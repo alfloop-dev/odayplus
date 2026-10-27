@@ -150,7 +150,12 @@ jobs:
     needs: change-scope
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # Whole-job budget: covers checkout, uv/npm installs, Postgres service
+    # startup, lint, the pytest step and post-job cleanup, not pytest alone.
+    # Run 40555469879 finished the full selection (2357.64s) yet the job was
+    # cancelled at the old 40m limit. 45 stays below the 60-minute merge
+    # queue check response timeout; it is a margin, not a performance promise.
+    timeout-minutes: 45
     services:
       postgres:
         image: postgis/postgis:16-3.5
