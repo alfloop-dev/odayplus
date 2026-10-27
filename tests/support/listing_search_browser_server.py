@@ -97,6 +97,7 @@ def setup():
             by_path = {f["field_path"]: f for f in receipt.get("fields", [])}
             for field, value in (
                 ("rent_amount", listing.rent_amount),
+                ("currency", listing.currency),
                 ("area_ping", listing.area_ping),
                 ("floor", listing.floor),
             ):
