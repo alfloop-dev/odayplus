@@ -91,6 +91,25 @@ def _historical_time(value: Any) -> bool:
         return False
 
 
+def _partition_month(value: Any) -> str | None:
+    """Use the recorded instant's UTC month in backfill, verify and inventory.
+
+    timestamptz preserves the instant, not the input's offset. Literal slicing
+    made the same receipt change partitions with the database session timezone.
+    UTC is the explicit shared selector basis; this does not rewrite source
+    timestamps/history or repair pre-existing partition proofs. Missing/naive
+    history cannot establish a partition and must not acquire a default zone.
+    """
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        return None
+    return value.astimezone(UTC).strftime("%Y-%m")
+
+
 def _artifact_uri(value: Any) -> bool:
     if not isinstance(value, str):
         return False
@@ -762,7 +781,7 @@ class IntakeMigrator:
                 continue
             i_source = intake["sourceId"]
             i_date_str = intake["submittedAt"]
-            i_month = i_date_str[:7] if (i_date_str and isinstance(i_date_str, str)) else None
+            i_month = _partition_month(i_date_str)
             match_res = intake.get("matchResult") or {}
             lst_id = match_res.get("targetListingId") or intake.get("resolved_listing_id") or intake.get("resolvedListingId")
             if lst_id:
@@ -793,7 +812,7 @@ class IntakeMigrator:
                 i_tenant = str(uuid.UUID(legacy_intake["tenantId"]))
                 i_source = legacy_intake["sourceId"]
                 i_date_str = legacy_intake["submittedAt"]
-                i_month = i_date_str[:7] if (i_date_str and isinstance(i_date_str, str)) else None
+                i_month = _partition_month(i_date_str)
 
                 if not self._execute("SELECT source_id FROM intake.source_registry WHERE source_id = %s", (i_source,)):
                     findings_count += 1
@@ -1171,8 +1190,8 @@ class IntakeMigrator:
                         or get_val(legacy_lst, "observed_at")
                         or get_val(legacy_lst, "firstSeenAt")
                     )
-                    if date_str and isinstance(date_str, str):
-                        lst_month = date_str[:7]
+                    lst_month = _partition_month(date_str)
+                    if lst_month:
                         listing_to_month[listing_uuid] = lst_month
 
                 if month:
@@ -1459,8 +1478,7 @@ class IntakeMigrator:
                         or get_val(candidate_site, "submittedAt")
                         or get_val(candidate_site, "submitted_at")
                     )
-                    if date_str and isinstance(date_str, str):
-                        c_month = date_str[:7]
+                    c_month = _partition_month(date_str)
 
                 if month:
                     if not c_month or c_month != month:
@@ -1687,6 +1705,7 @@ class IntakeMigrator:
                 "tenant_id": t_key,
                 "source_id": source_id or "ALL",
                 "month": month or "ALL",
+                "month_basis": "UTC",
                 "partition_key": p_key,
                 "proof_scope": "counts_and_ids_only_not_field_or_evidence_parity",
                 "intakes_received": len(normalized_inputs),
@@ -1955,7 +1974,7 @@ class IntakeMigrator:
                     r["intake_id"]
                     for r in intake_rows
                     if (p_src is None or p_src == "ALL" or r.get("source_id") == p_src)
-                    and (p_month is None or p_month == "ALL" or (r.get("submitted_at") and str(r.get("submitted_at"))[:7] == p_month))
+                    and (p_month is None or p_month == "ALL" or _partition_month(r.get("submitted_at")) == p_month)
                 ]
                 p_intake_sha = calculate_checksum(p_intake_ids)
                 exp_p_intake_c = exp_dict.get("intakes")
@@ -2231,7 +2250,7 @@ def inventory_intakes(engine: Any, tenant_id: str, *, source_id: str | None = No
                 or binding["isolation"] != "repeatable read"):
             raise ValueError("Unverified inventory context")
         binding.update({"source_selector_sha256": hashlib.sha256(source_id.encode()).hexdigest() if source_id else None,
-                        "month": month, "row_limit_per_model": limit})
+                        "month": month, "month_basis": "UTC", "row_limit_per_model": limit})
         unattributed_bridge_keys = None
         for model in ("legacy_documents", "bridge_documents", "native_rows"):
             engine.execute("SAVEPOINT inventory_model")
@@ -2300,7 +2319,7 @@ def inventory_intakes(engine: Any, tenant_id: str, *, source_id: str | None = No
                                 errors["id"] = "STATE_MAPPING_CONFLICT"
                         if not errors:
                             logical_id = ensure_uuid(row["id"])
-                            recorded_month = datetime.fromisoformat(row["submittedAt"].replace("Z", "+00:00")).strftime("%Y-%m")
+                            recorded_month = _partition_month(row["submittedAt"])
                             model_facts.append((logical_id, (row["sourceId"], recorded_month)))
                             if ((source_id is not None and row["sourceId"] != source_id)
                                     or (month is not None and recorded_month != month)):
@@ -2392,7 +2411,7 @@ def main() -> None:
     parser.add_argument("--tenant-id", type=str, default=None, help="Target tenant UUID (required for inventory)")
     parser.add_argument("--inventory-limit", type=int, default=10000, help="Inventory row bound per model (1..10000)")
     parser.add_argument("--source-id", type=str, default=None, help="Source system ID filter")
-    parser.add_argument("--month", type=str, default=None, help="YYYY-MM partition filter")
+    parser.add_argument("--month", type=str, default=None, help="YYYY-MM UTC instant-month partition filter (all actions)")
     parser.add_argument("--migration-ref", type=str, default="ODP-INTAKE-MIGRATION-001", help="Migration reference identifier")
     parser.add_argument("--dry-run", action="store_true", help="Execute without committing transaction")
     parser.add_argument("--resume", action="store_true", help="Resume backfill skipping existing records")
