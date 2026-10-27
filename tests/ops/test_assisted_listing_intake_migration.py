@@ -1558,3 +1558,406 @@ def test_tenant_partition_documents_exclusion_and_dry_run_invalid_input(conn):
     assert result["counts"]["intakes_quarantined"] == 1
     cur.execute("SELECT count(*) FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
     assert cur.fetchone()[0] == 0
+
+
+# Inventory is an operational read of the same migration inputs, not an export
+# or another persistence path. Every fixture below is an owned local database.
+INVENTORY_TENANT = "00000000-0000-0000-0000-000000000001"
+INVENTORY_OTHER = "00000000-0000-0000-0000-000000000002"
+
+
+@pytest.fixture
+def inventory_db(intake_blank_db):
+    import uuid
+
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+    with intake_blank_db.connect() as connection:
+        IntakeMigrator(connection).apply_schema()
+    engine = PostgresEngine(intake_blank_db.url(), validate_schema=False)
+    role = "inventory_" + uuid.uuid4().hex
+    try:
+        with intake_blank_db.connect() as connection:
+            connection.execute(f'CREATE ROLE "{role}" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS')
+            connection.execute('REVOKE CREATE ON SCHEMA public FROM PUBLIC')
+            connection.execute(f'REVOKE CREATE, TEMPORARY ON DATABASE "{intake_blank_db.dbname}" FROM PUBLIC')
+            connection.execute(f'GRANT USAGE ON SCHEMA intake, odp_runtime TO "{role}"')
+            connection.execute(f'GRANT SELECT ON ALL TABLES IN SCHEMA intake, odp_runtime TO "{role}"')
+        yield intake_blank_db, engine, role
+    finally:
+        engine.close()
+        with intake_blank_db.connect() as connection:
+            assert connection.execute(
+                "SELECT count(*) FROM pg_stat_activity WHERE usename = %s", (role,),
+            ).fetchone()[0] == 0
+            connection.execute(f'DROP OWNED BY "{role}"')
+            connection.execute(f'DROP ROLE "{role}"')
+
+
+def inventory_snapshot(database):
+    """Hash all application rows and catalog definitions, including evidence."""
+    with database.connect() as connection:
+        schemas = ("intake", "identity", "expansion", "workflow", "audit", "odp_runtime")
+        relations = connection.execute(
+            "SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+            "WHERE n.nspname = ANY(%s) AND c.relkind='r' ORDER BY 1,2", (list(schemas),),
+        ).fetchall()
+        snapshots = []
+        for schema, table in relations:
+            rows = connection.execute(f'SELECT to_jsonb(t) FROM "{schema}"."{table}" t ORDER BY to_jsonb(t)::text').fetchall()
+            snapshots.append((schema, table, rows))
+        for catalog, namespace in (("pg_class", "relnamespace"), ("pg_type", "typnamespace")):
+            snapshots.append(connection.execute(
+                f"SELECT to_jsonb(c) FROM {catalog} c JOIN pg_namespace n ON n.oid=c.{namespace} "
+                "WHERE n.nspname = ANY(%s) ORDER BY c.oid", (list(schemas),),
+            ).fetchall())
+        for catalog, relation in (("pg_attribute", "attrelid"), ("pg_constraint", "conrelid"),
+                                  ("pg_policy", "polrelid"), ("pg_attrdef", "adrelid"), ("pg_trigger", "tgrelid")):
+            snapshots.append(connection.execute(
+                f"SELECT to_jsonb(a) FROM {catalog} a JOIN pg_class c ON c.oid=a.{relation} "
+                "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname = ANY(%s) "
+                "ORDER BY to_jsonb(a)::text", (list(schemas),),
+            ).fetchall())
+    return hashlib.sha256(json.dumps(snapshots, default=str, sort_keys=True).encode()).hexdigest()
+
+
+def run_inventory_cli(database, role, *selectors, tenant=INVENTORY_TENANT, expected_exit=0, libpq=False):
+    import os
+    import subprocess
+    import sys
+
+    if libpq:
+        from psycopg.conninfo import make_conninfo
+
+        dsn = make_conninfo(**{**database.server.admin_params, "dbname": database.dbname, "user": role})
+    else:
+        dsn = database.url().replace("postgres@", role + "@")
+    env = {key: value for key, value in os.environ.items() if "DATABASE_URL" not in key}
+    env["MLFLOW_DISABLE_AGENT_HINT"] = "1"  # Unrelated installed MLflow startup advertising.
+    args = [sys.executable, "-m", "product_ops.migrations.assisted_listing_intake.migrate",
+            "--action", "inventory", "--db-dsn", dsn, *selectors]
+    if tenant is not None:
+        args.extend(["--tenant-id", tenant])
+    before = inventory_snapshot(database)
+    proc = subprocess.run(args, capture_output=True, text=True, env=env, timeout=45)
+    assert proc.returncode == expected_exit, proc.stderr + proc.stdout
+    assert proc.stderr == ""
+    assert len(proc.stdout) < 16000
+    for secret in (dsn, "tracking=synthetic", "Synthetic display label", "kms://", "591.com.tw", "synthetic-key"):
+        assert secret not in proc.stdout
+    assert inventory_snapshot(database) == before
+    with database.connect() as connection:
+        assert connection.execute("SELECT count(*) FROM pg_stat_activity WHERE usename = %s", (role,)).fetchone()[0] == 0
+    return json.loads(proc.stdout)
+
+
+def save_inventory_document(engine, value, *, bridge=False, tenant=INVENTORY_TENANT, key=None):
+    from shared.infrastructure.persistence.assisted_listing_intake import DurableAssistedIntakeStore
+    from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+    from shared.infrastructure.persistence.postgresql import PostgresDocumentStore
+
+    store = PostgresDocumentStore(engine)
+    intake_id = key or value.get("intake_id") or value["id"]
+    if bridge:
+        store.put("operator.assisted_intakes", f"{tenant}:{intake_id}",
+                  DurableAssistedIntakeStore._wrap(tenant, intake_id, value))
+    else:
+        TenantScopedDocumentStore(store, tenant).put("operator.assisted_intakes", intake_id, value)
+
+
+def seed_inventory_models(database, engine):
+    """Real legacy/bridge storage and native SQL, with mirrored logical IDs."""
+    legacy = migration_input()
+    bridge = migration_input(True)
+    # Mirror a legacy non-UUID through the migrator's original UUID mapping.
+    bridge["intake_id"] = bridge["operator_presentation"]["id"] = ensure_uuid(legacy["id"])
+    save_inventory_document(engine, legacy)
+    save_inventory_document(engine, bridge, bridge=True)
+    with database.connect() as connection:
+        IntakeMigrator(connection).backfill([legacy], [], [], tenant_id=INVENTORY_TENANT, parser_release=parser_provenance())
+        # Native-only, different source and month (not a mirrored receipt).
+        row = {**legacy, "id": "native-other", "sourceId": "SRC-BROKER", "submittedAt": "2026-08-01T01:00:00Z"}
+        IntakeMigrator(connection).backfill([row], [], [], tenant_id=INVENTORY_TENANT)
+        # A real foreign-tenant row and both foreign document forms must not leak.
+        row = {**legacy, "id": "foreign-native", "tenantId": INVENTORY_OTHER}
+        IntakeMigrator(connection).backfill([row], [], [], tenant_id=INVENTORY_OTHER)
+    foreign = {**legacy, "id": "foreign-document", "tenantId": INVENTORY_OTHER}
+    save_inventory_document(engine, foreign, tenant=INVENTORY_OTHER)
+    foreign_bridge = migration_input(True)
+    foreign_bridge["scope"]["tenant_id"] = foreign_bridge["operator_presentation"]["tenantId"] = INVENTORY_OTHER
+    save_inventory_document(engine, foreign_bridge, bridge=True, tenant=INVENTORY_OTHER)
+
+
+def test_inventory_real_select_only_cli_overlap_and_partitions(inventory_db):
+    database, engine, role = inventory_db
+    seed_inventory_models(database, engine)
+    import psycopg
+
+    # No role-level read-only default: the implementation must set READ ONLY.
+    with database.connect(user=role) as connection:
+        assert connection.execute("SHOW default_transaction_read_only").fetchone()[0] == "off"
+        assert connection.execute("SELECT rolsuper, rolbypassrls, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname=current_user").fetchone() == (False,) * 4
+        assert connection.execute("SELECT has_database_privilege(current_database(), 'CREATE'), has_database_privilege(current_database(), 'TEMP')").fetchone() == (False, False)
+        assert connection.execute("SELECT has_table_privilege('odp_runtime.durable_documents','SELECT'), has_table_privilege('intake.intakes','SELECT')").fetchone() == (True, True)
+        for relation in ("odp_runtime.durable_documents", "intake.intakes"):
+            for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"):
+                assert connection.execute("SELECT has_table_privilege(%s, %s)", (relation, privilege)).fetchone()[0] is False
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            connection.execute("DELETE FROM odp_runtime.durable_documents WHERE false")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            connection.execute("CREATE SCHEMA inventory_forbidden")
+    result = run_inventory_cli(database, role)
+    assert result["status"] == "complete"
+    assert result["binding"]["tenant_id"] == INVENTORY_TENANT
+    assert result["binding"]["read_only"] == "on"
+    assert result["binding"]["isolation"] == "repeatable read"
+    assert result["binding"]["snapshot"] and result["binding"]["captured_at"]
+    assert result["proof_scope"] == "counts_and_ids_only_not_field_or_evidence_parity"
+    assert result["partition_presence"] == "nonempty"
+    assert {key: value["counts"]["selected"] for key, value in result["models"].items()} == {
+        "legacy_documents": 1, "bridge_documents": 1, "native_rows": 2,
+    }
+    assert result["logical_ids"]["selected_union"] == 2  # Not four business receipts.
+    assert set(result["logical_ids"]["overlap"].values()) == {1}
+    partition = run_inventory_cli(database, role, "--source-id", "SRC-591", "--month", "2026-07", libpq=True)
+    assert partition["logical_ids"]["selected_union"] == 1
+    assert partition["models"]["native_rows"]["counts"] == {"observed": 2, "selected": 1, "excluded": 1, "unknown": 0}
+    assert partition["binding"]["source_selector_sha256"] == hashlib.sha256(b"SRC-591").hexdigest()
+    empty_partition = run_inventory_cli(database, role, "--source-id", "SRC-591", "--month", "2026-08")
+    assert empty_partition["partition_presence"] == "empty"
+    assert empty_partition["logical_ids"]["selected_union"] == 0
+    foreign_partition = run_inventory_cli(database, role, tenant=INVENTORY_OTHER)
+    assert foreign_partition["models"]["native_rows"]["counts"]["observed"] == 1
+    assert foreign_partition["models"]["bridge_documents"]["counts"]["observed"] == 1
+
+
+@pytest.mark.parametrize("submitted_at,utc_month,literal_month", [
+    ("2026-07-01T00:30:00+08:00", "2026-06", "2026-07"),
+    ("2026-06-30T23:30:00-07:00", "2026-07", "2026-06"),
+])
+@pytest.mark.parametrize("session_timezone", ["UTC", "Asia/Taipei"])
+def test_inventory_offset_month_shared_with_backfill_and_verify(
+    inventory_db, submitted_at, utc_month, literal_month, session_timezone,
+):
+    """Equivalent timestamptz projections must not invent conflicting history.
+
+    Month selectors consistently mean UTC instant-month, never the serialization
+    offset or the database session zone. Original source history remains intact.
+    """
+    from datetime import datetime
+
+    database, engine, role = inventory_db
+    legacy = migration_input()
+    legacy["submittedAt"] = submitted_at
+    bridge = migration_input(True)
+    bridge["intake_id"] = bridge["operator_presentation"]["id"] = ensure_uuid(legacy["id"])
+    bridge["submitted_at"] = bridge["operator_presentation"]["submittedAt"] = submitted_at
+    save_inventory_document(engine, legacy)
+    save_inventory_document(engine, bridge, bridge=True)
+    with database.connect() as connection:
+        connection.execute(f'ALTER ROLE "{role}" SET timezone = \'{session_timezone}\'')
+        IntakeMigrator(connection).backfill(
+            [legacy], [], [], tenant_id=INVENTORY_TENANT, parser_release=parser_provenance(),
+        )
+    result = run_inventory_cli(database, role)
+    assert result["coverage"]["scope_history_conflicting_logical_ids"] == 0
+    assert result["logical_ids"]["selected_union"] == 1
+    partition = run_inventory_cli(database, role, "--source-id", "SRC-591", "--month", utc_month)
+    assert partition["binding"]["month_basis"] == "UTC"
+    assert all(model["counts"]["selected"] == 1 for model in partition["models"].values())
+    excluded = run_inventory_cli(database, role, "--month", literal_month)
+    assert excluded["partition_presence"] == "empty"
+    assert all(model["counts"]["excluded"] == 1 for model in excluded["models"].values())
+    # Exercise original write/verify owners only in this owned synthetic DB.
+    # Verify both existing unpartitioned history and a new partitioned backfill.
+    with database.connect() as connection:
+        connection.execute(f"SET TIME ZONE '{session_timezone}'")
+        assert IntakeMigrator(connection).verify_shadow_comparison(INVENTORY_TENANT)["blocking_findings"] == 0
+        IntakeMigrator(connection).rollback_migration(tenant_id=INVENTORY_TENANT)
+        written = IntakeMigrator(connection).backfill(
+            [legacy], [], [], tenant_id=INVENTORY_TENANT, source_id="SRC-591", month=utc_month,
+            parser_release=parser_provenance(),
+        )
+        assert written["counts"]["intakes_processed"] == 1
+        assert written["counts"]["findings"] == 0
+        # Native datetime projection changes, but the instant and source text do not.
+        connection.execute("SET TIME ZONE 'America/Los_Angeles'")
+        native_time = connection.execute("SELECT submitted_at FROM intake.intakes").fetchone()[0]
+        assert native_time == datetime.fromisoformat(submitted_at)
+        history = connection.execute("SELECT reason_text FROM intake.intake_stage_transitions").fetchone()[0]
+        assert json.loads(history)["source_history"]["submittedAt"] == submitted_at
+        fresh = IntakeMigrator(connection).verify_shadow_comparison(INVENTORY_TENANT)
+        assert fresh["blocking_findings"] == 0
+        assert fresh["shadow_comparison_success"] is True
+        assert fresh["proof_scope"] == "counts_and_ids_only_not_field_or_evidence_parity"
+
+
+def test_inventory_zero_missing_schema_and_denial_are_distinct(inventory_db):
+    database, _, role = inventory_db
+    result = run_inventory_cli(database, role)
+    assert result["partition_presence"] == "empty"
+    assert result["logical_ids"]["selected_union"] == 0
+    assert all(value["counts"]["observed"] == 0 for value in result["models"].values())
+    with database.connect() as connection:
+        connection.execute(f'REVOKE SELECT ON intake.intakes FROM "{role}"')
+    denied = run_inventory_cli(database, role, expected_exit=1)
+    assert denied["partition_presence"] == "unknown"
+    assert denied["models"]["native_rows"] == {"status": "unavailable", "counts": None, "findings": {"permission_denied": 1}}
+    with database.connect() as connection:
+        connection.execute("DROP SCHEMA intake CASCADE")
+    absent = run_inventory_cli(database, role, expected_exit=1)
+    assert absent["models"]["native_rows"]["counts"] is None
+    assert absent["models"]["native_rows"]["findings"] == {"schema_absent": 1}
+    assert absent["models"]["legacy_documents"]["counts"]["observed"] == 0
+    with database.connect() as connection:
+        connection.execute("DROP SCHEMA odp_runtime CASCADE")
+    all_absent = run_inventory_cli(database, role, expected_exit=1)
+    assert all_absent["partition_presence"] == "unknown"
+    assert all(value["counts"] is None for value in all_absent["models"].values())
+
+
+@pytest.mark.parametrize("field,value", [
+    ("tenantId", None), ("tenantId", "bad-tenant"), ("tenantId", INVENTORY_OTHER),
+    ("submittedAt", None), ("submittedAt", "not-historical"), ("submittedAt", "2026-07-01T00:00:00"),
+    ("submittedBy", None), ("sourceId", None),
+])
+def test_inventory_unknown_scope_history_not_hidden_by_selectors(inventory_db, field, value):
+    database, engine, role = inventory_db
+    row = migration_input()
+    row[field] = value
+    # The legacy partition belongs to the selected tenant even when its payload
+    # is missing/wrong. Neither a different source nor month can hide that fact.
+    row["sourceId"] = value if field == "sourceId" else "SRC-BROKER"
+    save_inventory_document(engine, row)
+    result = run_inventory_cli(database, role, "--source-id", "SRC-591", "--month", "1999-01", expected_exit=1)
+    assert result["models"]["legacy_documents"]["counts"] == {"observed": 1, "selected": 0, "excluded": 0, "unknown": 1}
+    assert result["partition_presence"] == "unknown"
+    assert result["logical_ids"]["selected_union"] is None
+    assert result["models"]["legacy_documents"]["findings"]
+
+
+@pytest.mark.parametrize("fault", ["scope_missing", "scope_conflict", "source_conflict", "time_conflict", "wrapper_tenant", "wrapper_key", "malformed_pickle", "malformed_shape"])
+def test_inventory_bridge_corruption_is_visible(inventory_db, fault):
+    database, engine, role = inventory_db
+    from shared.infrastructure.persistence.assisted_listing_intake import DurableAssistedIntakeStore
+    from shared.infrastructure.persistence.postgresql import PostgresDocumentStore
+
+    row = migration_input(True)
+    key = row["intake_id"]
+    wrapped = DurableAssistedIntakeStore._wrap(INVENTORY_TENANT, key, row)
+    if fault == "scope_missing":
+        row["scope"] = {}
+    elif fault == "scope_conflict":
+        row["operator_presentation"]["tenantId"] = INVENTORY_OTHER
+    elif fault == "source_conflict":
+        row["source_id"] = "SRC-BROKER"
+    elif fault == "time_conflict":
+        row["submitted_at"] = "2026-08-01T00:00:00Z"
+    elif fault == "wrapper_tenant":
+        wrapped["_tenant_id"] = INVENTORY_OTHER
+    elif fault == "wrapper_key":
+        wrapped["_state_key"] = "wrong-key"
+    elif fault == "malformed_shape":
+        wrapped["value"] = ["not an Intake"]
+    PostgresDocumentStore(engine).put("operator.assisted_intakes", f"{INVENTORY_TENANT}:{key}", wrapped)
+    if fault == "malformed_pickle":
+        engine.execute("UPDATE odp_runtime.durable_documents SET data = ?", (b"not pickle: secret credentials",))
+    result = run_inventory_cli(database, role, "--source-id", "SRC-591", "--month", "2026-07", expected_exit=1)
+    bridge = result["models"]["bridge_documents"]
+    assert bridge["status"] == "findings"
+    assert bridge["counts"] == {"observed": 1, "selected": 0, "excluded": 0, "unknown": 1}
+    assert bridge["findings"]
+    assert "secret credentials" not in json.dumps(result)
+    assert result["partition_presence"] == "unknown"
+
+
+def test_inventory_limits_unattributed_and_cross_model_history(inventory_db):
+    database, engine, role = inventory_db
+    seed_inventory_models(database, engine)
+    limited = run_inventory_cli(database, role, "--inventory-limit", "1", expected_exit=1)
+    assert limited["models"]["native_rows"]["counts"] is None
+    assert limited["models"]["native_rows"]["findings"] == {"row_limit_exceeded": 1}
+    row = migration_input(True)
+    row["source_id"] = row["operator_presentation"]["sourceId"] = "SRC-BROKER"
+    save_inventory_document(engine, row, bridge=True)
+    conflict = run_inventory_cli(database, role, expected_exit=1)
+    assert conflict["coverage"]["scope_history_conflicting_logical_ids"] == 1
+    assert conflict["logical_ids"]["selected_union"] is None
+    from shared.infrastructure.persistence.postgresql import PostgresDocumentStore
+
+    PostgresDocumentStore(engine).put("operator.assisted_intakes", "unattributed", {"not": "tenant bound"})
+    unbound = run_inventory_cli(database, role, expected_exit=1)
+    assert unbound["coverage"]["unattributed_bridge_keys"] == 1
+
+
+@pytest.mark.parametrize("tenant,selectors", [
+    (None, []), ("bad-tenant-secret", []), (INVENTORY_TENANT, ["--month", "2026-13"]),
+    (INVENTORY_TENANT, ["--source-id", ""]), (INVENTORY_TENANT, ["--inventory-limit", "0"]),
+    (INVENTORY_TENANT, ["--dry-run"]), (INVENTORY_TENANT, ["--resume"]),
+    (INVENTORY_TENANT, ["--input-file", "secret-input.json"]),
+])
+def test_inventory_requires_explicit_valid_context(inventory_db, tenant, selectors):
+    database, _, role = inventory_db
+    result = run_inventory_cli(database, role, *selectors, tenant=tenant, expected_exit=2)
+    assert result == {"action": "inventory", "status": "error", "reason": "invalid_inventory_arguments"}
+
+
+def test_inventory_same_process_cleanup_on_success_and_failure(inventory_db, monkeypatch):
+    from product_ops.migrations.assisted_listing_intake.migrate import _inventory_cli
+
+    database, engine, role = inventory_db
+    dsn = database.url().replace("postgres@", role + "@")
+    assert _inventory_cli(dsn, INVENTORY_TENANT, source_id=None, month=None, limit=10000)["status"] == "complete"
+    # Validation and transaction failures must release the pool, observed here
+    # before interpreter teardown could hide a leaked connection.
+    with pytest.raises(ValueError):
+        _inventory_cli(dsn, "invalid-tenant", source_id=None, month=None, limit=10000)
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+    query_one = PostgresEngine.query_one
+
+    def fail_binding(self, sql, params=()):
+        if "AS snapshot" in sql:
+            raise RuntimeError("synthetic transaction failure: secret DSN")
+        return query_one(self, sql, params)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(PostgresEngine, "query_one", fail_binding)
+        with pytest.raises(RuntimeError, match="synthetic transaction failure"):
+            _inventory_cli(dsn, INVENTORY_TENANT, source_id=None, month=None, limit=10000)
+    with database.connect() as connection:
+        assert connection.execute("SELECT count(*) FROM pg_stat_activity WHERE usename = %s", (role,)).fetchone()[0] == 0
+    # The existing caller-owned engine is unaffected by inventory cleanup.
+    assert engine.query_one("SELECT 1 AS n")["n"] == 1
+
+
+def test_inventory_one_consistent_snapshot_across_models(inventory_db, monkeypatch):
+    from product_ops.migrations.assisted_listing_intake.migrate import _inventory_cli
+    from shared.infrastructure.persistence.postgresql import PostgresDocumentStore
+
+    database, engine, role = inventory_db
+    seed_inventory_models(database, engine)
+    original_get = PostgresDocumentStore.get
+    changed = False
+
+    def concurrent_change(self, collection, key):
+        nonlocal changed
+        value = original_get(self, collection, key)
+        if not changed:
+            changed = True
+            with database.connect() as connection:
+                connection.execute("UPDATE intake.intakes SET source_id = NULL WHERE tenant_id = %s", (INVENTORY_TENANT,))
+        return value
+
+    with monkeypatch.context() as patch:
+        patch.setattr(PostgresDocumentStore, "get", concurrent_change)
+        result = _inventory_cli(database.url().replace("postgres@", role + "@"), INVENTORY_TENANT,
+                                source_id="SRC-591", month="2026-07", limit=10000)
+    assert changed
+    assert result["status"] == "complete"  # Native reads retain the pre-update snapshot.
+    assert result["models"]["native_rows"]["counts"] == {"observed": 2, "selected": 1, "excluded": 1, "unknown": 0}
+    # A fresh real CLI snapshot must expose missing native source facts, even
+    # with a source/month selector. It cannot silently turn them into zero.
+    current = run_inventory_cli(database, role, "--source-id", "SRC-591", "--month", "2026-07", expected_exit=1)
+    assert current["models"]["native_rows"]["counts"] == {"observed": 2, "selected": 0, "excluded": 0, "unknown": 2}
+    assert current["models"]["native_rows"]["findings"] == {"MISSING_EVIDENCE:sourceId": 2}

@@ -45,11 +45,26 @@ SECRET_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# The final flag marks heuristics for raw diagnostic text only. Structured
+# reports/recovery configuration retain their original generic rules, so names
+# such as secret:ODP_API_INVOKER_TOKEN and safe descriptions stay intact.
 SECRET_STRING_PATTERNS = (
-    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+"), r"\1" + REDACTED),
-    (re.compile(r"(?i)([?&](?:access_token|api_key|apikey|client_secret|password|secret|token)=)[^&#\s]+"), r"\1" + REDACTED),
-    (re.compile(r"(?i)(://[^:/\s]+:)[^@/\s]+(@)"), r"\1" + REDACTED + r"\2"),
-    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?:.|\n)*?-----END [A-Z ]*PRIVATE KEY-----"), REDACTED),
+    (re.compile(r"\b([A-Za-z][A-Za-z0-9+.-]*://)[^\s/?#]*@"), rf"\1{REDACTED}@", True),
+    (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+"), rf"\1 {REDACTED}", True),
+    (
+        re.compile(
+            r"(?i)\b([A-Za-z0-9_-]*(?:password|passwd|pwd|secret|token|api[_-]?key"
+            r"|access[_-]?key|private[_-]?key|credential)[A-Za-z0-9_-]*(?:\\?[\"'])?)"
+            r"(\s*[=:]\s*)"
+            r"(\\\"(?:(?!\\\").)*\\\"|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|(?:\[REDACTED\]|<redacted>)[^\s,;&}\])]*|[^\s,;&}\])]+)"
+        ),
+        rf"\1\2{REDACTED}",
+        True,
+    ),
+    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+"), r"\1" + REDACTED, False),
+    (re.compile(r"(?i)([?&](?:access_token|api_key|apikey|client_secret|password|secret|token)=)[^&#\s]+"), r"\1" + REDACTED, False),
+    (re.compile(r"(?i)(://[^:/\s]+:)[^@/\s]+(@)"), r"\1" + REDACTED + r"\2", False),
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?:.|\n)*?-----END [A-Z ]*PRIVATE KEY-----"), REDACTED, False),
 )
 
 def _key_parts(key: str) -> set[str]:
@@ -63,15 +78,36 @@ def _is_sensitive_key(key: str) -> bool:
         return False
     return bool(SECRET_KEY_RE.search(key))
 
-def _redact_string(value: str, secret_values: Sequence[str]) -> str:
+def redact_text(
+    value: str, secret_values: Sequence[str] = (), *, replacement: str = REDACTED,
+    diagnostic: bool = False,
+) -> str:
+    """Mask known and suspected secrets in diagnostic text, before any length cap.
+
+    Receipt recursion uses generic rules and its default marker. Raw smoke
+    diagnostics explicitly opt into credential-assignment/userinfo heuristics.
+    Callers retain responsibility for structured fields and repr spellings.
+    """
     result = value
     # Explicit values are collected from caller-provided secrets and from
     # sensitive keyed fields before recursion.  Longest-first avoids replacing
     # a short token inside a longer token in a surprising order.
     for secret in sorted({item for item in secret_values if item}, key=len, reverse=True):
-        result = result.replace(secret, REDACTED)
-    for pattern, replacement in SECRET_STRING_PATTERNS:
-        result = pattern.sub(replacement, result)
+        result = result.replace(secret, replacement)
+    for pattern, template, diagnostic_only in SECRET_STRING_PATTERNS:
+        if diagnostic_only and not diagnostic:
+            continue
+
+        def render(match: re.Match[str], template: str = template) -> str:
+            # Raw diagnostics preserve an exact masked value across passes.
+            # Generic configuration retains its original canonicalization, which
+            # the scheduler recovery equality gate also uses to reject markers.
+            if diagnostic and any(match.group(0) == match.expand(template.replace(REDACTED, marker))
+                   for marker in (REDACTED, "<redacted>")):
+                return match.group(0)
+            return match.expand(template.replace(REDACTED, replacement))
+
+        result = pattern.sub(render, result)
     return result
 
 def _collect_keyed_secret_values(value: Any, output: list[str], *, key: str = "") -> None:
@@ -108,7 +144,7 @@ def _redact_value(value: Any, secret_values: Sequence[str], redacted_paths: list
             for index, child in enumerate(value)
         ]
     if isinstance(value, str):
-        return _redact_string(value, secret_values)
+        return redact_text(value, secret_values)
     return copy.deepcopy(value)
 
 def redact_secrets(value: Any, *, secret_values: Iterable[str] = ()) -> tuple[Any, dict[str, Any]]:

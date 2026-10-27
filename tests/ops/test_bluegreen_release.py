@@ -1318,3 +1318,53 @@ def test_actual_tag_build_entrypoint_pins_and_verifies_the_same_runtime_images(r
     workflow = (root / ".github/workflows/deploy-dev.yml").read_text()
     assert "resolve_image_digest() {" not in workflow
     assert "source product_ops/deployment/cloud_run_release_traffic.sh" in workflow
+
+
+@pytest.mark.parametrize("description", (
+    "Release-scoped worker trigger; starts paused until verified",
+    "Basic worker schedule",
+    "credential: environment reference",
+))
+def test_scheduler_recovery_keeps_nonsecret_description_and_body(description: str) -> None:
+    from product_ops.deployment.cloud_scheduler_trigger import recovery_snapshot
+    snapshot = _trigger("worker", "ENABLED")
+    snapshot["description"] = description
+    body = {"overrides": {"containerOverrides": [{"env": [
+        {"name": "CREDENTIAL_MODE", "value": "credential: environment reference"},
+    ]}]}}
+    snapshot["httpTarget"]["body"] = base64.b64encode(json.dumps(body).encode()).decode()
+    original = copy.deepcopy(snapshot)
+    assert recovery_snapshot(snapshot) == original
+    assert snapshot == original
+
+
+@pytest.mark.parametrize("location", ("header", "body", "description"))
+def test_scheduler_recovery_refuses_sensitive_config_without_sanitizing_it(location: str) -> None:
+    from product_ops.deployment.cloud_scheduler_trigger import recovery_snapshot
+    snapshot = _trigger("worker", "ENABLED")
+    if location == "header":
+        snapshot["httpTarget"]["headers"]["Authorization"] = "Bearer synthetic-credential"
+    elif location == "body":
+        snapshot["httpTarget"]["body"] = base64.b64encode(
+            json.dumps({"password": "synthetic-credential"}).encode(),
+        ).decode()
+    else:
+        snapshot["description"] = "Bearer synthetic-credential"
+    original = copy.deepcopy(snapshot)
+    with pytest.raises(ValueError, match="sensitive"):
+        recovery_snapshot(snapshot)
+    assert snapshot == original
+
+
+@pytest.mark.parametrize("description", (
+    "https://provider.test/data?token=<redacted>",
+    "postgresql://metadata-user:<redacted>@db.internal/odp",
+))
+def test_scheduler_recovery_refuses_noncanonical_redaction_placeholders(description: str) -> None:
+    from product_ops.deployment.cloud_scheduler_trigger import recovery_snapshot
+    snapshot = _trigger("worker", "ENABLED")
+    snapshot["description"] = description
+    original = copy.deepcopy(snapshot)
+    with pytest.raises(ValueError, match="sensitive"):
+        recovery_snapshot(snapshot)
+    assert snapshot == original

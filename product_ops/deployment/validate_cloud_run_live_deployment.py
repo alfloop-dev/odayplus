@@ -38,6 +38,7 @@ if str(ROOT) not in sys.path:
 # re-derived here; see shared/auth/mode.py for why the two must not drift
 # (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
 from product_ops.deployment.cloud_scheduler_trigger import validate_trigger_state
+from product_ops.deployment.release_redaction import redact_text
 from shared.audit.gcs_identity import validate_audit_service_accounts
 from shared.audit.worm import is_gcs_worm_sink_uri
 from shared.auth.mode import (
@@ -2524,6 +2525,91 @@ def _redact_known_secrets(
     return _redact_secret_values(checks, spellings), _redact_secret_values(report, spellings)
 
 
+OPERATOR_SECTION_MESSAGE_MAX_CHARS = 240
+OPERATOR_SECTION_FIELD_MAX_CHARS = 120
+OPERATOR_SECTION_REPORT_LIMIT = 32
+
+
+def _bounded_diagnostic(value: Any, limit: int, spellings: list[str]) -> str | None:
+    """Mask known and suspected secrets, then cap length so a dump cannot flood the report.
+
+    Both masks run before the cut: a known token straddling the cap would
+    otherwise lose its tail, and the report-wide ``_redact_known_secrets`` that
+    runs later only replaces complete spellings, so the head would survive.
+    """
+
+    if value is None:
+        return None
+    text = redact_text(str(value), spellings, replacement=REDACTED_SECRET, diagnostic=True)
+    return text if len(text) <= limit else f"{text[: limit - 3]}..."
+
+
+def _operator_section_diagnostics(meta: Mapping[str, Any], spellings: list[str]) -> dict[str, Any]:
+    """Which operator sections are not ``available``, and why.
+
+    ``OperatorLiveRepository`` degrades the whole bootstrap when any single
+    section is unavailable or degraded, so ``data_mode=degraded`` alone does not
+    say which read failed. Returns an empty mapping when every section is
+    available, leaving a live report unchanged.
+    """
+
+    def names(key: str) -> list[str]:
+        raw = meta.get(key)
+        if not isinstance(raw, (list, tuple)):
+            return []
+        return [
+            _bounded_diagnostic(item, OPERATOR_SECTION_FIELD_MAX_CHARS, spellings) or ""
+            for item in raw[:OPERATOR_SECTION_REPORT_LIMIT]
+        ]
+
+    unavailable = names("unavailableSections")
+    degraded = names("degradedSections")
+    sections = meta.get("sections")
+    sections = sections if isinstance(sections, Mapping) else {}
+    details: dict[str, dict[str, str | None]] = {}
+    for name, section in sections.items():
+        if len(details) >= OPERATOR_SECTION_REPORT_LIMIT:
+            break
+        if not isinstance(section, Mapping):
+            continue
+        state = str(section.get("state") or "").strip().lower()
+        if state == "available":
+            continue
+        details[_bounded_diagnostic(name, OPERATOR_SECTION_FIELD_MAX_CHARS, spellings) or ""] = {
+            "state": _bounded_diagnostic(
+                state or None, OPERATOR_SECTION_FIELD_MAX_CHARS, spellings
+            ),
+            "reason_code": _bounded_diagnostic(
+                section.get("reasonCode"), OPERATOR_SECTION_FIELD_MAX_CHARS, spellings
+            ),
+            "message": _bounded_diagnostic(
+                section.get("message"), OPERATOR_SECTION_MESSAGE_MAX_CHARS, spellings
+            ),
+        }
+    if not (unavailable or degraded or details):
+        return {}
+    return {
+        "unavailable_sections": unavailable,
+        "degraded_sections": degraded,
+        "non_available_sections": details,
+    }
+
+
+def _operator_section_summary(diagnostics: Mapping[str, Any]) -> str:
+    """``name:REASON`` pairs for a failing check's detail line."""
+
+    details = diagnostics.get("non_available_sections") or {}
+    listed = [
+        f"{name}:{entry.get('reason_code') or entry.get('state') or '<missing>'}"
+        for name, entry in details.items()
+    ]
+    for key in ("unavailable_sections", "degraded_sections"):
+        listed.extend(
+            f"{name}:<missing>" for name in diagnostics.get(key, []) if name not in details
+        )
+    return ",".join(listed)
+
+
 def _missing_api_invoker_check(prefix: str) -> CheckResult:
     return CheckResult(
         False,
@@ -2717,6 +2803,15 @@ def smoke_checks(
             "data_mode": _declared_data_mode(bootstrap) or None,
             "data_source": _operator_source(bootstrap) or None,
         }
+        bootstrap_meta = bootstrap.get("meta")
+        bootstrap_meta = bootstrap_meta if isinstance(bootstrap_meta, Mapping) else {}
+        section_diagnostics = _operator_section_diagnostics(
+            bootstrap_meta,
+            _secret_spellings((bearer_token, web_invoker_token, api_invoker_token)),
+        )
+        report["operator_bootstrap"].update(section_diagnostics)
+        section_summary = _operator_section_summary(section_diagnostics)
+        section_suffix = f" sections={section_summary}" if section_summary else ""
         checks.append(
             CheckResult(
                 ok=status == 200,
@@ -2726,20 +2821,22 @@ def smoke_checks(
         )
         bootstrap_mode = _declared_data_mode(bootstrap)
         bootstrap_source = _operator_source(bootstrap)
+        mode_ok = (
+            bootstrap_mode == "live"
+            and bool(bootstrap_source)
+            and not _contains_forbidden_marker(bootstrap_source)
+        )
         checks.append(
             CheckResult(
-                ok=bootstrap_mode == "live"
-                and bool(bootstrap_source)
-                and not _contains_forbidden_marker(bootstrap_source),
+                ok=mode_ok,
                 name="smoke:/api/v1/operator/bootstrap:provenance",
                 detail=(
                     f"data_mode={bootstrap_mode or '<missing>'} "
                     f"data_source={bootstrap_source or '<missing>'}"
+                    f"{'' if mode_ok else section_suffix}"
                 ),
             )
         )
-        bootstrap_meta = bootstrap.get("meta")
-        bootstrap_meta = bootstrap_meta if isinstance(bootstrap_meta, Mapping) else {}
         bootstrap_origin = bootstrap_meta.get("dataOrigin")
         bootstrap_origin = bootstrap_origin if isinstance(bootstrap_origin, Mapping) else {}
         live_readiness = bootstrap_meta.get("liveReadiness")
@@ -2768,6 +2865,7 @@ def smoke_checks(
                         "persistence_mode="
                         f"{bootstrap_origin.get('persistenceMode') or '<missing>'} "
                         f"live_ready={live_readiness.get('ready')}"
+                        f"{section_suffix}"
                     )
                 ),
             )

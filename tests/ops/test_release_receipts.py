@@ -199,3 +199,25 @@ def test_receipt_write_and_read_validate_the_same_identity(tmp_path: Path) -> No
 def test_builder_rejects_unbound_artifact() -> None:
     with pytest.raises(ReceiptValidationError, match="not produced by Runtime Release"):
         receipt(artifacts=[".odp_data/deployment/secret-values.json"])
+
+
+@pytest.mark.parametrize("marker", ("[REDACTED]", "<redacted>"))
+@pytest.mark.parametrize("diagnostic", (
+    "https://provider.test/data?token={marker}",
+    "postgresql://metadata-user:{marker}@db.internal/odp",
+))
+def test_receipt_canonicalizes_already_masked_diagnostic_values(marker: str, diagnostic: str) -> None:
+    safe = diagnostic.format(marker=marker)
+    first = receipt(details={"diagnostic": safe})
+    second = receipt(details=first["details"])
+    assert first["details"]["diagnostic"] == diagnostic.format(marker="[REDACTED]")
+    assert second["details"] == first["details"]
+
+
+def test_receipt_preserves_stable_check_names_and_secret_references() -> None:
+    details = {
+        "checks": [{"name": "secret:ODP_API_INVOKER_TOKEN", "ok": False, "detail": "missing"}],
+        "secret_ref": "ODP_TOKEN=projects/p/secrets/runtime/versions/1",
+        "credential_status": "configured",
+    }
+    assert receipt(details=details)["details"] == details
