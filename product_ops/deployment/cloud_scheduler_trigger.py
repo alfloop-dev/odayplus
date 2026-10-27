@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from delivery_toolchain.release.release_receipts import redact_secrets  # noqa: E402
+from product_ops.deployment.release_redaction import redact_secrets  # noqa: E402
 
 
 def validate_trigger_state(state: str) -> str:
