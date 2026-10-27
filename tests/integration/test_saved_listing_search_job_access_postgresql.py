@@ -187,7 +187,7 @@ def test_currency_revision_delivery_and_current_masking_through_normal_http_app(
         # Only currency exceeds the low-clearance reader's grant.
         next(f for f in record["fields"] if f["field_path"] == "currency")[
             "classification"
-        ] = "CONFIDENTIAL"
+        ] = "RESTRICTED"
         store = bundle.assisted_intake_store
         store.refresh(TENANT)
         store.intakes[intake_id] = record
@@ -196,6 +196,7 @@ def test_currency_revision_delivery_and_current_masking_through_normal_http_app(
         bundle.engine.close()
 
     bundle, client = setup_case(bridge_database, monkeypatch)
+    reader_headers = {**_headers(), "x-clearance": "RESTRICTED"}
     try:
         for version, change in enumerate(["TWD", "USD", "missing", "masked", "conflict", "TWD"], 1):
             if version > 1:
@@ -207,7 +208,7 @@ def test_currency_revision_delivery_and_current_masking_through_normal_http_app(
                 if change != "missing":
                     currency = {
                         "field_path": "currency", "effective": "USD" if change == "USD" else "TWD",
-                        "masked": change == "masked", "classification": "CONFIDENTIAL",
+                        "masked": change == "masked", "classification": "RESTRICTED",
                     }
                     record["fields"].append(currency)
                     if change == "conflict":
@@ -215,7 +216,7 @@ def test_currency_revision_delivery_and_current_masking_through_normal_http_app(
                 store.flush()
                 # No old match can stand in for an undelivered current revision.
                 for identity in identities:
-                    response = client.get(BASE + "/" + identity + "/results", headers=_headers())
+                    response = client.get(BASE + "/" + identity + "/results", headers=reader_headers)
                     assert response.status_code == 200 and response.json()["total"] == 0
             while job := bundle.job_queue.claim_next(worker_id="synthetic-currency-http"):
                 if not execute_claimed_listing_search(bundle, job):
@@ -223,7 +224,7 @@ def test_currency_revision_delivery_and_current_masking_through_normal_http_app(
                     # intents without executing an external WORM delivery.
                     assert job.job_type == "durable-audit-delivery", job.job_type
             for index, identity in enumerate(identities):
-                response = client.get(BASE + "/" + identity + "/results", headers=_headers())
+                response = client.get(BASE + "/" + identity + "/results", headers=reader_headers)
                 assert response.status_code == 200, response.text
                 expected = int(index == 1 or change == "TWD")
                 assert response.json()["total"] == expected
@@ -231,7 +232,7 @@ def test_currency_revision_delivery_and_current_masking_through_normal_http_app(
                     assert response.json()["items"][0]["intakeVersion"] == version
                 masked = client.get(
                     BASE + "/" + identity + "/results",
-                    headers={**_headers(), "x-clearance": "INTERNAL"},
+                    headers=_headers(),
                 )
                 assert masked.status_code == 200 and masked.json()["total"] == int(index == 1)
                 other = client.get(
@@ -253,7 +254,7 @@ def test_currency_revision_delivery_and_current_masking_through_normal_http_app(
             store._wrap(TENANT, intake_id, record),
         )
         for identity in identities:
-            response = client.get(BASE + "/" + identity + "/results", headers=_headers())
+            response = client.get(BASE + "/" + identity + "/results", headers=reader_headers)
             assert response.status_code == 200 and response.json()["total"] == 0
     finally:
         bundle.engine.close()
