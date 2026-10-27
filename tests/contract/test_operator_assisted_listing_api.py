@@ -206,6 +206,45 @@ def test_changed_price_revision_contract_test() -> None:
     assert l2024["rentPerMonth"] == 55000
 
 
+def test_unmatched_revision_is_rejected_instead_of_overwriting_first_listing() -> None:
+    app = create_app()
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/v1/operator/network-listings/intake/submit",
+        json={"url": "https://www.synthetic.example/detail-77120345.html", "heatZoneId": "HZ-01"},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 200
+    intake = resp.json()
+    assert intake["matchResult"]["targetListingId"] is None
+    listings_before = client.get("/api/v1/operator/network-listings", headers=HEADERS).json()["listings"]
+    assert listings_before
+
+    body = {
+        "action": "revise",
+        "reason": "無比對目標的版本更新",
+        "riskSummary": "將以送件版本覆寫既有物件。",
+        "riskAcknowledged": True,
+        "actorRoleId": "expansionManager",
+    }
+    for _ in range(2):
+        decide_resp = client.post(
+            f"/api/v1/operator/network-listings/intake/{intake['id']}/decide",
+            json=body,
+            headers=_write_headers("unmatched-revise"),
+        )
+        assert decide_resp.status_code == 409
+        assert "no target listing" in decide_resp.json()["detail"]
+
+    listings_after = client.get("/api/v1/operator/network-listings", headers=HEADERS).json()["listings"]
+    assert listings_after == listings_before
+    after = client.get(f"/api/v1/operator/network-listings/intake/{intake['id']}", headers=HEADERS)
+    assert after.status_code == 200
+    for field in ("stage", "version", "matchResult", "auditEvents"):
+        assert after.json()[field] == intake[field], field
+
+
 def test_ambiguous_entity_match_review_test() -> None:
     app = create_app()
     client = TestClient(app)
