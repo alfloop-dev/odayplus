@@ -99,7 +99,16 @@ def production_feature_schema_versions() -> dict[str, str]:
 
 
 try:
-    from fastapi import APIRouter, FastAPI, Header, HTTPException, Request, Response, status
+    from fastapi import (
+        APIRouter,
+        Depends,
+        FastAPI,
+        Header,
+        HTTPException,
+        Request,
+        Response,
+        status,
+    )
     from fastapi.responses import JSONResponse
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover - dependency added by backend task
@@ -1933,14 +1942,35 @@ else:
                 "roles": sorted(role.value for role in principal.roles),
             }
 
+        from apps.api.oday_api.security.dependencies import build_engine, require_permission
+        from shared.auth import Action, Principal
+
         @platform_router.get("/audit/events", tags=["audit"])
         def list_audit_events(
             correlation_id: str | None = None,
+            principal: Principal = Depends(
+                require_permission("audit", Action.VIEW, engine=build_engine(audit_log=audit_log))
+            ),
         ) -> dict[str, Any]:
+            # require_permission is a type-level check; the rows are scoped to
+            # the verified principal's tenant. A principal with no server-granted
+            # tenant (human or service) has no row scope and is refused rather
+            # than reading every tenant's events (contract §8.1).
+            tenant_id = principal.tenant_id
+            if not isinstance(tenant_id, str) or not tenant_id.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "TENANT_SCOPE_REQUIRED",
+                        "message": "Audit events require an authenticated tenant scope",
+                    },
+                )
             return {
                 "events": [
                     event.to_dict()
-                    for event in audit_log.list_events(correlation_id=correlation_id)
+                    for event in audit_log.list_events(
+                        tenant_id=tenant_id.strip(), correlation_id=correlation_id
+                    )
                 ]
             }
 

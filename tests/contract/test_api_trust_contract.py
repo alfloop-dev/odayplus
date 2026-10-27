@@ -2561,3 +2561,437 @@ class TestDeploymentShapeCollisionRegressions:
         assert outcome.token_type == "oidc"
         assert outcome.principal.subject_id == str(account_id)
         assert outcome.principal.roles == frozenset([Role.OPERATIONS_MANAGER])
+
+
+# --------------------------------------------------------------------------
+# GET /api/v1/audit/events (and its /audit/events alias) through create_app
+# (ODP-AUDIT-EVENTS-READ-AUTH-TENANT-261028)
+#
+# The read was mounted with no dependency at all: anyone could list every
+# tenant's events, and a correlation id was the only filter. These drive the
+# real route with real signed credentials through a real
+# AuthenticationBoundary installed as the process boundary.
+# --------------------------------------------------------------------------
+
+AUDIT_PATHS = ("/api/v1/audit/events", "/audit/events")
+AUDIT_CORRELATION = "corr-audit-read-scope"
+AUDIT_TENANT_A = "00000000-0000-0000-0000-00000000000a"
+AUDIT_TENANT_B = "00000000-0000-0000-0000-00000000000b"
+AUDIT_SEEDED_TYPE = "audit_read.seeded.v1"
+
+
+class TestAuditEventsReadBoundary:
+    """Authentication, audit:view and row tenant scope on the audit read."""
+
+    def _app(self, monkeypatch, **config_overrides):
+        from apps.api.oday_api import security
+        from apps.api.oday_api.main import create_app
+        from shared.audit import AuditEvent
+        from shared.infrastructure.persistence import build_persistence
+
+        bundle = build_persistence(mode="memory")
+        app = create_app(persistence=bundle)
+        audit_log = app.state.audit_log
+        for tenant in (AUDIT_TENANT_A, AUDIT_TENANT_B, None):
+            metadata = {"tenant_id": tenant} if tenant else {}
+            audit_log.record(
+                AuditEvent(
+                    event_type=AUDIT_SEEDED_TYPE,
+                    actor="seed",
+                    action="seed",
+                    resource=f"seed/{tenant or 'unowned'}",
+                    outcome="recorded",
+                    correlation_id=AUDIT_CORRELATION,
+                    metadata=metadata,
+                )
+            )
+
+        service_verifier = config_overrides.pop("service_verifier", None)
+        config_kwargs: dict[str, Any] = {
+            "audiences": frozenset([AUDIENCE]),
+            "local_issuer": LOCAL_ISSUER,
+            "local_signing_keys": {"local-k1": LOCAL_KEY},
+            "local_audiences": frozenset([AUDIENCE]),
+            "oidc_enabled": True,
+            "oidc_issuer": OIDC_ISSUER,
+            "oidc_signing_keys": {"oidc-k1": OIDC_KEY},
+            "oidc_audiences": frozenset([AUDIENCE]),
+            "service_issuer": SERVICE_ISSUER,
+            "service_signing_keys": {"service-k1": SERVICE_KEY},
+            "service_audiences": frozenset([AUDIENCE]),
+            "principal_mappings": {
+                "svc-audit-a": {"roles": ["auditor"], "scope": {"tenant_id": AUDIT_TENANT_A}},
+                "svc-audit-none": {"roles": ["auditor"]},
+                "svc-audit-blank": {"roles": ["auditor"], "scope": {"tenant_id": "   "}},
+                "svc-no-view-a": {
+                    "roles": ["pricing_manager"],
+                    "scope": {"tenant_id": AUDIT_TENANT_A},
+                },
+            },
+            "identity_store": bundle.identity_store,
+            "session_service": bundle.session_service,
+        }
+        config_kwargs.update(config_overrides)
+        installed = AuthenticationBoundary(
+            AuthBoundaryConfig(**config_kwargs),
+            service_verifier=service_verifier,
+            audit_log=audit_log,
+        )
+        # create_app binds (and so resets) the process boundary; install the
+        # configured one exactly where default_boundary() hands it out.
+        monkeypatch.setattr(
+            security.dependencies, "_default_boundary", installed, raising=True
+        )
+        return TestClient(app), bundle, audit_log
+
+    @staticmethod
+    def _local_user(bundle, *, roles, tenant_id, scope_tenant=..., status="active"):
+        account_id = uuid4()
+        bundle.identity_store.save_account(
+            Account(
+                account_id=account_id,
+                tenant_id=tenant_id,
+                username=f"audit-reader-{account_id.hex[:8]}",
+                email=f"audit-reader-{account_id.hex[:8]}@example.com",
+                status=status,
+            )
+        )
+        bundle.identity_store.set_account_roles(account_id, roles)
+        bundle.identity_store.set_account_scope(
+            account_id,
+            Scope(tenant_id=str(tenant_id) if scope_tenant is ... else scope_tenant),
+        )
+        session = bundle.session_service.create_session(
+            account_id=account_id, provider="local_password"
+        )
+        token = make_local_jwt(
+            sub=str(account_id), sid=str(session.session_id), tenant_id=str(tenant_id)
+        )
+        return account_id, session, token
+
+    @staticmethod
+    def _seeded(response) -> list[str]:
+        assert response.status_code == 200, response.text
+        return sorted(
+            event["resource"]
+            for event in response.json()["events"]
+            if event["event_type"] == AUDIT_SEEDED_TYPE
+        )
+
+    @staticmethod
+    def _get(client, path, headers, **params):
+        params.setdefault("correlation_id", AUDIT_CORRELATION)
+        return client.get(path, params=params, headers=headers)
+
+    # -- authentication ------------------------------------------------------
+
+    def test_anonymous_invalid_and_expired_credentials_are_refused(self, monkeypatch):
+        from uuid import UUID
+
+        client, bundle, _ = self._app(monkeypatch)
+        _, session, _ = self._local_user(
+            bundle, roles=[Role.AUDITOR], tenant_id=UUID(AUDIT_TENANT_A)
+        )
+        expired = make_local_jwt(
+            sub=str(session.account_id),
+            sid=str(session.session_id),
+            tenant_id=AUDIT_TENANT_A,
+            exp_offset=-3600,
+        )
+        forged_signature = make_jwt(
+            SigningKey(kid="local-k1", algorithm="HS256", secret=b"x" * 40),
+            iss=LOCAL_ISSUER,
+            sub=str(session.account_id),
+            extra_claims={"sid": str(session.session_id), "tenant_id": AUDIT_TENANT_A},
+        )
+        for path in AUDIT_PATHS:
+            for headers in (
+                {},
+                {"Authorization": "Bearer not-a-jwt"},
+                {"Authorization": f"Bearer {expired}"},
+                {"Authorization": f"Bearer {forged_signature}"},
+            ):
+                response = self._get(client, path, headers)
+                assert response.status_code == 401, (path, headers, response.text)
+                assert "events" not in response.json()
+
+    def test_production_forged_identity_headers_are_refused(self, monkeypatch):
+        client, _, _ = self._app(monkeypatch)
+        monkeypatch.setenv("ODP_PRODUCT_MODE", "production")
+        forged = {
+            "x-subject-id": "attacker",
+            "x-roles": "auditor,platform_admin",
+            "x-tenant-id": AUDIT_TENANT_A,
+        }
+        for path in AUDIT_PATHS:
+            response = self._get(client, path, forged)
+            assert response.status_code == 401, response.text
+            assert "events" not in response.json()
+
+    def test_production_without_boundary_refuses_header_trust(self, monkeypatch):
+        """No live boundary + production: forged headers never become a principal."""
+        from apps.api.oday_api import security
+
+        client, _, _ = self._app(monkeypatch)
+        monkeypatch.setattr(security.dependencies, "_default_boundary", None)
+        monkeypatch.setenv("ODP_PRODUCT_MODE", "production")
+        response = self._get(
+            client,
+            AUDIT_PATHS[0],
+            {"x-subject-id": "attacker", "x-roles": "auditor", "x-tenant-id": AUDIT_TENANT_A},
+        )
+        assert response.status_code == 401, response.text
+
+    def test_disabled_account_and_revoked_session_are_refused(self, monkeypatch):
+        from uuid import UUID
+
+        client, bundle, _ = self._app(monkeypatch)
+        _, _, disabled_token = self._local_user(
+            bundle, roles=[Role.AUDITOR], tenant_id=UUID(AUDIT_TENANT_A), status="disabled"
+        )
+        _, session, revoked_token = self._local_user(
+            bundle, roles=[Role.AUDITOR], tenant_id=UUID(AUDIT_TENANT_A)
+        )
+        bundle.session_service.revoke_session(session.session_id, RevocationReason.USER_LOGOUT)
+        for token in (disabled_token, revoked_token):
+            response = self._get(
+                client, AUDIT_PATHS[0], {"Authorization": f"Bearer {token}"}
+            )
+            assert response.status_code == 401, response.text
+
+    # -- authorization -------------------------------------------------------
+
+    def test_authenticated_principal_without_audit_view_is_refused_and_audited(
+        self, monkeypatch
+    ):
+        from uuid import UUID
+
+        client, bundle, audit_log = self._app(monkeypatch)
+        account_id, _, token = self._local_user(
+            bundle, roles=[Role.PRICING_MANAGER], tenant_id=UUID(AUDIT_TENANT_A)
+        )
+        service_token = make_jwt(SERVICE_KEY, iss=SERVICE_ISSUER, sub="svc-no-view-a")
+        for bearer, actor in ((token, str(account_id)), (service_token, "svc-no-view-a")):
+            correlation = f"corr-audit-deny-{actor}"
+            response = client.get(
+                AUDIT_PATHS[0],
+                params={"correlation_id": AUDIT_CORRELATION},
+                headers={"Authorization": f"Bearer {bearer}", "x-correlation-id": correlation},
+            )
+            assert response.status_code == 403, response.text
+            assert "events" not in response.json()
+            decisions = [
+                event
+                for event in audit_log.list_events(correlation_id=correlation)
+                if event.event_type == "security.authorization"
+            ]
+            assert [(e.actor, e.outcome, e.resource) for e in decisions] == [
+                (actor, "deny", "audit")
+            ]
+
+    def test_allowed_read_is_audited_with_the_permission_source(self, monkeypatch):
+        from uuid import UUID
+
+        client, bundle, audit_log = self._app(monkeypatch)
+        account_id, _, token = self._local_user(
+            bundle, roles=[Role.AUDITOR], tenant_id=UUID(AUDIT_TENANT_A)
+        )
+        response = client.get(
+            AUDIT_PATHS[0],
+            params={"correlation_id": AUDIT_CORRELATION},
+            headers={"Authorization": f"Bearer {token}", "x-correlation-id": "corr-audit-allow"},
+        )
+        assert response.status_code == 200, response.text
+        decisions = [
+            event
+            for event in audit_log.list_events(correlation_id="corr-audit-allow")
+            if event.event_type == "security.authorization"
+        ]
+        assert [(e.actor, e.outcome, e.action, e.resource) for e in decisions] == [
+            (str(account_id), "allow", "view", "audit")
+        ]
+        assert decisions[0].metadata.get("tenant_id") == AUDIT_TENANT_A
+
+    # -- tenant scope --------------------------------------------------------
+
+    def test_local_human_sees_only_its_tenant_and_cannot_widen_scope(self, monkeypatch):
+        from uuid import UUID
+
+        client, bundle, _ = self._app(monkeypatch)
+        _, _, token = self._local_user(
+            bundle, roles=[Role.AUDITOR], tenant_id=UUID(AUDIT_TENANT_A)
+        )
+        for path in AUDIT_PATHS:
+            plain = self._get(client, path, {"Authorization": f"Bearer {token}"})
+            assert self._seeded(plain) == [f"seed/{AUDIT_TENANT_A}"]
+            widened = self._get(
+                client,
+                path,
+                {
+                    "Authorization": f"Bearer {token}",
+                    "x-tenant-id": AUDIT_TENANT_B,
+                    "x-roles": "platform_admin",
+                },
+                tenant_id=AUDIT_TENANT_B,
+            )
+            assert self._seeded(widened) == [f"seed/{AUDIT_TENANT_A}"]
+        # Without a correlation filter the scope still holds row by row.
+        unfiltered = client.get(AUDIT_PATHS[0], headers={"Authorization": f"Bearer {token}"})
+        assert unfiltered.status_code == 200
+        tenants = {
+            event["metadata"].get("tenant_id") for event in unfiltered.json()["events"]
+        }
+        assert tenants == {AUDIT_TENANT_A}
+
+    def test_linked_oidc_human_sees_only_its_tenant(self, monkeypatch):
+        from uuid import UUID
+
+        client, bundle, _ = self._app(monkeypatch)
+        account_id = uuid4()
+        bundle.identity_store.save_account(
+            Account(
+                account_id=account_id,
+                tenant_id=UUID(AUDIT_TENANT_B),
+                username="oidc-audit-reader",
+                email="oidc-audit-reader@example.com",
+                status="active",
+            )
+        )
+        bundle.identity_store.link_federated_identity(account_id, OIDC_ISSUER, "oidc-audit-sub")
+        bundle.identity_store.set_account_roles(account_id, [Role.AUDITOR])
+        bundle.identity_store.set_account_scope(account_id, Scope(tenant_id=AUDIT_TENANT_B))
+        token = make_jwt(OIDC_KEY, iss=OIDC_ISSUER, sub="oidc-audit-sub")
+        response = self._get(
+            client, AUDIT_PATHS[0], {"Authorization": f"Bearer {token}"}, tenant_id=AUDIT_TENANT_A
+        )
+        assert self._seeded(response) == [f"seed/{AUDIT_TENANT_B}"]
+
+    def test_declared_service_jwt_sees_only_its_declared_tenant(self, monkeypatch):
+        client, _, _ = self._app(monkeypatch)
+        # Self-asserted claims are never the scope: the declaration wins.
+        token = make_jwt(
+            SERVICE_KEY,
+            iss=SERVICE_ISSUER,
+            sub="svc-audit-a",
+            extra_claims={"tenant_id": AUDIT_TENANT_B, "roles": ["platform_admin"]},
+        )
+        response = self._get(
+            client, AUDIT_PATHS[0], {"Authorization": f"Bearer {token}", "x-tenant-id": AUDIT_TENANT_B}
+        )
+        assert self._seeded(response) == [f"seed/{AUDIT_TENANT_A}"]
+
+    def test_legacy_issuer_service_jwt_sees_only_its_declared_tenant(self, monkeypatch):
+        client, _, _ = self._app(
+            monkeypatch,
+            issuer=SERVICE_ISSUER,
+            service_issuer=None,
+            signing_keys={"service-k1": SERVICE_KEY},
+            service_signing_keys={},
+        )
+        token = make_jwt(SERVICE_KEY, iss=SERVICE_ISSUER, sub="svc-audit-a")
+        response = self._get(client, AUDIT_PATHS[0], {"Authorization": f"Bearer {token}"})
+        assert self._seeded(response) == [f"seed/{AUDIT_TENANT_A}"]
+
+    def test_shared_secret_service_sees_only_its_registered_tenant(self, monkeypatch):
+        from modules.opsboard.auth import ServiceIdentity, ServiceIdentityVerifier
+
+        verifier = ServiceIdentityVerifier(
+            {
+                "audit-export-a": ServiceIdentity(
+                    service_id="audit-export-a",
+                    secret=b"shared-secret-audit-a",
+                    roles=frozenset([Role.AUDITOR]),
+                    scope=Scope(tenant_id=AUDIT_TENANT_B),
+                ),
+                "audit-export-unscoped": ServiceIdentity(
+                    service_id="audit-export-unscoped",
+                    secret=b"shared-secret-unscoped",
+                    roles=frozenset([Role.AUDITOR]),
+                ),
+            }
+        )
+        client, _, _ = self._app(monkeypatch, service_verifier=verifier)
+        scoped = self._get(
+            client,
+            AUDIT_PATHS[0],
+            {"x-service-id": "audit-export-a", "x-service-secret": "shared-secret-audit-a"},
+            tenant_id=AUDIT_TENANT_A,
+        )
+        assert self._seeded(scoped) == [f"seed/{AUDIT_TENANT_B}"]
+
+        wrong_secret = self._get(
+            client,
+            AUDIT_PATHS[0],
+            {"x-service-id": "audit-export-a", "x-service-secret": "guess"},
+        )
+        assert wrong_secret.status_code == 401
+        # A registered service with no server-granted tenant scope is not an
+        # all-tenant reader: None never defaults to an unscoped query.
+        unscoped = self._get(
+            client,
+            AUDIT_PATHS[0],
+            {"x-service-id": "audit-export-unscoped", "x-service-secret": "shared-secret-unscoped"},
+        )
+        assert unscoped.status_code == 403, unscoped.text
+        assert "events" not in unscoped.json()
+
+    def test_missing_or_blank_tenant_scope_fails_closed(self, monkeypatch):
+        from uuid import UUID
+
+        client, bundle, _ = self._app(monkeypatch)
+        _, _, null_scope_token = self._local_user(
+            bundle, roles=[Role.AUDITOR], tenant_id=UUID(AUDIT_TENANT_A), scope_tenant=None
+        )
+        cases = {
+            "local human without scope tenant": {"Authorization": f"Bearer {null_scope_token}"},
+            "declared service without tenant": {
+                "Authorization": "Bearer "
+                + make_jwt(SERVICE_KEY, iss=SERVICE_ISSUER, sub="svc-audit-none")
+            },
+            "declared service with blank tenant": {
+                "Authorization": "Bearer "
+                + make_jwt(SERVICE_KEY, iss=SERVICE_ISSUER, sub="svc-audit-blank")
+            },
+        }
+        for label, headers in cases.items():
+            for path in AUDIT_PATHS:
+                response = self._get(client, path, {**headers, "x-tenant-id": AUDIT_TENANT_A})
+                assert response.status_code == 403, (label, response.text)
+                assert "events" not in response.json(), label
+
+    def test_forged_service_claims_and_unknown_principals_get_no_service_scope(
+        self, monkeypatch
+    ):
+        client, _, _ = self._app(monkeypatch)
+        cases = {
+            # Signed by the service key but never declared: UNKNOWN_SERVICE.
+            "undeclared service subject": make_jwt(
+                SERVICE_KEY,
+                iss=SERVICE_ISSUER,
+                sub="svc-undeclared",
+                extra_claims={"roles": ["auditor"], "token_type": "service"},
+            ),
+            # Unlinked OIDC subject dressed up as a service.
+            "unlinked oidc subject with service claims": make_jwt(
+                OIDC_KEY,
+                iss=OIDC_ISSUER,
+                sub="svc-audit-a",
+                extra_claims={"token_type": "service", "service_id": "svc-audit-a"},
+            ),
+            # Service issuer, wrong key.
+            "service issuer forged signature": make_jwt(
+                SigningKey(kid="service-k1", algorithm="HS256", secret=b"y" * 40),
+                iss=SERVICE_ISSUER,
+                sub="svc-audit-a",
+            ),
+            # Unknown issuer.
+            "unknown issuer": make_jwt(SERVICE_KEY, iss="urn:odp:service:rogue", sub="svc-audit-a"),
+        }
+        for label, token in cases.items():
+            response = self._get(
+                client,
+                AUDIT_PATHS[0],
+                {"Authorization": f"Bearer {token}", "x-service-id": "svc-audit-a"},
+            )
+            assert response.status_code == 401, (label, response.text)
+            assert "events" not in response.json(), label
