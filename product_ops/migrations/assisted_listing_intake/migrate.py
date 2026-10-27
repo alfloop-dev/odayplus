@@ -2200,9 +2200,12 @@ def inventory_intakes(engine: Any, tenant_id: str, *, source_id: str | None = No
     the original backfill mapping. The caller owns/ closes the non-bootstrapping
     engine; every read here uses one repeatable-read, read-only snapshot.
     """
+    from time import monotonic
+
     from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
     from shared.infrastructure.persistence.postgresql import PostgresDocumentStore
 
+    deadline = monotonic() + 30
     tenant_id = str(uuid.UUID(tenant_id))
     if not 1 <= limit <= 10000:
         raise ValueError("Invalid inventory limit")
@@ -2268,6 +2271,8 @@ def inventory_intakes(engine: Any, tenant_id: str, *, source_id: str | None = No
                     raise ValueError("row_limit_exceeded")
                 result["counts"]["observed"] = len(rows)
                 for stored in rows:
+                    if monotonic() >= deadline:
+                        raise ValueError("inventory_deadline_exceeded")
                     errors: dict[str, str] = {}
                     try:
                         if model == "native_rows":
@@ -2294,7 +2299,7 @@ def inventory_intakes(engine: Any, tenant_id: str, *, source_id: str | None = No
                                 errors["id"] = "STATE_MAPPING_CONFLICT"
                         if not errors:
                             logical_id = ensure_uuid(row["id"])
-                            recorded_month = row["submittedAt"][:7]  # Same historical partition as backfill.
+                            recorded_month = datetime.fromisoformat(row["submittedAt"].replace("Z", "+00:00")).strftime("%Y-%m")
                             model_facts.append((logical_id, (row["sourceId"], recorded_month)))
                             if ((source_id is not None and row["sourceId"] != source_id)
                                     or (month is not None and recorded_month != month)):
@@ -2322,7 +2327,7 @@ def inventory_intakes(engine: Any, tenant_id: str, *, source_id: str | None = No
                 engine.execute("ROLLBACK TO SAVEPOINT inventory_model")
                 code = getattr(exc, "sqlstate", None)
                 reason = {"42P01": "schema_absent", "3F000": "schema_absent", "42501": "permission_denied"}.get(code, "query_or_data_error")
-                if type(exc) is ValueError and str(exc) in {"row_limit_exceeded", "payload_limit_exceeded"}:
+                if type(exc) is ValueError and str(exc) in {"row_limit_exceeded", "payload_limit_exceeded", "inventory_deadline_exceeded"}:
                     reason = str(exc)
                 result = {"status": "unavailable", "counts": None, "findings": {reason: 1}}
             finally:
