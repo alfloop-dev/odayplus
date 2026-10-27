@@ -2514,15 +2514,18 @@ def _redact_known_secrets(
 # Operator section messages are raw repository errors (``str(exc)``), so a DSN
 # or a ``password=`` fragment from a driver can ride along. The known-token
 # scrub at the end of ``smoke_checks`` cannot know those values; these patterns
-# mask what merely looks like a credential before the message is recorded.
+# mask what merely looks like a credential before the message is recorded. The
+# key may be bare (``password=x``) or quoted as in JSON / a dict repr
+# (``{"password": "x"}``, ``{'api_key': 'x'}``, ``{\"token\": \"x\"}``).
 _SUSPECTED_SECRET_PATTERNS = (
     (re.compile(r"\b([A-Za-z][A-Za-z0-9+.-]*://)[^\s/?#]*@"), rf"\1{REDACTED_SECRET}@"),
     (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+"), rf"\1 {REDACTED_SECRET}"),
     (
         re.compile(
             r"(?i)\b([A-Za-z0-9_-]*(?:password|passwd|pwd|secret|token|api[_-]?key"
-            r"|access[_-]?key|private[_-]?key|credential)[A-Za-z0-9_-]*)"
-            r"(\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;&]+)"
+            r"|access[_-]?key|private[_-]?key|credential)[A-Za-z0-9_-]*(?:\\?[\"'])?)"
+            r"(\s*[=:]\s*)"
+            r"(\\\"(?:(?!\\\").)*\\\"|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\s,;&]+)"
         ),
         rf"\1\2{REDACTED_SECRET}",
     ),
@@ -2532,18 +2535,23 @@ OPERATOR_SECTION_FIELD_MAX_CHARS = 120
 OPERATOR_SECTION_REPORT_LIMIT = 32
 
 
-def _bounded_diagnostic(value: Any, limit: int) -> str | None:
-    """Mask suspected secrets, then cap length so a stack dump cannot flood the report."""
+def _bounded_diagnostic(value: Any, limit: int, spellings: list[str]) -> str | None:
+    """Mask known and suspected secrets, then cap length so a dump cannot flood the report.
+
+    Both masks run before the cut: a known token straddling the cap would
+    otherwise lose its tail, and the report-wide ``_redact_known_secrets`` that
+    runs later only replaces complete spellings, so the head would survive.
+    """
 
     if value is None:
         return None
-    text = str(value)
+    text = _redact_secret_values(str(value), spellings)
     for pattern, replacement in _SUSPECTED_SECRET_PATTERNS:
         text = pattern.sub(replacement, text)
     return text if len(text) <= limit else f"{text[: limit - 3]}..."
 
 
-def _operator_section_diagnostics(meta: Mapping[str, Any]) -> dict[str, Any]:
+def _operator_section_diagnostics(meta: Mapping[str, Any], spellings: list[str]) -> dict[str, Any]:
     """Which operator sections are not ``available``, and why.
 
     ``OperatorLiveRepository`` degrades the whole bootstrap when any single
@@ -2557,7 +2565,7 @@ def _operator_section_diagnostics(meta: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(raw, (list, tuple)):
             return []
         return [
-            _bounded_diagnostic(item, OPERATOR_SECTION_FIELD_MAX_CHARS) or ""
+            _bounded_diagnostic(item, OPERATOR_SECTION_FIELD_MAX_CHARS, spellings) or ""
             for item in raw[:OPERATOR_SECTION_REPORT_LIMIT]
         ]
 
@@ -2574,13 +2582,15 @@ def _operator_section_diagnostics(meta: Mapping[str, Any]) -> dict[str, Any]:
         state = str(section.get("state") or "").strip().lower()
         if state == "available":
             continue
-        details[_bounded_diagnostic(name, OPERATOR_SECTION_FIELD_MAX_CHARS) or ""] = {
-            "state": _bounded_diagnostic(state or None, OPERATOR_SECTION_FIELD_MAX_CHARS),
+        details[_bounded_diagnostic(name, OPERATOR_SECTION_FIELD_MAX_CHARS, spellings) or ""] = {
+            "state": _bounded_diagnostic(
+                state or None, OPERATOR_SECTION_FIELD_MAX_CHARS, spellings
+            ),
             "reason_code": _bounded_diagnostic(
-                section.get("reasonCode"), OPERATOR_SECTION_FIELD_MAX_CHARS
+                section.get("reasonCode"), OPERATOR_SECTION_FIELD_MAX_CHARS, spellings
             ),
             "message": _bounded_diagnostic(
-                section.get("message"), OPERATOR_SECTION_MESSAGE_MAX_CHARS
+                section.get("message"), OPERATOR_SECTION_MESSAGE_MAX_CHARS, spellings
             ),
         }
     if not (unavailable or degraded or details):
@@ -2802,7 +2812,10 @@ def smoke_checks(
         }
         bootstrap_meta = bootstrap.get("meta")
         bootstrap_meta = bootstrap_meta if isinstance(bootstrap_meta, Mapping) else {}
-        section_diagnostics = _operator_section_diagnostics(bootstrap_meta)
+        section_diagnostics = _operator_section_diagnostics(
+            bootstrap_meta,
+            _secret_spellings((bearer_token, web_invoker_token, api_invoker_token)),
+        )
         report["operator_bootstrap"].update(section_diagnostics)
         section_summary = _operator_section_summary(section_diagnostics)
         section_suffix = f" sections={section_summary}" if section_summary else ""

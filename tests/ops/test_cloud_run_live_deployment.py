@@ -2315,6 +2315,146 @@ def test_deterministic_smoke_masks_suspected_secrets_in_operator_section_message
     assert message.endswith("...")
 
 
+def _quoted_credential_operator_sections() -> dict[str, object]:
+    # Repository errors are ``str(exc)``: a driver may print a JSON body or a dict
+    # repr, and an API error may echo the invoker token near the length cap.
+    return {
+        "sections": {
+            "survey_assignments": {
+                "state": "unavailable",
+                "reasonCode": "OPERATOR_SURVEY_ASSIGNMENTS_UNAVAILABLE",
+                "message": 'db rejected {"password": "synthetic-db-secret", "user": "odp"}',
+            },
+            "providers": {
+                "state": "unavailable",
+                "reasonCode": "OPERATOR_PROVIDERS_UNAVAILABLE",
+                "message": "provider config {'api_key': 'synthetic-provider-key'}",
+            },
+            "notices": {
+                "state": "degraded",
+                "reasonCode": "OPERATOR_NOTICES_PARTIAL",
+                "message": r"upstream body {\"token\": \"synthetic-escaped-token\"}",
+            },
+            # The known token straddles the 240-character cap.
+            "storeOpsIssues": {
+                "state": "unavailable",
+                "reasonCode": "OPERATOR_STOREOPSISSUES_UNAVAILABLE",
+                "message": "x" * 225 + SMOKE_API_INVOKER + "y" * 20,
+            },
+        },
+        "unavailableSections": ["survey_assignments", "providers", "storeOpsIssues"],
+        "degradedSections": ["notices"],
+    }
+
+
+def _quoted_credential_leaks() -> tuple[str, ...]:
+    return (
+        "synthetic-db-secret",
+        "synthetic-provider-key",
+        "synthetic-escaped-token",
+        SMOKE_API_INVOKER[:8],
+    )
+
+
+def _assert_quoted_credentials_masked(bootstrap: dict[str, object]) -> None:
+    sections = bootstrap["non_available_sections"]
+    assert sections["survey_assignments"]["message"] == (
+        'db rejected {"password": <redacted>, "user": "odp"}'
+    )
+    assert sections["providers"]["message"] == "provider config {'api_key': <redacted>}"
+    assert sections["notices"]["message"] == r"upstream body {\"token\": <redacted>}"
+    # Known-token redaction runs before the cut, so no prefix of it survives.
+    assert sections["storeOpsIssues"]["message"] == "x" * 225 + "<redacted>" + "yy..."
+    assert sections["storeOpsIssues"]["reason_code"] == "OPERATOR_STOREOPSISSUES_UNAVAILABLE"
+
+
+def test_deterministic_smoke_masks_quoted_and_boundary_secrets_in_operator_sections() -> None:
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _quoted_credential_operator_sections()
+    server, url = start_server()
+    try:
+        checks, report = validator.smoke_checks(
+            api_url=url,
+            web_url=url,
+            expected_sha=EXPECTED_SHA,
+            bearer_token=SMOKE_BEARER,
+            operator_role="ops-lead",
+            operator_subject="smoke-operator",
+            operator_tenant="tenant-live",
+            correlation_id="corr-operator-quoted-secrets",
+            timeout=2,
+            api_invoker_token=SMOKE_API_INVOKER,
+        )
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    rendered = json.dumps(report) + json.dumps([[c.name, c.detail] for c in checks])
+    for leaked in _quoted_credential_leaks():
+        assert leaked not in rendered
+    _assert_quoted_credentials_masked(report["operator_bootstrap"])
+    by_name = {check.name: check for check in checks}
+    assert by_name["smoke:/api/v1/operator/bootstrap:provenance"].ok is False
+
+
+def test_smoke_cli_report_masks_quoted_and_boundary_secrets_in_operator_sections(
+    tmp_path: Path,
+) -> None:
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _quoted_credential_operator_sections()
+    server, url = start_server()
+    report_path = tmp_path / "cloud-run-smoke.json"
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(VALIDATOR_PATH),
+                "smoke",
+                "--api-url",
+                url,
+                "--web-url",
+                url,
+                "--expected-sha",
+                EXPECTED_SHA,
+                "--smoke-retry-attempts",
+                "1",
+                "--output",
+                str(report_path),
+            ],
+            cwd=ROOT,
+            env=_smoke_cli_env(),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    # Degraded stays fail-closed; the report says which sections and why.
+    assert result.returncode == 1, result.stdout + result.stderr
+    text = report_path.read_text(encoding="utf-8")
+    for leaked in _quoted_credential_leaks():
+        assert leaked not in text
+        assert leaked not in result.stdout + result.stderr
+    report = json.loads(text)
+    assert report["ok"] is False
+    _assert_quoted_credentials_masked(report["operator_bootstrap"])
+    provenance = next(
+        check
+        for check in report["checks"]
+        if check["name"] == "smoke:/api/v1/operator/bootstrap:provenance"
+    )
+    assert "providers:OPERATOR_PROVIDERS_UNAVAILABLE" in provenance["detail"]
+    assert "notices:OPERATOR_NOTICES_PARTIAL" in provenance["detail"]
+
+
 def test_deterministic_smoke_live_operator_bootstrap_report_is_unchanged() -> None:
     DeterministicRuntimeHandler.operator_section_meta = {
         "sections": {
