@@ -2191,11 +2191,200 @@ class IntakeMigrator:
         }
 
 
+def inventory_intakes(engine: Any, tenant_id: str, *, source_id: str | None = None,
+                      month: str | None = None, limit: int = 10000) -> dict[str, Any]:
+    """Bounded operational input to the existing migration, never a cutover proof.
+
+    Read physical records, not Operator projections (which hide legacy mirrors).
+    Keep malformed history visible and compare only unambiguous logical IDs using
+    the original backfill mapping. The caller owns/ closes the non-bootstrapping
+    engine; every read here uses one repeatable-read, read-only snapshot.
+    """
+    from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+    from shared.infrastructure.persistence.postgresql import PostgresDocumentStore
+
+    tenant_id = str(uuid.UUID(tenant_id))
+    if not 1 <= limit <= 10000:
+        raise ValueError("Invalid inventory limit")
+    store = PostgresDocumentStore(engine)
+    scoped = TenantScopedDocumentStore(store, tenant_id)
+    collection = intake_schema._STATE_COLLECTIONS["intakes"]
+    models: dict[str, Any] = {}
+    ids: dict[str, set[str]] = {}
+    facts: dict[str, set[tuple[str, str]]] = {}
+    with engine.transaction():
+        engine.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        engine.execute("SET LOCAL statement_timeout = '5s'")
+        engine.execute("SET LOCAL lock_timeout = '1s'")
+        engine.execute("SET LOCAL idle_in_transaction_session_timeout = '10s'")
+        engine.query_one("SELECT set_config('app.tenant_id', ?, true)", (tenant_id,))
+        binding = engine.query_one(
+            "SELECT current_setting('app.tenant_id') AS tenant_id, "
+            "current_setting('transaction_read_only') AS read_only, "
+            "current_setting('transaction_isolation') AS isolation, "
+            "pg_current_snapshot()::text AS snapshot, transaction_timestamp() AS captured_at"
+        )
+        if (binding["tenant_id"] != tenant_id or binding["read_only"] != "on"
+                or binding["isolation"] != "repeatable read"):
+            raise ValueError("Unverified inventory context")
+        binding.update({"source_selector_sha256": hashlib.sha256(source_id.encode()).hexdigest() if source_id else None,
+                        "month": month, "row_limit_per_model": limit})
+        unattributed_bridge_keys = None
+        for model in ("legacy_documents", "bridge_documents", "native_rows"):
+            engine.execute("SAVEPOINT inventory_model")
+            result = {"status": "available", "counts": {"observed": 0, "selected": 0, "excluded": 0, "unknown": 0},
+                      "findings": {}}
+            model_ids: set[str] = set()
+            model_facts: list[tuple[str, tuple[str, str]]] = []
+            try:
+                if model == "native_rows":
+                    rows = engine.query(
+                        'SELECT intake_id AS "id", tenant_id AS "tenantId", source_id AS "sourceId", '
+                        'submitted_at AS "submittedAt", submitter_subject_id AS "submittedBy", '
+                        'processing_state AS "stage", intake_method AS "intakeMethod", version, '
+                        'original_url AS "originalUrl", heat_zone_id AS "heatZoneId", '
+                        'brand_id AS "brandId", region_id AS "regionId", assigned_area_id AS "assignedAreaId" '
+                        'FROM intake.intakes WHERE tenant_id = ? ORDER BY intake_id LIMIT ?',
+                        (tenant_id, limit + 1),
+                    )
+                else:
+                    physical_collection = scoped._collection(collection) if model == "legacy_documents" else collection
+                    # Metadata bounds are checked before invoking the existing
+                    # decoder. Do not load every tenant through list_all().
+                    rows = engine.query(
+                        "SELECT doc_id, octet_length(data) AS bytes FROM odp_runtime.durable_documents "
+                        "WHERE collection = ? AND (? OR starts_with(doc_id, ?)) ORDER BY doc_id LIMIT ?",
+                        (physical_collection, model == "legacy_documents", tenant_id + ":", limit + 1),
+                    )
+                    if model == "bridge_documents":
+                        unattributed_bridge_keys = engine.query_one(
+                            "SELECT count(*) AS n FROM odp_runtime.durable_documents WHERE collection = ? "
+                            "AND doc_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:.+$'",
+                            (collection,),
+                        )["n"]
+                    if sum(row["bytes"] for row in rows) > 32 * 1024 * 1024:
+                        raise ValueError("payload_limit_exceeded")
+                if len(rows) > limit:
+                    raise ValueError("row_limit_exceeded")
+                result["counts"]["observed"] = len(rows)
+                for stored in rows:
+                    errors: dict[str, str] = {}
+                    try:
+                        if model == "native_rows":
+                            value = stored
+                        elif model == "legacy_documents":
+                            value = scoped.get(collection, stored["doc_id"])
+                        else:
+                            wrapped = store.get(collection, stored["doc_id"])
+                            if (not isinstance(wrapped, dict)
+                                    or set(wrapped) != {"_tenant_id", "_state_key", "value"}
+                                    or wrapped["_tenant_id"] != tenant_id
+                                    or not isinstance(wrapped["_state_key"], str)
+                                    or stored["doc_id"] != tenant_id + ":" + wrapped["_state_key"]):
+                                raise ValueError("Invalid bridge storage binding")
+                            value = intake_schema.DurableAssistedIntakeStore._unwrap(wrapped)
+                        if not isinstance(value, dict):
+                            raise ValueError("Invalid Intake document")
+                        row, errors = _normalize_intake(value)
+                        if "tenantId" not in errors and str(uuid.UUID(row["tenantId"])) != tenant_id:
+                            errors["tenantId"] = "INVALID_SCOPE"
+                        if model != "native_rows":
+                            storage_id = stored["doc_id"] if model == "legacy_documents" else wrapped["_state_key"]
+                            if row.get("id") != storage_id:
+                                errors["id"] = "STATE_MAPPING_CONFLICT"
+                        if not errors:
+                            logical_id = ensure_uuid(row["id"])
+                            recorded_month = row["submittedAt"][:7]  # Same historical partition as backfill.
+                            model_facts.append((logical_id, (row["sourceId"], recorded_month)))
+                            if ((source_id is not None and row["sourceId"] != source_id)
+                                    or (month is not None and recorded_month != month)):
+                                result["counts"]["excluded"] += 1
+                                continue
+                            model_ids.add(logical_id)
+                            result["counts"]["selected"] += 1
+                            continue
+                    except Exception:
+                        # Neither decoder errors nor source fields are printable.
+                        # An SQL error aborts the savepoint and is caught below.
+                        errors = {"document": "MALFORMED_OR_UNREADABLE"}
+                    result["counts"]["unknown"] += 1
+                    for field, kind in errors.items():
+                        key = f"{kind}:{field}"
+                        result["findings"][key] = result["findings"].get(key, 0) + 1
+                # Detect a transaction aborted by a per-document read failure.
+                engine.query_one("SELECT 1 AS ok")
+                if result["counts"]["unknown"]:
+                    result["status"] = "findings"
+                for logical_id, fact in model_facts:
+                    facts.setdefault(logical_id, set()).add(fact)
+                ids[model] = model_ids
+            except Exception as exc:
+                engine.execute("ROLLBACK TO SAVEPOINT inventory_model")
+                code = getattr(exc, "sqlstate", None)
+                reason = {"42P01": "schema_absent", "3F000": "schema_absent", "42501": "permission_denied"}.get(code, "query_or_data_error")
+                if type(exc) is ValueError and str(exc) in {"row_limit_exceeded", "payload_limit_exceeded"}:
+                    reason = str(exc)
+                result = {"status": "unavailable", "counts": None, "findings": {reason: 1}}
+            finally:
+                engine.execute("RELEASE SAVEPOINT inventory_model")
+            models[model] = result
+
+    comparable = len(ids) == 3 and all(value["status"] == "available" for value in models.values())
+    conflicts = sum(len(values) > 1 for values in facts.values())
+    coverage = {"bridge_storage_scope": "tenant_prefixed_keys_only",
+                "unattributed_bridge_keys": unattributed_bridge_keys,
+                "scope_history_conflicting_logical_ids": conflicts}
+    complete = comparable and unattributed_bridge_keys == 0 and conflicts == 0
+    selected_sets = list(ids.values())
+    logical = {"status": "complete" if complete else "partial",
+               "selected_union_lower_bound": len(set().union(*selected_sets)),
+               "selected_union": len(set().union(*selected_sets)) if complete else None,
+               "overlap": {f"{left}__{right}": len(ids[left] & ids[right])
+                           for left in ids for right in ids if left < right}}
+    return {"action": "inventory", "status": "complete" if complete else "incomplete",
+            "partition_presence": ("nonempty" if logical["selected_union_lower_bound"] else "empty" if complete else "unknown"),
+            "proof_scope": "counts_and_ids_only_not_field_or_evidence_parity",
+            "binding": binding, "models": models, "coverage": coverage, "logical_ids": logical}
+
+
+def _inventory_cli(dsn: str, tenant_id: str, *, source_id: str | None, month: str | None,
+                   limit: int) -> dict[str, Any]:
+    """Own a bounded pool without bootstrap/validation, including failure cleanup."""
+    from urllib.parse import quote
+
+    from psycopg.conninfo import conninfo_to_dict
+    from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
+
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+    # Retain the CLI's libpq DSN as well as URL contract. Engine validates a URL;
+    # the supplied pool is the actual connection owner, not a second connection.
+    params = conninfo_to_dict(dsn)
+    database_url = "postgresql:///" + quote(params.get("dbname", "postgres"), safe="")
+    pool = ConnectionPool(dsn, min_size=1, max_size=1, open=False, timeout=5,
+                          kwargs={"row_factory": dict_row, "connect_timeout": 5})
+    engine = None
+    pool_logger = logging.getLogger("psycopg.pool")
+    was_disabled = pool_logger.disabled
+    pool_logger.disabled = True  # libpq diagnostics can contain source/connection data.
+    try:
+        pool.open(wait=True, timeout=5)
+        engine = PostgresEngine(database_url, pool=pool, bootstrap=False, validate_schema=False)
+        return inventory_intakes(engine, tenant_id, source_id=source_id, month=month, limit=limit)
+    finally:
+        if engine is not None:
+            engine.close()
+        pool.close()
+        pool_logger.disabled = was_disabled
+
+
 def main() -> None:
     """CLI entrypoint for executable staging backfill, verification, and rollback."""
     parser = argparse.ArgumentParser(description="Assisted Listing Intake Migration CLI (ODP-INTAKE-MIGRATION-001)")
-    parser.add_argument("--action", choices=["backfill", "verify", "rollback", "schema-upgrade", "schema-rollback"], default="backfill")
-    parser.add_argument("--tenant-id", type=str, default="00000000-0000-0000-0000-000000000001", help="Target tenant UUID")
+    parser.add_argument("--action", choices=["inventory", "backfill", "verify", "rollback", "schema-upgrade", "schema-rollback"], default="backfill")
+    parser.add_argument("--tenant-id", type=str, default=None, help="Target tenant UUID (required for inventory)")
+    parser.add_argument("--inventory-limit", type=int, default=10000, help="Inventory row bound per model (1..10000)")
     parser.add_argument("--source-id", type=str, default=None, help="Source system ID filter")
     parser.add_argument("--month", type=str, default=None, help="YYYY-MM partition filter")
     parser.add_argument("--migration-ref", type=str, default="ODP-INTAKE-MIGRATION-001", help="Migration reference identifier")
@@ -2212,6 +2401,31 @@ def main() -> None:
 
     dsn = args.db_dsn or os.environ.get("ODAY_DATABASE_URL") or os.environ.get("INTAKE_TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
+    if args.action == "inventory":
+        # Branch before connecting the writable migrator or applying any schema.
+        # Never echo argparse values, raw exception messages, source data or DSNs.
+        try:
+            if not args.tenant_id or not dsn or args.sqlite_path:
+                raise ValueError("Explicit tenant and PostgreSQL target required")
+            tenant = str(uuid.UUID(args.tenant_id))
+            if (not 1 <= args.inventory_limit <= 10000
+                    or (args.month is not None and not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", args.month))
+                    or (args.source_id is not None and not args.source_id.strip())
+                    or args.input_file or args.dry_run or args.resume):
+                raise ValueError("Invalid inventory arguments")
+        except ValueError:
+            print('{"action":"inventory","status":"error","reason":"invalid_inventory_arguments"}')
+            sys.exit(2)
+        try:
+            result = _inventory_cli(dsn, tenant, source_id=args.source_id, month=args.month, limit=args.inventory_limit)
+        except Exception:
+            print('{"action":"inventory","status":"unavailable","reason":"connection_or_transaction_error"}')
+            sys.exit(1)
+        print(json.dumps(result, indent=2))
+        sys.exit(0 if result["status"] == "complete" else 1)
+
+    # Keep the historical default for every original action, never inventory.
+    args.tenant_id = args.tenant_id or "00000000-0000-0000-0000-000000000001"
     if not dsn and not args.sqlite_path:
         print("Error: No database connection target provided. Specify --db-dsn/--dsn, --sqlite-path, or set ODAY_DATABASE_URL.", file=sys.stderr)
         sys.exit(1)
