@@ -28233,6 +28233,16 @@
             },
             "description": "Assisted intake API error"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
           "409": {
             "content": {
               "application/json": {
