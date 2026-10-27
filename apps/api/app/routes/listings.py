@@ -2646,7 +2646,11 @@ else:
                                     "version_after": 1,
                                 }
                             ],
-                            "fields": xlsx_intake_fields(row.model_dump()),
+                            "fields": intake_fields({
+                                **row.model_dump(),
+                                "batch_id": body.batch_id,
+                                "row_index": index + 1,
+                            }),
                             "audit": [],
                         }
                         active.intakes[intake_id] = value
@@ -2673,26 +2677,32 @@ else:
             response.status_code = code
             return BatchIntakeReceipt(**val)
 
-        # Field classifications for rows imported from a spreadsheet. Values are
-        # carried into the intake's FieldValue collection so a committed row is
-        # readable through GET /intakes/{id} under the usual masking policy.
-        XLSX_FIELD_CLASSIFICATIONS: dict[str, str] = {
+        # Submitted values and row provenance share the existing FieldValue
+        # collection and read masking. Source IDs here are submitter claims;
+        # they never set the Intake's authoritative source or retrieval policy.
+        INTAKE_FIELD_CLASSIFICATIONS: dict[str, str] = {
             "address_raw": "INTERNAL",
             "normalized_address": "INTERNAL",
             "rent_amount": "INTERNAL",
+            "currency": "INTERNAL",
             "area_ping": "INTERNAL",
             "floor": "INTERNAL",
             "normalized_floor": "INTERNAL",
             "title": "INTERNAL",
             "listing_type": "INTERNAL",
+            "source_id": "INTERNAL",
+            "source_listing_id": "INTERNAL",
+            "batch_id": "INTERNAL",
+            "row_index": "INTERNAL",
+            "source_row_index": "INTERNAL",
         }
 
-        def xlsx_intake_fields(row: dict[str, Any]) -> list[dict[str, Any]]:
+        def intake_fields(row: dict[str, Any]) -> list[dict[str, Any]]:
             fields: list[dict[str, Any]] = []
-            for field_path, classification in XLSX_FIELD_CLASSIFICATIONS.items():
-                value = row.get(field_path)
-                if value in (None, ""):
+            for field_path, classification in INTAKE_FIELD_CLASSIFICATIONS.items():
+                if field_path not in row:
                     continue
+                value = row[field_path]
                 fields.append({
                     "field_path": field_path,
                     "classification": classification,
@@ -2827,7 +2837,11 @@ else:
                                 "version_after": 1,
                             }
                         ],
-                        "fields": xlsx_intake_fields(row),
+                        "fields": intake_fields({
+                            **row,
+                            "row_index": row["_submitted_row_index"],
+                            "source_row_index": row["_row_index"],
+                        }),
                         "audit": [],
                     }
                     active.intakes[intake_id] = value

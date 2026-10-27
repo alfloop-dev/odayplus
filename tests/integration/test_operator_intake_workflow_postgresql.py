@@ -96,7 +96,184 @@ def _snapshot(bundle):
     store.refresh(TENANT)
     return deepcopy(tuple(getattr(store, field) for field in (
         "intakes", "assignments", "slas", "workflow_audits", "workflow_outbox", "replays",
+        "corrections", "decisions",
     )))
+
+
+@pytest.mark.parametrize("method", ["MANUAL", "CSV", "APPROVED_FEED"])
+def test_batch_declared_rows_survive_new_postgresql_owner_without_source_approval(
+    bridge_database, monkeypatch, method,
+):
+    db = bridge_database
+    batch_id = str(uuid4())
+    body = {
+        "batch_id": batch_id, "method": method, "scope": {"tenant_id": TENANT},
+        "rows": [
+            {"address_raw": "Synthetic zero row", "rent_amount": 0, "area_ping": 0,
+             "currency": "USD", "floor": "1F", "source_id": "submitted.feed.claim",
+             "source_listing_id": "submitted-listing-zero"},
+            {"address_raw": ""},
+            {"address_raw": "Synthetic nullable row", "rent_amount": None,
+             "area_ping": None, "currency": "EUR", "floor": None,
+             "source_id": "submitted.manual.claim", "source_listing_id": None},
+            {"address_raw": "Synthetic existing defaults"},
+        ],
+    }
+    headers = _headers(key=f"synthetic-retained-batch-{method.lower()}")
+    bundle = _bundle(db, monkeypatch)
+    try:
+        submitted = _client(bundle).post("/api/v1/intake-batches", json=body, headers=headers)
+        assert submitted.status_code == 207, submitted.text
+        receipt = submitted.json()
+        assert (receipt["accepted_count"], receipt["rejected_count"]) == (3, 1)
+        retained_ids = [row["intake_id"] for row in receipt["rows"] if row["status"] == "ACCEPTED"]
+        committed = _snapshot(bundle)
+    finally:
+        bundle.engine.close()
+
+    replica = _bundle(db, monkeypatch)
+    try:
+        client = _client(replica)
+        expected_rows = [
+            {"row_index": 1, "address_raw": "Synthetic zero row", "rent_amount": 0,
+             "area_ping": 0, "currency": "USD", "floor": "1F",
+             "source_id": "submitted.feed.claim", "source_listing_id": "submitted-listing-zero"},
+            {"row_index": 3, "address_raw": "Synthetic nullable row", "rent_amount": None,
+             "area_ping": None, "currency": "EUR", "floor": None,
+             "source_id": "submitted.manual.claim", "source_listing_id": None},
+            {"row_index": 4, "address_raw": "Synthetic existing defaults", "rent_amount": None,
+             "area_ping": None, "currency": "TWD", "floor": None,
+             "source_id": "manual.operator", "source_listing_id": None},
+        ]
+        for intake_id, expected in zip(retained_ids, expected_rows, strict=True):
+            response = client.get(f"/api/v1/intakes/{intake_id}", headers=headers)
+            assert response.status_code == 200, response.text
+            detail = response.json()
+            fields = {field["field_path"]: field for field in detail["fields"]}
+            expected = {**expected, "batch_id": batch_id}
+            assert expected.keys() <= fields.keys()
+            for name, value in expected.items():
+                assert fields[name]["effective"] == value
+                assert fields[name]["parsed"] == value
+                assert fields[name]["classification"] == "INTERNAL"
+            assert detail["original_url"] is None and detail["canonical_url"] is None
+            assert detail["state"] == "SUBMITTED"
+            assert detail["policy_state"] == "ASSISTED_ENTRY_ONLY"
+            assert detail["source_id"] is None and detail["source_snapshot_id"] is None
+            assert detail["parser_run_id"] is None and detail["match_case_id"] is None
+            assert detail["assignment_id"] and detail["sla_instance_id"]
+            assert client.get(f"/api/v1/intakes/{intake_id}", headers=_headers(tenant=str(uuid4()))).status_code == 404
+        assert _snapshot(replica) == committed
+        replay = client.post("/api/v1/intake-batches", json=body, headers=headers)
+        assert replay.status_code == 207 and replay.json() == receipt
+        assert _snapshot(replica) == committed
+        changed = deepcopy(body)
+        changed["rows"][0]["currency"] = "JPY"
+        assert client.post("/api/v1/intake-batches", json=changed, headers=headers).status_code == 409
+        assert _snapshot(replica) == committed
+    finally:
+        replica.engine.close()
+
+
+@pytest.mark.parametrize("supplied_batch_id", [True, False])
+def test_xlsx_row_claim_and_submitted_position_survive_new_postgresql_owner(
+    bridge_database, monkeypatch, supplied_batch_id,
+):
+    db = bridge_database
+    batch_id = str(uuid4())
+    body = {"batch_id": batch_id, "scope": {"tenant_id": TENANT}, "rows": [
+        {"address_raw": "Synthetic sheet zero", "rent_amount": 0, "area_ping": 0,
+         "currency": "USD", "source_id": "submitted.sheet.claim", "source_listing_id": "sheet-zero",
+         "_row_index": 11, "_submitted_row_index": 999},
+        {"address_raw": "", "_row_index": 17},
+        {"address_raw": "Synthetic sheet nullable", "rent_amount": None, "area_ping": None,
+         "currency": "EUR", "source_id": "submitted.sheet.claim", "source_listing_id": None,
+         "_row_index": 21, "_SUBMITTED_ROW_INDEX": 777},
+    ]}
+    if not supplied_batch_id:
+        del body["batch_id"]
+    headers = _headers(key="synthetic-retained-sheet-rows")
+    bundle = _bundle(db, monkeypatch)
+    try:
+        response = _client(bundle).post("/api/v1/intake-batches/xlsx/commit", json=body, headers=headers)
+        assert response.status_code == 202, response.text
+        receipt = response.json()
+        if supplied_batch_id:
+            assert receipt["batch_id"] == batch_id
+        else:
+            assert receipt["batch_id"].startswith("xlsx-commit-")
+            batch_id = receipt["batch_id"]
+        assert (receipt["accepted_count"], receipt["rejected_count"]) == (2, 1)
+        committed = _snapshot(bundle)
+    finally:
+        bundle.engine.close()
+    replica = _bundle(db, monkeypatch)
+    try:
+        client = _client(replica)
+        expected_rows = [
+            {"row_index": 1, "source_row_index": 11, "rent_amount": 0, "area_ping": 0,
+             "currency": "USD", "source_listing_id": "sheet-zero"},
+            {"row_index": 3, "source_row_index": 21, "rent_amount": None, "area_ping": None,
+             "currency": "EUR", "source_listing_id": None},
+        ]
+        for intake_id, expected in zip(receipt["intake_ids"], expected_rows, strict=True):
+            detail = client.get(f"/api/v1/intakes/{intake_id}", headers=headers).json()
+            fields = {field["field_path"]: field for field in detail["fields"]}
+            expected = {**expected, "source_id": "submitted.sheet.claim", "batch_id": batch_id}
+            assert expected.keys() <= fields.keys()
+            assert {name: fields[name]["effective"] for name in expected} == expected
+            assert detail["source_id"] is None and detail["policy_state"] == "ASSISTED_ENTRY_ONLY"
+        replay = client.post("/api/v1/intake-batches/xlsx/commit", json=body, headers=headers)
+        assert replay.status_code == 202 and replay.json() == receipt
+        assert _snapshot(replica) == committed
+    finally:
+        replica.engine.close()
+
+
+@pytest.mark.parametrize("field_path", ["batch_id", "row_index", "source_row_index"])
+def test_batch_provenance_cannot_be_corrected_but_ordinary_field_can(
+    bridge_database, monkeypatch, field_path,
+):
+    bundle = _bundle(bridge_database, monkeypatch)
+    try:
+        client = _client(bundle)
+        submitted = client.post("/api/v1/intake-batches/xlsx/commit", json={
+            "batch_id": str(uuid4()), "scope": {"tenant_id": TENANT}, "rows": [{
+                "address_raw": "Synthetic provenance correction", "floor": "1F", "_row_index": 19,
+            }],
+        }, headers=_headers(key=f"synthetic-provenance-submit-{field_path}"))
+        assert submitted.status_code == 202, submitted.text
+        intake_id = submitted.json()["intake_ids"][0]
+        store = bundle.assisted_intake_store
+        store.refresh(TENANT)
+        # Isolate the existing correction state, without claiming parser/source approval.
+        with store.transaction():
+            store.intakes[intake_id]["state"] = "NEEDS_REVIEW"
+            store.intakes[intake_id]["version"] += 1
+            store.flush()
+        before = _snapshot(bundle)
+        before_detail = client.get(f"/api/v1/intakes/{intake_id}", headers=_headers()).json()
+        rejected = client.post(f"/api/v1/intakes/{intake_id}/corrections", json={
+            "field_path": field_path, "corrected_value": "forged batch provenance",
+            "reason": "Synthetic provenance negative", "risk_acknowledged": True,
+        }, headers={**_headers(key=f"synthetic-provenance-reject-{field_path}"), "If-Match": 'W/"2"'})
+        assert rejected.status_code == 422, rejected.text
+        assert _snapshot(bundle) == before
+        assert "Idempotency-Replayed" not in rejected.headers
+        accepted = client.post(f"/api/v1/intakes/{intake_id}/corrections", json={
+            "field_path": "floor", "corrected_value": "2F",
+            "reason": "Synthetic ordinary correction", "risk_acknowledged": True,
+        }, headers={**_headers(key=f"synthetic-ordinary-after-{field_path}"), "If-Match": 'W/"2"'})
+        assert accepted.status_code == 201 and accepted.json()["status"] == "APPLIED", accepted.text
+        detail = client.get(f"/api/v1/intakes/{intake_id}", headers=_headers()).json()
+        fields = {field["field_path"]: field for field in detail["fields"]}
+        assert fields["floor"]["parsed"] == "1F" and fields["floor"]["effective"] == "2F"
+        assert fields[field_path] == next(
+            field for field in before_detail["fields"] if field["field_path"] == field_path
+        )
+        assert detail["source_id"] is None and detail["policy_state"] == "ASSISTED_ENTRY_ONLY"
+    finally:
+        bundle.engine.close()
 
 
 def _synthetic_approved_policy(monkeypatch):

@@ -620,6 +620,10 @@ def map_and_validate_rows(
                     )
                 )
 
+        # The submitted batch position is distinct from the caller's claimed
+        # spreadsheet row. Set it after mapping so input cannot forge it.
+        mapped_row["_submitted_row_index"] = position
+
         # Domain Validation Rules
         # Rule 1: Required address_raw
         address_raw = str(mapped_row.get("address_raw") or "").strip()
@@ -896,10 +900,11 @@ def commit_xlsx_import(
 
     writer = intake_writer or _default_intake_writer
     ts = datetime.now(UTC).isoformat()
-    committed_intake_ids = [writer(row) for row in valid_to_commit]
+    committed_batch_id = batch_id or f"xlsx-commit-{uuid.uuid4()}"
+    committed_intake_ids = [writer({**row, "batch_id": committed_batch_id}) for row in valid_to_commit]
 
     receipt = XlsxCommitReceipt(
-        batch_id=batch_id or f"xlsx-commit-{uuid.uuid4()}",
+        batch_id=committed_batch_id,
         committed_at=ts,
         accepted_count=len(valid_to_commit),
         rejected_count=rejected_count,
