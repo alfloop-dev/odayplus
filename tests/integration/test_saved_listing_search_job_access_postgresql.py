@@ -218,7 +218,10 @@ def test_currency_revision_delivery_and_current_masking_through_normal_http_app(
                     response = client.get(BASE + "/" + identity + "/results", headers=_headers())
                     assert response.status_code == 200 and response.json()["total"] == 0
             while job := bundle.job_queue.claim_next(worker_id="synthetic-currency-http"):
-                assert execute_claimed_listing_search(bundle, job), job.job_type
+                if not execute_claimed_listing_search(bundle, job):
+                    # Like the existing bridge fixture, claim unrelated audit
+                    # intents without executing an external WORM delivery.
+                    assert job.job_type == "durable-audit-delivery", job.job_type
             for index, identity in enumerate(identities):
                 response = client.get(BASE + "/" + identity + "/results", headers=_headers())
                 assert response.status_code == 200, response.text
