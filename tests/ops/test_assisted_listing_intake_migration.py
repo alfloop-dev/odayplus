@@ -1731,6 +1731,67 @@ def test_inventory_real_select_only_cli_overlap_and_partitions(inventory_db):
     assert foreign_partition["models"]["bridge_documents"]["counts"]["observed"] == 1
 
 
+@pytest.mark.parametrize("submitted_at,utc_month,literal_month", [
+    ("2026-07-01T00:30:00+08:00", "2026-06", "2026-07"),
+    ("2026-06-30T23:30:00-07:00", "2026-07", "2026-06"),
+])
+@pytest.mark.parametrize("session_timezone", ["UTC", "Asia/Taipei"])
+def test_inventory_offset_month_shared_with_backfill_and_verify(
+    inventory_db, submitted_at, utc_month, literal_month, session_timezone,
+):
+    """Equivalent timestamptz projections must not invent conflicting history.
+
+    Month selectors consistently mean UTC instant-month, never the serialization
+    offset or the database session zone. Original source history remains intact.
+    """
+    from datetime import datetime
+
+    database, engine, role = inventory_db
+    legacy = migration_input()
+    legacy["submittedAt"] = submitted_at
+    bridge = migration_input(True)
+    bridge["intake_id"] = bridge["operator_presentation"]["id"] = ensure_uuid(legacy["id"])
+    bridge["submitted_at"] = bridge["operator_presentation"]["submittedAt"] = submitted_at
+    save_inventory_document(engine, legacy)
+    save_inventory_document(engine, bridge, bridge=True)
+    with database.connect() as connection:
+        connection.execute(f'ALTER ROLE "{role}" SET timezone = \'{session_timezone}\'')
+        IntakeMigrator(connection).backfill(
+            [legacy], [], [], tenant_id=INVENTORY_TENANT, parser_release=parser_provenance(),
+        )
+    result = run_inventory_cli(database, role)
+    assert result["coverage"]["scope_history_conflicting_logical_ids"] == 0
+    assert result["logical_ids"]["selected_union"] == 1
+    partition = run_inventory_cli(database, role, "--source-id", "SRC-591", "--month", utc_month)
+    assert partition["binding"]["month_basis"] == "UTC"
+    assert all(model["counts"]["selected"] == 1 for model in partition["models"].values())
+    excluded = run_inventory_cli(database, role, "--month", literal_month)
+    assert excluded["partition_presence"] == "empty"
+    assert all(model["counts"]["excluded"] == 1 for model in excluded["models"].values())
+    # Exercise original write/verify owners only in this owned synthetic DB.
+    # Verify both existing unpartitioned history and a new partitioned backfill.
+    with database.connect() as connection:
+        connection.execute(f"SET TIME ZONE '{session_timezone}'")
+        assert IntakeMigrator(connection).verify_shadow_comparison(INVENTORY_TENANT)["blocking_findings"] == 0
+        IntakeMigrator(connection).rollback_migration(tenant_id=INVENTORY_TENANT)
+        written = IntakeMigrator(connection).backfill(
+            [legacy], [], [], tenant_id=INVENTORY_TENANT, source_id="SRC-591", month=utc_month,
+            parser_release=parser_provenance(),
+        )
+        assert written["counts"]["intakes_processed"] == 1
+        assert written["counts"]["findings"] == 0
+        # Native datetime projection changes, but the instant and source text do not.
+        connection.execute("SET TIME ZONE 'America/Los_Angeles'")
+        native_time = connection.execute("SELECT submitted_at FROM intake.intakes").fetchone()[0]
+        assert native_time == datetime.fromisoformat(submitted_at)
+        history = connection.execute("SELECT reason_text FROM intake.intake_stage_transitions").fetchone()[0]
+        assert json.loads(history)["source_history"]["submittedAt"] == submitted_at
+        fresh = IntakeMigrator(connection).verify_shadow_comparison(INVENTORY_TENANT)
+        assert fresh["blocking_findings"] == 0
+        assert fresh["shadow_comparison_success"] is True
+        assert fresh["proof_scope"] == "counts_and_ids_only_not_field_or_evidence_parity"
+
+
 def test_inventory_zero_missing_schema_and_denial_are_distinct(inventory_db):
     database, _, role = inventory_db
     result = run_inventory_cli(database, role)
