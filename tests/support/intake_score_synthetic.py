@@ -82,6 +82,8 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
     The parser/matcher and human accounts are actual owned preconditions. Login,
     JWT/session, HTTP commands, signed worker and readback remain their normal
     implementations. This creates no accepted command or READY receipt.
+    Only the metadata transport is emulated locally; no Cloud Run IAM, Google
+    token validation or production rollout is qualified by this SQL/browser case.
     """
     import json
     import os
@@ -93,17 +95,20 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
     import threading
     import time
     from dataclasses import replace
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from pathlib import Path
-    from urllib.error import URLError
-    from urllib.request import urlopen
+    from urllib.error import HTTPError, URLError
+    from urllib.parse import parse_qs, urlencode, urlsplit
+    from urllib.request import Request, urlopen
 
     from apps.worker.oday_worker.main import ODayWorker
+    from modules.opsboard.auth.jwt import SigningKey, encode_compact_jwt
     from shared.infrastructure.persistence.factory import build_persistence
 
     root = Path(__file__).resolve().parents[2]
     assert re.fullmatch(r"oday_native_parser_p_[0-9a-f]{16}", database.dbname), database.dbname
     private_dir.mkdir(mode=0o700)
-    password, signing, session_secret = (secrets.token_urlsafe(40) for _ in range(3))
+    password, signing, session_secret, metadata_secret = (secrets.token_urlsafe(40) for _ in range(4))
     append_property = str(uuid4()) if independent_reviewer else None
     credentials = {"username": "synthetic-manager-" + ids["reviewer"], "password": password,
         "actor_id": ids["reviewer"], "tenant_id": ids["tenant"], "intake_id": parsed["intake_id"],
@@ -154,6 +159,33 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
 
     api_port, web_port = port(), port()
     api_url, web_url = f"http://127.0.0.1:{api_port}", f"http://localhost:{web_port}"
+    metadata_token = encode_compact_jwt({
+        "iss": "urn:odp:isolated-browser:metadata-emulator", "sub": "owned-native-browser-web",
+        "aud": api_url, "iat": int(time.time()), "exp": int(time.time()) + 600,
+    }, SigningKey(kid="owned-browser-metadata", algorithm="HS256", secret=metadata_secret.encode()))
+    metadata_counts = {"accepted": 0, "rejected": 0, "other": 0}
+    metadata_lock = threading.Lock()
+
+    class OwnedMetadata(BaseHTTPRequestHandler):
+        def do_GET(self):
+            target = urlsplit(self.path)
+            identity_path = target.path == "/computeMetadata/v1/instance/service-accounts/default/identity"
+            accepted = (identity_path
+                        and parse_qs(target.query, keep_blank_values=True) == {"audience": [api_url], "format": ["full"]}
+                        and self.headers.get("metadata-flavor") == "Google")
+            with metadata_lock:
+                bucket = ("accepted" if accepted else "rejected") if identity_path else "other"
+                metadata_counts[bucket] += 1
+            body = metadata_token.encode() if accepted else b"Owned metadata request rejected"
+            self.send_response(200 if accepted else 403)
+            self.send_header("metadata-flavor", "Google")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
     credentials["api_url"] = api_url
     scenario = private_dir / "native-scenario.json"
     scenario.write_text(json.dumps(credentials))
@@ -176,6 +208,8 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
     stop = threading.Event()
     worker_bundle = None
     worker_thread = None
+    metadata_server = None
+    metadata_thread = None
 
     def launch(command, environment, label, cwd=root):
         stream = (private_dir / (label + ".log")).open("w")
@@ -209,9 +243,29 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                 return
 
     try:
+        metadata_server = ThreadingHTTPServer(("127.0.0.1", 0), OwnedMetadata)
+        metadata_thread = threading.Thread(target=metadata_server.serve_forever, daemon=True)
+        metadata_thread.start()
+        web_env["GCE_METADATA_HOST"] = f"127.0.0.1:{metadata_server.server_port}"
+        metadata_url = (f"http://{web_env['GCE_METADATA_HOST']}/computeMetadata/v1/instance/"
+                        "service-accounts/default/identity")
+        for audience, headers in ((api_url, {}), ("urn:wrong-owned-audience", {"metadata-flavor": "Google"})):
+            try:
+                with urlopen(Request(metadata_url + "?" + urlencode({"audience": audience, "format": "full"}),
+                                     headers=headers), timeout=2):
+                    raise AssertionError("Owned metadata accepted an invalid request")
+            except HTTPError as error:
+                assert error.code == 403
         api = launch([str(Path(os.sys.executable)), "-m", "uvicorn", "tests.support.intake_score_browser_server:app",
             "--host", "127.0.0.1", "--port", str(api_port)], api_env, "api")
         ready(api_url + "/_synthetic/health", api)
+        # The transport fixture's issuer/key cannot authenticate an API user.
+        try:
+            with urlopen(Request(api_url + "/api/v1/canonical-intakes",
+                                 headers={"authorization": "Bearer " + metadata_token}), timeout=2):
+                raise AssertionError("Metadata fixture acquired end-user authority")
+        except HTTPError as error:
+            assert error.code == 401
         web = launch(["npm", "run", "start", "--workspace=@oday-plus/web", "--", "-p", str(web_port),
             "--hostname", "127.0.0.1"], web_env, "web")
         ready(web_url + "/login", web)
@@ -226,10 +280,11 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             "--workers=1", "--retries=0", "--trace=off", "--output", str(private_dir / "browser-results")], browser_env, "browser")
         browser.wait(timeout=240)
         browser_log = (private_dir / "browser.log").read_text()
-        for value in (password, signing, session_secret, database.url()):
+        for value in (password, signing, session_secret, metadata_secret, metadata_token, database.url()):
             browser_log = browser_log.replace(value, "[REDACTED]")
         assert not worker_errors, worker_errors
         assert browser.returncode == 0, browser_log[-12000:]
+        assert metadata_counts["accepted"] > 0 and metadata_counts["rejected"] == 2
         with database.connect() as connection:
             sessions = connection.execute("SELECT count(*) FROM identity.sessions WHERE account_id=%s AND revoked_at IS NULL",
                 (ids["reviewer"],)).fetchone()[0]
@@ -264,6 +319,8 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                 assert connection.execute("SELECT count(*) FROM audit.audit_events WHERE tenant_id=%s "
                     "AND action='match.manual_context_added.v1'", (ids["tenant"],)).fetchone()[0] == 1
         return {"scope": SCOPE, "web_mode": "production", "api_auth": "actual-local-JWT-SQL-identity",
+            "service_identity_transport": "isolated-loopback-metadata-emulator", "cloud_run_iam_verified": False,
+            "metadata_requests": dict(metadata_counts),
             "browser_returncode": browser.returncode, "active_real_sessions": sessions,
             "resolved_listing_id": str(result[1]), "worker_errors": worker_errors, "manager_region_id": manager_region_id,
             "independent_reviewer_id": independent_reviewer, "real_reviewer_sessions": reviewer_sessions,
@@ -274,7 +331,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             log = private_dir / (label + ".log")
             if log.exists():
                 tail = log.read_text()[-6000:]
-                for value in (password, signing, session_secret, database.url()):
+                for value in (password, signing, session_secret, metadata_secret, metadata_token, database.url()):
                     tail = tail.replace(value, "[REDACTED]")
                 print(label + " diagnostics:\n" + tail)
         raise
@@ -294,7 +351,14 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                     process.wait(timeout=5)
         for stream in streams:
             stream.close()
+        if metadata_server:
+            if metadata_thread and metadata_thread.is_alive():
+                metadata_server.shutdown()
+            metadata_server.server_close()
+        if metadata_thread and metadata_thread.is_alive():
+            metadata_thread.join(timeout=5)
         assert worker_thread is None or not worker_thread.is_alive(), "Owned browser worker did not stop"
+        assert metadata_thread is None or not metadata_thread.is_alive(), "Owned metadata transport did not stop"
 
 
 def ready_scenario(database_url, bundle, client):

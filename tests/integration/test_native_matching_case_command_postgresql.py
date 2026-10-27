@@ -444,6 +444,9 @@ def test_native_browser_password_session_and_registered_worker_read_real_persist
         worm_sink_uri=canonical_graph[0].audit_sink.delivery.sink.sink_id, manager_region_id=manager_region_id,
         independent_reviewer=independent_reviewer)
     assert evidence["browser_returncode"] == 0 and evidence["active_real_sessions"] > 0
+    assert evidence["service_identity_transport"] == "isolated-loopback-metadata-emulator"
+    assert evidence["metadata_requests"]["accepted"] > 0 and evidence["metadata_requests"]["rejected"] == 2
+    assert evidence["cloud_run_iam_verified"] is False
     import os
 
     if path := os.environ.get("ODP_NATIVE_BROWSER_EVIDENCE_PATH"):

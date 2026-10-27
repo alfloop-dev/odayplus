@@ -29,6 +29,15 @@ Required environment (all modes):
 | `ODP_AUTH_LOCAL_ISSUER` | Issuer for Web-minted local access tokens; defaults to `urn:odp:identity:local` |
 | `ODP_AUTH_AUDIENCES` | API audience for Web-minted local access tokens |
 
+The existing metadata resolver also accepts `GCE_METADATA_HOST` for an explicit
+isolated transport, restricted to `127.0.0.1[:port]` or `[::1][:port]` literals.
+Unset or blank retains the Google metadata endpoint; invalid hosts and issuance
+failures remain errors. This follows the [Google metadata client setting](https://github.com/googleapis/gcp-metadata#environment-variables)
+with a stricter loopback restriction. The native SQL/browser fixture uses it for
+a declared local protocol emulator. That fixture verifies the normal password,
+session, authorization and worker path, and does not verify Cloud Run IAM,
+Google-issued tokens or production rollout. Live Cloud acceptance remains required.
+
 In production, `ODAY_DATABASE_URL` and `ODP_IDENTITY_TOKEN_SIGNING_KEY` are
 injected from Secret Manager (`ODAY_DATABASE_URL_SECRET` and
 `ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET`). The API and Web services must use the

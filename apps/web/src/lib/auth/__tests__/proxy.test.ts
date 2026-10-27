@@ -388,7 +388,7 @@ describe("production BFF", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("obtains a metadata identity token without exposing it to the browser", async () => {
+  it.each([undefined, "", " \t "])("keeps the Google metadata endpoint when override is %j", async (host) => {
     const fetchMock = vi.fn(async (url: URL, init?: RequestInit) => {
       expect(url.hostname).toBe("metadata.google.internal");
       expect(url.searchParams.get("audience")).toBe(
@@ -403,8 +403,56 @@ describe("production BFF", () => {
       resolveGoogleMetadataIdentityToken(
         "https://api.internal.example",
         fetchMock as typeof fetch,
+        { GCE_METADATA_HOST: host },
       ),
     ).resolves.toBe("header.payload.signature");
+  });
+
+  it.each(["127.0.0.1", "127.0.0.1:8777", "[::1]", "[::1]:8778"])(
+    "uses the configured loopback metadata transport %s", async (host) => {
+      const fetchMock = vi.fn(async (url: URL, init?: RequestInit) => {
+        expect(url.host).toBe(host);
+        expect(url.protocol).toBe("http:");
+        expect(url.pathname).toBe("/computeMetadata/v1/instance/service-accounts/default/identity");
+        expect(url.searchParams.get("audience")).toBe("https://api.internal.example");
+        expect(url.searchParams.get("format")).toBe("full");
+        expect(new Headers(init?.headers).get("metadata-flavor")).toBe("Google");
+        return new Response("header.payload.signature", { status: 200 });
+      });
+      await expect(resolveGoogleMetadataIdentityToken("https://api.internal.example", fetchMock as typeof fetch,
+        { GCE_METADATA_HOST: host })).resolves.toBe("header.payload.signature");
+      expect(fetchMock).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["evil.example.com", "169.254.169.254", "metadata.google.internal.evil.com", "localhost:1234",
+    "127.1:1234", "2130706433:1234", "0x7f000001:1234", "127.0.0.1:0", "127.0.0.1:65536",
+    "user@127.0.0.1:1234", "127.0.0.1:1234/path", "127.0.0.1:1234?aud=x",
+    "http://127.0.0.1:1234", "[::1]:1234#x"])("rejects unsafe metadata host %s before fetch", async (host) => {
+    const fetchMock = vi.fn();
+    await expect(resolveGoogleMetadataIdentityToken("https://api.internal.example", fetchMock,
+      { GCE_METADATA_HOST: host })).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps production fail-closed when the configured metadata transport refuses issuance", async () => {
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+    vi.stubEnv("GCE_METADATA_HOST", "127.0.0.1:8777");
+    const cookie = await productionSessionCookie();
+    const fetchMock = vi.fn(async (url: URL) => {
+      expect(url.host).toBe("127.0.0.1:8777");
+      return new Response("denied", { status: 403 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const request = new NextRequest("https://web.example/api/v1/operator/bootstrap");
+    request.cookies.set(webSessionCookieName, cookie);
+    const response = await proxyApiRequest(request, "/api/v1/operator/bootstrap", {
+      NODE_ENV: "production", ODP_API_BASE_URL: "https://api.internal.example",
+      ODP_API_SERVICE_AUDIENCE: "https://api.internal.example",
+    });
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "WEB_SERVICE_IDENTITY_UNAVAILABLE" } });
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });
 
