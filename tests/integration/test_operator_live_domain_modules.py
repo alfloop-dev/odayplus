@@ -22,6 +22,7 @@ from modules.opsboard.application.store_ops import (
     DurableStoreOpsRepository,
     InMemoryStoreOpsRepository,
 )
+from shared.api.errors import install_error_handlers
 from shared.infrastructure.persistence import (
     DurableAVMRepository,
     DurableListingRepository,
@@ -903,7 +904,13 @@ def test_live_router_rejects_every_network_reset(tmp_path: Path) -> None:
         bundle.engine.close()
 
 
-def test_live_operator_repository_failure_returns_503_instead_of_empty_200() -> None:
+@pytest.mark.parametrize(("path", "operation"), [
+    ("today", "operator.envelope"),
+    ("shell/home", "operator.shell.get_home"),
+])
+def test_live_operator_repository_failure_returns_503_instead_of_empty_200(
+    tmp_path: Path, path: str, operation: str,
+) -> None:
     class BrokenLiveRepository:
         @property
         def data_origin(self) -> dict[str, Any]:
@@ -914,31 +921,34 @@ def test_live_operator_repository_failure_returns_503_instead_of_empty_200() -> 
             }
 
         def load_state(self, **_kwargs: Any) -> dict[str, Any]:
-            raise OperatorLiveRepositoryError("database unavailable")
+            raise OperatorLiveRepositoryError(
+                "database unavailable: password=synthetic-db-only; synthetic-unclassified-503-value-9012"
+            )
 
-    app = FastAPI()
-    app.include_router(
-        create_operator_router(
-            live_repository=BrokenLiveRepository(),
-            require_live_data=True,
-            persistence_mode="postgresql",
-            provider_mode="live",
-        ),
-        prefix="/api/v1",
+    app, bundle = _live_app(
+        tmp_path / "public-error.sqlite3", live_repository=BrokenLiveRepository(),
     )
-
-    with TestClient(app) as client:
-        response = client.get(
-            f"{BASE}/today",
-            headers=_headers("tenant-live-failure"),
-        )
+    # Exercise the mounted live router with the same additive error handlers
+    # create_app installs; this is not a production IAM/provider qualification.
+    install_error_handlers(app)
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"{BASE}/{path}", headers=_headers("tenant-live-failure"))
+    finally:
+        bundle.engine.close()
 
     assert response.status_code == 503
-    assert response.json()["detail"] == {
+    assert "synthetic-db-only" not in response.text
+    assert "synthetic-unclassified-503-value-9012" not in response.text
+    body = response.json()
+    assert body["detail"] == {
         "code": "OPERATOR_LIVE_DATA_UNAVAILABLE",
-        "operation": "operator.envelope",
-        "message": "database unavailable",
+        "operation": operation,
+        "message": "Operator data is temporarily unavailable. Please try again later.",
     }
+    assert body["error"]["message"] == body["detail"]["message"]
+    assert body["error"]["details"] == [body["detail"]]
+    assert body["error"]["correlation_id"] == "corr-tenant-live-failure"
 
 
 def test_live_operator_without_repository_returns_503_not_fixture() -> None:

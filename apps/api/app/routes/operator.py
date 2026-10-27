@@ -41,6 +41,7 @@ from pydantic import BaseModel
 
 from modules.opsboard.application.growth import GrowthService
 from modules.opsboard.application.operator_live_repository import (
+    OPERATOR_DATA_UNAVAILABLE_MESSAGE,
     OperatorLiveRepositoryError,
     OperatorLiveRepositoryProtocol,
 )
@@ -450,7 +451,7 @@ def create_operator_router(
                     detail={
                         "code": "OPERATOR_LIVE_DATA_UNAVAILABLE",
                         "operation": operation,
-                        "message": str(exc),
+                        "message": OPERATOR_DATA_UNAVAILABLE_MESSAGE,
                     },
                 ) from exc
 
@@ -554,7 +555,7 @@ def create_operator_router(
                             detail={
                                 "code": "OPERATOR_LIVE_DATA_UNAVAILABLE",
                                 "operation": f"operator.shell.{name}",
-                                "message": str(exc),
+                                "message": OPERATOR_DATA_UNAVAILABLE_MESSAGE,
                             },
                         ) from exc
 
