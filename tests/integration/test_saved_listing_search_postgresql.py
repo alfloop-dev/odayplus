@@ -22,6 +22,7 @@ from shared.infrastructure.persistence.assisted_listing_intake import (
 )
 from shared.infrastructure.persistence.job_queue import DurableJobQueue
 from shared.infrastructure.persistence.listing_search_delivery import (
+    EVENTS,
     JOB_TYPE,
     ListingSearchDelivery,
 )
@@ -154,6 +155,65 @@ def test_corrected_receipt_has_new_disposition_and_keeps_original_match(owned_ca
         (1, "MATCH"),
         (2, "NO_MATCH"),
     ]
+
+
+@pytest.mark.parametrize("changed", ["USD", None])
+def test_currency_only_change_cannot_reuse_receipt_revision(owned_case, changed):
+    c = owned_case
+    store = c["open"]()
+    store.refresh(c["tenant"])
+    store.saved_views.append(search(c))
+    store.intakes[c["intakeId"]] = intake(c)
+    store.flush()
+    drain(store)
+    original = history(store, c)
+    currency = next(
+        f for f in store.intakes[c["intakeId"]]["fields"] if f["field_path"] == "currency"
+    )
+    currency["effective"] = changed
+    with pytest.raises(ListingSearchMatchConflict, match="REVISION_FACTS_CHANGED"):
+        store.flush()
+    restart = c["open"]()
+    restart.refresh(c["tenant"])
+    assert restart.intakes[c["intakeId"]] == intake(c)
+    assert history(restart, c) == original
+
+
+def test_currency_revisions_survive_restart_and_default_worker_without_rewriting_history(owned_case):
+    c = owned_case
+    store = c["open"]()
+    store.refresh(c["tenant"])
+    store.saved_views.append(search(c))
+    record = intake(c)
+    record.update(state="NEEDS_REVIEW", intake_method="CSV")
+    # An immutable historical receipt with unknown currency stays unknown.
+    record["fields"] = [f for f in record["fields"] if f["field_path"] != "currency"]
+    store.intakes[c["intakeId"]] = record
+    store.flush()
+    documents = TenantScopedDocumentStore(store._store, c["tenant"])
+    original_events = deepcopy(documents.list_by_group(EVENTS, "receipt"))
+    for version, currency in enumerate(["TWD", "USD", "EUR", "TWD"], start=2):
+        record = store.intakes[c["intakeId"]]
+        record["version"] = version
+        record["fields"] = [f for f in record["fields"] if f["field_path"] != "currency"]
+        record["fields"].append(
+            {"field_path": "currency", "effective": currency, "masked": False}
+        )
+        store.flush()
+    store._engine.close()
+    restart = c["open"]()
+    restart.refresh(c["tenant"])
+    assert drain(restart) == 6
+    rows = sorted(history(restart, c), key=lambda r: r["intakeVersion"])
+    assert [r["outcome"] for r in rows] == [
+        "INSUFFICIENT_EVIDENCE", "MATCH", "INSUFFICIENT_EVIDENCE", "INSUFFICIENT_EVIDENCE", "MATCH"
+    ]
+    assert len({r["receiptFactsSha256"] for r in rows}) == 5
+    assert rows[0]["reasonCodes"] == ["RENT_CURRENCY_UNAVAILABLE"]
+    documents = TenantScopedDocumentStore(restart._store, c["tenant"])
+    assert all(documents.get(EVENTS, e["id"]) == e for e in original_events)
+    assert drain(restart) == 0
+    assert sorted(history(restart, c), key=lambda r: r["intakeVersion"]) == rows
 
 
 def test_existing_unrelated_saved_view_query_is_unchanged(owned_case):

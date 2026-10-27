@@ -1,5 +1,6 @@
 """The normal app must not expose or accept private search delivery records."""
 
+from copy import deepcopy
 from hashlib import sha256
 from uuid import uuid4
 
@@ -11,6 +12,11 @@ from shared.api.idempotency import request_fingerprint
 from tests.intake_registry_fixture import MANAGER, OWNER, TENANT
 from tests.integration.test_intake_registry_calendar_postgresql import _bundle
 from tests.integration.test_operator_intake_workflow_postgresql import _headers, bridge_database
+from tests.support.listing_search_integration import (
+    execute_claimed_listing_search,
+    listing_search_events,
+)
+from tests.unit.test_saved_listing_search_criteria import receipt
 
 pytestmark = pytest.mark.requires_live_env
 assert bridge_database
@@ -152,6 +158,100 @@ def test_public_enqueue_cannot_forge_private_command_replay_or_reserve_its_key(
         replay = client.post(BASE, json=data, headers=_headers(key=key))
         assert replay.status_code == 201 and replay.json()["replayed"]
         assert replay.json()["receiptId"] == actual["receiptId"]
+    finally:
+        bundle.engine.close()
+
+
+def test_currency_revision_delivery_and_current_masking_through_normal_http_app(
+    bridge_database, monkeypatch
+):
+    zone, intake_id = str(uuid4()), str(uuid4())
+    bundle, client = setup_case(bridge_database, monkeypatch)
+    try:
+        rent_body = body(zone)
+        no_rent_body = deepcopy(rent_body)
+        no_rent_body["query"].pop("maxRentPerMonth")
+        identities = []
+        for index, data in enumerate([rent_body, no_rent_body]):
+            response = client.post(
+                BASE, json=data, headers=_headers(key=f"synthetic-currency-search-{index:04d}")
+            )
+            assert response.status_code == 201, response.text
+            identities.append(response.json()["search"]["saved_view_id"])
+        record = receipt(
+            intake_id=intake_id, version=1, state="NEEDS_REVIEW", intake_method="MANUAL",
+            submitted_by=MANAGER, scope={"tenant_id": TENANT, "heat_zone_id": zone},
+        )
+        for field in record["fields"]:
+            field["classification"] = "INTERNAL"
+        # Only currency exceeds the low-clearance reader's grant.
+        next(f for f in record["fields"] if f["field_path"] == "currency")[
+            "classification"
+        ] = "CONFIDENTIAL"
+        store = bundle.assisted_intake_store
+        store.refresh(TENANT)
+        store.intakes[intake_id] = record
+        store.flush()
+    finally:
+        bundle.engine.close()
+
+    bundle, client = setup_case(bridge_database, monkeypatch)
+    try:
+        for version, change in enumerate(["TWD", "USD", "missing", "masked", "conflict", "TWD"], 1):
+            if version > 1:
+                store = bundle.assisted_intake_store
+                store.refresh(TENANT)
+                record = store.intakes[intake_id]
+                record["version"] = version
+                record["fields"] = [f for f in record["fields"] if f["field_path"] != "currency"]
+                if change != "missing":
+                    currency = {
+                        "field_path": "currency", "effective": "USD" if change == "USD" else "TWD",
+                        "masked": change == "masked", "classification": "CONFIDENTIAL",
+                    }
+                    record["fields"].append(currency)
+                    if change == "conflict":
+                        record["fields"].append({**currency, "effective": "USD"})
+                store.flush()
+                # No old match can stand in for an undelivered current revision.
+                for identity in identities:
+                    response = client.get(BASE + "/" + identity + "/results", headers=_headers())
+                    assert response.status_code == 200 and response.json()["total"] == 0
+            while job := bundle.job_queue.claim_next(worker_id="synthetic-currency-http"):
+                assert execute_claimed_listing_search(bundle, job), job.job_type
+            for index, identity in enumerate(identities):
+                response = client.get(BASE + "/" + identity + "/results", headers=_headers())
+                assert response.status_code == 200, response.text
+                expected = int(index == 1 or change == "TWD")
+                assert response.json()["total"] == expected
+                if expected:
+                    assert response.json()["items"][0]["intakeVersion"] == version
+                masked = client.get(
+                    BASE + "/" + identity + "/results",
+                    headers={**_headers(), "x-clearance": "INTERNAL"},
+                )
+                assert masked.status_code == 200 and masked.json()["total"] == int(index == 1)
+                other = client.get(
+                    BASE + "/" + identity + "/results", headers=_headers(OWNER)
+                )
+                assert other.status_code == 404
+            if version == 1:
+                original_events = listing_search_events(bundle, TENANT)
+        events = listing_search_events(bundle, TENANT)
+        assert all(event in events for event in original_events)
+        # A currency-only current-row drift without a new immutable event is
+        # hidden by the reader's shared facts hash, even for a no-rent query.
+        store = bundle.assisted_intake_store
+        store.refresh(TENANT)
+        record = deepcopy(store.intakes[intake_id])
+        next(f for f in record["fields"] if f["field_path"] == "currency")["effective"] = "USD"
+        store._store.put(
+            "operator.assisted_intakes", f"{TENANT}:{intake_id}",
+            store._wrap(TENANT, intake_id, record),
+        )
+        for identity in identities:
+            response = client.get(BASE + "/" + identity + "/results", headers=_headers())
+            assert response.status_code == 200 and response.json()["total"] == 0
     finally:
         bundle.engine.close()
 
