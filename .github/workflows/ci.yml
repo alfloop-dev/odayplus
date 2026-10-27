@@ -301,8 +301,6 @@ jobs:
                 shutil.rmtree(evidence)
             raise
         PY
-    - name: Test official real-estate outcomes on PostgreSQL 16
-      run: uv run pytest tests/integration/test_official_real_estate_postgresql.py
     - name: Test database contracts, migrations and schema gates
       env:
         PYTEST_ADDOPTS: --junitxml=.odp_data/ci/database-contracts.xml
@@ -313,6 +311,7 @@ jobs:
         # Scratch databases isolate file groups. Keep each file on one worker
         # so its stateful fixtures and browser composition stay serialized.
         # Overlap real lease waits without shortening root or IO budgets.
+        # Official real-estate outcomes are included here, once per case.
         uv run pytest -m "requires_live_env" \
           tests/contract tests/ops tests/integration -x --tb=short -vv \
           -n2 --dist=loadfile --max-worker-restart=0

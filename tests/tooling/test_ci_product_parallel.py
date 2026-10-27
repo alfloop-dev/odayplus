@@ -2,7 +2,7 @@
 
 Validates that:
 1. .github/workflows/ci.yml splits product checks into isolated parallel runners.
-2. All original commands are preserved and uniquely assigned to exactly one owning lane.
+2. Acceptance commands have one owning lane; redundant file executions stay retired.
 3. Required runner dependencies (PostgreSQL service/env, Node 20, npm ci, fetch-depth 0)
    are configured for each owning lane.
 4. The product job aggregates results fail-closed under all circumstances.
@@ -19,6 +19,7 @@ import re
 import shlex
 import subprocess
 import sys
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -221,19 +222,29 @@ def test_ci_workflow_product_aggregate_job(ci_workflow: dict[str, Any]) -> None:
 
 
 def test_ci_workflow_command_exact_single_ownership(ci_workflow: dict[str, Any]) -> None:
-    """Assert each complete original acceptance command is present in exactly one lane."""
+    """Assert each required acceptance command is present in exactly one lane."""
     jobs = ci_workflow["jobs"]
 
-    # Canonical acceptance commands from the baseline monolithic product job
+    # Required acceptance selections, each with one owning lane. Official
+    # real-estate PostgreSQL cases belong to the complete database selection.
     expected_command_lanes = {
         "uv run ruff check tests modules apps shared models solver pipelines infra": "product-lint-unit",
         'uv run pytest -m "not requires_live_env and not performance" --ignore=tests/tooling tests modules apps shared models -n auto': "product-lint-unit",
-        "uv run pytest tests/integration/test_official_real_estate_postgresql.py": "product-db",
         'uv run pytest -m "requires_live_env" tests/contract tests/ops tests/integration -x --tb=short -vv -n2 --dist=loadfile --max-worker-restart=0': "product-db",
         "make api-contract": "product-api-contract",
         "make security": "product-security",
         "make node-check": "product-node",
     }
+
+    official_file = "tests/integration/test_official_real_estate_postgresql.py"
+    for job in jobs.values():
+        for step in job.get("steps", []):
+            for command in parse_executable_commands_from_script(step.get("run", "")):
+                if command[:3] == ["uv", "run", "pytest"]:
+                    assert official_file not in [arg.removeprefix("./") for arg in command[3:]], (
+                        "Official PostgreSQL cases are covered by the complete SQL selection; "
+                        "a dedicated file invocation runs the same cases twice."
+                    )
 
     for expected_cmd, expected_lane in expected_command_lanes.items():
         occurrences = count_exact_command_occurrences(jobs, expected_cmd)
@@ -248,6 +259,19 @@ def test_ci_workflow_command_exact_single_ownership(ci_workflow: dict[str, Any])
             f"found in: {list(occurrences.keys())}"
         )
         assert occurrences[expected_lane] == 1
+
+
+@pytest.mark.parametrize("duplicate_command", [
+    "uv run pytest tests/integration/test_official_real_estate_postgresql.py",
+    "uv run pytest -vv ./tests/integration/test_official_real_estate_postgresql.py",
+])
+def test_official_postgresql_cases_reject_duplicate_ci_runs(
+    ci_workflow: dict[str, Any], duplicate_command: str,
+) -> None:
+    workflow = deepcopy(ci_workflow)
+    workflow["jobs"]["product-db"]["steps"].append({"run": duplicate_command})
+    with pytest.raises(AssertionError, match="same cases twice"):
+        test_ci_workflow_command_exact_single_ownership(workflow)
 
 
 def test_delivery_tooling_keeps_a_required_unconditional_owner(ci_workflow: dict[str, Any]) -> None:
