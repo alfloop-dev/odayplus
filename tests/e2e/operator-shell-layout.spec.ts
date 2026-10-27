@@ -422,6 +422,9 @@ test.describe("Network Find Areas Package 10 layout", () => {
 
   test("1440px geometry matches the design grid", async ({ page }) => {
     await openFindAreas(page, 1440);
+    // The product seed is read through the recorded HeatZone projection. Wait
+    // for its provenance row before measuring, rather than the prototype rows.
+    await expect(page.getByTestId("find-areas-zone-facts").locator("dt").last()).toHaveText("評估模式");
     const g = await page.evaluate(() => {
       const box = (selector: string) => {
         const element = document.querySelector<HTMLElement>(selector);
@@ -445,7 +448,10 @@ test.describe("Network Find Areas Package 10 layout", () => {
         bigScoreFont: getComputedStyle(document.querySelector('[data-testid="find-areas-zone-score"]')!).fontSize,
         columns: Array.from(panel.children).map((child) => Math.round(child.getBoundingClientRect().width)),
         docScrollWidth: document.documentElement.scrollWidth,
-        factRows: document.querySelectorAll('[data-testid="find-areas-zone-facts"] > div').length,
+        facts: Array.from(document.querySelectorAll('[data-testid="find-areas-zone-facts"] > div'), (row) => ({
+          label: row.querySelector("dt")?.textContent,
+          value: row.querySelector("dd")?.textContent,
+        })),
         header,
         headerCenters: headerParts,
         headerText: document.querySelector('[data-testid="network-header"]')!.textContent,
@@ -486,7 +492,13 @@ test.describe("Network Find Areas Package 10 layout", () => {
     expect(g.legend).not.toMatch(/High lens fit|Watch tradeoff|Risk pressure/);
     // Package 10 has one primary, URL intake and four secondary actions.
     expect(g.bigScoreFont).toBe("22px");
-    expect(g.factRows).toBe(7);
+    expect(g.facts.map((row) => row.label)).toEqual([
+      "未滿足需求", "店型適配", "競爭壓力", "自家稀釋風險", "租金可行性", "物件供給", "資料信心", "評估模式",
+    ]);
+    // The baseline seed does not record these facts. Retain unknown values;
+    // competitor counts and a numeric score cannot establish them.
+    expect(g.facts.find((row) => row.label === "競爭壓力")?.value).toBe("未評估");
+    expect(g.facts.find((row) => row.label === "評估模式")?.value).toBe("未知");
     expect(g.actions.map((action) => action.text)).toContain("＋ 從網址新增物件（帶入本區）");
     expect(g.actions).toHaveLength(6);
     expect(g.actions.slice(3).map((action) => action.text)).toEqual([
