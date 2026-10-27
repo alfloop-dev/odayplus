@@ -10,6 +10,7 @@ import pytest
 from modules.listing.infrastructure.repositories import InMemoryListingRepository
 from modules.opsboard.application.network_listings import (
     InMemoryAssistedIntakeRepository,
+    NetworkListingConflict,
     NetworkListingPolicyError,
     NetworkListingService,
 )
@@ -287,6 +288,35 @@ def test_operator_decision_preserves_lineage_and_real_snapshot_after_reload(tmp_
             assert restored[name] == value
     finally:
         restarted.close()
+
+
+def test_revise_without_named_or_recorded_target_does_not_pick_first_listing():
+    intakes = InMemoryAssistedIntakeRepository()
+    listings = InMemoryListingRepository()
+    created = _intake()
+    intakes.save_intake(created)
+    listing_id = _create(_service(listings, intakes), created)["matchResult"]["targetListingId"]
+    unrelated = _intake(id="00000000-0000-0000-0000-000000000202",
+                        snapshotId="unrelated-snapshot")
+    unrelated["parsedFields"]["rent"]["normalizedValue"] = 12345
+    intakes.save_intake(unrelated)
+    listing_before = listings.get_listing(listing_id)
+    intake_before = deepcopy(intakes.get_intake(unrelated["id"]))
+    receipts_before = intakes.list_idempotency_records()
+    service = _service(listings, intakes)
+    evidence_before = service.get_listing(listing_id)["sourceEvidence"]
+    with pytest.raises(NetworkListingConflict, match="no target listing"):
+        service.decide_intake(
+            intake_id=unrelated["id"], action="revise", reason="Unmatched revision",
+            risk_summary="Would overwrite an existing listing", risk_acknowledged=True,
+            actor_role_id="site_reviewer", actor_name=ACTOR, idempotency_key="unmatched-revise",
+            correlation_id="unmatched-revise-correlation", authorize_existing=lambda _: None,
+        )
+    assert listings.get_listing(listing_id) == listing_before
+    assert listing_before.rent_amount == 58000.75
+    assert _service(listings, intakes).get_listing(listing_id)["sourceEvidence"] == evidence_before
+    assert intakes.get_intake(unrelated["id"]) == intake_before
+    assert intakes.list_idempotency_records() == receipts_before
 
 
 @pytest.mark.parametrize("target_format", [None, "FMT-MICRO-STORE"])
