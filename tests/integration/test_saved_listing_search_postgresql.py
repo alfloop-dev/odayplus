@@ -5,9 +5,11 @@ The runtime document migration is real; unrelated canonical business relations
 are outside these storage tests, so full application boot is tested elsewhere.
 """
 
+import json
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import replace
+from hashlib import sha256
 from threading import Barrier, Event
 from types import SimpleNamespace
 from uuid import uuid4
@@ -16,6 +18,7 @@ import pytest
 from fastapi import HTTPException
 
 from apps.worker.oday_worker.handlers import build_default_registry
+from modules.listing.application.saved_search import SavedListingCriteria, receipt_matching_facts
 from shared.infrastructure.persistence.assisted_listing_intake import (
     AssistedIntakePersistenceConflict,
     DurableAssistedIntakeStore,
@@ -29,6 +32,7 @@ from shared.infrastructure.persistence.listing_search_delivery import (
 from shared.infrastructure.persistence.listing_search_matches import (
     ListingSearchMatchConflict,
     ListingSearchMatchStore,
+    evidence_digest,
 )
 from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
 from shared.infrastructure.persistence.postgresql import PostgresDocumentStore, PostgresEngine
@@ -214,6 +218,105 @@ def test_currency_revisions_survive_restart_and_default_worker_without_rewriting
     assert all(documents.get(EVENTS, e["id"]) == e for e in original_events)
     assert drain(restart) == 0
     assert sorted(history(restart, c), key=lambda r: r["intakeVersion"]) == rows
+
+
+@pytest.mark.parametrize("insert_race", [False, True])
+@pytest.mark.parametrize(
+    "changed_field",
+    [None, "id", "tenantId", "searchId", "searchVersion", "ownerSubjectId",
+     "criteriaSha256", "intakeId", "intakeVersion", "receiptFactsSha256"],
+)
+def test_immutable_disposition_replay_checks_all_evidence_even_on_insert_race(
+    owned_case, monkeypatch, insert_race, changed_field
+):
+    c = owned_case
+    store = c["open"]()
+    documents = TenantScopedDocumentStore(store._store, c["tenant"])
+    ledger = ListingSearchMatchStore(documents)
+    view, record = search(c), intake(c)
+    record["fields"] = [f for f in record["fields"] if f["field_path"] != "currency"]
+    criteria = SavedListingCriteria.from_query(view["query"])
+    assert criteria.evaluate(record, tenant_id=c["tenant"]).outcome == "INSUFFICIENT_EVIDENCE"
+    match_id = sha256(json.dumps(
+        [c["viewId"], 1, c["intakeId"], 1], separators=(",", ":")
+    ).encode()).hexdigest()
+    # Golden pre-currency disposition. Each negative row is stored at the same
+    # lookup key but forges one binding, so an outcome-only repair cannot pass.
+    legacy = {
+        "id": match_id, "tenantId": c["tenant"], "searchId": c["viewId"],
+        "searchVersion": 1, "ownerSubjectId": c["owner"],
+        "criteriaSha256": sha256(json.dumps(
+            criteria.to_query(), sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode()).hexdigest(),
+        "intakeId": c["intakeId"], "intakeVersion": 1,
+        "receiptFactsSha256": evidence_digest(receipt_matching_facts(record)),
+        "outcome": "MATCH", "reasonCodes": [], "recordedAt": "2026-10-01T00:00:00+00:00",
+    }
+    if changed_field:
+        legacy[changed_field] = 2 if changed_field.endswith("Version") else "forged-binding"
+    assert documents.put_if_absent(
+        ledger.COLLECTION, match_id, legacy, group_key=f"{c['viewId']}:1"
+    )
+    get, put = documents.get, documents.put_if_absent
+    reads, inserts = [], []
+
+    def read(collection, identity):
+        reads.append(identity)
+        # Simulate a concurrent insert becoming visible only after the first
+        # read. The real PG unique insert below must lose, then recheck fences.
+        if insert_race and len(reads) == 1:
+            return None
+        return get(collection, identity)
+
+    def insert(*args, **kwargs):
+        result = put(*args, **kwargs)
+        inserts.append(result)
+        return result
+
+    monkeypatch.setattr(documents, "get", read)
+    monkeypatch.setattr(documents, "put_if_absent", insert)
+    args = dict(searches=[view], receipts=[record], changed_search_ids={c["viewId"]},
+                changed_receipt_ids=set())
+    if changed_field:
+        with pytest.raises(ListingSearchMatchConflict, match="MATCH_VERSION_REUSED"):
+            ledger.reconcile(**args)
+    else:
+        ledger.reconcile(**args)
+    assert reads == [match_id] * (2 if insert_race else 1)
+    assert inserts == ([False] if insert_race else [])
+    restart = c["open"]()
+    assert history(restart, c) == [legacy]
+    assert TenantScopedDocumentStore(restart._store, c["tenant"]).list_all(
+        ledger.COLLECTION
+    ) == [legacy]
+
+
+@pytest.mark.parametrize("change", ["owner", "criteria", "rent", "currency", "classification"])
+def test_existing_pair_rejects_changed_input_before_mutation(owned_case, change):
+    c = owned_case
+    store = c["open"]()
+    documents = TenantScopedDocumentStore(store._store, c["tenant"])
+    ledger = ListingSearchMatchStore(documents)
+    view, record = search(c), intake(c)
+    args = dict(searches=[view], receipts=[record], changed_search_ids={c["viewId"]},
+                changed_receipt_ids=set())
+    ledger.reconcile(**args)
+    before = history(store, c)
+    if change == "owner":
+        view["owner_subject_id"] = str(uuid4())
+    elif change == "criteria":
+        view["query"]["maxRentPerMonth"] = 61000
+    else:
+        field = next(f for f in record["fields"] if f["field_path"] == (
+            "rent_amount" if change == "rent" else "currency"
+        ))
+        if change == "classification":
+            field["classification"] = "RESTRICTED"
+        else:
+            field["effective"] = 51000 if change == "rent" else "USD"
+    with pytest.raises(ListingSearchMatchConflict, match="MATCH_VERSION_REUSED"):
+        ledger.reconcile(**args)
+    assert history(c["open"](), c) == before
 
 
 def test_existing_unrelated_saved_view_query_is_unchanged(owned_case):
