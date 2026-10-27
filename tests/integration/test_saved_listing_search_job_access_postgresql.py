@@ -1,6 +1,8 @@
 """The normal app must not expose or accept private search delivery records."""
 
+import json
 from copy import deepcopy
+from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import uuid4
 
@@ -9,6 +11,12 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from shared.api.idempotency import request_fingerprint
+from shared.infrastructure.persistence.listing_search_matches import (
+    ListingSearchMatchStore,
+    evidence_digest,
+)
+from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+from shared.jobs.queue import JobStatus
 from tests.intake_registry_fixture import MANAGER, OWNER, TENANT
 from tests.integration.test_intake_registry_calendar_postgresql import _bundle
 from tests.integration.test_operator_intake_workflow_postgresql import _headers, bridge_database
@@ -158,6 +166,122 @@ def test_public_enqueue_cannot_forge_private_command_replay_or_reserve_its_key(
         replay = client.post(BASE, json=data, headers=_headers(key=key))
         assert replay.status_code == 201 and replay.json()["replayed"]
         assert replay.json()["receiptId"] == actual["receiptId"]
+    finally:
+        bundle.engine.close()
+
+
+@pytest.mark.parametrize("method", ["MANUAL", "CSV"])
+def test_pre_currency_match_and_pending_receipt_survive_upgrade_without_rewriting_history(
+    bridge_database, monkeypatch, method
+):
+    zone, intake_id = str(uuid4()), str(uuid4())
+    bundle, client = setup_case(bridge_database, monkeypatch)
+    try:
+        created = client.post(
+            BASE, json=body(zone), headers=_headers(key="synthetic-upgrade-search-0001")
+        )
+        assert created.status_code == 201, created.text
+        identity = created.json()["search"]["saved_view_id"]
+        record = receipt(
+            intake_id=intake_id, version=1, state="NEEDS_REVIEW", intake_method=method,
+            submitted_by=MANAGER, scope={"tenant_id": TENANT, "heat_zone_id": zone},
+        )
+        record["fields"] = [f for f in record["fields"] if f["field_path"] != "currency"]
+        for field in record["fields"]:
+            field["classification"] = "INTERNAL"
+        store = bundle.assisted_intake_store
+        store.refresh(TENANT)
+        store.intakes[intake_id] = deepcopy(record)
+        store.flush()
+        original_events = listing_search_events(bundle, TENANT)
+        search_event = next(e for e in original_events if e["kind"] == "search")
+        receipt_event = next(e for e in original_events if e["kind"] == "receipt")
+        assert len(original_events) == 2
+        assert not any(f["field_path"] == "currency" for f in receipt_event["facts"]["fields"])
+
+        # Golden persisted output of the pre-currency matcher (68f2dd6e4044):
+        # the completed S1 job saw both commits and recorded MATCH for R1.
+        # This is an initial historical DB fixture, not a rewrite of an event
+        # or a patched current matcher. R1's server-reserved job stays pending.
+        match_id = sha256(json.dumps([identity, 1, intake_id, 1], separators=(",", ":")).encode()).hexdigest()
+        legacy = {
+            "id": match_id,
+            "tenantId": TENANT,
+            "searchId": identity,
+            "searchVersion": 1,
+            "ownerSubjectId": MANAGER,
+            "criteriaSha256": sha256(json.dumps(
+                search_event["facts"]["query"], sort_keys=True, separators=(",", ":"), allow_nan=False,
+            ).encode()).hexdigest(),
+            "intakeId": intake_id,
+            "intakeVersion": 1,
+            "receiptFactsSha256": evidence_digest(receipt_event["facts"]),
+            "outcome": "MATCH",
+            "reasonCodes": [],
+            "recordedAt": datetime.now(UTC).isoformat(),
+        }
+        documents = TenantScopedDocumentStore(store._store, TENANT)
+        ledger = ListingSearchMatchStore(documents)
+        with bundle.engine.transaction():
+            assert documents.put_if_absent(
+                ledger.COLLECTION, match_id, legacy, group_key=f"{identity}:1"
+            )
+        for _ in range(10):
+            job = bundle.job_queue.claim_next(worker_id="synthetic-pre-upgrade-search")
+            assert job is not None
+            if job.job_id == search_event["job_id"]:
+                bundle.job_queue.update_status(
+                    job.job_id, JobStatus.SUCCEEDED,
+                    expected_version=job.version, fence_token=job.fence_token,
+                )
+                break
+            assert job.job_type == "durable-audit-delivery", job.job_type
+        else:
+            pytest.fail("The pre-upgrade search job was not claimable")
+        assert bundle.job_queue.get(receipt_event["job_id"]).status == JobStatus.QUEUED
+        assert ledger.history(search_id=identity, search_version=1) == [legacy]
+    finally:
+        bundle.engine.close()
+
+    bundle, client = setup_case(bridge_database, monkeypatch)
+    try:
+        store = bundle.assisted_intake_store
+        ledger = ListingSearchMatchStore(TenantScopedDocumentStore(store._store, TENANT))
+        path = BASE + "/" + identity + "/results"
+        # Historical MATCH is not a current currency grant, even before replay.
+        result = client.get(path, headers=_headers())
+        assert result.status_code == 200 and result.json()["total"] == 0
+        pending = bundle.job_queue.claim_next(worker_id="synthetic-post-upgrade-receipt")
+        assert pending is not None and pending.job_id == receipt_event["job_id"]
+        # Actual registered default handler, original bound event, real PG fence.
+        # Before the repair this raises LISTING_SEARCH_MATCH_VERSION_REUSED.
+        assert execute_claimed_listing_search(bundle, pending)
+        assert bundle.job_queue.get(pending.job_id).status == JobStatus.SUCCEEDED
+        assert ledger.history(search_id=identity, search_version=1) == [legacy]
+        assert listing_search_events(bundle, TENANT) == original_events
+        store.refresh(TENANT)
+        assert store.intakes[intake_id] == record
+        result = client.get(path, headers=_headers())
+        assert result.status_code == 200 and result.json()["items"] == []
+        assert client.get(path, headers=_headers(OWNER)).status_code == 404
+
+        # A genuinely new explicit-currency revision can match normally; the
+        # immutable old receipt/event/ledger must not be backfilled to get it.
+        store.refresh(TENANT)
+        current = store.intakes[intake_id]
+        current["version"] = 2
+        current["fields"].append({
+            "field_path": "currency", "effective": "TWD", "masked": False,
+            "classification": "INTERNAL",
+        })
+        store.flush()
+        while job := bundle.job_queue.claim_next(worker_id="synthetic-post-upgrade-twd"):
+            assert execute_claimed_listing_search(bundle, job)
+        result = client.get(path, headers=_headers())
+        assert result.status_code == 200 and result.json()["total"] == 1
+        assert result.json()["items"][0]["intakeVersion"] == 2
+        assert legacy in ledger.history(search_id=identity, search_version=1)
+        assert all(event in listing_search_events(bundle, TENANT) for event in original_events)
     finally:
         bundle.engine.close()
 
