@@ -36,7 +36,7 @@ TRAFFIC_HELPER = ROOT / "product_ops/deployment/cloud_run_release_traffic.sh"
 API_SERVICE = "oday-api"
 WEB_SERVICE = "oday-web"
 TAG = "candidate-ee06d1d8aaaaaaaa"
-SUFFIX = "release-ee06d1d8aaaa"
+SUFFIX = "ee06d1d8aaaa-r40598998837-a2"
 
 FAKE_GCLOUD = r"""#!/usr/bin/env python3
 import json

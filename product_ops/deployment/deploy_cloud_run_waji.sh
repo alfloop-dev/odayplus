@@ -284,7 +284,53 @@ run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py p
   --output "${PREFLIGHT_REPORT}"
 
 # No build, push, or Cloud Run mutation may occur above this line.
-REVISION_SUFFIX="release-${ODAY_RELEASE_SHA:0:12}"
+#
+# ODP-CLOUD-RUN-REVISION-SUFFIX-PER-ATTEMPT-001: the API and Web revision name
+# is `<service>-<suffix>`, and Cloud Run refuses a second revision of that name
+# with a different configuration (ALREADY_EXISTS). staging/production pin the
+# release SHA through the lease, so a SHA-only suffix made any retry of the
+# same candidate -- e.g. after a corrected environment variable -- impossible
+# (Runtime Release run 40598998837 attempt 2). The suffix therefore names the
+# deployment attempt as well as the release:
+#
+#   GitHub Actions  <sha12>-r<GITHUB_RUN_ID>-a<GITHUB_RUN_ATTEMPT>
+#   anywhere else   <sha12>-l<UTC epoch seconds>  (e.g. the foreground dev
+#                   smoke rollout, which refuses to run inside Actions)
+#
+# A local suffix only repeats for two attempts started in the same second, and
+# then Cloud Run refuses the second deploy; neither form can repeat the other.
+# Nothing reads the release back from the revision name: lineage and recovery
+# use the `oday-release-sha` label and the `candidate-<sha16>` tag. On a rerun,
+# `gcloud run deploy --tag` clears that tag from the previous attempt's revision
+# before giving it to the new one (traffic.UpdateTags), so exactly one target
+# carries it. Redeploying the release that is already serving moves the tag off
+# the serving revision; if that attempt rolls back, automatic_dev.serving_release
+# finds the restored revision untagged and refuses rather than guess. Every
+# revision name is checked against Cloud Run's 63-character DNS-label rule
+# here, before any mutation. With an 11-digit run id and a
+# 1-digit attempt the suffix is 28 characters, so service names up to 34
+# characters fit (dev `oday-api` and production `oday-prod-api` do).
+release_revision_suffix() {
+  local suffix service revision
+  if [ "${GITHUB_ACTIONS:-}" = "true" ] || [ -n "${GITHUB_RUN_ID:-}" ] || [ -n "${GITHUB_RUN_ATTEMPT:-}" ]; then
+    if [[ ! "${GITHUB_RUN_ID:-}" =~ ^[1-9][0-9]*$ ]] || [[ ! "${GITHUB_RUN_ATTEMPT:-}" =~ ^[1-9][0-9]*$ ]]; then
+      echo "Error: a GitHub Actions deployment requires numeric GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT to name its revisions; got '${GITHUB_RUN_ID:-}' and '${GITHUB_RUN_ATTEMPT:-}'." >&2
+      return 1
+    fi
+    suffix="${ODAY_RELEASE_SHA:0:12}-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
+  else
+    suffix="${ODAY_RELEASE_SHA:0:12}-l$(date -u +%s)"
+  fi
+  for service in "$@"; do
+    revision="${service}-${suffix}"
+    if [ "${#revision}" -gt 63 ] || [[ ! "${revision}" =~ ^[a-z]([-a-z0-9]*[a-z0-9])?$ ]]; then
+      echo "Error: Cloud Run revision name '${revision}' (${#revision} characters) is not a lowercase DNS label of at most 63 characters." >&2
+      return 1
+    fi
+  done
+  printf "%s" "${suffix}"
+}
+REVISION_SUFFIX="$(release_revision_suffix "${API_SERVICE}" "${WEB_SERVICE}")"
 API_REVISION_TAG="candidate-${ODAY_RELEASE_SHA:0:16}"
 WEB_REVISION_TAG="candidate-${ODAY_RELEASE_SHA:0:16}"
 release_job_name() {
@@ -346,6 +392,7 @@ fi
 echo "Deployment details:"
 echo "  Environment:      ${ODP_DEPLOY_ENV}"
 echo "  Release SHA:      ${ODAY_RELEASE_SHA}"
+echo "  Revision Suffix:  ${REVISION_SUFFIX}"
 echo "  GCP Project:      ${GCP_PROJECT}"
 echo "  GCP Region:       ${GCP_REGION}"
 echo "  Artifact Repo:    ${GCP_AR_REPO}"

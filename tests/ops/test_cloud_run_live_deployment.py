@@ -2631,6 +2631,170 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     assert result.returncode == 0, result.stderr
 
 
+REVISION_RELEASE_SHA = "4fc05643b17165d54ef841d5d1343bafed94a02f"
+REVISION_NAME_PATTERN = re.compile(r"[a-z]([-a-z0-9]*[a-z0-9])?")
+
+
+def _run_release_revision_suffix(*services: str, **env: str) -> subprocess.CompletedProcess[str]:
+    """Execute the deploy script's own revision-suffix function."""
+    function = _extract_shell_function(
+        DEPLOY_SCRIPT.read_text(encoding="utf-8"), "release_revision_suffix"
+    )
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"GITHUB_ACTIONS", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"}
+    }
+    environment.update({"ODAY_RELEASE_SHA": REVISION_RELEASE_SHA, **env})
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'set -euo pipefail\n{function}release_revision_suffix "$@"',
+            "bash",
+            *services,
+        ],
+        cwd=ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_revision_suffix_is_defined_once_and_shared_by_api_and_web() -> None:
+    """ODP-CLOUD-RUN-REVISION-SUFFIX-PER-ATTEMPT-001: one definition, both deploys."""
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assignments = re.findall(r"^\s*REVISION_SUFFIX=.*$", text, flags=re.MULTILINE)
+    assert assignments == [
+        'REVISION_SUFFIX="$(release_revision_suffix "${API_SERVICE}" "${WEB_SERVICE}")"'
+    ]
+    assert text.count('--revision-suffix="${REVISION_SUFFIX}"') == 2
+    assert "--revision-suffix=" not in text.replace('--revision-suffix="${REVISION_SUFFIX}"', "")
+    # Resolved after the read-only preflight and before the first Cloud Run mutation.
+    assignment = text.index(assignments[0])
+    assert text.index("validate_cloud_run_live_deployment.py preflight") < assignment
+    assert assignment < text.index('gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}"')
+    assert assignment < text.index('gcloud run deploy "${API_SERVICE}"')
+
+
+def test_revision_suffix_differs_per_github_run_attempt_for_the_same_sha() -> None:
+    first = _run_release_revision_suffix(
+        "oday-api",
+        "oday-web",
+        GITHUB_ACTIONS="true",
+        GITHUB_RUN_ID="40598998837",
+        GITHUB_RUN_ATTEMPT="1",
+    )
+    retry = _run_release_revision_suffix(
+        "oday-api",
+        "oday-web",
+        GITHUB_ACTIONS="true",
+        GITHUB_RUN_ID="40598998837",
+        GITHUB_RUN_ATTEMPT="2",
+    )
+    rerun = _run_release_revision_suffix(
+        "oday-api",
+        "oday-web",
+        GITHUB_ACTIONS="true",
+        GITHUB_RUN_ID="40611111111",
+        GITHUB_RUN_ATTEMPT="1",
+    )
+
+    assert (first.returncode, retry.returncode, rerun.returncode) == (0, 0, 0), (
+        first.stderr + retry.stderr + rerun.stderr
+    )
+    assert first.stdout == "4fc05643b171-r40598998837-a1"
+    assert retry.stdout == "4fc05643b171-r40598998837-a2"
+    assert rerun.stdout == "4fc05643b171-r40611111111-a1"
+    # The failed attempt-2 name from Runtime Release run 40598998837 is gone.
+    assert "oday-api-release-4fc05643b171" not in {
+        f"oday-api-{result.stdout}" for result in (first, retry, rerun)
+    }
+
+
+def test_revision_suffix_outside_github_actions_is_explicit_and_time_bound() -> None:
+    before = int(time.time())
+    result = _run_release_revision_suffix("oday-api", "oday-web")
+    after = int(time.time())
+
+    assert result.returncode == 0, result.stderr
+    match = re.fullmatch(r"4fc05643b171-l([0-9]+)", result.stdout)
+    assert match, result.stdout
+    assert before <= int(match.group(1)) <= after
+    # A local name can never take the form an Actions attempt uses.
+    assert "-r" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"GITHUB_ACTIONS": "true"},
+        {"GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "40598998837"},
+        {"GITHUB_RUN_ID": "40598998837"},
+        {"GITHUB_RUN_ATTEMPT": "2"},
+        {"GITHUB_RUN_ID": "40598998837", "GITHUB_RUN_ATTEMPT": "0"},
+        {"GITHUB_RUN_ID": "4059899883x", "GITHUB_RUN_ATTEMPT": "1"},
+    ],
+)
+def test_revision_suffix_refuses_partial_github_attempt_identity(env: dict[str, str]) -> None:
+    result = _run_release_revision_suffix("oday-api", "oday-web", **env)
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("api_service", "web_service"),
+    [
+        ("oday-api", "oday-web"),  # dev (Runtime Release run 40598998837)
+        ("oday-prod-api", "oday-prod-web"),  # infra/terraform/cloud_run.tf, environment=prod
+    ],
+)
+def test_revision_names_for_deployed_services_fit_cloud_run_limit(
+    api_service: str, web_service: str
+) -> None:
+    # A two-digit attempt and a run id one digit longer than today's leave headroom.
+    result = _run_release_revision_suffix(
+        api_service,
+        web_service,
+        GITHUB_ACTIONS="true",
+        GITHUB_RUN_ID="405989988370",
+        GITHUB_RUN_ATTEMPT="50",
+    )
+
+    assert result.returncode == 0, result.stderr
+    for service in (api_service, web_service):
+        revision = f"{service}-{result.stdout}"
+        assert len(revision) <= 63, revision
+        assert REVISION_NAME_PATTERN.fullmatch(revision), revision
+
+
+def test_revision_suffix_refuses_a_name_cloud_run_would_reject() -> None:
+    longest = "s" * 34
+    attempt = {"GITHUB_RUN_ID": "40598998837", "GITHUB_RUN_ATTEMPT": "2"}
+
+    fits = _run_release_revision_suffix("oday-api", longest, **attempt)
+    too_long = _run_release_revision_suffix("oday-api", longest + "s", **attempt)
+    uppercase = _run_release_revision_suffix("Oday-api", "oday-web", **attempt)
+
+    assert fits.returncode == 0, fits.stderr
+    assert len(f"{longest}-{fits.stdout}") == 63
+    assert too_long.returncode == 1
+    assert too_long.stdout == ""
+    assert f"'{longest}s-4fc05643b171-r40598998837-a2' (64 characters)" in too_long.stderr
+    assert uppercase.returncode == 1
+    assert "Oday-api-4fc05643b171-r40598998837-a2" in uppercase.stderr
+
+
+def test_release_traffic_check_still_accepts_the_deploy_script() -> None:
+    checks = {check.name: check for check in validator.repository_capability_checks(ROOT)}
+
+    assert checks["repository:release_traffic"].ok, checks["repository:release_traffic"].detail
+
+
 def _traffic_description(
     *,
     service_url: str = "https://service.example.test",
