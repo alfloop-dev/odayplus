@@ -3111,6 +3111,156 @@ class SourceAuthorReviewIndependenceTests(unittest.TestCase):
         self.assertTrue(delivery.get("merge_verified_via_pr"))
         self.assertEqual(delivery.get("ci_status"), "success")
 
+    def test_merge_only_finalizer_head_keeps_its_submitted_range(self) -> None:
+        """A head that is only Claude's merge keeps `B..H` once `dev` took Codex's `C`.
+
+        Claude's finalizer `H` merges `B` into Codex's `C` and resolves an
+        integration file; `B..H` is submitted while open: Codex alone. Codex2
+        reopens it, and integration merge `M` (`M^1 == B`) brings in `C` but
+        not `H`. From `M`, the range holds no non-merge commit at all, so the
+        unchanged head's same-head resubmission and, after the conflict-free
+        merge `N` of `H` and the branch's deletion, its merged recovery must
+        re-read the range they were submitted with rather than refuse it as
+        empty. A first submission or a record narrowed to `M` still finds
+        nothing to review, Codex is still refused before any write, and
+        independent Codex2 approves.
+        """
+        self.git("reset", "-q", "--hard", self.codex_commit)
+        base = self.git("rev-parse", "dev")
+        self.git("merge", "--no-ff", "--no-commit", "-q", "dev")
+        (self.repo / "glue.txt").write_text("integration resolution\n", encoding="utf-8")
+        self.git("add", "glue.txt")
+        self.git(
+            "commit", "-q", "-m",
+            f"Merge dev into {self.BRANCH}\n\nLLM-Agent: Claude\nTask-ID: {self.TASK_ID}\nReviewer: Codex2\n",
+        )
+        head = self.git("rev-parse", "HEAD")
+        self.assertEqual(self.git("rev-parse", f"{head}^1", f"{head}^2").split(), [self.codex_commit, base])
+        self.task["reviewer"] = "Codex2"
+
+        self.run_as("Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready"], head=head)
+        submitted = dict(self.task["review_submission"])
+        self.assertEqual(
+            (submitted["source_base"], submitted["source_head"], submitted["source_authors"], submitted["submitted_by"]),
+            (base, head, ["Codex"], "Claude"),
+        )
+        self.run_as("Codex2", ai_status.command_reopen, [self.TASK_ID, "needs another look"], head=head)
+        self.assertEqual(self.task["status"], "in_progress")
+
+        self.git("checkout", "-q", "dev")
+        self.git("merge", "--no-ff", "-q", "-m", "Merge pull request #4300 (integration)", self.codex_commit)
+        integration_merge = self.git("rev-parse", "dev")
+        self.git("update-ref", "refs/remotes/origin/dev", "dev")
+        self.git("checkout", "-q", self.BRANCH)
+        self.assertEqual(self.git("rev-parse", f"{integration_merge}^1"), base)
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.git("merge-base", "--is-ancestor", head, integration_merge)
+        # The scanner alone, from the new tip, finds nothing left to review.
+        narrowed = ai_status.inspect_delivery_identity(
+            self.repo, task_id=self.TASK_ID, base="dev", head=head,
+            expected_branch=self.BRANCH, actual_branch=self.BRANCH,
+        )
+        self.assertEqual(narrowed.source_agents, ())
+        self.assertRegex("; ".join(narrowed.errors), r"contains no non-merge commits")
+
+        # A record narrowed to the integration merge reads that empty range
+        # and is refused; so is one bound to some other head.
+        for label, forged in (
+            ("narrowed to the integration merge", dict(submitted, source_base=integration_merge)),
+            ("narrowed, authors dropped", dict(submitted, source_base=integration_merge, source_authors=["Claude"])),
+        ):
+            with self.subTest(label=label), mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+                self.task["review_submission"] = forged
+                self.assert_refused_without_mutation(
+                    "Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready again"],
+                    r"contains no non-merge commits", head=head,
+                )
+        self.task["review_submission"] = dict(submitted, source_head=self.codex_commit)
+        self.assert_refused_without_mutation(
+            "Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready again"],
+            r"contains no non-merge commits", head=head,
+        )
+        # A first submission has no submitted range to keep.
+        self.task.pop("review_submission")
+        self.assert_refused_without_mutation(
+            "Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready"],
+            r"contains no non-merge commits", head=head,
+        )
+
+        # A recorded author list is not trusted either: the kept range is read again.
+        self.task["review_submission"] = dict(submitted, source_authors=["Claude"])
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.run_as("Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready again"], head=head)
+        self.assertEqual(self.task["status"], "review")
+        self.assertEqual(self.task["owner"], "Claude")
+        self.assertEqual(self.task["review_submission"], submitted)
+        self.assertIn(
+            ("Claude", "Codex2"),
+            [(h.get("from"), h.get("to")) for h in self.state["handoffs"] if h.get("status") == "pending"],
+        )
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.task["reviewer"] = "Codex"
+            self.assert_refused_without_mutation(
+                "Codex", ai_status.command_approve, [self.TASK_ID, "LGTM"],
+                r"reviewer Codex is itself a source author", head=head,
+            )
+        self.task["reviewer"] = "Codex2"
+        self.run_as("Codex2", ai_status.command_reopen, [self.TASK_ID, "one more look"], head=head)
+        self.assertEqual(self.task["review_submission"], submitted)
+
+        # The unchanged head merges cleanly as `N`, and the branch is deleted.
+        self.git("checkout", "-q", "dev")
+        self.git("merge", "--no-ff", "-q", "-m", "Merge pull request #4242", head)
+        merge_commit = self.git("rev-parse", "dev")
+        self.git("update-ref", "refs/remotes/origin/dev", "dev")
+        self.git("branch", "-D", self.BRANCH)
+        self.assertEqual(self.git("rev-parse", f"{merge_commit}^1", f"{merge_commit}^2").split(), [integration_merge, head])
+        merged_pr = dict(
+            self.pr(head),
+            state="MERGED",
+            mergedAt="2026-10-28T00:00:00Z",
+            mergeCommit={"oid": merge_commit},
+            statusCheckRollup=[
+                {"__typename": "CheckRun", "name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ],
+        )
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.run_as(
+                "Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Merged recovery"],
+                head=head, pr=merged_pr,
+            )
+        recovered = dict(self.task["review_submission"])
+        self.assertEqual(self.task["status"], "review")
+        self.assertEqual(
+            {k: recovered[k] for k in ("source_base", "source_head", "source_authors", "submitted_by")},
+            {k: submitted[k] for k in ("source_base", "source_head", "source_authors", "submitted_by")},
+        )
+        self.assertEqual((recovered["merge_commit"], recovered["recovery_by"]), (merge_commit, "Claude"))
+
+        # Recovered without that open range, the same merged head is refused as empty.
+        self.task.update({"status": "in_progress"})
+        self.task.pop("review_submission")
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.assert_refused_without_mutation(
+                "Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Merged recovery"],
+                r"contains no non-merge commits", head=head, pr=merged_pr,
+            )
+
+        self.task.update({"status": "review", "review_submission": dict(recovered)})
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.task["reviewer"] = "Codex"
+            self.assert_refused_without_mutation(
+                "Codex", ai_status.command_approve, [self.TASK_ID, "LGTM"],
+                r"reviewer Codex is itself a source author", head=head,
+            )
+            self.task["reviewer"] = "Codex2"
+            self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review"], head=head)
+        self.assertEqual(self.task["status"], "review_approved")
+        self.assertEqual(self.task["approved_head"], head)
+        self.assertEqual(self.task["last_approved_by"], "Codex2")
+        self.assertEqual(self.task["owner"], "Claude")
+        self.assertEqual(self.task["review_submission"], recovered)
+
 
 class ToolingCloseoutTests(unittest.TestCase):
     """Real Git, identity, scope and archival checks; only GitHub is synthetic."""

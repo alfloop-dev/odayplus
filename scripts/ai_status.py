@@ -7992,6 +7992,35 @@ def review_submission_for_task(
             f"Cannot submit {task_id} for review: PR #{pr_number} has invalid head commit SHA '{head_oid}'."
         )
 
+    # The same submitted head keeps the range it was submitted with. Once the
+    # integration branch has merged in part of that range, rescanning from its
+    # new tip reads fewer commits and would drop their authors from the record
+    # -- and from every pool a reviewer has to avoid -- with nothing in the
+    # submission changed; for a head that is only a merge, it reads no commits
+    # at all. Merging the unchanged head does not change it either: the first
+    # merged recovery of a head submitted while open keeps that range, since
+    # the merge commit's first parent may be just such a tip. So that range is
+    # what is scanned again here, not merely copied after a narrower scan
+    # succeeded. Only a head first submitted already merged reads the range
+    # from that parent; `task_review_source_identity` re-validates either base
+    # from Git before anything is recorded.
+    prior = task.get("review_submission")
+
+    def submitted_range_base(merge_commit: str = "") -> str | None:
+        if not (
+            isinstance(prior, dict)
+            and prior.get("pr_number") == int(pr_number)
+            and str(prior.get("branch") or "").strip() == branch
+            and str(prior.get("remote_sha") or "").strip().lower() == head_oid.lower()
+            and str(prior.get("source_head") or "").strip().lower() == head_oid.lower()
+            and str(prior.get("merge_commit") or "").strip() in ("", merge_commit)
+        ):
+            return None
+        source_base = str(prior.get("source_base") or "").strip()
+        if not (re.fullmatch(r"[0-9a-fA-F]{40}", source_base) or re.fullmatch(r"[0-9a-fA-F]{64}", source_base)):
+            return None
+        return source_base
+
     if pr_state == "OPEN":
         try:
             remote_sha = resolve_task_sha(task_id, force_refresh=True)
@@ -8013,7 +8042,7 @@ def review_submission_for_task(
         identity = inspect_delivery_identity(
             repository_root,
             task_id=task_id,
-            base=base_branch,
+            base=submitted_range_base() or base_branch,
             head=remote_sha,
             expected_branch=branch,
             actual_branch=head_branch,
@@ -8092,7 +8121,7 @@ def review_submission_for_task(
         identity = inspect_delivery_identity(
             repository_root,
             task_id=task_id,
-            base=pre_merge_base,
+            base=submitted_range_base(merge_commit) or pre_merge_base,
             head=head_oid,
             expected_branch=branch,
             actual_branch=head_branch,
@@ -8158,25 +8187,6 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     )
     if is_same_submission and "submitted_by" in existing_sub:
         submission["submitted_by"] = existing_sub["submitted_by"]
-    # The same submitted head keeps the range it was submitted with. Once the
-    # integration branch has merged in part of that range, rescanning from its
-    # new tip reads fewer commits and would drop their authors from the record
-    # -- and from every pool a reviewer has to avoid -- with nothing in the
-    # submission changed. Merging the unchanged head does not change it
-    # either: the first merged recovery of a head submitted while open keeps
-    # that range, since the merge commit's first parent may be just such a tip.
-    # Only a head first submitted already merged reads the range from that
-    # parent; the rule below re-validates either from Git.
-    if (
-        is_same_submission
-        and str(existing_sub.get("source_head") or "").strip().lower()
-        == str(submission.get("remote_sha") or "").strip().lower()
-        and str(existing_sub.get("merge_commit") or "").strip()
-        in ("", str(submission.get("merge_commit") or "").strip())
-    ):
-        for field in ("source_base", "source_head", "source_authors"):
-            if field in existing_sub:
-                submission[field] = existing_sub[field]
 
     # Every actor of the submitted work has to resolve to a registered account
     # before review can start: an unknown author is not an independent one, so
