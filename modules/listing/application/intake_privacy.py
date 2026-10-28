@@ -568,6 +568,7 @@ class IntakePrivacyService:
                 "checksum": content_sha256,
                 "download_evidence_id": download_evidence_id,
                 "destination_residency": destination_residency,
+                "tenant_id": tenant_id,
             },
         )
         self.audit_log.record(audit_event)
