@@ -19,6 +19,8 @@ from shared.infrastructure.persistence.assisted_listing_intake import apply_upgr
 from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
 from shared.infrastructure.persistence.repositories import DurableNetPlanRepository
 from solver.netplan import NetPlanConstraints
+from tests.integration import test_netplan_solver as netplan_inputs
+from tests.integration._operation_flag_fixtures import NETPLAN_MOVE_EXIT_FLAG, enable_operation_flag
 from tests.integration.test_intake_registry_calendar_postgresql import _bundle, _upgrade
 
 pytestmark = pytest.mark.requires_live_env
@@ -136,3 +138,128 @@ def test_native_command_cannot_read_then_overwrite_a_locked_builder_revision(own
         assert result.problem_hash == expected
         assert builder_owner.get_solve(scenario_id).problem_hash == expected
         assert persisted.status.value == "solved"
+
+
+@pytest.fixture
+def move_approval_owners(owners, monkeypatch):
+    database, first, second, _, _ = owners
+    options = netplan_inputs._lifecycle_options()
+    options["store-001"] = tuple(option for option in options["store-001"] if option.action.value == "MOVE")
+    with monkeypatch.context() as scoped:
+        scoped.setattr(netplan_inputs, "_lifecycle_options", lambda: options)
+        memory, template, scenario_id, receipt = netplan_inputs._pending_authoritative_service()
+    repository = DurableNetPlanRepository(TenantScopedDocumentStore(
+        PostgresDocumentStore(first.engine), netplan_inputs.NETPLAN_TENANT_ID,
+    ))
+    repository.save_scenario(memory.get_scenario(scenario_id))
+    repository.save_solve(memory.get_solve(scenario_id))
+    for acknowledgement in memory.list_disclosure_acknowledgements(scenario_id):
+        repository.save_disclosure_acknowledgement(acknowledgement)
+    enable_operation_flag(first.feature_flag_registry, key=NETPLAN_MOVE_EXIT_FLAG,
+        tenant_id=netplan_inputs.NETPLAN_TENANT_ID, queue=first.job_queue, audit_log=first.audit_log)
+    service = NetPlanService(repository=repository, approval_verifier=template.approval_verifier,
+        policy_repository=template.policy_repository, runtime_mode="poc",
+        feature_flags=first.feature_flag_registry, job_queue=first.job_queue)
+    assert any(action.action.value == "MOVE" for action in repository.get_solve(scenario_id).result.selected_actions)
+    return database, first, second, repository, service, scenario_id, receipt
+
+
+@pytest.mark.parametrize("rollback", [False, True])
+def test_netplan_move_flag_lock_lasts_through_business_commit_or_rollback(move_approval_owners, monkeypatch, rollback):
+    database, first, second, repository, service, scenario_id, receipt = move_approval_owners
+    allowed, admin_started, release_business = Event(), Event(), Event()
+    observed = {}
+    original_enabled = first.feature_flag_registry.is_enabled
+    original_cas = second.feature_flag_registry.store.compare_and_put
+    original_approval = repository.save_approval
+    before = repository.get_scenario(scenario_id)
+
+    def pause_after_real_flag_read(*args, **kwargs):
+        enabled = original_enabled(*args, **kwargs)
+        assert enabled
+        allowed.set()
+        assert release_business.wait(30)
+        return enabled
+
+    def observe_admin_cas(*args, **kwargs):
+        observed["pid"] = second.engine.query_one("SELECT pg_backend_pid() AS pid")["pid"]
+        admin_started.set()
+        return original_cas(*args, **kwargs)
+
+    def save_then_rollback(approval):
+        original_approval(approval)
+        raise RuntimeError("synthetic-business-rollback")
+
+    monkeypatch.setattr(first.feature_flag_registry, "is_enabled", pause_after_real_flag_read)
+    monkeypatch.setattr(second.feature_flag_registry.store, "compare_and_put", observe_admin_cas)
+    if rollback:
+        monkeypatch.setattr(repository, "save_approval", save_then_rollback)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        pending = executor.submit(service.decide, scenario_id, actor_id=netplan_inputs.APPROVAL_PRINCIPAL,
+            reason="Explicit synthetic MOVE approval", approval_receipt_id=receipt.receipt_id,
+            decided_at=netplan_inputs.MOMENT)
+        try:
+            assert allowed.wait(10)
+            disable = executor.submit(second.feature_flag_registry.execute, "disable", NETPLAN_MOVE_EXIT_FLAG,
+                actor="synthetic-admin", correlation_id="synthetic-disable-during-business", audit_log=second.audit_log,
+                queue=second.job_queue)
+            assert admin_started.wait(5)
+            blocked = _wait_for_owned_backend_lock(database, observed["pid"])
+        finally:
+            release_business.set()
+        if rollback:
+            with pytest.raises(RuntimeError, match="synthetic-business-rollback"):
+                pending.result(timeout=20)
+        else:
+            assert pending.result(timeout=20).decision == "approved"
+        assert not disable.result(timeout=20).flag.enabled
+        assert blocked, "admin disable did not wait for the original business transaction"
+    assert not original_enabled(NETPLAN_MOVE_EXIT_FLAG)
+    if rollback:
+        assert repository.get_scenario(scenario_id) == before
+        assert repository.list_approvals(scenario_id) == []
+    else:
+        assert repository.get_scenario(scenario_id).status.value == "approved"
+        assert len(repository.list_approvals(scenario_id)) == 1
+
+
+def test_netplan_move_waits_for_prior_disable_and_refuses_positive_write(move_approval_owners, monkeypatch):
+    database, first, second, repository, service, scenario_id, receipt = move_approval_owners
+    disabled_uncommitted, business_started, release_admin = Event(), Event(), Event()
+    observed = {}
+    original_enabled = first.feature_flag_registry.is_enabled
+    original_cas = second.feature_flag_registry.store.compare_and_put
+    before = repository.get_scenario(scenario_id)
+
+    def pause_after_admin_cas(*args, **kwargs):
+        result = original_cas(*args, **kwargs)
+        disabled_uncommitted.set()
+        assert release_admin.wait(30)
+        return result
+
+    def observe_business_flag(*args, **kwargs):
+        observed["pid"] = first.engine.query_one("SELECT pg_backend_pid() AS pid")["pid"]
+        business_started.set()
+        return original_enabled(*args, **kwargs)
+
+    monkeypatch.setattr(second.feature_flag_registry.store, "compare_and_put", pause_after_admin_cas)
+    monkeypatch.setattr(first.feature_flag_registry, "is_enabled", observe_business_flag)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        disable = executor.submit(second.feature_flag_registry.execute, "disable", NETPLAN_MOVE_EXIT_FLAG,
+            actor="synthetic-admin", correlation_id="synthetic-disable-before-business", audit_log=second.audit_log,
+            queue=second.job_queue)
+        try:
+            assert disabled_uncommitted.wait(10)
+            pending = executor.submit(service.decide, scenario_id, actor_id=netplan_inputs.APPROVAL_PRINCIPAL,
+                reason="Explicit synthetic MOVE approval", approval_receipt_id=receipt.receipt_id,
+                decided_at=netplan_inputs.MOMENT)
+            assert business_started.wait(5)
+            blocked = _wait_for_owned_backend_lock(database, observed["pid"])
+        finally:
+            release_admin.set()
+        assert not disable.result(timeout=20).flag.enabled
+        with pytest.raises(PermissionError, match="FEATURE_FLAG_DISABLED"):
+            pending.result(timeout=20)
+        assert blocked, "business flag read did not wait for the original admin transaction"
+    assert repository.get_scenario(scenario_id) == before
+    assert repository.list_approvals(scenario_id) == []

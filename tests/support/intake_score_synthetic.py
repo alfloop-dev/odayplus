@@ -387,7 +387,8 @@ def ready_scenario(database_url, bundle, client):
                             "riskSummary": "Explicit synthetic measured input", "riskAcknowledged": True}, headers=headers())
     assert corrected.status_code == 200, corrected.text
     decided = client.post(f"{base}/{iid}/decide", json={"action": "revise", "targetListingId": listing_id,
-                          "reason": SCOPE, "riskSummary": "Synthetic local integration", "riskAcknowledged": True}, headers=headers(APPROVER))
+                          "reason": SCOPE, "riskSummary": "Synthetic local integration", "riskAcknowledged": True},
+                          headers={**headers(APPROVER), "If-Match": f'W/"{corrected.json()["version"]}"'})
     assert decided.status_code == 200, decided.text
     assert decided.json()["stage"] == "READY"
     store = bundle.assisted_intake_store

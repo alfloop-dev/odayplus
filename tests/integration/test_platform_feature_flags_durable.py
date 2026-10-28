@@ -1,6 +1,8 @@
 """Engineering SQLite controls; no production flags or native PG claim."""
 from __future__ import annotations
 
+import sqlite3
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, date, datetime
 
@@ -28,6 +30,7 @@ from shared.infrastructure.persistence.feature_flags import (
     FeatureFlagAlreadyExists,
     FeatureFlagOperationDisabled,
     FeatureFlagStoreUnavailable,
+    require_operation_feature_flag,
 )
 from shared.infrastructure.persistence.job_queue import DurableJobQueue
 from shared.jobs.queue import NonRetryableJobError
@@ -463,6 +466,41 @@ def _enable(registry, audit):
     return _command(registry, audit, "enable")
 
 
+@pytest.mark.parametrize("rollback", [False, True])
+def test_business_flag_read_and_outer_transaction_serialize_independent_disable(tmp_path, rollback):
+    path = tmp_path / "business-flag-transaction.sqlite"
+    a, first, audit_a = _owner(path)
+    b, second, audit_b = _owner(path)
+    try:
+        _enable(first, audit_a)
+        queue = DurableJobQueue(a, flags=first)
+        before, events = second.read_versioned(), audit_b.list_events()
+        # Refuse immediately rather than relying on thread timing or waiting
+        # for the default timeout while this thread owns the other transaction.
+        b._conn.execute("PRAGMA busy_timeout=0")
+        with pytest.raises(RuntimeError, match="synthetic-business-rollback") if rollback else nullcontext():
+            with a.transaction():
+                require_operation_feature_flag(KEY, owner=first, engine=a, queue=queue,
+                                               durable_required=True)
+                with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+                    _command(second, audit_b, "disable")
+                assert second.read_versioned() == before
+                assert audit_b.list_events() == events
+                first.store.put("synthetic.flag-transaction", "owned-business", {"committed": True})
+                if rollback:
+                    raise RuntimeError("synthetic-business-rollback")
+        assert first.store.get("synthetic.flag-transaction", "owned-business") == (
+            None if rollback else {"committed": True}
+        )
+        _command(second, audit_b, "disable")
+        assert not first.is_enabled(KEY)
+        assert second.read_versioned()[1] == before[1] + 1
+        assert len(audit_b.list_events()) == len(events) + 1
+    finally:
+        a.close()
+        b.close()
+
+
 def test_known_job_type_cannot_substitute_unrelated_enabled_payload_flag():
     from shared.auth.feature_flags import FeatureFlagRegistry
     from shared.jobs.queue import check_job_feature_flag, resolve_job_feature_flag_key
@@ -714,7 +752,7 @@ def test_temporary_flag_storage_failure_preserves_claim_attempt_version_fence_an
         job, _ = queue.enqueue(JobRequest(job_type="priceops.execute", payload={}), correlation_id="queued")
         original = queue.get(job.job_id)
 
-        def unavailable():
+        def unavailable(*, lock_in_transaction=False):
             raise FeatureFlagStoreUnavailable("Synthetic temporary storage failure")
 
         with monkeypatch.context() as patch:

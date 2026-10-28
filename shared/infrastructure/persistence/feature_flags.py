@@ -99,9 +99,9 @@ class DurableFeatureFlagRegistry:
         self.store.compare_and_put(COLLECTION, DOCUMENT, initial, expected_version=None)
         self.read_versioned()  # A pre-existing malformed record is not repaired.
 
-    def read_versioned(self) -> tuple[dict[str, FeatureFlag], int]:
+    def read_versioned(self, *, lock_in_transaction: bool = False) -> tuple[dict[str, FeatureFlag], int]:
         try:
-            row = self.store.get_versioned(COLLECTION, DOCUMENT)
+            row = self.store.get_versioned(COLLECTION, DOCUMENT, lock_in_transaction=lock_in_transaction)
             if row is None:
                 raise FeatureFlagStoreUnavailable("Platform feature flag owner is not initialized")
             value, version = row
@@ -119,7 +119,10 @@ class DurableFeatureFlagRegistry:
 
     def is_enabled(self, key: str, *, on: date | None = None,
                    tenant_id: str | None = None, source_id: str | None = None) -> bool:
-        flag = self.get(key)
+        # Existing same-engine business transactions must serialize their
+        # positive decision with admin disable/configuration changes. Keep
+        # admin read_versioned() optimistic to avoid lock-upgrade races.
+        flag = self.read_versioned(lock_in_transaction=True)[0].get(key)
         return flag is not None and flag.is_active(on or date.today(), tenant_id=tenant_id, source_id=source_id)
 
     def expired(self, *, on: date) -> tuple[FeatureFlag, ...]:
