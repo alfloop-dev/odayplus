@@ -552,14 +552,24 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(SystemExit, "delivery identity preflight failed"):
                 ai_status.review_submission_for_task(task, "123")
+            # The same PR/branch/head re-reads the range it was submitted
+            # with; without that record the range is read from `dev`.
+            with self.assertRaisesRegex(SystemExit, "delivery identity preflight failed"):
+                ai_status.review_submission_for_task({**task, "review_submission": None}, "123")
 
-        identity_check.assert_called_once_with(
-            ai_status.ROOT,
-            task_id="REG-002",
-            base="dev",
-            head=remote_sha,
-            expected_branch="task/REG-002",
-            actual_branch="task/REG-002",
+        self.assertEqual(
+            identity_check.call_args_list,
+            [
+                mock.call(
+                    ai_status.ROOT,
+                    task_id="REG-002",
+                    base=base,
+                    head=remote_sha,
+                    expected_branch="task/REG-002",
+                    actual_branch="task/REG-002",
+                )
+                for base in (task["review_submission"]["source_base"], "dev")
+            ],
         )
 
     def test_merged_review_submission_success(self) -> None:
