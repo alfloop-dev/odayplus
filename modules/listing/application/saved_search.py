@@ -21,7 +21,7 @@ _KEYS = frozenset(
 )
 _GROUND_FLOOR = re.compile(r"^(?:1[fF]|[fF]1|1樓|一樓)(?:\s*(?:臨路|店面|臨街|地面))*$")
 _MATCHING_FIELDS = frozenset(
-    {"area_ping", "areaPing", "rent_amount", "rent", "rentPerMonth", "floor"}
+    {"area_ping", "areaPing", "rent_amount", "rent", "rentPerMonth", "currency", "floor"}
 )
 
 
@@ -173,12 +173,18 @@ class SavedListingCriteria:
             ):
                 mismatch.append("AREA_OUTSIDE_RANGE")
         if self.max_rent_per_month is not None:
+            # The Taiwan rent ceiling is comparable only to explicit effective
+            # TWD evidence. Historical missing currency is unknown, never TWD;
+            # use the same lineage/masking/conflict rules as the rent amount.
+            currency = _effective_field(receipt, frozenset({"currency"}))
+            if currency != "TWD":
+                missing.append("RENT_CURRENCY_UNAVAILABLE")
             rent = _finite_number(
                 _effective_field(receipt, frozenset({"rent_amount", "rent", "rentPerMonth"}))
             )
             if rent is None or rent <= 0:
                 missing.append("RENT_UNAVAILABLE")
-            elif rent > self.max_rent_per_month:
+            elif currency == "TWD" and rent > self.max_rent_per_month:
                 mismatch.append("RENT_ABOVE_MAXIMUM")
         if self.ground_floor_only:
             floor = _effective_field(receipt, frozenset({"floor"}))

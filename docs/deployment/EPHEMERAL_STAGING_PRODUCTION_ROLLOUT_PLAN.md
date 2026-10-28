@@ -334,18 +334,34 @@ Gate 0–6 可以保留為證據分類，但 registry 必須額外記錄 `stage`
   一律視為無法斷定而拒絕，不會被當成「不存在」；
 - 記錄綁定這次的 candidate SHA、component image digest、target environment 與
   recovery method，因此不能被搬到另一個 release、另一個環境，或在 rebuild 後沿用；
-- 只適用於 `dev`。staging 每個 release 重建、production 是被 promote 進去的，
-  兩者都不會在沒有已核准前版的情況下走到首次部署；
+- 建置目標只能是 `dev` 或 `staging`。production 從未有過已核准 release 時，
+  它的首次 release 只能是 staging 封存並演練過的同一份 manifest：staging 封存的
+  紀錄可 admission 到 staging 與 production，dev 封存的只能進 dev。staging 讀回
+  的是這個 release 的 release-scoped 名稱
+  （ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001，細節見
+  `docs/design/ODP_CORE_OPS_RELEASE_PROFILE.md` §5）；
+- staging／production 的 admission 另外讀 **production 的** Supervisor lease
+  store：production 只要曾為其他 manifest admitted 過 release，這條分支就關閉，
+  之後的 release 一律回到 §8.4 綁定 rollback target。staging 自己的 store 不會有
+  production 的紀錄，所以 staging admission 必須跨環境讀 production store，讀不到
+  就拒絕；無法分類的紀錄也一律拒絕；
 - 該 release 不得宣告任何啟用中的外部資料來源。有啟用來源就維持原本的
   masked snapshot 與 rollback 綁定要求；
-- admission 在消費 lease 之前會**再讀一次** target。build 當下為空不代表 deploy
-  當下仍為空，這一步是整條分支唯一無法從 release SHA 的 tree 推導出來的部分。
+- admission 在消費 lease 之前會**再讀一次**該環境的 target，讀回綁定 manifest
+  digest、限時 10 分鐘，由 `check_runtime_admission.py` 驗證。build 當下為空不代表
+  deploy 當下仍為空，這一步是整條分支唯一無法從 release SHA 的 tree 推導出來的
+  部分。
 
-首次 release 的 recovery 動作是明確記錄的，且**不是回滾**：
+首次 release 的 recovery 動作是明確記錄的，且**不是回滾**。dev 與 production：
 
 1. 刪除本次建立的候選 Cloud Run service 與 job；
 2. 刪除本次建立的 scheduler trigger；
 3. 維持零流量。
+
+ephemeral staging 不刪除也不切流量：失敗時 `staging_lifecycle.py hold` 保留這個
+release 專屬的 namespace 供鑑識，到 TTL 後由 `staging_lifecycle.py cleanup` 整個
+拆除。這個 namespace 只屬於這個 release，沒有其他 release 的流量依賴它。staging
+封存的紀錄同時寫明兩者：自己的 hold，以及晉升到 production 時的刪除 candidate。
 
 沒有可回滾的既有版本時，deploy 失敗路徑必須照實這樣說明，不得宣稱正在還原流量
 ——那會描述一個從未存在過的版本。第二個 release 起，target 上已經有這個首次

@@ -10,10 +10,12 @@ import argparse
 import hashlib
 import json
 import logging
+import re
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 from shared.infrastructure.persistence import assisted_listing_intake as intake_schema
 
@@ -21,6 +23,7 @@ logger = logging.getLogger("assisted-listing-intake-migration")
 
 FINDING_TYPE_MAP = {
     "MISSING_EVIDENCE": "MISSING_EVIDENCE",
+    "INVALID_SCOPE": "INVALID_SCOPE",
     "DUPLICATE_CANDIDATE": "DUPLICATE_CANDIDATE",
     "STATE_MAPPING_CONFLICT": "STATE_MAPPING_CONFLICT",
     "COUNT_MISMATCH": "COUNT_MISMATCH",
@@ -77,6 +80,121 @@ def calculate_checksum(ids: Iterable[str]) -> str:
     sorted_ids = sorted(str(x) for x in ids if str(x).strip())
     content = ",".join(sorted_ids)
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _historical_time(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is not None
+    except ValueError:
+        return False
+
+
+def _partition_month(value: Any) -> str | None:
+    """Use the recorded instant's UTC month in backfill, verify and inventory.
+
+    timestamptz preserves the instant, not the input's offset. Literal slicing
+    made the same receipt change partitions with the database session timezone.
+    UTC is the explicit shared selector basis; this does not rewrite source
+    timestamps/history or repair pre-existing partition proofs. Missing/naive
+    history cannot establish a partition and must not acquire a default zone.
+    """
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        return None
+    return value.astimezone(UTC).strftime("%Y-%m")
+
+
+def _artifact_uri(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        uri = urlsplit(value)
+        return uri.scheme in {"gs", "odp-artifact", "https"} and bool(uri.netloc and uri.path)
+    except ValueError:
+        return False
+
+
+def _normalize_intake(value: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """One backfill boundary for legacy rows, bridge documents and projections.
+
+    Bridge identity/history is authoritative, including explicit nulls. Conflicts
+    are findings, never a reason to choose a different alias or display identity.
+    """
+    bridge = "intake_id" in value or "scope" in value
+    presentation = value.get("operator_presentation", {}) if bridge else {}
+    errors: dict[str, str] = {}
+    if not isinstance(presentation, dict):
+        presentation = {}
+        errors["operator_presentation"] = "STATE_MAPPING_CONFLICT"
+    row = {**presentation, **value}
+    scope = value.get("scope", {}) if bridge else {}
+    if not isinstance(scope, dict):
+        scope = {}
+        errors["scope"] = "INVALID_SCOPE"
+    aliases = {
+        "id": ("intake_id",), "tenantId": ("tenant_id",),
+        "stage": ("state",), "originalUrl": ("original_url", "sourceUrl"),
+        "canonicalUrl": ("canonical_url",), "sourceId": ("source_id",),
+        "submittedBy": ("submitted_by",), "submittedAt": ("submitted_at",),
+        "intakeMethod": ("intake_method",), "version": (),
+        "sourcePolicyState": ("policy_state", "source_policy_state", "policy"),
+        "correlationId": ("correlation_id",),
+        **{camel: (snake,) for camel, snake in (
+            ("heatZoneId", "heat_zone_id"), ("brandId", "brand_id"),
+            ("regionId", "region_id"), ("assignedAreaId", "assigned_area_id"),
+        )},
+    }
+    scoped = {"tenantId", "heatZoneId", "brandId", "regionId", "assignedAreaId"}
+    for key, names in aliases.items():
+        candidates = []
+        if bridge and key in scoped:
+            candidates.append(scope.get(names[0]))
+        elif bridge:
+            candidates.append(value.get(names[0] if names else key))
+        for container in (value, presentation):
+            candidates.extend(container[name] for name in (key, *names) if name in container)
+        if not candidates:
+            continue
+        row[key] = candidates[0]
+        if any(candidate != candidates[0] for candidate in candidates[1:]):
+            errors[key] = "INVALID_SCOPE" if key in scoped else "STATE_MAPPING_CONFLICT"
+    for key in ("tenantId", "submittedBy", "heatZoneId", "brandId", "regionId", "assignedAreaId"):
+        val = row.get(key)
+        if val is None and key not in {"tenantId", "submittedBy"}:
+            continue
+        try:
+            uuid.UUID(val)
+        except (ValueError, TypeError, AttributeError):
+            errors[key] = "INVALID_SCOPE" if key in scoped else "MISSING_EVIDENCE"
+    if not isinstance(row.get("id"), str) or not row["id"].strip():
+        errors["id"] = "MISSING_EVIDENCE"
+    if not _historical_time(row.get("submittedAt")):
+        errors["submittedAt"] = "MISSING_EVIDENCE"
+    if row.get("stage") not in {
+        "SUBMITTED", "CHECKING_IDENTITY", "CHECKING_SOURCE_POLICY", "AWAITING_ASSISTED_ENTRY",
+        "RETRIEVING", "PARSING", "MATCHING", "NEEDS_REVIEW", "READY", "QUARANTINED", "FAILED", "CANCELLED",
+    }:
+        errors["stage"] = "STATE_MAPPING_CONFLICT"
+    if row.get("intakeMethod") not in {"URL", "MANUAL", "CSV", "APPROVED_FEED", "OPERATOR_SNAPSHOT"}:
+        errors["intakeMethod"] = "MISSING_EVIDENCE"
+    if not isinstance(row.get("sourceId"), str) or not row["sourceId"].strip():
+        errors["sourceId"] = "MISSING_EVIDENCE"
+    if row.get("intakeMethod") == "URL" and not row.get("originalUrl"):
+        errors["originalUrl"] = "MISSING_EVIDENCE"
+    for key in ("originalUrl", "canonicalUrl"):
+        if row.get(key) is not None and not isinstance(row[key], str):
+            errors[key] = "STATE_MAPPING_CONFLICT"
+    if row.get("sourcePolicyState") not in {None, "APPROVED_RETRIEVAL", "ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED", "SOURCE_BLOCKED", "POLICY_UNKNOWN"}:
+        errors["sourcePolicyState"] = "STATE_MAPPING_CONFLICT"
+    if row.get("version") is not None and (type(row["version"]) is not int or row["version"] <= 0):
+        errors["version"] = "STATE_MAPPING_CONFLICT"
+    return row, errors
 
 
 class IntakeMigrator:
@@ -458,8 +576,8 @@ class IntakeMigrator:
         sources: list[tuple[str, str, str, list[str]]] | None = None,
         parser_release: dict[str, Any] | None = None,
         tenant_id: str | None = None,
-    ) -> None:
-        """Register sources and parser releases using supplied verified provenance."""
+    ) -> dict[str, Any] | None:
+        """Register provenance and return only the caller's matching registry release."""
         default_sources = [
             ("SRC-591", "591 licensed broker intake", "APPROVED_RETRIEVAL", ["591.com.tw"]),
             ("SRC-BROKER", "Broker confirmation", "ASSISTED_ENTRY_ONLY", []),
@@ -503,26 +621,32 @@ class IntakeMigrator:
                 )
             return
 
-        sem_ver = get_val(parser_release, "semantic_version") or "1.4"
+        sem_ver = get_val(parser_release, "semantic_version")
         art_uri = get_val(parser_release, "artifact_uri")
         art_sha = get_val(parser_release, "artifact_sha256")
 
-        if not art_uri or not art_sha:
+        required_parser_facts = ("source_id", "semantic_version", "package_name", "input_schema_version",
+                                 "output_schema_version", "test_corpus_version", "validation_status")
+        if (not _artifact_uri(art_uri) or not isinstance(art_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", art_sha)
+                or not all(isinstance(get_val(parser_release, key), str) and get_val(parser_release, key).strip()
+                           for key in required_parser_facts)):
             if tenant_id:
                 self._create_finding(
                     tenant_id=ensure_uuid(tenant_id),
                     source_kind="schema",
-                    source_id=sem_ver,
-                    target_ids=[ensure_uuid(f"parser-{sem_ver}")],
+                    source_id=sem_ver or "unknown-parser",
+                    target_ids=[],
                     finding_type="MISSING_EVIDENCE",
                     severity="BLOCKING",
-                    expected={"artifact_uri": "non-empty URI", "artifact_sha256": "64-char sha256"},
+                    expected={"artifact_uri": "non-empty URI", "artifact_sha256": "64-char sha256",
+                              "required_parser_facts": required_parser_facts},
                     actual={"artifact_uri": art_uri, "artifact_sha256": art_sha},
                 )
             return
 
-        check_parser = "SELECT parser_release_id FROM intake.parser_releases WHERE semantic_version = %s"
-        if not self._execute(check_parser, (sem_ver,)):
+        parser_source = get_val(parser_release, "source_id")
+        check_parser = "SELECT * FROM intake.parser_releases WHERE semantic_version = %s AND source_id = %s"
+        if not self._execute(check_parser, (sem_ver, parser_source)):
             insert_parser = """
                 INSERT INTO intake.parser_releases (
                     parser_release_id, source_id, package_name, semantic_version,
@@ -530,10 +654,10 @@ class IntakeMigrator:
                     artifact_sha256, test_corpus_version, validation_status, version
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
-            parser_id = ensure_uuid(get_val(parser_release, "parser_release_id") or f"parser-{sem_ver}")
-            val_status = get_val(parser_release, "validation_status") or "DRAFT"
-            pkg_name = get_val(parser_release, "package_name") or "listing-parser"
-            src_id = get_val(parser_release, "source_id") or "SRC-591"
+            parser_id = ensure_uuid(get_val(parser_release, "parser_release_id") or f"parser-{parser_source}-{sem_ver}")
+            val_status = get_val(parser_release, "validation_status")
+            pkg_name = get_val(parser_release, "package_name")
+            src_id = parser_source
 
             self._execute(
                 insert_parser,
@@ -542,15 +666,32 @@ class IntakeMigrator:
                     src_id,
                     pkg_name,
                     sem_ver,
-                    "v1.0",
-                    "v1.0",
+                    get_val(parser_release, "input_schema_version"),
+                    get_val(parser_release, "output_schema_version"),
                     art_uri,
                     art_sha,
-                    "v1.0",
+                    get_val(parser_release, "test_corpus_version"),
                     val_status,
                     1,
                 ),
             )
+
+        registered = self._execute(check_parser, (sem_ver, parser_source))[0]
+        provenance_fields = (*required_parser_facts, "artifact_uri", "artifact_sha256")
+        conflicts = [key for key in provenance_fields if registered[key] != get_val(parser_release, key)]
+        supplied_id = get_val(parser_release, "parser_release_id")
+        if supplied_id and str(registered["parser_release_id"]) != ensure_uuid(supplied_id):
+            conflicts.append("parser_release_id")
+        if conflicts:
+            if tenant_id:
+                self._create_finding(
+                    tenant_id=ensure_uuid(tenant_id), source_kind="parser_release",
+                    source_id=sem_ver, target_ids=[], finding_type="MISSING_EVIDENCE",
+                    severity="BLOCKING", expected={"matching_registered_provenance": True},
+                    actual={"conflicting_fields": conflicts},
+                )
+            return None
+        return registered
 
     def backfill(
         self,
@@ -567,13 +708,55 @@ class IntakeMigrator:
     ) -> dict[str, Any]:
         """Perform the staging backfill. Returns count proofs and reconciliation report."""
         self.apply_schema()
-        target_tenant = ensure_uuid(tenant_id or "00000000-0000-0000-0000-000000000001")
-        self.register_sources_and_parsers(sources=sources, parser_release=parser_release, tenant_id=target_tenant)
+        # A finding still needs an explicit valid partition when source scope is invalid.
+        # Never hash an invalid tenant string into a different tenant identity.
+        target_tenant = str(uuid.UUID(tenant_id)) if tenant_id else None
+        normalized_inputs = [_normalize_intake(row) for row in legacy_intakes]
+        input_tenants = {str(uuid.UUID(row["tenantId"])) for row, errors in normalized_inputs if "tenantId" not in errors}
+        if target_tenant is None:
+            if len(input_tenants) != 1 or any("tenantId" in errors for _, errors in normalized_inputs):
+                raise ValueError("An explicit valid tenant partition is required")
+            target_tenant = input_tenants.pop()
+        legacy_intakes = []
+        registered_parser = self.register_sources_and_parsers(
+            sources=sources, parser_release=parser_release, tenant_id=target_tenant,
+        )
 
         reconciled_count = 0
         skipped_count = 0
         quarantined_count = 0
         findings_count = 0
+        intake_quarantined = 0
+        intake_excluded = 0
+        for row, errors in normalized_inputs:
+            # Exclude only on unambiguous scope, before saving unrelated history
+            # failures into this tenant's findings. Missing/conflicting scope
+            # still fails closed rather than being hidden by a source filter.
+            foreign_tenant = "tenantId" not in errors and str(uuid.UUID(row["tenantId"])) != target_tenant
+            foreign_source = (
+                source_id and "sourceId" not in errors and row["sourceId"] != source_id
+                and "INVALID_SCOPE" not in errors.values()
+            )
+            if foreign_tenant or foreign_source:
+                intake_excluded += 1
+                continue
+            if not errors:
+                legacy_intakes.append(row)
+                continue
+            if errors:
+                intake_quarantined += 1
+                quarantined_count += 1
+                findings_count += 1
+                finding_type = "INVALID_SCOPE" if "INVALID_SCOPE" in errors.values() else next(iter(errors.values()))
+                self._create_finding(
+                    tenant_id=target_tenant, source_kind="legacy_intake",
+                    source_id=str(row.get("id") or "unknown-intake"), target_ids=[],
+                    finding_type=finding_type, severity="BLOCKING",
+                    expected={"valid_source_history_and_scope": True},
+                    actual={"invalid_fields": errors, "source_history": {key: row.get(key) for key in (
+                        "id", "tenantId", "stage", "submittedAt", "submittedBy", "intakeMethod", "version",
+                    )}},
+                )
 
         # Pre-pass: map addresses, sources, and real legacy timestamps ONLY
         listing_to_address: dict[str, Any] = {}
@@ -594,9 +777,11 @@ class IntakeMigrator:
                     listing_to_source[lst_uuid] = c_src
 
         for intake in legacy_intakes:
-            i_source = intake.get("sourceId") or intake.get("source_id") or "SRC-591"
-            i_date_str = intake.get("submittedAt") or intake.get("firstSeenAt") or intake.get("submitted_at")
-            i_month = i_date_str[:7] if (i_date_str and isinstance(i_date_str, str)) else None
+            if str(uuid.UUID(intake["tenantId"])) != target_tenant:
+                continue
+            i_source = intake["sourceId"]
+            i_date_str = intake["submittedAt"]
+            i_month = _partition_month(i_date_str)
             match_res = intake.get("matchResult") or {}
             lst_id = match_res.get("targetListingId") or intake.get("resolved_listing_id") or intake.get("resolvedListingId")
             if lst_id:
@@ -624,14 +809,20 @@ class IntakeMigrator:
             # 1. Backfill Intakes
             for legacy_intake in legacy_intakes:
                 l_id = legacy_intake.get("id")
-                i_tenant = ensure_uuid(legacy_intake.get("tenantId") or legacy_intake.get("tenant_id") or tenant_id or "tenant-a")
-                i_source = legacy_intake.get("sourceId") or legacy_intake.get("source_id") or "SRC-591"
-                i_date_str = legacy_intake.get("submittedAt") or legacy_intake.get("firstSeenAt") or legacy_intake.get("submitted_at")
-                i_month = i_date_str[:7] if (i_date_str and isinstance(i_date_str, str)) else None
+                i_tenant = str(uuid.UUID(legacy_intake["tenantId"]))
+                i_source = legacy_intake["sourceId"]
+                i_date_str = legacy_intake["submittedAt"]
+                i_month = _partition_month(i_date_str)
 
-                if tenant_id and i_tenant != ensure_uuid(tenant_id):
-                    continue
-                if source_id and i_source != source_id:
+                if not self._execute("SELECT source_id FROM intake.source_registry WHERE source_id = %s", (i_source,)):
+                    findings_count += 1
+                    quarantined_count += 1
+                    intake_quarantined += 1
+                    self._create_finding(
+                        tenant_id=i_tenant, source_kind="legacy_intake", source_id=l_id,
+                        target_ids=[], finding_type="MISSING_EVIDENCE", severity="BLOCKING",
+                        expected={"registered_source": True}, actual={"source_id": i_source},
+                    )
                     continue
                 if month:
                     if not i_month or i_month != month:
@@ -647,6 +838,7 @@ class IntakeMigrator:
                             expected={"month_partition": month},
                             actual={"month_partition": i_month},
                         )
+                        intake_quarantined += 1
                         continue
 
                 intake_uuid = ensure_uuid(l_id)
@@ -661,12 +853,13 @@ class IntakeMigrator:
 
                 self._execute("SELECT 1", tenant_id=i_tenant)
 
-                url = legacy_intake.get("originalUrl") or legacy_intake.get("sourceUrl") or ""
-                canon_url = legacy_intake.get("canonicalUrl") or url
+                url = legacy_intake.get("originalUrl")
+                canon_url = legacy_intake.get("canonicalUrl")
                 canon_url_sha = hashlib.sha256(canon_url.encode()).hexdigest() if canon_url else None
-                stage = legacy_intake.get("stage") or "READY"
+                stage = legacy_intake["stage"]
                 source_policy = legacy_intake.get("sourcePolicyState") or legacy_intake.get("source_policy_state") or "POLICY_UNKNOWN"
-                sub_time = i_date_str or datetime.now(UTC).isoformat()
+                sub_time = i_date_str
+                migration_time = datetime.now(UTC).isoformat()
 
                 if not url:
                     findings_count += 1
@@ -695,8 +888,8 @@ class IntakeMigrator:
                         intake_uuid,
                         i_tenant,
                         ensure_uuid(legacy_intake.get("heatZoneId") or legacy_intake.get("heat_zone_id")),
-                        ensure_uuid("system"),
-                        "URL",
+                        str(uuid.UUID(legacy_intake["submittedBy"])),
+                        legacy_intake["intakeMethod"],
                         url,
                         canon_url,
                         canon_url_sha,
@@ -707,8 +900,13 @@ class IntakeMigrator:
                         ensure_uuid(legacy_intake.get("correlationId") or f"corr-{l_id}"),
                         1,
                         sub_time,
-                        sub_time,
+                        migration_time,
                     ),
+                    tenant_id=i_tenant,
+                )
+                self._execute(
+                    "UPDATE intake.intakes SET brand_id = %s, region_id = %s, assigned_area_id = %s WHERE intake_id = %s AND tenant_id = %s",
+                    (legacy_intake.get("brandId"), legacy_intake.get("regionId"), legacy_intake.get("assignedAreaId"), intake_uuid, i_tenant),
                     tenant_id=i_tenant,
                 )
 
@@ -716,8 +914,9 @@ class IntakeMigrator:
                 insert_trans_sql = """
                     INSERT INTO intake.intake_stage_transitions (
                         transition_id, tenant_id, intake_id, sequence_no, from_state,
-                        to_state, actor_subject_id, service_principal, permission, resulting_version, correlation_id, reason_code
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        to_state, actor_subject_id, service_principal, permission, resulting_version, correlation_id, reason_code,
+                        reason_text, occurred_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 self._execute(
                     insert_trans_sql,
@@ -734,6 +933,11 @@ class IntakeMigrator:
                         1,
                         corr_id,
                         self.migration_ref,
+                        json.dumps({"source_history": {key: legacy_intake.get(key) for key in (
+                            "id", "tenantId", "stage", "submittedAt", "submittedBy", "intakeMethod", "version",
+                            "sourcePolicyState", "originalUrl", "canonicalUrl", "sourceId",
+                        )}, "target_version": 1, "execution_actor": "migration_worker"}),
+                        migration_time,
                     ),
                     tenant_id=i_tenant,
                 )
@@ -742,39 +946,50 @@ class IntakeMigrator:
                 raw_uri = legacy_intake.get("rawObjectUri") or legacy_intake.get("raw_object_uri")
                 snap_sha = legacy_intake.get("rawSnapshotSha256")
 
-                if not raw_uri:
+                raw_snap = legacy_intake.get("rawSnapshot")
+                raw_snap_bytes = b""
+                if isinstance(raw_snap, bytes):
+                    raw_snap_bytes = raw_snap
+                elif isinstance(raw_snap, str):
+                    raw_snap_bytes = raw_snap.encode("utf-8") if raw_snap.strip() else b""
+                elif isinstance(raw_snap, dict) and raw_snap:
+                    raw_snap_bytes = json.dumps(raw_snap, sort_keys=True, ensure_ascii=False).encode("utf-8")
+                computed_sha = hashlib.sha256(raw_snap_bytes).hexdigest()
+                checksum_conflict = snap_sha is not None and (
+                    not isinstance(snap_sha, str) or snap_sha.lower() != computed_sha
+                )
+                snapshot_valid = (
+                    bool(raw_snap_bytes) and _artifact_uri(raw_uri) and not checksum_conflict
+                    and (urlsplit(raw_uri).scheme != "gs" or (
+                        type(legacy_intake.get("objectGeneration")) is int and legacy_intake["objectGeneration"] > 0
+                    ))
+                    and _historical_time(legacy_intake.get("capturedAt"))
+                    and _historical_time(legacy_intake.get("observedAt"))
+                    and legacy_intake.get("captureMethod") in {"SERVER_RETRIEVAL", "OPERATOR_UPLOAD", "APPROVED_FEED", "MANUAL_ENTRY"}
+                    and all(isinstance(legacy_intake.get(key), str) and legacy_intake[key].strip()
+                            for key in ("mediaType", "retentionClass", "encryptionKeyRef"))
+                )
+                if not snapshot_valid:
                     findings_count += 1
                     self._create_finding(
-                        tenant_id=i_tenant,
-                        source_kind="snapshot",
-                        source_id=l_id,
+                        tenant_id=i_tenant, source_kind="snapshot", source_id=l_id,
                         target_ids=[intake_uuid],
-                        finding_type="MISSING_EVIDENCE",
-                        severity="WARNING",
-                        expected={"rawObjectUri": "valid artifact URI"},
-                        actual={"rawObjectUri": None},
+                        finding_type="CHECKSUM_MISMATCH" if checksum_conflict else "MISSING_EVIDENCE",
+                        severity="BLOCKING", expected={"raw_evidence_and_provenance": True},
+                        actual={"raw_evidence_present": bool(raw_snap_bytes), "rawObjectUri": raw_uri,
+                                "declared_sha256": snap_sha, "computed_sha256": computed_sha if raw_snap_bytes else None},
                     )
-                    raw_uri = f"unverified://missing-snapshot/{snap_id}"
 
-                if "rawSnapshot" in legacy_intake:
-                    raw_snap = legacy_intake["rawSnapshot"]
-                    if isinstance(raw_snap, bytes):
-                        raw_snap_bytes = raw_snap
-                    elif isinstance(raw_snap, str):
-                        raw_snap_bytes = raw_snap.encode("utf-8")
-                    else:
-                        raw_snap_bytes = json.dumps(raw_snap, sort_keys=True, ensure_ascii=False).encode("utf-8")
-
-                    computed_sha = hashlib.sha256(raw_snap_bytes).hexdigest()
-                    final_sha = snap_sha or computed_sha
+                if snapshot_valid:
+                    final_sha = computed_sha
 
                     insert_snap_sql = """
                         INSERT INTO intake.source_snapshots (
                             source_snapshot_id, tenant_id, intake_id, source_id,
                             original_url, canonical_url, raw_object_uri, content_sha256,
                             media_type, byte_length, captured_at, observed_at,
-                            capture_method, retention_class, encryption_key_ref, version
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            capture_method, retention_class, encryption_key_ref, version, object_generation, residency_mode
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """
                     self._execute(
                         insert_snap_sql,
@@ -787,22 +1002,30 @@ class IntakeMigrator:
                             canon_url,
                             raw_uri,
                             final_sha,
-                            "application/json",
+                            legacy_intake["mediaType"],
                             len(raw_snap_bytes),
-                            sub_time,
-                            sub_time,
-                            "SERVER_RETRIEVAL",
-                            "STANDARD",
-                            "kms://default-key",
+                            legacy_intake["capturedAt"],
+                            legacy_intake["observedAt"],
+                            legacy_intake["captureMethod"],
+                            legacy_intake["retentionClass"],
+                            legacy_intake["encryptionKeyRef"],
                             1,
+                            legacy_intake.get("objectGeneration"),
+                            legacy_intake.get("residencyMode") or "TW_ONLY",
                         ),
                         tenant_id=i_tenant,
                     )
 
-                    if "parsedFields" in legacy_intake:
-                        parser_rel_id = ensure_uuid(get_val(parser_release, "parser_release_id") or f"parser-{get_val(parser_release, 'semantic_version') or '1.4'}")
-                        check_pr_sql = "SELECT parser_release_id FROM intake.parser_releases WHERE parser_release_id = %s"
-                        if self._execute(check_pr_sql, (parser_rel_id,)):
+                    if legacy_intake.get("parsedFields"):
+                        # Use only the complete provenance accepted at registration;
+                        # never substitute an older release found by intake aliases.
+                        if (isinstance(legacy_intake["parsedFields"], dict)
+                                and legacy_intake.get("parserRunStatus") == "SUCCEEDED"
+                                and registered_parser
+                                and registered_parser["source_id"] == i_source
+                                and registered_parser["semantic_version"] == legacy_intake.get("parserVersion")
+                                and registered_parser["validation_status"] in {"VALIDATED", "CANARY", "PRODUCTION", "DEPRECATED", "ROLLED_BACK"}):
+                            parser_rel_id = registered_parser["parser_release_id"]
                             parsed_fields = legacy_intake["parsedFields"]
                             insert_parser_run_sql = """
                                 INSERT INTO intake.parser_runs (
@@ -822,8 +1045,8 @@ class IntakeMigrator:
                                     parser_rel_id,
                                     "SUCCEEDED",
                                     json.dumps(parsed_fields),
-                                    json.dumps(parsed_fields),
-                                    ensure_uuid("system"),
+                                    json.dumps(legacy_intake.get("normalizedFields")),
+                                    corr_id,
                                     1,
                                 ),
                                 tenant_id=i_tenant,
@@ -836,7 +1059,7 @@ class IntakeMigrator:
                                 source_id=l_id,
                                 target_ids=[intake_uuid],
                                 finding_type="MISSING_EVIDENCE",
-                                severity="WARNING",
+                                severity="BLOCKING",
                                 expected={"parser_release_exists": True},
                                 actual={"parser_release_exists": False},
                             )
@@ -889,9 +1112,9 @@ class IntakeMigrator:
                             i_tenant,
                             intake_uuid,
                             outcome,
-                            "APPROVED",
-                            float(match_res.get("confidence") or 1.0),
-                            "system",
+                            "PENDING_REVIEW",
+                            float(match_res.get("confidence") or 0.0),
+                            "migration_worker",
                             1,
                         ),
                         tenant_id=i_tenant,
@@ -940,28 +1163,8 @@ class IntakeMigrator:
                             tenant_id=i_tenant,
                         )
 
-                    match_dec_id = ensure_uuid(f"MDEC-{l_id}")
-                    insert_match_dec_sql = """
-                        INSERT INTO identity.match_decisions (
-                            match_decision_id, tenant_id, match_case_id, decision_type,
-                            status, proposer_subject_id, reason, before_graph, after_graph, version
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 1)
-                    """
-                    self._execute(
-                        insert_match_dec_sql,
-                        (
-                            match_dec_id,
-                            i_tenant,
-                            match_case_id,
-                            "CREATE" if outcome == "NEW" else "DUPLICATE",
-                            "APPROVED",
-                            ensure_uuid("system"),
-                            "Legacy match backfill",
-                            "{}",
-                            "{}",
-                        ),
-                        tenant_id=i_tenant,
-                    )
+                    # A match result is evidence, not an independently reviewed decision.
+                    # Do not invent an approver or an APPROVED match_decision.
 
                 reconciled_count += 1
                 processed_intake_uuids.append(intake_uuid)
@@ -987,8 +1190,8 @@ class IntakeMigrator:
                         or get_val(legacy_lst, "observed_at")
                         or get_val(legacy_lst, "firstSeenAt")
                     )
-                    if date_str and isinstance(date_str, str):
-                        lst_month = date_str[:7]
+                    lst_month = _partition_month(date_str)
+                    if lst_month:
                         listing_to_month[listing_uuid] = lst_month
 
                 if month:
@@ -1275,8 +1478,7 @@ class IntakeMigrator:
                         or get_val(candidate_site, "submittedAt")
                         or get_val(candidate_site, "submitted_at")
                     )
-                    if date_str and isinstance(date_str, str):
-                        c_month = date_str[:7]
+                    c_month = _partition_month(date_str)
 
                 if month:
                     if not c_month or c_month != month:
@@ -1503,7 +1705,12 @@ class IntakeMigrator:
                 "tenant_id": t_key,
                 "source_id": source_id or "ALL",
                 "month": month or "ALL",
+                "month_basis": "UTC",
                 "partition_key": p_key,
+                "proof_scope": "counts_and_ids_only_not_field_or_evidence_parity",
+                "intakes_received": len(normalized_inputs),
+                "intakes_quarantined": intake_quarantined,
+                "intakes_excluded": intake_excluded,
                 "intakes": len(processed_intake_uuids),
                 "listings": len(processed_listing_uuids),
                 "candidates": len(processed_candidate_uuids),
@@ -1573,6 +1780,9 @@ class IntakeMigrator:
             "dry_run": dry_run,
             "status": "success" if not dry_run else "dry_run",
             "counts": {
+                "intakes_received": len(normalized_inputs),
+                "intakes_quarantined": intake_quarantined,
+                "intakes_excluded": intake_excluded,
                 "intakes_processed": reconciled_count,
                 "listings_processed": len(processed_listing_uuids),
                 "candidates_processed": len(processed_candidate_uuids),
@@ -1764,7 +1974,7 @@ class IntakeMigrator:
                     r["intake_id"]
                     for r in intake_rows
                     if (p_src is None or p_src == "ALL" or r.get("source_id") == p_src)
-                    and (p_month is None or p_month == "ALL" or (r.get("submitted_at") and str(r.get("submitted_at"))[:7] == p_month))
+                    and (p_month is None or p_month == "ALL" or _partition_month(r.get("submitted_at")) == p_month)
                 ]
                 p_intake_sha = calculate_checksum(p_intake_ids)
                 exp_p_intake_c = exp_dict.get("intakes")
@@ -1992,6 +2202,7 @@ class IntakeMigrator:
             "open_findings": open_findings,
             "blocking_findings": blocking_findings,
             "shadow_comparison_success": shadow_comparison_success,
+            "proof_scope": "counts_and_ids_only_not_field_or_evidence_parity",
             "failures": {
                 "duplicate_promotions": len(pd_dup),
                 "blocking_reconciliation_findings": blocking_findings,
@@ -1999,13 +2210,208 @@ class IntakeMigrator:
         }
 
 
+def inventory_intakes(engine: Any, tenant_id: str, *, source_id: str | None = None,
+                      month: str | None = None, limit: int = 10000) -> dict[str, Any]:
+    """Bounded operational input to the existing migration, never a cutover proof.
+
+    Read physical records, not Operator projections (which hide legacy mirrors).
+    Keep malformed history visible and compare only unambiguous logical IDs using
+    the original backfill mapping. The caller owns/ closes the non-bootstrapping
+    engine; every read here uses one repeatable-read, read-only snapshot.
+    """
+    from time import monotonic
+
+    from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+    from shared.infrastructure.persistence.postgresql import PostgresDocumentStore
+
+    deadline = monotonic() + 30
+    tenant_id = str(uuid.UUID(tenant_id))
+    if not 1 <= limit <= 10000:
+        raise ValueError("Invalid inventory limit")
+    store = PostgresDocumentStore(engine)
+    scoped = TenantScopedDocumentStore(store, tenant_id)
+    collection = intake_schema._STATE_COLLECTIONS["intakes"]
+    models: dict[str, Any] = {}
+    ids: dict[str, set[str]] = {}
+    facts: dict[str, set[tuple[str, str]]] = {}
+    with engine.transaction():
+        engine.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        engine.execute("SET LOCAL statement_timeout = '5s'")
+        engine.execute("SET LOCAL lock_timeout = '1s'")
+        engine.execute("SET LOCAL idle_in_transaction_session_timeout = '10s'")
+        engine.query_one("SELECT set_config('app.tenant_id', ?, true)", (tenant_id,))
+        binding = engine.query_one(
+            "SELECT current_setting('app.tenant_id') AS tenant_id, "
+            "current_setting('transaction_read_only') AS read_only, "
+            "current_setting('transaction_isolation') AS isolation, "
+            "pg_current_snapshot()::text AS snapshot, transaction_timestamp() AS captured_at"
+        )
+        if (binding["tenant_id"] != tenant_id or binding["read_only"] != "on"
+                or binding["isolation"] != "repeatable read"):
+            raise ValueError("Unverified inventory context")
+        binding.update({"source_selector_sha256": hashlib.sha256(source_id.encode()).hexdigest() if source_id else None,
+                        "month": month, "month_basis": "UTC", "row_limit_per_model": limit})
+        unattributed_bridge_keys = None
+        for model in ("legacy_documents", "bridge_documents", "native_rows"):
+            engine.execute("SAVEPOINT inventory_model")
+            result = {"status": "available", "counts": {"observed": 0, "selected": 0, "excluded": 0, "unknown": 0},
+                      "findings": {}}
+            model_ids: set[str] = set()
+            model_facts: list[tuple[str, tuple[str, str]]] = []
+            try:
+                if model == "native_rows":
+                    rows = engine.query(
+                        'SELECT intake_id AS "id", tenant_id AS "tenantId", source_id AS "sourceId", '
+                        'submitted_at AS "submittedAt", submitter_subject_id AS "submittedBy", '
+                        'processing_state AS "stage", intake_method AS "intakeMethod", version, '
+                        'original_url AS "originalUrl", heat_zone_id AS "heatZoneId", '
+                        'brand_id AS "brandId", region_id AS "regionId", assigned_area_id AS "assignedAreaId" '
+                        'FROM intake.intakes WHERE tenant_id = ? ORDER BY intake_id LIMIT ?',
+                        (tenant_id, limit + 1),
+                    )
+                else:
+                    physical_collection = scoped._collection(collection) if model == "legacy_documents" else collection
+                    # Metadata bounds are checked before invoking the existing
+                    # decoder. Do not load every tenant through list_all().
+                    rows = engine.query(
+                        "SELECT doc_id, octet_length(data) AS bytes FROM odp_runtime.durable_documents "
+                        "WHERE collection = ? AND (? OR starts_with(doc_id, ?)) ORDER BY doc_id LIMIT ?",
+                        (physical_collection, model == "legacy_documents", tenant_id + ":", limit + 1),
+                    )
+                    if model == "bridge_documents":
+                        unattributed_bridge_keys = engine.query_one(
+                            "SELECT count(*) AS n FROM odp_runtime.durable_documents WHERE collection = ? "
+                            "AND doc_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:.+$'",
+                            (collection,),
+                        )["n"]
+                    if sum(row["bytes"] for row in rows) > 32 * 1024 * 1024:
+                        raise ValueError("payload_limit_exceeded")
+                if len(rows) > limit:
+                    raise ValueError("row_limit_exceeded")
+                result["counts"]["observed"] = len(rows)
+                for stored in rows:
+                    if monotonic() >= deadline:
+                        raise ValueError("inventory_deadline_exceeded")
+                    errors: dict[str, str] = {}
+                    try:
+                        if model == "native_rows":
+                            value = stored
+                        elif model == "legacy_documents":
+                            value = scoped.get(collection, stored["doc_id"])
+                        else:
+                            wrapped = store.get(collection, stored["doc_id"])
+                            if (not isinstance(wrapped, dict)
+                                    or set(wrapped) != {"_tenant_id", "_state_key", "value"}
+                                    or wrapped["_tenant_id"] != tenant_id
+                                    or not isinstance(wrapped["_state_key"], str)
+                                    or stored["doc_id"] != tenant_id + ":" + wrapped["_state_key"]):
+                                raise ValueError("Invalid bridge storage binding")
+                            value = intake_schema.DurableAssistedIntakeStore._unwrap(wrapped)
+                        if (not isinstance(value, dict) or (model == "bridge_documents"
+                                and not {"intake_id", "scope"}.issubset(value))):
+                            raise ValueError("Invalid Intake document")
+                        row, errors = _normalize_intake(value)
+                        if "tenantId" not in errors and str(uuid.UUID(row["tenantId"])) != tenant_id:
+                            errors["tenantId"] = "INVALID_SCOPE"
+                        if model != "native_rows":
+                            storage_id = stored["doc_id"] if model == "legacy_documents" else wrapped["_state_key"]
+                            if row.get("id") != storage_id:
+                                errors["id"] = "STATE_MAPPING_CONFLICT"
+                        if not errors:
+                            logical_id = ensure_uuid(row["id"])
+                            recorded_month = _partition_month(row["submittedAt"])
+                            model_facts.append((logical_id, (row["sourceId"], recorded_month)))
+                            if ((source_id is not None and row["sourceId"] != source_id)
+                                    or (month is not None and recorded_month != month)):
+                                result["counts"]["excluded"] += 1
+                                continue
+                            model_ids.add(logical_id)
+                            result["counts"]["selected"] += 1
+                            continue
+                    except Exception:
+                        # Neither decoder errors nor source fields are printable.
+                        # An SQL error aborts the savepoint and is caught below.
+                        errors = {"document": "MALFORMED_OR_UNREADABLE"}
+                    result["counts"]["unknown"] += 1
+                    for field, kind in errors.items():
+                        key = f"{kind}:{field}"
+                        result["findings"][key] = result["findings"].get(key, 0) + 1
+                # Detect a transaction aborted by a per-document read failure.
+                engine.query_one("SELECT 1 AS ok")
+                if result["counts"]["unknown"]:
+                    result["status"] = "findings"
+                for logical_id, fact in model_facts:
+                    facts.setdefault(logical_id, set()).add(fact)
+                ids[model] = model_ids
+            except Exception as exc:
+                engine.execute("ROLLBACK TO SAVEPOINT inventory_model")
+                code = getattr(exc, "sqlstate", None)
+                reason = {"42P01": "schema_absent", "3F000": "schema_absent", "42501": "permission_denied"}.get(code, "query_or_data_error")
+                if type(exc) is ValueError and str(exc) in {"row_limit_exceeded", "payload_limit_exceeded", "inventory_deadline_exceeded"}:
+                    reason = str(exc)
+                result = {"status": "unavailable", "counts": None, "findings": {reason: 1}}
+            finally:
+                engine.execute("RELEASE SAVEPOINT inventory_model")
+            models[model] = result
+
+    comparable = len(ids) == 3 and all(value["status"] == "available" for value in models.values())
+    conflicts = sum(len(values) > 1 for values in facts.values())
+    coverage = {"bridge_storage_scope": "tenant_prefixed_keys_only",
+                "unattributed_bridge_keys": unattributed_bridge_keys,
+                "scope_history_conflicting_logical_ids": conflicts}
+    complete = comparable and unattributed_bridge_keys == 0 and conflicts == 0
+    selected_sets = list(ids.values())
+    logical = {"status": "complete" if complete else "partial",
+               "selected_union_lower_bound": len(set().union(*selected_sets)),
+               "selected_union": len(set().union(*selected_sets)) if complete else None,
+               "overlap": {f"{left}__{right}": len(ids[left] & ids[right])
+                           for left in ids for right in ids if left < right}}
+    return {"action": "inventory", "status": "complete" if complete else "incomplete",
+            "partition_presence": ("nonempty" if logical["selected_union_lower_bound"] else "empty" if complete else "unknown"),
+            "proof_scope": "counts_and_ids_only_not_field_or_evidence_parity",
+            "binding": binding, "models": models, "coverage": coverage, "logical_ids": logical}
+
+
+def _inventory_cli(dsn: str, tenant_id: str, *, source_id: str | None, month: str | None,
+                   limit: int) -> dict[str, Any]:
+    """Own a bounded pool without bootstrap/validation, including failure cleanup."""
+    from urllib.parse import quote
+
+    from psycopg.conninfo import conninfo_to_dict
+    from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
+
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+    # Retain the CLI's libpq DSN as well as URL contract. Engine validates a URL;
+    # the supplied pool is the actual connection owner, not a second connection.
+    params = conninfo_to_dict(dsn)
+    database_url = "postgresql:///" + quote(params.get("dbname", "postgres"), safe="")
+    pool = ConnectionPool(dsn, min_size=1, max_size=1, open=False, timeout=5,
+                          kwargs={"row_factory": dict_row, "connect_timeout": 5})
+    engine = None
+    pool_logger = logging.getLogger("psycopg.pool")
+    was_disabled = pool_logger.disabled
+    pool_logger.disabled = True  # libpq diagnostics can contain source/connection data.
+    try:
+        pool.open(wait=True, timeout=5)
+        engine = PostgresEngine(database_url, pool=pool, bootstrap=False, validate_schema=False)
+        return inventory_intakes(engine, tenant_id, source_id=source_id, month=month, limit=limit)
+    finally:
+        if engine is not None:
+            engine.close()
+        pool.close()
+        pool_logger.disabled = was_disabled
+
+
 def main() -> None:
     """CLI entrypoint for executable staging backfill, verification, and rollback."""
     parser = argparse.ArgumentParser(description="Assisted Listing Intake Migration CLI (ODP-INTAKE-MIGRATION-001)")
-    parser.add_argument("--action", choices=["backfill", "verify", "rollback", "schema-upgrade", "schema-rollback"], default="backfill")
-    parser.add_argument("--tenant-id", type=str, default="00000000-0000-0000-0000-000000000001", help="Target tenant UUID")
+    parser.add_argument("--action", choices=["inventory", "backfill", "verify", "rollback", "schema-upgrade", "schema-rollback"], default="backfill")
+    parser.add_argument("--tenant-id", type=str, default=None, help="Target tenant UUID (required for inventory)")
+    parser.add_argument("--inventory-limit", type=int, default=10000, help="Inventory row bound per model (1..10000)")
     parser.add_argument("--source-id", type=str, default=None, help="Source system ID filter")
-    parser.add_argument("--month", type=str, default=None, help="YYYY-MM partition filter")
+    parser.add_argument("--month", type=str, default=None, help="YYYY-MM UTC instant-month partition filter (all actions)")
     parser.add_argument("--migration-ref", type=str, default="ODP-INTAKE-MIGRATION-001", help="Migration reference identifier")
     parser.add_argument("--dry-run", action="store_true", help="Execute without committing transaction")
     parser.add_argument("--resume", action="store_true", help="Resume backfill skipping existing records")
@@ -2020,6 +2426,32 @@ def main() -> None:
 
     dsn = args.db_dsn or os.environ.get("ODAY_DATABASE_URL") or os.environ.get("INTAKE_TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
+    if args.action == "inventory":
+        # Branch before connecting the writable migrator or applying any schema.
+        # Never echo argparse values, raw exception messages, source data or DSNs.
+        try:
+            if not args.tenant_id or not dsn or args.sqlite_path:
+                raise ValueError("Explicit tenant and PostgreSQL target required")
+            tenant = str(uuid.UUID(args.tenant_id))
+            if (not 1 <= args.inventory_limit <= 10000
+                    or (args.month is not None and not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", args.month))
+                    or (args.source_id is not None and not args.source_id.strip())
+                    or args.input_file or args.dry_run or args.resume):
+                raise ValueError("Invalid inventory arguments")
+        except ValueError:
+            print('{"action":"inventory","status":"error","reason":"invalid_inventory_arguments"}')
+            sys.exit(2)
+        try:
+            result = _inventory_cli(dsn, tenant, source_id=args.source_id, month=args.month, limit=args.inventory_limit)
+        except Exception:
+            print('{"action":"inventory","status":"unavailable","reason":"connection_or_transaction_error"}')
+            sys.exit(1)
+        print(json.dumps(result, indent=2))
+        sys.exit(0 if result["status"] == "complete" else 1)
+
+    # Keep the historical default for every original action, never inventory.
+    if args.tenant_id is None:
+        args.tenant_id = "00000000-0000-0000-0000-000000000001"
     if not dsn and not args.sqlite_path:
         print("Error: No database connection target provided. Specify --db-dsn/--dsn, --sqlite-path, or set ODAY_DATABASE_URL.", file=sys.stderr)
         sys.exit(1)

@@ -2918,6 +2918,12 @@ def test_sqlite_adjust_revalidation_stale_window_rejected_against_competitor_sto
     client_b = TestClient(app_b, headers=INTERVENTION_HEADERS, raise_server_exceptions=False)
 
     try:
+        # Each app builds its route table lazily on its first request (seconds
+        # under CI load). Pay that with a read on both apps before the timed
+        # read/save interleaving, so the competing command is not a cold start.
+        for client in (client_a, client_b):
+            warm = client.get(f"/interventions/{case_id}")
+            assert warm.status_code == 200, warm.text
         with ThreadPoolExecutor(max_workers=1) as pool:
             future_a = pool.submit(
                 client_a.post,
@@ -3002,6 +3008,12 @@ def test_sqlite_adjust_revalidation_stale_window_rejected_against_competitor_ass
     client_b = TestClient(app_b, headers=INTERVENTION_HEADERS, raise_server_exceptions=False)
 
     try:
+        # Each app builds its route table lazily on its first request (seconds
+        # under CI load). Pay that with a read on both apps before the timed
+        # read/save interleaving, so the competing command is not a cold start.
+        for client in (client_a, client_b):
+            warm = client.get(f"/interventions/{case_id}")
+            assert warm.status_code == 200, warm.text
         with ThreadPoolExecutor(max_workers=1) as pool:
             future_a = pool.submit(
                 client_a.post,

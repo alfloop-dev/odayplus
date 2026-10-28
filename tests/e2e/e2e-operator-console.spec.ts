@@ -237,7 +237,16 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
 
   // Test 1: Evidence Package produces mock file entry + audit event
   // Go to Evidence Package 匯出 tab
+  const exportSnapshotResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/operator/governance/snapshot") && response.request().method() === "GET",
+  );
   await page.goto("/operator?ws=govern&tab=evidencePackage");
+  const confirmedExportSnapshot = await exportSnapshotResponse;
+  expect(confirmedExportSnapshot.ok()).toBe(true);
+  expect((await confirmedExportSnapshot.json()).actionAuthority.verified).toBe(true);
+  await expect(page.getByTestId("governance-workspace")).toBeVisible();
+  await expect(page.getByTestId("governance-decision-authority")).toHaveAttribute("data-authority", "granted");
+  await expect(page.getByTestId("governance-decision-authority")).toHaveAttribute("title", /operations_manager/);
   await page.getByTestId("governance-tab-evidencePackage").click();
   await expect(
     page.getByRole("button", { name: "產生 Evidence Package", exact: true }),

@@ -143,7 +143,7 @@ on:
         default: ""
         type: string
       initial_release_recovery:
-        description: "Set only for the first release into a target that holds no approved release (build phase). The build reads the target back and refuses unless every Cloud Run service and job is absent; recovery for such a release is deleting the candidate and holding zero traffic, never a rollback."
+        description: "Set only for the first release into a target that holds no approved release (build phase; dev or staging). The build reads the target back and refuses unless every Cloud Run service and job is absent -- for ephemeral staging, this release's release-scoped names. A staging-sealed first release is the staging leg of production's first release: admission into staging or production re-reads that environment's target, binds the readback to the manifest digest, and refuses once production's lease store shows any other admitted release (staging reads it via vars.ODP_PRODUCTION_RELEASE_LEASE_STATE_URI and is refused without it). Recovery is never a rollback: dev and production delete the candidate and hold zero traffic; ephemeral staging holds the release-scoped namespace for forensics until cleanup."
         required: false
         default: false
         type: boolean
@@ -478,16 +478,25 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${HANDOFF_DIR}"
+          # Ephemeral staging has no long-lived names: the probe derives this
+          # release's release-scoped names from the release id instead.
+          if [ "${{ inputs.environment }}" = "staging" ]; then
+            target_args=(--staging-release-id "odp-${ODAY_RELEASE_SHA:0:12}")
+          else
+            target_args=(
+              --target "api=${API_SERVICE}"
+              --target "web=${WEB_SERVICE}"
+              --target "migration=${MIGRATION_JOB}"
+              --target "worker=${WORKER_JOB}"
+              --target "scheduler=${SCHEDULER_JOB}"
+            )
+          fi
           python3 delivery_toolchain/release/probe_release_target_absence.py \
             --environment "${{ inputs.environment }}" \
             --candidate-sha "${ODAY_RELEASE_SHA}" \
             --project "${GCP_PROJECT}" \
             --region "${GCP_REGION}" \
-            --target "api=${API_SERVICE}" \
-            --target "web=${WEB_SERVICE}" \
-            --target "migration=${MIGRATION_JOB}" \
-            --target "worker=${WORKER_JOB}" \
-            --target "scheduler=${SCHEDULER_JOB}" \
+            "${target_args[@]}" \
             --output "${HANDOFF_DIR}/initial-release-absence-readback.json"
 
       - name: Install Cosign
@@ -910,13 +919,24 @@ jobs:
 
       # The binding gate covers variable presence; this covers the one shape
       # requirement it cannot express -- lease state must be shared, not local.
+      # Production's store, when staging is handed it as first-release lineage,
+      # is held to the same shape: a runner-local directory or a bare bucket is
+      # not production's history. Unset, it is not passed and the verifier
+      # refuses a staging first release on its own.
       - name: Validate shared lease store configuration
         env:
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
+          PRODUCTION_LEASE_STATE_URI: ${{ vars.ODP_PRODUCTION_RELEASE_LEASE_STATE_URI }}
         run: |
           set -euo pipefail
           if [[ ! "${RELEASE_LEASE_STATE_URI}" =~ ^gs://[^/]+/.+ ]]; then
             echo "Error: durable lease admission requires a shared gs://bucket/prefix state URI." >&2
+            exit 1
+          fi
+          if [ "${RELEASE_ENVIRONMENT}" = "staging" ] && [ -n "${PRODUCTION_LEASE_STATE_URI:-}" ] \
+            && [[ ! "${PRODUCTION_LEASE_STATE_URI}" =~ ^gs://[^/]+/.+ ]]; then
+            echo "Error: ODP_PRODUCTION_RELEASE_LEASE_STATE_URI must be production's shared gs://bucket/prefix lease store." >&2
             exit 1
           fi
 
@@ -955,16 +975,25 @@ jobs:
           SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
         run: |
           set -euo pipefail
+          # Staging names come from the admitted manifest's release id; the
+          # probe refuses long-lived names for ephemeral staging.
+          if [ "${{ inputs.environment }}" = "staging" ]; then
+            target_args=()
+          else
+            target_args=(
+              --target "api=${API_SERVICE}"
+              --target "web=${WEB_SERVICE}"
+              --target "migration=${MIGRATION_JOB}"
+              --target "worker=${WORKER_JOB}"
+              --target "scheduler=${SCHEDULER_JOB}"
+            )
+          fi
           python3 delivery_toolchain/release/probe_release_target_absence.py \
             --environment "${{ inputs.environment }}" \
             --candidate-sha "${{ inputs.release_sha }}" \
             --project "${GCP_PROJECT}" \
             --region "${GCP_REGION}" \
-            --target "api=${API_SERVICE}" \
-            --target "web=${WEB_SERVICE}" \
-            --target "migration=${MIGRATION_JOB}" \
-            --target "worker=${WORKER_JOB}" \
-            --target "scheduler=${SCHEDULER_JOB}" \
+            "${target_args[@]}" \
             --manifest "${RELEASE_RECEIPT_DIR}/admitted-manifest/RELEASE_MANIFEST.json" \
             --receipt "${RELEASE_RECEIPT_DIR}/initial-release-recovery-receipt.json"
 
@@ -1020,6 +1049,15 @@ jobs:
           RELEASE_LEASE: ${{ inputs.release_lease }}
           ODP_RELEASE_LEASE_PUBLIC_KEY: ${{ vars.ODP_RELEASE_LEASE_PUBLIC_KEY }}
           RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
+          # Production's lease store, read by a staging first-release admission
+          # (production's history is not in the staging store). Unset in the
+          # staging environment, that admission is refused before consumption.
+          PRODUCTION_LEASE_STATE_URI: ${{ vars.ODP_PRODUCTION_RELEASE_LEASE_STATE_URI }}
+          # Production's own Artifact Registry, the one the deploy job promotes
+          # the manifest images into; read only for a production admission.
+          TARGET_GCP_REGION: ${{ vars.GCP_REGION }}
+          TARGET_GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          TARGET_GCP_AR_REPO: ${{ vars.GCP_AR_REPO }}
           API_IMAGE_INPUT: ${{ inputs.api_image }}
           WEB_IMAGE_INPUT: ${{ inputs.web_image }}
           WORKER_IMAGE_INPUT: ${{ inputs.worker_image }}
@@ -1029,6 +1067,28 @@ jobs:
           set -euo pipefail
           umask 077
           printf '%s' "${RELEASE_LEASE}" | base64 -d > "${RUNNER_TEMP}/release-lease.json"
+          # The re-read above writes this receipt only for a first-release
+          # manifest. The verifier requires it -- fresh and bound to this
+          # manifest digest -- whenever the manifest carries
+          # initial_release_recovery, so passing it only when present cannot
+          # admit a first release without it.
+          initial_release_args=()
+          if [ -f "${RELEASE_RECEIPT_DIR}/initial-release-recovery-receipt.json" ]; then
+            initial_release_args+=(--initial-release-receipt "${RELEASE_RECEIPT_DIR}/initial-release-recovery-receipt.json")
+          fi
+          # Opened by the verifier only for an initial-release manifest.
+          if [ "${RELEASE_ENVIRONMENT}" = "staging" ] && [ -n "${PRODUCTION_LEASE_STATE_URI:-}" ]; then
+            initial_release_args+=(--lineage-state-uri "${PRODUCTION_LEASE_STATE_URI}")
+          fi
+          # ODP-PROD-IMAGE-PROMOTION-001: production may be handed either the
+          # manifest's references or the same names and digests in its own
+          # registry. dev and staging are not given this, and the verifier
+          # refuses it for them. Unresolved variables make a malformed registry,
+          # which the verifier refuses before the lease is consumed.
+          promotion_args=()
+          if [ "${RELEASE_ENVIRONMENT}" = "production" ]; then
+            promotion_args+=("--target-registry=${TARGET_GCP_REGION}-docker.pkg.dev/${TARGET_GCP_PROJECT}/${TARGET_GCP_AR_REPO}")
+          fi
           uv run python delivery_toolchain/release/check_runtime_admission.py \
             --sha "${EVENT_SHA}" \
             --environment "${RELEASE_ENVIRONMENT}" \
@@ -1043,6 +1103,8 @@ jobs:
             --manifest "${RELEASE_RECEIPT_DIR}/admitted-manifest/RELEASE_MANIFEST.json" \
             --manifest-digest "${MANIFEST_DIGEST_INPUT}" \
             --require-manifest-digest \
+            "${initial_release_args[@]}" \
+            "${promotion_args[@]}" \
             --receipt "${RELEASE_RECEIPT_DIR}/release-admission-receipt.json"
 
       - name: Extract admitted manifest digest
@@ -1180,6 +1242,7 @@ jobs:
       name: ${{ inputs.environment }}
     outputs:
       manifest_digest: ${{ needs.build.outputs.manifest_digest || needs.admission.outputs.manifest_digest }}
+      production_backup_id: ${{ steps.prod-sql-backup.outputs.backup_id }}
     env:
       GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
@@ -1412,10 +1475,203 @@ jobs:
           uv run python -m delivery_toolchain.release.automatic_dev scheduler-baseline
           --output "${RUNNER_TEMP}/dev-scheduler-baseline-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
 
+      # ODP-PROD-IMAGE-PROMOTION-001: production deploys from its own Artifact
+      # Registry, never from the staging project the manifest's images were
+      # built in (2026-10-24 owner decision). After admission and before any
+      # Cloud Run change, the four manifest images are copied by digest -- with
+      # their Cosign signatures and SBOM attestations -- into
+      # GCP_REGION/GCP_PROJECT/GCP_AR_REPO of this environment, read back, and
+      # verified there. The manifest is the build run's own artifact, held to the
+      # digest admission consumed the lease for; it is not rewritten. Any failure
+      # stops the job: no outputs, so the deploy step below never receives a
+      # production reference and the deploy script refuses anything else.
+      - name: Download the admitted manifest for production image promotion
+        if: ${{ inputs.environment == 'production' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: runtime-release-manifest-${{ inputs.release_sha }}
+          run-id: ${{ inputs.manifest_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ env.RELEASE_RECEIPT_DIR }}/promotion-manifest
+
+      - name: Promote the admitted images into the production registry
+        id: promote-images
+        if: ${{ inputs.environment == 'production' }}
+        run: >-
+          uv run --frozen python delivery_toolchain/release/promote_release_images.py
+          --environment "${ODP_DEPLOY_ENV}"
+          --manifest "${RELEASE_RECEIPT_DIR}/promotion-manifest/RELEASE_MANIFEST.json"
+          --expected-sha "${ODAY_RELEASE_SHA}"
+          --expected-digest "${MANIFEST_DIGEST}"
+          "--target-registry=${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/${GCP_AR_REPO}"
+          --component-image "api=${API_IMAGE}"
+          --component-image "web=${WEB_IMAGE}"
+          --component-image "worker=${WORKER_IMAGE}"
+          --component-image "scheduler=${SCHEDULER_IMAGE}"
+          --receipt "${RELEASE_RECEIPT_DIR}/production-image-promotion.json"
+          --github-output "${GITHUB_OUTPUT}"
+
+      - name: Publish production image promotion receipt
+        if: ${{ always() && inputs.environment == 'production' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-image-promotion-receipt-${{ inputs.release_sha }}-${{ github.run_attempt }}
+          path: .odp_data/release/production-image-promotion.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # ODP-PROD-DEPLOY-SAFETY-001: the pre-switch production state is what a
+      # manual `bluegreen_release.py rollback` after the live gate restores to,
+      # so it is captured here, before the deploy script mutates anything, and
+      # published before the cutover can start. It used to run after the switch
+      # (recording green, not blue) into RUNNER_TEMP, which no upload reached.
+      # The snapshots keep only status.url and status.traffic, never the raw
+      # describe dump with its env block and secret selectors. A first release
+      # records both services as explicitly absent; a half-present target, a
+      # traffic split that cannot be restored, or any capture error stops the
+      # deploy before migrations or traffic.
+      - name: Capture pre-switch production blue-green state
+        id: prod-bluegreen-state
+        if: ${{ inputs.environment == 'production' }}
+        run: |
+          set -euo pipefail
+          state_dir="${RELEASE_RECEIPT_DIR}/production-bluegreen-state"
+          python3 product_ops/deployment/bluegreen_release.py \
+            --project "${GCP_PROJECT}" \
+            --region "${GCP_REGION}" \
+            capture-state \
+            --release-id "odp-${ODAY_RELEASE_SHA:0:12}" \
+            --api-service "${API_SERVICE}" \
+            --web-service "${WEB_SERVICE}" \
+            --output-dir "${state_dir}"
+          test -s "${state_dir}/api-traffic.json"
+          test -s "${state_dir}/web-traffic.json"
+          test -s "${state_dir}/release-state.json"
+          api_exists="$(python3 product_ops/deployment/cloud_run_traffic.py exists --description="${state_dir}/api-traffic.json")"
+          web_exists="$(python3 product_ops/deployment/cloud_run_traffic.py exists --description="${state_dir}/web-traffic.json")"
+          if [ "${api_exists}" != "${web_exists}" ]; then
+            echo "Error: API and Web must both exist or both be absent before a production release (api=${api_exists}, web=${web_exists})." >&2
+            exit 1
+          fi
+          if [ "${api_exists}" = "true" ]; then
+            python3 product_ops/deployment/cloud_run_traffic.py restore-arg --description="${state_dir}/api-traffic.json" >/dev/null
+            python3 product_ops/deployment/cloud_run_traffic.py restore-arg --description="${state_dir}/web-traffic.json" >/dev/null
+          fi
+          STATE_DIR="${state_dir}" python3 -c 'import json, os; from pathlib import Path; s=json.loads((Path(os.environ["STATE_DIR"]) / "release-state.json").read_text()); assert s["release_id"] == "odp-" + os.environ["ODAY_RELEASE_SHA"][:12]; assert s["api_traffic_snapshot_path"] == "api-traffic.json"; assert s["web_traffic_snapshot_path"] == "web-traffic.json"'
+          echo "previous_release_present=${api_exists}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish pre-switch production blue-green state
+        if: ${{ inputs.environment == 'production' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-bluegreen-prerelease-state-${{ inputs.release_sha }}-${{ github.run_attempt }}
+          path: .odp_data/release/production-bluegreen-state/
+          if-no-files-found: error
+          retention-days: 90
+
+      # ODP-PROD-DEPLOY-SAFETY-001: migrations run inside the deploy script and
+      # are expand-only, never reversed by any rollback. A point to restore the
+      # data to is therefore taken immediately before the deploy script, for
+      # production only, and confirmed by reading it back: the on-demand backup
+      # this run created must be listed SUCCESSFUL, or nothing is migrated.
+      - name: Take pre-migration production Cloud SQL backup
+        id: prod-sql-backup
+        if: ${{ inputs.environment == 'production' }}
+        run: |
+          set -euo pipefail
+          : "${GCP_CLOUD_SQL_INSTANCE:?GCP_CLOUD_SQL_INSTANCE is required for the production pre-migration backup}"
+          IFS=':' read -r -a sql_binding <<<"${GCP_CLOUD_SQL_INSTANCE}"
+          if [ "${#sql_binding[@]}" -ne 3 ] \
+            || [ "${sql_binding[0]}" != "${GCP_PROJECT}" ] \
+            || [ "${sql_binding[1]}" != "${GCP_REGION}" ] \
+            || [ -z "${sql_binding[2]}" ]; then
+            echo "Error: GCP_CLOUD_SQL_INSTANCE must be ${GCP_PROJECT}:${GCP_REGION}:<instance> for the production backup." >&2
+            exit 1
+          fi
+          sql_instance="${sql_binding[2]}"
+          backup_description="odp-predeploy-${ODAY_RELEASE_SHA:0:12}-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          backup_listing="${RUNNER_TEMP}/production-predeploy-backups.json"
+          gcloud sql backups create \
+            --instance="${sql_instance}" \
+            --project="${GCP_PROJECT}" \
+            --description="${backup_description}" \
+            --quiet
+          gcloud sql backups list \
+            --instance="${sql_instance}" \
+            --project="${GCP_PROJECT}" \
+            --format=json >"${backup_listing}"
+          export BACKUP_LISTING="${backup_listing}"
+          export BACKUP_DESCRIPTION="${backup_description}"
+          export SQL_INSTANCE="${sql_instance}"
+          export BACKUP_RECEIPT="${RELEASE_RECEIPT_DIR}/production-predeploy-cloud-sql-backup.json"
+          python3 - >"${RUNNER_TEMP}/production-predeploy-backup-id" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          rows = json.loads(Path(os.environ["BACKUP_LISTING"]).read_text(encoding="utf-8"))
+          mine = [
+              row for row in rows
+              if isinstance(row, dict) and row.get("description") == os.environ["BACKUP_DESCRIPTION"]
+          ]
+          if not (
+              len(mine) == 1
+              and str(mine[0].get("id") or "").strip()
+              and mine[0].get("status") == "SUCCESSFUL"
+              and mine[0].get("type") == "ON_DEMAND"
+          ):
+              found = [(row.get("id"), row.get("status"), row.get("type")) for row in mine]
+              sys.exit(
+                  f"Error: pre-migration backup {os.environ['BACKUP_DESCRIPTION']} "
+                  f"could not be confirmed SUCCESSFUL: {found}"
+              )
+          backup = mine[0]
+          receipt = {
+              "kind": "production-predeploy-cloud-sql-backup",
+              "environment": "production",
+              "release_sha": os.environ["ODAY_RELEASE_SHA"],
+              "manifest_digest": os.environ["MANIFEST_DIGEST"],
+              "cloud_sql_instance": os.environ["GCP_CLOUD_SQL_INSTANCE"],
+              "instance": os.environ["SQL_INSTANCE"],
+              "backup_id": str(backup["id"]),
+              "status": backup["status"],
+              "type": backup["type"],
+              "description": backup["description"],
+              "window_start_time": backup.get("windowStartTime", ""),
+              "end_time": backup.get("endTime", ""),
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "github_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+          }
+          out = Path(os.environ["BACKUP_RECEIPT"])
+          out.parent.mkdir(parents=True, exist_ok=True)
+          out.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print(receipt["backup_id"])
+          PY
+          backup_id="$(cat "${RUNNER_TEMP}/production-predeploy-backup-id")"
+          echo "backup_id=${backup_id}" >> "${GITHUB_OUTPUT}"
+          echo "Production pre-migration Cloud SQL backup: ${sql_instance} backup ${backup_id} (${backup_description})" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Publish production pre-migration Cloud SQL backup record
+        if: ${{ always() && inputs.environment == 'production' && steps.prod-sql-backup.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-predeploy-cloud-sql-backup-${{ inputs.release_sha }}-${{ github.run_attempt }}
+          path: .odp_data/release/production-predeploy-cloud-sql-backup.json
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Deploy Cloud Run by immutable digest
         id: live-deploy
         if: ${{ inputs.environment != 'staging' }}
         env:
+          # Production deploys the promoted references (same digests, its own
+          # registry); the promotion step is skipped elsewhere, so dev keeps the
+          # job-level build output or handoff input unchanged.
+          API_IMAGE: ${{ steps.promote-images.outputs.api_image || needs.build.outputs.api_image || inputs.api_image }}
+          WEB_IMAGE: ${{ steps.promote-images.outputs.web_image || needs.build.outputs.web_image || inputs.web_image }}
+          WORKER_IMAGE: ${{ steps.promote-images.outputs.worker_image || needs.build.outputs.worker_image || inputs.worker_image }}
+          SCHEDULER_IMAGE: ${{ steps.promote-images.outputs.scheduler_image || needs.build.outputs.scheduler_image || inputs.scheduler_image }}
           # Only the dev-admin profile reads these: the live gate signs in
           # through the Web password form as the single pure platform_admin
           # account, verifies must_change enforcement, first-login rotation
@@ -1601,23 +1857,6 @@ jobs:
             .odp_data/release/staging-lifecycle-hold.json
           if-no-files-found: ignore
 
-      - name: Verify production blue-green deployment state
-        if: ${{ inputs.environment == 'production' }}
-        run: |
-          set -euo pipefail
-          prod_state_dir="${RUNNER_TEMP}/prod-bluegreen-state"
-          python3 product_ops/deployment/bluegreen_release.py capture-state \
-            --release-id "odp-${ODAY_RELEASE_SHA:0:12}" \
-            --api-service "${API_SERVICE}" \
-            --web-service "${WEB_SERVICE}" \
-            --project "${GCP_PROJECT}" \
-            --region "${GCP_REGION}" \
-            --output-dir "${prod_state_dir}"
-          test -s "${prod_state_dir}/api-traffic.json"
-          test -s "${prod_state_dir}/web-traffic.json"
-          test -s "${prod_state_dir}/release-state.json"
-          PROD_STATE_DIR="${prod_state_dir}" uv run --frozen python -c 'import json, os; from pathlib import Path; d=Path(os.environ["PROD_STATE_DIR"]); s=json.loads((d / "release-state.json").read_text()); assert s["release_id"] == "odp-" + os.environ["ODAY_RELEASE_SHA"][:12]; traffic=[json.loads((d / n).read_text()).get("status", {}).get("traffic") for n in ("api-traffic.json", "web-traffic.json")]; assert all(isinstance(item, list) and item for item in traffic)'
-
       - name: Download the successfully deployed manifest
         if: ${{ success() && inputs.environment == 'dev' }}
         uses: actions/download-artifact@v4
@@ -1682,6 +1921,8 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: staging
+    outputs:
+      watch_verified: ${{ steps.watch-receipt.outputs.verified }}
     env:
       GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
@@ -1790,14 +2031,43 @@ jobs:
           STAGING_STATE_DIR="${STAGING_STATE_DIR}" TFVARS_FILE="${tfvars_file}" \
             uv run --frozen python -c 'import json, os; from pathlib import Path; d=Path(os.environ["STAGING_STATE_DIR"]); out=json.loads((d / "staging-terraform-outputs.json").read_text()); tf=json.loads(Path(os.environ["TFVARS_FILE"]).read_text()); assert os.environ["MANIFEST_DIGEST"].startswith("sha256:"); assert out["release_id"] == os.environ["STAGING_RELEASE_ID"]; assert tf["release_id"] == os.environ["STAGING_RELEASE_ID"]; assert tf["candidate_sha"] == os.environ["ODAY_RELEASE_SHA"]; assert tf["manifest_digest"] == os.environ["MANIFEST_DIGEST"]'
 
+      # ODP-PROD-DEPLOY-SAFETY-001: this job starts as soon as the production
+      # deploy succeeds, but the receipt it needs proves at least 15 minutes of
+      # provider-signed observation of the release that deploy just switched
+      # to, written by the production watch owner outside this run. On the
+      # first production release (and on every release, unless the staging
+      # approval is held for the whole window) that object cannot exist yet,
+      # so `gcloud storage cp` failed and turned a good release run red.
+      #
+      # An absent receipt (404) now defers: staging stays up, nothing is
+      # deleted, and the job says so; re-run this job once the watch owner has
+      # written the receipt. A receipt that is present is still verified and
+      # any defect in it fails the job, as does every other storage error.
+      # The staging bundle check above runs on every attempt, so the
+      # staging-digest == production-digest binding is never skipped.
       - name: Read and verify production watch receipt with staging identity
+        id: watch-receipt
         run: |
           set -euo pipefail
+          describe_err="${RUNNER_TEMP}/production-watch-receipt-describe.err"
+          if ! gcloud storage objects describe "${ODP_PRODUCTION_WATCH_CLOSEOUT_URI}" --format='value(name)' >/dev/null 2>"${describe_err}"; then
+            cat "${describe_err}" >&2
+            if grep -Eqi '404|not found' "${describe_err}"; then
+              echo "::warning title=Staging closeout deferred::No production watch receipt at ${ODP_PRODUCTION_WATCH_CLOSEOUT_URI} yet; staging ${STAGING_RELEASE_ID} is retained. Re-run this job after the watch window receipt is written."
+              echo "Staging closeout deferred: production watch receipt for ${ODAY_RELEASE_SHA} is not written yet; staging ${STAGING_RELEASE_ID} retained." >> "${GITHUB_STEP_SUMMARY}"
+              echo "verified=false" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+            echo "Error: production watch receipt could not be read; refusing to guess whether it exists." >&2
+            exit 1
+          fi
           gcloud storage cp "${ODP_PRODUCTION_WATCH_CLOSEOUT_URI}" "${STAGING_WATCH_RECEIPT}"
           test -s "${STAGING_WATCH_RECEIPT}"
           WATCH_RECEIPT="${STAGING_WATCH_RECEIPT}" uv run --frozen python -c 'from shared.observability.watch_window import verify_watch_window_receipt; import os; verify_watch_window_receipt(os.environ["ODAY_RELEASE_SHA"], os.environ["WATCH_RECEIPT"])'
+          echo "verified=true" >> "${GITHUB_OUTPUT}"
 
       - name: Cleanup staging after verified production watch closeout
+        if: ${{ steps.watch-receipt.outputs.verified == 'true' }}
         run: |
           set -euo pipefail
           inventory_file="$(printf '%s\n' "${STAGING_STATE_DIR}"/*.inventory.json)"
@@ -1816,7 +2086,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: runtime-release-production-staging-closeout-receipts
+          # The job is re-run after a deferred closeout; one name per attempt.
+          name: runtime-release-production-staging-closeout-receipts-${{ github.run_attempt }}
           path: |
             .odp_data/release/staging-closeout-environment-receipt.json
             .odp_data/release/production-watch-window-receipt.json

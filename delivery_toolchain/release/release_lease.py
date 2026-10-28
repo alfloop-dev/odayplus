@@ -589,9 +589,20 @@ class LeaseStateStore:
         if not path.exists():
             return None
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            # Bytes that are not UTF-8 are as unreadable as bytes that are not
+            # JSON. Left unwrapped, UnicodeDecodeError escapes every caller that
+            # catches LeaseStateError and the verifier dies without a receipt.
             raise LeaseStateError(f"lease state record {path} is unreadable: {exc}") from exc
+        # A record that exists but is not an object (``null``, a list, a bare
+        # string) is damage, not absence. Returning None here would let
+        # list_records drop it and present a corrupted history as an empty one,
+        # which is exactly what an initial-release lineage check must not see.
+        # The GCS backend refuses the same shape in _read.
+        if not isinstance(record, dict):
+            raise LeaseStateError(f"lease state record {path} is malformed")
+        return record
 
     def record_issued(self, lease: dict[str, Any], *, issued_by: str = "supervisor") -> dict[str, Any]:
         """Persist a freshly minted lease. Fails closed if the id already exists."""
@@ -679,8 +690,10 @@ class LeaseStateStore:
             try:
                 try:
                     record = json.loads(handle.read())
-                except json.JSONDecodeError as exc:
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                     raise LeaseStateError(f"lease state record {path} is unreadable: {exc}") from exc
+                if not isinstance(record, dict):
+                    raise LeaseStateError(f"lease state record {path} is malformed")
 
                 current = record.get("state")
                 if current != STATE_ISSUED:

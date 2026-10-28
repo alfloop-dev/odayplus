@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-7a9bf23f727539bad7032043e0c92ebd",
+  "serialNumber": "urn:uuid:sha256-c5ec94d7b82d2f462bf2715af2a91a95",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-24T02:29:46.909677+00:00",
+    "timestamp": "2026-10-24T08:14:52.039136+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@888e50c0a20084f41e7c057b24d068c69e373a01",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@888e50c0a20084f41e7c057b24d068c69e373a01"
+      "purl": "pkg:generic/alfloop-dev/odayplus@efbdaf4365e12c2b5cff13f5a7c40bd40495c857",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@efbdaf4365e12c2b5cff13f5a7c40bd40495c857"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "888e50c0a20084f41e7c057b24d068c69e373a01"
+        "value": "efbdaf4365e12c2b5cff13f5a7c40bd40495c857"
       },
       {
         "name": "sbom-hash",
-        "value": "7a9bf23f727539bad7032043e0c92ebd2e3b0ce23cd752fed6057b4204a5d0eb"
+        "value": "c5ec94d7b82d2f462bf2715af2a91a955d7661a5c0532b97d5ed9799a16aed1f"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:ec7cd78225255848f0acacdfc7c61c9e125fcad454bc65de5ad9089e02fbb308"
+        "value": "sha256:a56087db0c4df2903b1bb44816f92e014646e6cf7a457c3fa9d35a08feb6e71a"
       },
       {
         "name": "container-base-images",
@@ -3815,10 +3815,10 @@
     },
     {
       "name": "@vitest/expect",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "type": "library",
-      "purl": "pkg:npm/@vitest/expect@4.1.11",
-      "bom-ref": "pkg:npm/@vitest/expect@4.1.11",
+      "purl": "pkg:npm/@vitest/expect@4.1.12",
+      "bom-ref": "pkg:npm/@vitest/expect@4.1.12",
       "scope": "optional",
       "licenses": [
         {
@@ -3830,16 +3830,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "VX2x5vNJXET47KAFzwERI+KRMtTTCSWTfSMKsW7JsUsXV4psq++e3DvZpuTDOpHcxytiDs6p2nhVb2tVDiiUYw=="
+          "content": "vFlTt+YEu9WBpNjdGayNmlMVzrWPi1+sv853/7t2FU7hpO5gAFBKHzQmkCq5Xjpr+evegF2994LQT3hF3mRlqQ=="
         }
       ]
     },
     {
       "name": "@vitest/mocker",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "type": "library",
-      "purl": "pkg:npm/@vitest/mocker@4.1.11",
-      "bom-ref": "pkg:npm/@vitest/mocker@4.1.11",
+      "purl": "pkg:npm/@vitest/mocker@4.1.12",
+      "bom-ref": "pkg:npm/@vitest/mocker@4.1.12",
       "scope": "optional",
       "licenses": [
         {
@@ -3851,16 +3851,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "2XJVD55d1o5AZous5CCGKS74g/riOj9odEt2bQpCVZeblHyHdnMeFl4jl0XjU21stf4mbjUkew2eXQZt65g5CQ=="
+          "content": "fKShNpKZzupWZuY0z7egydvL0sqW4INEZBEExMBMAa6izlENEVHwoXgdaTCaBZ5fwlr4xf2o1wXC83n9RpO+NA=="
         }
       ]
     },
     {
       "name": "@vitest/pretty-format",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "type": "library",
-      "purl": "pkg:npm/@vitest/pretty-format@4.1.11",
-      "bom-ref": "pkg:npm/@vitest/pretty-format@4.1.11",
+      "purl": "pkg:npm/@vitest/pretty-format@4.1.12",
+      "bom-ref": "pkg:npm/@vitest/pretty-format@4.1.12",
       "scope": "optional",
       "licenses": [
         {
@@ -3872,16 +3872,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "yiZzPbGTS9Sr/JpFl8zHrcIkAofNbFV6k21vIgQN/cY/oxZeXhJv5sc/MBJ5jFKWmWs+oJHw0UXLZjmf931+Vw=="
+          "content": "XW9O8+Mxx4VpCtkYdMJLZQQwsVryP9wk7cPKDxtXFfwSak6yRh5+2fep/Y0XF/ElBvJHq8bcYdi6aeuai0opZA=="
         }
       ]
     },
     {
       "name": "@vitest/runner",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "type": "library",
-      "purl": "pkg:npm/@vitest/runner@4.1.11",
-      "bom-ref": "pkg:npm/@vitest/runner@4.1.11",
+      "purl": "pkg:npm/@vitest/runner@4.1.12",
+      "bom-ref": "pkg:npm/@vitest/runner@4.1.12",
       "scope": "optional",
       "licenses": [
         {
@@ -3893,16 +3893,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "LztvUgdwMNJMIkj3hQnnxiC2Xy1zNxq928W/xhjCLaNCzqTZOudjwbQf6v9IntZGPw132i2Lq2rgTRZHD3JHNw=="
+          "content": "NKlVKCr5QnCe8jijdMnmkpHHU+WTqiLFR6G0pHji9uRjXK9xJl1k1nTw6F3pOOj2PDcsDt2GKQMI7wIsaT491w=="
         }
       ]
     },
     {
       "name": "@vitest/snapshot",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "type": "library",
-      "purl": "pkg:npm/@vitest/snapshot@4.1.11",
-      "bom-ref": "pkg:npm/@vitest/snapshot@4.1.11",
+      "purl": "pkg:npm/@vitest/snapshot@4.1.12",
+      "bom-ref": "pkg:npm/@vitest/snapshot@4.1.12",
       "scope": "optional",
       "licenses": [
         {
@@ -3914,16 +3914,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "pN7ikn1ON7h8ee4gIAp4AzyK+zBtJPzVbqOgu5LCEh4VaJVbPQcgYQYJIMGQPXVeJJq1fnfazis7a5pFNPahog=="
+          "content": "ko1y1Qgb/slzQ9mr+b89Cuqud8WG1TKtsPD8r7ZUBdvVOGt85Af2HwCqHujrhwJq95hs/9RM7fcAPg57o1vlzw=="
         }
       ]
     },
     {
       "name": "@vitest/spy",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "type": "library",
-      "purl": "pkg:npm/@vitest/spy@4.1.11",
-      "bom-ref": "pkg:npm/@vitest/spy@4.1.11",
+      "purl": "pkg:npm/@vitest/spy@4.1.12",
+      "bom-ref": "pkg:npm/@vitest/spy@4.1.12",
       "scope": "optional",
       "licenses": [
         {
@@ -3935,16 +3935,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "apNa/prQy2qCeywhnixOHPRCgGNhvg7T4Dapfl1GahLp/R+uhBm5cPyFoNVyqsNd2h1nJxL6BqqdIjiABL60YA=="
+          "content": "RGq9x4JNGNTZHEJxvN0oSiJjeSCExm0n2gZKKJZHY9cX5AVA6M7VJILBT3ZJ/tJ/0J9uWT7fETV9/btoi//vSg=="
         }
       ]
     },
     {
       "name": "@vitest/utils",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "type": "library",
-      "purl": "pkg:npm/@vitest/utils@4.1.11",
-      "bom-ref": "pkg:npm/@vitest/utils@4.1.11",
+      "purl": "pkg:npm/@vitest/utils@4.1.12",
+      "bom-ref": "pkg:npm/@vitest/utils@4.1.12",
       "scope": "optional",
       "licenses": [
         {
@@ -3956,7 +3956,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "zTCVGpyFsGWBhllOyKlTw/vnr6D9qxsfSDyfbyZmTyjHw5N/VuvzHpHoQjm2ZJzn4RJgx5w4r7V0er69CmLgPQ=="
+          "content": "Q3awXrwOfEV+qc3WmO5ONyE0yO7Q1gQ9/oyHxGLZ/pl7N3NO/ZztqQwKLuwMkV+CA1JYSIeO3gkHnRDIo4AVaA=="
         }
       ]
     },
@@ -9187,10 +9187,10 @@
     },
     {
       "name": "happy-dom",
-      "version": "20.11.1",
+      "version": "21.0.4",
       "type": "library",
-      "purl": "pkg:npm/happy-dom@20.11.1",
-      "bom-ref": "pkg:npm/happy-dom@20.11.1",
+      "purl": "pkg:npm/happy-dom@21.0.4",
+      "bom-ref": "pkg:npm/happy-dom@21.0.4",
       "scope": "optional",
       "licenses": [
         {
@@ -9202,7 +9202,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "XSt8tMzbW9ymE7687xztkO1ckR7qJNQ3LywY9vlYGhGi3zXrGBHuUo2Cl1ztZaICW+1eAGdkLbj6iwVqDT33kg=="
+          "content": "tFm+GaLBgo6o0awHnvHaNoraVo27qJ+2tZEtZ+cIa08hXbeitrxAJajLI05hsUy/2/YTKcUjQYzHe5mCcraLBw=="
         }
       ],
       "supplier": {
@@ -18000,10 +18000,10 @@
     },
     {
       "name": "vite",
-      "version": "8.1.5",
+      "version": "8.1.6",
       "type": "library",
-      "purl": "pkg:npm/vite@8.1.5",
-      "bom-ref": "pkg:npm/vite@8.1.5",
+      "purl": "pkg:npm/vite@8.1.6",
+      "bom-ref": "pkg:npm/vite@8.1.6",
       "scope": "optional",
       "licenses": [
         {
@@ -18015,7 +18015,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "7ULLwsCdYx/nRyrpiEwvqb5TFHrMVZyBt+rg/OAXT7rgj/z+DtTDyKFeLAdDkubDVDKD8jOsndmy7m55XcfUsw=="
+          "content": "aRAHIxx5SW5zc1sMqFwJU/t5qaFfXb5Hj0J7W0VXihu/X99+346tz6080tO1T1xVIJORX/b3zVTXGFqUXh35uw=="
         }
       ],
       "supplier": {
@@ -18024,10 +18024,10 @@
     },
     {
       "name": "vitest",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "type": "library",
-      "purl": "pkg:npm/vitest@4.1.11",
-      "bom-ref": "pkg:npm/vitest@4.1.11",
+      "purl": "pkg:npm/vitest@4.1.12",
+      "bom-ref": "pkg:npm/vitest@4.1.12",
       "scope": "optional",
       "licenses": [
         {
@@ -18039,7 +18039,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "fhACrNXUidIbGSBr5FlbuBkO7VWC1ZyLl0DO4CU2DrQoAPxX84Ysxs+HeGQpii5lZWV1Q4gBZTTu49mF+A6Edw=="
+          "content": "5eWdz2yb3ajxWF3C8C4TjkXl7FGm3n2E/VlazALrQHzK7nYMSGFnCZto0bbPNl77AwkOZVLk0YnBAejUu0NiWA=="
         }
       ],
       "supplier": {
@@ -18608,7 +18608,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@888e50c0a20084f41e7c057b24d068c69e373a01",
+      "ref": "pkg:generic/alfloop-dev/odayplus@efbdaf4365e12c2b5cff13f5a7c40bd40495c857",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -19224,50 +19224,50 @@
       ]
     },
     {
-      "ref": "pkg:npm/@vitest/expect@4.1.11",
+      "ref": "pkg:npm/@vitest/expect@4.1.12",
       "dependsOn": [
         "pkg:npm/@standard-schema/spec@1.1.0",
         "pkg:npm/@types/chai@5.2.3",
-        "pkg:npm/@vitest/spy@4.1.11",
-        "pkg:npm/@vitest/utils@4.1.11",
+        "pkg:npm/@vitest/spy@4.1.12",
+        "pkg:npm/@vitest/utils@4.1.12",
         "pkg:npm/chai@6.3.0",
         "pkg:npm/tinyrainbow@3.2.0"
       ]
     },
     {
-      "ref": "pkg:npm/@vitest/mocker@4.1.11",
+      "ref": "pkg:npm/@vitest/mocker@4.1.12",
       "dependsOn": [
-        "pkg:npm/@vitest/spy@4.1.11",
+        "pkg:npm/@vitest/spy@4.1.12",
         "pkg:npm/estree-walker@3.0.3",
         "pkg:npm/magic-string@0.30.21"
       ]
     },
     {
-      "ref": "pkg:npm/@vitest/pretty-format@4.1.11",
+      "ref": "pkg:npm/@vitest/pretty-format@4.1.12",
       "dependsOn": [
         "pkg:npm/tinyrainbow@3.2.0"
       ]
     },
     {
-      "ref": "pkg:npm/@vitest/runner@4.1.11",
+      "ref": "pkg:npm/@vitest/runner@4.1.12",
       "dependsOn": [
-        "pkg:npm/@vitest/utils@4.1.11",
+        "pkg:npm/@vitest/utils@4.1.12",
         "pkg:npm/pathe@2.0.3"
       ]
     },
     {
-      "ref": "pkg:npm/@vitest/snapshot@4.1.11",
+      "ref": "pkg:npm/@vitest/snapshot@4.1.12",
       "dependsOn": [
-        "pkg:npm/@vitest/pretty-format@4.1.11",
-        "pkg:npm/@vitest/utils@4.1.11",
+        "pkg:npm/@vitest/pretty-format@4.1.12",
+        "pkg:npm/@vitest/utils@4.1.12",
         "pkg:npm/magic-string@0.30.21",
         "pkg:npm/pathe@2.0.3"
       ]
     },
     {
-      "ref": "pkg:npm/@vitest/utils@4.1.11",
+      "ref": "pkg:npm/@vitest/utils@4.1.12",
       "dependsOn": [
-        "pkg:npm/@vitest/pretty-format@4.1.11",
+        "pkg:npm/@vitest/pretty-format@4.1.12",
         "pkg:npm/convert-source-map@2.0.0",
         "pkg:npm/tinyrainbow@3.2.0"
       ]
@@ -19995,7 +19995,7 @@
       ]
     },
     {
-      "ref": "pkg:npm/happy-dom@20.11.1",
+      "ref": "pkg:npm/happy-dom@21.0.4",
       "dependsOn": [
         "pkg:npm/@types/node@20.14.10",
         "pkg:npm/@types/whatwg-mimetype@3.0.2",
@@ -20827,7 +20827,7 @@
       ]
     },
     {
-      "ref": "pkg:npm/vite@8.1.5",
+      "ref": "pkg:npm/vite@8.1.6",
       "dependsOn": [
         "pkg:npm/lightningcss@1.33.0",
         "pkg:npm/picomatch@2.3.2",
@@ -20837,15 +20837,15 @@
       ]
     },
     {
-      "ref": "pkg:npm/vitest@4.1.11",
+      "ref": "pkg:npm/vitest@4.1.12",
       "dependsOn": [
-        "pkg:npm/@vitest/expect@4.1.11",
-        "pkg:npm/@vitest/mocker@4.1.11",
-        "pkg:npm/@vitest/pretty-format@4.1.11",
-        "pkg:npm/@vitest/runner@4.1.11",
-        "pkg:npm/@vitest/snapshot@4.1.11",
-        "pkg:npm/@vitest/spy@4.1.11",
-        "pkg:npm/@vitest/utils@4.1.11",
+        "pkg:npm/@vitest/expect@4.1.12",
+        "pkg:npm/@vitest/mocker@4.1.12",
+        "pkg:npm/@vitest/pretty-format@4.1.12",
+        "pkg:npm/@vitest/runner@4.1.12",
+        "pkg:npm/@vitest/snapshot@4.1.12",
+        "pkg:npm/@vitest/spy@4.1.12",
+        "pkg:npm/@vitest/utils@4.1.12",
         "pkg:npm/es-module-lexer@2.3.1",
         "pkg:npm/expect-type@1.4.0",
         "pkg:npm/magic-string@0.30.21",
@@ -20857,7 +20857,7 @@
         "pkg:npm/tinyexec@1.2.4",
         "pkg:npm/tinyglobby@0.2.17",
         "pkg:npm/tinyrainbow@3.2.0",
-        "pkg:npm/vite@8.1.5",
+        "pkg:npm/vite@8.1.6",
         "pkg:npm/why-is-node-running@2.3.0"
       ]
     },

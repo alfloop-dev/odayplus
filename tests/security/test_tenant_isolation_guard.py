@@ -138,7 +138,9 @@ def _registry_with(*waivers: TenantAccessWaiver) -> TenantAccessWaiverRegistry:
 @pytest.fixture
 def sample_site_context_payload() -> dict[str, Any]:
     return {
+        "contract_version": "emgi.site-market-context.v1",
         "document_id": "smc-doc-test-001",
+        "product_version": "0.4.1",
         "generated_at": "2026-08-14T00:00:00Z",
         "period_grain": "MONTHLY",
         "period_key": "2026-08",
@@ -165,6 +167,7 @@ def sample_site_context_payload() -> dict[str, Any]:
                     "routing_engine": "valhalla",
                     "graph_version": "v1.0",
                     "status": "available",
+                    "h3_cells": ["8928308280fffff"],
                     "h3_resolution": 9,
                     "total_cells_count": 1,
                     "geom": {
@@ -226,7 +229,7 @@ def sample_site_context_payload() -> dict[str, Any]:
                     "status": "available",
                     "activity_population": 15000,
                     "resident_population": 10000,
-                    "work_population": 8000,
+                    "worker_population": 8000,
                 },
                 "traffic": {
                     "status": "available",
@@ -235,7 +238,6 @@ def sample_site_context_payload() -> dict[str, Any]:
                     "motorcycle_hourly_volume": 600,
                     "motorcycle_ratio": 0.5,
                     "level_of_service": "C",
-                    "is_congestion_hotspot": False,
                 },
                 "event": {
                     "status": "available",

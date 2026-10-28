@@ -47,7 +47,8 @@ const interval: Shape = { p10: numeric, p50: numeric, p90: numeric };
 const chainShape: Shape = {
   schema: (v) => v === "sitescore.recorded-decision-chain.v1", source_digest: hash,
   prediction: { status: (v) => v === "recorded", report_id: text, report_version: version, report_sha256: hash,
-    intervals: { m1: interval, m3: interval, m6: interval, m12: interval }, payback_period: interval, payback_p50_months: numeric,
+    intervals: { m1: interval, m3: interval, m6: interval, m12: interval },
+    payback_period: (v) => v === null || matches(v, interval), payback_p50_months: (v) => v === null || numeric(v),
     confidence: (v) => v === null || (numeric(v) && Number(v) >= 0 && Number(v) <= 1),
     confidence_status: (v) => ["measured", "unmeasured", "legacy_unknown"].includes(String(v)),
     model_reference: text, feature_reference: text, feature_snapshot_time: time, prediction_origin_time: time, scored_at: time, source_snapshot_ids: [text] },
@@ -157,6 +158,8 @@ export async function previewCanonicalEvidence(selection: CanonicalEvidenceSelec
     const execution = doc.recorded_chain.execution;
     if (!record(human) || human.decision_id !== selection.decision_id || human.decision_version !== selection.expected_decision_version) return invalid();
     if (!record(prediction) || !record(execution)
+        // Retained partial reports have explicit paired absence, never a mixed pair or fabricated payback.
+        || (prediction.payback_period === null) !== (prediction.payback_p50_months === null)
         || (prediction.confidence_status === "measured" ? !numeric(prediction.confidence) : prediction.confidence !== null)
         || (execution.status === "recorded" ? execution.record === null || execution.reason !== null : execution.record !== null)) return invalid();
     const reference = sections.decision_log?.[0];

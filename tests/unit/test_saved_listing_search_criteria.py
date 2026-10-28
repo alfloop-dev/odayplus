@@ -8,7 +8,9 @@ from modules.listing.application.saved_search import (
     LISTING_CRITERIA_KIND,
     ListingCriteriaInvalid,
     SavedListingCriteria,
+    receipt_matching_facts,
 )
+from shared.infrastructure.persistence.listing_search_matches import evidence_digest
 
 
 def query(**updates):
@@ -31,7 +33,9 @@ def receipt(**updates):
         "intake_method": "MANUAL",
         "fields": [
             {"field_path": path, "effective": value, "masked": False}
-            for path, value in [("area_ping", 18), ("rent_amount", 50000), ("floor", "1F 臨路")]
+            for path, value in [
+                ("area_ping", 18), ("rent_amount", 50000), ("currency", "TWD"), ("floor", "1F 臨路")
+            ]
         ],
         **updates,
     }
@@ -89,7 +93,7 @@ def test_masked_missing_or_conflicting_lineage_is_not_reconstructed(change):
     elif change == "conflicting_alias":
         record["fields"].append({"field_path": "areaPing", "effective": 20, "masked": False})
     else:
-        record["fields"].pop()
+        record["fields"] = [f for f in record["fields"] if f["field_path"] != "floor"]
     assert (
         SavedListingCriteria.from_query(query()).evaluate(record, tenant_id="tenant-a").outcome
         == "INSUFFICIENT_EVIDENCE"
@@ -145,6 +149,62 @@ def test_private_tenant_zone_and_unknown_zone_have_distinct_safe_outcomes():
 def test_invalid_or_ambiguous_condition_is_refused(updates):
     with pytest.raises(ListingCriteriaInvalid):
         SavedListingCriteria.from_query(query(**updates))
+
+
+@pytest.mark.parametrize("method", ["MANUAL", "CSV"])
+@pytest.mark.parametrize(
+    "change",
+    ["USD", "missing", "masked", "top_mask", "conflict", "no_effective", "null", "typed"],
+)
+def test_rent_ceiling_requires_explicit_readable_unambiguous_twd(method, change):
+    record = receipt(state="NEEDS_REVIEW", intake_method=method)
+    currency = next(f for f in record["fields"] if f["field_path"] == "currency")
+    if change == "missing":
+        record["fields"].remove(currency)
+    elif change == "masked":
+        currency.update(masked=True, parsed="TWD")
+    elif change == "top_mask":
+        record["masked_fields"] = ["currency"]
+    elif change == "conflict":
+        record["fields"].append({**currency, "effective": "USD"})
+    elif change == "no_effective":
+        currency.pop("effective")
+        currency.update(parsed="TWD", normalized="TWD", corrected="TWD")
+    else:
+        currency["effective"] = {"USD": "USD", "null": None, "typed": True}[change]
+    before = deepcopy(record)
+    criteria = SavedListingCriteria.from_query(query())
+    result = criteria.evaluate(record, tenant_id="tenant-a")
+    assert result.outcome == "INSUFFICIENT_EVIDENCE"
+    assert result.reasons == ("RENT_CURRENCY_UNAVAILABLE",)
+    # No rent constraint means currency is irrelevant, not a new admission gate.
+    assert SavedListingCriteria.from_query(query(maxRentPerMonth=None)).evaluate(
+        record, tenant_id="tenant-a"
+    ).outcome == "MATCH"
+    assert record == before
+
+
+def test_uncomparable_currency_does_not_turn_a_large_amount_into_a_rent_mismatch():
+    record = receipt()
+    next(f for f in record["fields"] if f["field_path"] == "currency")["effective"] = "USD"
+    next(f for f in record["fields"] if f["field_path"] == "rent_amount")["effective"] = 70000
+    assert SavedListingCriteria.from_query(query()).evaluate(
+        record, tenant_id="tenant-a"
+    ).outcome == "INSUFFICIENT_EVIDENCE"
+
+
+def test_currency_lineage_is_part_of_original_facts_and_typed_digest():
+    record = receipt()
+    before = deepcopy(record)
+    facts = receipt_matching_facts(record)
+    currency = next(f for f in facts["fields"] if f["field_path"] == "currency")
+    assert currency == {"field_path": "currency", "effective": "TWD", "masked": False}
+    original_hash = evidence_digest(facts)
+    currency["effective"] = "USD"
+    assert evidence_digest(facts) != original_hash
+    assert record == before  # Facts are a detached snapshot, not a writer.
+    record["fields"].append({"field_path": "raw_text", "effective": "USD", "masked": False})
+    assert evidence_digest(receipt_matching_facts(record)) == original_hash
 
 
 def test_existing_inbox_saved_views_are_not_reinterpreted_as_listing_searches():

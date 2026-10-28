@@ -42,12 +42,14 @@ from modules.opsboard.application.network_read_scope import (
     scoped_audit_events,
     visible_candidate_ids,
 )
+from modules.site_economics.domain.formats import DEFAULT_FORMAT_REGISTRY, TargetFormatRegistry
 from modules.sitescore.application.candidate_features import (
     feature_from_candidate,
     none_safe_min,
 )
 from modules.sitescore.domain.scoring import SiteScoreReport
-from shared.auth import Principal
+from shared.auth import Action, DataClassification, Principal
+from shared.auth.rbac import rbac_allows
 from shared.domain.models import MEASUREMENT_MEASURED
 
 MODEL_VERSION = "SiteScore v2.3"
@@ -365,7 +367,9 @@ class NetworkScoringService:
         current_model_admission: Any | None = None,
         execution_service: Any | None = None,
         defer_canonical_refresh: bool = False,
+        format_registry: TargetFormatRegistry = DEFAULT_FORMAT_REGISTRY,
     ) -> None:
+        self._format_registry = format_registry
         self._canonical_refresh_pending = require_canonical
         self._execution_service = execution_service
         self._seed_fixtures = seed_fixtures
@@ -458,6 +462,7 @@ class NetworkScoringService:
         ]
         return {
             "source": "canonical" if self._require_canonical else "api",
+            "targetFormat": self._target_format_read(read_principal),
             "modelVersion": (
                 scorecards[0]["modelVersion"]
                 if scorecards
@@ -622,6 +627,59 @@ class NetworkScoringService:
         }
 
     # -- internals -----------------------------------------------------
+
+    def _target_format_read(self, principal: Principal | None) -> dict[str, Any] | None:
+        # The registry is global, not bound to any candidate/brand/area. A
+        # collection read (including operator_network) is not a catalog grant.
+        if (not self._require_canonical or principal is None
+                or not self._tenant_id or principal.tenant_id != self._tenant_id
+                or not rbac_allows(principal, "sitescore", Action.VIEW)):
+            return None
+        scope = principal.scope
+        if (not scope.permits_module("operator_console")
+                or not scope.permits_classification(DataClassification.CONFIDENTIAL)
+                or not all(permits(None) for permits in (
+                    scope.permits_brand, scope.permits_region, scope.permits_store,
+                    scope.permits_assigned_area, scope.permits_heat_zone,
+                ))):
+            return None
+        try:
+            spec = self._format_registry.get("ODAY_G2", "2.0.0").to_dict()
+            if (spec["format_code"], spec["format_version"]) != ("ODAY_G2", "2.0.0"):
+                raise ValueError("unexpected target format identity")
+            policies = ("utilities_spec", "maintenance_spec", "financing_spec", "tax_spec",
+                        "residual_spec", "ramp_spec", "seasonality_spec")
+            if any(spec[key] is not None for key in policies):
+                raise ValueError("target format policy projection requires review")
+            # Explicit read allowlist: no description, source contract, internal
+            # spec ids, derived aggregates or future financial policy bodies.
+            return {
+                **{key: spec[key] for key in (
+                    "format_code", "format_name", "format_version", "package_total_untaxed",
+                    "unallocated_package_cost", "daily_operating_hours", *policies,
+                )},
+                "machine_mix": {"items": [{
+                    "quantity": item["quantity"],
+                    "machine_model": {key: item["machine_model"][key] for key in (
+                        "model_id", "machine_class", "capacity_kg", "unit_capex", "base_cycle_price",
+                        "cycle_minutes", "baseline_turns_per_day", "useful_life_months",
+                        "residual_value_ratio", "water_liters_per_cycle", "electricity_kwh_per_cycle",
+                        "gas_kg_per_cycle", "detergent_cost_per_cycle", "monthly_maintenance_per_unit",
+                    )},
+                } for item in spec["machine_mix"]["items"]]},
+                "capital_assets": [{key: asset[key] for key in (
+                    "asset_id", "asset_kind", "quantity", "unit_capex", "useful_life_months",
+                    "residual_value_ratio", "monthly_fixed_operating_cost",
+                )} for asset in spec["capital_assets"]],
+                "fitout_spec": {key: spec["fitout_spec"][key] for key in (
+                    "base_fitout_cost", "fitout_useful_life_months",
+                )},
+            }
+        except Exception as exc:
+            raise NetworkScoringRuntimeUnavailable(
+                "canonical target format read is unavailable",
+                code="SITESCORE_TARGET_FORMAT_UNAVAILABLE",
+            ) from exc
 
     def _require_canonical_dependencies(self) -> None:
         missing = [

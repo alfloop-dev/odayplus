@@ -1,8 +1,10 @@
 import "@testing-library/jest-dom/vitest";
 import { createElement } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NetworkFindAreasWorkspace as GrantedReadNetworkWorkspace, inspectNetworkListingsSnapshot, inspectNetworkScoringSnapshot } from "../../NetworkFindAreasWorkspace";
+import { SiteScorePanel } from "../SiteScorePanel";
+import styles from "../../networkFindAreas.module.css";
 
 // Explicit read-grant fixture: shell projects listing and SiteScore read families.
 // This is a renderer premise, not a real Principal/production permission grant.
@@ -13,7 +15,7 @@ function NetworkFindAreasWorkspace(props: import("../../NetworkFindAreasWorkspac
 
 
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/operator", useSearchParams: () => new URLSearchParams("ws=network&tab=sitescore"),
+  usePathname: () => "/operator", useSearchParams: () => new URLSearchParams(window.location.search),
   useRouter: () => ({ push: vi.fn() }),
 }));
 afterEach(() => { cleanup(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -1253,6 +1255,239 @@ describe("rendered Network read contracts", () => {
     damage(candidate); expect(() => scoring(value)).not.toThrow(); expect(scoring(value)).toBe("error");
   });
 
+});
+
+// Synthetic rendering fixture matching the pinned registry read allowlist.
+// It is not a grant, source activation, financial scenario or model admission.
+const targetFormat = {
+  format_code: "ODAY_G2", format_version: "2.0.0", format_name: "ODay G2 accepted untaxed package",
+  package_total_untaxed: 5546000, unallocated_package_cost: 200000, daily_operating_hours: 24,
+  machine_mix: { items: [[27, 730000, 150], [17, 630000, 120]].map(([kg, cost, price]) => ({
+    quantity: 3, machine_model: { model_id: `G2-COMBO-${kg}KG-V2`, machine_class: "COMBO", capacity_kg: kg,
+      unit_capex: cost, base_cycle_price: price, cycle_minutes: 55, useful_life_months: 60, residual_value_ratio: 0,
+      baseline_turns_per_day: null, water_liters_per_cycle: null, electricity_kwh_per_cycle: null,
+      gas_kg_per_cycle: null, detergent_cost_per_cycle: null, monthly_maintenance_per_unit: null },
+  })) },
+  capital_assets: [["PAYMENT_SYSTEM", 100000], ["KIOSK", 160000], ["VENDING", 40000], ["CAMERA_SYSTEM", 29122], ["FURNITURE", 21633]]
+    .map(([kind, cost]) => ({ asset_id: `G2-${kind}-V2`, asset_kind: kind, quantity: 1, unit_capex: cost,
+      useful_life_months: 60, residual_value_ratio: 0, monthly_fixed_operating_cost: null })),
+  fitout_spec: { base_fitout_cost: 915245, fitout_useful_life_months: 60 },
+  utilities_spec: null, maintenance_spec: null, financing_spec: null, tax_spec: null, residual_spec: null,
+  ramp_spec: null, seasonality_spec: null,
+};
+const emptyWithFormat = { source: "canonical", modelVersion: null, candidates: [], scorecards: [], batchResults: [],
+  compare: { columns: [], metrics: [], recommendation: null, empty: true }, compareSet: [], targetFormat };
+const formatDamage: Array<[string, (value: any) => void]> = [
+  ["wrong format", (x) => { x.format_code = "ODAY_G3"; }],
+  ["historical version", (x) => { x.format_version = "1.0.0"; }],
+  ["nonfinite total", (x) => { x.package_total_untaxed = Infinity; }],
+  ["coercible total", (x) => { x.package_total_untaxed = "5546000"; }],
+  ["missing total", (x) => { delete x.package_total_untaxed; }],
+  ["malformed mix", (x) => { x.machine_mix = []; }],
+  ["missing machines", (x) => { x.machine_mix.items = []; }],
+  ["null machine", (x) => { x.machine_mix.items[0] = null; }],
+  ["duplicate machine", (x) => { x.machine_mix.items[1] = x.machine_mix.items[0]; }],
+  ["fractional quantity", (x) => { x.machine_mix.items[0].quantity = 2.5; }],
+  ["negative cost", (x) => { x.machine_mix.items[0].machine_model.unit_capex = -1; }],
+  ["nonfinite cycle", (x) => { x.machine_mix.items[0].machine_model.cycle_minutes = NaN; }],
+  ["object identity", (x) => { x.machine_mix.items[0].machine_model.model_id = {}; }],
+  ["wrong machine class", (x) => { x.machine_mix.items[0].machine_model.machine_class = "DRYER"; }],
+  ["missing unknown", (x) => { delete x.machine_mix.items[0].machine_model.baseline_turns_per_day; }],
+  ["nonfinite unknown", (x) => { x.machine_mix.items[0].machine_model.water_liters_per_cycle = Infinity; }],
+  ["null asset", (x) => { x.capital_assets[0] = null; }],
+  ["unknown asset kind", (x) => { x.capital_assets[0].asset_kind = "OTHER"; }],
+  ["duplicate asset", (x) => { x.capital_assets[1] = x.capital_assets[0]; }],
+  ["missing fitout", (x) => { x.fitout_spec = null; }],
+  ["nonfinite fitout", (x) => { x.fitout_spec.base_fitout_cost = Infinity; }],
+  ["non-null policy", (x) => { x.tax_spec = { corporate_tax_rate: 0.2 }; }],
+];
+
+describe("read-only standard configuration in the existing SiteScore flow", () => {
+  it("keeps valid canonical empty/config empty and legacy optional config compatible", () => {
+    expect(scoring(emptyWithFormat)).toBe("empty");
+    expect(scoring({ ...emptyWithFormat, targetFormat: null })).toBe("empty");
+    const legacy: any = clone(emptyWithFormat); delete legacy.targetFormat;
+    expect(scoring(legacy)).toBe("empty");
+    expect(scoring({ ...emptyWithFormat, source: "fixture" })).toBe("seed");
+    expect(scoring({ ...emptyWithFormat, source: "api" })).toBe("error");
+  });
+  it.each(formatDamage)("rejects %s at the API-to-UI boundary", (_name, damage) => {
+    const value: any = clone(emptyWithFormat); damage(value.targetFormat);
+    expect(() => scoring(value)).not.toThrow(); expect(scoring(value)).toBe("error");
+  });
+
+  function setupRead(body: unknown, status = 200) {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    window.history.replaceState(null, "", "/operator?ws=network&tab=sitescore");
+    const mock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(
+      String(input).includes("network-scoring") ? body : { detail: "unrelated read refused" }), {
+      status: String(input).includes("network-scoring") ? status : 403,
+      headers: { "Content-Type": "application/json", "X-Correlation-Id": "g2-read-correlation" },
+    }));
+    vi.stubGlobal("fetch", mock);
+    return mock;
+  }
+  const props = { activeRoleId: "expansion-manager" as const,
+    createAuthenticatedReadGuard: (current: () => boolean) => async () => current() };
+
+  function expectCompactFormatSummary(block: HTMLElement) {
+    const summaries = block.querySelectorAll("dl");
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toHaveClass(styles.scoreMeta);
+    expect(block.querySelector("table, thead, th, td")).toBeNull();
+    expect(block.querySelector("input, select, textarea, button")).toBeNull();
+    expect(block).toHaveTextContent("ODAY_G2 · 2.0.0");
+    expect(block).toHaveTextContent("完整未稅套裝NT$5,546,000");
+    expect(block).toHaveTextContent("套裝內未分配金額NT$200,000（已含於總價，非額外費用");
+    expect(block).toHaveTextContent("24 小時／日");
+    expect(block).toHaveTextContent("不是預測需求或利用率");
+    for (const [capacity, cost, price] of [[27, "730,000", "150"], [17, "630,000", "120"]]) {
+      const machine = within(block).getByText(`${capacity} kg 洗烘一體機`, { selector: "dt" }).parentElement!;
+      expect(machine.querySelector("dd")).toHaveTextContent(`3 台 × NT$${cost}（未稅）；每次 NT$${price}／55 分鐘`);
+      expect(machine).toHaveTextContent("使用年限 60 月／殘值比 0；基準轉數／日 未知");
+      expect(machine).toHaveTextContent("每次水 L／電 kWh／氣 kg：未知／未知／未知");
+      expect(machine).toHaveTextContent("洗劑 未知／每台月維護 未知");
+    }
+    for (const [label, cost] of [["支付系統", "100,000"], ["Kiosk", "160,000"], ["販賣機", "40,000"], ["監視系統", "29,122"], ["家具備品", "21,633"]]) {
+      const asset = within(block).getByText(label, { selector: "dt" }).parentElement!;
+      expect(asset.querySelector("dd")).toHaveTextContent(`1 件 × NT$${cost}；60 月／殘值比 0；每月營運成本 未知`);
+    }
+    expect(block).toHaveTextContent("工程裝修（未稅）NT$915,245；60 月或較短租期");
+    expect(block).toHaveTextContent("水電費率、維護、融資、稅、殘值政策、爬坡與季節性：未知");
+    expect(block).toHaveTextContent("未計算 ROI、折舊或報告 CAPEX");
+    for (const { machine_model: model } of targetFormat.machine_mix.items) {
+      expect(document.body).not.toHaveTextContent(model.model_id);
+    }
+    for (const asset of targetFormat.capital_assets) expect(block).not.toHaveTextContent(asset.asset_id);
+  }
+
+  it("renders authorized empty configuration without a model/report/action or another tab gate bypass", async () => {
+    const fetchMock = setupRead(emptyWithFormat);
+    const view = render(createElement(NetworkFindAreasWorkspace, props));
+    const block = await screen.findByTestId("sitescore-target-format");
+    expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty");
+    expectCompactFormatSummary(block);
+    expect(screen.queryByTestId("sitescore-model-meta")).toBeNull();
+    expect(screen.queryByTestId("network-panel-sitescore")).toBeNull();
+    expect(screen.queryByText("CAPEX 假設")).toBeNull();
+    expect(screen.queryByRole("button", { name: /重新評分|執行 SiteScore|送審/ })).toBeNull();
+    window.history.replaceState(null, "", "/operator?ws=network&tab=candidates");
+    view.rerender(createElement(NetworkFindAreasWorkspace, props));
+    await vi.waitFor(() => expect(screen.queryByTestId("sitescore-target-format")).toBeNull());
+    expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty");
+    expect(screen.queryByTestId("network-candidate-table")).toBeNull();
+    window.history.replaceState(null, "", "/operator?ws=network&tab=compare");
+    view.rerender(createElement(NetworkFindAreasWorkspace, props));
+    await vi.waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty"));
+    expect(screen.queryByTestId("network-compare-table")).toBeNull();
+    expect(fetchMock.mock.calls.every(([, init]) => !(init as RequestInit | undefined)?.method)).toBe(true);
+  });
+
+  it("renders the same compact summary through the ready workspace read without replacing saved assumptions", async () => {
+    const body = { ...canonicalProducer, targetFormat, scorecards: [
+      { ...canonicalProducer.scorecards[0], capex: "Historical CAPEX", rentAssumption: "Historical rent" },
+    ] };
+    expect(scoring(body)).toBe("ready");
+    const fetchMock = setupRead(body);
+    render(createElement(NetworkFindAreasWorkspace, props));
+    const block = await screen.findByTestId("sitescore-target-format");
+    expect(screen.queryByTestId("operator-data-unavailable")).toBeNull();
+    expect(screen.getByTestId("network-panel-sitescore")).toContainElement(block);
+    expectCompactFormatSummary(block);
+    const report = screen.getByTestId("sitescore-card-candidate-A");
+    expect(report).toHaveTextContent("Historical CAPEX");
+    expect(report).toHaveTextContent("Historical rent");
+    expect(report).not.toContainElement(block);
+    expect(report).not.toHaveTextContent("5,546,000");
+    expect(fetchMock.mock.calls.every(([, init]) => !(init as RequestInit | undefined)?.method)).toBe(true);
+  });
+
+  it("keeps current template visually outside saved report CAPEX/rent assumptions", () => {
+    render(createElement(SiteScorePanel, { candidates: [], fallbackRows: [],
+      scorecards: [{ ...canonicalProducer.scorecards[0], capex: "Historical CAPEX", rentAssumption: "Historical rent" }] as any,
+      targetFormat: targetFormat as any }));
+    const report = screen.getByTestId("sitescore-card-candidate-A");
+    expect(report).toHaveTextContent("Historical CAPEX"); expect(report).toHaveTextContent("Historical rent");
+    expect(within(report).queryByTestId("sitescore-target-format")).toBeNull();
+    expect(report).not.toHaveTextContent("5,546,000");
+    expect(screen.getByTestId("sitescore-target-format")).toHaveTextContent("不是已保存報告的假設");
+  });
+
+  it.each([403, 503])("preserves received %s details without rendering configuration", async (status) => {
+    setupRead({ detail: { code: "G2_READ_REFUSED", message: "original read refusal" } }, status);
+    render(createElement(NetworkFindAreasWorkspace, props));
+    await vi.waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"));
+    expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("g2-read-correlation");
+    expect(screen.getByTestId("operator-data-unavailable-technical")).toHaveTextContent(String(status));
+    expect(screen.queryByTestId("sitescore-target-format")).toBeNull();
+  });
+
+  it.each(["malformed", "seed"])("does not display plausible configuration from %s HTTP 200", async (kind) => {
+    const body: any = clone(emptyWithFormat);
+    if (kind === "malformed") body.targetFormat.machine_mix.items[0].machine_model.unit_capex = {};
+    else body.source = "fixture";
+    setupRead(body); render(createElement(NetworkFindAreasWorkspace, props));
+    await vi.waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", kind === "seed" ? "seed" : "error"));
+    expect(screen.queryByTestId("sitescore-target-format")).toBeNull();
+    expect(screen.queryByRole("button", { name: /重新評分|送審/ })).toBeNull();
+  });
+
+  it.each(["role", "navigation", "tenant"])("discards stale empty/config response after %s changes", async (change) => {
+    setupRead(emptyWithFormat);
+    let finish: (response: Response) => void = () => undefined;
+    let scoringReads = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes("network-scoring") && ++scoringReads === 1)
+        return new Promise<Response>((resolve) => { finish = resolve; });
+      return Promise.resolve(new Response(JSON.stringify({ detail: "new context denied" }), { status: 403 }));
+    }));
+    const priorTenant = sessionStorage.getItem("oday.operator.tenant");
+    try {
+      const view = render(createElement(NetworkFindAreasWorkspace, props));
+      await vi.waitFor(() => expect(scoringReads).toBe(1));
+      if (change === "navigation") window.history.replaceState(null, "", "/operator?ws=network&tab=compare");
+      if (change === "tenant") sessionStorage.setItem("oday.operator.tenant", "new-context");
+      view.rerender(createElement(NetworkFindAreasWorkspace, { ...props,
+        activeRoleId: change === "role" ? "platform-admin" : props.activeRoleId }));
+      await vi.waitFor(() => expect(scoringReads).toBeGreaterThan(1));
+      await act(async () => { finish(new Response(JSON.stringify(emptyWithFormat), { status: 200 })); });
+      expect(screen.queryByTestId("sitescore-target-format")).toBeNull();
+      expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error");
+    } finally {
+      if (priorTenant === null) sessionStorage.removeItem("oday.operator.tenant");
+      else sessionStorage.setItem("oday.operator.tenant", priorTenant);
+    }
+  });
+
+  it("discards configuration when the authenticated session guard is revoked during the read", async () => {
+    setupRead(emptyWithFormat);
+    let authenticated = true;
+    let finish: (response: Response) => void = () => undefined;
+    let reads = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes("network-scoring")) {
+        reads += 1; return new Promise<Response>((resolve) => { finish = resolve; });
+      }
+      return Promise.resolve(new Response("{}", { status: 403 }));
+    }));
+    render(createElement(NetworkFindAreasWorkspace, { ...props,
+      createAuthenticatedReadGuard: (current: () => boolean) => async () => authenticated && current() }));
+    await vi.waitFor(() => expect(reads).toBe(1));
+    authenticated = false;
+    await act(async () => { finish(new Response(JSON.stringify(emptyWithFormat), { status: 200 })); });
+    expect(screen.queryByTestId("sitescore-target-format")).toBeNull();
+    expect(screen.queryByRole("button", { name: /重新評分|送審/ })).toBeNull();
+  });
+
+  it("invalidates already displayed config immediately on a role switch", async () => {
+    const mock = setupRead(emptyWithFormat);
+    const view = render(createElement(NetworkFindAreasWorkspace, props));
+    await screen.findByTestId("sitescore-target-format");
+    mock.mockImplementation(async () => new Response(JSON.stringify({ detail: "role denied" }), { status: 403 }));
+    view.rerender(createElement(NetworkFindAreasWorkspace, { ...props, activeRoleId: "platform-admin" }));
+    expect(screen.queryByTestId("sitescore-target-format")).toBeNull();
+    await vi.waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"));
+  });
 });
 
 describe("successful HTTP response body shape", () => {

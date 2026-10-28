@@ -51,16 +51,17 @@ class MachineModelSpec:
     model_name: str
     capacity_kg: float
     unit_capex: float
-    baseline_turns_per_day: float
+    baseline_turns_per_day: float | None
     max_turns_per_day: float
     base_cycle_price: float
-    water_liters_per_cycle: float = 0.0
-    electricity_kwh_per_cycle: float = 0.0
-    gas_kg_per_cycle: float = 0.0
-    detergent_cost_per_cycle: float = 0.0
-    monthly_maintenance_per_unit: float = 500.0
+    water_liters_per_cycle: float | None = 0.0
+    electricity_kwh_per_cycle: float | None = 0.0
+    gas_kg_per_cycle: float | None = 0.0
+    detergent_cost_per_cycle: float | None = 0.0
+    monthly_maintenance_per_unit: float | None = 500.0
     useful_life_months: int = 84
     residual_value_ratio: float = 0.10
+    cycle_minutes: float | None = None
 
     @property
     def residual_value_per_unit(self) -> float:
@@ -74,20 +75,21 @@ class MachineModelSpec:
             model_name=str(data["model_name"]),
             capacity_kg=float(data["capacity_kg"]),
             unit_capex=float(data["unit_capex"]),
-            baseline_turns_per_day=float(data["baseline_turns_per_day"]),
+            baseline_turns_per_day=(float(data["baseline_turns_per_day"])
+                                    if data["baseline_turns_per_day"] is not None else None),
             max_turns_per_day=float(data["max_turns_per_day"]),
             base_cycle_price=float(data["base_cycle_price"]),
-            water_liters_per_cycle=float(data.get("water_liters_per_cycle", 0.0)),
-            electricity_kwh_per_cycle=float(data.get("electricity_kwh_per_cycle", 0.0)),
-            gas_kg_per_cycle=float(data.get("gas_kg_per_cycle", 0.0)),
-            detergent_cost_per_cycle=float(data.get("detergent_cost_per_cycle", 0.0)),
-            monthly_maintenance_per_unit=float(data.get("monthly_maintenance_per_unit", 500.0)),
+            **{key: float(data.get(key, default)) if data.get(key, default) is not None else None
+               for key, default in (("water_liters_per_cycle", 0.0),
+                   ("electricity_kwh_per_cycle", 0.0), ("gas_kg_per_cycle", 0.0),
+                   ("detergent_cost_per_cycle", 0.0), ("monthly_maintenance_per_unit", 500.0))},
+            cycle_minutes=float(data["cycle_minutes"]) if data.get("cycle_minutes") is not None else None,
             useful_life_months=int(data.get("useful_life_months", 84)),
             residual_value_ratio=float(data.get("residual_value_ratio", 0.10)),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "model_id": self.model_id,
             "machine_class": self.machine_class.value,
             "model_name": self.model_name,
@@ -104,6 +106,10 @@ class MachineModelSpec:
             "useful_life_months": self.useful_life_months,
             "residual_value_ratio": self.residual_value_ratio,
         }
+        # Retained snapshots predate explicit cycle timing.
+        if self.cycle_minutes is not None:
+            result["cycle_minutes"] = self.cycle_minutes
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,7 +128,7 @@ class MachineMixItem:
         return self.machine_model.base_cycle_price
 
     @property
-    def effective_turns_per_day(self) -> float:
+    def effective_turns_per_day(self) -> float | None:
         if self.custom_turns_per_day is not None:
             return self.custom_turns_per_day
         return self.machine_model.baseline_turns_per_day
@@ -241,7 +247,7 @@ class CapitalAssetSpec:
     unit_capex: float
     useful_life_months: int
     residual_value_ratio: float
-    monthly_fixed_operating_cost: float
+    monthly_fixed_operating_cost: float | None
 
     def __post_init__(self) -> None:
         def refuse() -> None:
@@ -258,13 +264,17 @@ class CapitalAssetSpec:
         try:
             if not math.isfinite(self.quantity) or not math.isfinite(self.useful_life_months):
                 refuse()
-            for value in (self.unit_capex, self.residual_value_ratio, self.monthly_fixed_operating_cost):
+            for value in (self.unit_capex, self.residual_value_ratio, *(
+                (self.monthly_fixed_operating_cost,) if self.monthly_fixed_operating_cost is not None else ()
+            )):
                 if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
                     refuse()
             if self.residual_value_ratio > 1:
                 refuse()
             if not all(math.isfinite(value) for value in (
-                self.total_capex, self.total_residual_value, self.total_monthly_operating_cost,
+                self.total_capex, self.total_residual_value, *(
+                    (self.total_monthly_operating_cost,) if self.total_monthly_operating_cost is not None else ()
+                ),
             )):
                 refuse()
         except OverflowError:
@@ -279,7 +289,9 @@ class CapitalAssetSpec:
         return self.total_capex * self.residual_value_ratio
 
     @property
-    def total_monthly_operating_cost(self) -> float:
+    def total_monthly_operating_cost(self) -> float | None:
+        if self.monthly_fixed_operating_cost is None:
+            return None
         return self.monthly_fixed_operating_cost * self.quantity
 
     @classmethod
