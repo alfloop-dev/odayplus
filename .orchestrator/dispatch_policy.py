@@ -330,9 +330,9 @@ def immutable_review_source_authors(
     status file could edit, so no reviewer path takes its `source_authors` on
     trust -- not the approval, and not the queue that decides which reviewer is
     dispatched in the first place. The recorded base must be a commit the
-    integration branch itself stood on -- and, for a merged submission, the
-    first parent of its recorded merge commit, which is what submission read
-    the range from -- otherwise it could be moved up to hide earlier commits.
+    integration branch itself stood on -- and, for a merged submission, one it
+    stood on no later than the first parent of its recorded merge commit --
+    otherwise it could be moved up to hide earlier commits.
     Nor may it be a later tip that merged in part of the range: wherever it
     meets the head has to be on the integration line too. The range from it
     to the recorded head is scanned again with the same
@@ -369,17 +369,20 @@ def immutable_review_source_authors(
                 f"the recorded source base {source_base[:12]} is not a commit {target_ref} stood on; "
                 "a commit merged in from a branch cannot be the range's base"
             )
-        # A merged submission was read from its merge commit's first parent,
-        # and that is the only base its record can name.
+        # A merged submission's base is a tip the line stood on before its
+        # merge commit: that commit's first parent, which a first merged
+        # recovery reads the range from, or an earlier tip on the same line,
+        # which an unchanged head submitted while open keeps. It can be neither
+        # the merge itself nor a tip from after it.
         if merge_commit:
             pre_merge_base = (
                 _git_output(repo_root, "rev-parse", "--verify", "--quiet", f"{merge_commit}^1^{{commit}}")
                 if _SHA_RE.fullmatch(merge_commit)
                 else None
             )
-            if (pre_merge_base or "").lower() != source_base:
+            if not pre_merge_base or not _is_integration_point(repo_root, source_base, pre_merge_base.lower()):
                 return (), (
-                    f"the recorded source base {source_base[:12]} is not the pre-merge base of the "
+                    f"the recorded source base {source_base[:12]} is not a pre-merge base of the "
                     f"recorded merge commit {merge_commit[:12]}"
                 )
         # The base is also wrong when the integration line reached it by
@@ -396,7 +399,11 @@ def immutable_review_source_authors(
                 return (), (
                     f"the recorded source base {source_base[:12]} already contains part of the submitted "
                     f"range to {source_head[:12]} through a merged branch, so it would drop that part's "
-                    f"authors; merge {target_ref} into the task branch before submitting"
+                    + (
+                        "authors; only the range this head was submitted with while open names them all"
+                        if merge_commit
+                        else f"authors; merge {target_ref} into the task branch before submitting"
+                    )
                 )
         scan = _inspect_delivery_identity(
             repo_root,

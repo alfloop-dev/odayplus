@@ -2953,6 +2953,164 @@ class SourceAuthorReviewIndependenceTests(unittest.TestCase):
         self.assertEqual(self.task["owner"], "Claude")
         self.assertEqual(self.task["review_submission"]["source_authors"], ["Codex", "Claude"])
 
+    def test_merged_recovery_after_dev_took_part_of_the_range_keeps_both_authors(self) -> None:
+        """The unchanged head, merged after `dev` took Codex's `C`, is still `B..H`.
+
+        Claude adds `H` and submits `B..H` while open: Codex and Claude. Codex2
+        reopens it. Integration merge `M` (`M^1 == B`) brings in `C` alone,
+        then the unchanged PR head merges as `N` (`N^1 == M`) and the task
+        branch is deleted. `N^1..H` holds only Claude's `H`, so the owner's
+        ordinary merged recovery keeps the range submitted while open: review
+        resumes with both authors, Codex is refused before any write, records
+        narrowed to `M` or moved past the merge are refused on a cold cache, a
+        head first submitted only now cannot record the narrowed range, and
+        independent Codex2 approves and the closeout merge gate still passes.
+        """
+        head = self.commit("final.txt", f"{self.TASK_ID}: finalizer change", "Claude")
+        self.run_as("Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready"], head=head)
+        submitted = dict(self.task["review_submission"])
+        base = self.git("rev-parse", "dev")
+        self.assertEqual(
+            (submitted["source_base"], submitted["source_head"], submitted["source_authors"]),
+            (base, head, ["Codex", "Claude"]),
+        )
+        self.task["reviewer"] = "Codex2"
+        self.run_as("Codex2", ai_status.command_reopen, [self.TASK_ID, "needs another look"], head=head)
+        self.assertEqual(self.task["status"], "in_progress")
+        self.assertEqual(self.task["review_submission"], submitted)
+
+        self.git("checkout", "-q", "dev")
+        self.git("merge", "--no-ff", "-q", "-m", "Merge pull request #4300 (integration)", self.codex_commit)
+        integration_merge = self.git("rev-parse", "dev")
+        self.git("merge", "--no-ff", "-q", "-m", "Merge pull request #4242", head)
+        merge_commit = self.git("rev-parse", "dev")
+        self.git("update-ref", "refs/remotes/origin/dev", "dev")
+        self.git("branch", "-D", self.BRANCH)
+        self.assertEqual(
+            (self.git("rev-parse", f"{integration_merge}^1"), self.git("rev-parse", f"{merge_commit}^1")),
+            (base, integration_merge),
+        )
+        # Read from the merge commit's first parent, the range is Claude's alone.
+        narrowed = ai_status.inspect_delivery_identity(
+            self.repo, task_id=self.TASK_ID, base=f"{merge_commit}^1", head=head,
+            expected_branch=self.BRANCH, actual_branch=self.BRANCH,
+        )
+        self.assertEqual((narrowed.errors, list(narrowed.source_agents)), ([], ["Claude"]))
+        merged_pr = dict(
+            self.pr(head),
+            state="MERGED",
+            mergedAt="2026-10-28T00:00:00Z",
+            mergeCommit={"oid": merge_commit},
+            statusCheckRollup=[
+                {"__typename": "CheckRun", "name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ],
+        )
+
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.run_as(
+                "Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Merged recovery"],
+                head=head, pr=merged_pr,
+            )
+        recovered = dict(self.task["review_submission"])
+        self.assertEqual(self.task["status"], "review")
+        self.assertEqual(self.task["owner"], "Claude")
+        self.assertEqual(
+            {k: recovered[k] for k in ("source_base", "source_head", "source_authors", "submitted_by")},
+            {k: submitted[k] for k in ("source_base", "source_head", "source_authors", "submitted_by")},
+        )
+        self.assertEqual(
+            (recovered["merge_commit"], recovered["merged_at"], recovered["remote_sha"]),
+            (merge_commit, "2026-10-28T00:00:00Z", head),
+        )
+        self.assertEqual(recovered["recovery_by"], "Claude")
+        self.assertIn(
+            ("Claude", "Codex2"),
+            [(h.get("from"), h.get("to")) for h in self.state["handoffs"] if h.get("status") == "pending"],
+        )
+
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.task["reviewer"] = "Codex"
+            self.assert_refused_without_mutation(
+                "Codex", ai_status.command_approve, [self.TASK_ID, "LGTM"],
+                r"reviewer Codex is itself a source author", head=head,
+            )
+        for label, forged, pattern in (
+            (
+                "narrowed to the integration merge",
+                dict(recovered, source_base=integration_merge, source_authors=["Claude"]),
+                r"already contains part of the submitted range",
+            ),
+            (
+                "narrowed, authors kept",
+                dict(recovered, source_base=integration_merge),
+                r"already contains part of the submitted range",
+            ),
+            (
+                "base past the merge",
+                dict(recovered, source_base=merge_commit, source_authors=["Claude"]),
+                r"is not a pre-merge base of the recorded merge commit",
+            ),
+        ):
+            with self.subTest(label=label), mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+                self.task["review_submission"] = forged
+                for reviewer in ("Codex", "Codex2"):
+                    self.task["reviewer"] = reviewer
+                    self.assert_refused_without_mutation(
+                        reviewer, ai_status.command_approve, [self.TASK_ID, "LGTM"], pattern, head=head,
+                    )
+                self.assertNotIn(("Claude",), dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.values())
+
+        # A head first submitted only now has no open range to keep, and the
+        # narrowed one it would read is refused rather than recorded.
+        self.task.update({"status": "in_progress", "reviewer": "Codex2"})
+        self.task.pop("review_submission")
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.assert_refused_without_mutation(
+                "Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Merged recovery"],
+                r"only the range this head was submitted with while open names them all", head=head, pr=merged_pr,
+            )
+
+        self.task.update({"status": "review", "review_submission": dict(recovered)})
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            with self.assertRaisesRegex(SystemExit, r"required CI status is 'pending'"):
+                self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], head=head, ci="pending")
+            self.assertEqual(self.task["status"], "review")
+            self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review"], head=head)
+            # A repeated recovery of the approved head is a no-op on its provenance.
+            self.run_as(
+                "Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Merged recovery"],
+                head=head, pr=merged_pr,
+            )
+        self.assertEqual(self.task["status"], "review_approved")
+        self.assertEqual(self.task["approved_head"], head)
+        self.assertEqual(self.task["last_approved_by"], "Codex2")
+        self.assertEqual(self.task["owner"], "Claude")
+        self.assertEqual(self.task["review_submission"], recovered)
+
+        self.git("remote", "add", "origin", str(self.repo))
+        delivery: dict[str, Any] = {"verified_head": head}
+        closeout_pr = dict(
+            merged_pr,
+            statusCheckRollup=[
+                *merged_pr["statusCheckRollup"],
+                {"__typename": "StatusContext", "context": "task-review-gate", "state": "SUCCESS"},
+            ],
+        )
+        with mock.patch.object(ai_status, "pull_request_status_for_branch", return_value=closeout_pr):
+            ai_status.enforce_delivery_merged_gate(
+                {"branch_workflow": {"dev_branch": "dev"}},
+                delivery,
+                repository_root=self.repo,
+                repository_id="pantheon",
+                branch=self.BRANCH,
+                remote_names=["origin"],
+                approved_head=head,
+                repository_slug_value="example/repo",
+                task=self.task,
+            )
+        self.assertTrue(delivery.get("merge_verified_via_pr"))
+        self.assertEqual(delivery.get("ci_status"), "success")
+
 
 class ToolingCloseoutTests(unittest.TestCase):
     """Real Git, identity, scope and archival checks; only GitHub is synthetic."""

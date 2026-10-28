@@ -8162,14 +8162,17 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     # integration branch has merged in part of that range, rescanning from its
     # new tip reads fewer commits and would drop their authors from the record
     # -- and from every pool a reviewer has to avoid -- with nothing in the
-    # submission changed. Only a merged recovery re-reads the range, from its
-    # merge commit's first parent; the rule below re-validates either from Git.
+    # submission changed. Merging the unchanged head does not change it
+    # either: the first merged recovery of a head submitted while open keeps
+    # that range, since the merge commit's first parent may be just such a tip.
+    # Only a head first submitted already merged reads the range from that
+    # parent; the rule below re-validates either from Git.
     if (
         is_same_submission
         and str(existing_sub.get("source_head") or "").strip().lower()
         == str(submission.get("remote_sha") or "").strip().lower()
         and str(existing_sub.get("merge_commit") or "").strip()
-        == str(submission.get("merge_commit") or "").strip()
+        in ("", str(submission.get("merge_commit") or "").strip())
     ):
         for field in ("source_base", "source_head", "source_authors"):
             if field in existing_sub:
