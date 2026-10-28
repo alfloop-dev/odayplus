@@ -256,6 +256,21 @@ tagged_revision_url() {
     --tag="${tag}"
 }
 
+# Fails unless the pre-deploy snapshot proves this attempt's candidate tag and
+# revision name are new to the service (cloud_run_traffic.py candidate-unused).
+assert_candidate_unused() {
+  local snapshot="$1"
+  local tag="$2"
+  local revision="$3"
+  python3 "${ODP_TRAFFIC_HELPER}" candidate-unused \
+    --description="${snapshot}" \
+    --tag="${tag}" \
+    --revision="${revision}" || {
+    echo "Error: candidate ${revision} (tag ${tag}) is not new to its service; refusing before any Cloud Run mutation." >&2
+    return 1
+  }
+}
+
 promote_service_traffic() {
   local service="$1"
   local revision="$2"

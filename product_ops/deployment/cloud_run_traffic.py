@@ -73,6 +73,36 @@ def tagged_target(description: dict[str, Any], tag: str) -> tuple[str, str]:
     return revision, url
 
 
+def assert_candidate_unused(description: dict[str, Any], tag: str, revision: str) -> None:
+    """Refuse a candidate whose tag or revision name the service already has.
+
+    ``gcloud run deploy --tag`` would silently move an existing tag off the
+    revision that holds it, and an existing revision name ends in ALREADY_EXISTS
+    only after the release has mutated jobs and the database. Every candidate
+    revision this script creates keeps its tag, so the pre-deploy traffic
+    snapshot shows both. A service that did not exist has neither.
+    """
+
+    if not tag or not revision:
+        raise ValueError("candidate tag and revision name are required")
+    if not is_present(description):
+        return
+    status = description.get("status")
+    traffic = status.get("traffic") if isinstance(status, dict) else None
+    if not isinstance(traffic, list):
+        raise ValueError("Cloud Run service description is missing status.traffic")
+    for item in traffic:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("tag") or "") == tag:
+            raise ValueError(
+                f"tag {tag!r} already exists on revision {item.get('revisionName')!r}; "
+                "deploying would move it off that revision"
+            )
+        if str(item.get("revisionName") or "") == revision:
+            raise ValueError(f"revision {revision!r} already exists")
+
+
 def restore_traffic_argument(description: dict[str, Any]) -> str:
     status = description.get("status")
     traffic = status.get("traffic") if isinstance(status, dict) else None
@@ -114,11 +144,13 @@ def main() -> int:
             "tagged-url",
             "restore-arg",
             "write-absent",
+            "candidate-unused",
         ),
     )
     parser.add_argument("--description", required=True, type=Path)
     parser.add_argument("--service")
     parser.add_argument("--tag")
+    parser.add_argument("--revision")
     args = parser.parse_args()
 
     if args.command == "write-absent":
@@ -139,6 +171,9 @@ def main() -> int:
         return 0
     if args.command == "restore-arg":
         print(restore_traffic_argument(description))
+        return 0
+    if args.command == "candidate-unused":
+        assert_candidate_unused(description, args.tag or "", args.revision or "")
         return 0
     if not args.tag:
         parser.error(f"--tag is required for {args.command}")

@@ -957,3 +957,368 @@ def test_smoke_sends_the_candidate_invoker_token_only_to_web(
         assert "x-serverless-authorization" not in seen["web"]
     assert report["web_invoker_authenticated"] is bool(invoker_token)
     assert invoker_token == "" or invoker_token not in json.dumps(report)
+
+
+# ODP-CLOUD-RUN-REVISION-SUFFIX-PER-ATTEMPT-001: redeploying the release that is
+# already serving. This fake gcloud keeps tags the way SDK 580 does --
+# `run deploy --tag` clears that tag from every other target before adding it
+# to the new revision (traffic.UpdateTags), and `update-traffic --to-revisions`
+# moves percentages but leaves tags where they are (traffic.UpdateTraffic) -- and
+# records each Web revision's env file, so the test can follow the serving
+# Web's ODP_API_BASE_URL to the API revision it reaches.
+TAGGING_GCLOUD = r"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+state_path = Path(os.environ["FAKE_STATE"])
+state = json.loads(state_path.read_text(encoding="utf-8"))
+args = sys.argv[1:]
+with Path(os.environ["FAKE_LOG"]).open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(args) + "\n")
+
+
+def flag(name):
+    for argument in args:
+        if argument.startswith(name + "="):
+            return argument.split("=", 1)[1]
+    return ""
+
+
+def save():
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    raise SystemExit(0)
+
+
+if args[:3] == ["run", "services", "list"]:
+    name = flag("--filter").split("=", 1)[1]
+    print(name if name in state else "")
+    raise SystemExit(0)
+
+if args[:3] == ["scheduler", "jobs", "list"]:
+    raise SystemExit(0)
+
+if args[:3] == ["run", "services", "describe"]:
+    service = args[3]
+    if flag("--format") == "value(metadata.name)":
+        print(service)
+    else:
+        print(json.dumps({key: state[service][key] for key in ("metadata", "status")}))
+    raise SystemExit(0)
+
+if args[:2] == ["run", "deploy"]:
+    service = args[2]
+    assert service in state and "--no-traffic" in args, args
+    revision = f"{service}-{flag('--revision-suffix')}"
+    if revision in state[service]["revisions"]:
+        print(f"ERROR: ALREADY_EXISTS: Revision named '{revision}' already exists",
+              file=sys.stderr)
+        raise SystemExit(1)
+    env_file = flag("--env-vars-file")
+    state[service]["revisions"][revision] = json.loads(
+        Path(env_file).read_text(encoding="utf-8") or "{}"
+    )
+    tag = flag("--tag")
+    kept = []
+    for target in state[service]["status"]["traffic"]:
+        if target.get("tag") == tag:
+            target.pop("tag")
+            target.pop("url", None)
+        if target.get("percent") or target.get("tag"):
+            kept.append(target)
+    kept.append({
+        "revisionName": revision,
+        "tag": tag,
+        "url": f"https://{tag}---{service}-abc.a.run.app",
+    })
+    state[service]["status"]["traffic"] = kept
+    save()
+
+if args[:3] == ["run", "services", "update-traffic"]:
+    service = args[3]
+    split = dict(item.split("=", 1) for item in flag("--to-revisions").split(","))
+    kept = []
+    for target in state[service]["status"]["traffic"]:
+        target.pop("percent", None)
+        if target.get("tag"):
+            kept.append(target)
+    for revision, percent in split.items():
+        assert revision in state[service]["revisions"], revision
+        kept.insert(0, {"revisionName": revision, "percent": int(percent)})
+    state[service]["status"]["traffic"] = kept
+    save()
+
+if args[:3] == ["run", "services", "add-iam-policy-binding"]:
+    iam = state[args[3]].setdefault("iam", [])
+    if flag("--member") not in iam:
+        iam.append(flag("--member"))
+    save()
+
+if args[:2] == ["auth", "print-identity-token"]:
+    print(f"idtoken:{flag('--impersonate-service-account')}:{flag('--audiences')}")
+    raise SystemExit(0)
+
+print("unexpected gcloud command", args, file=sys.stderr)
+raise SystemExit(2)
+"""
+
+# Follow the Web revision that serves traffic to the API revision its
+# ODP_API_BASE_URL reaches: a tag URL routes to the target holding that tag.
+SERVING_PATH = r"""
+import json, sys
+state = json.load(open(sys.argv[1]))
+
+
+def serving(service):
+    targets = [t for t in state[service]["status"]["traffic"] if t.get("percent")]
+    assert len(targets) == 1 and targets[0]["percent"] == 100, targets
+    return targets[0]["revisionName"]
+
+
+web = serving(sys.argv[3])
+base_url = state[sys.argv[3]]["revisions"][web]["ODP_API_BASE_URL"]
+tag = base_url.split("://", 1)[1].split("---", 1)[0]
+reached = [t["revisionName"] for t in state[sys.argv[2]]["status"]["traffic"] if t.get("tag") == tag]
+print(json.dumps({"web": web, "api_base_url": base_url, "api": reached}))
+"""
+
+REDEPLOY_HARNESS = r"""
+set -euo pipefail
+source "$1"
+CLOUD_RUN_NETWORK_ARGS=(--vpc-egress=all-traffic)
+SCHEDULER_TRIGGER_SNAPSHOT="$(mktemp)"
+WORKER_TRIGGER_SNAPSHOT="$(mktemp)"
+MIGRATION_CANDIDATE_JOB=oday-migrate-candidate
+eval "$2"
+eval "$3"
+if [ "${FAKE_NAME_ONLY:-0}" = "1" ]; then
+  printf '%s %s\n' "${REVISION_SUFFIX}" "${REVISION_TAG}"
+  exit 0
+fi
+eval "$4"
+eval "$5"
+# The deploy script writes the API candidate tag URL into the Web runtime env.
+printf '{"ODP_API_BASE_URL": "%s"}' "${API_URL}" >"${WEB_ENV_FILE}"
+run_locked_python() {
+  if [[ "$*" == *"smoke"* ]]; then
+    python3 -c "${SERVING_PATH}" "${FAKE_STATE}" "${API_SERVICE}" "${WEB_SERVICE}" \
+      >>"${FAKE_SERVING_LOG}"
+    return "${FAKE_SMOKE_EXIT:-0}"
+  fi
+  return 0
+}
+upsert_scheduler_trigger() { :; }
+eval "$6"
+"""
+
+REDEPLOY_SHA = "4fc05643b17165d54ef841d5d1343bafed94a02f"
+
+
+def _shared_tag_script() -> str:
+    """The deploy script with the candidate tag put back to one per release."""
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    old = 'REVISION_TAG="$(release_revision_tag "${REVISION_SUFFIX}" "${API_SERVICE}" "${WEB_SERVICE}")"'
+    assert text.count(old) == 1
+    text = text.replace(old, 'REVISION_TAG="candidate-${ODAY_RELEASE_SHA:0:16}"')
+    assert text.count("\nassert_candidate_unused ") == 2
+    return text.replace("\nassert_candidate_unused ", "\n: assert_candidate_unused ")
+
+
+def _redeploy(tmp_path: Path, state: dict, *, script_text: str, **env: str):
+    text = script_text
+    segments = [
+        _segment("release_revision_suffix() {", 'WEB_REVISION_TAG="${REVISION_TAG}"', text),
+        _segment('API_ENV_FILE="$(mktemp)"', "trap handle_deployment_exit EXIT", text),
+        _segment(
+            'capture_service_traffic "${API_SERVICE}" "${API_TRAFFIC_SNAPSHOT}"',
+            "ROLLBACK_ARMED=true",
+            text,
+        ),
+        _segment(*API_SEGMENT_MARKERS, text=text),
+        _segment(*WEB_SEGMENT_MARKERS, text=text),
+    ]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for name, body in (("gcloud", TAGGING_GCLOUD), ("curl", FAKE_CURL)):
+        tool = bin_dir / name
+        tool.write_text(body, encoding="utf-8")
+        tool.chmod(0o755)
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    serving_log = tmp_path / "serving.jsonl"
+    serving_log.write_text("", encoding="utf-8")
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"GITHUB_ACTIONS", "ODP_API_INVOKER_TOKEN", "ODP_WEB_BASE_URL",
+                       "ODP_WEB_CANDIDATE_INVOKER_TOKEN"}
+    }
+    environment.update(
+        {
+            "PATH": f"{bin_dir}:{environment.get('PATH', '')}",
+            "FAKE_STATE": str(state_path),
+            "FAKE_LOG": str(tmp_path / "gcloud.log"),
+            "FAKE_SERVING_LOG": str(serving_log),
+            "SERVING_PATH": SERVING_PATH,
+            "GCP_PROJECT": "odayplus-dev",
+            "GCP_REGION": "asia-east1",
+            "API_SERVICE": API_SERVICE,
+            "WEB_SERVICE": WEB_SERVICE,
+            "API_IMAGE": "registry/api@sha256:" + "a" * 64,
+            "WEB_IMAGE": "registry/web@sha256:" + "b" * 64,
+            "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT": RUNTIME_SA,
+            "GCP_CLOUD_SQL_INSTANCE": "odayplus-dev:asia-east1:oday",
+            "API_SECRET_BINDINGS": "ODAY_DATABASE_URL=db-url:latest",
+            "WEB_SECRET_BINDINGS": "ODAY_DATABASE_URL=db-url:latest",
+            "ODAY_RELEASE_SHA": REDEPLOY_SHA,
+            "GITHUB_RUN_ID": "40598998837",
+            "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT": SMOKE_SA,
+            "ODP_OPERATOR_SMOKE_BEARER_TOKEN": "operator-app-token",
+            "ODP_DEPLOY_ENV": "dev",
+            "SMOKE_REPORT": str(tmp_path / "smoke.json"),
+            "LIVE_E2E_REPORT": str(tmp_path / "live_e2e.json"),
+            "SCHEDULER_SCHEDULE_NAME": "oday-scheduler",
+            "SCHEDULER_CANDIDATE_JOB": "oday-scheduler-candidate",
+            "ODP_SCHEDULER_CRON": "* * * * *",
+            "WORKER_SCHEDULE_NAME": "oday-worker",
+            "WORKER_CANDIDATE_JOB": "oday-worker-candidate",
+            "ODP_WORKER_CRON": "* * * * *",
+            "ODP_CANDIDATE_INVOKER_WAIT_SECONDS": "0",
+            "ODP_PUBLIC_INVOKER_WAIT_SECONDS": "0",
+            "ODP_API_INVOKER_WAIT_SECONDS": "0",
+            **env,
+        }
+    )
+    result = subprocess.run(
+        ["bash", "-c", REDEPLOY_HARNESS, "bash", str(TRAFFIC_HELPER), *segments],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    serving = [json.loads(line) for line in serving_log.read_text(encoding="utf-8").splitlines()]
+    return result, serving, json.loads(state_path.read_text(encoding="utf-8"))
+
+
+def _serving_attempt(tmp_path: Path, script_text: str) -> tuple[dict, str, str]:
+    """Live state after attempt 1 of the release was verified and promoted."""
+    named, _, _ = _redeploy(
+        tmp_path, {}, script_text=script_text, FAKE_NAME_ONLY="1", GITHUB_RUN_ATTEMPT="1"
+    )
+    assert named.returncode == 0, named.stderr
+    suffix, tag = named.stdout.split()
+    state = {}
+    for service in (API_SERVICE, WEB_SERVICE):
+        revision = f"{service}-{suffix}"
+        state[service] = {
+            "metadata": {"name": service},
+            "iam": API_INVOKERS if service == API_SERVICE else ["allUsers"],
+            "status": {
+                "url": f"https://{service}-abc.a.run.app",
+                "traffic": [
+                    {"revisionName": revision, "percent": 100},
+                    {"revisionName": revision, "tag": tag,
+                     "url": f"https://{tag}---{service}-abc.a.run.app"},
+                ],
+            },
+            "revisions": {revision: {}},
+        }
+    api_revision = f"{API_SERVICE}-{suffix}"
+    state[WEB_SERVICE]["revisions"][f"{WEB_SERVICE}-{suffix}"] = {
+        "ODP_API_BASE_URL": f"https://{tag}---{API_SERVICE}-abc.a.run.app"
+    }
+    return state, api_revision, tag
+
+
+def test_redeploying_the_serving_release_keeps_the_serving_web_on_its_verified_api(
+    tmp_path: Path,
+) -> None:
+    """Serving attempt 1 -> attempt 2 of the same SHA -> smoke fails -> rollback.
+
+    The serving Web reaches the attempt-1 API while the attempt-2 candidate is
+    verified, and the whole Web->API path is attempt 1 again after the rollback.
+    """
+    state, attempt1_api, attempt1_tag = _serving_attempt(
+        tmp_path / "name", DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    )
+    attempt2_api = f"{API_SERVICE}-4fc05643b171-r40598998837-a2"
+
+    result, serving, final = _redeploy(
+        tmp_path,
+        state,
+        script_text=DEPLOY_SCRIPT.read_text(encoding="utf-8"),
+        GITHUB_RUN_ATTEMPT="2",
+        FAKE_SMOKE_EXIT="1",
+    )
+
+    assert result.returncode == 1, result.stderr
+    assert "restoring the recorded API/Web traffic split" in result.stderr
+    # Attempt 2 deployed its own API candidate under its own tag ...
+    api_tags = {t.get("tag"): t["revisionName"] for t in final[API_SERVICE]["status"]["traffic"]}
+    assert attempt2_api in final[API_SERVICE]["revisions"]
+    assert api_tags[attempt1_tag] == attempt1_api
+    (attempt2_tag,) = [tag for tag, revision in api_tags.items() if revision == attempt2_api]
+    assert attempt2_tag != attempt1_tag
+    assert attempt2_tag.startswith(f"candidate-{REDEPLOY_SHA[:16]}-")
+    # ... while the serving Web, during candidate verification, still reached attempt 1.
+    assert serving == [
+        {
+            "web": f"{WEB_SERVICE}-4fc05643b171-r40598998837-a1",
+            "api_base_url": f"https://{attempt1_tag}---{API_SERVICE}-abc.a.run.app",
+            "api": [attempt1_api],
+        }
+    ]
+    # After the rollback the whole Web->API path is attempt 1 again.
+    restored = subprocess.run(
+        ["python3", "-c", SERVING_PATH, str(tmp_path / "state.json"), API_SERVICE, WEB_SERVICE],
+        check=True, capture_output=True, text=True,
+    )
+    assert json.loads(restored.stdout) == serving[0]
+    assert [t["revisionName"] for t in final[API_SERVICE]["status"]["traffic"]
+            if t.get("percent")] == [attempt1_api]
+
+
+def test_a_tag_shared_by_every_attempt_repoints_the_serving_web(tmp_path: Path) -> None:
+    """The same run with one tag per release: the fake gcloud moves the tag, so
+    the serving Web reaches the unverified attempt-2 API and stays there after
+    the rollback. This is the defect the per-attempt tag removes."""
+    shared = _shared_tag_script()
+    state, attempt1_api, _ = _serving_attempt(tmp_path / "name", shared)
+    attempt2_api = f"{API_SERVICE}-4fc05643b171-r40598998837-a2"
+
+    result, serving, _ = _redeploy(
+        tmp_path, state, script_text=shared, GITHUB_RUN_ATTEMPT="2", FAKE_SMOKE_EXIT="1"
+    )
+
+    assert result.returncode == 1, result.stderr
+    assert [entry["api"] for entry in serving] == [[attempt2_api]]
+    restored = subprocess.run(
+        ["python3", "-c", SERVING_PATH, str(tmp_path / "state.json"), API_SERVICE, WEB_SERVICE],
+        check=True, capture_output=True, text=True,
+    )
+    assert json.loads(restored.stdout)["api"] == [attempt2_api] != [attempt1_api]
+
+
+def test_redeploy_refuses_a_repeated_attempt_before_any_cloud_run_mutation(
+    tmp_path: Path,
+) -> None:
+    """Re-running attempt 1 itself would reuse its tag and revision name."""
+    state, _, attempt1_tag = _serving_attempt(
+        tmp_path / "name", DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    )
+
+    result, serving, final = _redeploy(
+        tmp_path,
+        state,
+        script_text=DEPLOY_SCRIPT.read_text(encoding="utf-8"),
+        GITHUB_RUN_ATTEMPT="1",
+    )
+
+    assert result.returncode == 1
+    assert f"tag {attempt1_tag}) is not new to its service" in result.stderr
+    assert serving == []
+    assert final == state
+    calls = [json.loads(line) for line in (tmp_path / "gcloud.log").read_text().splitlines()]
+    assert not [c for c in calls if c[:2] == ["run", "deploy"] or "update-traffic" in c]

@@ -294,22 +294,20 @@ run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py p
 # deployment attempt as well as the release:
 #
 #   GitHub Actions  <sha12>-r<GITHUB_RUN_ID>-a<GITHUB_RUN_ATTEMPT>
-#   anywhere else   <sha12>-l<UTC epoch seconds>  (e.g. the foreground dev
-#                   smoke rollout, which refuses to run inside Actions)
+#   anywhere else   <sha12>-l<UTC epoch seconds>-p<deploy shell PID>  (e.g. the
+#                   foreground dev smoke rollout, which refuses to run inside
+#                   Actions)
 #
-# A local suffix only repeats for two attempts started in the same second, and
-# then Cloud Run refuses the second deploy; neither form can repeat the other.
-# Nothing reads the release back from the revision name: lineage and recovery
-# use the `oday-release-sha` label and the `candidate-<sha16>` tag. On a rerun,
-# `gcloud run deploy --tag` clears that tag from the previous attempt's revision
-# before giving it to the new one (traffic.UpdateTags), so exactly one target
-# carries it. Redeploying the release that is already serving moves the tag off
-# the serving revision; if that attempt rolls back, automatic_dev.serving_release
-# finds the restored revision untagged and refuses rather than guess. Every
-# revision name is checked against Cloud Run's 63-character DNS-label rule
-# here, before any mutation. With an 11-digit run id and a
-# 1-digit attempt the suffix is 28 characters, so service names up to 34
-# characters fit (dev `oday-api` and production `oday-prod-api` do).
+# Two local attempts only share a suffix if they start in the same second with
+# the same process id, and neither form can repeat the other. A repeat is not
+# left to Cloud Run: assert_candidate_unused refuses it from the pre-deploy
+# traffic snapshot, before the first Cloud Run mutation. Nothing reads the
+# release back from the revision name: lineage and recovery use the
+# `oday-release-sha` label and the candidate tag. Every revision name is checked
+# against Cloud Run's 63-character DNS-label rule here, before any mutation.
+# With an 11-digit run id and a 1-digit attempt the suffix is 28 characters, so
+# service names up to 34 characters fit (dev `oday-api` and production
+# `oday-prod-api` do).
 release_revision_suffix() {
   local suffix service revision
   if [ "${GITHUB_ACTIONS:-}" = "true" ] || [ -n "${GITHUB_RUN_ID:-}" ] || [ -n "${GITHUB_RUN_ATTEMPT:-}" ]; then
@@ -319,7 +317,7 @@ release_revision_suffix() {
     fi
     suffix="${ODAY_RELEASE_SHA:0:12}-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
   else
-    suffix="${ODAY_RELEASE_SHA:0:12}-l$(date -u +%s)"
+    suffix="${ODAY_RELEASE_SHA:0:12}-l$(date -u +%s)-p$$"
   fi
   for service in "$@"; do
     revision="${service}-${suffix}"
@@ -330,9 +328,39 @@ release_revision_suffix() {
   done
   printf "%s" "${suffix}"
 }
+# The candidate tag names the attempt too. The serving Web's ODP_API_BASE_URL
+# is the API candidate tag URL it was verified with, and `gcloud run deploy
+# --tag` moves an existing tag onto the new revision (traffic.UpdateTags). A
+# tag shared by every attempt of one release would therefore repoint the
+# serving Web at an unverified API the moment the same release is redeployed,
+# and a rollback, which restores traffic by revision name, would leave it
+# there. A per-attempt tag never moves: the serving Web keeps the API it was
+# verified with until the candidate is promoted, and still has it after a
+# rollback. `candidate-<sha16>` stays the prefix (automatic_dev.serving_release
+# reads the release from it); the 4 hex characters are the start of the
+# suffix's SHA-256. A repeat is refused before any mutation, like a repeated
+# suffix. The tagged URL host `<tag>---<service>-<10-character hash>-<region
+# code>` is one DNS label, so the tag and service name together get at most
+# 63 - 17 = 46 characters; the 31-character tag leaves production
+# `oday-prod-api` (13) two to spare.
+release_revision_tag() {
+  local suffix="$1"
+  shift
+  local digest tag service
+  digest="$(printf "%s" "${suffix}" | sha256sum)"
+  tag="candidate-${ODAY_RELEASE_SHA:0:16}-${digest:0:4}"
+  for service in "$@"; do
+    if [ $((${#tag} + ${#service})) -gt 46 ]; then
+      echo "Error: Cloud Run tag '${tag}' and service '${service}' exceed the 46 characters a tagged URL host allows." >&2
+      return 1
+    fi
+  done
+  printf "%s" "${tag}"
+}
 REVISION_SUFFIX="$(release_revision_suffix "${API_SERVICE}" "${WEB_SERVICE}")"
-API_REVISION_TAG="candidate-${ODAY_RELEASE_SHA:0:16}"
-WEB_REVISION_TAG="candidate-${ODAY_RELEASE_SHA:0:16}"
+REVISION_TAG="$(release_revision_tag "${REVISION_SUFFIX}" "${API_SERVICE}" "${WEB_SERVICE}")"
+API_REVISION_TAG="${REVISION_TAG}"
+WEB_REVISION_TAG="${REVISION_TAG}"
 release_job_name() {
   local base="$1"
   local suffix="-r-${ODAY_RELEASE_SHA:0:12}"
@@ -393,6 +421,7 @@ echo "Deployment details:"
 echo "  Environment:      ${ODP_DEPLOY_ENV}"
 echo "  Release SHA:      ${ODAY_RELEASE_SHA}"
 echo "  Revision Suffix:  ${REVISION_SUFFIX}"
+echo "  Revision Tag:     ${REVISION_TAG}"
 echo "  GCP Project:      ${GCP_PROJECT}"
 echo "  GCP Region:       ${GCP_REGION}"
 echo "  Artifact Repo:    ${GCP_AR_REPO}"
@@ -874,6 +903,10 @@ run_public_egress_probe() {
 echo "Recording the existing API/Web traffic before any runtime mutation..."
 capture_service_traffic "${API_SERVICE}" "${API_TRAFFIC_SNAPSHOT}"
 capture_service_traffic "${WEB_SERVICE}" "${WEB_TRAFFIC_SNAPSHOT}"
+# Before any Cloud Run mutation: this attempt's revision name and tag must be
+# new to both services (see release_revision_suffix / release_revision_tag).
+assert_candidate_unused "${API_TRAFFIC_SNAPSHOT}" "${API_REVISION_TAG}" "${API_SERVICE}-${REVISION_SUFFIX}"
+assert_candidate_unused "${WEB_TRAFFIC_SNAPSHOT}" "${WEB_REVISION_TAG}" "${WEB_SERVICE}-${REVISION_SUFFIX}"
 capture_scheduler_trigger "${SCHEDULER_SCHEDULE_NAME}" "${SCHEDULER_TRIGGER_SNAPSHOT}"
 capture_scheduler_trigger "${WORKER_SCHEDULE_NAME}" "${WORKER_TRIGGER_SNAPSHOT}"
 OLD_API_URL="$(service_snapshot_url "${API_TRAFFIC_SNAPSHOT}")"

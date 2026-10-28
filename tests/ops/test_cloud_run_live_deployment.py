@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -2635,11 +2636,11 @@ REVISION_RELEASE_SHA = "4fc05643b17165d54ef841d5d1343bafed94a02f"
 REVISION_NAME_PATTERN = re.compile(r"[a-z]([-a-z0-9]*[a-z0-9])?")
 
 
-def _run_release_revision_suffix(*services: str, **env: str) -> subprocess.CompletedProcess[str]:
-    """Execute the deploy script's own revision-suffix function."""
-    function = _extract_shell_function(
-        DEPLOY_SCRIPT.read_text(encoding="utf-8"), "release_revision_suffix"
-    )
+def _run_release_naming(
+    name: str, *args: str, **env: str
+) -> subprocess.CompletedProcess[str]:
+    """Execute one of the deploy script's own revision-naming functions."""
+    function = _extract_shell_function(DEPLOY_SCRIPT.read_text(encoding="utf-8"), name)
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -2650,9 +2651,9 @@ def _run_release_revision_suffix(*services: str, **env: str) -> subprocess.Compl
         [
             "bash",
             "-c",
-            f'set -euo pipefail\n{function}release_revision_suffix "$@"',
+            f'set -euo pipefail\n{function}{name} "$@"',
             "bash",
-            *services,
+            *args,
         ],
         cwd=ROOT,
         env=environment,
@@ -2660,6 +2661,16 @@ def _run_release_revision_suffix(*services: str, **env: str) -> subprocess.Compl
         capture_output=True,
         text=True,
     )
+
+
+def _run_release_revision_suffix(*services: str, **env: str) -> subprocess.CompletedProcess[str]:
+    return _run_release_naming("release_revision_suffix", *services, **env)
+
+
+def _run_release_revision_tag(
+    suffix: str, *services: str, **env: str
+) -> subprocess.CompletedProcess[str]:
+    return _run_release_naming("release_revision_tag", suffix, *services, **env)
 
 
 def test_revision_suffix_is_defined_once_and_shared_by_api_and_web() -> None:
@@ -2672,6 +2683,26 @@ def test_revision_suffix_is_defined_once_and_shared_by_api_and_web() -> None:
     ]
     assert text.count('--revision-suffix="${REVISION_SUFFIX}"') == 2
     assert "--revision-suffix=" not in text.replace('--revision-suffix="${REVISION_SUFFIX}"', "")
+    tags = re.findall(r"^\s*(?:API_|WEB_)?REVISION_TAG=.*$", text, flags=re.MULTILINE)
+    assert tags == [
+        'REVISION_TAG="$(release_revision_tag "${REVISION_SUFFIX}" "${API_SERVICE}" "${WEB_SERVICE}")"',
+        'API_REVISION_TAG="${REVISION_TAG}"',
+        'WEB_REVISION_TAG="${REVISION_TAG}"',
+    ]
+    assert text.count('--tag="${API_REVISION_TAG}"') == 1
+    assert text.count('--tag="${WEB_REVISION_TAG}"') == 1
+    # Both candidates are checked against the pre-deploy snapshot after it is
+    # captured and before the first Cloud Run mutation (the migration job).
+    guards = [
+        'assert_candidate_unused "${API_TRAFFIC_SNAPSHOT}" "${API_REVISION_TAG}" '
+        '"${API_SERVICE}-${REVISION_SUFFIX}"',
+        'assert_candidate_unused "${WEB_TRAFFIC_SNAPSHOT}" "${WEB_REVISION_TAG}" '
+        '"${WEB_SERVICE}-${REVISION_SUFFIX}"',
+    ]
+    for guard in guards:
+        assert text.count(guard) == 1
+        assert text.index('capture_service_traffic "${WEB_SERVICE}"') < text.index(guard)
+        assert text.index(guard) < text.index('gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}"')
     # Resolved after the read-only preflight and before the first Cloud Run mutation.
     assignment = text.index(assignments[0])
     assert text.index("validate_cloud_run_live_deployment.py preflight") < assignment
@@ -2720,11 +2751,74 @@ def test_revision_suffix_outside_github_actions_is_explicit_and_time_bound() -> 
     after = int(time.time())
 
     assert result.returncode == 0, result.stderr
-    match = re.fullmatch(r"4fc05643b171-l([0-9]+)", result.stdout)
+    match = re.fullmatch(r"4fc05643b171-l([0-9]+)-p([0-9]+)", result.stdout)
     assert match, result.stdout
     assert before <= int(match.group(1)) <= after
     # A local name can never take the form an Actions attempt uses.
     assert "-r" not in result.stdout
+
+
+def test_local_revision_suffixes_started_in_the_same_second_differ(tmp_path: Path) -> None:
+    """Two local attempts in one fixed second are told apart by the deploy shell."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_date = bin_dir / "date"
+    fake_date.write_text("#!/bin/sh\necho 1793180000\n", encoding="utf-8")
+    fake_date.chmod(0o755)
+    path = f"{bin_dir}:{os.environ.get('PATH', '')}"
+
+    first = _run_release_revision_suffix("oday-api", "oday-web", PATH=path)
+    second = _run_release_revision_suffix("oday-api", "oday-web", PATH=path)
+
+    assert (first.returncode, second.returncode) == (0, 0), first.stderr + second.stderr
+    for result in (first, second):
+        assert re.fullmatch(r"4fc05643b171-l1793180000-p[0-9]+", result.stdout), result.stdout
+    assert first.stdout != second.stdout
+    tags = [_run_release_revision_tag(r.stdout, "oday-api", "oday-web") for r in (first, second)]
+    assert all(tag.returncode == 0 for tag in tags), [tag.stderr for tag in tags]
+
+
+def test_candidate_tag_names_the_attempt_and_keeps_the_release_prefix() -> None:
+    suffixes = [
+        "4fc05643b171-r40598998837-a1",
+        "4fc05643b171-r40598998837-a2",
+        "4fc05643b171-r40611111111-a1",
+        "4fc05643b171-l1793180000-p4242",
+    ]
+    tags = [_run_release_revision_tag(suffix, "oday-api", "oday-web") for suffix in suffixes]
+
+    assert all(tag.returncode == 0 for tag in tags), [tag.stderr for tag in tags]
+    for suffix, tag in zip(suffixes, tags, strict=True):
+        digest = hashlib.sha256(suffix.encode()).hexdigest()[:4]
+        assert tag.stdout == f"candidate-4fc05643b17165d5-{digest}"
+        assert REVISION_NAME_PATTERN.fullmatch(tag.stdout)
+    assert len({tag.stdout for tag in tags}) == len(suffixes)
+    # Deterministic: the same attempt always names the same tag.
+    again = _run_release_revision_tag(suffixes[1], "oday-api", "oday-web")
+    assert again.stdout == tags[1].stdout
+
+
+@pytest.mark.parametrize(
+    ("service", "fits"),
+    [
+        ("oday-api", True),
+        ("oday-prod-api", True),  # infra/terraform/cloud_run.tf, environment=prod
+        ("oday-prod-web", True),
+        ("s" * 15, True),
+        ("s" * 16, False),
+    ],
+)
+def test_candidate_tag_fits_the_tagged_url_host(service: str, fits: bool) -> None:
+    result = _run_release_revision_tag("4fc05643b171-r40598998837-a2", "oday-api", service)
+
+    if fits:
+        assert result.returncode == 0, result.stderr
+        # <tag>---<service>-<10-character hash>-<2-character region> is one DNS label.
+        assert len(f"{result.stdout}---{service}-abcdefghij-de") <= 63
+    else:
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert "exceed the 46 characters" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -2810,6 +2904,38 @@ def _traffic_description(
             ],
         }
     }
+
+
+def test_traffic_helper_refuses_a_candidate_the_service_already_has() -> None:
+    description = _traffic_description(
+        traffic=[
+            {"revisionName": "oday-api-4fc05643b171-r1-a1", "percent": 100},
+            {
+                "revisionName": "oday-api-4fc05643b171-r1-a1",
+                "tag": "candidate-4fc05643b17165d5-aaaa",
+                "url": "https://candidate-4fc05643b17165d5-aaaa---oday-api.example.test",
+            },
+        ]
+    )
+
+    traffic_helper.assert_candidate_unused(
+        description, "candidate-4fc05643b17165d5-bbbb", "oday-api-4fc05643b171-r1-a2"
+    )
+    traffic_helper.assert_candidate_unused(
+        traffic_helper.absent_snapshot("oday-api"),
+        "candidate-4fc05643b17165d5-aaaa",
+        "oday-api-4fc05643b171-r1-a1",
+    )
+    with pytest.raises(ValueError, match="would move it off"):
+        traffic_helper.assert_candidate_unused(
+            description, "candidate-4fc05643b17165d5-aaaa", "oday-api-4fc05643b171-r1-a2"
+        )
+    with pytest.raises(ValueError, match="already exists"):
+        traffic_helper.assert_candidate_unused(
+            description, "candidate-4fc05643b17165d5-bbbb", "oday-api-4fc05643b171-r1-a1"
+        )
+    with pytest.raises(ValueError, match="missing status.traffic"):
+        traffic_helper.assert_candidate_unused({"status": {}}, "tag", "revision")
 
 
 def test_traffic_helper_resolves_tagged_revision_and_exact_restore_split() -> None:
