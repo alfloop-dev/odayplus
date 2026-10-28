@@ -89,7 +89,8 @@ def _ready_intake(db, bundle, client):
                           json={"action": "revise", "targetListingId": listing_id,
                                 "reason": "Revise the synthetic measured listing",
                                 "riskSummary": "Synthetic local acceptance", "riskAcknowledged": True},
-                          headers=_reviewer_headers("synthetic-promotion-decide"))
+                          headers={**_reviewer_headers("synthetic-promotion-decide"),
+                                   "If-Match": f'W/"{corrected.json()["version"]}"'})
     assert decided.status_code == 200, decided.text
     record = decided.json()
     assert record["matchResult"]["targetListingId"] == listing_id

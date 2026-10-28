@@ -11,6 +11,7 @@ import type {
   IntakeFieldValue,
   IntakeInboxPage,
   IntakeInboxQuery,
+  IntakeDecidePayload,
   JobReceipt,
   PromotionDecisionReceipt,
   SlaReceipt,
@@ -20,7 +21,7 @@ import { getOperatorRole } from "../../navigation";
 import styles from "./intake.module.css";
 import type { IntakeHeatZoneOptions } from "./AddListingFromUrlDialog";
 import { ListingInboxIntakeView } from "./ListingInboxIntakeView";
-import { IntakeDecisionDialog } from "./IntakeDecisionDialog";
+import { IntakeDecisionDialog, type IntakeDecisionDraft } from "./IntakeDecisionDialog";
 import { IntakeProcessingDetail } from "./IntakeProcessingDetail";
 import { IntakeFieldFixDialog } from "./IntakeFieldFixDialog";
 import type {
@@ -202,7 +203,10 @@ export function AssistedIntakeSection({
   // A list omission or failed direct GET must not discard this exact draft.
   const decisionScope = useMemo(() => ({
     client, activeRoleId, activeSubjectId, selectedId, decisionKind, dialog,
-    idempotencyKey: null as string | null,
+    command: null as {
+      idempotencyKey: string; correlationId: string; ifMatch: string;
+      payload: IntakeDecidePayload; record: AssistedIntake;
+    } | null,
   }), [client, activeRoleId, activeSubjectId, selectedId, decisionKind, dialog]);
   const currentDecisionScope = useRef<typeof decisionScope | null>(decisionScope);
   currentDecisionScope.current = decisionScope;
@@ -212,9 +216,9 @@ export function AssistedIntakeSection({
       if (currentDecisionScope.current === decisionScope) currentDecisionScope.current = null;
     };
   }, [decisionScope]);
-  const [decisionDraft, setDecisionDraft] = useState<{
-    scope: typeof decisionScope; reason: string; riskAcknowledged: boolean;
-  } | null>(null);
+  const [decisionDraft, setDecisionDraft] = useState<(IntakeDecisionDraft & {
+    scope: typeof decisionScope;
+  }) | null>(null);
   const [pendingDecision, setPendingDecision] = useState<typeof decisionScope | null>(null);
   const [decisionError, setDecisionError] = useState<{
     scope: typeof decisionScope; error: IntakeApiError;
@@ -441,12 +445,16 @@ export function AssistedIntakeSection({
     setActionError(null);
   }
 
-  /** Merge a server response back into the queue; the server is authoritative. */
-  function applyRecord(record: AssistedIntake) {
+  /** Apply a receipt without replacing a newer observed version of this Intake. */
+  function applyRecord(record: AssistedIntake, source: "receipt" | "read") {
     if (client !== activeClient.current) return;
     setRecords((current) => {
       const index = current.findIndex((item) => item.id === record.id);
       if (index === -1) return [record, ...current];
+      const observedVersion = validResourceVersion(current[index].version);
+      const receiptVersion = validResourceVersion(record.version);
+      if (observedVersion !== null && (receiptVersion === null || receiptVersion < observedVersion
+        || (source === "receipt" && receiptVersion === observedVersion))) return current;
       const next = [...current];
       next[index] = record;
       return next;
@@ -475,7 +483,7 @@ export function AssistedIntakeSection({
       return;
     }
     submitKeyRef.current = null;
-    applyRecord(result.value);
+    applyRecord(result.value, "receipt");
     updateUrlState({ dialog: "detail", selectedId: result.value.id });
     setToast(
       result.value.matchResult?.outcome === "EXACT_DUPLICATE"
@@ -520,7 +528,7 @@ export function AssistedIntakeSection({
       return;
     }
     correctionKeyRef.current = null;
-    applyRecord(result.value);
+    applyRecord(result.value, "receipt");
     updateUrlState({ dialog: "detail", fixFieldKey: null });
     setToast("已記錄人工修正（前後值已寫入 Audit）");
   }
@@ -558,7 +566,7 @@ export function AssistedIntakeSection({
       return;
     }
     assistedEntryKeyRef.current = null;
-    applyRecord(result.value);
+    applyRecord(result.value, "receipt");
     setToast("補錄完成 — 已進入比對");
     void refresh();
   }
@@ -575,21 +583,28 @@ export function AssistedIntakeSection({
     if (!client || !selected || !decisionKind || busy) return;
     const scope = decisionScope;
     if (currentDecisionScope.current !== scope || client !== activeClient.current) return;
+    if (!scope.command) {
+      const version = validResourceVersion(selected.version);
+      if (version === null) {
+        setDecisionError({ scope, error: unavailableResourceError("RESOURCE_VERSION_UNAVAILABLE", "Intake resource version") });
+        return;
+      }
+      scope.command = {
+        idempotencyKey: newIntakeActionIdempotencyKey(selected.id, `decide-${decisionKind}`),
+        correlationId: newCorrelationId(), ifMatch: `W/"${version}"`,
+        payload: { action: DECISION_API_ACTION[decisionKind as IntakeDecisionKind],
+          reason, riskSummary, riskAcknowledged },
+        record: structuredClone(selected),
+      };
+    }
+    const command = scope.command;
     setPendingDecision(scope);
     setDecisionError(null);
-    if (!scope.idempotencyKey) {
-      scope.idempotencyKey = newIntakeActionIdempotencyKey(selected.id, `decide-${decisionKind}`);
-    }
     const result = await intakeApi.decide(
       client,
-      selected.id,
-      {
-        action: DECISION_API_ACTION[decisionKind as IntakeDecisionKind],
-        reason,
-        riskSummary,
-        riskAcknowledged,
-      },
-      { idempotencyKey: scope.idempotencyKey },
+      command.record.id,
+      command.payload,
+      command,
     );
     // Abandoned principal/intent results cannot clear a newer dialog or draft.
     if (currentDecisionScope.current !== scope || client !== activeClient.current) return;
@@ -600,9 +615,9 @@ export function AssistedIntakeSection({
       setDecisionError({ scope, error: result.error });
       return;
     }
-    scope.idempotencyKey = null;
+    scope.command = null;
     setDecisionDraft(null);
-    applyRecord(result.value);
+    applyRecord(result.value, "receipt");
     updateUrlState({ dialog: "detail", decisionKind: null });
     setToast(`決策已寫入 — ${result.value.stage} · 已記錄於 Audit Trail`);
     void refresh();
@@ -619,7 +634,7 @@ export function AssistedIntakeSection({
       setActionError(result.error);
       return;
     }
-    applyRecord(result.value);
+    applyRecord(result.value, "receipt");
     setToast("已重試擷取 — 先前送件內容與人工修正已保留");
     void refresh();
   }
@@ -634,7 +649,7 @@ export function AssistedIntakeSection({
       setActionError(result.error);
       return;
     }
-    applyRecord(result.value);
+    applyRecord(result.value, "receipt");
     setToast(`收件 ${intakeId} 已直接重試；原始證據與修正紀錄保留`);
     void refresh();
   }
@@ -690,7 +705,7 @@ export function AssistedIntakeSection({
       setToast(input.successMessage);
       const getResult = await intakeApi.get(client, intakeId);
       if (!isCurrent()) return;
-      if (getResult.ok) applyRecord(getResult.value);
+      if (getResult.ok) applyRecord(getResult.value, "read");
       if (input.closeDialog) updateUrlState({ dialog: "detail" });
       void refresh();
     } catch (error: unknown) {
@@ -784,7 +799,7 @@ export function AssistedIntakeSection({
     );
     // The request consumed the intake's If-Match; refetch for the new version.
     const getResult = await intakeApi.get(client, selected.id);
-    if (getResult.ok) applyRecord(getResult.value);
+    if (getResult.ok) applyRecord(getResult.value, "read");
   }
 
   async function handleReviewPromotion(input: PromotionReviewInput) {
@@ -880,7 +895,7 @@ export function AssistedIntakeSection({
       const getResult = await intakeApi.get(client, selected.id);
       if (client !== activeClient.current || contextGeneration !== activeCommandContext.current.generation) return;
       if (getResult.ok) {
-        applyRecord(getResult.value);
+        applyRecord(getResult.value, "read");
         setActionError(null);
         // The worker advances promotion/job receipts independently of the
         // intake record. Refresh those authorities even if intake ID is stable.
@@ -1131,21 +1146,22 @@ export function AssistedIntakeSection({
           busy={busy}
           draft={currentDecisionDraft}
           error={decisionError?.scope === decisionScope ? decisionError.error : null}
+          hasPendingCommand={decisionScope.command !== null}
           kind={decisionKind}
           onDraftChange={(draft) => {
-            if (currentDecisionScope.current === decisionScope && client === activeClient.current) {
+            if (!decisionScope.command && currentDecisionScope.current === decisionScope && client === activeClient.current) {
               setDecisionDraft({ scope: decisionScope, ...draft });
             }
           }}
           onClose={() => {
-            decisionScope.idempotencyKey = null;
+            decisionScope.command = null;
             setDecisionDraft(null);
             setDecisionError(null);
             updateUrlState({ dialog: "detail", decisionKind: null });
             setActionError(null);
           }}
           onSubmit={handleDecide}
-          record={selected}
+          record={decisionScope.command?.record ?? selected}
         />
       ) : null}
 

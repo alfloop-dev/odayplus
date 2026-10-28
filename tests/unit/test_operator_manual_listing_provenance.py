@@ -50,6 +50,7 @@ def _service(listings=None, intakes=None):
 
 def _create(service, intake, key="manual-create"):
     return service.decide_intake(
+        if_match='W/"{}"'.format(intake["version"]),
         intake_id=intake["id"], action="create", reason="Verified distinct listing",
         risk_summary="Geocode and hard-rule evidence still require verification",
         risk_acknowledged=True, actor_role_id="site_reviewer", actor_name=ACTOR,
@@ -260,6 +261,7 @@ def test_operator_decision_preserves_lineage_and_real_snapshot_after_reload(tmp_
         intakes.save_intake(intake)
         service = _service(listings, intakes)
         service.decide_intake(
+            if_match='W/"{}"'.format(intake["version"]),
             intake_id=intake["id"], action=action, target_listing_id=row["id"],
             reason="Recorded observation confirms new rent", risk_summary="Retain property binding",
             risk_acknowledged=True, actor_role_id="site_reviewer", actor_name=ACTOR,
@@ -311,6 +313,7 @@ def test_revise_without_named_or_recorded_target_does_not_pick_first_listing():
     evidence_before = service.get_listing(listing_id)["sourceEvidence"]
     with pytest.raises(NetworkListingConflict, match="no target listing"):
         service.decide_intake(
+            if_match='W/"{}"'.format(unrelated["version"]),
             intake_id=unrelated["id"], action="revise", reason="Unmatched revision",
             risk_summary="Would overwrite an existing listing", risk_acknowledged=True,
             actor_role_id="site_reviewer", actor_name=ACTOR, idempotency_key="unmatched-revise",
@@ -448,6 +451,7 @@ def _manual_decision_service(match_result):
 
 def _manual_revise(service, intake, *, target, key="manual-revise"):
     return service.decide_intake(
+        if_match='W/"{}"'.format(intake["version"]),
         intake_id=intake["id"], action="revise", target_listing_id=target,
         reason="Independent operator selects the recorded target",
         risk_summary="Retain source observations without inventing a score",
@@ -523,6 +527,7 @@ def test_fresh_decisions_without_an_existing_target_do_not_invent_target_authori
         _authorize_provenance_record(row)
 
     result = service.decide_intake(
+        if_match='W/"{}"'.format(intake["version"]),
         intake_id=intake["id"], action=action, reason="Record non-target decision",
         risk_summary="No existing listing is being changed", risk_acknowledged=True,
         actor_role_id="site_reviewer", actor_name=ACTOR,
@@ -553,6 +558,7 @@ def test_cached_create_reauthorizes_its_actual_created_listing(scope_revoked):
 
     def command():
         return service.decide_intake(
+            if_match='W/"{}"'.format(intake["version"]),
             intake_id=intake["id"], action="create", reason="Create one scoped listing",
             risk_summary="The replay may only return its actual created listing",
             risk_acknowledged=True, actor_role_id="site_reviewer", actor_name=ACTOR,
@@ -592,6 +598,7 @@ def test_cached_non_listing_decision_still_has_no_target_authorization(action):
 
     def command():
         return service.decide_intake(
+            if_match='W/"{}"'.format(intake["version"]),
             intake_id=intake["id"], action=action, reason="Retain non-listing decision",
             risk_summary="No listing was changed or created", risk_acknowledged=True,
             actor_role_id="site_reviewer", actor_name=ACTOR,
@@ -617,6 +624,7 @@ def test_duplicate_without_recorded_target_is_a_controlled_conflict_without_writ
     before_rows = deepcopy(listings.list_listings())
     with pytest.raises(NetworkListingConflict, match="no target listing"):
         service.decide_intake(
+            if_match='W/"{}"'.format(intake["version"]),
             intake_id=intake["id"], action="duplicate", reason="No recorded duplicate target",
             risk_summary="Never select an unrelated existing listing", risk_acknowledged=True,
             actor_role_id="site_reviewer", actor_name=ACTOR,

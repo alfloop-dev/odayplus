@@ -63,6 +63,19 @@ def test_generated_client_matches_the_artifact() -> None:
     assert OUTPUT_PATH.read_text(encoding="utf-8") == render(_artifact())
 
 
+def test_operator_intake_decision_declares_its_observed_version_and_controlled_errors() -> None:
+    operation = _artifact()["paths"]["/api/v1/operator/network-listings/intake/{intake_id}/decide"]["post"]
+    header = next(value for value in operation["parameters"] if value["name"] == "If-Match")
+    assert header["in"] == "header"
+    # Runtime checks after authorization own the controlled428, not FastAPI's
+    # generic missing-required-header422 before the write boundary.
+    assert header["required"] is False
+    for status in ("428", "503"):
+        assert operation["responses"][status]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/ErrorResponse",
+        }
+
+
 def test_generated_client_is_marked_do_not_edit() -> None:
     assert "DO NOT EDIT" in OUTPUT_PATH.read_text(encoding="utf-8")
 

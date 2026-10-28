@@ -567,7 +567,16 @@ def test_operator_correction_and_decision_versions_survive_replay(bridge_databas
                 conn.execute("INSERT INTO identity.account_roles(account_id,role,granted_by) VALUES (%s,%s,%s)",
                              (APPROVER, role.value, "isolated-synthetic-test"))
         decision_headers = {**_headers(APPROVER, key="synthetic-bridge-decision"),
+                            "If-Match": f'W/"{corrected.json()["version"]}"',
                             "x-roles": "site_reviewer,expansion_user", "x-operator-role": "expansion-manager"}
+        before_stale = _snapshot(bundle)
+        stale = client.post(f"{BASE}/intake/{iid}/decide", json=decision_body, headers={
+            **decision_headers, "If-Match": f'W/"{initial["version"]}"',
+            "Idempotency-Key": "synthetic-bridge-stale-decision",
+        })
+        assert stale.status_code == 409, stale.text
+        assert stale.json()["detail"] == "VERSION_CONFLICT"
+        assert _snapshot(bundle) == before_stale
         decided = client.post(f"{BASE}/intake/{iid}/decide", json=decision_body, headers=decision_headers)
         assert decided.status_code == 200, decided.text
         assert decided.json()["version"] == 3 and decided.json()["stage"] == "FAILED"

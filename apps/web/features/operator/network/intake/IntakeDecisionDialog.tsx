@@ -24,10 +24,18 @@ import { decisionOptions, decisionTitle, matchConfidence, matchLabel, shortUrl, 
 // checkbox. It is deliberately not rebuilt at submit time: the audit record
 // must store the text the operator actually read, not a re-derivation of it.
 
+export type IntakeDecisionDraft = {
+  reason: string;
+  riskAcknowledged: boolean;
+  reviewedVersion?: number;
+  reviewedRiskSummary?: string;
+};
+
 export function IntakeDecisionDialog({
   busy,
   draft,
   error,
+  hasPendingCommand = false,
   kind,
   onClose,
   onDraftChange,
@@ -35,20 +43,20 @@ export function IntakeDecisionDialog({
   record,
 }: {
   busy: boolean;
-  draft?: { reason: string; riskAcknowledged: boolean };
+  draft?: IntakeDecisionDraft;
   error: IntakeApiError | null;
+  hasPendingCommand?: boolean;
   kind: IntakeDecisionKind;
   onClose: () => void;
-  onDraftChange?: (draft: { reason: string; riskAcknowledged: boolean }) => void;
+  onDraftChange?: (draft: IntakeDecisionDraft) => void;
   onSubmit: (input: { reason: string; riskSummary: string; riskAcknowledged: boolean }) => void;
   record: AssistedIntake;
 }) {
   // The container owns a scope-bound draft so list/detail reconciliation may
   // remount this dialog without discarding an unconfirmed command.
-  const [localReason, setReason] = useState("");
-  const [localRiskAcknowledged, setRiskAcknowledged] = useState(false);
-  const reason = draft?.reason ?? localReason;
-  const riskAcknowledged = draft?.riskAcknowledged ?? localRiskAcknowledged;
+  const [localDraft, setLocalDraft] = useState<IntakeDecisionDraft>({ reason: "", riskAcknowledged: false });
+  const currentDraft = draft ?? localDraft;
+  const reason = currentDraft.reason;
   const [localError, setLocalError] = useState<string | null>(null);
   const [escapeBlocked, setEscapeBlocked] = useState(false);
 
@@ -57,6 +65,9 @@ export function IntakeDecisionDialog({
   const outcome = record.matchResult?.outcome;
   const target = record.matchResult?.targetListingId ?? "";
   const riskSummary = buildRiskSummary(record, kind, target);
+  const riskAcknowledged = currentDraft.riskAcknowledged
+    && currentDraft.reviewedVersion === record.version
+    && currentDraft.reviewedRiskSummary === riskSummary;
 
   function handleSubmit() {
     if (busy) return;
@@ -129,11 +140,12 @@ export function IntakeDecisionDialog({
             className={styles.textarea}
             data-autofocus
             data-testid="intake-decide-reason"
-            disabled={busy}
+            disabled={busy || hasPendingCommand}
             id="intake-decide-reason"
             onChange={(event) => {
-              if (onDraftChange) onDraftChange({ reason: event.target.value, riskAcknowledged });
-              else setReason(event.target.value);
+              const next = { ...currentDraft, reason: event.target.value, riskAcknowledged };
+              if (onDraftChange) onDraftChange(next);
+              else setLocalDraft(next);
             }}
             placeholder="例：樓層與提供者 ID 矛盾，實地確認為不同物件…"
             rows={3}
@@ -150,11 +162,13 @@ export function IntakeDecisionDialog({
             <input
               checked={riskAcknowledged}
               data-testid="intake-decide-risk-ack"
-              disabled={busy}
+              disabled={busy || hasPendingCommand}
               id="intake-decide-risk-ack"
               onChange={(event) => {
-                if (onDraftChange) onDraftChange({ reason, riskAcknowledged: event.target.checked });
-                else setRiskAcknowledged(event.target.checked);
+                const next = { reason, riskAcknowledged: event.target.checked,
+                  reviewedVersion: record.version, reviewedRiskSummary: riskSummary };
+                if (onDraftChange) onDraftChange(next);
+                else setLocalDraft(next);
               }}
               type="checkbox"
             />
@@ -179,6 +193,7 @@ export function IntakeDecisionDialog({
         ) : null}
 
         <div className={styles.noteBox} data-testid="intake-decide-note">
+          {hasPendingCommand ? "本次送出時的檢視快照；寫入結果尚未確認。重送會沿用原內容與版本。取消只關閉視窗，不會取消已送出的決策；修改前請先重新讀取案件確認狀態。" : null}
           此決策不使用 optimistic UI — 按下確認才會寫入，並記錄操作者、時間、前後值、快照與
           parser 版本。
         </div>

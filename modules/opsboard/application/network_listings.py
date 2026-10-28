@@ -2305,6 +2305,7 @@ class NetworkListingService:
         correlation_id: str | None,
         authorize_existing: Callable[[dict[str, Any]], None] | None = None,
         target_listing_id: str | None = None,
+        if_match: str | None = None,
     ) -> dict[str, Any]:
         # Server-side role check
         actor_name = self._require_actor(actor_name, actor_role_id)
@@ -2332,10 +2333,25 @@ class NetworkListingService:
         if targets:
             self._authorize_listing_write(targets, authorize_existing)
 
+        request_value = {"intake_id": intake_id, "action": action, "target_listing_id": target_listing_id,
+                         "reason": reason, "risk_summary": risk_summary,
+                         "risk_acknowledged": risk_acknowledged}
+        # Preserve the fingerprint of historical tokenless receipts. They may
+        # still be reauthorized/replayed, but cannot authorize a fresh write.
+        if if_match is not None:
+            request_value["if_match"] = if_match
         write = self._prepare_write("decide_intake", governed_key, actor_name,
-                                    {"intake_id": intake_id, "action": action, "target_listing_id": target_listing_id, "reason": reason, "risk_summary": risk_summary, "risk_acknowledged": risk_acknowledged}, correlation_id)
+                                    request_value, correlation_id)
         if write.replayed_response is not None:
             return write.replayed_response
+        if not (self._seed_fixtures and if_match is None):
+            if if_match is None:
+                raise NetworkListingPreconditionRequired("PRECONDITION_REQUIRED")
+            revision = intake.get("version")
+            if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+                raise NetworkListingVersionUnavailable("INTAKE_VERSION_UNAVAILABLE")
+            if if_match != f'W/"{revision}"':
+                raise NetworkListingConflict("VERSION_CONFLICT")
         if match_result is not None and not isinstance(match_result, dict):
             raise NetworkListingPolicyError("MATCH_RESULT_UNAVAILABLE")
 

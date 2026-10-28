@@ -1205,6 +1205,162 @@ describe("partial recorded match facts do not establish decision authority", () 
 
 
 describe("decision drafts belong to one client, principal, record and decision intent", () => {
+  it.each([undefined, null, 0, true, 1.5, "4"])("does not submit a decision without a usable Intake version (%s)", async (version) => {
+    const record = intake({ version: version as unknown as number });
+    let writes = 0;
+    nav.reset(`selected=${record.id}&dialog=decide&decision=create`);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path === "/api/v1/operator/network-listings/intake") return json({
+        items: [record], total: 1, page: 1, pageSize: 10, counts: {}, evidenceState: "complete",
+      });
+      if (path.endsWith("/decide")) writes++;
+      return json({ code: "NOT_FOUND" }, 404);
+    }));
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="draft-owner" />);
+    fireEvent.change(await screen.findByTestId("intake-decide-reason"), { target: { value: "Reviewed evidence" } });
+    fireEvent.click(screen.getByTestId("intake-decide-risk-ack"));
+    fireEvent.click(screen.getByTestId("intake-decide-submit"));
+    expect(await screen.findByTestId("intake-decide-error")).toHaveTextContent("RESOURCE_VERSION_UNAVAILABLE");
+    expect(writes).toBe(0);
+  });
+
+  it.each([
+    ["create", 8], ["revise", 8], ["dup", 8],
+    ["create", 5], ["revise", 5], ["dup", 5],
+  ] as const)("replays the captured %s review with observed parent version %s", async (kind, observedVersion) => {
+    const record = intake({ snapshotId: "reviewed-snapshot", parserVersion: "reviewed-parser",
+      slaInstanceId: "SLA-OBSERVED", slaVersion: 1 });
+    let listed = record;
+    let refreshUnavailable = false;
+    const writes: Array<{ key: string | null; correlation: string | null; ifMatch: string | null; body: unknown }> = [];
+    nav.reset(`selected=${record.id}&dialog=decide&decision=${kind}`);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path === "/api/v1/operator/network-listings/intake") return refreshUnavailable
+        ? json({ detail: "Follow-up read unavailable" }, 503) : json({
+        items: [listed], total: 1, page: 1, pageSize: 10, counts: {}, evidenceState: "complete",
+      });
+      if (path.endsWith(`/${record.id}/decide`)) {
+        const headers = new Headers(init?.headers);
+        writes.push({ key: headers.get("idempotency-key"), correlation: headers.get("x-correlation-id"),
+          ifMatch: headers.get("if-match"), body: JSON.parse(String(init?.body)) });
+        return writes.length === 1 ? json({ detail: "Decision result unknown" }, 503)
+          : json({ ...record, stage: "READY", version: record.version + 1 });
+      }
+      return json({ code: "NOT_FOUND" }, 404);
+    }));
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="draft-owner" />);
+    fireEvent.change(await screen.findByTestId("intake-decide-reason"), { target: { value: "Reviewed original evidence" } });
+    fireEvent.click(screen.getByTestId("intake-decide-risk-ack"));
+    const risk = screen.getByTestId("intake-decide-risk-summary").textContent;
+    fireEvent.click(screen.getByTestId("intake-decide-submit"));
+    await screen.findByTestId("intake-decide-error");
+    listed = { ...record, version: observedVersion, slaVersion: 2, slaState: "PAUSED",
+      stage: observedVersion === 5 ? "READY" : record.stage,
+      snapshotId: observedVersion === 5 ? record.snapshotId : "new-unreviewed-snapshot",
+      parserVersion: observedVersion === 5 ? record.parserVersion : "new-parser",
+      matchResult: { ...record.matchResult!, targetListingId: observedVersion === 5 ? record.matchResult!.targetListingId : "LST-OTHER" } };
+    await act(async () => nav.replace(`/operator?selected=${record.id}&dialog=decide&decision=${kind}&refresh=newer`));
+    await waitFor(() => expect(screen.getByTestId("intake-decide-risk-summary").textContent).toBe(risk));
+    expect(screen.getByTestId("intake-decide-reason")).toBeDisabled();
+    expect(screen.getByTestId("intake-decide-risk-ack")).toBeDisabled();
+    expect(screen.getByTestId("intake-decide-note")).toHaveTextContent("尚未確認");
+    await waitFor(() => expect(screen.getByTestId("intake-detail-header")).toHaveTextContent(`版本 v${observedVersion}`));
+    expect(screen.getByTestId("asg-sla-status")).toHaveTextContent("已暫停");
+    refreshUnavailable = true;
+    fireEvent.click(screen.getByTestId("intake-decide-submit"));
+    await waitFor(() => expect(writes).toHaveLength(2));
+    expect(writes[0].ifMatch).toBe('W/"4"');
+    expect(writes[0].correlation).toBeTruthy();
+    expect(writes[1]).toEqual(writes[0]);
+    await waitFor(() => expect(screen.queryByTestId("intake-decide-dialog")).not.toBeInTheDocument());
+    expect(screen.getByTestId("intake-detail-header")).toHaveTextContent(`版本 v${observedVersion}`);
+    expect(screen.getByTestId("asg-sla-status")).toHaveTextContent("已暫停");
+  });
+
+  it.each(["version", "risk", "both"] as const)("requires a new acknowledgement when %s changes before first submit", async (change) => {
+    const record = intake({ snapshotId: "first-review", parserVersion: "first-parser" });
+    let listed = record;
+    const writes: Array<{ ifMatch: string | null; risk: string }> = [];
+    nav.reset(`selected=${record.id}&dialog=decide&decision=revise`);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path === "/api/v1/operator/network-listings/intake") return json({
+        items: [listed], total: 1, page: 1, pageSize: 10, counts: {}, evidenceState: "complete",
+      });
+      if (path.endsWith(`/${record.id}/decide`)) {
+        writes.push({ ifMatch: new Headers(init?.headers).get("if-match"), risk: JSON.parse(String(init?.body)).riskSummary });
+        return json({ ...listed, stage: "READY", version: listed.version + 1 });
+      }
+      return json({ code: "NOT_FOUND" }, 404);
+    }));
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="draft-owner" />);
+    fireEvent.change(await screen.findByTestId("intake-decide-reason"), { target: { value: "Reviewed original decision" } });
+    fireEvent.click(screen.getByTestId("intake-decide-risk-ack"));
+    expect(screen.getByTestId("intake-decide-risk-ack")).toBeChecked();
+    const expectedVersion = change === "risk" ? 4 : 8;
+    listed = { ...record, version: expectedVersion,
+      snapshotId: change === "version" ? record.snapshotId : "new-review",
+      parserVersion: change === "version" ? record.parserVersion : "new-parser",
+      matchResult: { ...record.matchResult!, targetListingId: change === "version" ? record.matchResult!.targetListingId : "LST-NEW-REVIEW" } };
+    await act(async () => nav.replace(`/operator?selected=${record.id}&dialog=decide&decision=revise&refresh=before-send`));
+    await waitFor(() => expect(screen.getByTestId("intake-detail-header")).toHaveTextContent(`版本 v${expectedVersion}`));
+    await waitFor(() => expect(screen.getByTestId("intake-decide-risk-summary")).toHaveTextContent(change === "version" ? "first-review" : "new-review"));
+    expect(screen.getByTestId("intake-decide-risk-ack")).not.toBeChecked();
+    fireEvent.click(screen.getByTestId("intake-decide-submit"));
+    expect(await screen.findByTestId("intake-decide-error")).toHaveTextContent("請先確認");
+    expect(writes).toHaveLength(0);
+    fireEvent.click(screen.getByTestId("intake-decide-risk-ack"));
+    const risk = screen.getByTestId("intake-decide-risk-summary").textContent;
+    fireEvent.click(screen.getByTestId("intake-decide-submit"));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({ ifMatch: `W/"${expectedVersion}"`, risk });
+  });
+
+  it("allows a fresh reviewed intent after leaving an unconfirmed decision and rereading the case", async () => {
+    const record = intake({ snapshotId: "old-reviewed-snapshot" });
+    let listed = record;
+    const writes: Array<{ key: string | null; ifMatch: string | null; body: { reason: string; riskSummary: string } }> = [];
+    nav.reset(`selected=${record.id}&dialog=decide&decision=create`);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path === "/api/v1/operator/network-listings/intake") return json({
+        items: [listed], total: 1, page: 1, pageSize: 10, counts: {}, evidenceState: "complete",
+      });
+      if (path.endsWith(`/${record.id}/decide`)) {
+        const headers = new Headers(init?.headers);
+        writes.push({ key: headers.get("idempotency-key"), ifMatch: headers.get("if-match"),
+          body: JSON.parse(String(init?.body)) });
+        return writes.length === 1 ? json({ detail: "Decision result unknown" }, 503)
+          : json({ ...listed, stage: "READY", version: listed.version + 1 });
+      }
+      return json({ code: "NOT_FOUND" }, 404);
+    }));
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="draft-owner" />);
+    fireEvent.change(await screen.findByTestId("intake-decide-reason"), { target: { value: "First reviewed intent" } });
+    fireEvent.click(screen.getByTestId("intake-decide-risk-ack"));
+    fireEvent.click(screen.getByTestId("intake-decide-submit"));
+    await screen.findByTestId("intake-decide-error");
+    expect(screen.getByTestId("intake-decide-reason")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /^取消$/ }));
+    expect(screen.queryByTestId("intake-decide-dialog")).not.toBeInTheDocument();
+    expect(writes).toHaveLength(1); // Closing sends no cancellation command.
+    listed = { ...record, version: 8, snapshotId: "new-reviewed-snapshot" };
+    await act(async () => nav.replace(`/operator?selected=${record.id}&dialog=decide&decision=create&refresh=after-close`));
+    await waitFor(() => expect(screen.getByTestId("intake-decide-risk-summary")).toHaveTextContent("new-reviewed-snapshot"));
+    expect(screen.getByTestId("intake-decide-reason")).toBeEnabled();
+    expect(screen.getByTestId("intake-decide-risk-ack")).not.toBeChecked();
+    fireEvent.change(screen.getByTestId("intake-decide-reason"), { target: { value: "New explicitly reviewed intent" } });
+    fireEvent.click(screen.getByTestId("intake-decide-risk-ack"));
+    fireEvent.click(screen.getByTestId("intake-decide-submit"));
+    await waitFor(() => expect(writes).toHaveLength(2));
+    expect(writes[1].key).not.toBe(writes[0].key);
+    expect(writes[1].ifMatch).toBe('W/"8"');
+    expect(writes[1].body.reason).toBe("New explicitly reviewed intent");
+    expect(writes[1].body.riskSummary).toContain("new-reviewed-snapshot");
+  });
+
   it("survives list omission, delayed failing direct GET and 503, then retries the same command key", async () => {
     const record = intake();
     let listed = true;

@@ -45513,6 +45513,22 @@
               ],
               "title": "X-Correlation-Id"
             }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
           }
         ],
         "requestBody": {
@@ -45598,6 +45614,16 @@
             },
             "description": "Validation failed"
           },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The observed Intake version is required"
+          },
           "500": {
             "content": {
               "application/json": {
@@ -45607,6 +45633,16 @@
               }
             },
             "description": "Unexpected server error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The authoritative Intake version is unavailable"
           }
         },
         "summary": "Decide Intake",

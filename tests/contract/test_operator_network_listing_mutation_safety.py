@@ -168,6 +168,58 @@ def _post_decide(client, action="revise", *, intake_id=INTAKE, headers=None, tar
     )
 
 
+@pytest.mark.parametrize("token", ['W/"2"', 'W/"0"', '"1"', 'W/"01"'])
+def test_decide_http_rejects_a_stale_or_invalid_intake_token_without_effect(token):
+    client, service, _ = _decide_client()
+    before = service.export_state()
+    response = _post_decide(client, headers={**HEADERS, "If-Match": token})
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "VERSION_CONFLICT"
+    assert service.export_state() == before
+    assert service._intakes.list_idempotency_records() == []
+
+
+def test_decide_http_replay_binds_the_original_intake_token_after_version_advances():
+    client, service, _ = _decide_client()
+    headers = {**HEADERS, "If-Match": 'W/"1"'}
+    first = _post_decide(client, headers=headers)
+    assert first.status_code == 200, first.text
+    assert first.json()["version"] == 2
+    before = service.export_state()
+    replay = _post_decide(client, headers=headers)
+    assert replay.status_code == 200 and replay.json() == first.json()
+    changed = _post_decide(client, headers={**headers, "If-Match": 'W/"2"'})
+    assert changed.status_code == 409, changed.text
+    assert changed.json()["detail"] == "IDEMPOTENCY_CONFLICT"
+    assert service.export_state() == before
+
+
+@pytest.mark.parametrize("token,version,status,code", [
+    (None, 1, 428, "PRECONDITION_REQUIRED"),
+    ('W/"1"', None, 503, "INTAKE_VERSION_UNAVAILABLE"),
+])
+def test_nonfixture_decide_http_maps_missing_or_unavailable_intake_version(token, version, status, code):
+    client, service, intake = _decide_client()
+    tenant = "00000000-0000-0000-0000-000000000001"
+    actor = "00000000-0000-0000-0000-000000000101"
+    service._seed_fixtures = False
+    service._tenant_id = tenant
+    for row in service._state["listings"]:
+        row["tenantId"] = tenant
+    intake.update(tenantId=tenant, version=version)
+    service._intakes.save_intake(intake)
+    service.get_intake(INTAKE)
+    headers = {**HEADERS, "x-tenant-id": tenant, "x-subject-id": actor}
+    if token is not None:
+        headers["If-Match"] = token
+    before = service.export_state()
+    response = _post_decide(client, headers=headers)
+    assert response.status_code == status, response.text
+    assert response.json()["detail"] == code
+    assert service.export_state() == before
+    assert service._intakes.list_idempotency_records() == []
+
+
 @pytest.mark.parametrize("action", ["revise", "duplicate"])
 @pytest.mark.parametrize("header,field,allowed", DECIDE_AXES)
 @pytest.mark.parametrize("actual_value", [None, "excluded"])

@@ -9,6 +9,8 @@ from modules.opsboard.application.network_listings import (
     NetworkListingConflict,
     NetworkListingNotFound,
     NetworkListingPolicyError,
+    NetworkListingPreconditionRequired,
+    NetworkListingVersionUnavailable,
     NetworkListingService,
 )
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
@@ -351,14 +353,67 @@ def _save_decision_intake(service, *, ident=DECISION_INTAKE, target=TARGET):
 
 
 def _decide(service, *, action="revise", ident=DECISION_INTAKE, target=TARGET,
-            authority=_authorize):
+            authority=_authorize, if_match='W/"1"'):
     return service.decide_intake(
         intake_id=ident, action=action, target_listing_id=target,
         reason="Durable original decision reason", risk_summary="Keep source and target authority",
         risk_acknowledged=True, actor_role_id="site_reviewer", actor_name=ACTOR,
         idempotency_key="durable-decision", correlation_id="durable-decision-correlation",
         authorize_existing=authority,
+        if_match=if_match,
     )
+
+
+def test_fresh_decision_requires_its_own_intake_version_without_mutation():
+    service = _service()
+    _save_decision_intake(service)
+    before = service.export_state()
+    with pytest.raises(NetworkListingPreconditionRequired, match="PRECONDITION_REQUIRED"):
+        _decide(service, if_match=None)
+    assert service.export_state() == before
+    assert service._intakes.list_idempotency_records() == []
+
+
+@pytest.mark.parametrize("version", [None, 0, -1, True, 1.5, "1"])
+def test_fresh_decision_rejects_an_unavailable_actual_intake_version(version):
+    service = _service()
+    intake = _save_decision_intake(service)
+    intake["version"] = version
+    service._intakes.save_intake(intake)
+    service.get_intake(intake["id"])
+    before = service.export_state()
+    with pytest.raises(NetworkListingVersionUnavailable, match="INTAKE_VERSION_UNAVAILABLE"):
+        _decide(service)
+    assert service.export_state() == before
+    assert service._intakes.list_idempotency_records() == []
+
+
+def test_newer_intake_cannot_apply_a_captured_decision_to_a_different_target():
+    service = _service()
+    intake = _save_decision_intake(service)
+    intake.update(version=2, matchResult={"outcome": "REVISION", "targetListingId": SOURCE})
+    service._intakes.save_intake(intake)
+    service.get_intake(intake["id"])
+    before = service.export_state()
+    with pytest.raises(NetworkListingConflict, match="VERSION_CONFLICT"):
+        _decide(service, action="duplicate")
+    assert service.export_state() == before
+    assert service._intakes.list_idempotency_records() == []
+
+
+def test_historical_tokenless_receipt_keeps_its_original_fingerprint_on_replay():
+    service = _service()
+    _save_decision_intake(service)
+    # Build the exact pre-header request/receipt format through the explicit
+    # fixture compatibility path, then restore the production guard.
+    service._seed_fixtures = True
+    first = _decide(service, if_match=None)
+    service._seed_fixtures = False
+    before = service.export_state()
+    receipts = deepcopy(service._intakes.list_idempotency_records())
+    assert _decide(service, if_match=None) == first
+    assert service.export_state() == before
+    assert service._intakes.list_idempotency_records() == receipts
 
 
 @pytest.mark.parametrize("action", ["revise", "duplicate"])

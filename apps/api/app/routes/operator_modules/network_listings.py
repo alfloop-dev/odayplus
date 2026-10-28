@@ -45,6 +45,7 @@ from modules.opsboard.application.network_read_scope import (
     project_listing_snapshot,
 )
 from modules.opsboard.application.operator_actor import operator_actor
+from shared.api.errors import ErrorResponse
 from shared.audit import InMemoryAuditLog
 from shared.auth import DataClassification, Principal, Role
 from shared.infrastructure.persistence.assisted_listing_intake import (
@@ -883,6 +884,10 @@ def create_network_listings_sub_router(
     @router.post(
         "/intake/{intake_id}/decide",
         dependencies=[Depends(require_write_permission_fn)],
+        responses={
+            428: {"model": ErrorResponse, "description": "The observed Intake version is required"},
+            503: {"model": ErrorResponse, "description": "The authoritative Intake version is unavailable"},
+        },
     )
     def decide_intake(
         request: Request,
@@ -890,6 +895,7 @@ def create_network_listings_sub_router(
         body: IntakeDecidePayload,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+        if_match: str | None = Header(default=None, alias="If-Match"),
     ) -> dict[str, Any]:
         try:
             principal = get_principal(request)
@@ -925,6 +931,7 @@ def create_network_listings_sub_router(
                 correlation_id=x_correlation_id,
                 target_listing_id=getattr(body, "targetListingId", None),
                 authorize_existing=authorize_existing,
+                if_match=if_match,
             )
             return mask_intake(principal, result)
         except PermissionError as exc:
@@ -933,6 +940,10 @@ def create_network_listings_sub_router(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except (NetworkListingConflict, AssistedIntakePersistenceConflict) as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except NetworkListingPreconditionRequired as exc:
+            raise HTTPException(status_code=428, detail=str(exc)) from exc
+        except NetworkListingVersionUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except NetworkListingPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
