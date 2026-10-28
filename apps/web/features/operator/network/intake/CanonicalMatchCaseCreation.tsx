@@ -6,7 +6,7 @@ import { readCanonicalMatchCaseProperties, submitCanonicalMatchCase, type Canoni
 import { useCanonicalIntakeCommand } from "./useCanonicalIntakeCommand";
 import styles from "./intake.module.css";
 
-type Props = { context: CanonicalIntakeReadContext; intake: CanonicalIntakeSummary; onBusyChange: (busy: boolean) => void;
+type Props = { context: CanonicalIntakeReadContext; intake: CanonicalIntakeSummary;
   matchCase?: MatchCaseSummary; Failure: ComponentType<{ error: unknown }>; onCaseChanged?: (changed: boolean) => void };
 type Load = { state: "loading" } | { state: "error"; error: unknown } | { state: "ready"; value: CanonicalMatchCasePropertyPage };
 const address = (row: CanonicalMatchCasePropertyOption) => row.address_masked ? "地址已遮罩" : row.normalized_address || "地址未提供";
@@ -19,7 +19,7 @@ export function CanonicalMatchCaseCreation(props: Props) {
   </>;
 }
 
-function CaseForm({ context, intake, onBusyChange, matchCase, Failure, onCaseChanged }: Props) {
+function CaseForm({ context, intake, matchCase, Failure, onCaseChanged }: Props) {
   const [cursor, setCursor] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const [page, setPage] = useState<Load>({ state: "loading" });
@@ -29,7 +29,8 @@ function CaseForm({ context, intake, onBusyChange, matchCase, Failure, onCaseCha
   const [reason, setReason] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
   const command = useCanonicalIntakeCommand<CanonicalMatchCaseCommand, MatchCaseReceipt>(context,
-    (packet, signal) => submitCanonicalMatchCase(context, packet, signal), onBusyChange);
+    (packet, signal) => submitCanonicalMatchCase(context, packet, signal), (packet) => `收件 ${packet.intakeId} 的人工案件關聯`,
+    (receipt) => `收件 ${receipt.intake_id} · 版本 ${receipt.intake_version} · 比對案件 ${receipt.match_case_id} · 版本 ${receipt.version}`);
   useEffect(() => { if (command.receipt && matchCase) onCaseChanged?.(true); }, [command.receipt, matchCase, onCaseChanged]);
   useEffect(() => {
     const controller = new AbortController(); let current = true;
@@ -40,7 +41,7 @@ function CaseForm({ context, intake, onBusyChange, matchCase, Failure, onCaseCha
     );
     return () => { current = false; controller.abort(); };
   }, [context, intake, cursor, reload]);
-  const locked = command.busy || command.hasPending;
+  const locked = command.busy || command.blocked || command.hasPending;
   const existingRoots = new Set(matchCase?.candidates.map((row) => row.property_id) ?? []);
   const remaining = 100 - (matchCase?.candidates.length ?? 0);
   const title = matchCase ? "追加人工覆核關聯" : "建立人工覆核案件";
@@ -89,7 +90,8 @@ function CaseForm({ context, intake, onBusyChange, matchCase, Failure, onCaseCha
       <label className={styles.fieldLabel}>{matchCase ? "追加關聯原因" : "建立案件原因"}<textarea className={styles.textarea} maxLength={4000} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
       <label><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} />我已核對所選正式主體、版本與人工關聯依據</label>
     </fieldset>
-    {command.error ? <><Failure error={command.error} /><p>結果尚未確認；重試沿用相同主體、版本及內容。案件或版本已變動時，請重新讀取收件。</p>
+    {command.error ? <Failure error={command.error} /> : null}
+    {command.error && command.hasPending ? <><p>結果尚未確認；重試沿用相同主體、版本及內容。案件或版本已變動時，請重新讀取收件。</p>
       <button type="button" className={styles.secondaryButton} disabled={command.busy} onClick={() => void command.submit(() => { throw new Error("CAPTURED_COMMAND_REQUIRED"); })}>重試同一案件請求</button></>
       : <button type="button" className={styles.primaryButton} disabled={locked || !valid} onClick={() => void command.submit(() => ({
         intakeId: intake.intake_id, expectedVersion: intake.version, key: `canonical-case:${crypto.randomUUID()}`,

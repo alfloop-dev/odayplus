@@ -29,6 +29,8 @@ import {
 import styles from "./networkFindAreas.module.css";
 import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview } from "./types";
 import { ListingRadarPanel } from "./network/ListingRadarPanel";
+import { CanonicalIntakeCommandProvider } from "./network/intake/useCanonicalIntakeCommand";
+import { CanonicalIntakeCommandStatus } from "./network/intake/CanonicalIntakeCasePicker";
 import { buildDurableDetailHref } from "./network/intake/AssistedIntakeSection";
 import { parseUrlState } from "./network/intake/urlState";
 import { navigationIncludesTarget, resolveListingNavigation, type ListingNavigationTarget, type RelatedIntake } from "./network/listingNavigation";
@@ -752,6 +754,9 @@ export function NetworkFindAreasWorkspace({
   const [reviewsNavigationGeneration, setReviewsNavigationGeneration] = useState<number | null>(null);
   const [navigationError, setNavigationError] = useState<string | null>(null);
   const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId, navigationContextKey]);
+  const nativeCommandContext = !fixturesAllowed && canReadListings ? {
+    fetchImpl: nativeReadFetch, contextKey: navigationContextKey, headers: NETWORK_OPERATOR_HEADERS,
+  } : null;
   const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
   const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : EMPTY_HEAT_ZONES);
   const listings = listingsInput ?? (fixturesAllowed ? LISTING_FIXTURES : EMPTY_LISTINGS);
@@ -2622,9 +2627,7 @@ export function NetworkFindAreasWorkspace({
     <ListingRadarPanel
       activeRoleId={activeRoleId}
       busyListingId={busyListingId}
-      canonicalIntakeReadContext={!fixturesAllowed && canReadListings ? {
-        fetchImpl: nativeReadFetch, contextKey: navigationContextKey, headers: NETWORK_OPERATOR_HEADERS,
-      } : undefined}
+      canonicalIntakeReadContext={nativeCommandContext ?? undefined}
       intakeDetailOpen={intakeDetailOpen}
       listings={listingsEffective}
       listingsReadFailure={listingsReadFailure}
@@ -2680,6 +2683,7 @@ export function NetworkFindAreasWorkspace({
    */
   if (intakeDetailOpen) {
     return (
+      <CanonicalIntakeCommandProvider context={nativeCommandContext}>
       <section
         className={styles.workspace}
         data-intake-detail-open="true"
@@ -2690,14 +2694,20 @@ export function NetworkFindAreasWorkspace({
               {listingMergeDialog}
         {listingArchiveDialog}
       </section>
+      <CanonicalIntakeCommandStatus />
+      </CanonicalIntakeCommandProvider>
     );
   }
 
   if (activeTab < 0) {
-    return <section role="status">目前身分沒有可讀取的 Network 分頁。</section>;
+    return <CanonicalIntakeCommandProvider context={nativeCommandContext}>
+      <section role="status">目前身分沒有可讀取的 Network 分頁。</section>
+      <CanonicalIntakeCommandStatus />
+    </CanonicalIntakeCommandProvider>;
   }
 
   return (
+    <CanonicalIntakeCommandProvider context={nativeCommandContext}>
     <section className={styles.workspace} data-screen-label="Network 展店與店網" data-testid="network-find-areas-workspace">
       {/* Package 10 S05: one row — title, flow summary, four truthful KPI chips. */}
       <header className={styles.header} data-testid="network-header">
@@ -2923,6 +2933,8 @@ export function NetworkFindAreasWorkspace({
           onClose={() => setAreaPlanningRequest(null)} /> : null}
         {listingArchiveDialog}
     </section>
+    <CanonicalIntakeCommandStatus />
+    </CanonicalIntakeCommandProvider>
   );
 }
 

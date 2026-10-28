@@ -4,13 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import type { CanonicalIntakeAssistedEntryRequestReceipt, CanonicalIntakePage, CanonicalIntakeReceipt, CanonicalIntakeSummary, NativeIntakeScope } from "@oday-plus/openapi-client";
 import { IntakeDialogShell } from "./IntakeDialogShell";
 import {
-  CANONICAL_INTAKE_STAGE_LABEL, readCanonicalIntakeCase, readCanonicalIntakePage, submitCanonicalAssistedEntry, submitCanonicalURL,
+  CANONICAL_INTAKE_STAGE_LABEL, CanonicalIntakeReadError, readCanonicalIntakeCase, readCanonicalIntakePage, submitCanonicalAssistedEntry, submitCanonicalURL,
   type CanonicalAssistedEntryCommand, type CanonicalIntakeReadContext, type CanonicalURLCommand,
 } from "./canonicalIntakeReadClient";
 import { CanonicalIdentityDecisionPanel, CanonicalIntakeFailure as ReadFailure } from "./CanonicalIdentityDecisionPanel";
 import { AddListingFromUrlDialog } from "./AddListingFromUrlDialog";
 import { AssistedEntryForm } from "./AssistedEntryForm";
-import { useCanonicalIntakeCommand } from "./useCanonicalIntakeCommand";
+import { useCanonicalIntakeCommand, useCanonicalIntakeCommandState } from "./useCanonicalIntakeCommand";
 import { CanonicalMatchCaseCreation } from "./CanonicalMatchCaseCreation";
 import { AssignmentSlaSummary } from "./AssignmentSlaSummary";
 import styles from "./intake.module.css";
@@ -36,7 +36,7 @@ function SelectionDialog({ context, onClose }: { context: CanonicalIntakeReadCon
   const [reload, setReload] = useState(0);
   const [list, setList] = useState<Load<CanonicalIntakePage>>({ status: "loading" });
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [commandBusy, setCommandBusy] = useState(false);
+  const { busy: commandBusy } = useCanonicalIntakeCommandState();
   const [adding, setAdding] = useState(false);
   const [created, setCreated] = useState<CanonicalIntakeReceipt | null>(null);
   const [detail, setDetail] = useState<Load<Awaited<ReturnType<typeof readCanonicalIntakeCase>>>>({ status: "loading" });
@@ -135,11 +135,11 @@ function SelectionDialog({ context, onClose }: { context: CanonicalIntakeReadCon
               </section> : null}
               {detail.value.intake.intake_method === "URL" && detail.value.intake.processing_state === "AWAITING_ASSISTED_ENTRY"
                 ? <CanonicalAssistedEntry key={`${detail.value.intake.intake_id}:${detail.value.intake.version}`}
-                  context={context} intake={detail.value.intake} onBusyChange={setCommandBusy} /> : null}
+                  context={context} intake={detail.value.intake} /> : null}
               {detail.value.intake.processing_state === "AWAITING_SOURCE_AUTHORIZATION" ? <p>此收件等待來源授權；人工補錄須先由既定流程確認另有明確核准。</p> : null}
               {detail.value.matchCase === null ? (["MATCHING", "NEEDS_REVIEW"].includes(detail.value.intake.processing_state)
                 ? <CanonicalMatchCaseCreation key={`${detail.value.intake.intake_id}:${detail.value.intake.version}`}
-                  context={context} intake={detail.value.intake} onBusyChange={setCommandBusy} Failure={ReadFailure} />
+                  context={context} intake={detail.value.intake} Failure={ReadFailure} />
                 : <p>這筆收件目前沒有比對案件。</p>) : (
                 <>
                   <p>比對案件 {detail.value.matchCase.match_case_id} · 版本 {detail.value.matchCase.version} · {detail.value.matchCase.status} · {detail.value.matchCase.outcome}</p>
@@ -151,7 +151,7 @@ function SelectionDialog({ context, onClose }: { context: CanonicalIntakeReadCon
                     </li>)}
                   </ul>
                   <CanonicalIdentityDecisionPanel key={`${detail.value.matchCase.match_case_id}:${detail.value.matchCase.version}:${detail.value.intake.version}`}
-                    context={context} selected={detail.value.matchCase} intake={detail.value.intake} onBusyChange={setCommandBusy} busy={commandBusy} />
+                    context={context} selected={detail.value.matchCase} intake={detail.value.intake} busy={commandBusy} />
                 </>
               )}
             </>
@@ -162,7 +162,7 @@ function SelectionDialog({ context, onClose }: { context: CanonicalIntakeReadCon
         <button className={styles.secondaryButton} disabled={commandBusy} onClick={() => { setList({ status: "loading" }); setSelectedId(null); setReload((n) => n + 1); }} type="button">重新讀取</button>
         <button className={styles.secondaryButton} disabled={commandBusy} onClick={onClose} type="button">關閉</button>
       </footer>
-      {adding && list.status === "ready" ? <CanonicalURLSubmission context={context} onBusyChange={setCommandBusy}
+      {adding && list.status === "ready" ? <CanonicalURLSubmission context={context}
         scopes={[{ label: "不指定範圍（依目前帳號權限核對）", scope: { brand_id: null, region_id: null, assigned_area_id: null, heat_zone_id: null } },
           ...list.value.items.map((row) => ({ label: `沿用收件 ${row.intake_id} 的範圍`, scope: row.scope }))]}
         onClose={() => setAdding(false)} onCreated={(value) => { setCreated(value); setAdding(false); }} /> : null}
@@ -170,15 +170,23 @@ function SelectionDialog({ context, onClose }: { context: CanonicalIntakeReadCon
   );
 }
 
-function CanonicalURLSubmission({ context, scopes, onClose, onCreated, onBusyChange }: {
+function CanonicalURLSubmission({ context, scopes, onClose, onCreated }: {
   context: CanonicalIntakeReadContext; scopes: ReadonlyArray<{ label: string; scope: NativeIntakeScope }>;
-  onClose: () => void; onCreated: (receipt: CanonicalIntakeReceipt) => void; onBusyChange: (busy: boolean) => void;
+  onClose: () => void; onCreated: (receipt: CanonicalIntakeReceipt) => void;
 }) {
   const command = useCanonicalIntakeCommand<CanonicalURLCommand, CanonicalIntakeReceipt>(context,
-    (packet, signal) => submitCanonicalURL(context, packet, signal), onBusyChange);
+    (packet, signal) => submitCanonicalURL(context, packet, signal), (packet) => `網址送件：${packet.body.original_url}`,
+    (receipt) => `收件 ${receipt.intake_id} · 版本 ${receipt.version} · ${receipt.processing_state}`);
+  if (command.receipt) return <div role="status" className={styles.noteBox}>
+    <p>正式收件 {command.receipt.intake_id} · 已送出 · 版本 {command.receipt.version}</p>
+    <p>稽核紀錄 {command.receipt.audit_event_id} · 查詢編號 {command.receipt.correlation_id}</p>
+    <p>提交回執僅表示已收件；後續處理狀態以重新讀取的結果為準。</p>
+    <button type="button" className={styles.secondaryButton} onClick={onClose}>返回收件</button>
+  </div>;
+  if (command.blocked) return <p role="status">先前收件操作尚待確認；可關閉此視窗，從原操作摘要重試。</p>;
   return <AddListingFromUrlDialog busy={command.busy} locked={command.hasPending} canonicalScopes={scopes}
     error={null} submitterLabel="目前登入身分" onClose={onClose}
-    errorContent={command.error ? <><ReadFailure error={command.error} /><p>結果尚未確認；重試會沿用同一請求。返回收件後可重新讀取目前狀態。</p></> : null}
+    errorContent={command.error ? <><ReadFailure error={command.error} />{command.hasPending ? <p>結果尚未確認；重試會沿用同一請求。返回收件後仍可從原操作摘要重試。</p> : null}</> : null}
     onSubmit={async (input) => {
       const receipt = await command.submit(() => {
         if (!input.reason || !input.scope) throw new Error("EXPLICIT_NATIVE_SUBMISSION_REQUIRED");
@@ -189,26 +197,47 @@ function CanonicalURLSubmission({ context, scopes, onClose, onCreated, onBusyCha
     }} />;
 }
 
-function CanonicalAssistedEntry({ context, intake, onBusyChange }: {
-  context: CanonicalIntakeReadContext; intake: CanonicalIntakeSummary; onBusyChange: (busy: boolean) => void;
+function CanonicalAssistedEntry({ context, intake }: {
+  context: CanonicalIntakeReadContext; intake: CanonicalIntakeSummary;
 }) {
   const command = useCanonicalIntakeCommand<CanonicalAssistedEntryCommand, CanonicalIntakeAssistedEntryRequestReceipt>(context,
-    (packet, signal) => submitCanonicalAssistedEntry(context, packet, signal), onBusyChange);
+    (packet, signal) => submitCanonicalAssistedEntry(context, packet, signal), (packet) => `收件 ${packet.intakeId} 的人工補錄`,
+    (receipt) => `收件 ${receipt.intake_id} · 版本 ${receipt.version} · 補錄提案 ${receipt.request_id} · ${receipt.status}`);
   if (command.receipt) return <div role="status" className={styles.noteBox}>
     <p>補錄提案 {command.receipt.request_id} · 已受理 · {command.receipt.correction_ids.length} 個欄位</p>
     <p>稽核紀錄 {command.receipt.audit_event_id} · 查詢編號 {command.receipt.correlation_id}</p>
     <p>補錄內容尚待工作處理，請重新讀取收件；此回執不代表解析或比對已完成。</p>
   </div>;
   return <>
-    <AssistedEntryForm busy={command.busy} canEdit native locked={command.hasPending}
+    <AssistedEntryForm busy={command.busy} canEdit native locked={command.hasPending || command.blocked}
       onSave={(input) => { void command.submit(() => {
         if (!input.reason) throw new Error("EXPLICIT_NATIVE_ENTRY_REASON_REQUIRED");
         return { key: `canonical-entry:${crypto.randomUUID()}`, intakeId: intake.intake_id, expectedVersion: intake.version,
           body: { reason: input.reason, risk_summary: input.riskSummary, risk_acknowledged: input.riskAcknowledged,
             fields: { ...input.fields, address: input.fields.address, rent: Number(input.fields.rent), areaPing: Number(input.fields.areaPing) } } };
       }); }} />
-    {command.error ? <><ReadFailure error={command.error} /><p>結果尚未確認；重試會沿用同一份補錄內容與版本。</p>
+    {command.error ? <><ReadFailure error={command.error} />{command.hasPending ? <p>結果尚未確認；重試會沿用同一份補錄內容與版本。</p> : null}
       {command.hasPending ? <button className={styles.secondaryButton} type="button" disabled={command.busy}
         onClick={() => void command.submit(() => { throw new Error("CAPTURED_COMMAND_REQUIRED"); })}>重試同一補錄請求</button> : null}</> : null}
   </>;
+}
+
+/** The same workspace owner remains visible when a form or radar tab closes. */
+export function CanonicalIntakeCommandStatus() {
+  const owner = useCanonicalIntakeCommandState();
+  const command = owner.command;
+  if (!command) return null;
+  return <section aria-label="先前收件操作" className={styles.noteBox}>
+    <p>{command.description}</p>
+    {command.receipt ? <>
+      <p role="status">原操作已收到回執 · 稽核紀錄 {command.receipt.audit_event_id} · 查詢編號 {command.receipt.correlation_id}</p>
+      <p>{command.receiptDescription}</p>
+      <p>回執僅表示這次請求已受理；後續處理結果請重新讀取原收件或案件。</p>
+      <button type="button" className={styles.secondaryButton} onClick={owner.dismissReceipt}>收起原操作回執</button>
+    </> : <>
+      <p role="status">{owner.busy ? "正在傳送原操作，請稍候。" : "原操作結果尚未確認。關閉或切換畫面不會取消已送出的請求；重試沿用原內容與版本。"}</p>
+      {owner.error ? <p>上次嘗試未取得可驗證回執{owner.error.value instanceof CanonicalIntakeReadError ? `（HTTP ${owner.error.value.status}）` : ""}；請確認目前連線與登入權限，再重試原操作。</p> : null}
+      <button type="button" className={styles.secondaryButton} disabled={owner.busy} onClick={() => void owner.retry()}>重試原操作</button>
+    </>}
+  </section>;
 }

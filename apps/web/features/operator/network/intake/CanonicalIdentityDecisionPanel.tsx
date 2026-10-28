@@ -18,9 +18,9 @@ const confirmable = (input: ListingInput) => input.fields.length > 0
   && input.fields.every((field) => !field.masked && field.status === "PROPOSED")
   && Date.parse(input.manual_entry_valid_until) > Date.now();
 
-export function CanonicalIdentityDecisionPanel({ context, selected, intake, onBusyChange, busy }: {
+export function CanonicalIdentityDecisionPanel({ context, selected, intake, busy }: {
   context: CanonicalIntakeReadContext; selected: MatchCaseSummary; intake: CanonicalIntakeSummary;
-  onBusyChange: (busy: boolean) => void; busy: boolean;
+  busy: boolean;
 }) {
   const [selection, setSelection] = useState<string | null>(null);
   const [caseChanged, setCaseChanged] = useState(false);
@@ -42,15 +42,15 @@ export function CanonicalIdentityDecisionPanel({ context, selected, intake, onBu
       <button className={styles.secondaryButton} disabled={busy} type="button" onClick={() => setSelection(id)}>檢視決策 {id}</button>
     </li>)}</ul> : null}
     {selection === "append" ? <CanonicalMatchCaseCreation context={context} intake={intake} matchCase={selected}
-      Failure={CanonicalIntakeFailure} onBusyChange={onBusyChange} onCaseChanged={setCaseChanged} />
-      : selection === "planning" ? <PlanningForm context={context} selected={selected} onBusyChange={onBusyChange} />
-      : selection === "graph" ? <GraphPlanningForm context={context} selected={selected} onBusyChange={onBusyChange} />
-      : selection ? <RecordedDecision key={selection} context={context} selected={selected} decisionId={selection} onBusyChange={onBusyChange} /> : null}
+      Failure={CanonicalIntakeFailure} onCaseChanged={setCaseChanged} />
+      : selection === "planning" ? <PlanningForm context={context} selected={selected} />
+      : selection === "graph" ? <GraphPlanningForm context={context} selected={selected} />
+      : selection ? <RecordedDecision key={selection} context={context} selected={selected} decisionId={selection} /> : null}
   </section>;
 }
 
-function GraphPlanningForm({ context, selected, onBusyChange }: {
-  context: CanonicalIntakeReadContext; selected: MatchCaseSummary; onBusyChange: (busy: boolean) => void;
+function GraphPlanningForm({ context, selected }: {
+  context: CanonicalIntakeReadContext; selected: MatchCaseSummary;
 }) {
   const [data, setData] = useState<Load<CanonicalIdentityPlanningContext>>({ status: "loading" });
   const [kind, setKind] = useState<"MERGE" | "SPLIT" | "">("");
@@ -159,15 +159,15 @@ function GraphPlanningForm({ context, selected, onBusyChange }: {
     </p>)}
     {kind && !plan ? <p>請完成來源、目標、每條來源關聯的分配，以及所有受影響候選點的明確處置。</p> : null}
     {plan ? <ObservedPlan plan={plan} /> : null}
-    <CommandForm context={context} prepare={prepare} onBusyChange={onBusyChange} onLock={() => setLocked(true)} canSubmit={plan !== null}
+    <CommandForm context={context} prepare={prepare} onLock={() => setLocked(true)} canSubmit={plan !== null}
       selectionKey={JSON.stringify({ kind, sources, target, splitSource, targets, assignments, dispositions })} minReason={20} acknowledgementRequired
       risk="合併／拆分會改變主體、來源關聯與候選點歸屬。此步只記錄提案，須由另一位授權人員覆核後交既有執行器處理；它不套用補錄欄位，也不代表收件已完成。"
       label={kind === "SPLIT" ? "提交拆分提案" : "提交合併提案"} />
   </>;
 }
 
-function PlanningForm({ context, selected, onBusyChange }: {
-  context: CanonicalIntakeReadContext; selected: MatchCaseSummary; onBusyChange: (busy: boolean) => void;
+function PlanningForm({ context, selected }: {
+  context: CanonicalIntakeReadContext; selected: MatchCaseSummary;
 }) {
   const [data, setData] = useState<Load<CanonicalIdentityPlanningContext>>({ status: "loading" });
   const [kind, setKind] = useState<Kind | "">("");
@@ -229,14 +229,14 @@ function PlanningForm({ context, selected, onBusyChange }: {
         <option key={row.match_candidate_id} value={row.listing_id!}>{row.listing_id} · 主體 {row.effective_property_id} · 版本 {row.listing_version}</option>)}
     </select></label> : null}
     {kind && selectedResources ? <ObservedPlan plan={plan} /> : null}
-    <CommandForm context={context} prepare={prepare} onLock={() => setLocked(true)} onBusyChange={onBusyChange}
+    <CommandForm context={context} prepare={prepare} onLock={() => setLocked(true)}
       selectionKey={`${kind}:${listingId}`} canSubmit={eligible && Boolean(kind) && selectedResources}
       minReason={kind === "DUPLICATE" ? 20 : 3} acknowledgementRequired risk={risk} label={kind ? titles[kind] : "確認所選決策"} />
   </>;
 }
 
-function RecordedDecision({ context, selected, decisionId, onBusyChange }: {
-  context: CanonicalIntakeReadContext; selected: MatchCaseSummary; decisionId: string; onBusyChange: (busy: boolean) => void;
+function RecordedDecision({ context, selected, decisionId }: {
+  context: CanonicalIntakeReadContext; selected: MatchCaseSummary; decisionId: string;
 }) {
   const [data, setData] = useState<Load<CanonicalIdentitySummary>>({ status: "loading" });
   const [action, setAction] = useState<"APPROVE" | "REJECT" | "">("");
@@ -291,7 +291,7 @@ function RecordedDecision({ context, selected, decisionId, onBusyChange }: {
             : input ? <InputFields input={input} /> : null}
         {sourceRead?.status === "ready" && !currentInput ? <p role="alert">補錄內容被遮罩、已變更或已過期，無法核准；仍可選擇拒絕提案。</p> : null}
       </> : null}
-      <CommandForm context={context} prepare={prepare} onLock={() => setLocked(true)} onBusyChange={onBusyChange} selectionKey={action}
+      <CommandForm context={context} prepare={prepare} onLock={() => setLocked(true)} selectionKey={action}
         canSubmit={Boolean(action) && (action !== "APPROVE" || decision.decision_type !== "DUPLICATE" || currentInput)} minReason={3} acknowledgementRequired={action === "APPROVE"}
         risk={action === "APPROVE" ? "核准後將依已記錄的計畫派送執行工作；系統會再次核對目前的權限、來源與版本。" : "拒絕將留下覆核紀錄；此提案不會執行。"}
         label={action === "REJECT" ? "確認拒絕" : "確認核准"} />
@@ -319,16 +319,17 @@ function ObservedPlan({ plan }: { plan: CanonicalIdentitySummary["plan"] }) {
   </div>;
 }
 
-function CommandForm({ context, prepare, canSubmit, minReason, acknowledgementRequired, risk, label, selectionKey, onLock, onBusyChange }: {
+function CommandForm({ context, prepare, canSubmit, minReason, acknowledgementRequired, risk, label, selectionKey, onLock }: {
   context: CanonicalIntakeReadContext; prepare: (reason: string, acknowledged: boolean) => CanonicalIdentityCommand;
   canSubmit: boolean; minReason: number; acknowledgementRequired: boolean; risk: ReactNode; label: string;
-  selectionKey: string; onLock: () => void; onBusyChange: (busy: boolean) => void;
+  selectionKey: string; onLock: () => void;
 }) {
   const [reason, setReason] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
   const command = useCanonicalIntakeCommand<CanonicalIdentityCommand, CanonicalIdentityReceipt>(context,
-    (packet, signal) => submitCanonicalIdentity(context, packet, signal), onBusyChange);
-  const { busy, error, receipt, hasPending } = command;
+    (packet, signal) => submitCanonicalIdentity(context, packet, signal), (packet) => `案件 ${packet.matchCaseId}：${label}`,
+    (receipt) => `比對案件 ${receipt.match_case_id} · 版本 ${receipt.match_case_version} · 決策 ${receipt.decision_id} · 版本 ${receipt.version} · ${receipt.status}`);
+  const { busy, blocked, error, receipt, hasPending } = command;
   useEffect(() => { setAcknowledged(false); }, [selectionKey]);
   function submit() {
     if (!hasPending && (!canSubmit || reason.trim().length < minReason || reason.trim().length > 4000 || acknowledgementRequired && !acknowledged)) return;
@@ -344,12 +345,12 @@ function CommandForm({ context, prepare, canSubmit, minReason, acknowledgementRe
   return <div className={styles.sectionBox}>
     <p>{risk}</p>
     <label className={styles.fieldLabel}>決策／覆核原因（至少 {minReason} 字）<textarea className={styles.textarea}
-      disabled={busy || hasPending} maxLength={4000} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
-    <label className={styles.checkboxRow}><input type="checkbox" checked={acknowledged} disabled={busy || hasPending}
+      disabled={busy || blocked || hasPending} maxLength={4000} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+    <label className={styles.checkboxRow}><input type="checkbox" checked={acknowledged} disabled={busy || blocked || hasPending}
       onChange={(event) => setAcknowledged(event.target.checked)} />我已閱讀上述影響與觀察版本，確認此決策</label>
-    {error ? <><CanonicalIntakeFailure error={error} /><p>結果尚未確認；重試會沿用同一請求。若需修改內容，請先重新讀取案件確認伺服器狀態。</p></> : null}
+    {error ? <><CanonicalIntakeFailure error={error} />{hasPending ? <p>結果尚未確認；重試會沿用同一請求。若需修改內容，請先重新讀取案件確認伺服器狀態。</p> : null}</> : null}
     <button className={styles.secondaryButton} type="button" onClick={() => void submit()}
-      disabled={busy || !hasPending && (!canSubmit || reason.trim().length < minReason || acknowledgementRequired && !acknowledged)}>
+      disabled={busy || blocked || !hasPending && (!canSubmit || reason.trim().length < minReason || acknowledgementRequired && !acknowledged)}>
       {busy ? "正在提交…" : hasPending ? "重試同一請求" : label}
     </button>
   </div>;

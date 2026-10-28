@@ -1,9 +1,16 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CanonicalIntakeCasePicker } from "../CanonicalIntakeCasePicker";
+import { CanonicalIntakeCasePicker as CasePicker, CanonicalIntakeCommandStatus } from "../CanonicalIntakeCasePicker";
+import { CanonicalIntakeCommandProvider } from "../useCanonicalIntakeCommand";
 import type { CanonicalIntakeReadContext } from "../canonicalIntakeReadClient";
 import type { CanonicalIdentityPlanningContext } from "@oday-plus/openapi-client";
+
+function CanonicalIntakeCasePicker({ context }: { context: CanonicalIntakeReadContext }) {
+  return <CanonicalIntakeCommandProvider context={context}>
+    <CasePicker context={context} /><CanonicalIntakeCommandStatus />
+  </CanonicalIntakeCommandProvider>;
+}
 
 const id = (n: number) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")}`;
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
@@ -89,6 +96,7 @@ describe("native Intake and case selection", () => {
     fireEvent.click(screen.getByRole("button", { name: "提交人工關聯" }));
     fireEvent.click(await screen.findByRole("button", { name: "重試同一案件請求" }));
     await screen.findByText(new RegExp(`已追加人工關聯至案件 ${original.match_case_id}`));
+    expect(screen.getByRole("region", { name: "先前收件操作" })).toHaveTextContent(`收件 ${id(1)} · 版本 3 · 比對案件 ${original.match_case_id} · 版本 2`);
     await waitFor(() => expect(screen.queryByRole("button", { name: "提出合併／拆分計畫" })).not.toBeInTheDocument());
     expect(sent).toHaveLength(2);
     expect(sent[0].body).toEqual(sent[1].body);
@@ -133,6 +141,7 @@ describe("native Intake and case selection", () => {
     expect(screen.getByLabelText(/人工判斷信心值/)).toBeDisabled();
     fireEvent.click(retry);
     await screen.findByText(new RegExp(`人工覆核案件 ${id(20)}`));
+    expect(screen.getByRole("region", { name: "先前收件操作" })).toHaveTextContent(`收件 ${id(1)} · 版本 4 · 比對案件 ${id(20)} · 版本 2`);
     expect(sent).toHaveLength(2);
     expect(sent[0].body).toEqual(sent[1].body);
     expect(sent[0].headers.get("Idempotency-Key")).toBe(sent[1].headers.get("Idempotency-Key"));
@@ -472,6 +481,116 @@ describe("canonical confirmation and independent review in the existing picker",
     fireEvent.click(await screen.findByRole("button", { name: "重試同一請求" })); await screen.findByText(/已收到正式回執/);
     const sent = posts(context); expect(sent).toHaveLength(2); expect(sent[0][1]?.body).toBe(sent[1][1]?.body);
     for (const name of ["idempotency-key", "if-match"]) expect(new Headers(sent[0][1]?.headers).get(name)).toBe(new Headers(sent[1][1]?.headers).get(name));
+  });
+
+  it("retains the original uncertain identity request through refresh and reselection", async () => {
+    let tries = 0;
+    const { context } = nativeContext("NEW", () => {
+      if (++tries === 1) throw new TypeError("uncertain original identity request");
+      return json(nativeReceipt(), 201);
+    });
+    await openPlanning(context); acknowledge("CREATE");
+    fireEvent.click(screen.getByRole("button", { name: "確認為新物件" }));
+    await screen.findByRole("button", { name: "重試同一請求" });
+    const original = posts(context)[0];
+    fireEvent.click(screen.getByRole("button", { name: "重新讀取" }));
+    await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    fireEvent.click(await screen.findByRole("button", { name: "檢視確認資料" }));
+    await screen.findByRole("table", { name: "本次確認的補錄欄位" });
+    expect(screen.getByLabelText(/決策／覆核原因/)).toBeDisabled();
+    expect(posts(context)).toHaveLength(1);
+    fireEvent.click(await screen.findByRole("button", { name: "重試原操作" }));
+    await waitFor(() => expect(posts(context)).toHaveLength(2));
+    const retry = posts(context)[1];
+    expect(retry[0]).toBe(original[0]);
+    expect(retry[1]?.body).toBe(original[1]?.body);
+    for (const name of ["idempotency-key", "if-match"])
+      expect(new Headers(retry[1]?.headers).get(name)).toBe(new Headers(original[1]?.headers).get(name));
+    expect(await screen.findByText(/原操作已收到回執/)).toHaveTextContent(id(73));
+    expect(screen.queryByText(/已收到正式回執：決策/)).not.toBeInTheDocument();
+  });
+
+  it("retains an uncertain URL submission after both dialogs close without inventing an Intake ID", async () => {
+    let tries = 0;
+    const context = entryContext("AWAITING_SOURCE_AUTHORIZATION", () => {
+      if (++tries === 1) throw new TypeError("uncertain original URL request");
+      return json({ intake_id: id(95), intake_method: "URL", processing_state: "SUBMITTED", version: 1,
+        submitted_at: "2026-10-19T08:00:00Z", correlation_id: id(96), transition_id: id(97),
+        audit_event_id: id(98), outbox_event_id: id(99) }, 201);
+    });
+    render(<CanonicalIntakeCasePicker context={context} />); open();
+    fireEvent.click(await screen.findByRole("button", { name: "從網址建立正式收件" }));
+    fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://source.example/original" } });
+    fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "保留這一筆原始網址送件" } });
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    await screen.findByRole("button", { name: "重試同一請求" });
+    const original = posts(context)[0];
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    fireEvent.click(screen.getByText("關閉", { selector: "button" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "重試原操作" }));
+    await screen.findByText(/原操作已收到回執/);
+    const retry = posts(context)[1];
+    expect(retry[0]).toBe("/api/v1/canonical-intakes");
+    expect(retry[1]?.body).toBe(original[1]?.body);
+    expect(new Headers(retry[1]?.headers).get("idempotency-key")).toBe(new Headers(original[1]?.headers).get("idempotency-key"));
+    expect(new Headers(retry[1]?.headers).has("if-match")).toBe(false);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "先前收件操作" })).toHaveTextContent(`收件 ${id(95)} · 版本 1 · SUBMITTED`);
+  });
+
+  it("does not re-enable a settled URL form when its workspace receipt is dismissed", async () => {
+    let tries = 0;
+    const context = entryContext("AWAITING_SOURCE_AUTHORIZATION", () => {
+      if (++tries === 1) throw new TypeError("uncertain URL before global retry");
+      return json({ intake_id: id(95), intake_method: "URL", processing_state: "SUBMITTED", version: 1,
+        submitted_at: "2026-10-19T08:00:00Z", correlation_id: id(96), transition_id: id(97),
+        audit_event_id: id(98), outbox_event_id: id(99) }, 201);
+    });
+    render(<CanonicalIntakeCasePicker context={context} />); open();
+    fireEvent.click(await screen.findByRole("button", { name: "從網址建立正式收件" }));
+    fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://source.example/settled" } });
+    fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "完成後不能從原表單重建另一筆" } });
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    await screen.findByRole("button", { name: "重試同一請求" });
+    fireEvent.click(screen.getByRole("button", { name: "重試原操作" }));
+    await screen.findByText(/原操作已收到回執/);
+    fireEvent.click(screen.getByRole("button", { name: "收起原操作回執" }));
+    expect(screen.queryByTestId("intake-submit-button")).not.toBeInTheDocument();
+    expect(screen.getByText(/正式收件 .*已送出/)).toHaveTextContent(id(95));
+    expect(posts(context)).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "返回收件" }));
+    fireEvent.click(screen.getByRole("button", { name: "從網址建立正式收件" }));
+    expect(screen.getByTestId("intake-url-input")).toBeEnabled();
+    expect(screen.getByTestId("intake-url-input")).toHaveValue("");
+  });
+
+  it.each([403, 409, 422, 428])("allows correction after an initial explicit URL rejection %s without retaining an uncertain packet", async (status) => {
+    let tries = 0;
+    const context = entryContext("AWAITING_SOURCE_AUTHORIZATION", () => {
+      if (++tries === 1) return json({ detail: "initial explicit rejection" }, status);
+      return json({ intake_id: id(95), intake_method: "URL", processing_state: "SUBMITTED", version: 1,
+        submitted_at: "2026-10-19T08:00:00Z", correlation_id: id(96), transition_id: id(97),
+        audit_event_id: id(98), outbox_event_id: id(99) }, 201);
+    });
+    render(<CanonicalIntakeCasePicker context={context} />); open();
+    fireEvent.click(await screen.findByRole("button", { name: "從網址建立正式收件" }));
+    fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://source.example/rejected" } });
+    fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "第一次送件的原因" } });
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    await screen.findByRole("alert");
+    expect(screen.getByTestId("intake-url-input")).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "重試原操作" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "修正後重新提交的原因" } });
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    await screen.findByText(/正式收件 .*已送出/);
+    const sent = posts(context);
+    expect(sent).toHaveLength(2);
+    expect(JSON.parse(String(sent[1][1]?.body)).reason).toBe("修正後重新提交的原因");
+    expect(new Headers(sent[0][1]?.headers).get("idempotency-key")).not.toBe(new Headers(sent[1][1]?.headers).get("idempotency-key"));
   });
 
   it("lets an independent reviewer reject the recorded proposal without requesting positive parser/source input", async () => {

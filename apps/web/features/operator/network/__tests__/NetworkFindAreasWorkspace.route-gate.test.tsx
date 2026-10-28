@@ -36,7 +36,7 @@ vi.mock("../ListingRadarPanel", () => ({
     radarProps.calls.push(props);
     const context = props.canonicalIntakeReadContext as ComponentProps<typeof CanonicalIntakeCasePicker>["context"] | undefined;
     return <div data-testid="listing-radar-panel">Listing Radar
-      {radarProps.showNativePicker && context ? <CanonicalIntakeCasePicker context={context} /> : null}
+      {radarProps.showNativePicker && !props.intakeDetailOpen && context ? <CanonicalIntakeCasePicker context={context} /> : null}
     </div>;
   },
 }));
@@ -180,6 +180,48 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+  });
+
+  it.each(["tab", "intake detail"])("retains the original unknown URL command when the real workspace removes the picker for %s", async (surface) => {
+    radarProps.showNativePicker = true;
+    const writes: RequestInit[] = [];
+    const receipt = { intake_id: "00000000-0000-0000-0000-000000000095", intake_method: "URL",
+      processing_state: "SUBMITTED", version: 1, submitted_at: "2026-10-19T08:00:00Z",
+      correlation_id: "00000000-0000-0000-0000-000000000096", transition_id: "00000000-0000-0000-0000-000000000097",
+      audit_event_id: "00000000-0000-0000-0000-000000000098", outbox_event_id: "00000000-0000-0000-0000-000000000099" };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/v1/canonical-intakes" && init?.method === "POST") {
+        writes.push(init);
+        if (writes.length === 1) throw new TypeError("original URL result unknown");
+        return new Response(JSON.stringify(receipt), { status: 201 });
+      }
+      if (path === "/api/v1/canonical-intakes") return new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 });
+      return forbiddenResponse("isolated-native-lifetime", path);
+    }));
+    const guard = (current: () => boolean) => async () => current();
+    const props = { allowedTabIds: ["radar", "review"] as const, activeRoleId: "expansion-manager" as const, createAuthenticatedReadGuard: guard };
+    const view = render(<NetworkFindAreasWorkspace {...props} />);
+    fireEvent.click(await screen.findByRole("button", { name: "選取收件／比對案件" }));
+    fireEvent.click(await screen.findByRole("button", { name: "從網址建立正式收件" }));
+    fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://source.example/original-workspace" } });
+    fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "切換工作區後保留原始操作" } });
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    await screen.findByRole("button", { name: "重試同一請求" });
+    if (surface === "tab") navigation.search = "ws=network&tab=review";
+    else { navigation.pathname = "/intake/IN-3001"; navigation.search = ""; }
+    view.rerender(<NetworkFindAreasWorkspace {...props} />);
+    await waitFor(() => expect(screen.queryByTestId("canonical-intake-case-picker")).not.toBeInTheDocument());
+    expect(writes[0].signal?.aborted).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "重試原操作" }));
+    const summary = await screen.findByRole("region", { name: "先前收件操作" });
+    await within(summary).findByText(/原操作已收到回執/);
+    expect(summary).toHaveTextContent(`收件 ${receipt.intake_id} · 版本 1 · SUBMITTED`);
+    expect(writes).toHaveLength(2);
+    expect(writes[1].body).toBe(writes[0].body);
+    expect(new Headers(writes[1].headers).get("idempotency-key")).toBe(new Headers(writes[0].headers).get("idempotency-key"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it.each(["query HTTP", "query JSON", "role", "tenant"] as const)(
