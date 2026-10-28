@@ -5,7 +5,7 @@ version: 1.0.0
 status: proposed
 owner: System Design
 reviewers: Product / Security / Data / Platform / Engineering / QA
-updated_at: 2026-07-17
+updated_at: 2026-10-28
 ---
 
 # ODay Plus Assisted Listing Intake Binding State Contracts
@@ -23,6 +23,19 @@ Every human or service transition persists:
 - append-only transition row, audit event, and transactional outbox event.
 
 Human mutations require `If-Match: W/"<version>"`. Missing tokens return `428 PRECONDITION_REQUIRED`; stale tokens return `409 VERSION_CONFLICT`. Replayed idempotency keys with the same fingerprint return the original receipt; a different fingerprint returns `409 IDEMPOTENCY_KEY_REUSED`.
+
+The maintained Operator route
+`POST /api/v1/operator/network-listings/intake/{intake_id}/decide` uses that
+original Intake resource's `version`, independently of Listing, Assignment,
+SLA or native Intake versions. An unavailable authoritative positive version
+returns `503 INTAKE_VERSION_UNAVAILABLE`; it is never replaced with version 1.
+This original route retains its existing `409 IDEMPOTENCY_CONFLICT` detail for
+a changed request fingerprint. Same-key replay still requires current resource
+authorization. A tokenful request's fingerprint includes its original observed
+`If-Match`; historical tokenless receipts retain their original fingerprints
+for replay, while fresh production decisions require the token. Explicit
+fixture compatibility grants no production write authority. This documents the
+existing Operator compatibility boundary without changing a state or transition.
 
 `QUARANTINED` and `FAILED` are controlled, reopenable states. They are not terminal. Only `READY`, `CANCELLED`, `ARCHIVED`, and `COMPLETED` are terminal where explicitly named.
 

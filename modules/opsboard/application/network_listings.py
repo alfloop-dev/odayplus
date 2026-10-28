@@ -220,11 +220,11 @@ class NetworkListingPolicyError(RuntimeError):
 
 
 class NetworkListingPreconditionRequired(NetworkListingPolicyError):
-    """A governed write did not carry its actual listing revision."""
+    """A governed write requires the observed version of its own resource."""
 
 
 class NetworkListingVersionUnavailable(NetworkListingPolicyError):
-    """The listing producer has not published an authoritative revision."""
+    """The resource producer has not published an authoritative version."""
 
 
 def _require_acknowledged_risk(
