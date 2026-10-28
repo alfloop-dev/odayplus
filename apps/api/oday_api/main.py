@@ -1953,12 +1953,14 @@ else:
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action, Principal
 
+        audit_view_principal = Depends(
+            require_permission("audit", Action.VIEW, engine=build_engine(audit_log=audit_log))
+        )
+
         @platform_router.get("/audit/events", tags=["audit"])
         def list_audit_events(
             correlation_id: str | None = None,
-            principal: Principal = Depends(
-                require_permission("audit", Action.VIEW, engine=build_engine(audit_log=audit_log))
-            ),
+            principal: Principal = audit_view_principal,
         ) -> dict[str, Any]:
             # require_permission is a type-level check; the rows are scoped to
             # the verified principal's tenant. A principal with no server-granted
