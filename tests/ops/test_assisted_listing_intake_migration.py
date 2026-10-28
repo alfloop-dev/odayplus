@@ -1961,3 +1961,354 @@ def test_inventory_one_consistent_snapshot_across_models(inventory_db, monkeypat
     current = run_inventory_cli(database, role, "--source-id", "SRC-591", "--month", "2026-07", expected_exit=1)
     assert current["models"]["native_rows"]["counts"] == {"observed": 2, "selected": 0, "excluded": 0, "unknown": 2}
     assert current["models"]["native_rows"]["findings"] == {"MISSING_EVIDENCE:sourceId": 2}
+
+
+@pytest.mark.parametrize("tenant_claims", [
+    {"tenantId": "00000000-0000-0000-0000-000000000002"},
+    {"tenant_id": "not-a-tenant"},
+    {"tenantId": "00000000-0000-0000-0000-000000000001",
+     "tenant_id": "00000000-0000-0000-0000-000000000002"},
+])
+def test_backfill_listing_partition_never_rewrites_record_tenant(conn, tenant_claims):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-EXPLICIT-SCOPE", "sourceId": "SRC-591", "sourceListingId": "source-scope",
+               "address": "Synthetic recorded listing address", **tenant_claims}
+    result = IntakeMigrator(conn).backfill([], [listing], [], tenant_id=tenant,
+                                         parser_release=parser_provenance())
+    assert result["counts"]["listings_processed"] == 0
+    cur = conn.cursor()
+    for table in ("expansion.listings", "identity.properties", "identity.source_identity_edges"):
+        cur.execute(f"SELECT count(*) FROM {table}")
+        assert cur.fetchone()[0] == 0
+    if tenant_claims.get("tenant_id"):
+        assert result["counts"]["listings_excluded"] == 0
+        cur.execute("SELECT finding_type FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+        assert cur.fetchall() == [("INVALID_SCOPE",)]
+    else:
+        assert result["counts"]["listings_received"] == result["counts"]["listings_excluded"] == 1
+
+
+@pytest.mark.parametrize("source_claims", [
+    {}, {"sourceId": ""}, {"sourceId": "SRC-591", "source_id": "SRC-BROKER"},
+])
+def test_backfill_listing_source_never_defaults_or_selects_conflicting_alias(conn, source_claims):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-SOURCE-FACT", "tenantId": tenant,
+               "address": "Synthetic recorded source address", **source_claims}
+    result = IntakeMigrator(conn).backfill([], [listing], [], tenant_id=tenant,
+                                         parser_release=parser_provenance())
+    assert result["counts"]["listings_processed"] == 0
+    cur = conn.cursor()
+    for table in ("expansion.listings", "identity.properties", "identity.source_identity_edges"):
+        cur.execute(f"SELECT count(*) FROM {table}")
+        assert cur.fetchone()[0] == 0
+    cur.execute("SELECT source_kind FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchall() == [("legacy_listing",)]
+
+
+def test_backfill_foreign_candidate_cannot_poison_local_listing_prepass(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    foreign = "00000000-0000-0000-0000-000000000002"
+    listing = {"id": "L-SHARED-LEGACY-ID", "tenantId": tenant, "sourceId": "SRC-591",
+               "sourceListingId": "source-local", "address": "Synthetic local address"}
+    candidate = {"listing": {**listing, "tenantId": foreign},
+                 "candidate_site": {"candidate_site_id": "C-FOREIGN", "tenant_id": foreign},
+                 "address": {"normalized_address": "Synthetic foreign address", "latitude": 1, "longitude": 2}}
+    result = IntakeMigrator(conn).backfill([], [listing], [candidate], tenant_id=tenant,
+                                         parser_release=parser_provenance())
+    cur = conn.cursor()
+    cur.execute("SELECT normalized_address FROM identity.properties ORDER BY normalized_address")
+    addresses = cur.fetchall()
+    cur.execute("SELECT count(*) FROM expansion.candidate_sites")
+    assert (addresses, cur.fetchone()[0], result["counts"]["candidates_processed"]) == (
+        [("Synthetic local address",)], 0, 0,
+    )
+    assert result["counts"]["candidates_received"] == result["counts"]["candidates_excluded"] == 1
+
+
+@pytest.mark.parametrize("fault", ["address_tenant", "address_id", "listing_id", "source_id", "listing_source", "owner_address"])
+def test_backfill_candidate_owner_conflicts_cannot_supply_listing_facts(conn, fault):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-OWNER", "tenantId": tenant, "sourceId": "SRC-591",
+               "sourceListingId": "source-owner", "address": "Synthetic owner address"}
+    candidate = {"listing": dict(listing),
+                 "candidate_site": {"candidate_site_id": "C-CONFLICT", "listing_id": "L-OWNER", "address_id": "A-OWNER"},
+                 "address": {"address_id": "A-OWNER", "normalized_address": "Synthetic conflicting address"}}
+    if fault == "address_tenant":
+        candidate["address"]["tenant_id"] = "00000000-0000-0000-0000-000000000002"
+    elif fault == "address_id":
+        candidate["address"]["address_id"] = "A-OTHER"
+    elif fault == "listing_id":
+        candidate["candidate_site"]["listing_id"] = "L-OTHER"
+    elif fault == "listing_source":
+        candidate["listing_source"] = "SRC-BROKER"
+    elif fault == "owner_address":
+        listing["addressId"] = "A-OWNER"
+        candidate["listing"]["address_id"] = "A-OTHER"
+        candidate["candidate_site"]["address_id"] = "A-OTHER"
+        candidate["address"]["address_id"] = "A-OTHER"
+    else:
+        candidate["listing"]["sourceId"] = "SRC-BROKER"
+    result = IntakeMigrator(conn).backfill([], [listing], [candidate], tenant_id=tenant,
+                                         parser_release=parser_provenance())
+    cur = conn.cursor()
+    cur.execute("SELECT normalized_address FROM identity.properties ORDER BY normalized_address")
+    assert cur.fetchall() == [("Synthetic owner address",)]
+    assert result["counts"]["candidates_processed"] == 0
+    cur.execute("SELECT source_kind FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchall() == [("legacy_candidate",)]
+
+
+def test_backfill_candidate_source_comes_from_actual_listing_owner_across_resume(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    intake = migration_input()
+    intake["stage"] = "READY"
+    intake["matchResult"] = {"outcome": "NEW", "targetListingId": "L-BROKER-OWNER"}
+    listing = {"id": "L-BROKER-OWNER", "tenantId": tenant, "sourceId": "SRC-BROKER",
+               "sourceListingId": "broker-owner", "address": "Synthetic broker owner address"}
+    migrator = IntakeMigrator(conn)
+    first = migrator.backfill([intake], [listing], [], tenant_id=tenant, parser_release=parser_provenance())
+    assert first["counts"]["listings_processed"] == 1
+    candidate = {"id": "C-OWNER-READBACK", "listingId": "L-BROKER-OWNER"}
+    second = IntakeMigrator(conn).backfill([], [], [candidate], tenant_id=tenant,
+                                          source_id="SRC-BROKER", resume=True, parser_release=parser_provenance())
+    assert second["counts"]["candidates_processed"] == 1
+    cur = conn.cursor()
+    cur.execute("SELECT source_id FROM expansion.listings")
+    assert cur.fetchall() == [("SRC-BROKER",)]
+    cur.execute("SELECT source_id FROM intake.intakes")
+    assert cur.fetchall() == [("SRC-591",)]
+
+
+def test_backfill_match_target_does_not_supply_missing_listing_source(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    intake = migration_input()
+    intake["matchResult"] = {"outcome": "NEW", "targetListingId": "L-UNKNOWN-ORIGIN"}
+    listing = {"id": "L-UNKNOWN-ORIGIN", "tenantId": tenant, "address": "Synthetic source-unknown address"}
+    result = IntakeMigrator(conn).backfill([intake], [listing], [], tenant_id=tenant,
+                                         parser_release=parser_provenance())
+    assert result["counts"]["intakes_processed"] == 1
+    assert result["counts"]["listings_processed"] == 0
+    cur = conn.cursor()
+    cur.execute("SELECT count(*) FROM expansion.listings")
+    assert cur.fetchone()[0] == 0
+    cur.execute("SELECT source_kind FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchall() == [("legacy_listing",)]
+
+
+def test_backfill_listing_resume_proof_uses_actual_owner_source(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-RESUME-OWNER", "tenantId": tenant, "sourceId": "SRC-BROKER",
+               "sourceListingId": "broker-resume", "address": "Synthetic resume owner address"}
+    first = IntakeMigrator(conn).backfill([], [listing], [], tenant_id=tenant,
+                                         parser_release=parser_provenance())
+    assert first["counts"]["listings_processed"] == 1
+    changed_claim = {**listing, "sourceId": "SRC-591"}
+    second = IntakeMigrator(conn).backfill([], [changed_claim], [], tenant_id=tenant,
+                                          source_id="SRC-591", resume=True, parser_release=parser_provenance())
+    assert second["counts"]["listings_processed"] == 0
+    assert second["counts"]["skipped_due_to_resume"] == 0
+    cur = conn.cursor()
+    cur.execute("SELECT source_id FROM expansion.listings")
+    assert cur.fetchall() == [("SRC-BROKER",)]
+    cur.execute("SELECT source_kind FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchall() == [("legacy_listing",)]
+    cur.execute("SELECT expected FROM workflow.reconciliation_findings WHERE severity='INFO' AND source_id=%s",
+                (f"PROOF-{tenant}:SRC-591:ALL",))
+    assert cur.fetchone()[0]["listing_ids"] == []
+
+
+def test_backfill_candidate_resume_proof_uses_saved_listing_owner(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    intake_a, intake_b = migration_input(), migration_input()
+    intake_a.update(stage="READY", matchResult={"outcome": "NEW", "targetListingId": "L-RESUME-A"})
+    intake_b.update(id="IN-RESUME-B", stage="READY",
+                    matchResult={"outcome": "NEW", "targetListingId": "L-RESUME-B"})
+    listing_a = {"id": "L-RESUME-A", "tenantId": tenant, "sourceId": "SRC-591",
+                 "sourceListingId": "source-resume-a", "address": "Synthetic resume A address"}
+    listing_b = {"id": "L-RESUME-B", "tenantId": tenant, "sourceId": "SRC-BROKER",
+                 "sourceListingId": "source-resume-b", "address": "Synthetic resume B address"}
+    candidate = {"id": "C-RESUME-SAVED-OWNER", "listingId": "L-RESUME-B"}
+    first = IntakeMigrator(conn).backfill([intake_a, intake_b], [listing_a, listing_b], [candidate],
+                                         tenant_id=tenant, parser_release=parser_provenance())
+    assert first["counts"]["candidates_processed"] == 1
+    changed_claim = {**candidate, "listingId": "L-RESUME-A"}
+    second = IntakeMigrator(conn).backfill([], [], [changed_claim], tenant_id=tenant,
+                                          source_id="SRC-591", resume=True, parser_release=parser_provenance())
+    assert second["counts"]["candidates_processed"] == 0
+    assert second["counts"]["skipped_due_to_resume"] == 0
+    cur = conn.cursor()
+    cur.execute("SELECT source_listing_id FROM expansion.candidate_sites")
+    assert str(cur.fetchone()[0]) == ensure_uuid("L-RESUME-B")
+    cur.execute("SELECT source_kind FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchall() == [("legacy_candidate",)]
+    cur.execute("SELECT expected FROM workflow.reconciliation_findings WHERE severity='INFO' AND source_id=%s",
+                (f"PROOF-{tenant}:SRC-591:ALL",))
+    assert cur.fetchone()[0]["candidate_ids"] == []
+
+
+def test_backfill_source_excluded_listing_also_excludes_its_sourceless_candidate(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-EXCLUDED-OWNER", "tenantId": tenant, "sourceId": "SRC-BROKER",
+               "sourceListingId": "broker-excluded", "address": "Synthetic excluded owner address"}
+    candidate = {"id": "C-EXCLUDED-OWNER", "listingId": "L-EXCLUDED-OWNER"}
+    result = IntakeMigrator(conn).backfill([], [listing], [candidate], tenant_id=tenant,
+                                         source_id="SRC-591", parser_release=parser_provenance())
+    assert result["counts"]["listings_received"] == result["counts"]["listings_excluded"] == 1
+    assert result["counts"]["candidates_received"] == result["counts"]["candidates_excluded"] == 1
+    assert result["counts"]["quarantined"] == 0
+    cur = conn.cursor()
+    for table in ("identity.properties", "expansion.listings", "expansion.candidate_sites"):
+        cur.execute(f"SELECT count(*) FROM {table}")
+        assert cur.fetchone()[0] == 0
+    cur.execute("SELECT count(*) FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchone()[0] == 0
+
+
+def test_backfill_source_selector_cannot_choose_conflicting_primary_listing_owners(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-CONFLICTING-PRIMARY-OWNER", "tenantId": tenant, "sourceId": "SRC-591",
+               "sourceListingId": "primary-owner", "address": "Synthetic primary owner address"}
+    other_claim = {**listing, "sourceId": "SRC-BROKER"}
+    with pytest.raises(ValueError, match="Conflicting legacy Listing source ownership"):
+        IntakeMigrator(conn).backfill([], [listing, other_claim], [], tenant_id=tenant,
+                                     source_id="SRC-591", parser_release=parser_provenance())
+    cur = conn.cursor()
+    for table in ("identity.properties", "expansion.listings", "expansion.candidate_sites"):
+        cur.execute(f"SELECT count(*) FROM {table}")
+        assert cur.fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_backfill_prepass_failure_rolls_back_metadata_findings_and_connection_reuse(conn, dry_run):
+    from psycopg.pq import TransactionStatus
+
+    tenant = "00000000-0000-0000-0000-000000000001"
+    migrator = IntakeMigrator(conn)
+    migrator.apply_schema()
+    invalid_intake = {**migration_input(), "submittedBy": None}
+    listing = {"id": "L-FAILED-PREPASS", "tenantId": tenant, "sourceId": "SRC-591",
+               "address": "Synthetic failed prepass address"}
+    with pytest.raises(ValueError, match="Conflicting legacy Listing source ownership"):
+        migrator.backfill([invalid_intake], [listing, {**listing, "sourceId": "SRC-BROKER"}], [],
+                          tenant_id=tenant, dry_run=dry_run, parser_release=parser_provenance())
+    assert conn.info.transaction_status == TransactionStatus.IDLE
+    cur = conn.cursor()
+    for table in ("intake.source_registry", "intake.parser_releases", "workflow.reconciliation_findings",
+                  "intake.intakes", "expansion.listings", "expansion.candidate_sites", "identity.properties"):
+        cur.execute(f"SELECT count(*) FROM {table}")
+        assert cur.fetchone()[0] == 0
+    # A later successful call on this same connection must not commit the
+    # failed attempt's registration or invalid-history finding.
+    result = migrator.backfill([migration_input()], [], [], tenant_id=tenant,
+                              parser_release=parser_provenance())
+    assert result["counts"]["intakes_processed"] == 1
+    cur.execute("SELECT count(*) FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("kind", ["listing", "candidate", "owner_address_alias"])
+def test_backfill_unselected_source_domain_errors_are_excluded_consistently(conn, kind):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-UNSELECTED-DOMAIN", "tenantId": tenant, "sourceId": "SRC-BROKER",
+               "address_id": "A-ORIGINAL", "address": "Synthetic unselected address"}
+    if kind in {"listing", "owner_address_alias"}:
+        listings = [{**listing, "addressId": "A-CONTRADICTORY"}]
+        candidates = [] if kind == "listing" else [{"id": "C-UNSELECTED", "listingId": listing["id"]}]
+    else:
+        listings = [listing]
+        candidates = [{"listing": dict(listing),
+                       "candidate_site": {"candidate_site_id": "C-UNSELECTED", "listing_id": listing["id"],
+                                          "address_id": "A-CONTRADICTORY"},
+                       "address": {"address_id": "A-CONTRADICTORY", "normalized_address": "Synthetic other address"}}]
+    result = IntakeMigrator(conn).backfill([], listings, candidates, tenant_id=tenant,
+                                         source_id="SRC-591", parser_release=parser_provenance())
+    assert result["counts"]["listings_excluded"] == 1
+    assert result["counts"]["candidates_excluded"] == len(candidates)
+    assert result["counts"]["quarantined"] == result["counts"]["findings"] == 0
+    cur = conn.cursor()
+    for table in ("expansion.listings", "identity.properties", "expansion.candidate_sites"):
+        cur.execute(f"SELECT count(*) FROM {table}")
+        assert cur.fetchone()[0] == 0
+    cur.execute("SELECT count(*) FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchone()[0] == 0
+
+
+def test_backfill_unselected_existing_owner_is_resolved_before_candidate_month(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-EXISTING-UNSELECTED", "tenantId": tenant, "sourceId": "SRC-BROKER",
+               "address": "Synthetic native owner address"}
+    first = IntakeMigrator(conn).backfill([], [listing], [], tenant_id=tenant,
+                                         parser_release=parser_provenance())
+    assert first["counts"]["listings_processed"] == 1
+    candidate = {"id": "C-EXISTING-UNSELECTED", "listingId": listing["id"]}
+    result = IntakeMigrator(conn).backfill([], [], [candidate], tenant_id=tenant, source_id="SRC-591",
+                                         month="1999-01", parser_release=parser_provenance())
+    assert result["counts"]["candidates_excluded"] == 1
+    assert result["counts"]["candidates_processed"] == result["counts"]["quarantined"] == 0
+    cur = conn.cursor()
+    cur.execute("SELECT count(*) FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchone()[0] == 0
+    cur.execute("SELECT count(*) FROM expansion.candidate_sites")
+    assert cur.fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("fault", ["listing_id", "source_id", "address_tenant"])
+def test_backfill_unselected_source_cannot_hide_candidate_scope_conflicts(conn, fault):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-UNSELECTED-TRUST", "tenantId": tenant, "sourceId": "SRC-BROKER",
+               "address": "Synthetic unselected owner address"}
+    candidate = {"listing": dict(listing),
+                 "candidate_site": {"candidate_site_id": "C-UNSELECTED-TRUST", "listing_id": listing["id"]},
+                 "address": {"normalized_address": "Synthetic trust check address"}}
+    if fault == "listing_id":
+        candidate["candidate_site"]["listing_id"] = "L-DIFFERENT-OWNER"
+    elif fault == "source_id":
+        candidate["listing_source"] = "SRC-591"
+    else:
+        candidate["address"]["tenant_id"] = "00000000-0000-0000-0000-000000000002"
+    result = IntakeMigrator(conn).backfill([], [listing], [candidate], tenant_id=tenant,
+                                         source_id="SRC-591", parser_release=parser_provenance())
+    assert result["counts"]["candidates_excluded"] == result["counts"]["candidates_processed"] == 0
+    assert result["counts"]["quarantined"] == 1
+    cur = conn.cursor()
+    cur.execute("SELECT source_kind FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchall() == [("legacy_candidate",)]
+
+
+def test_backfill_conflicting_primary_address_owners_fail_before_source_exclusion(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-PRIMARY-ADDRESS-CONFLICT", "tenantId": tenant, "sourceId": "SRC-BROKER",
+               "address_id": "A-PRIMARY", "address": "Synthetic primary address"}
+    with pytest.raises(ValueError, match="Conflicting legacy Listing address ownership"):
+        IntakeMigrator(conn).backfill([], [listing, {**listing, "address_id": "A-DIFFERENT"}], [],
+                                     tenant_id=tenant, source_id="SRC-591", parser_release=parser_provenance())
+    cur = conn.cursor()
+    for table in ("identity.properties", "expansion.listings", "expansion.candidate_sites"):
+        cur.execute(f"SELECT count(*) FROM {table}")
+        assert cur.fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("kind", ["listing", "candidate"])
+def test_backfill_unselected_claim_cannot_hide_selected_native_listing_owner(conn, kind):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-NATIVE-SOURCE-TRUST", "tenantId": tenant, "sourceId": "SRC-591",
+               "address": "Synthetic native source owner address"}
+    first = IntakeMigrator(conn).backfill([], [listing], [], tenant_id=tenant,
+                                         parser_release=parser_provenance())
+    assert first["counts"]["listings_processed"] == 1
+    claimed_owner = {**listing, "sourceId": "SRC-BROKER"}
+    listings = [claimed_owner] if kind == "listing" else []
+    candidates = [] if kind == "listing" else [
+        {"listing": claimed_owner, "candidate_site": {"candidate_site_id": "C-NATIVE-SOURCE-TRUST",
+                                                       "listing_id": listing["id"]}},
+    ]
+    result = IntakeMigrator(conn).backfill([], listings, candidates, tenant_id=tenant,
+                                         source_id="SRC-591", resume=True, parser_release=parser_provenance())
+    assert result["counts"][f"{kind}s_excluded"] == 0
+    assert result["counts"]["quarantined"] == 1
+    cur = conn.cursor()
+    cur.execute("SELECT source_kind FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchall() == [(f"legacy_{kind}",)]
+    cur.execute("SELECT source_id FROM expansion.listings")
+    assert cur.fetchall() == [("SRC-591",)]

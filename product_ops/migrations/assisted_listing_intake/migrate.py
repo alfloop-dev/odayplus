@@ -75,6 +75,63 @@ def get_val(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
+def _legacy_resource_scope(
+    partition_tenant: str, *records: Any,
+) -> tuple[str | None, bool, dict[str, str]]:
+    """Resolve recorded Listing/draft scope before using its related facts.
+
+    The original DTOs may omit tenant (or carry their empty default); the
+    validated import partition supplies that context. An explicit declaration
+    cannot be overridden by the selector or a different nested owner. Unlike
+    that legacy DTO context, a source is a recorded fact, never a default feed.
+    A Candidate without source may subsequently read its actual Listing owner.
+    """
+    tenants: set[str] = set()
+    sources: set[str] = set()
+    errors: dict[str, str] = {}
+    for record in records:
+        for name in ("tenant_id", "tenantId"):
+            value = get_val(record, name)
+            if value is None or value == "":
+                continue
+            try:
+                tenants.add(str(uuid.UUID(value)))
+            except (ValueError, TypeError, AttributeError):
+                errors["tenantId"] = "INVALID_SCOPE"
+        for name in ("source_id", "sourceId", "listing_source"):
+            value = get_val(record, name)
+            if value is None or value == "":
+                continue
+            if not isinstance(value, str) or not value.strip() or value != value.strip():
+                errors["sourceId"] = "MISSING_EVIDENCE"
+            else:
+                sources.add(value)
+    if len(tenants) > 1:
+        errors["tenantId"] = "INVALID_SCOPE"
+    # Do not retain unrelated source/address history as this tenant's findings.
+    foreign = "tenantId" not in errors and len(tenants) == 1 and partition_tenant not in tenants
+    if foreign:
+        return None, True, {}
+    if len(sources) > 1:
+        errors["sourceId"] = "STATE_MAPPING_CONFLICT"
+    return next(iter(sources)) if len(sources) == 1 else None, False, errors
+
+
+def _source_partition_excluded(
+    selector: str | None, recorded_source: str | None, errors: dict[str, str],
+) -> bool:
+    """Exclude known other-source history only after its scope is trusted.
+
+    Domain/history defects do not belong in a different source's findings.
+    Conflicting source, tenant or parent Listing identity cannot establish
+    that exclusion. Both original Intake and resource normalization use this
+    rule; excluded resources never contribute to the business pre-pass.
+    """
+    return bool(selector and recorded_source is not None and recorded_source != selector
+                and "sourceId" not in errors and "listingId" not in errors
+                and "INVALID_SCOPE" not in errors.values())
+
+
 def calculate_checksum(ids: Iterable[str]) -> str:
     """Compute deterministic SHA-256 checksum for a collection of string IDs."""
     sorted_ids = sorted(str(x) for x in ids if str(x).strip())
@@ -718,94 +775,189 @@ class IntakeMigrator:
                 raise ValueError("An explicit valid tenant partition is required")
             target_tenant = input_tenants.pop()
         legacy_intakes = []
-        registered_parser = self.register_sources_and_parsers(
-            sources=sources, parser_release=parser_release, tenant_id=target_tenant,
-        )
-
-        reconciled_count = 0
-        skipped_count = 0
-        quarantined_count = 0
-        findings_count = 0
-        intake_quarantined = 0
-        intake_excluded = 0
-        for row, errors in normalized_inputs:
-            # Exclude only on unambiguous scope, before saving unrelated history
-            # failures into this tenant's findings. Missing/conflicting scope
-            # still fails closed rather than being hidden by a source filter.
-            foreign_tenant = "tenantId" not in errors and str(uuid.UUID(row["tenantId"])) != target_tenant
-            foreign_source = (
-                source_id and "sourceId" not in errors and row["sourceId"] != source_id
-                and "INVALID_SCOPE" not in errors.values()
+        try:
+            registered_parser = self.register_sources_and_parsers(
+                sources=sources, parser_release=parser_release, tenant_id=target_tenant,
             )
-            if foreign_tenant or foreign_source:
-                intake_excluded += 1
-                continue
-            if not errors:
-                legacy_intakes.append(row)
-                continue
-            if errors:
-                intake_quarantined += 1
-                quarantined_count += 1
-                findings_count += 1
-                finding_type = "INVALID_SCOPE" if "INVALID_SCOPE" in errors.values() else next(iter(errors.values()))
-                self._create_finding(
-                    tenant_id=target_tenant, source_kind="legacy_intake",
-                    source_id=str(row.get("id") or "unknown-intake"), target_ids=[],
-                    finding_type=finding_type, severity="BLOCKING",
-                    expected={"valid_source_history_and_scope": True},
-                    actual={"invalid_fields": errors, "source_history": {key: row.get(key) for key in (
-                        "id", "tenantId", "stage", "submittedAt", "submittedBy", "intakeMethod", "version",
-                    )}},
-                )
 
-        # Pre-pass: map addresses, sources, and real legacy timestamps ONLY
-        listing_to_address: dict[str, Any] = {}
-        listing_to_month: dict[str, str | None] = {}
-        listing_to_source: dict[str, str] = {}
-        intake_resolved_listings: dict[str, str] = {}
+            reconciled_count = 0
+            skipped_count = 0
+            quarantined_count = 0
+            findings_count = 0
+            intake_quarantined = 0
+            intake_excluded = 0
+            for row, errors in normalized_inputs:
+                # Exclude only on unambiguous scope, before saving unrelated history
+                # failures into this tenant's findings. Missing/conflicting scope
+                # still fails closed rather than being hidden by a source filter.
+                foreign_tenant = "tenantId" not in errors and str(uuid.UUID(row["tenantId"])) != target_tenant
+                foreign_source = _source_partition_excluded(source_id, row.get("sourceId"), errors)
+                if foreign_tenant or foreign_source:
+                    intake_excluded += 1
+                    continue
+                if not errors:
+                    legacy_intakes.append(row)
+                    continue
+                if errors:
+                    intake_quarantined += 1
+                    quarantined_count += 1
+                    findings_count += 1
+                    finding_type = "INVALID_SCOPE" if "INVALID_SCOPE" in errors.values() else next(iter(errors.values()))
+                    self._create_finding(
+                        tenant_id=target_tenant, source_kind="legacy_intake",
+                        source_id=str(row.get("id") or "unknown-intake"), target_ids=[],
+                        finding_type=finding_type, severity="BLOCKING",
+                        expected={"valid_source_history_and_scope": True},
+                        actual={"invalid_fields": errors, "source_history": {key: row.get(key) for key in (
+                            "id", "tenantId", "stage", "submittedAt", "submittedBy", "intakeMethod", "version",
+                        )}},
+                    )
 
-        for draft in legacy_candidates:
-            lst = get_val(draft, "listing")
-            addr = get_val(draft, "address")
-            if lst:
-                lst_id = get_val(lst, "listing_id") or get_val(lst, "id")
+            # Normalize the two legacy resource forms once, before either can
+            # contribute address/source facts to another record's pre-pass.
+            listing_to_address: dict[str, Any] = {}
+            listing_to_month: dict[str, str | None] = {}
+            listing_owners: dict[str, tuple[Any, str]] = {}
+            intake_resolved_listings: dict[str, str] = {}
+            scoped_listings: list[tuple[Any, Any, str]] = []
+            scoped_candidates: list[tuple[Any, Any, str | None]] = []
+            resource_excluded = {"legacy_listing": 0, "legacy_candidate": 0}
+
+            for kind, records in (("legacy_listing", legacy_listings), ("legacy_candidate", legacy_candidates)):
+                for record in records:
+                    is_listing = kind == "legacy_listing"
+                    listing = record if is_listing else get_val(record, "listing")
+                    candidate = None if is_listing else get_val(record, "candidate_site")
+                    address = None if is_listing else get_val(record, "address")
+                    resource_source, foreign, errors = _legacy_resource_scope(
+                        target_tenant, *((record,) if is_listing else (record, listing, candidate, address)),
+                    )
+                    if foreign:
+                        resource_excluded[kind] += 1
+                        continue
+                    record_id = (get_val(listing, "listing_id") or get_val(listing, "id")) if is_listing else (
+                        get_val(candidate, "candidate_site_id") or get_val(record, "id")
+                    )
+                    listing_refs = [get_val(listing, "listing_id"), get_val(listing, "id")]
+                    address_refs = [get_val(listing, name) for name in ("address_id", "addressId") if get_val(listing, name)]
+                    if not is_listing:
+                        listing_refs.extend((get_val(candidate, "listing_id"), get_val(record, "listingId")))
+                        address_refs.extend(get_val(item, name) for item, name in (
+                            (candidate, "address_id"), (candidate, "addressId"),
+                            (address, "address_id"), (address, "id"),
+                        ) if get_val(item, name))
+                    listing_refs = [value for value in listing_refs if value]
+                    if not record_id or not listing_refs:
+                        errors["id"] = "MISSING_EVIDENCE"
+                    if not listing_refs:
+                        errors["listingId"] = "MISSING_EVIDENCE"
+                    elif len({ensure_uuid(value) for value in listing_refs}) > 1:
+                        errors["listingId"] = "STATE_MAPPING_CONFLICT"
+                    listing_id = listing_refs[0] if listing_refs else None
+                    if is_listing:
+                        if resource_source is None:
+                            errors.setdefault("sourceId", "MISSING_EVIDENCE")
+                    else:
+                        owner = listing_owners.get(ensure_uuid(listing_id))
+                        owner_source = owner[1] if owner is not None else None
+                        if owner is not None:
+                            address_refs.extend(get_val(owner[0], name) for name in ("address_id", "addressId") if get_val(owner[0], name))
+                        if resource_source is not None and owner_source is not None and resource_source != owner_source:
+                            errors["sourceId"] = "STATE_MAPPING_CONFLICT"
+                        if resource_source is None:
+                            resource_source = owner_source
+                    # A supplied origin cannot hide a conflicting saved owner by
+                    # calling itself out-of-source. Resolve scope before domain
+                    # checks (including month), using only the exact tenant/key.
+                    # The later mutation/resume read remains a separate boundary:
+                    # it also sees Listings created by this same backfill.
+                    if listing_id and "listingId" not in errors and "INVALID_SCOPE" not in errors.values():
+                        saved_owner = self._execute(
+                            "SELECT source_id FROM expansion.listings WHERE listing_id = %s AND tenant_id = %s",
+                            (ensure_uuid(listing_id), target_tenant), tenant_id=target_tenant,
+                        )
+                        if saved_owner:
+                            saved_source = saved_owner[0]["source_id"]
+                            if resource_source is not None and resource_source != saved_source:
+                                errors["sourceId"] = "STATE_MAPPING_CONFLICT"
+                            elif not is_listing and resource_source is None:
+                                resource_source = saved_source
+                    if len({ensure_uuid(value) for value in address_refs}) > 1:
+                        errors["addressId"] = "STATE_MAPPING_CONFLICT"
+                    if is_listing and resource_source is not None and not any(
+                        key in errors for key in ("id", "listingId", "sourceId", "tenantId")
+                    ):
+                        previous = listing_owners.get(ensure_uuid(listing_id))
+                        if previous is not None:
+                            if previous[1] != resource_source:
+                                raise ValueError("Conflicting legacy Listing source ownership")
+                            previous_address_refs = [get_val(previous[0], name) for name in ("address_id", "addressId")
+                                                     if get_val(previous[0], name)]
+                            if len({ensure_uuid(value) for value in (*previous_address_refs, *address_refs)}) > 1:
+                                raise ValueError("Conflicting legacy Listing address ownership")
+                        # Preserve the first recorded owner instead of selecting
+                        # the last duplicate. Unrelated domain errors can still be
+                        # excluded together with this proven source's Candidate.
+                        listing_owners.setdefault(ensure_uuid(listing_id), (record, resource_source))
+                    excluded_source = _source_partition_excluded(source_id, resource_source, errors)
+                    if excluded_source:
+                        resource_excluded[kind] += 1
+                        continue
+                    if not errors and resource_source is not None and not self._execute(
+                        "SELECT source_id FROM intake.source_registry WHERE source_id = %s", (resource_source,),
+                    ):
+                        errors["sourceId"] = "MISSING_EVIDENCE"
+                    if errors:
+                        findings_count += 1
+                        quarantined_count += 1
+                        self._create_finding(
+                            tenant_id=target_tenant, source_kind=kind,
+                            source_id=str(record_id or "unknown-resource"), target_ids=[],
+                            finding_type="INVALID_SCOPE" if "INVALID_SCOPE" in errors.values() else next(iter(errors.values())),
+                            severity="BLOCKING", expected={"consistent_recorded_scope_and_owner": True},
+                            actual={"invalid_fields": errors},
+                        )
+                        continue
+                    if is_listing:
+                        scoped_listings.append((record, record_id, resource_source))
+                    else:
+                        scoped_candidates.append((record, listing_id, resource_source))
+
+            for draft, lst_id, _ in scoped_candidates:
+                addr = get_val(draft, "address")
+                if lst_id and addr:
+                    listing_to_address[ensure_uuid(lst_id)] = addr
+
+            for intake in legacy_intakes:
+                if str(uuid.UUID(intake["tenantId"])) != target_tenant:
+                    continue
+                i_source = intake["sourceId"]
+                i_date_str = intake["submittedAt"]
+                i_month = _partition_month(i_date_str)
+                match_res = intake.get("matchResult") or {}
+                lst_id = match_res.get("targetListingId") or intake.get("resolved_listing_id") or intake.get("resolvedListingId")
                 if lst_id:
                     lst_uuid = ensure_uuid(lst_id)
-                    if addr:
-                        listing_to_address[lst_uuid] = addr
-                    c_src = get_val(lst, "source_id") or get_val(lst, "sourceId") or "SRC-591"
-                    listing_to_source[lst_uuid] = c_src
+                    intake_uuid = ensure_uuid(intake.get("id"))
+                    if intake_uuid:
+                        intake_resolved_listings[intake_uuid] = lst_uuid
+                    if i_month:
+                        listing_to_month[lst_uuid] = i_month
+                    # A match target may belong to another source. Its observation
+                    # cannot redefine the existing Listing's own source identity.
+                    parsed = intake.get("parsedFields") or {}
+                    if lst_uuid not in listing_to_address and parsed.get("address"):
+                        listing_to_address[lst_uuid] = {
+                            "normalized_address": parsed.get("address"),
+                            "raw_address": parsed.get("address"),
+                            "latitude": parsed.get("latitude"),
+                            "longitude": parsed.get("longitude"),
+                        }
 
-        for intake in legacy_intakes:
-            if str(uuid.UUID(intake["tenantId"])) != target_tenant:
-                continue
-            i_source = intake["sourceId"]
-            i_date_str = intake["submittedAt"]
-            i_month = _partition_month(i_date_str)
-            match_res = intake.get("matchResult") or {}
-            lst_id = match_res.get("targetListingId") or intake.get("resolved_listing_id") or intake.get("resolvedListingId")
-            if lst_id:
-                lst_uuid = ensure_uuid(lst_id)
-                intake_uuid = ensure_uuid(intake.get("id"))
-                if intake_uuid:
-                    intake_resolved_listings[intake_uuid] = lst_uuid
-                if i_month:
-                    listing_to_month[lst_uuid] = i_month
-                listing_to_source[lst_uuid] = i_source
-                parsed = intake.get("parsedFields") or {}
-                if lst_uuid not in listing_to_address and parsed.get("address"):
-                    listing_to_address[lst_uuid] = {
-                        "normalized_address": parsed.get("address"),
-                        "raw_address": parsed.get("address"),
-                        "latitude": parsed.get("latitude"),
-                        "longitude": parsed.get("longitude"),
-                    }
+            processed_intake_uuids: list[str] = []
+            processed_listing_uuids: list[str] = []
+            processed_candidate_uuids: list[str] = []
 
-        processed_intake_uuids: list[str] = []
-        processed_listing_uuids: list[str] = []
-        processed_candidate_uuids: list[str] = []
-
-        try:
             # 1. Backfill Intakes
             for legacy_intake in legacy_intakes:
                 l_id = legacy_intake.get("id")
@@ -1170,16 +1322,9 @@ class IntakeMigrator:
                 processed_intake_uuids.append(intake_uuid)
 
             # 2. Backfill Listings
-            for legacy_lst in legacy_listings:
-                l_id = get_val(legacy_lst, "listing_id") or get_val(legacy_lst, "id")
+            for legacy_lst, l_id, i_source in scoped_listings:
                 listing_uuid = ensure_uuid(l_id)
-                i_tenant = ensure_uuid(tenant_id or get_val(legacy_lst, "tenant_id") or get_val(legacy_lst, "tenantId") or "tenant-a")
-                i_source = get_val(legacy_lst, "source_id") or get_val(legacy_lst, "sourceId") or listing_to_source.get(listing_uuid) or "SRC-591"
-
-                if tenant_id and i_tenant != ensure_uuid(tenant_id):
-                    continue
-                if source_id and i_source != source_id:
-                    continue
+                i_tenant = target_tenant
 
                 lst_month = listing_to_month.get(listing_uuid)
                 if not lst_month:
@@ -1211,8 +1356,18 @@ class IntakeMigrator:
                         continue
 
                 if resume:
-                    check_exists = "SELECT listing_id FROM expansion.listings WHERE listing_id = %s AND tenant_id = %s"
-                    if self._execute(check_exists, (listing_uuid, i_tenant), tenant_id=i_tenant):
+                    check_exists = "SELECT listing_id, source_id FROM expansion.listings WHERE listing_id = %s AND tenant_id = %s"
+                    existing = self._execute(check_exists, (listing_uuid, i_tenant), tenant_id=i_tenant)
+                    if existing and existing[0]["source_id"] != i_source:
+                        findings_count += 1
+                        quarantined_count += 1
+                        self._create_finding(
+                            tenant_id=i_tenant, source_kind="legacy_listing", source_id=l_id,
+                            target_ids=[listing_uuid], finding_type="STATE_MAPPING_CONFLICT", severity="BLOCKING",
+                            expected={"source_id": existing[0]["source_id"]}, actual={"source_id": i_source},
+                        )
+                        continue
+                    if existing:
                         skipped_count += 1
                         if listing_uuid not in processed_listing_uuids:
                             processed_listing_uuids.append(listing_uuid)
@@ -1451,23 +1606,14 @@ class IntakeMigrator:
                 processed_listing_uuids.append(listing_uuid)
 
             # 3. Backfill Candidates
-            for legacy_cand in legacy_candidates:
+            for legacy_cand, lst_id, c_source in scoped_candidates:
                 candidate_site = get_val(legacy_cand, "candidate_site")
                 c_id = get_val(candidate_site, "candidate_site_id") or get_val(legacy_cand, "id")
-                listing = get_val(legacy_cand, "listing")
-                lst_id = get_val(listing, "listing_id") or get_val(legacy_cand, "listingId")
                 status = get_val(legacy_cand, "status") or "CANDIDATE"
 
                 candidate_uuid = ensure_uuid(c_id)
                 listing_uuid = ensure_uuid(lst_id)
-                i_tenant = ensure_uuid(tenant_id or get_val(candidate_site, "tenant_id") or "tenant-a")
-
-                if tenant_id and i_tenant != ensure_uuid(tenant_id):
-                    continue
-
-                c_source = get_val(listing, "source_id") or get_val(listing, "sourceId") or listing_to_source.get(listing_uuid) or "SRC-591"
-                if source_id and c_source != source_id:
-                    continue
+                i_tenant = target_tenant
 
                 # Real month partition comes from legacy evidence only
                 c_month = listing_to_month.get(listing_uuid)
@@ -1496,18 +1642,10 @@ class IntakeMigrator:
                         )
                         continue
 
-                if resume:
-                    check_exists = "SELECT candidate_site_id FROM expansion.candidate_sites WHERE candidate_site_id = %s AND tenant_id = %s"
-                    if self._execute(check_exists, (candidate_uuid, i_tenant), tenant_id=i_tenant):
-                        skipped_count += 1
-                        if candidate_uuid not in processed_candidate_uuids:
-                            processed_candidate_uuids.append(candidate_uuid)
-                        continue
-
                 self._execute("SELECT 1", tenant_id=i_tenant)
 
                 prop_row = self._execute(
-                    "SELECT property_id FROM expansion.listings WHERE listing_id = %s AND tenant_id = %s",
+                    "SELECT property_id, source_id, canonical_url_sha256 FROM expansion.listings WHERE listing_id = %s AND tenant_id = %s",
                     (listing_uuid, i_tenant),
                     tenant_id=i_tenant,
                 )
@@ -1525,6 +1663,47 @@ class IntakeMigrator:
                         actual={"listing_exists": False},
                     )
                     continue
+
+                if c_source is not None and c_source != prop_row[0]["source_id"]:
+                    findings_count += 1
+                    quarantined_count += 1
+                    self._create_finding(
+                        tenant_id=i_tenant, source_kind="legacy_candidate", source_id=c_id,
+                        target_ids=[candidate_uuid], finding_type="STATE_MAPPING_CONFLICT", severity="BLOCKING",
+                        expected={"source_id": prop_row[0]["source_id"]}, actual={"source_id": c_source},
+                    )
+                    continue
+                if source_id and prop_row[0]["source_id"] != source_id:
+                    resource_excluded["legacy_candidate"] += 1
+                    continue
+                if resume:
+                    check_exists = (
+                        "SELECT c.candidate_site_id,c.source_listing_id,p.listing_id AS decision_listing_id "
+                        "FROM expansion.candidate_sites c LEFT JOIN expansion.promotion_decisions p "
+                        "ON p.promotion_decision_id=c.promotion_decision_id AND p.tenant_id=c.tenant_id "
+                        "WHERE c.candidate_site_id = %s AND c.tenant_id = %s"
+                    )
+                    existing = self._execute(check_exists, (candidate_uuid, i_tenant), tenant_id=i_tenant)
+                    if existing and (
+                        ensure_uuid(existing[0]["source_listing_id"]) != listing_uuid
+                        or ensure_uuid(existing[0]["decision_listing_id"]) != listing_uuid
+                    ):
+                        findings_count += 1
+                        quarantined_count += 1
+                        self._create_finding(
+                            tenant_id=i_tenant, source_kind="legacy_candidate", source_id=c_id,
+                            target_ids=[candidate_uuid], finding_type="STATE_MAPPING_CONFLICT", severity="BLOCKING",
+                            expected={"listing_id": listing_uuid}, actual={
+                                "source_listing_id": ensure_uuid(existing[0]["source_listing_id"]),
+                                "decision_listing_id": ensure_uuid(existing[0]["decision_listing_id"]),
+                            },
+                        )
+                        continue
+                    if existing:
+                        skipped_count += 1
+                        if candidate_uuid not in processed_candidate_uuids:
+                            processed_candidate_uuids.append(candidate_uuid)
+                        continue
 
                 prop_uuid = prop_row[0]["property_id"]
 
@@ -1555,12 +1734,7 @@ class IntakeMigrator:
 
                 decision_uuid = ensure_uuid(f"PD-{c_id}")
 
-                listing_url_row = self._execute(
-                    "SELECT canonical_url_sha256 FROM expansion.listings WHERE listing_id = %s AND tenant_id = %s",
-                    (listing_uuid, i_tenant),
-                    tenant_id=i_tenant,
-                )
-                url_sha = listing_url_row[0]["canonical_url_sha256"] if listing_url_row else None
+                url_sha = prop_row[0]["canonical_url_sha256"]
 
                 if url_sha:
                     intake_row = self._execute(
@@ -1711,6 +1885,10 @@ class IntakeMigrator:
                 "intakes_received": len(normalized_inputs),
                 "intakes_quarantined": intake_quarantined,
                 "intakes_excluded": intake_excluded,
+                "listings_received": len(legacy_listings),
+                "listings_excluded": resource_excluded["legacy_listing"],
+                "candidates_received": len(legacy_candidates),
+                "candidates_excluded": resource_excluded["legacy_candidate"],
                 "intakes": len(processed_intake_uuids),
                 "listings": len(processed_listing_uuids),
                 "candidates": len(processed_candidate_uuids),
@@ -1783,6 +1961,10 @@ class IntakeMigrator:
                 "intakes_received": len(normalized_inputs),
                 "intakes_quarantined": intake_quarantined,
                 "intakes_excluded": intake_excluded,
+                "listings_received": len(legacy_listings),
+                "listings_excluded": resource_excluded["legacy_listing"],
+                "candidates_received": len(legacy_candidates),
+                "candidates_excluded": resource_excluded["legacy_candidate"],
                 "intakes_processed": reconciled_count,
                 "listings_processed": len(processed_listing_uuids),
                 "candidates_processed": len(processed_candidate_uuids),
