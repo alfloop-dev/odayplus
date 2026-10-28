@@ -1950,24 +1950,39 @@ else:
                 "roles": sorted(role.value for role in principal.roles),
             }
 
-        from apps.api.oday_api.security.dependencies import build_engine, require_permission
-        from shared.auth import Action, Principal
+        from apps.api.oday_api.security.dependencies import (
+            _operator_access_request,
+            _record_denial,
+            build_engine,
+            require_permission,
+        )
+        from shared.auth import Action, Decision, Principal, ResourceDescriptor
 
+        audit_view_engine = build_engine(audit_log=audit_log)
         audit_view_principal = Depends(
-            require_permission("audit", Action.VIEW, engine=build_engine(audit_log=audit_log))
+            require_permission("audit", Action.VIEW, engine=audit_view_engine)
         )
 
         @platform_router.get("/audit/events", tags=["audit"])
         def list_audit_events(
+            request: Request,
             correlation_id: str | None = None,
             principal: Principal = audit_view_principal,
         ) -> dict[str, Any]:
             # require_permission is a type-level check; the rows are scoped to
             # the verified principal's tenant. A principal with no server-granted
             # tenant (human or service) has no row scope and is refused rather
-            # than reading every tenant's events (contract §8.1).
+            # than reading every tenant's events (contract §8.1). The refusal
+            # follows the type-level allow, so it is audited as its own deny.
             tenant_id = principal.tenant_id
             if not isinstance(tenant_id, str) or not tenant_id.strip():
+                _record_denial(
+                    audit_view_engine,
+                    _operator_access_request(
+                        request, principal, Action.VIEW, ResourceDescriptor(type="audit")
+                    ),
+                    Decision.deny("TENANT_SCOPE_REQUIRED", policy_id="tenant.isolation"),
+                )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail={

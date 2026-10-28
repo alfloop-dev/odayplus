@@ -2938,26 +2938,71 @@ class TestAuditEventsReadBoundary:
     def test_missing_or_blank_tenant_scope_fails_closed(self, monkeypatch):
         from uuid import UUID
 
-        client, bundle, _ = self._app(monkeypatch)
-        _, _, null_scope_token = self._local_user(
+        client, bundle, audit_log = self._app(monkeypatch)
+        local_id, _, null_scope_token = self._local_user(
             bundle, roles=[Role.AUDITOR], tenant_id=UUID(AUDIT_TENANT_A), scope_tenant=None
         )
+        oidc_id = uuid4()
+        bundle.identity_store.save_account(
+            Account(
+                account_id=oidc_id,
+                tenant_id=UUID(AUDIT_TENANT_A),
+                username="oidc-audit-unscoped",
+                email="oidc-audit-unscoped@example.com",
+                status="active",
+            )
+        )
+        bundle.identity_store.link_federated_identity(oidc_id, OIDC_ISSUER, "oidc-unscoped-sub")
+        bundle.identity_store.set_account_roles(oidc_id, [Role.AUDITOR])
+        bundle.identity_store.set_account_scope(oidc_id, Scope(tenant_id=None))
         cases = {
-            "local human without scope tenant": {"Authorization": f"Bearer {null_scope_token}"},
-            "declared service without tenant": {
-                "Authorization": "Bearer "
-                + make_jwt(SERVICE_KEY, iss=SERVICE_ISSUER, sub="svc-audit-none")
-            },
-            "declared service with blank tenant": {
-                "Authorization": "Bearer "
-                + make_jwt(SERVICE_KEY, iss=SERVICE_ISSUER, sub="svc-audit-blank")
-            },
+            "local human without scope tenant": (
+                str(local_id),
+                null_scope_token,
+            ),
+            "linked oidc human without scope tenant": (
+                str(oidc_id),
+                make_jwt(OIDC_KEY, iss=OIDC_ISSUER, sub="oidc-unscoped-sub"),
+            ),
+            "declared service without tenant": (
+                "svc-audit-none",
+                make_jwt(SERVICE_KEY, iss=SERVICE_ISSUER, sub="svc-audit-none"),
+            ),
+            "declared service with blank tenant": (
+                "svc-audit-blank",
+                make_jwt(SERVICE_KEY, iss=SERVICE_ISSUER, sub="svc-audit-blank"),
+            ),
         }
-        for label, headers in cases.items():
-            for path in AUDIT_PATHS:
-                response = self._get(client, path, {**headers, "x-tenant-id": AUDIT_TENANT_A})
+        for label, (actor, token) in cases.items():
+            for index, path in enumerate(AUDIT_PATHS):
+                correlation = f"corr-audit-unscoped-{actor}-{index}"
+                response = self._get(
+                    client,
+                    path,
+                    {
+                        "Authorization": f"Bearer {token}",
+                        "x-tenant-id": AUDIT_TENANT_A,
+                        "x-correlation-id": correlation,
+                    },
+                )
                 assert response.status_code == 403, (label, response.text)
+                assert response.json()["detail"]["code"] == "TENANT_SCOPE_REQUIRED", label
                 assert "events" not in response.json(), label
+                # The scope refusal follows the type-level allow and is
+                # audited as its own deny for the same verified actor.
+                decisions = [
+                    event
+                    for event in audit_log.list_events(correlation_id=correlation)
+                    if event.event_type == "security.authorization"
+                ]
+                assert [
+                    (e.actor, e.outcome, e.action, e.resource, e.metadata.get("reason"))
+                    for e in decisions
+                ] == [
+                    (actor, "allow", "view", "audit", "role permits view on audit"),
+                    (actor, "deny", "view", "audit", "TENANT_SCOPE_REQUIRED"),
+                ], label
+                assert decisions[1].metadata.get("policy_id") == "tenant.isolation", label
 
     def test_forged_service_claims_and_unknown_principals_get_no_service_scope(
         self, monkeypatch
