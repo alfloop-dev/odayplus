@@ -60,6 +60,32 @@ EXEC_TIME = datetime(2026, 6, 1, 10, 0, tzinfo=UTC)
 MATURE_TIME = EXEC_TIME + timedelta(days=29)
 IMMATURE_TIME = EXEC_TIME + timedelta(days=3)
 
+# Explicit-nonlive compatibility: these API lifecycle callers run with no
+# verified tenant, so the intervention audit records carry no tenant. The
+# lifecycle is read back through the app's own audit log; the public audit read
+# only proves such unscoped records never leak through the tenant boundary.
+INTERVENTION_AUDIT_READ_TENANT = "tenant-intervention-audit-reader"
+
+
+def _assert_public_audit_read_withholds_unscoped(
+    client: TestClient, correlation_id: str, intervention_id: str
+) -> None:
+    missing_tenant = client.get("/audit/events", params={"correlation_id": correlation_id})
+    assert missing_tenant.status_code == 403, missing_tenant.text
+    assert missing_tenant.json()["detail"]["code"] == "TENANT_SCOPE_REQUIRED"
+
+    scoped = client.get(
+        "/audit/events",
+        params={"correlation_id": correlation_id},
+        headers={"x-tenant-id": INTERVENTION_AUDIT_READ_TENANT},
+    )
+    assert scoped.status_code == 200, scoped.text
+    events = scoped.json()["events"]
+    assert not [e for e in events if e["resource"] == f"intervention/{intervention_id}"]
+    assert all(
+        e["metadata"].get("tenant_id") == INTERVENTION_AUDIT_READ_TENANT for e in events
+    )
+
 
 def _seed_store(engine: SqliteEngine, store_id: str = "store-durable-1") -> None:
     tenant_id = "00000000-0000-0000-0000-000000000001"
@@ -635,7 +661,8 @@ def test_observation_sweep_matures_and_auto_evaluates() -> None:
 
 
 def test_api_drives_full_lifecycle_with_conflict_and_label() -> None:
-    client = TestClient(create_app(), headers=INTERVENTION_HEADERS)
+    app = create_app()
+    client = TestClient(app, headers=INTERVENTION_HEADERS)
 
     create = client.post(
         "/interventions",
@@ -750,9 +777,13 @@ def test_api_drives_full_lifecycle_with_conflict_and_label() -> None:
     assert label.status_code == 200
     assert label.json()["exclude_from_baseline"] is True
 
-    audit = client.get("/audit/events", params={"correlation_id": "corr-iv-1"})
-    actions = {e["action"] for e in audit.json()["events"]}
+    actions = {
+        e.action
+        for e in app.state.audit_log.list_events(correlation_id="corr-iv-1")
+        if e.resource == f"intervention/{iid}"
+    }
     assert {"create", "approve", "execute", "evaluate_effect"} <= actions
+    _assert_public_audit_read_withholds_unscoped(client, "corr-iv-1", iid)
 
 
 def test_api_conflict_blocks_submit() -> None:
@@ -794,7 +825,8 @@ def test_api_conflict_blocks_submit() -> None:
 
 
 def test_api_close_case_with_follow_up_and_audit() -> None:
-    client = TestClient(create_app(), headers=INTERVENTION_HEADERS)
+    app = create_app()
+    client = TestClient(app, headers=INTERVENTION_HEADERS)
     corr = {"x-correlation-id": "corr-iv-close"}
 
     create = client.post(
@@ -873,9 +905,13 @@ def test_api_close_case_with_follow_up_and_audit() -> None:
     assert follow_up.json()["status"] == "CANDIDATE"
     assert follow_up.json()["trigger_ref"] == f"follow-up:{iid}"
 
-    audit = client.get("/audit/events", params={"correlation_id": "corr-iv-close"})
-    actions = {e["action"] for e in audit.json()["events"]}
+    actions = {
+        e.action
+        for e in app.state.audit_log.list_events(correlation_id="corr-iv-close")
+        if e.resource == f"intervention/{iid}"
+    }
     assert "close" in actions
+    _assert_public_audit_read_withholds_unscoped(client, "corr-iv-close", iid)
 
 
 def test_assignment_lifecycle_and_audit() -> None:
