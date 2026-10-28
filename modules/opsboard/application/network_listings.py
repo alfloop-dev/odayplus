@@ -61,11 +61,14 @@ def _atomic_intake_submission(method: Callable[..., Any]) -> Callable[..., Any]:
     @wraps(method)
     def invoke(self: Any, *args: Any, **kwargs: Any) -> Any:
         transaction = getattr(self._intakes, "transaction", None)
-        if transaction is None:
-            return method(self, *args, **kwargs)
-        before = copy.deepcopy((self._state, self._idempotency_cache, self._idempotency_bindings))
+        # Only a real repository transaction can roll back the matching writes.
+        # Restoring self alone would hide surviving nontransactional writes.
+        before = (
+            copy.deepcopy((self._state, self._idempotency_cache, self._idempotency_bindings))
+            if transaction is not None else None
+        )
         try:
-            with transaction(intake_id=kwargs.get("intake_id")):
+            with (transaction(intake_id=kwargs.get("intake_id")) if transaction is not None else nullcontext()):
                 self._load_intakes()
                 self._load_idempotency_cache()
                 if kwargs.get("intake_id"):
@@ -76,7 +79,8 @@ def _atomic_intake_submission(method: Callable[..., Any]) -> Callable[..., Any]:
                         authorize(_copy(self._listing_intake(kwargs["intake_id"])))
                 return method(self, *args, **kwargs)
         except BaseException:
-            self._state, self._idempotency_cache, self._idempotency_bindings = before
+            if before is not None:
+                self._state, self._idempotency_cache, self._idempotency_bindings = before
             raise
     return invoke
 
@@ -1395,17 +1399,48 @@ class NetworkListingService:
             for record in records:
                 authorize_existing(_copy(record))
 
-    def _listing_write_records(self, action: str, key: str | None, actor: str, ids: list[str]) -> list[dict[str, Any]]:
+    def _listing_write_records(
+        self, action: str, key: str | None, actor: str, ids: list[str], *,
+        authorize_intake: Callable[[dict[str, Any]], None] | None = None,
+    ) -> list[dict[str, Any]]:
         lookup_key = key.strip() if key and (action == "merge" or not self._seed_fixtures) else key
         cached = self._idempotency_cache.get((action, hashlib.sha256(actor.encode()).hexdigest() + ":" + lookup_key)) if lookup_key else None
         if cached is not None:
-            fields = ("source", "target") if action == "merge" else ("listing",)
-            if any(not isinstance(cached.get(name), dict) or not isinstance(cached[name].get("id"), str) for name in fields):
-                raise NetworkListingPolicyError("REPLAY_RECEIPT_UNAVAILABLE")
             # Authorize the durable receipt's actual resources before exposing
             # it or rejecting a changed fingerprint. Never choose new body IDs
             # as the authority for an existing logical operation.
-            ids = [cached[name]["id"] for name in fields]
+            if action == "decide_intake":
+                if not isinstance(cached, dict) or not isinstance(cached.get("id"), str) or not cached["id"]:
+                    raise NetworkListingPolicyError("REPLAY_RECEIPT_UNAVAILABLE")
+                if authorize_intake is None and not self._seed_fixtures:
+                    raise NetworkListingPolicyError("INTAKE_SCOPE_CONTEXT_REQUIRED")
+                current_intake = self._listing_intake(cached["id"])
+                if authorize_intake is not None:
+                    authorize_intake(_copy(current_intake))
+                events = cached.get("auditEvents")
+                event = events[-1] if isinstance(events, list) and events else None
+                metadata = event.get("metadata") if isinstance(event, dict) else None
+                decision = metadata.get("decision") if isinstance(metadata, dict) else None
+                if (not isinstance(decision, str)
+                        or decision not in {"create", "revise", "duplicate", "quarantine", "reject"}
+                        or event.get("action") != f"intake.decide.{decision}"
+                        or event.get("targetId") != cached["id"]):
+                    raise NetworkListingPolicyError("REPLAY_RECEIPT_UNAVAILABLE")
+                ids = []
+                if decision in {"create", "revise", "duplicate"}:
+                    target_id = metadata.get("targetListingId")
+                    match = cached.get("matchResult")
+                    if (not isinstance(target_id, str) or not target_id
+                            or not isinstance(match, dict) or match.get("targetListingId") != target_id):
+                        raise NetworkListingPolicyError("REPLAY_RECEIPT_UNAVAILABLE")
+                    ids = [target_id]
+            else:
+                fields = ("source", "target") if action == "merge" else ("listing",)
+                if any(not isinstance(cached.get(name), dict) or not isinstance(cached[name].get("id"), str) for name in fields):
+                    raise NetworkListingPolicyError("REPLAY_RECEIPT_UNAVAILABLE")
+                ids = [cached[name]["id"] for name in fields]
+        if action == "decide_intake" and ids:
+            self._load_listings()
         return [self._action_listing(listing_id) for listing_id in ids]
 
     def _check_listing_revision(self, record: dict[str, Any], if_match: str | None) -> None:
@@ -2282,10 +2317,27 @@ class NetworkListingService:
             correlation_id=correlation_id,
             action_label="decide intake",
         )
+        intake = self._listing_intake(intake_id)
+        normalized_action = action.strip().lower()
+        match_result = intake.get("matchResult")
+        target_id = None
+        if normalized_action in {"revise", "duplicate"}:
+            target_id = (target_listing_id if normalized_action == "revise" else None) or (
+                match_result.get("targetListingId") if isinstance(match_result, dict) else None
+            )
+        targets = self._listing_write_records(
+            "decide_intake", governed_key, actor_name, [target_id] if target_id else [],
+            authorize_intake=authorize_existing,
+        )
+        if targets:
+            self._authorize_listing_write(targets, authorize_existing)
+
         write = self._prepare_write("decide_intake", governed_key, actor_name,
                                     {"intake_id": intake_id, "action": action, "target_listing_id": target_listing_id, "reason": reason, "risk_summary": risk_summary, "risk_acknowledged": risk_acknowledged}, correlation_id)
         if write.replayed_response is not None:
             return write.replayed_response
+        if match_result is not None and not isinstance(match_result, dict):
+            raise NetworkListingPolicyError("MATCH_RESULT_UNAVAILABLE")
 
         reason_text = (reason or "").strip()
         if not reason_text:
@@ -2307,7 +2359,8 @@ class NetworkListingService:
         effective_vals = effective_fields(intake["parsedFields"])
 
         before_stage = intake["stage"]
-        before_after = {"stage": {"before": before_stage}}
+        before_after = {"stage": {"before": before_stage},
+                        "matchResult": {"before": _copy(intake.get("matchResult"))}}
         effect_summary = f"Manual decision '{action}' recorded for intake {intake_id}."
 
         if action == "create":
@@ -2368,14 +2421,17 @@ class NetworkListingService:
                 intake["matchResult"] = {
                     "outcome": "NEW",
                     "outcomeLabel": "新物件",
-                    "confidence": 1.0,
+                    "confidence": None,
                     "targetListingId": new_id,
                     "agreeingSignals": [],
                     "contradictingSignals": [],
                     "summary": f"已手動建立為新物件 {new_id}。"
                 }
             else:
-                intake["matchResult"]["targetListingId"] = new_id
+                intake["matchResult"].update(
+                    targetListingId=new_id, confidence=None,
+                    agreeingSignals=[], contradictingSignals=[],
+                )
                 intake["matchResult"]["outcome"] = "NEW"
                 intake["matchResult"]["outcomeLabel"] = "新物件"
                 intake["matchResult"]["summary"] = f"已手動建立為新物件 {new_id}。"
@@ -2387,10 +2443,9 @@ class NetworkListingService:
         elif action == "revise":
             # Only an operator-named target or the recorded match may be revised;
             # an unmatched intake must not overwrite whichever listing is first.
-            target_id = target_listing_id or (intake.get("matchResult") or {}).get("targetListingId")
             if not target_id:
                 raise NetworkListingConflict("no target listing found for revision")
-            target = self._listing(target_id)
+            target = targets[0]
             before_rent = target["rentPerMonth"]
             before_area = target["areaPing"]
             before_floor = target["floor"]
@@ -2407,9 +2462,14 @@ class NetworkListingService:
             self._sync_listing_to_repo(target_id)
             intake["stage"] = "READY"
             if not intake.get("matchResult"):
-                intake["matchResult"] = {"targetListingId": target_id, "confidence": 0.9}
-            else:
-                intake["matchResult"]["targetListingId"] = target_id
+                intake["matchResult"] = {"targetListingId": target_id, "confidence": None}
+            elif intake["matchResult"].get("targetListingId") != target_id:
+                # A measurement about another match cannot be reassigned to a
+                # human-selected target. The original remains in this audit.
+                intake["matchResult"].update(
+                    targetListingId=target_id, confidence=None,
+                    agreeingSignals=[], contradictingSignals=[],
+                )
             intake["matchResult"]["summary"] = f"已手動將版本更新至既有物件 {target_id}。"
 
             before_after["stage"]["after"] = "READY"
@@ -2419,10 +2479,9 @@ class NetworkListingService:
             effect_summary = f"Revised listing {target_id} from intake {intake_id}."
 
         elif action == "duplicate":
-            target_id = intake["matchResult"].get("targetListingId")
             if not target_id:
                 raise NetworkListingConflict("no target listing found for duplicate merge")
-            target = self._listing(target_id)
+            target = targets[0]
             before_evidence_count = len(target.get("sourceEvidence") or ())
 
             snapshot_id = intake.get("snapshotId")
@@ -2476,6 +2535,7 @@ class NetworkListingService:
             before_after["stage"]["after"] = "FAILED"
             effect_summary = f"Rejected intake {intake_id}."
 
+        before_after["matchResult"]["after"] = _copy(intake.get("matchResult"))
         audit_evt = {
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
             "occurredAt": _now(),

@@ -122,3 +122,134 @@ def test_http_new_hold_denies_original_receipt_on_replay(operation, record):
     assert replay.status_code == 409, replay.text
     assert replay.json()["detail"] == "LEGAL_HOLD_CONFLICT"
     assert service.export_state() == before
+
+
+
+INTAKE = "00000000-0000-0000-0000-000000000401"
+OTHER_INTAKE = "00000000-0000-0000-0000-000000000402"
+DECIDE_AXES = [
+    ("X-Brand-Ids", "brandId", "brand-a"),
+    ("X-Region-Ids", "regionId", "north"),
+    ("X-Store-Ids", "storeId", "store-a"),
+    ("X-Assigned-Area-Ids", "assignedAreaId", "area-a"),
+    ("X-Heat-Zone-Ids", "heatZoneId", "HZ-01"),
+]
+
+
+def _decide_client():
+    client, service = _client()
+    scope = {field: value for _, field, value in DECIDE_AXES}
+    for ident in (SOURCE, TARGET):
+        service._listing(ident).update(scope)
+    intake = {
+        "id": INTAKE, "tenantId": "tenant-a", "sourceId": "SRC-SYNTHETIC",
+        "originalUrl": "https://example.invalid/recorded-intake", "snapshotId": "recorded-source",
+        "stage": "NEEDS_REVIEW", "version": 1, "auditEvents": [], **scope,
+        "submitter": "independent-submitter",
+        "matchResult": {"outcome": "REVISION", "targetListingId": TARGET, "confidence": 0.63},
+        "parsedFields": {name: {"normalizedValue": value, "correctedValue": None} for name, value in {
+            "providerListingId": "recorded-intake", "address": "Synthetic current address",
+            "rent": 55000, "areaPing": 25, "floor": "1F",
+        }.items()},
+    }
+    service._intakes.save_intake(intake)
+    service.get_intake(INTAKE)
+    return client, service, intake
+
+
+def _post_decide(client, action="revise", *, intake_id=INTAKE, headers=None, target=TARGET):
+    return client.post(
+        f"/api/v1/operator/network-listings/intake/{intake_id}/decide",
+        headers=headers or HEADERS,
+        json={"action": action, "targetListingId": target,
+              "reason": "Operator names the actual listing to decide",
+              "riskSummary": "Only current authorized target may be revised",
+              "riskAcknowledged": True},
+    )
+
+
+@pytest.mark.parametrize("action", ["revise", "duplicate"])
+@pytest.mark.parametrize("header,field,allowed", DECIDE_AXES)
+@pytest.mark.parametrize("actual_value", [None, "excluded"])
+def test_decide_http_authorizes_actual_target_on_every_restricted_scope_axis(
+    action, header, field, allowed, actual_value,
+):
+    client, service, _ = _decide_client()
+    service._listing(TARGET)[field] = actual_value
+    before = service.export_state()
+    response = _post_decide(client, action, headers={**HEADERS, header: allowed})
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"] == "SCOPE_DENIED"
+    assert service.export_state() == before
+    assert service._intakes.list_idempotency_records() == []
+
+
+@pytest.mark.parametrize("action", ["revise", "duplicate"])
+@pytest.mark.parametrize("target_tenant", [None, "tenant-b"])
+def test_decide_http_does_not_assign_caller_tenant_to_unowned_or_foreign_target(action, target_tenant):
+    client, service, _ = _decide_client()
+    service._listing(TARGET)["tenantId"] = target_tenant
+    before = service.export_state()
+    response = _post_decide(client, action)
+    assert response.status_code == 403, response.text
+    assert service.export_state() == before
+    assert service._intakes.list_idempotency_records() == []
+
+
+@pytest.mark.parametrize("action", ["revise", "duplicate"])
+def test_decide_http_refuses_ambiguous_target_id_before_changing_any_listing(action):
+    client, service, _ = _decide_client()
+    duplicate = deepcopy(service._listing(TARGET))
+    duplicate["rentPerMonth"] = 1
+    service._state["listings"].append(duplicate)
+    before = service.export_state()
+    response = _post_decide(client, action)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "AMBIGUOUS_LISTING_ID"
+    assert service.export_state() == before
+    assert service._intakes.list_idempotency_records() == []
+
+
+@pytest.mark.parametrize("original_action", ["revise", "duplicate"])
+@pytest.mark.parametrize("changed_action", ["revise", "quarantine"])
+@pytest.mark.parametrize("revoked", ["original-intake", "original-target"])
+def test_decide_http_changed_intake_and_body_cannot_escape_original_receipt_authorization(
+    original_action, changed_action, revoked,
+):
+    client, service, intake = _decide_client()
+    headers = {**HEADERS, "X-Heat-Zone-Ids": "HZ-01"}
+    first = _post_decide(client, original_action, headers=headers)
+    assert first.status_code == 200, first.text
+    other = deepcopy(intake)
+    other.update(id=OTHER_INTAKE, matchResult={"targetListingId": SOURCE, "confidence": None})
+    service._intakes.save_intake(other)
+    if revoked == "original-intake":
+        original = service._intakes.get_intake(INTAKE)
+        original["heatZoneId"] = "excluded"
+        service._intakes.save_intake(original)
+    else:
+        service._listing(TARGET)["heatZoneId"] = "excluded"
+    service.get_intake(OTHER_INTAKE)
+    before = service.export_state()
+    receipts = deepcopy(service._intakes.list_idempotency_records())
+    response = _post_decide(client, changed_action, intake_id=OTHER_INTAKE,
+                            headers=headers, target=SOURCE)
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"] == "SCOPE_DENIED"
+    assert service.export_state() == before
+    assert service._intakes.list_idempotency_records() == receipts
+
+
+@pytest.mark.parametrize("action", ["revise", "duplicate"])
+def test_decide_http_valid_replay_is_exact_but_changed_target_still_conflicts(action):
+    client, service, _ = _decide_client()
+    first = _post_decide(client, action)
+    assert first.status_code == 200, first.text
+    before = service.export_state()
+    replay = _post_decide(client, action)
+    assert replay.status_code == 200 and replay.json() == first.json()
+    changed = _post_decide(client, action, target=SOURCE)
+    assert changed.status_code == 409, changed.text
+    assert changed.json()["detail"] == "IDEMPOTENCY_CONFLICT"
+    assert service.export_state() == before
+    assert len(service._intakes.list_idempotency_records()) == 1

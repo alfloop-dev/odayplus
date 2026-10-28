@@ -440,3 +440,67 @@ def test_staff_view_own_only_filtering() -> None:
     list_ids_a = [i["id"] for i in list_intakes_a.json()["items"]]
     assert intake_a_id in list_ids_a
     assert intake_b_id not in list_ids_a
+
+
+
+@pytest.mark.parametrize("clearance", [
+    DataClassification.PUBLIC, DataClassification.INTERNAL,
+    DataClassification.CONFIDENTIAL, DataClassification.RESTRICTED,
+    DataClassification.HIGHLY_RESTRICTED,
+])
+@pytest.mark.parametrize("historical_scope", ["own", "foreign-tenant", "excluded-heat-zone"])
+def test_http_intake_projection_omits_internal_match_history_at_every_clearance_and_scope(
+    clearance, historical_scope,
+):
+    import json
+    from copy import deepcopy
+
+    from modules.listing.application.intake_authorization import mask_intake
+    from modules.opsboard.application.network_listings import InMemoryAssistedIntakeRepository
+    from shared.auth import Principal, Role, Scope
+
+    target = {
+        "targetListingId": "history-only-listing-identifier",
+        "tenantId": "tenant-b" if historical_scope == "foreign-tenant" else "tenant-a",
+        "heatZoneId": "HZ-EXCLUDED" if historical_scope == "excluded-heat-zone" else "HZ-01",
+        "confidence": 0.63,
+        "agreeingSignals": ["history-only-private-address"],
+        "contradictingSignals": ["history-only-broker-phone"],
+        "candidates": [{"targetListingId": "history-only-other-candidate"}],
+    }
+    original = {
+        "id": "intake-history-projection", "tenantId": "tenant-a", "heatZoneId": "HZ-01",
+        "matchResult": {"targetListingId": "current-visible-listing", "confidence": None},
+        "parsedFields": {},
+        "auditEvents": [
+            {"id": "decision-history", "action": "intake.decide.revise", "metadata": {
+                "reason": "Preserve existing audit reason",
+                "beforeAfter": {
+                    "stage": {"before": "NEEDS_REVIEW", "after": "READY"},
+                    "target_rent": {"before": 60000, "after": 55000},
+                    "matchResult": {"before": deepcopy(target), "after": deepcopy(target)},
+                },
+            }},
+            {"id": "unrelated-history", "metadata": {"beforeAfter": {"version": {"before": 1, "after": 2}}}},
+            {"id": "without-metadata", "action": "intake.submitted"},
+        ],
+    }
+    repository = InMemoryAssistedIntakeRepository()
+    repository.save_intake(original)
+    stored_before = deepcopy(repository.get_intake(original["id"]))
+    input_record = repository.get_intake(original["id"])
+    principal = Principal(
+        "scoped-history-reader", roles=frozenset({Role.SITE_REVIEWER}),
+        scope=Scope(tenant_id="tenant-a", heat_zone_ids=frozenset({"HZ-01"}), clearance=clearance),
+    )
+    projected = mask_intake(principal, input_record)
+    expected_events = deepcopy(stored_before["auditEvents"])
+    del expected_events[0]["metadata"]["beforeAfter"]["matchResult"]
+    assert projected["auditEvents"] == expected_events
+    assert projected["matchResult"] == stored_before["matchResult"]
+    serialized = json.dumps(projected)
+    for marker in ("history-only-listing-identifier", "history-only-private-address",
+                   "history-only-broker-phone", "history-only-other-candidate"):
+        assert marker not in serialized
+    assert input_record == stored_before
+    assert repository.get_intake(original["id"]) == stored_before

@@ -678,6 +678,22 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
             masked["originalUrl_masked"] = True
             masked["originalUrl_mask_reason_code"] = "FIELD_MASKED"
 
+    # The retained before/after match history can name other Listings and
+    # contain their signals. Intake access alone does not grant those resource
+    # reads. Keep this new audit evidence internally, without exposing it in
+    # any Intake HTTP presentation or mutating its stored receipt.
+    events = masked.get("auditEvents")
+    if isinstance(events, list):
+        projected_events = []
+        for event in events:
+            metadata = event.get("metadata") if isinstance(event, dict) else None
+            before_after = metadata.get("beforeAfter") if isinstance(metadata, dict) else None
+            if isinstance(before_after, dict) and "matchResult" in before_after:
+                event = deepcopy(event)
+                event["metadata"]["beforeAfter"].pop("matchResult")
+            projected_events.append(event)
+        masked["auditEvents"] = projected_events
+
     return masked
 
 

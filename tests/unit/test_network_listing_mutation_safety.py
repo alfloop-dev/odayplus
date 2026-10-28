@@ -1,6 +1,7 @@
 """Listing-marker mutations preserve holds, terminal state and original receipts."""
 
 from copy import deepcopy
+from dataclasses import replace
 
 import pytest
 
@@ -326,5 +327,182 @@ def test_service_refreshes_durable_hold_recorded_after_instance_creation(tmp_pat
         assert service._intakes.get_listing_metadata(SOURCE) == before
         assert service._intakes.list_idempotency_records() == []
         assert service._listing_repository.get_listing(SOURCE).listing_status == "duplicate"
+    finally:
+        engine.close()
+
+
+
+DECISION_INTAKE = "00000000-0000-0000-0000-000000000501"
+DECISION_OTHER = "00000000-0000-0000-0000-000000000502"
+
+
+def _save_decision_intake(service, *, ident=DECISION_INTAKE, target=TARGET):
+    intake = {
+        "id": ident, "tenantId": TENANT, "sourceId": "recorded-source",
+        "originalUrl": "https://example.invalid/durable-decision", "snapshotId": "intake-evidence",
+        "stage": "NEEDS_REVIEW", "version": 1, "auditEvents": [],
+        "matchResult": {"outcome": "REVISION", "targetListingId": target, "confidence": 0.63},
+        "parsedFields": {name: {"normalizedValue": value, "correctedValue": None}
+                         for name, value in {"rent": 55000, "areaPing": 25, "floor": "1F"}.items()},
+    }
+    service._intakes.save_intake(intake)
+    service.get_intake(ident)
+    return intake
+
+
+def _decide(service, *, action="revise", ident=DECISION_INTAKE, target=TARGET,
+            authority=_authorize):
+    return service.decide_intake(
+        intake_id=ident, action=action, target_listing_id=target,
+        reason="Durable original decision reason", risk_summary="Keep source and target authority",
+        risk_acknowledged=True, actor_role_id="site_reviewer", actor_name=ACTOR,
+        idempotency_key="durable-decision", correlation_id="durable-decision-correlation",
+        authorize_existing=authority,
+    )
+
+
+@pytest.mark.parametrize("action", ["revise", "duplicate"])
+def test_decide_instance_older_than_receipt_replays_durable_original_after_restart(tmp_path, action):
+    path = tmp_path / "intake-target-replay.sqlite3"
+    engine = SqliteEngine(path)
+    try:
+        first = _durable_service(engine, _service().export_state())
+        _save_decision_intake(first)
+        second = _durable_service(engine)
+        receipt = _decide(first, action=action)
+        assert _decide(second, action=action) == receipt
+        assert len(first._intakes.list_idempotency_records()) == 1
+    finally:
+        engine.close()
+    reopened = SqliteEngine(path)
+    try:
+        restored = _durable_service(reopened)
+        assert _decide(restored, action=action) == receipt
+        assert len(restored._intakes.list_idempotency_records()) == 1
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("action", ["revise", "duplicate"])
+@pytest.mark.parametrize("change", ["scope", "deleted"])
+def test_decide_replay_refreshes_original_target_after_another_writer_changes_it(tmp_path, action, change):
+    engine = SqliteEngine(tmp_path / "intake-target-fresh.sqlite3")
+    try:
+        first = _durable_service(engine, _service().export_state())
+        _save_decision_intake(first)
+        second = _durable_service(engine)
+        _decide(first, action=action)
+        if change == "deleted":
+            first._listing_repository.clear()
+            expected = NetworkListingNotFound
+        else:
+            metadata = first._intakes.get_listing_metadata(TARGET)
+            first._intakes.save_listing_metadata(TARGET, {**metadata, "heatZoneId": "revoked"})
+            expected = PermissionError
+
+        def current_target(row):
+            _authorize(row)
+            if row.get("heatZoneId") == "revoked":
+                raise PermissionError("TARGET_SCOPE_REVOKED")
+
+        records = deepcopy(first._intakes.list_idempotency_records())
+        intake = deepcopy(first._intakes.get_intake(DECISION_INTAKE))
+        listings = deepcopy(first._listing_repository.list_listings())
+        with pytest.raises(expected):
+            _decide(second, action=action, authority=current_target)
+        assert first._intakes.get_intake(DECISION_INTAKE) == intake
+        assert first._listing_repository.list_listings() == listings
+        assert first._intakes.list_idempotency_records() == records
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("changed_action", ["revise", "quarantine"])
+def test_decide_replay_reauthorizes_original_intake_before_changed_body_conflict(tmp_path, changed_action):
+    engine = SqliteEngine(tmp_path / "intake-original-authority.sqlite3")
+    try:
+        first = _durable_service(engine, _service().export_state())
+        _save_decision_intake(first)
+        _save_decision_intake(first, ident=DECISION_OTHER, target=SOURCE)
+        second = _durable_service(engine)
+        _decide(first)
+        old = first._intakes.get_intake(DECISION_INTAKE)
+        first._intakes.save_intake({**old, "heatZoneId": "revoked"})
+        checked = []
+
+        def intake_authority(row):
+            checked.append(row["id"])
+            _authorize(row)
+            if row.get("heatZoneId") == "revoked":
+                raise PermissionError("ORIGINAL_INTAKE_SCOPE_REVOKED")
+
+        records = deepcopy(first._intakes.list_idempotency_records())
+        before = deepcopy(first._intakes.list_intakes())
+        with pytest.raises(PermissionError, match="ORIGINAL_INTAKE_SCOPE_REVOKED"):
+            _decide(second, action=changed_action, ident=DECISION_OTHER, target=SOURCE,
+                    authority=intake_authority)
+        assert DECISION_OTHER in checked and DECISION_INTAKE in checked
+        assert first._intakes.list_intakes() == before
+        assert first._intakes.list_idempotency_records() == records
+    finally:
+        engine.close()
+
+
+def test_decide_replay_does_not_replace_original_target_with_current_intake_match(tmp_path):
+    engine = SqliteEngine(tmp_path / "intake-current-match.sqlite3")
+    try:
+        service = _durable_service(engine, _service().export_state())
+        _save_decision_intake(service)
+        _decide(service)
+        current = service._intakes.get_intake(DECISION_INTAKE)
+        current["matchResult"]["targetListingId"] = SOURCE
+        service._intakes.save_intake(current)
+        metadata = service._intakes.get_listing_metadata(TARGET)
+        service._intakes.save_listing_metadata(TARGET, {**metadata, "heatZoneId": "revoked"})
+        seen = []
+
+        def target_authority(row):
+            _authorize(row)
+            if "parsedFields" in row or "url" in row:
+                return
+            seen.append(row["id"])
+            if row.get("heatZoneId") == "revoked":
+                raise PermissionError("ORIGINAL_TARGET_SCOPE_REVOKED")
+
+        before = deepcopy(service._intakes.get_intake(DECISION_INTAKE))
+        receipts = deepcopy(service._intakes.list_idempotency_records())
+        with pytest.raises(PermissionError, match="ORIGINAL_TARGET_SCOPE_REVOKED"):
+            _decide(service, authority=target_authority)
+        assert seen == [TARGET]
+        assert service._intakes.get_intake(DECISION_INTAKE) == before
+        assert service._intakes.list_idempotency_records() == receipts
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("corruption", ["missing-match", "missing-decision", "target-disagrees"])
+def test_decide_replay_cannot_infer_original_target_from_a_corrupt_receipt(tmp_path, corruption):
+    engine = SqliteEngine(tmp_path / "intake-corrupt-receipt.sqlite3")
+    try:
+        service = _durable_service(engine, _service().export_state())
+        _save_decision_intake(service)
+        _decide(service)
+        original = service._intakes.list_idempotency_records()[0]
+        payload = deepcopy(original.response)
+        if corruption == "missing-match":
+            payload["matchResult"] = None
+        elif corruption == "missing-decision":
+            payload["auditEvents"] = []
+        else:
+            payload["matchResult"]["targetListingId"] = SOURCE
+        service._intakes.save_idempotency_record(replace(original, response=payload))
+        before = deepcopy(service._intakes.list_intakes())
+        receipts = deepcopy(service._intakes.list_idempotency_records())
+        rows = deepcopy(service._listing_repository.list_listings())
+        with pytest.raises((NetworkListingPolicyError, NetworkListingConflict)):
+            _decide(service)
+        assert service._intakes.list_intakes() == before
+        assert service._intakes.list_idempotency_records() == receipts
+        assert service._listing_repository.list_listings() == rows
     finally:
         engine.close()
