@@ -376,6 +376,41 @@ class DurableAssistedIntakeStore:
         }
         self._local.baseline = deepcopy(loaded)
 
+    @staticmethod
+    def command_replay_key(tenant: str, actor: str, operation: str, key: str,
+                           resource_id: str | None = None) -> str:
+        """Keep the existing native POST namespace for its exact read too."""
+        parts = [tenant, actor, operation]
+        if resource_id is not None:
+            parts.append(resource_id)
+        return ":".join([*parts, key])
+
+    def read_command_replay(self, tenant: str, actor: str, operation: str, key: str,
+                            resource_id: str | None = None) -> tuple | None:
+        """Read one committed receipt from the same store, without refreshing RAM.
+
+        The router supplies the authenticated tenant/actor and fixed operation,
+        and authorizes the actual resource. Corrupt wrappers are not absence.
+        """
+        replay_key = self.command_replay_key(tenant, actor, operation, key, resource_id)
+        try:
+            stored_row = self._store.get_versioned(_STATE_COLLECTIONS["replays"], f"{tenant}:{replay_key}")
+        except (pickle.UnpicklingError, EOFError, ValueError, TypeError) as exc:
+            raise AssistedIntakeSchemaError("Canonical command receipt is unavailable") from exc
+        if stored_row is None:
+            return None
+        stored, _ = stored_row
+        if (not isinstance(stored, dict) or set(stored) != {"_state_key", "_tenant_id", "value"}
+                or stored["_tenant_id"] != tenant or stored["_state_key"] != replay_key):
+            raise AssistedIntakeSchemaError("Canonical command receipt binding differs")
+        receipt = self._unwrap(stored)
+        if (not isinstance(receipt, (tuple, list)) or len(receipt) != 3
+                or not isinstance(receipt[0], str) or len(receipt[0]) != 64
+                or any(c not in "0123456789abcdef" for c in receipt[0])
+                or not isinstance(receipt[1], dict) or type(receipt[2]) is not int):
+            raise AssistedIntakeSchemaError("Canonical command receipt is malformed")
+        return deepcopy(tuple(receipt))
+
     def _current_collections(self) -> dict[str, dict[str, Any]]:
         if not getattr(self._local, "tenant_id", None):
             raise AssistedIntakeSchemaError(

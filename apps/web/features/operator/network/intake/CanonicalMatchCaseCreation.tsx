@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ComponentType } from "react";
 import type { CanonicalIntakeSummary, CanonicalMatchCasePropertyOption, CanonicalMatchCasePropertyPage, MatchCaseReceipt, MatchCaseSummary } from "@oday-plus/openapi-client";
-import { readCanonicalMatchCaseProperties, submitCanonicalMatchCase, type CanonicalIntakeReadContext, type CanonicalMatchCaseCommand } from "./canonicalIntakeReadClient";
+import { readCanonicalMatchCaseProperties, readCanonicalMatchCaseReceipt, submitCanonicalMatchCase, type CanonicalIntakeReadContext, type CanonicalMatchCaseCommand } from "./canonicalIntakeReadClient";
 import { useCanonicalIntakeCommand } from "./useCanonicalIntakeCommand";
 import styles from "./intake.module.css";
 
@@ -30,7 +30,8 @@ function CaseForm({ context, intake, matchCase, Failure, onCaseChanged }: Props)
   const [acknowledged, setAcknowledged] = useState(false);
   const command = useCanonicalIntakeCommand<CanonicalMatchCaseCommand, MatchCaseReceipt>(context,
     (packet, signal) => submitCanonicalMatchCase(context, packet, signal), (packet) => `收件 ${packet.intakeId} 的人工案件關聯`,
-    (receipt) => `收件 ${receipt.intake_id} · 版本 ${receipt.intake_version} · 比對案件 ${receipt.match_case_id} · 版本 ${receipt.version}`);
+    (receipt) => `收件 ${receipt.intake_id} · 版本 ${receipt.intake_version} · 比對案件 ${receipt.match_case_id} · 版本 ${receipt.version}`,
+    (packet, signal) => readCanonicalMatchCaseReceipt(context, packet, signal));
   useEffect(() => { if (command.receipt && matchCase) onCaseChanged?.(true); }, [command.receipt, matchCase, onCaseChanged]);
   useEffect(() => {
     const controller = new AbortController(); let current = true;

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CanonicalIntakeReadError, readCanonicalIntakeCase, readCanonicalIntakePage,
   readCanonicalMatchCaseProperties, submitCanonicalMatchCase,
+  readCanonicalURLReceipt, readCanonicalMatchCaseReceipt, readCanonicalIdentityReceipt, readCanonicalAssistedEntryReceipt,
+  type CanonicalURLCommand, type CanonicalIdentityCommand, type CanonicalAssistedEntryCommand,
   type CanonicalIntakeReadContext, type CanonicalMatchCaseCommand,
 } from "../canonicalIntakeReadClient";
 
@@ -188,5 +190,97 @@ describe("canonical Intake read transport", () => {
     controller.abort(); resolve(summary());
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+function exactReceiptOperation(kind: "url" | "case" | "proposal" | "review" | "manual") {
+  const key = "synthetic-exact-key-123456789";
+  const common = { audit_event_id: id(80), correlation_id: id(81) };
+  if (kind === "url") {
+    const packet: CanonicalURLCommand = { key, body: { intake_method: "URL", original_url: "https://source.example/private-input",
+      scope: {}, reason: "Original synthetic URL intent" } };
+    const receipt = { ...common, intake_id: id(1), processing_state: "SUBMITTED", intake_method: "URL", version: 1,
+      submitted_at: "2026-10-29T06:00:00Z", transition_id: id(82), outbox_event_id: id(83) };
+    return { key, receipt, status: 201, path: "/api/v1/canonical-intakes/submissions/receipt",
+      lookup: (value: CanonicalIntakeReadContext, signal: AbortSignal) => readCanonicalURLReceipt(value, packet, signal) };
+  }
+  if (kind === "case") {
+    const packet: CanonicalMatchCaseCommand = { key, intakeId: id(1), expectedVersion: 3,
+      body: { outcome: "POSSIBLE_MATCH", confidence: "0.5000", reason: "Original synthetic association", risk_acknowledged: true,
+        supporting_signals: [{}], contradictory_signals: [], candidates: [{ property_id: id(41), property_version: 7, confidence: "0.5000", evidence: {} }] } };
+    const receipt = { ...common, match_case_id: id(20), intake_id: id(1), status: "PENDING_REVIEW", version: 1,
+      intake_version: 4, candidate_ids: [id(21)] };
+    return { key, receipt, status: 201, path: `/api/v1/intakes/${id(1)}/match-case/receipt`,
+      lookup: (value: CanonicalIntakeReadContext, signal: AbortSignal) => readCanonicalMatchCaseReceipt(value, packet, signal) };
+  }
+  if (kind === "manual") {
+    const packet: CanonicalAssistedEntryCommand = { key, intakeId: id(1), expectedVersion: 3,
+      body: { fields: { address: "Synthetic private original address", rent: 43210, areaPing: 42.5 }, reason: "Original human proposal",
+        risk_summary: "Explicit original risk", risk_acknowledged: true } };
+    const receipt = { ...common, request_id: id(95), intake_id: id(1), status: "REQUESTED", version: 3,
+      requested_at: "2026-10-29T06:00:00Z", outbox_event_id: id(95), correction_ids: [id(30), id(31), id(32)] };
+    return { key, receipt, status: 202, path: `/api/v1/canonical-intakes/${id(1)}/assisted-entry-completions/receipt`,
+      lookup: (value: CanonicalIntakeReadContext, signal: AbortSignal) => readCanonicalAssistedEntryReceipt(value, packet, signal) };
+  }
+  const packet: CanonicalIdentityCommand = kind === "proposal"
+    ? { key, expectedVersion: 2, matchCaseId: id(20), path: `/api/v1/match-cases/${id(20)}/identity-decisions`,
+      body: { decision_type: "MERGE", reason: "Explicit synthetic graph proposal", risk_acknowledged: true,
+        plan: { source_property_ids: [id(41)], target_property_id: id(42), expected_property_versions: { [id(41)]: 7, [id(42)]: 11 },
+          expected_listing_versions: {}, expected_edge_versions: {}, candidate_reassignment_plan: [] } } }
+    : { key, expectedVersion: 2, matchCaseId: id(20), decisionId: id(90), path: `/api/v1/canonical-identity-decisions/${id(90)}/actions/review`,
+      body: { decision: "REJECT", expected_case_version: 3, reason: "Explicit independent human rejection", risk_acknowledged: false } };
+  const receipt = { ...common, decision_id: id(90), match_case_id: id(20), match_case_version: 3, version: 2,
+    status: kind === "proposal" ? "PENDING_REVIEW" : "REJECTED", job_id: null };
+  return { key, receipt, status: kind === "proposal" ? 201 : 200, path: packet.path + "/receipt",
+    lookup: (value: CanonicalIntakeReadContext, signal: AbortSignal) => readCanonicalIdentityReceipt(value, packet, signal) };
+}
+
+describe("exact original command receipt observations", () => {
+  it.each(["url", "case", "proposal", "review", "manual"] as const)("uses the original %s namespace only as a scoped GET with no packet or If-Match", async (kind) => {
+    const operation = exactReceiptOperation(kind);
+    const envelope = { observation: "RECEIPT_COMMITTED", observed_at: "2026-10-29T07:00:00Z",
+      original_http_status: operation.status, receipt: operation.receipt };
+    const { value, signal, fetchImpl } = context(json(envelope));
+    expect(await operation.lookup(value, signal)).toEqual(envelope);
+    const [path, init] = fetchImpl.mock.calls[0];
+    expect(path).toBe(operation.path); expect(init?.method).toBeUndefined(); expect(init?.body).toBeUndefined();
+    expect(new Headers(init?.headers).get("idempotency-key")).toBe(operation.key);
+    expect(new Headers(init?.headers).has("if-match")).toBe(false);
+    expect(new Headers(init?.headers).has("content-type")).toBe(false);
+    expect(new Headers(init?.headers).get("X-Operator-Role")).toBe("expansion-manager");
+  });
+  it.each(["url", "case", "proposal", "review", "manual"] as const)("keeps a valid no-row %s observation distinct from execution or a new command", async (kind) => {
+    const { value, signal, fetchImpl } = context(json({ observation: "NOT_OBSERVED", observed_at: "2026-10-29T07:00:00Z" }));
+    expect(await exactReceiptOperation(kind).lookup(value, signal)).toEqual({ observation: "NOT_OBSERVED", observed_at: "2026-10-29T07:00:00Z" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1); expect(fetchImpl.mock.calls[0][1]?.method).toBeUndefined();
+  });
+  it.each([
+    { observation: "NOT_EXECUTED" }, { observed_at: "2026-10-29T07:00:00" }, { original_http_status: 202 },
+    { receipt: { wrong: "not the original typed result" } },
+  ])("rejects a malformed committed observation rather than settling an unknown command: %j", async (change) => {
+    const operation = exactReceiptOperation("url");
+    const { value, signal } = context(json({ observation: "RECEIPT_COMMITTED", observed_at: "2026-10-29T07:00:00Z",
+      original_http_status: 201, receipt: operation.receipt, ...change }));
+    await expect(operation.lookup(value, signal)).rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
+  });
+  it.each([
+    ["case", { candidate_ids: [id(21), id(22)] }], ["case", { intake_version: 6 }],
+    ["proposal", { match_case_id: id(99) }], ["review", { decision_id: id(99) }], ["manual", { intake_id: id(99) }],
+  ] as const)("retains the original packet-dependent %s receipt checks: %j", async (kind, change) => {
+    const operation = exactReceiptOperation(kind);
+    const { value, signal } = context(json({ observation: "RECEIPT_COMMITTED", observed_at: "2026-10-29T07:00:00Z",
+      original_http_status: operation.status, receipt: { ...operation.receipt, ...change } }));
+    await expect(operation.lookup(value, signal)).rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
+  });
+  it("refuses a purported absence that includes a receipt", async () => {
+    const operation = exactReceiptOperation("url");
+    const { value, signal } = context(json({ observation: "NOT_OBSERVED", observed_at: "2026-10-29T07:00:00Z", receipt: operation.receipt }));
+    await expect(operation.lookup(value, signal)).rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
+  });
+  it.each(["url", "case", "proposal", "review", "manual"] as const)("preserves a current authorization error on %s lookup", async (kind) => {
+    const { value, signal, fetchImpl } = context(json({ detail: "current authority refused" }, 403));
+    await expect(exactReceiptOperation(kind).lookup(value, signal)).rejects.toMatchObject({ status: 403, code: "CANONICAL_READ_FAILED" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1); expect(fetchImpl.mock.calls[0][1]?.method).toBeUndefined();
   });
 });

@@ -15,7 +15,11 @@ from shared.auth import Principal, Role, Scope
 from shared.jobs.queue import JobStatus
 from tests.integration.test_assisted_listing_identity import canonical_graph as canonical_graph
 from tests.integration.test_canonical_identity_admission_postgresql import _claim
-from tests.integration.test_canonical_identity_cases_postgresql import _http_command, _parent
+from tests.integration.test_canonical_identity_cases_postgresql import (
+    _http_command,
+    _manual_context_command,
+    _parent,
+)
 from tests.integration.test_canonical_identity_proposals_postgresql import _merge, _state
 
 pytestmark = pytest.mark.requires_live_env
@@ -141,8 +145,9 @@ def test_native_http_case_proposal_independent_review_and_real_worker_share_dura
     from shared.infrastructure.persistence.postgresql import PostgresEngine
 
     graph, ids, _, db = canonical_graph
-    client, _, _ = identity_api
-    proposal, _, path, body = _proposal(canonical_graph, identity_api)
+    client, caller, _ = identity_api
+    proposer = caller["principal"]
+    proposal, intake, path, body = _proposal(canonical_graph, identity_api)
     assert proposal["status"] == "PENDING_REVIEW" and proposal["job_id"] is None
     assert proposal["version"] == 2 and proposal["match_case_version"] == 3
     before = _state(canonical_graph)
@@ -184,6 +189,23 @@ def test_native_http_case_proposal_independent_review_and_real_worker_share_dura
     assert selected.status_code == 200, selected.text
     assert selected.json()["status"] == "EXECUTED" and selected.json()["job_status"] == "SUCCEEDED"
     assert graph.resolve_listing(ids["tenant"], ids["listing"])["effective_property_id"] == ids["target"]
+    # Preserve historical acceptance after the real worker advances the graph.
+    before = _state(canonical_graph)
+    for receipt_path, key, original, actor, original_status in [
+        (review_path + "/receipt", headers["Idempotency-Key"], receipt, ids["reviewer"], 200),
+        (path + "/receipt", "synthetic-native-http-proposal-001", proposal, ids["actor"], 201),
+    ]:
+        caller["principal"] = replace(proposer, subject_id=actor)
+        observed = client.get(receipt_path, headers={"Idempotency-Key": key})
+        assert observed.status_code == 200, observed.text
+        assert observed.json()["original_http_status"] == original_status
+        assert observed.json()["receipt"] == original
+    case_receipt = client.get(f"/api/v1/intakes/{intake}/match-case/receipt",
+        headers={"Idempotency-Key": "synthetic-native-http-case-001"})
+    assert case_receipt.status_code == 200, case_receipt.text
+    assert case_receipt.json()["receipt"]["status"] == "PENDING_REVIEW"
+    assert case_receipt.json()["receipt"]["version"] == 2
+    assert _state(canonical_graph) == before
 
 
 def test_native_split_http_preserves_explicit_partitions_through_independent_review_and_worker(canonical_graph, identity_api):
@@ -430,4 +452,102 @@ def test_native_http_security_audit_failure_keeps_allow_closed_and_denial_enforc
     before = _state(canonical_graph)
     response = client.post(path, json=body, headers=headers)
     assert response.status_code == (503 if outcome == "allow" else 403), response.text
+    assert _state(canonical_graph) == before
+
+
+@pytest.mark.parametrize("operation", ["case", "proposal", "review"])
+def test_exact_receipt_read_keeps_original_http_result_and_creates_no_native_work(canonical_graph, identity_api, operation):
+    client, caller, _ = identity_api
+    if operation == "case":
+        intake = _parent(canonical_graph)
+        key = "synthetic-exact-http-case-receipt-001"
+        path = f"/api/v1/intakes/{intake}/match-case"
+        created = client.post(path, json=_http_command(canonical_graph), headers=_headers(17, key))
+        assert created.status_code == 201, created.text
+        original, status, receipt_path = created.json(), 201, path + "/receipt"
+    else:
+        proposal, _, path, _ = _proposal(canonical_graph, identity_api)
+        if operation == "proposal":
+            original, status, key, receipt_path = proposal, 201, "synthetic-native-http-proposal-001", path + "/receipt"
+        else:
+            client, path, body, headers = _review_request(canonical_graph, identity_api, proposal)
+            created = client.post(path, json=body, headers=headers)
+            assert created.status_code == 200, created.text
+            original, status, key, receipt_path = created.json(), 200, headers["Idempotency-Key"], path + "/receipt"
+    before = _state(canonical_graph)
+    response = client.get(receipt_path, headers={"Idempotency-Key": key})
+    assert response.status_code == 200, response.text
+    assert response.json()["observation"] == "RECEIPT_COMMITTED"
+    assert response.json()["original_http_status"] == status and response.json()["receipt"] == original
+    assert response.headers["cache-control"] == "no-store"
+    assert "plan" not in response.json() and "body" not in response.json()
+    assert _state(canonical_graph) == before
+    caller["principal"] = replace(caller["principal"], subject_id=str(uuid4()))
+    absent = client.get(receipt_path, headers={"Idempotency-Key": key})
+    assert absent.status_code == 200, absent.text
+    assert absent.json()["observation"] == "NOT_OBSERVED" and "receipt" not in absent.json()
+    assert _state(canonical_graph) == before
+
+
+def test_exact_original_case_receipt_reauthorizes_new_targets_after_real_append(canonical_graph, identity_api):
+    _, ids, _, db = canonical_graph
+    client, caller, _ = identity_api
+    intake = _parent(canonical_graph)
+    path = f"/api/v1/intakes/{intake}/match-case"
+    key = "synthetic-case-before-appended-target-001"
+    created = client.post(path, json=_http_command(canonical_graph), headers=_headers(17, key))
+    assert created.status_code == 201, created.text
+    receipt = created.json()
+    allowed, denied_region = str(uuid4()), str(uuid4())
+    with db.connect() as connection:
+        connection.execute("UPDATE intake.intakes SET region_id=%s WHERE intake_id=%s", (allowed, intake))
+        connection.execute("UPDATE identity.properties SET region_id=%s WHERE tenant_id=%s", (allowed, ids["tenant"]))
+        connection.execute("UPDATE identity.properties SET region_id=%s WHERE property_id=%s", (denied_region, ids["split_target"]))
+        # Native Listing authorization resolves its effective Property region.
+    principal = caller["principal"]
+    caller["principal"] = replace(principal, scope=replace(principal.scope, region_ids=frozenset({allowed})))
+    before = _state(canonical_graph)
+    observed = client.get(path + "/receipt", headers={"Idempotency-Key": key})
+    assert observed.status_code == 200 and observed.json()["receipt"] == receipt, observed.text
+    assert _state(canonical_graph) == before
+    caller["principal"] = principal
+    appended = client.post(path, json=_manual_context_command(canonical_graph, receipt),
+        headers=_headers(receipt["intake_version"], "synthetic-case-later-target-append-001"))
+    assert appended.status_code == 201, appended.text
+    assert appended.json()["version"] == receipt["version"] + 1
+    before = _state(canonical_graph)
+    observed = client.get(path + "/receipt", headers={"Idempotency-Key": key})
+    assert observed.status_code == 200 and observed.json()["receipt"] == receipt, observed.text
+    caller["principal"] = replace(principal, scope=replace(principal.scope, region_ids=frozenset({allowed})))
+    denied = client.get(path + "/receipt", headers={"Idempotency-Key": key})
+    assert denied.status_code == 403, denied.text
+    assert _state(canonical_graph) == before
+
+
+@pytest.mark.parametrize("operation", ["proposal", "review"])
+@pytest.mark.parametrize("revocation", ["role", "parent_scope", "graph_scope", "anonymous"])
+def test_exact_receipt_read_rechecks_each_actual_parent_and_plan_target(canonical_graph, identity_api, operation, revocation):
+    _, ids, _, db = canonical_graph
+    proposal, intake, path, _ = _proposal(canonical_graph, identity_api)
+    client, caller, _ = identity_api
+    key = "synthetic-native-http-proposal-001"
+    if operation == "review":
+        client, path, body, headers = _review_request(canonical_graph, identity_api, proposal)
+        assert client.post(path, json=body, headers=headers).status_code == 200
+        key = headers["Idempotency-Key"]
+    principal = caller["principal"]
+    if revocation == "role":
+        caller["principal"] = replace(principal, roles=frozenset({Role.PLATFORM_ADMIN}))
+    elif revocation == "anonymous":
+        caller["principal"] = replace(principal, authenticated=False)
+    else:
+        region = str(uuid4())
+        caller["principal"] = replace(principal, scope=Scope(tenant_id=ids["tenant"], region_ids=frozenset({region})))
+        if revocation == "graph_scope":
+            with db.connect() as connection:
+                connection.execute("UPDATE intake.intakes SET region_id=%s WHERE intake_id=%s", (region, intake))
+    before = _state(canonical_graph)
+    response = client.get(path + "/receipt", headers={"Idempotency-Key": key})
+    assert response.status_code == (401 if revocation == "anonymous" else 403), response.text
+    assert "receipt" not in response.json() and "NOT_OBSERVED" not in response.text
     assert _state(canonical_graph) == before

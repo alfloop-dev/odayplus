@@ -3,13 +3,16 @@
 import { createContext, createElement, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { bindCanonicalIntakeFetch, CanonicalIntakeReadError, type CanonicalIntakeReadContext } from "./canonicalIntakeTransport";
 import { operatorSubjectId } from "../../operatorSecurityHeaders";
+import type { CanonicalReceiptObservation } from "./canonicalIntakeReadClient";
 
 type Receipt = { audit_event_id: string; correlation_id: string };
 type Captured = { source: symbol; description: string;
   send: (signal: AbortSignal) => Promise<{ receipt: Receipt; description: string }>;
+  probe?: (signal: AbortSignal) => Promise<{ value: CanonicalReceiptObservation<Receipt>; description: string | null }>;
+  notObserved: boolean;
   uncertain: boolean; receipt: Receipt | null; receiptDescription: string | null };
 type Lifetime = { context: CanonicalIntakeReadContext; controller: AbortController; command: Captured | null;
-  inFlight: boolean; error: { source: symbol; value: unknown } | null };
+  inFlight: boolean; probing: boolean; error: { source: symbol; value: unknown } | null };
 
 function useCommandOwner(context: CanonicalIntakeReadContext | null) {
   const [, render] = useState(0);
@@ -18,7 +21,7 @@ function useCommandOwner(context: CanonicalIntakeReadContext | null) {
   const publish = () => render((value) => value + 1);
   useEffect(() => {
     const active: Lifetime | null = context ? { context, controller: new AbortController(), command: null,
-      inFlight: false, error: null } : null;
+      inFlight: false, probing: false, error: null } : null;
     lifetime.current = active; publish();
     return () => { active?.controller.abort(); };
   }, [context]);
@@ -33,7 +36,7 @@ function useCommandOwner(context: CanonicalIntakeReadContext | null) {
 
   async function execute(owner: Lifetime, captured: Captured) {
     if (!current(owner) || owner.inFlight || captured.receipt) return null;
-    owner.inFlight = true; owner.error = null; publish();
+    owner.inFlight = true; owner.probing = false; owner.error = null; captured.notObserved = false; publish();
     try {
       const value = await captured.send(owner.controller.signal);
       if (!current(owner)) return null;
@@ -55,7 +58,8 @@ function useCommandOwner(context: CanonicalIntakeReadContext | null) {
 
   async function submit<P extends object, R extends Receipt>(source: symbol, candidate: CanonicalIntakeReadContext,
     prepare: () => P, send: (packet: P, signal: AbortSignal) => Promise<R>, describe: (packet: P) => string,
-    summarize: (receipt: R) => string, onCapture?: () => void) {
+    summarize: (receipt: R) => string, onCapture?: () => void,
+    probe?: (packet: P, signal: AbortSignal) => Promise<CanonicalReceiptObservation<R>>) {
     const owner = lifetime.current;
     if (!owner || !matches(candidate) || !current(owner) || owner.inFlight) return null;
     if (owner.command?.receipt) {
@@ -68,15 +72,40 @@ function useCommandOwner(context: CanonicalIntakeReadContext | null) {
         const packet = structuredClone(prepare());
         owner.command = { source, description: describe(packet),
           send: async (signal) => { const receipt = await send(packet, signal); return { receipt, description: summarize(receipt) }; },
-          uncertain: false, receipt: null, receiptDescription: null };
+          ...(probe ? { probe: async (signal: AbortSignal) => {
+            const value = await probe(packet, signal);
+            return { value, description: value.observation === "RECEIPT_COMMITTED" ? summarize(value.receipt) : null };
+          } } : {}),
+          notObserved: false, uncertain: false, receipt: null, receiptDescription: null };
       } catch (failure) { owner.error = { source, value: failure }; publish(); return null; }
       onCapture?.();
     }
     // A source token can only read the result of the sender captured above.
     return await execute(owner, owner.command) as R | null;
   }
+
+  async function probeReceipt() {
+    const owner = lifetime.current, captured = owner?.command;
+    if (!owner || !current(owner) || owner.inFlight || !captured?.probe || captured.receipt) return;
+    owner.inFlight = true; owner.probing = true; owner.error = null; captured.notObserved = false; publish();
+    try {
+      const observed = await captured.probe(owner.controller.signal);
+      if (!current(owner) || owner.command !== captured) return;
+      if (observed.value.observation === "RECEIPT_COMMITTED") {
+        captured.receipt = observed.value.receipt; captured.receiptDescription = observed.description;
+      } else {
+        // Absence is one authorized observation, not proof of nonexecution or
+        // permission to discard the frozen packet or issue a fresh key.
+        captured.notObserved = true;
+      }
+    } catch (failure) {
+      if (current(owner) && owner.command === captured) owner.error = { source: captured.source, value: failure };
+    } finally { if (current(owner)) { owner.inFlight = false; owner.probing = false; publish(); } }
+  }
   return { matches, submit, busy: Boolean(active?.inFlight), command: active?.command ?? null,
+    probing: Boolean(active?.probing),
     error: active?.error ?? null,
+    probeReceipt,
     retry: async () => { const owner = lifetime.current; if (owner?.command) await execute(owner, owner.command); },
     dismissReceipt: () => {
       const owner = lifetime.current;
@@ -122,7 +151,8 @@ export function useCanonicalIntakeCommandState() {
 
 /** Forms present a captured command; they never own a second pending packet. */
 export function useCanonicalIntakeCommand<P extends object, R extends Receipt>(context: CanonicalIntakeReadContext,
-  send: (packet: P, signal: AbortSignal) => Promise<R>, describe: (packet: P) => string, summarize: (receipt: R) => string) {
+  send: (packet: P, signal: AbortSignal) => Promise<R>, describe: (packet: P) => string, summarize: (receipt: R) => string,
+  probe?: (packet: P, signal: AbortSignal) => Promise<CanonicalReceiptObservation<R>>) {
   const owner = useCanonicalIntakeCommandState();
   const source = useRef(Symbol("canonical command form")).current;
   const mounted = useRef(false);
@@ -139,7 +169,7 @@ export function useCanonicalIntakeCommand<P extends object, R extends Receipt>(c
     receipt: bound ? presented.current?.receipt ?? null : null, hasPending: own && owner.command !== null,
     submit: async (prepare: () => P, onCapture?: () => void) => {
       if (!mounted.current || presented.current) return null;
-      const value = await owner.submit(source, context, prepare, send, describe, summarize, onCapture);
+      const value = await owner.submit(source, context, prepare, send, describe, summarize, onCapture, probe);
       // Retain the owner's receipt without running a removed form's onCreated.
       return mounted.current && owner.matches(context) ? value : null;
     } };

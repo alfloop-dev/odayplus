@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { CandidateDispositionRequest, CanonicalIdentityPlanningContext, CanonicalIdentityReceipt, CanonicalIdentitySummary, CanonicalIntakeSummary, ListingPlan, MatchCaseSummary, MergePlan, SplitPlan } from "@oday-plus/openapi-client";
 import {
-  CanonicalIntakeReadError, readCanonicalIdentityContext, readCanonicalIdentityDecision, submitCanonicalIdentity,
+  CanonicalIntakeReadError, readCanonicalIdentityContext, readCanonicalIdentityDecision, readCanonicalIdentityReceipt, submitCanonicalIdentity,
   type CanonicalIdentityCommand, type CanonicalIntakeReadContext, type CanonicalListingProposal,
 } from "./canonicalIntakeReadClient";
 import styles from "./intake.module.css";
@@ -328,7 +328,8 @@ function CommandForm({ context, prepare, canSubmit, minReason, acknowledgementRe
   const [acknowledged, setAcknowledged] = useState(false);
   const command = useCanonicalIntakeCommand<CanonicalIdentityCommand, CanonicalIdentityReceipt>(context,
     (packet, signal) => submitCanonicalIdentity(context, packet, signal), (packet) => `案件 ${packet.matchCaseId}：${label}`,
-    (receipt) => `比對案件 ${receipt.match_case_id} · 版本 ${receipt.match_case_version} · 決策 ${receipt.decision_id} · 版本 ${receipt.version} · ${receipt.status}`);
+    (receipt) => `比對案件 ${receipt.match_case_id} · 版本 ${receipt.match_case_version} · 決策 ${receipt.decision_id} · 版本 ${receipt.version} · ${receipt.status}`,
+    (packet, signal) => readCanonicalIdentityReceipt(context, packet, signal));
   const { busy, blocked, error, receipt, hasPending } = command;
   useEffect(() => { setAcknowledged(false); }, [selectionKey]);
   function submit() {

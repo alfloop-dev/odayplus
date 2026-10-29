@@ -157,7 +157,8 @@ async function invokeConfirmedNetworkRefreshControl() {
   expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
 }
 
-async function beginCanonicalCommand(boundary: "HTTP" | "JSON" | "ERROR_JSON" | "uncertain") {
+async function beginCanonicalCommand(boundary: "HTTP" | "JSON" | "ERROR_JSON" | "uncertain",
+  probe?: (init: RequestInit | undefined, actor: string) => Response | Promise<Response>) {
   const response = deferred<Response>(), body = deferred<unknown>(), reading = deferred<boolean>();
   const receipt = { intake_id: "00000000-0000-0000-0000-000000000095", intake_method: "URL",
     processing_state: "SUBMITTED", version: 1, submitted_at: "2026-10-29T03:00:00Z",
@@ -169,6 +170,7 @@ async function beginCanonicalCommand(boundary: "HTTP" | "JSON" | "ERROR_JSON" | 
     canonicalNetwork: () => json(canonicalNetworkSnapshot("Current native context")),
     nativeIntake: (path, init, actor) => {
       if (init?.method !== "POST") {
+        if (path === "/api/v1/canonical-intakes/submissions/receipt" && probe) return probe(init, actor);
         if (path.endsWith("/match-case")) return json({ detail: "CANONICAL_MATCH_CASE_NOT_FOUND" }, 404);
         if (path === "/api/v1/canonical-intakes/" + receipt.intake_id) return json({ ...receipt, tenant_id: B,
           submitter_subject_id: actor, scope: { brand_id: null, region_id: null, assigned_area_id: null, heat_zone_id: null } });
@@ -200,6 +202,68 @@ async function beginCanonicalCommand(boundary: "HTTP" | "JSON" | "ERROR_JSON" | 
 }
 
 describe("authenticated bootstrap persona ownership", () => {
+  it("reads the exact original receipt through the real Console after an uncertain command and full workspace teardown", async () => {
+    let original: unknown;
+    const state = await beginCanonicalCommand("uncertain", () => json({ observation: "RECEIPT_COMMITTED",
+      observed_at: "2026-10-29T07:00:00Z", original_http_status: 201, receipt: original }));
+    original = state.receipt;
+    await state.finish();
+    await screen.findByText(/結果尚未確認；重試會沿用同一請求/);
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: /^Today/ }));
+    await screen.findByText("Account A current row");
+    fireEvent.click(screen.getByRole("button", { name: /^Network/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "查詢原操作回執" }));
+    await screen.findByText(/原操作已收到回執/);
+    expect(state.writes).toHaveLength(1);
+    const reads = state.fetch.mock.calls.filter(([path]) => String(path) === "/api/v1/canonical-intakes/submissions/receipt");
+    expect(reads).toHaveLength(1);
+    const init = reads[0][1];
+    expect(init?.method).toBeUndefined(); expect(init?.body).toBeUndefined();
+    expect(new Headers(init?.headers).get("idempotency-key")).toBe(new Headers(state.writes[0].headers).get("idempotency-key"));
+    expect(new Headers(init?.headers).has("if-match")).toBe(false);
+    expect(screen.queryByText(/原操作結果尚未確認/)).not.toBeInTheDocument();
+  });
+
+  it.each(["HTTP", "JSON"] as const)("discards an old-account receipt observation across the real Console at %s", async (boundary) => {
+    const response = deferred<Response>(), body = deferred<unknown>(), started = deferred<boolean>();
+    const state = await beginCanonicalCommand("uncertain", () => {
+      if (boundary === "HTTP") { started.resolve(true); return response.promise; }
+      const pending = json({}); pending.json = () => { started.resolve(true); return body.promise; }; return pending;
+    });
+    await state.finish();
+    await screen.findByText(/結果尚未確認；重試會沿用同一請求/);
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(await screen.findByRole("button", { name: "查詢原操作回執" }));
+    await started.promise;
+    state.setAccount(B);
+    const result = { observation: "RECEIPT_COMMITTED", observed_at: "2026-10-29T07:00:00Z",
+      original_http_status: 201, receipt: state.receipt };
+    await act(async () => { if (boundary === "HTTP") response.resolve(json(result)); else body.resolve(result); });
+    await waitFor(() => expect(state.bootstrapObservations.some((entry) => entry.subject === B)).toBe(true));
+    expect(screen.queryByRole("region", { name: "先前收件操作" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/原操作已收到回執/)).not.toBeInTheDocument();
+    expect(screen.queryByText(state.receipt.audit_event_id)).not.toBeInTheDocument();
+    expect(state.writes).toHaveLength(1);
+  });
+  it.each(["NOT_OBSERVED", "DENIED"] as const)("preserves the original command after a receipt observation is %s", async (outcome) => {
+    const state = await beginCanonicalCommand("uncertain", () => outcome === "DENIED"
+      ? json({ detail: "current view refused" }, 403) : json({ observation: "NOT_OBSERVED", observed_at: "2026-10-29T07:00:00Z" }));
+    await state.finish();
+    await screen.findByText(/結果尚未確認；重試會沿用同一請求/);
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(await screen.findByRole("button", { name: "查詢原操作回執" }));
+    if (outcome === "NOT_OBSERVED") await screen.findByText(/這次查詢尚未觀察到原回執/);
+    else await screen.findByText(/HTTP 403/);
+    expect(state.writes).toHaveLength(1);
+    expect(screen.queryByText(/原操作已收到回執/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重試原操作" }));
+    await screen.findByText(/原操作已收到回執/);
+    expect(state.writes).toHaveLength(2);
+    expect(state.writes[1].body).toBe(state.writes[0].body);
+    expect(new Headers(state.writes[1].headers).get("idempotency-key")).toBe(new Headers(state.writes[0].headers).get("idempotency-key"));
+  });
+
   it("keeps the actual receipt detail in Network during same-Console history restoration without repeating its POST", async () => {
     const { fetch, receipt, finish, writes } = await beginCanonicalCommand("HTTP");
     expect(new URL(window.location.href).searchParams.get("intakeKind")).toBe("canonical");

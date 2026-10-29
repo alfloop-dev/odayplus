@@ -13,7 +13,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from apps.api.app.routes.canonical_match_cases import _http_errors
+from apps.api.app.routes.canonical_match_cases import (
+    NativeReceiptCommitted,
+    NativeReceiptNotObserved,
+    _http_errors,
+    _receipt_observation,
+)
 from apps.api.oday_api.security.dependencies import principal_from_headers
 from modules.external_data.security.assisted_listing_retrieval import (
     contains_sensitive_submission_material,
@@ -35,6 +40,7 @@ from modules.listing.application.native_intake_assisted_entry_request import (
 from modules.listing.application.native_intake_command_withdrawal import (
     NativeIntakeCommandWithdrawalOwner,
 )
+from modules.listing.application.native_intake_pending_commands import NativeIntakeCommandBudget
 from modules.listing.application.native_intake_requester_authority import (
     NativeIntakeRequesterAuthorityUnavailable,
 )
@@ -356,6 +362,13 @@ def create_canonical_intakes_router(store) -> APIRouter:
             correlation_id=request.headers.get("x-correlation-id"),
             required_feature_flag=("assisted_intake_v1_read", flag_owner) if flag_owner is not None else None)
 
+    def authorize_read_collection(request, principal, flags):
+        authorize_intake_action(principal, "view", tenant_id=principal.tenant_id,
+            collection_scope={}, collection_rows_projected=True,
+            audit_log=getattr(request.app.state, "audit_log", None),
+            correlation_id=request.headers.get("x-correlation-id"),
+            required_feature_flag=("assisted_intake_v1_read", flags))
+
     errors = {code: {"description": description} for code, description in (
         (401, "Authentication required"), (403, "Current actor or resource scope denied"),
         (404, "Native Intake not found"), (409, "Concurrent command or idempotency conflict"),
@@ -374,11 +387,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
             # Server-owned contract: SQL projects all native scope axes and
             # staff ownership before LIMIT; each row is reauthorized below.
             # This opt-in cannot be supplied through a query/body parameter.
-            authorize_intake_action(principal, "view", tenant_id=tenant,
-                collection_scope={}, collection_rows_projected=True,
-                audit_log=getattr(request.app.state, "audit_log", None),
-                correlation_id=request.headers.get("x-correlation-id"),
-                required_feature_flag=("assisted_intake_v1_read", flags))
+            authorize_read_collection(request, principal, flags)
             position = None
             if cursor is not None:
                 try:
@@ -456,6 +465,29 @@ def create_canonical_intakes_router(store) -> APIRouter:
                 return {**row, "scope": {key: row[key] for key in NativeIntakeScope.model_fields},
                         "resolution": resolution, "workflow": repo.workflow(principal.tenant_id, str(intake_id))}
 
+    @router.get("/canonical-intakes/submissions/receipt", operation_id="getCanonicalIntakeSubmissionReceipt",
+                response_model=NativeReceiptCommitted[CanonicalIntakeReceipt] | NativeReceiptNotObserved, responses=errors)
+    def submission_receipt(request: Request, response: Response,
+        key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
+    ):
+        with _http_errors():
+            principal, repo = context(request)
+            flags = read_flag_owner(request, repo)
+            with repo.graph.transaction(principal.tenant_id):
+                authorize_read_collection(request, principal, flags)
+                prior = store.read_command_replay(principal.tenant_id, principal.subject_id, "submitCanonicalIntake", key)
+                observed = _receipt_observation(CanonicalIntakeReceipt, prior[1] if prior else None,
+                    prior[2] if prior else None, expected_status=201)
+                if isinstance(observed, NativeReceiptCommitted):
+                    row = repo.get(principal.tenant_id, str(observed.receipt.intake_id))
+                    authorize(request, principal, repo, row, flag_owner=flags)
+                    if (row["submitter_subject_id"] != principal.subject_id
+                            or row["intake_method"] != observed.receipt.intake_method
+                            or row["correlation_id"] != str(observed.receipt.correlation_id)):
+                        raise HTTPException(503, "CANONICAL_INTAKE_STORAGE_UNAVAILABLE")
+                response.headers["Cache-Control"] = "no-store"
+                return observed
+
     @router.post("/canonical-intakes", operation_id="submitCanonicalIntake", status_code=201,
                  response_model=CanonicalIntakeReceipt, responses=errors)
     def submit(body: SubmitCanonicalIntakeRequest, request: Request, response: Response,
@@ -467,7 +499,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
             scope = body.scope.model_dump(mode="json")
             digest = hashlib.sha256(json.dumps(body.model_dump(mode="json"), sort_keys=True,
                 separators=(",", ":")).encode()).hexdigest()
-            replay_key = f"{tenant}:{actor}:submitCanonicalIntake:{key}"
+            replay_key = store.command_replay_key(tenant, actor, "submitCanonicalIntake", key)
             with repo.graph.transaction(tenant):
                 store.refresh(tenant)
                 with store.transaction():
@@ -504,7 +536,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
             tenant, actor = principal.tenant_id, principal.subject_id
             digest = hashlib.sha256(json.dumps({"body": body.model_dump(mode="json"), "if_match": if_match},
                 sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-            replay_key = f"{tenant}:{actor}:cancelCanonicalIntakeAuthorizationWait:{intake_id}:{key}"
+            replay_key = store.command_replay_key(tenant, actor, "cancelCanonicalIntakeAuthorizationWait", key, str(intake_id))
             with repo.graph.transaction(tenant):
                 store.refresh(tenant)
                 with store.transaction():
@@ -540,7 +572,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
             tenant, actor = principal.tenant_id, principal.subject_id
             digest = hashlib.sha256(json.dumps({"body": body.model_dump(mode="json"), "if_match": if_match},
                 sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-            replay_key = f"{tenant}:{actor}:requestCanonicalIntakeSourcePolicyRecheck:{intake_id}:{key}"
+            replay_key = store.command_replay_key(tenant, actor, "requestCanonicalIntakeSourcePolicyRecheck", key, str(intake_id))
             with repo.graph.transaction(tenant):
                 store.refresh(tenant)
                 with store.transaction():
@@ -578,6 +610,29 @@ def create_canonical_intakes_router(store) -> APIRouter:
             response.headers["ETag"] = f'W/"{receipt["version"]}"'
             response.headers["Idempotency-Replayed"] = str(replayed).lower()
             return receipt
+
+    @router.get("/canonical-intakes/{intake_id}/assisted-entry-completions/receipt",
+                operation_id="getCanonicalIntakeAssistedEntryRequestReceipt",
+                response_model=NativeReceiptCommitted[CanonicalIntakeAssistedEntryRequestReceipt] | NativeReceiptNotObserved,
+                responses=errors)
+    def assisted_entry_receipt(intake_id: UUID, request: Request, response: Response,
+        key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
+    ):
+        with _http_errors(), _assisted_errors():
+            principal, repo = context(request)
+            flags = read_flag_owner(request, repo)
+            owner = NativeAssistedEntryRequestOwner(repo.graph)
+            with repo.graph.transaction(principal.tenant_id):
+                before = NativeIntakeCommandBudget(owner.source.source)
+                before()
+                row = repo.get(principal.tenant_id, str(intake_id))
+                authorize(request, principal, repo, row, flag_owner=flags)
+                before()
+                receipt = owner.read_receipt(principal, str(intake_id), key, before=before)
+                observed = _receipt_observation(CanonicalIntakeAssistedEntryRequestReceipt, receipt, 202, expected_status=202)
+                before()
+                response.headers["Cache-Control"] = "no-store"
+                return observed
 
     def withdraw_command(intake_id, request_id, body, request, response, key, if_match, kind):
         errors_context = _recheck_errors if kind == "SOURCE_POLICY_RECHECK" else _assisted_errors

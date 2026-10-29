@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -24,11 +25,43 @@ from shared.audit.backlog import AuditBacklogBlocked, AuditBacklogUnavailable, C
 from shared.audit.errors import CanonicalAuditUnavailable
 from shared.infrastructure.persistence.assisted_listing_intake import (
     AssistedIntakePersistenceConflict,
+    AssistedIntakeSchemaError,
 )
 from shared.infrastructure.persistence.identity_cases_sql import (
     MatchCandidateEvidence,
     validate_match_case_outcome,
 )
+
+
+class NativeReceiptNotObserved(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    observation: Literal["NOT_OBSERVED"]
+    observed_at: datetime
+
+
+class NativeReceiptCommitted[ReceiptValue: BaseModel](BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    observation: Literal["RECEIPT_COMMITTED"]
+    observed_at: datetime
+    original_http_status: Literal[200, 201, 202]
+    receipt: ReceiptValue
+
+
+def _receipt_observation(model, receipt, status, *, expected_status):
+    """Project an original HTTP result, never a current processing outcome."""
+    at = datetime.now(UTC)
+    if receipt is None:
+        return NativeReceiptNotObserved(observation="NOT_OBSERVED", observed_at=at)
+    if status != expected_status:
+        raise AssistedIntakeSchemaError("Canonical command receipt status differs")
+    try:
+        typed = model.model_validate(receipt)
+    except (ValueError, TypeError) as exc:
+        raise AssistedIntakeSchemaError("Canonical command receipt model differs") from exc
+    return NativeReceiptCommitted[model](observation="RECEIPT_COMMITTED", observed_at=at,
+        original_http_status=status, receipt=typed)
 
 
 class MatchEvidenceCandidate(BaseModel):
@@ -126,6 +159,8 @@ def _http_errors():
         raise HTTPException(404, str(exc)) from exc
     except (IdentityConflictError, AssistedIntakePersistenceConflict) as exc:
         raise HTTPException(409, str(exc)) from exc
+    except AssistedIntakeSchemaError:
+        raise HTTPException(503, "CANONICAL_INTAKE_STORAGE_UNAVAILABLE") from None
     except (CanonicalAuditUnavailable, AuditBacklogBlocked, AuditBacklogUnavailable) as exc:
         raise HTTPException(503, "CANONICAL_AUDIT_UNAVAILABLE") from exc
     except IntakeWorkflowUnavailable as exc:
@@ -265,7 +300,7 @@ def create_canonical_match_case_router(store: Any) -> APIRouter:
             wire_body = body.model_dump(mode="json", exclude=excluded)
             digest = hashlib.sha256(json.dumps({"body": wire_body, "if_match": if_match},
                 sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-            replay_key = f"{tenant}:{actor}:createCanonicalMatchCase:{intake_id}:{key}"
+            replay_key = store.command_replay_key(tenant, actor, "createCanonicalMatchCase", key, str(intake_id))
             # The graph owns the SERIALIZABLE root; receipt and graph share its
             # engine. A lost response can never cause a second case/audit/job.
             with repo.graph.transaction(tenant):
@@ -300,6 +335,32 @@ def create_canonical_match_case_router(store: Any) -> APIRouter:
                         store.flush()
                     response.headers["ETag"] = f'W/"{result["version"]}"'
             return result
+
+    @router.get("/intakes/{intake_id}/match-case/receipt", operation_id="getCanonicalMatchCaseReceipt",
+                response_model=NativeReceiptCommitted[MatchCaseReceipt] | NativeReceiptNotObserved, responses=errors)
+    def receipt(intake_id: UUID, request: Request, response: Response,
+        key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
+    ):
+        with _http_errors():
+            principal, repo = context(request)
+            tenant = principal.tenant_id
+            with repo.graph.transaction(tenant):
+                parent = repo.graph._one("SELECT * FROM intake.intakes WHERE tenant_id=? AND intake_id=?",
+                    (tenant, str(intake_id)))
+                authorize(request, principal, repo, parent)
+                prior = store.read_command_replay(tenant, principal.subject_id, "createCanonicalMatchCase", key, str(intake_id))
+                observed = _receipt_observation(MatchCaseReceipt, prior[1] if prior else None,
+                    prior[2] if prior else None, expected_status=201)
+                if isinstance(observed, NativeReceiptCommitted):
+                    selected = repo.get_for_intake(tenant, str(intake_id))
+                    if (str(observed.receipt.intake_id) != str(intake_id)
+                            or str(observed.receipt.match_case_id) != selected["match_case"]["match_case_id"]
+                            or not {str(v) for v in observed.receipt.candidate_ids}.issubset(
+                                {v["match_candidate_id"] for v in selected["candidates"]})):
+                        raise AssistedIntakeSchemaError("Canonical case receipt resource differs")
+                    authorize_candidates(request, principal, repo, selected["candidates"])
+                response.headers["Cache-Control"] = "no-store"
+                return observed
 
     return router
 

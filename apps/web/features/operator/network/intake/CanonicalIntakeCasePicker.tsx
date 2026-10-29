@@ -7,6 +7,7 @@ import { IntakeDialogShell } from "./IntakeDialogShell";
 import { IntakeProcessingDetail } from "./IntakeProcessingDetail";
 import {
   CANONICAL_INTAKE_STAGE_LABEL, CanonicalIntakeReadError, readCanonicalIntakeCase, readCanonicalIntakePage, submitCanonicalAssistedEntry, submitCanonicalURL,
+  readCanonicalAssistedEntryReceipt, readCanonicalURLReceipt,
   type CanonicalAssistedEntryCommand, type CanonicalIntakeReadContext, type CanonicalURLCommand,
 } from "./canonicalIntakeReadClient";
 import { CanonicalIdentityDecisionPanel, CanonicalIntakeFailure as ReadFailure } from "./CanonicalIdentityDecisionPanel";
@@ -231,7 +232,8 @@ function CanonicalURLSubmission({ context, scopes, onClose, onCreated }: {
 }) {
   const command = useCanonicalIntakeCommand<CanonicalURLCommand, CanonicalIntakeReceipt>(context,
     (packet, signal) => submitCanonicalURL(context, packet, signal), (packet) => `網址送件：${packet.body.original_url}`,
-    (receipt) => `收件 ${receipt.intake_id} · 版本 ${receipt.version} · ${receipt.processing_state}`);
+    (receipt) => `收件 ${receipt.intake_id} · 版本 ${receipt.version} · ${receipt.processing_state}`,
+    (packet, signal) => readCanonicalURLReceipt(context, packet, signal));
   if (command.receipt) return <div role="status" className={styles.noteBox}>
     <p>正式收件 {command.receipt.intake_id} · 已送出 · 版本 {command.receipt.version}</p>
     <p>稽核紀錄 {command.receipt.audit_event_id} · 查詢編號 {command.receipt.correlation_id}</p>
@@ -257,7 +259,8 @@ function CanonicalAssistedEntry({ context, intake }: {
 }) {
   const command = useCanonicalIntakeCommand<CanonicalAssistedEntryCommand, CanonicalIntakeAssistedEntryRequestReceipt>(context,
     (packet, signal) => submitCanonicalAssistedEntry(context, packet, signal), (packet) => `收件 ${packet.intakeId} 的人工補錄`,
-    (receipt) => `收件 ${receipt.intake_id} · 版本 ${receipt.version} · 補錄提案 ${receipt.request_id} · ${receipt.status}`);
+    (receipt) => `收件 ${receipt.intake_id} · 版本 ${receipt.version} · 補錄提案 ${receipt.request_id} · ${receipt.status}`,
+    (packet, signal) => readCanonicalAssistedEntryReceipt(context, packet, signal));
   if (command.receipt) return <div role="status" className={styles.noteBox}>
     <p>補錄提案 {command.receipt.request_id} · 已受理 · {command.receipt.correction_ids.length} 個欄位</p>
     <p>稽核紀錄 {command.receipt.audit_event_id} · 查詢編號 {command.receipt.correlation_id}</p>
@@ -290,9 +293,12 @@ export function CanonicalIntakeCommandStatus() {
       <p>回執僅表示這次請求已受理；後續處理結果請重新讀取原收件或案件。</p>
       <button type="button" className={styles.secondaryButton} onClick={owner.dismissReceipt}>收起原操作回執</button>
     </> : <>
-      <p role="status">{owner.busy ? "正在傳送原操作，請稍候。" : "原操作結果尚未確認。關閉或切換畫面不會取消已送出的請求；重試沿用原內容與版本。"}</p>
+      <p role="status">{owner.probing ? "正在查詢原操作回執，請稍候。" : owner.busy ? "正在傳送原操作，請稍候。" : "原操作結果尚未確認。關閉或切換畫面不會取消已送出的請求；重試沿用原內容與版本。"}</p>
+      {command.notObserved ? <p>這次查詢尚未觀察到原回執，仍不能確定請求是否已執行。原內容與請求識別保留，可稍後再查詢或重試原操作。</p> : null}
       {owner.error ? <p>上次嘗試未取得可驗證回執{owner.error.value instanceof CanonicalIntakeReadError ? `（HTTP ${owner.error.value.status}）` : ""}；請確認目前連線與登入權限，再重試原操作。</p> : null}
       <button type="button" className={styles.secondaryButton} disabled={owner.busy} onClick={() => void owner.retry()}>重試原操作</button>
+      {command.probe ? <button type="button" className={styles.secondaryButton} disabled={owner.busy}
+        onClick={() => void owner.probeReceipt()}>查詢原操作回執</button> : null}
     </>}
   </section>;
 }

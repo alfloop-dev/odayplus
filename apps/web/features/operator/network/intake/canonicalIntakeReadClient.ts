@@ -3,6 +3,7 @@ import type {
   CanonicalIntakeAssistedEntryRequestReceipt, CanonicalIntakeDetail, CanonicalIntakePage, CanonicalIntakeReceipt, CanonicalIntakeSummary, CanonicalIntakeWorkflow,
   CanonicalMatchCasePropertyPage, CreateMatchCaseRequest, MatchCaseReceipt,
   DuplicateProposal, IdentityReviewRequest, ListingConfirmation, MatchCaseSummary, MergeProposal, NativeAssistedEntryCommand, SplitProposal, SubmitCanonicalIntakeRequest,
+  NativeReceiptCommitted_CanonicalIntakeReceipt_, NativeReceiptNotObserved,
 } from "@oday-plus/openapi-client";
 
 import { CanonicalIntakeReadError, type CanonicalIntakeReadContext } from "./canonicalIntakeTransport";
@@ -100,18 +101,23 @@ function matchCase(v: unknown): v is MatchCaseSummary {
 }
 
 async function read(context: CanonicalIntakeReadContext, path: string, signal: AbortSignal,
-  command?: { body: unknown; key: string; expectedVersion?: number }): Promise<unknown> {
+  command?: { body: unknown; key: string; expectedVersion?: number },
+  receiptReference?: { key: string; expectedVersion?: number }): Promise<unknown> {
   signal.throwIfAborted();
   const headers = new Headers(context.headers);
   const correlationId = crypto.randomUUID();
   headers.set("accept", "application/json");
   headers.set("X-Correlation-Id", correlationId);
-  if (command) {
-    if (command.expectedVersion !== undefined && !version(command.expectedVersion) || !/^[A-Za-z0-9._:-]{16,128}$/.test(command.key)) {
+  const reference = command ?? receiptReference;
+  if (reference) {
+    if (command && receiptReference || reference.expectedVersion !== undefined && !version(reference.expectedVersion)
+      || !/^[A-Za-z0-9._:-]{16,128}$/.test(reference.key)) {
       throw new CanonicalIntakeReadError(422, "CANONICAL_COMMAND_INVALID", correlationId);
     }
+    headers.set("Idempotency-Key", reference.key);
+  }
+  if (command) {
     headers.set("content-type", "application/json");
-    headers.set("Idempotency-Key", command.key);
     if (command.expectedVersion !== undefined) headers.set("If-Match", `W/"${command.expectedVersion}"`);
   }
   const response = await context.fetchImpl(path, { headers, cache: "no-store", credentials: "same-origin", signal,
@@ -133,6 +139,26 @@ async function read(context: CanonicalIntakeReadContext, path: string, signal: A
   const body: unknown = await response.json();
   signal.throwIfAborted();
   return body;
+}
+
+export type CanonicalReceiptObservation<R> = NativeReceiptNotObserved
+  | (Omit<NativeReceiptCommitted_CanonicalIntakeReceipt_, "receipt"> & { receipt: R });
+
+async function readReceipt<R>(context: CanonicalIntakeReadContext, path: string, signal: AbortSignal,
+  reference: { key: string; expectedVersion?: number }, status: 200 | 201 | 202,
+  validate: (value: unknown) => R): Promise<CanonicalReceiptObservation<R>> {
+  // The same scoped transport carries only an exact reference. A receipt
+  // observation never activates read()'s business-POST/body branch.
+  const value = await read(context, path, signal, undefined, reference);
+  if (!object(value) || !timestamp(value.observed_at))
+    throw new CanonicalIntakeReadError(200, "CANONICAL_RESPONSE_INVALID", "");
+  if (value.observation === "NOT_OBSERVED"
+    && Object.keys(value).every((key) => ["observation", "observed_at"].includes(key))) return value as NativeReceiptNotObserved;
+  if (value.observation !== "RECEIPT_COMMITTED" || value.original_http_status !== status
+    || !Object.keys(value).every((key) => ["observation", "observed_at", "original_http_status", "receipt"].includes(key)))
+    throw new CanonicalIntakeReadError(200, "CANONICAL_RESPONSE_INVALID", "");
+  return { observation: "RECEIPT_COMMITTED", observed_at: value.observed_at,
+    original_http_status: status, receipt: validate(value.receipt) };
 }
 
 export async function readCanonicalIntakePage(context: CanonicalIntakeReadContext, cursor: string | null, signal: AbortSignal) {
@@ -187,6 +213,11 @@ export async function submitCanonicalMatchCase(context: CanonicalIntakeReadConte
   if (append && (!uuid(append.match_case_id) || !version(append.version)))
     throw new CanonicalIntakeReadError(422, "CANONICAL_COMMAND_INVALID", "");
   const v = await read(context, `/api/v1/intakes/${encodeURIComponent(command.intakeId)}/match-case`, signal, command);
+  return matchCaseReceipt(v, command);
+}
+
+function matchCaseReceipt(v: unknown, command: CanonicalMatchCaseCommand): MatchCaseReceipt {
+  const append = command.body.append_to_case;
   if (!object(v) || v.intake_id !== command.intakeId || !uuid(v.match_case_id) || v.status !== "PENDING_REVIEW" || !version(v.version)
     || !version(v.intake_version) || v.intake_version < command.expectedVersion || v.intake_version > command.expectedVersion + 1
     || !uuid(v.audit_event_id) || !uuid(v.correlation_id) || !Array.isArray(v.candidate_ids)
@@ -196,6 +227,13 @@ export async function submitCanonicalMatchCase(context: CanonicalIntakeReadConte
   if (append && (v.match_case_id !== append.match_case_id || v.version !== append.version + 1 || v.intake_version !== command.expectedVersion))
     throw new CanonicalIntakeReadError(200, "CANONICAL_RESPONSE_INVALID", "");
   return v as MatchCaseReceipt;
+}
+
+export async function readCanonicalMatchCaseReceipt(context: CanonicalIntakeReadContext, command: CanonicalMatchCaseCommand,
+  signal: AbortSignal): Promise<CanonicalReceiptObservation<MatchCaseReceipt>> {
+  if (!uuid(command.intakeId)) throw new CanonicalIntakeReadError(422, "CANONICAL_INTAKE_ID_INVALID", "");
+  return readReceipt(context, `/api/v1/intakes/${encodeURIComponent(command.intakeId)}/match-case/receipt`, signal,
+    command, 201, (value) => matchCaseReceipt(value, command));
 }
 const versions = (v: unknown): v is Record<string, number> => object(v)
   && Object.keys(v).length <= 1000 && Object.entries(v).every(([key, value]) => uuid(key) && version(value));
@@ -280,11 +318,24 @@ export type CanonicalGraphProposal = MergeProposal | SplitProposal;
 export type CanonicalIdentityCommand = { path: string; key: string; expectedVersion: number;
   body: CanonicalListingProposal | CanonicalGraphProposal | IdentityReviewRequest; matchCaseId: string; decisionId?: string };
 
+function identityCommandPath(command: CanonicalIdentityCommand): string {
+  const path = command.decisionId === undefined
+    ? `/api/v1/match-cases/${encodeURIComponent(command.matchCaseId)}/identity-decisions`
+    : `/api/v1/canonical-identity-decisions/${encodeURIComponent(command.decisionId)}/actions/review`;
+  if (!uuid(command.matchCaseId) || command.decisionId !== undefined && !uuid(command.decisionId) || command.path !== path)
+    throw new CanonicalIntakeReadError(422, "CANONICAL_COMMAND_INVALID", "");
+  return path;
+}
+
 export async function submitCanonicalIdentity(context: CanonicalIntakeReadContext, command: CanonicalIdentityCommand,
   signal: AbortSignal): Promise<CanonicalIdentityReceipt> {
   // The component captures this exact command once. An uncertain response is
   // retried with the same key, body and versions, never a second proposal.
-  const v = await read(context, command.path, signal, command);
+  const v = await read(context, identityCommandPath(command), signal, command);
+  return identityReceipt(v, command);
+}
+
+function identityReceipt(v: unknown, command: CanonicalIdentityCommand): CanonicalIdentityReceipt {
   if (!object(v) || !uuid(v.decision_id) || command.decisionId !== undefined && v.decision_id !== command.decisionId
     || v.match_case_id !== command.matchCaseId || !version(v.match_case_version) || !version(v.version)
     || !["PENDING_REVIEW", "APPROVED", "REJECTED", "EXECUTING", "EXECUTED", "FAILED"].includes(String(v.status))
@@ -294,10 +345,20 @@ export async function submitCanonicalIdentity(context: CanonicalIntakeReadContex
   return v as CanonicalIdentityReceipt;
 }
 
+export async function readCanonicalIdentityReceipt(context: CanonicalIntakeReadContext, command: CanonicalIdentityCommand,
+  signal: AbortSignal): Promise<CanonicalReceiptObservation<CanonicalIdentityReceipt>> {
+  return readReceipt(context, identityCommandPath(command) + "/receipt", signal, command,
+    command.decisionId === undefined ? 201 : 200, (value) => identityReceipt(value, command));
+}
+
 export type CanonicalURLCommand = { key: string; body: SubmitCanonicalIntakeRequest & { intake_method: "URL" } };
 export async function submitCanonicalURL(context: CanonicalIntakeReadContext, command: CanonicalURLCommand,
   signal: AbortSignal): Promise<CanonicalIntakeReceipt> {
   const v = await read(context, "/api/v1/canonical-intakes", signal, command);
+  return urlReceipt(v);
+}
+
+function urlReceipt(v: unknown): CanonicalIntakeReceipt {
   if (!object(v) || !uuid(v.intake_id) || v.processing_state !== "SUBMITTED" || v.intake_method !== "URL" || !version(v.version)
     || !timestamp(v.submitted_at)
     || ![v.correlation_id, v.transition_id, v.audit_event_id, v.outbox_event_id].every(uuid))
@@ -305,11 +366,20 @@ export async function submitCanonicalURL(context: CanonicalIntakeReadContext, co
   return v as CanonicalIntakeReceipt;
 }
 
+export async function readCanonicalURLReceipt(context: CanonicalIntakeReadContext, command: CanonicalURLCommand,
+  signal: AbortSignal): Promise<CanonicalReceiptObservation<CanonicalIntakeReceipt>> {
+  return readReceipt(context, "/api/v1/canonical-intakes/submissions/receipt", signal, command, 201, urlReceipt);
+}
+
 export type CanonicalAssistedEntryCommand = { key: string; intakeId: string; expectedVersion: number; body: NativeAssistedEntryCommand };
 export async function submitCanonicalAssistedEntry(context: CanonicalIntakeReadContext, command: CanonicalAssistedEntryCommand,
   signal: AbortSignal): Promise<CanonicalIntakeAssistedEntryRequestReceipt> {
   if (!uuid(command.intakeId)) throw new CanonicalIntakeReadError(422, "CANONICAL_INTAKE_ID_INVALID", "");
   const v = await read(context, `/api/v1/canonical-intakes/${encodeURIComponent(command.intakeId)}/assisted-entry-completions`, signal, command);
+  return assistedEntryReceipt(v, command);
+}
+
+function assistedEntryReceipt(v: unknown, command: CanonicalAssistedEntryCommand): CanonicalIntakeAssistedEntryRequestReceipt {
   if (!object(v) || v.intake_id !== command.intakeId || v.status !== "REQUESTED" || !version(v.version)
     || ![v.request_id, v.correlation_id, v.audit_event_id, v.outbox_event_id].every(uuid)
     || !timestamp(v.requested_at)
@@ -317,4 +387,11 @@ export async function submitCanonicalAssistedEntry(context: CanonicalIntakeReadC
     || !v.correction_ids.every(uuid) || new Set(v.correction_ids).size !== v.correction_ids.length)
     throw new CanonicalIntakeReadError(200, "CANONICAL_RESPONSE_INVALID", "");
   return v as CanonicalIntakeAssistedEntryRequestReceipt;
+}
+
+export async function readCanonicalAssistedEntryReceipt(context: CanonicalIntakeReadContext, command: CanonicalAssistedEntryCommand,
+  signal: AbortSignal): Promise<CanonicalReceiptObservation<CanonicalIntakeAssistedEntryRequestReceipt>> {
+  if (!uuid(command.intakeId)) throw new CanonicalIntakeReadError(422, "CANONICAL_INTAKE_ID_INVALID", "");
+  return readReceipt(context, `/api/v1/canonical-intakes/${encodeURIComponent(command.intakeId)}/assisted-entry-completions/receipt`,
+    signal, command, 202, (value) => assistedEntryReceipt(value, command));
 }

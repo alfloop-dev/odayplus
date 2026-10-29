@@ -1893,6 +1893,44 @@ export type NativeIntakeScope = {
   region_id?: string | null;
 };
 
+/** NativeReceiptCommitted[CanonicalIdentityReceipt] */
+export type NativeReceiptCommitted_CanonicalIdentityReceipt_ = {
+  observation: "RECEIPT_COMMITTED";
+  observed_at: string;
+  original_http_status: 200 | 201 | 202;
+  receipt: CanonicalIdentityReceipt;
+};
+
+/** NativeReceiptCommitted[CanonicalIntakeAssistedEntryRequestReceipt] */
+export type NativeReceiptCommitted_CanonicalIntakeAssistedEntryRequestReceipt_ = {
+  observation: "RECEIPT_COMMITTED";
+  observed_at: string;
+  original_http_status: 200 | 201 | 202;
+  receipt: CanonicalIntakeAssistedEntryRequestReceipt;
+};
+
+/** NativeReceiptCommitted[CanonicalIntakeReceipt] */
+export type NativeReceiptCommitted_CanonicalIntakeReceipt_ = {
+  observation: "RECEIPT_COMMITTED";
+  observed_at: string;
+  original_http_status: 200 | 201 | 202;
+  receipt: CanonicalIntakeReceipt;
+};
+
+/** NativeReceiptCommitted[MatchCaseReceipt] */
+export type NativeReceiptCommitted_MatchCaseReceipt_ = {
+  observation: "RECEIPT_COMMITTED";
+  observed_at: string;
+  original_http_status: 200 | 201 | 202;
+  receipt: MatchCaseReceipt;
+};
+
+/** NativeReceiptNotObserved */
+export type NativeReceiptNotObserved = {
+  observation: "NOT_OBSERVED";
+  observed_at: string;
+};
+
 /** NetPlanActorPayload */
 export type NetPlanActorPayload = {
   actor?: string;
@@ -3104,10 +3142,13 @@ export const API_PATHS = {
   "/api/v1/canonical-identity-decisions/{decision_id}": ["GET"],
   "/api/v1/canonical-identity-decisions/{decision_id}/actions/cancel-job": ["POST"],
   "/api/v1/canonical-identity-decisions/{decision_id}/actions/review": ["POST"],
+  "/api/v1/canonical-identity-decisions/{decision_id}/actions/review/receipt": ["GET"],
   "/api/v1/canonical-identity-decisions/{decision_id}/job": ["GET"],
   "/api/v1/canonical-intakes": ["GET", "POST"],
+  "/api/v1/canonical-intakes/submissions/receipt": ["GET"],
   "/api/v1/canonical-intakes/{intake_id}": ["GET"],
   "/api/v1/canonical-intakes/{intake_id}/assisted-entry-completions": ["POST"],
+  "/api/v1/canonical-intakes/{intake_id}/assisted-entry-completions/receipt": ["GET"],
   "/api/v1/canonical-intakes/{intake_id}/assisted-entry-completions/{request_id}/cancel": ["POST"],
   "/api/v1/canonical-intakes/{intake_id}/cancel": ["POST"],
   "/api/v1/canonical-intakes/{intake_id}/source-policy-rechecks": ["POST"],
@@ -3170,6 +3211,7 @@ export const API_PATHS = {
   "/api/v1/intakes/{intake_id}/corrections": ["POST"],
   "/api/v1/intakes/{intake_id}/match-case": ["GET", "POST"],
   "/api/v1/intakes/{intake_id}/match-case/property-options": ["GET"],
+  "/api/v1/intakes/{intake_id}/match-case/receipt": ["GET"],
   "/api/v1/intakes/{intake_id}/promotion-decision": ["GET"],
   "/api/v1/intakes/{intake_id}/promotion-requests": ["POST"],
   "/api/v1/interventions": ["GET", "POST"],
@@ -3238,6 +3280,7 @@ export const API_PATHS = {
   "/api/v1/match-cases/{match_case_id}/decisions": ["POST"],
   "/api/v1/match-cases/{match_case_id}/identity-context": ["GET"],
   "/api/v1/match-cases/{match_case_id}/identity-decisions": ["POST"],
+  "/api/v1/match-cases/{match_case_id}/identity-decisions/receipt": ["GET"],
   "/api/v1/netplan/scenarios": ["GET", "POST"],
   "/api/v1/netplan/scenarios/{scenario_id}": ["GET", "PUT"],
   "/api/v1/netplan/scenarios/{scenario_id}/close": ["POST"],

@@ -18,7 +18,12 @@ from uuid import UUID
 from fastapi import APIRouter, Header, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
-from apps.api.app.routes.canonical_match_cases import _http_errors
+from apps.api.app.routes.canonical_match_cases import (
+    NativeReceiptCommitted,
+    NativeReceiptNotObserved,
+    _http_errors,
+    _receipt_observation,
+)
 from apps.api.oday_api.security.dependencies import principal_from_headers
 from modules.listing.application.intake_authorization import (
     authorize_intake_action,
@@ -437,13 +442,20 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
         except (ValueError, KeyError, TypeError) as exc:
             raise IdentityConflictError("CANONICAL_IDENTITY_PLAN_UNAVAILABLE") from exc
 
+    def readable_decision(request, principal, repo, decision_id):
+        selected = repo.get(principal.tenant_id, decision_id, for_update=False)
+        authorize(request, principal, repo, selected["intake"])
+        plan = recorded_plan(selected["decision"])
+        authorize_resources(request, principal, repo, plan)
+        return selected, plan
+
     def command(request, response, principal, repo, key, if_match, resource_id, operation, body, permission, make,
                 receipt_model=CanonicalIdentityReceipt):
         tenant, actor = principal.tenant_id, principal.subject_id
         body_json = body.model_dump(mode="json")
         digest = hashlib.sha256(json.dumps({"body": body_json, "if_match": if_match},
             sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        replay_key = f"{tenant}:{actor}:{operation}:{resource_id}:{key}"
+        replay_key = store.command_replay_key(tenant, actor, operation, key, resource_id)
         with repo.graph.transaction(tenant):
             store.refresh(tenant)
             with store.transaction():
@@ -572,17 +584,56 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
             return command(request, response, principal, repo, key, if_match, str(decision_id),
                 "reviewCanonicalIdentity", body, permission, make)
 
+    def observe_identity_receipt(request, response, key, resource_id, operation, status):
+        with _identity_errors(request):
+            principal, repo = context(request)
+            tenant = principal.tenant_id
+            with repo.graph.transaction(tenant):
+                selected = None
+                if operation == "proposeCanonicalIdentity":
+                    _, parent = repo.graph._case(tenant, resource_id)
+                    authorize(request, principal, repo, parent)
+                else:
+                    selected, _ = readable_decision(request, principal, repo, resource_id)
+                prior = store.read_command_replay(tenant, principal.subject_id, operation, key, resource_id)
+                observed = _receipt_observation(CanonicalIdentityReceipt, prior[1] if prior else None,
+                    prior[2] if prior else None, expected_status=status)
+                if isinstance(observed, NativeReceiptCommitted):
+                    value = observed.receipt
+                    if operation == "proposeCanonicalIdentity":
+                        selected, _ = readable_decision(request, principal, repo, str(value.decision_id))
+                    decision, case = selected["decision"], selected["match_case"]
+                    if (str(value.decision_id) != decision["match_decision_id"]
+                            or str(value.match_case_id) != case["match_case_id"]
+                            or (operation == "proposeCanonicalIdentity"
+                                and (str(value.match_case_id) != resource_id
+                                     or decision["proposer_subject_id"] != principal.subject_id))
+                            or (operation == "reviewCanonicalIdentity"
+                                and decision["reviewer_subject_id"] != principal.subject_id)):
+                        raise HTTPException(503, "CANONICAL_IDENTITY_STORAGE_UNAVAILABLE")
+                response.headers["Cache-Control"] = "no-store"
+                return observed
+
+    @router.get("/match-cases/{match_case_id}/identity-decisions/receipt",
+                operation_id="getCanonicalIdentityProposalReceipt",
+                response_model=NativeReceiptCommitted[CanonicalIdentityReceipt] | NativeReceiptNotObserved, responses=errors)
+    def proposal_receipt(match_case_id: UUID, request: Request, response: Response, key: KeyHeader):
+        return observe_identity_receipt(request, response, key, str(match_case_id), "proposeCanonicalIdentity", 201)
+
+    @router.get("/canonical-identity-decisions/{decision_id}/actions/review/receipt",
+                operation_id="getCanonicalIdentityReviewReceipt",
+                response_model=NativeReceiptCommitted[CanonicalIdentityReceipt] | NativeReceiptNotObserved, responses=errors)
+    def review_receipt(decision_id: UUID, request: Request, response: Response, key: KeyHeader):
+        return observe_identity_receipt(request, response, key, str(decision_id), "reviewCanonicalIdentity", 200)
+
     @router.get("/canonical-identity-decisions/{decision_id}", operation_id="getCanonicalIdentityDecision",
                 response_model=CanonicalIdentitySummary, responses=errors)
     def read(decision_id: UUID, request: Request, response: Response) -> dict:
         with _identity_errors(request):
             principal, repo = context(request)
             with repo.graph.transaction(principal.tenant_id):
-                selected = repo.get(principal.tenant_id, str(decision_id), for_update=False)
+                selected, plan = readable_decision(request, principal, repo, str(decision_id))
                 decision, case, parent = selected["decision"], selected["match_case"], selected["intake"]
-                authorize(request, principal, repo, parent)
-                plan = recorded_plan(decision)
-                authorize_resources(request, principal, repo, plan)
                 job = repo.engine.query_one("SELECT job_id,status,version FROM workflow.jobs WHERE tenant_id=? "
                     "AND job_type='identity-execution' AND aggregate_type='identity_decision' AND aggregate_id=?",
                     (principal.tenant_id, str(decision_id)))

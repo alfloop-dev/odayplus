@@ -69,6 +69,32 @@ class NativeAssistedEntryRequestOwner:
         self.requests = NativeAssistedEntryRequestProof(graph)
         self.pending = NativeIntakePendingCommands(graph)
 
+    @staticmethod
+    def _request_id(tenant, actor, intake_id, key):
+        return str(uuid5(UUID(native_intake_uuid(intake_id)),
+            f"native-assisted-entry-request-v1:{tenant}:{actor}:{key}"))
+
+    def read_receipt(self, principal, intake_id, key, *, before):
+        """Read the original accepted HTTP request, not its later execution.
+
+        The caller owns current view authorization and the same SERIALIZABLE
+        tenant transaction/root budget. Historical proof grants no new action.
+        """
+        if not isinstance(key, str) or not _KEY.fullmatch(key):
+            raise ValueError("NATIVE_COMMAND_IDEMPOTENCY_KEY_REQUIRED")
+        tenant, actor = native_intake_uuid(principal.tenant_id), native_intake_uuid(principal.subject_id)
+        request_id = self._request_id(tenant, actor, intake_id, key)
+        before()
+        row = self.engine.query_one("SELECT event_id FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?",
+            (tenant, request_id))
+        if row is None:
+            return None
+        event = self.pending.original(tenant, intake_id, request_id, "ASSISTED_ENTRY", before)
+        if event["payload"]["requested_by"] != actor:
+            raise NativeAssistedEntryConflict("NATIVE_COMMAND_FOREIGN_REQUEST")
+        before()
+        return request_receipt(event)
+
     def context(self, principal, intake_id, command, before):
         before()
         intake = self.graph._one("SELECT * FROM intake.intakes WHERE tenant_id=? AND intake_id=? "
@@ -86,8 +112,7 @@ class NativeAssistedEntryRequestOwner:
                 or not isinstance(idempotency_key, str) or not _KEY.fullmatch(idempotency_key)):
             raise ValueError("NATIVE_ASSISTED_EXPLICIT_COMMAND_REQUIRED")
         tenant, actor = native_intake_uuid(principal.tenant_id), native_intake_uuid(principal.subject_id)
-        request_id = str(uuid5(UUID(native_intake_uuid(intake_id)),
-            f"native-assisted-entry-request-v1:{tenant}:{actor}:{idempotency_key}"))
+        request_id = self._request_id(tenant, actor, intake_id, idempotency_key)
         with self.graph.transaction(tenant):
             before = NativeIntakeCommandBudget(self.source.source)
             intake, current = self.context(principal, intake_id, command, before)

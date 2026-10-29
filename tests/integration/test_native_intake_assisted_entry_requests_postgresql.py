@@ -421,3 +421,30 @@ def test_active_recheck_cancellation_changes_only_business_flag_then_real_worker
     assert ODayWorker(persistence=start[2]).run_once() is True
     assert graph.queue.get(admitted["job_id"]).status == JobStatus.CANCELLED
     assert native_row(start, prior["intake_id"])["processing_state"] == "AWAITING_SOURCE_AUTHORIZATION"
+
+
+@pytest.mark.parametrize("withdrawn", [False, True])
+def test_exact_receipt_read_uses_original_manual_envelope_without_fields_or_positive_authority(assisted, monkeypatch, withdrawn):
+    response = command(assisted)
+    assert response.status_code == 202, response.text
+    receipt = response.json()
+    if withdrawn:
+        cancelled = withdraw(assisted, receipt)
+        assert cancelled.status_code == 200 and cancelled.json()["status"] == "WITHDRAWN", cancelled.text
+    recheck, _, _, _, result, _ = assisted
+    start = recheck[0][0]
+    client, _, store = start[1]
+    retire_settings(monkeypatch)
+    def no_legacy(*args, **kwargs):
+        raise AssertionError("Exact native manual receipt must not use legacy refresh/flush")
+    monkeypatch.setattr(store, "refresh", no_legacy)
+    monkeypatch.setattr(store, "flush", no_legacy)
+    before = snapshot(assisted)
+    path = f'/api/v1/canonical-intakes/{result["intake_id"]}/assisted-entry-completions/receipt'
+    observed = client.get(path, headers={"Idempotency-Key": "synthetic-assisted-human-request-001"})
+    assert observed.status_code == 200, observed.text
+    assert observed.json()["observation"] == "RECEIPT_COMMITTED"
+    assert observed.json()["original_http_status"] == 202 and observed.json()["receipt"] == receipt
+    assert observed.headers["cache-control"] == "no-store"
+    assert BODY["fields"]["address"] not in observed.text and BODY["reason"] not in observed.text
+    assert snapshot(assisted) == before

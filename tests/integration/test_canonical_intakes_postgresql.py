@@ -442,3 +442,123 @@ def test_submitted_intake_cannot_bypass_processing_to_create_a_match_case(canoni
         CanonicalMatchCaseRepository(graph).create_case(ids["tenant"], created.json()["intake_id"],
             **_command(canonical_graph, expected_intake_version=1, actor_id=ids["reviewer"]))
     assert snapshot(canonical_graph) == before
+
+
+@pytest.mark.parametrize("method", ["URL", "MANUAL"])
+def test_exact_receipt_read_restores_original_submission_without_repeating_command(canonical_graph, native_api, method):
+    client, caller, _ = native_api
+    body = command(intake_method=method)
+    if method == "URL":
+        body["original_url"] = "https://synthetic.example/receipt-private?source=synthetic"
+    headers = {"Idempotency-Key": "synthetic-exact-submission-receipt-001"}
+    created = client.post("/api/v1/canonical-intakes", json=body, headers=headers)
+    assert created.status_code == 201, created.text
+    original = created.json()
+    before = snapshot(canonical_graph)
+    response = client.get("/api/v1/canonical-intakes/submissions/receipt", headers=headers)
+    assert response.status_code == 200, response.text
+    observed = response.json()
+    assert observed["observation"] == "RECEIPT_COMMITTED"
+    assert observed["original_http_status"] == 201 and observed["receipt"] == original
+    assert datetime.fromisoformat(observed["observed_at"]).utcoffset() is not None
+    assert response.headers["cache-control"] == "no-store"
+    assert "original_url" not in response.text and body["reason"] not in response.text
+    assert snapshot(canonical_graph) == before
+    # A manager's current read grant does not make a different actor's key his.
+    caller["principal"] = replace(caller["principal"], subject_id=str(uuid4()), roles=frozenset({Role.SITE_REVIEWER}))
+    absent = client.get("/api/v1/canonical-intakes/submissions/receipt", headers=headers)
+    assert absent.status_code == 200, absent.text
+    assert absent.json()["observation"] == "NOT_OBSERVED" and "receipt" not in absent.json()
+    assert snapshot(canonical_graph) == before
+
+
+@pytest.mark.parametrize("damage", ["null-payload", "tenant", "key", "extra", "status", "model", "digest"])
+def test_exact_receipt_read_reports_corrupt_original_record_as_unavailable(canonical_graph, native_api, damage):
+    graph, ids, _, _ = canonical_graph
+    client, _, store = native_api
+    key = "synthetic-corrupt-exact-receipt-001"
+    created = client.post("/api/v1/canonical-intakes", json=command(), headers={"Idempotency-Key": key})
+    assert created.status_code == 201, created.text
+    namespace = f'{ids["tenant"]}:{ids["actor"]}:submitCanonicalIntake:{key}'
+    physical = f'{ids["tenant"]}:{namespace}'
+    with graph.transaction(ids["tenant"]):
+        row = store._store.get("assisted_intake.idempotency_replays", physical)
+        if damage == "null-payload":
+            row = None
+        elif damage in {"tenant", "key", "extra"}:
+            row[{"tenant": "_tenant_id", "key": "_state_key", "extra": "undeclared"}[damage]] = "synthetic-mismatched-wrapper"
+        else:
+            digest, body, status = row["value"]
+            row["value"] = ("invalid-digest" if damage == "digest" else digest,
+                {**body, "intake_id": "synthetic-not-a-native-UUID"} if damage == "model" else body,
+                200 if damage == "status" else status)
+        store._store.put("assisted_intake.idempotency_replays", physical, row)
+    before = snapshot(canonical_graph)
+    response = client.get("/api/v1/canonical-intakes/submissions/receipt", headers={"Idempotency-Key": key})
+    assert response.status_code == 503, response.text
+    assert "receipt" not in response.json() and "NOT_OBSERVED" not in response.text
+    assert snapshot(canonical_graph) == before
+
+
+@pytest.mark.parametrize("revocation", ["role", "scope", "anonymous", "read-disabled", "missing-flag-owner"])
+def test_exact_receipt_read_rechecks_current_view_and_original_rollout(canonical_graph, native_api, monkeypatch, revocation):
+    from shared.infrastructure.persistence.audit_log import DurableAuditLog
+    graph, ids, _, _ = canonical_graph
+    client, caller, _ = native_api
+    key = "synthetic-exact-receipt-current-view-001"
+    assert client.post("/api/v1/canonical-intakes", json=command(), headers={"Idempotency-Key": key}).status_code == 201
+    current = caller["principal"]
+    if revocation == "role":
+        caller["principal"] = replace(current, roles=frozenset({Role.PLATFORM_ADMIN}))
+    elif revocation == "scope":
+        caller["principal"] = replace(current, scope=Scope(tenant_id=ids["tenant"], region_ids=frozenset({str(uuid4())})))
+    elif revocation == "anonymous":
+        caller["principal"] = replace(current, authenticated=False)
+    elif revocation == "read-disabled":
+        graph.queue._flags.execute("disable", "assisted_intake_v1_read", actor="synthetic-admin",
+            correlation_id="synthetic-receipt-current-read", audit_log=DurableAuditLog(graph.engine))
+    else:
+        monkeypatch.setattr(client.app.state.persistence_bundle, "feature_flag_registry", None)
+    before = snapshot(canonical_graph)
+    for lookup in (key, "synthetic-exact-receipt-unobserved-001"):
+        response = client.get("/api/v1/canonical-intakes/submissions/receipt", headers={"Idempotency-Key": lookup})
+        if revocation == "scope" and lookup != key:
+            # This authorized collection query has no object whose scope can
+            # be checked. It must not borrow a different key's resource.
+            assert response.status_code == 200, response.text
+            assert response.json()["observation"] == "NOT_OBSERVED" and "receipt" not in response.json()
+        else:
+            assert response.status_code == (503 if revocation == "missing-flag-owner" else 401 if revocation == "anonymous" else 403), response.text
+            assert "receipt" not in response.json() and "NOT_OBSERVED" not in response.text
+    assert snapshot(canonical_graph) == before
+
+
+def test_exact_receipt_read_is_durable_without_any_legacy_refresh_or_business_retry(canonical_graph, native_api, monkeypatch):
+    from tests.integration.test_assisted_listing_identity import independent_canonical_graph
+    graph, _, _, database = canonical_graph
+    client, _, _ = native_api
+    key = "synthetic-direct-durable-exact-receipt-001"
+    response = client.post("/api/v1/canonical-intakes", json=command(), headers={"Idempotency-Key": key})
+    assert response.status_code == 201
+    before = snapshot(canonical_graph)
+    # A separately owned SQL engine, store and real router have no old RAM
+    # receipt snapshot. They must read the same committed original result.
+    with independent_canonical_graph(graph, database) as reopened:
+        fresh = DurableAssistedIntakeStore(PostgresDocumentStore(reopened.engine))
+        fresh.configure_canonical_audit(reopened.audit_sink)
+        bundle = SimpleNamespace(engine=reopened.engine, job_queue=reopened.queue, assisted_intake_store=fresh,
+            assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(), feature_flag_registry=reopened.queue._flags)
+        for name in ("canonical_identity_graph", "canonical_intakes"):
+            setattr(bundle, name, MethodType(getattr(PersistenceBundle, name), bundle))
+        app = FastAPI()
+        app.state.persistence_bundle, app.state.audit_log = bundle, InMemoryAuditLog()
+        app.include_router(canonical_intakes.create_canonical_intakes_router(fresh), prefix="/api/v1")
+        def no_legacy(*args, **kwargs):
+            raise AssertionError("Read-only receipt lookup must not refresh or flush legacy command state")
+        monkeypatch.setattr(fresh, "refresh", no_legacy)
+        monkeypatch.setattr(fresh, "flush", no_legacy)
+        with TestClient(app) as restarted:
+            observed = restarted.get("/api/v1/canonical-intakes/submissions/receipt", headers={"Idempotency-Key": key})
+            assert observed.status_code == 200, observed.text
+            assert observed.json()["receipt"] == response.json()
+    assert snapshot(canonical_graph) == before

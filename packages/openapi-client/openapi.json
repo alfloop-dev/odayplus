@@ -9818,6 +9818,167 @@
         "title": "NativeIntakeScope",
         "type": "object"
       },
+      "NativeReceiptCommitted_CanonicalIdentityReceipt_": {
+        "additionalProperties": false,
+        "properties": {
+          "observation": {
+            "const": "RECEIPT_COMMITTED",
+            "title": "Observation",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "original_http_status": {
+            "enum": [
+              200,
+              201,
+              202
+            ],
+            "title": "Original Http Status",
+            "type": "integer"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/CanonicalIdentityReceipt"
+          }
+        },
+        "required": [
+          "observation",
+          "observed_at",
+          "original_http_status",
+          "receipt"
+        ],
+        "title": "NativeReceiptCommitted[CanonicalIdentityReceipt]",
+        "type": "object"
+      },
+      "NativeReceiptCommitted_CanonicalIntakeAssistedEntryRequestReceipt_": {
+        "additionalProperties": false,
+        "properties": {
+          "observation": {
+            "const": "RECEIPT_COMMITTED",
+            "title": "Observation",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "original_http_status": {
+            "enum": [
+              200,
+              201,
+              202
+            ],
+            "title": "Original Http Status",
+            "type": "integer"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/CanonicalIntakeAssistedEntryRequestReceipt"
+          }
+        },
+        "required": [
+          "observation",
+          "observed_at",
+          "original_http_status",
+          "receipt"
+        ],
+        "title": "NativeReceiptCommitted[CanonicalIntakeAssistedEntryRequestReceipt]",
+        "type": "object"
+      },
+      "NativeReceiptCommitted_CanonicalIntakeReceipt_": {
+        "additionalProperties": false,
+        "properties": {
+          "observation": {
+            "const": "RECEIPT_COMMITTED",
+            "title": "Observation",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "original_http_status": {
+            "enum": [
+              200,
+              201,
+              202
+            ],
+            "title": "Original Http Status",
+            "type": "integer"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/CanonicalIntakeReceipt"
+          }
+        },
+        "required": [
+          "observation",
+          "observed_at",
+          "original_http_status",
+          "receipt"
+        ],
+        "title": "NativeReceiptCommitted[CanonicalIntakeReceipt]",
+        "type": "object"
+      },
+      "NativeReceiptCommitted_MatchCaseReceipt_": {
+        "additionalProperties": false,
+        "properties": {
+          "observation": {
+            "const": "RECEIPT_COMMITTED",
+            "title": "Observation",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "original_http_status": {
+            "enum": [
+              200,
+              201,
+              202
+            ],
+            "title": "Original Http Status",
+            "type": "integer"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/MatchCaseReceipt"
+          }
+        },
+        "required": [
+          "observation",
+          "observed_at",
+          "original_http_status",
+          "receipt"
+        ],
+        "title": "NativeReceiptCommitted[MatchCaseReceipt]",
+        "type": "object"
+      },
+      "NativeReceiptNotObserved": {
+        "additionalProperties": false,
+        "properties": {
+          "observation": {
+            "const": "NOT_OBSERVED",
+            "title": "Observation",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "observation",
+          "observed_at"
+        ],
+        "title": "NativeReceiptNotObserved",
+        "type": "object"
+      },
       "NetPlanActorPayload": {
         "properties": {
           "actor": {
@@ -21901,6 +22062,77 @@
         ]
       }
     },
+    "/api/v1/canonical-identity-decisions/{decision_id}/actions/review/receipt": {
+      "get": {
+        "operationId": "getCanonicalIdentityReviewReceipt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Decision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptCommitted_CanonicalIdentityReceipt_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptNotObserved"
+                    }
+                  ],
+                  "title": "Response Getcanonicalidentityreviewreceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor, segregation or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case, decision or affected resource not found"
+          },
+          "409": {
+            "description": "Native version, custody, plan or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid request headers, path, body or identity plan"
+          },
+          "503": {
+            "description": "Canonical storage, execution configuration or audit unavailable"
+          }
+        },
+        "summary": "Review Receipt",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
     "/api/v1/canonical-identity-decisions/{decision_id}/job": {
       "get": {
         "operationId": "getCanonicalIdentityJob",
@@ -22101,6 +22333,68 @@
         ]
       }
     },
+    "/api/v1/canonical-intakes/submissions/receipt": {
+      "get": {
+        "operationId": "getCanonicalIntakeSubmissionReceipt",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptCommitted_CanonicalIntakeReceipt_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptNotObserved"
+                    }
+                  ],
+                  "title": "Response Getcanonicalintakesubmissionreceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Submission Receipt",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
     "/api/v1/canonical-intakes/{intake_id}": {
       "get": {
         "operationId": "getCanonicalIntake",
@@ -22232,6 +22526,78 @@
           }
         },
         "summary": "Request Assisted Entry Completion",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-intakes/{intake_id}/assisted-entry-completions/receipt": {
+      "get": {
+        "operationId": "getCanonicalIntakeAssistedEntryRequestReceipt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptCommitted_CanonicalIntakeAssistedEntryRequestReceipt_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptNotObserved"
+                    }
+                  ],
+                  "title": "Response Getcanonicalintakeassistedentryrequestreceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Assisted Entry Receipt",
         "tags": [
           "assisted-listing-intake",
           "assisted-listing-intake"
@@ -29131,6 +29497,75 @@
           }
         },
         "summary": "Property Options",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/intakes/{intake_id}/match-case/receipt": {
+      "get": {
+        "operationId": "getCanonicalMatchCaseReceipt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptCommitted_MatchCaseReceipt_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptNotObserved"
+                    }
+                  ],
+                  "title": "Response Getcanonicalmatchcasereceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case or candidate identity not found"
+          },
+          "409": {
+            "description": "Native version, custody or idempotency conflict"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Receipt",
         "tags": [
           "assisted-listing-intake",
           "assisted-listing-intake"
@@ -38247,6 +38682,77 @@
           }
         },
         "summary": "Propose",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/match-cases/{match_case_id}/identity-decisions/receipt": {
+      "get": {
+        "operationId": "getCanonicalIdentityProposalReceipt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "match_case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Match Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptCommitted_CanonicalIdentityReceipt_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptNotObserved"
+                    }
+                  ],
+                  "title": "Response Getcanonicalidentityproposalreceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor, segregation or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case, decision or affected resource not found"
+          },
+          "409": {
+            "description": "Native version, custody, plan or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid request headers, path, body or identity plan"
+          },
+          "503": {
+            "description": "Canonical storage, execution configuration or audit unavailable"
+          }
+        },
+        "summary": "Proposal Receipt",
         "tags": [
           "assisted-listing-intake"
         ]
