@@ -863,6 +863,66 @@ def test_task_finalize_prepublication_admits_a_child_published_at_the_registered
     assert "dry-run: git push --set-upstream origin" in moved.stdout
 
 
+def local_ssh_transport(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """An ``ssh://`` host whose transport runs the requested git command locally.
+
+    Git still invokes the real ``git-upload-pack``/``git-receive-pack`` for the
+    exact URL path, so a path is the repository that server would serve.
+    """
+    shim = tmp_path / "local-ssh-transport"
+    shim.write_text("#!/bin/sh\nfor last; do :; done\nexec sh -c \"$last\"\n", encoding="utf-8")
+    shim.chmod(0o700)
+    monkeypatch.setenv("GIT_SSH", str(shim))
+    monkeypatch.setenv("GIT_SSH_VARIANT", "ssh")
+    return "ssh://git@fixture.example"
+
+
+def test_task_finalize_prepublication_keeps_a_custom_ssh_hosts_path_case(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Two paths that differ only in case on a custom SSH host are two repositories.
+
+    The registered remote is /EXAMPLE/repo.git on that host, which does not
+    publish the child; the checkout's origin is /example/repo.git, a different
+    repository publishing the child's exact head. Through the normal loader
+    and the unchanged finalizer, the origin proves nothing about the
+    registered repository -- while an scp-like spelling of the registered
+    path itself still is that endpoint.
+    """
+    host = local_ssh_transport(tmp_path, monkeypatch)
+    status_root, child, head = compose_source_only_child(repo, tmp_path)
+    parent = {"id": TASK, "owner": "Claude2", "reviewer": "Codex", "status": "in_progress",
+              "branch": f"task/{TASK}"}
+    lower = tmp_path / "example" / "repo.git"
+    upper = tmp_path / "EXAMPLE" / "repo.git"
+    subprocess.run(["git", "clone", "--quiet", "--bare", str(tmp_path / "origin.git"), str(upper)],
+                   check=True, capture_output=True)
+    ref = f"refs/heads/task/{CHILD}"
+    git(repo, "remote", "set-url", "origin", host + str(lower))
+    assert git(repo, "ls-remote", "--heads", "origin", ref).stdout.split()[0] == child["review_gate_sha"]
+    assert not git(repo, "ls-remote", "--heads", host + str(upper), ref).stdout.strip()
+
+    register_remote(status_root, host + str(upper))
+    refused = finalize_with_records(repo, status_root, parent, child)
+    assert refused.returncode == 1
+    assert (
+        f"is fixture.example{tmp_path}/example/repo, "
+        f"not the registered repository example/repo at fixture.example{tmp_path}/EXAMPLE/repo"
+    ) in refused.stderr
+    assert f"Task-ID trailer '{CHILD}' does not match '{TASK}'" in refused.stderr
+    assert "dry-run: git push" not in refused.stdout
+
+    # The registered path, once it publishes the child, is the endpoint in
+    # either SSH spelling.
+    git(repo, "push", "--quiet", host + str(upper), f"{child['review_gate_sha']}:{ref}")
+    for origin in (host + str(upper), f"git@fixture.example:{upper}"):
+        git(repo, "remote", "set-url", "origin", origin)
+        admitted = finalize_with_records(repo, status_root, parent, child)
+        assert admitted.returncode == 0, (origin, admitted.stderr)
+        assert "dry-run: git push --set-upstream origin" in admitted.stdout
+        assert git(repo, "rev-parse", "HEAD").stdout.strip() == head
+
+
 def test_task_finalize_refuses_a_branch_whose_own_python_fails_lint(repo: Path, tmp_path: Path):
     """The lint preflight refuses here rather than letting CI find it 20 minutes later.
 

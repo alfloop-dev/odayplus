@@ -5,6 +5,7 @@ import ast
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -4065,6 +4066,87 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
         self.assertEqual(self.task["status"], "review_approved")
         self.assertEqual(self.state["blockers"], [technical])
 
+    def test_a_child_whose_prerequisite_is_unsatisfied_is_never_admitted(self) -> None:
+        # A structured prerequisite behind a human gate, with the child's own
+        # dependency blocker naming it: nothing in the child's record says
+        # "human", only the prerequisite's record does.
+        prerequisite = {
+            "id": "DEPENDENCY-GATE-001", "owner": "Human/Ops", "reviewer": "Codex", "status": "blocked",
+            "task_class": "human_gate", "requires_human_approval": True, "waiting_for": "Human/Ops",
+            "depends_on": [],
+        }
+        dependency_blocker = {
+            "task_id": self.CHILD_ID, "status": "open", "kind": "dependency", "waiting_for": "Codex",
+            "message": "Waiting for dependencies: DEPENDENCY-GATE-001",
+        }
+        self.state["tasks"].append(prerequisite)
+        pattern = (
+            r"its prerequisite DEPENDENCY-GATE-001 is blocked, not satisfied, "
+            r"and held: task carries an unresolved human gate"
+        )
+
+        def hold() -> tuple[dict[str, Any], dict[str, Any], list[Any]]:
+            saved = tuple(json.loads(json.dumps(item)) for item in (self.child, prerequisite, self.state["blockers"]))
+            self.child["depends_on"] = [prerequisite["id"]]
+            self.child["next"] = "Waiting for dependencies: DEPENDENCY-GATE-001"
+            self.state["blockers"].append(dict(dependency_blocker))
+            return saved  # type: ignore[return-value]
+
+        def release(saved: tuple[dict[str, Any], dict[str, Any], list[Any]]) -> None:
+            self.child.clear()
+            self.child.update(saved[0])
+            self.state["blockers"][:] = saved[2]
+
+        # The shared rule itself, over the same versioned board and resolver.
+        saved = hold()
+        try:
+            self.assertRegex(str(dispatch_policy.canonical_hard_gate_reason(self.child, self.state)), pattern)
+            # First OPEN refuses and leaves child, prerequisite and blocker as they are.
+            self.refuse_submission(r"CHILD-001.*still carries an unresolved gate: " + pattern)
+            self.assertEqual((self.child["depends_on"], prerequisite, self.state["blockers"][-1]),
+                             ([prerequisite["id"]], saved[1], dependency_blocker))
+            # A prerequisite that is merely unfinished holds the child too.
+            prerequisite.update(status="in_progress", task_class="implementation", waiting_for="Codex",
+                                requires_human_approval=False, owner="Codex")
+            self.refuse_submission(r"its prerequisite DEPENDENCY-GATE-001 is in_progress, not satisfied")
+            # A missing one is no satisfied prerequisite either.
+            self.child["depends_on"] = ["DEPENDENCY-MISSING-001"]
+            self.refuse_submission(r"its prerequisite DEPENDENCY-MISSING-001 is missing, not satisfied")
+        finally:
+            release(saved)
+            prerequisite.clear()
+            prerequisite.update(saved[1])
+
+        submission = json.loads(json.dumps(self.submit()))
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.assertIsNone(self.block_reason("Codex2"))  # warms the cache
+            saved = hold()
+            try:
+                self.assertRegex(str(self.block_reason("Codex2")), pattern)
+                dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.clear()
+                self.assertRegex(str(self.block_reason("Codex2")), pattern)
+                self.assert_refused_without_mutation(
+                    "Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], pattern
+                )
+                self.refuse_submission(r"still carries an unresolved gate: " + pattern)
+                # Nothing is consumed, cleared or rewritten by any of the refusals.
+                self.assertEqual(prerequisite, saved[1])
+                self.assertEqual(self.state["blockers"][-1], dependency_blocker)
+                self.assertEqual(self.task["review_submission"], submission)
+
+                # Satisfied -- done in the archive -- it no longer holds the
+                # child's source; the dependency blocker's own recovery is
+                # still the child's owners' business.
+                self.state["tasks"].remove(prerequisite)
+                self.archived[prerequisite["id"]] = dict(prerequisite, status="done", waiting_for="")
+                dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.clear()
+                self.assertIsNone(self.block_reason("Codex2"))
+                self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review"])
+            finally:
+                release(saved)
+        self.assertEqual(self.task["status"], "review_approved")
+        self.assertEqual((self.child["status"], self.child["waiting_for"]), ("blocked", "Codex"))
+
     def test_publication_is_only_proven_by_the_registered_repository(self) -> None:
         # An unrelated remote carries the child's exact head; the registered
         # origin no longer publishes it.
@@ -4129,6 +4211,53 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
                     self.child.clear()
                     self.child.update(child_before)
                 self.assertIsNone(self.block_reason("Codex2"))
+        self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review"])
+        self.assertEqual(self.task["status"], "review_approved")
+
+    def test_a_custom_ssh_endpoint_keeps_its_path_case_on_first_open_and_replay(self) -> None:
+        # A custom SSH host whose transport runs the requested git command on
+        # this machine: real git-upload-pack for the exact URL path.
+        shim = self.root / "local-ssh-transport"
+        shim.write_text('#!/bin/sh\nfor last; do :; done\nexec sh -c "$last"\n', encoding="utf-8")
+        shim.chmod(0o700)
+        environment = mock.patch.dict(os.environ, {"GIT_SSH": str(shim), "GIT_SSH_VARIANT": "ssh"})
+        environment.start()
+        self.addCleanup(environment.stop)
+        host = "ssh://git@fixture.example"
+        upper = self.root / "EXAMPLE" / "repo.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "dev", str(upper)], check=True)
+        registered = self.config["coordination"]["repositories"]["pantheon"]
+
+        # First OPEN: the origin that publishes the child is /example/repo, the
+        # registered repository /EXAMPLE/repo, which does not.
+        registered["remote"] = host + str(upper)
+        self.git("remote", "set-url", "origin", host + str(self.origin))
+        self.refuse_submission(
+            r"origin asked for its publication is fixture\.example" + re.escape(str(self.origin.with_suffix("")))
+            + r", not the registered repository example/repo at fixture\.example" + re.escape(str(upper.with_suffix("")))
+        )
+
+        # Bound at the lower-case registered endpoint, a replay refuses the
+        # registry retargeted to the upper-case one -- warm, cold and approval.
+        registered["remote"] = host + str(self.origin)
+        submission = json.loads(json.dumps(self.submit()))
+        self.assertEqual(submission["source_helpers"][0]["remote"], f"fixture.example{self.origin.with_suffix('')}")
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.assertIsNone(self.block_reason("Codex2"))  # warms the cache
+            registered["remote"] = host + str(upper)
+            try:
+                pattern = r"CHILD-001' is refused: its canonical record no longer matches the bound recorded"
+                self.assertRegex(str(self.block_reason("Codex2")), pattern)
+                dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.clear()
+                self.assertRegex(str(self.block_reason("Codex2")), pattern)
+                self.assert_refused_without_mutation(
+                    "Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], pattern
+                )
+                self.refuse_submission(r"no longer matches the bound recorded")
+            finally:
+                registered["remote"] = host + str(self.origin)
+            self.assertEqual(self.task["review_submission"], submission)
+            self.assertIsNone(self.block_reason("Codex2"))
         self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review"])
         self.assertEqual(self.task["status"], "review_approved")
 

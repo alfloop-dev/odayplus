@@ -220,6 +220,17 @@ class MultiRepoRegistryTests(unittest.TestCase):
         for url in different:
             with self.subTest(url):
                 self.assertNotEqual(endpoint(url), "github.com/alfloop-dev/odayplus")
+        # Only GitHub's paths are case-insensitive; a custom server's path is
+        # whatever its filesystem says, so a case difference is another repository.
+        self.assertEqual(endpoint("ssh://git@Git.Example.com/srv/EXAMPLE/repo.git"), "git.example.com/srv/EXAMPLE/repo")
+        self.assertEqual(endpoint("git@git.example.com:/srv/EXAMPLE/repo.git"), "git.example.com/srv/EXAMPLE/repo")
+        for upper, lower in (
+            ("ssh://git@git.example.com/srv/EXAMPLE/repo.git", "ssh://git@git.example.com/srv/example/repo.git"),
+            ("git@git.example.com:EXAMPLE/repo.git", "git@git.example.com:example/repo.git"),
+            ("https://git.example.com/EXAMPLE/repo", "https://git.example.com/example/repo"),
+        ):
+            with self.subTest(upper):
+                self.assertNotEqual(endpoint(upper), endpoint(lower))
         # A signed URL or an unknown scheme is no identity at all.
         for url in ("https://github.com/alfloop-dev/odayplus?token=x", "ftp://github.com/a/b", ""):
             with self.subTest(url):

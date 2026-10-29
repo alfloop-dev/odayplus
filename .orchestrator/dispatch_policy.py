@@ -531,15 +531,24 @@ _BLOCKER_RECOVERY_HARD_GATE_WORDS_RE = re.compile(
 
 
 
-def canonical_hard_gate_reason(task: dict[str, Any], status_snapshot: Any) -> str | None:
+def canonical_hard_gate_reason(
+    task: dict[str, Any],
+    status_snapshot: Any,
+    *,
+    resolver: TaskResolver | None = None,
+    _seen: frozenset[str] = frozenset(),
+) -> str | None:
     """Why one versioned canonical board still holds ``task`` behind a hard gate, or None.
 
     The hard-gate half of the supervisor's blocked-task recovery, kept here so
     that recovery and child-source admission ask one rule: the task's own
     human or independent gate, a wait on Human/Ops, gate prose in its record,
-    and every open canonical blocker of the task -- its waiting party, its own
-    gate fields, its kind and its prose. A board with no write revision, or
-    whose blockers cannot be read, proves no blocker absent and holds the task.
+    every structured prerequisite in ``depends_on`` the board's `TaskResolver`
+    (``resolver``, or one over the same board) does not report satisfied --
+    named with the prerequisite's own hard gate when it has one -- and every
+    open canonical blocker of the task -- its waiting party, its own gate
+    fields, its kind and its prose. A board with no write revision, or whose
+    blockers cannot be read, proves no blocker absent and holds the task.
     It reads only: no approval is consumed or issued, and whether a released
     gate makes the task recoverable is the supervisor's separate question.
     """
@@ -554,6 +563,22 @@ def canonical_hard_gate_reason(task: dict[str, Any], status_snapshot: Any) -> st
     if is_human_gate_agent(task.get("waiting_for")):
         return f"task is waiting for {task.get('waiting_for')}"
     declared_dependencies = [str(dep).strip() for dep in (task.get("depends_on") or []) if str(dep).strip()]
+    if declared_dependencies:
+        if resolver is None:
+            resolver = TaskResolver(status_snapshot.get("tasks") or [])
+        seen = _seen | {str(task.get("id") or "").strip()}
+        for dep_id in declared_dependencies:
+            if resolver.dependency_satisfied(dep_id):
+                continue
+            prerequisite = resolver.get(dep_id)
+            held = (
+                canonical_hard_gate_reason(prerequisite, status_snapshot, resolver=resolver, _seen=seen)
+                if isinstance(prerequisite, dict) and dep_id not in seen
+                else None
+            )
+            return f"its prerequisite {dep_id} is {resolver.dependency_status(dep_id)}, not satisfied" + (
+                f", and held: {held}" if held else ""
+            )
     context = blocked_task_prose_context({
         **task,
         "next": f"{task.get('next') or ''} {task.get('blocked_reason') or ''}",
@@ -618,7 +643,9 @@ def source_helper_resolver(
     child's own status, blockers and signoffs are left as they are. A child
     the versioned canonical board still holds behind a hard gate -- its own,
     a Human/Ops wait such as a review-churn escalation no continuation has
-    released, or an open canonical blocker -- is not admitted at all, by the
+    released, a prerequisite its `depends_on` names that the same resolver
+    does not report satisfied, or an open canonical blocker -- is not
+    admitted at all, by the
     same `canonical_hard_gate_reason` blocked-task recovery asks: its source
     cannot reach review through a parent while that gate is open.
 
@@ -679,7 +706,7 @@ def source_helper_resolver(
         branch = task_explicit_branch(child)
         if not branch:
             return "its record names no branch of its own"
-        held = canonical_hard_gate_reason(child, board)
+        held = canonical_hard_gate_reason(child, board, resolver=tasks)
         if held:
             return f"its record still carries an unresolved gate: {held}"
         source = toolchain.HelperSource(

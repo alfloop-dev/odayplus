@@ -452,6 +452,10 @@ def normalized_repository_slug(value: str | None) -> str | None:
 #: does not make a different endpoint.
 _DEFAULT_REMOTE_PORTS = {"ssh": "22", "git+ssh": "22", "https": "443", "http": "80", "git": "9418"}
 _SCP_REMOTE_RE = re.compile(r"^(?:[^@/:]+@)?(?P<host>[^@/:\[\]]+):(?!//)(?P<path>.+)$")
+#: Hosts whose repository paths are case-insensitive. Anywhere else the path
+#: is whatever the server's filesystem makes of it, so ``/EXAMPLE/repo`` and
+#: ``/example/repo`` are two repositories until that server says otherwise.
+_CASE_INSENSITIVE_PATH_HOSTS = frozenset({"github.com"})
 
 
 def normalized_remote_endpoint(url: str | None, *, base: Path | None = None) -> str | None:
@@ -461,6 +465,8 @@ def normalized_remote_endpoint(url: str | None, *, base: Path | None = None) -> 
     network repository -- SSH, scp-like ``git@host:``, HTTPS, a ``.git``
     suffix, the scheme's own default port -- yields one endpoint, while a
     different host, port or path prefix never collapses onto it by suffix.
+    Host names are case-insensitive everywhere; paths only on hosts known to
+    treat them so (GitHub), never on an arbitrary SSH or HTTPS server.
     Credentials and user names are dropped, never echoed; a URL carrying a
     query or fragment (a signed URL) is not an identity at all. A local
     repository is its full resolved path, relative paths taken from ``base``.
@@ -498,9 +504,11 @@ def normalized_remote_endpoint(url: str | None, *, base: Path | None = None) -> 
     path = re.sub(r"\.git$", "", path.strip("/")).strip("/")
     if not host or not path or any(part in ("", ".", "..") for part in path.split("/")):
         return None
+    if host in _CASE_INSENSITIVE_PATH_HOSTS:
+        path = path.casefold()
     if port is not None and str(port) != _DEFAULT_REMOTE_PORTS[scheme]:
         host = f"{host}:{port}"
-    return f"{host}/{path.casefold()}"
+    return f"{host}/{path}"
 
 
 def _checkout_origin_url(root: Path) -> str | None:
