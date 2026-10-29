@@ -197,6 +197,67 @@ class MultiRepoRegistryTests(unittest.TestCase):
             )
 
 
+    def test_remote_endpoints_equate_spellings_but_never_a_shared_suffix(self) -> None:
+        endpoint = multi_repo_registry.normalized_remote_endpoint
+        same = (
+            "https://github.com/alfloop-dev/odayplus.git",
+            "git@github.com:alfloop-dev/odayplus.git",
+            "ssh://git@github.com/alfloop-dev/odayplus",
+            "ssh://git@github.com:22/alfloop-dev/odayplus.git",
+            "https://github.com:443/Alfloop-Dev/odayplus/",
+        )
+        self.assertEqual({endpoint(url) for url in same}, {"github.com/alfloop-dev/odayplus"})
+        # Credentials are dropped, never echoed into the identity.
+        self.assertEqual(endpoint("https://user:secret@github.com/alfloop-dev/odayplus"),
+                         "github.com/alfloop-dev/odayplus")
+        different = (
+            "https://ghe.example.com/alfloop-dev/odayplus.git",
+            "git@github.example.com:alfloop-dev/odayplus.git",
+            "https://github.com:8443/alfloop-dev/odayplus",
+            "https://github.com/mirror/alfloop-dev/odayplus",
+            "/srv/git/alfloop-dev/odayplus.git",
+        )
+        for url in different:
+            with self.subTest(url):
+                self.assertNotEqual(endpoint(url), "github.com/alfloop-dev/odayplus")
+        # A signed URL or an unknown scheme is no identity at all.
+        for url in ("https://github.com/alfloop-dev/odayplus?token=x", "ftp://github.com/a/b", ""):
+            with self.subTest(url):
+                self.assertIsNone(endpoint(url))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            self.assertEqual(endpoint("repo.git", base=base), f"file:{(base / 'repo.git').resolve()}")
+            self.assertEqual(endpoint(f"file://{base}/repo.git"), f"file:{(base / 'repo.git').resolve()}")
+
+    def test_the_registered_endpoint_is_the_registry_not_a_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            anchor = Path(tmpdir)
+            config = _config_anchored_at(anchor)
+            config["coordination"] = {"repositories": {
+                "pantheon": {"repo": "alfloop-dev/odayplus", "local_path": "."},
+                "fixture": {"repo": "example/repo", "remote": "fixtures/example/repo.git", "local_path": "work"},
+                "nameless": {"local_path": "nameless"},
+            }}
+            registered = multi_repo_registry.registered_remote_endpoint
+            self.assertEqual(registered(config, "pantheon"), "github.com/alfloop-dev/odayplus")
+            self.assertEqual(
+                registered(config, "fixture"), f"file:{(anchor / 'fixtures/example/repo.git').resolve()}"
+            )
+            self.assertIsNone(registered(config, "nameless"))
+            self.assertIsNone(registered(config, "unregistered"))
+
+            # Same suffix, different repository: the slug projection agrees,
+            # the endpoint does not.
+            checkout = _init_repo(anchor / "work", str(anchor / "unregistered/example/repo.git"))
+            self.assertEqual(multi_repo_registry.checkout_origin_slug(checkout), "example/repo")
+            self.assertNotEqual(multi_repo_registry.checkout_origin_endpoint(checkout), registered(config, "fixture"))
+            subprocess.run(["git", "remote", "set-url", "origin", "../fixtures/example/repo.git"],
+                           cwd=checkout, check=True)
+            self.assertEqual(multi_repo_registry.checkout_origin_endpoint(checkout), registered(config, "fixture"))
+            subprocess.run(["git", "remote", "remove", "origin"], cwd=checkout, check=True)
+            self.assertIsNone(multi_repo_registry.checkout_origin_endpoint(checkout))
+
+
 class TaskRepositoryDeclarationTests(unittest.TestCase):
     """A task that names its repository must not be re-derived from artifacts.
 

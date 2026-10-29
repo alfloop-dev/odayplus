@@ -2155,6 +2155,7 @@ def test_review_queue_excludes_a_source_only_childs_pool_and_rereads_its_record(
         "task_id": child_id,
         "repository": "pantheon",
         "repo_slug": "example/repo",
+        "remote": "github.com/example/repo",
         "branch": f"task/{child_id}",
         "source_base": frozen,
         "source_head": child_head,
@@ -2184,7 +2185,7 @@ def test_review_queue_excludes_a_source_only_childs_pool_and_rereads_its_record(
         },
         "depends_on": [],
     }
-    records = {"tasks": [task, child]}
+    records = {"tasks": [task, child], "blockers": [], "_status_write_revision": "revision-1"}
 
     def eligible(record: dict, agent: str) -> bool:
         with (

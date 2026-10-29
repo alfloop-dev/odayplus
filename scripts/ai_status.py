@@ -8051,10 +8051,13 @@ def review_submission_for_task(
         if not any(key in prior for key in ("source_base", "source_head", "source_authors", "source_helpers")):
             return None, False
         source_base = str(prior.get("source_base") or "").strip()
+        helpers = prior.get("source_helpers", [])
         if not (
             str(prior.get("source_head") or "").strip().lower() == head_oid.lower()
             and str(prior.get("merge_commit") or "").strip() in ("", merge_commit)
             and (re.fullmatch(r"[0-9a-fA-F]{40}", source_base) or re.fullmatch(r"[0-9a-fA-F]{64}", source_base))
+            and isinstance(helpers, list)
+            and all(isinstance(entry, dict) for entry in helpers)
         ):
             return None, True
         return source_base, False
@@ -8066,7 +8069,7 @@ def review_submission_for_task(
         if recorded_source_evidence(merge_commit)[1]:
             raise SystemExit(
                 f"Cannot submit {task_id} for review: the source evidence recorded for PR #{pr_number} "
-                f"head {head_oid[:8]} is damaged (base, source head or merge commit); the same head is "
+                f"head {head_oid[:8]} is damaged (base, source head, merge commit or child bounds); the same head is "
                 "not resubmitted over it."
             )
 

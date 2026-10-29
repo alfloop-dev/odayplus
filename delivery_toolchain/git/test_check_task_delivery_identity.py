@@ -327,7 +327,8 @@ def composed(tmp_path: Path) -> tuple[Path, str, str, str]:
 
 def child(base: str, head: str, *, scope: tuple[str, ...] = CHILD_SCOPE, task_id: str = "CHILD-ONE") -> HelperSource:
     return HelperSource(
-        task_id=task_id, repository="pantheon", repo_slug="example/repo", branch="task/CHILD-ONE",
+        task_id=task_id, repository="pantheon", repo_slug="example/repo", remote="github.com/example/repo",
+        branch="task/CHILD-ONE",
         base_sha=base, head_sha=head, owned_paths=scope,
     )
 
@@ -355,6 +356,7 @@ def test_a_bounded_source_only_child_is_admitted_and_its_author_kept(tmp_path: P
             "task_id": "CHILD-ONE",
             "repository": "pantheon",
             "repo_slug": "example/repo",
+            "remote": "github.com/example/repo",
             "branch": "task/CHILD-ONE",
             "source_base": frozen,
             "source_head": child_head,

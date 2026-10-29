@@ -84,14 +84,15 @@ class HelperSource:
     """A direct child task's source contribution, as its canonical record states it.
 
     ``base_sha``..``head_sha`` is the child's frozen range and ``owned_paths``
-    its declared literal scope, in the registered ``repository`` (``repo_slug``)
-    its publication was proven in. It recognizes source only: it is not an
-    approval of the child.
+    its declared literal scope, in the registered ``repository`` (``repo_slug``,
+    published at endpoint ``remote``) its publication was proven in. It
+    recognizes source only: it is not an approval of the child.
     """
 
     task_id: str
     repository: str
     repo_slug: str
+    remote: str
     branch: str
     base_sha: str
     head_sha: str
@@ -103,6 +104,7 @@ class HelperSource:
             "task_id": self.task_id,
             "repository": self.repository,
             "repo_slug": self.repo_slug,
+            "remote": self.remote,
             "branch": self.branch,
             "source_base": self.base_sha,
             "source_head": self.head_sha,
@@ -309,6 +311,26 @@ def _child_source(
             + ", ".join(repr(path) for path in leaks)
         ]
     return child, child_range
+
+
+def published_branch_head(repo: Path, branch: str) -> str | None:
+    """The commit ``origin`` publishes ``branch`` at now, or None.
+
+    Asked of the remote itself, not of a local ``refs/remotes`` copy that any
+    checkout can point anywhere: this is the initial publication proof of a
+    child source, so it has to be the published fact. Which repository that
+    origin is, is the caller's to have established first.
+    """
+    ref = f"refs/heads/{branch}"
+    try:
+        listing = _git(repo, "ls-remote", "--heads", "origin", ref)
+    except ValueError:
+        return None
+    for line in listing.splitlines():
+        sha, _, name = line.partition("\t")
+        if name == ref and _FULL_OID.fullmatch(sha):
+            return sha.lower()
+    return None
 
 
 def canonical_helper_resolver(repo: Path, task_id: str) -> HelperResolver:

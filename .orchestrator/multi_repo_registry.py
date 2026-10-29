@@ -448,8 +448,62 @@ def normalized_repository_slug(value: str | None) -> str | None:
     return candidate.casefold() or None
 
 
-def checkout_origin_slug(root: Path) -> str | None:
-    """The ``owner/name`` a checkout actually pushes to, if it has an origin."""
+#: The port a scheme reaches when a remote URL names none; spelling it out
+#: does not make a different endpoint.
+_DEFAULT_REMOTE_PORTS = {"ssh": "22", "git+ssh": "22", "https": "443", "http": "80", "git": "9418"}
+_SCP_REMOTE_RE = re.compile(r"^(?:[^@/:]+@)?(?P<host>[^@/:\[\]]+):(?!//)(?P<path>.+)$")
+
+
+def normalized_remote_endpoint(url: str | None, *, base: Path | None = None) -> str | None:
+    """The endpoint a Git remote URL reaches: ``host[:port]/owner/name``, or ``file:<path>``.
+
+    The one parser of remote identity. Every accepted spelling of the same
+    network repository -- SSH, scp-like ``git@host:``, HTTPS, a ``.git``
+    suffix, the scheme's own default port -- yields one endpoint, while a
+    different host, port or path prefix never collapses onto it by suffix.
+    Credentials and user names are dropped, never echoed; a URL carrying a
+    query or fragment (a signed URL) is not an identity at all. A local
+    repository is its full resolved path, relative paths taken from ``base``.
+    """
+    from urllib.parse import unquote, urlsplit
+
+    raw = str(url or "").strip()
+    if not raw:
+        return None
+    if "://" in raw:
+        parts = urlsplit(raw)
+        scheme = parts.scheme.casefold()
+        if parts.query or parts.fragment or raw.endswith(("?", "#")):
+            return None
+        if scheme == "file":
+            if parts.netloc not in ("", "localhost"):
+                return None
+            return "file:" + str(Path(unquote(parts.path)).resolve())
+        if scheme not in _DEFAULT_REMOTE_PORTS:
+            return None
+        try:
+            host, port = (parts.hostname or "").casefold(), parts.port
+        except ValueError:
+            return None
+        path = unquote(parts.path)
+    else:
+        scp = _SCP_REMOTE_RE.match(raw)
+        if scp and not Path(raw).is_absolute() and not raw.startswith((".", "~")):
+            scheme, host, port, path = "ssh", scp.group("host").casefold(), None, scp.group("path")
+        else:
+            local = Path(os.path.expanduser(raw))
+            if not local.is_absolute():
+                local = (base or Path.cwd()) / local
+            return "file:" + str(local.resolve())
+    path = re.sub(r"\.git$", "", path.strip("/")).strip("/")
+    if not host or not path or any(part in ("", ".", "..") for part in path.split("/")):
+        return None
+    if port is not None and str(port) != _DEFAULT_REMOTE_PORTS[scheme]:
+        host = f"{host}:{port}"
+    return f"{host}/{path.casefold()}"
+
+
+def _checkout_origin_url(root: Path) -> str | None:
     try:
         proc = subprocess.run(
             ["git", "remote", "get-url", "origin"],
@@ -462,8 +516,44 @@ def checkout_origin_slug(root: Path) -> str | None:
         return None
     if proc.returncode != 0:
         return None
-    match = re.search(r"[:/]([^/:]+/[^/]+)$", re.sub(r"\.git$", "", (proc.stdout or "").strip()))
-    return match.group(1).casefold() if match else None
+    return (proc.stdout or "").strip() or None
+
+
+def checkout_origin_endpoint(root: Path) -> str | None:
+    """The endpoint (`normalized_remote_endpoint`) a checkout's origin reaches, if it has one."""
+    return normalized_remote_endpoint(_checkout_origin_url(root), base=root)
+
+
+def checkout_origin_slug(root: Path) -> str | None:
+    """The ``owner/name`` a checkout actually pushes to, if it has an origin.
+
+    A display projection of `checkout_origin_endpoint`: the last two path
+    components, which is all an ``owner/name`` slug can compare. Anything that
+    has to tell two repositories with the same suffix apart compares endpoints.
+    """
+    endpoint = checkout_origin_endpoint(root)
+    if endpoint is None:
+        return None
+    parts = re.sub(r"\.git$", "", endpoint.removeprefix("file:")).strip("/").split("/")
+    return "/".join(parts[-2:]).casefold() if len(parts) >= 2 else None
+
+
+def registered_remote_endpoint(config: dict[str, Any], repo_id: str | None) -> str | None:
+    """The endpoint the registry says ``repo_id`` is published at, or None if it says nothing.
+
+    An entry's explicit ``remote`` URL is that endpoint -- relative local
+    paths anchored like ``local_path`` -- and otherwise its ``repo`` slug is
+    the GitHub repository of that name, the repository its pull requests are
+    looked up in. Never derived from whatever a checkout's origin says.
+    """
+    if not repo_id or repo_id not in repositories(config):
+        return None
+    repo = resolve_repository(config, repo_id)
+    remote = str(repo.get("remote") or "").strip()
+    if remote:
+        return normalized_remote_endpoint(remote, base=repository_path_anchor(config))
+    slug = str(repo.get("repo") or "").strip()
+    return normalized_remote_endpoint(f"https://github.com/{slug}") if slug else None
 
 
 @dataclass(frozen=True)

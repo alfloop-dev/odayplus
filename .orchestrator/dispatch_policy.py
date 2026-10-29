@@ -6,19 +6,18 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, NamedTuple
-from urllib.parse import quote
 
-from common import load_status, normalize_agent_id, resolve_github_cli
+from common import load_status, normalize_agent_id
 from multi_repo_registry import (
-    checkout_origin_slug,
-    normalized_repository_slug,
+    checkout_origin_endpoint,
+    registered_remote_endpoint,
     repository_local_path,
     repository_slug,
     resolve_repository,
     task_repository_id,
 )
 from provider_runtime import provider_config, provider_config_entry
-from task_archive import TaskResolver, unresolved_required_delivery_blockers
+from task_archive import TaskResolver
 
 REASON_REVIEW_READY = "review_ready_dispatch"
 REASON_OWNED_FINALIZE = "owned_finalize_dispatch"
@@ -355,84 +354,249 @@ def task_unresolved_human_or_independent_gate_reason(task: dict[str, Any]) -> st
     return None
 
 
-def canonical_task_resolver(config: dict[str, Any]) -> TaskResolver:
-    """The canonical task records, active first and then the archive."""
-    return TaskResolver((load_status(config) or {}).get("tasks") or [])
+#: The revision every canonical board write stamps (`status_transition`): a
+#: board without it is not a versioned snapshot and proves nothing absent.
+STATUS_WRITE_REVISION_FIELD = "_status_write_revision"
 
 
-def source_child_gate_reason(child: dict[str, Any], blockers: Any) -> str | None:
-    """Why a child's own record still holds it behind a human, independent or churn gate.
+# Canonical blocker prose (casefolded). A path or filename may name the
+# required deliverable itself (`waiting for dataset.csv`), so path syntax is
+# never release authority. Only two bounded reference grammars prove a path is
+# an incidental code pointer: a whole `refs=`/`ref:`/`see` clause, and the
+# location of a failure (`provider failure in scripts/deployment.py`), each
+# ending at a clause boundary.
+_CODE_REFERENCE_PATH = (
+    r"`?(?:(?:~|\.{1,2})?/[a-z0-9_.\-/]*[a-z0-9_\-]"
+    r"|[a-z0-9_.\-]+/[a-z0-9_.\-/]*[a-z0-9_\-]"
+    r"|[a-z0-9_.\-/]*[a-z0-9_\-]\.[a-z0-9]{1,8})`?"
+)
+_CODE_REFERENCE_CLAUSE_END = r"\s*(?=[;；\n]|$)"
+_CODE_REFERENCE_LABEL_CLAUSE_RE = re.compile(
+    # A label must end at a separator: `seed/dataset` and `reference.json`
+    # are artifacts, not `see`/`ref` clauses with an empty delimiter.
+    r"(?:^|(?<=[;；\n]))\s*(?:refs?|see)(?:\s*[:=]\s*|\s+)"
+    + _CODE_REFERENCE_PATH
+    + r"(?:\s*,\s*" + _CODE_REFERENCE_PATH + r")*"
+    + _CODE_REFERENCE_CLAUSE_END
+)
+_CODE_REFERENCE_FAILURE_LOCATION_RE = re.compile(
+    r"\b(failure|failures|failed|error|errors|crash|crashed|exception|traceback|timeout)"
+    r"\s+(?:in|at)\s+" + _CODE_REFERENCE_PATH + _CODE_REFERENCE_CLAUSE_END
+)
+# Only a complete routing-failure clause proves a slash compound describes
+# scheduler infrastructure rather than an awaited artifact. Anchor both ends:
+# `provider quota/worktree failure` is recoverable; `waiting for
+# provider/worktree` and `required provider/worktree failure` are not.
+_CANONICAL_ROUTING_FAILURE_CLAUSE_RE = re.compile(
+    r"(?:^|(?<=[;；\n]))\s*(?:stale\s+)?(?:provider\s+)?"
+    r"(?:provider|quota|worktree)(?:/(?:provider|quota|worktree))+\s+"
+    r"(?:failure|failures|failed|error|errors|crash|crashed|timeout)"
+    + _CODE_REFERENCE_CLAUSE_END
+)
+def _strip_explicit_code_reference_clauses(context: str) -> str:
+    context = _CODE_REFERENCE_LABEL_CLAUSE_RE.sub(" ", context)
+    return _CODE_REFERENCE_FAILURE_LOCATION_RE.sub(lambda match: f"{match.group(1)} ", context)
 
-    The gate state is the child's canonical record and the open canonical
-    blockers about it -- the same structured facts the supervisor's blocker
-    recovery refuses to release by itself: the task's and each blocker's
-    human or independent gate, a wait on Human/Ops, a review-churn escalation
-    no continuation approval has released yet, and an unresolved required
-    delivery. A child waiting on an automated reviewer for its technical
-    handoff is not held. Nothing here is cleared: the gate stays the child's.
+
+def blocked_task_prose_context(
+    task: dict[str, Any], *, canonical_gate_prose: bool = False,
+) -> str:
+    """Return prose without task/dependency identifiers and code references.
+
+    Canonical blocker prose is gate evidence, unlike an ordinary task note.
+    A bare slash compound (External-data/dataset, Human/Ops) is ambiguous:
+    do not erase it as a filesystem path. Only explicit paths/code references
+    may be removed there; ambiguous gate evidence must fail closed.
+
+    The gate keywords below are matched as substrings, so any task ID that
+    happens to contain one poisons every task that depends on it: a task
+    waiting on ``DPF-KRN-DATASET-001`` reads as an external-data gate purely
+    because its dependency list mentions "dataset". Dependency identity is
+    already carried structurally in ``depends_on``; strip those tokens before
+    keyword matching so only genuine prose is classified.
     """
-    held = task_unresolved_human_or_independent_gate_reason(child)
-    if held:
-        return held
-    if is_human_gate_agent(child.get("waiting_for")):
-        return f"task is waiting for {child.get('waiting_for')}"
-    try:
-        escalated = max(0, int(child.get("review_churn_escalated_at_count", 0) or 0))
-        released = max(0, int(child.get("review_churn_reassigned_at_count", 0) or 0))
-    except (TypeError, ValueError):
-        return "task carries an unreadable review-churn escalation"
-    # A consumed continuation approval moves the checkpoint up to the reopen
-    # count it released; an escalation past the checkpoint is still open.
-    if escalated > released:
-        return "task carries a review-churn escalation no continuation approval has released"
-    if unresolved_required_delivery_blockers(child):
-        return "task carries an unresolved required delivery"
+    identifiers = [str(task.get("id") or "")]
+    identifiers.extend(str(dep) for dep in (task.get("depends_on") or []))
+    for agent_key in ("owner", "reviewer", "waiting_for"):
+        agent_val = str(task.get(agent_key) or "").strip()
+        if agent_val and agent_val.casefold() not in {"human", "human/ops", "ops"}:
+            identifiers.append(agent_val)
+    raw_context = " ".join(
+        str(task.get(key) or "")
+        for key in (
+            "next",
+            "waiting_for",
+            "blocker",
+            "blocked_by",
+            "failure_reason",
+            "last_failure_reason",
+            "push_status",
+        )
+    )
+
+    # Mask only complete structural identity tokens, never substrings in
+    # requirements (`Pi` inside `API`) or artifact/path components. Include
+    # path/identifier punctuation in the boundary so `Pi.json`, `src/Pi` and
+    # longer task IDs stay intact for fail-closed gate classification.
+    context = raw_context.casefold()
+    for identifier in identifiers:
+        token = identifier.strip().casefold()
+        if token:
+            context = re.sub(
+                r"(?<![\w./~+\-])" + re.escape(token) + r"(?![\w./~+\-])",
+                " ",
+                context,
+            )
+
+    # 1. Strip code blocks and inline backticks. In canonical blocker prose,
+    # Markdown quoting is not proof of code: `human approval`, `pending_human`
+    # or `docs/approval.json` may be the gate itself. Remove only the bounded
+    # explicit reference clauses, then unwrap every remaining span so
+    # hard/unknown/artifact classification still sees its content.
+    if canonical_gate_prose:
+        context = _strip_explicit_code_reference_clauses(context)
+        context = re.sub(
+            r"```([\s\S]*?)```|`([^`]*)`",
+            lambda match: f" {match.group(1) if match.group(1) is not None else match.group(2)} ",
+            context,
+        )
+    else:
+        context = re.sub(r"```[\s\S]*?```", " ", context)
+        context = re.sub(r"`[^`]*`", " ", context)
+
+    # 2. Strip <key>=<value> pairs. Canonical blocker prose keeps both sides
+    # as words: `approval=pending` is gate evidence, not a code reference.
+    if canonical_gate_prose:
+        context = re.sub(r"\s*=\s*", " ", context)
+    else:
+        context = re.sub(r"[A-Za-z0-9_.\-/]+\s*=\s*[A-Za-z0-9_.\-/]+", " ", context)
+
+    # 3. Strip filesystem paths and file references from ordinary notes only.
+    # In canonical blocker prose a path or filename may be the missing
+    # deliverable; it survives and fails closed unless step 1 proved it an
+    # explicit reference clause.
+    if not canonical_gate_prose:
+        context = re.sub(r"(?<!\S)/(?:[A-Za-z0-9_.\-]+/)*[A-Za-z0-9_.\-]*[A-Za-z0-9_\-]+", " ", context)
+        context = re.sub(r"(?:\./|\.\./)[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-]+", " ", context)
+        context = re.sub(
+            r"\b[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-]+\.(?:py|sh|tf|yml|yaml|json|toml|md|csv|txt|log|lock|ini|cfg)\b",
+            " ",
+            context,
+            flags=re.IGNORECASE,
+        )
+        context = re.sub(r"\b[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-]+\b", " ", context)
+
+    # 4. Strip snake_case identifiers containing underscore. In canonical
+    # blocker prose a snake_case label (pending_human) may be the gate itself;
+    # split it into words so hard/unknown classification still sees it.
+    # Explicit code references were already removed above (backticks, paths).
+    if canonical_gate_prose:
+        context = context.replace("_", " ")
+    else:
+        context = re.sub(r"\b[A-Za-z0-9_]*_[A-Za-z0-9_]*\b", " ", context)
+
+    # 5. Strip job references (e.g. 'deploy 相關 job', 'build job', 'deploy job')
+    # from ordinary notes only. In canonical blocker prose an unfinished job
+    # ('deployment job pending') is the gate itself, not a code reference.
+    if not canonical_gate_prose:
+        context = re.sub(
+            r"\b[A-Za-z0-9_.\-]+\s*(?:相關\s*)?job\b", " ", context, flags=re.IGNORECASE
+        )
+
+    if canonical_gate_prose:
+        context = _CANONICAL_ROUTING_FAILURE_CLAUSE_RE.sub(
+            lambda match: match.group(0).replace("/", " "), context,
+        )
+
+    return context
+
+
+_BLOCKER_RECOVERY_HARD_GATE_MARKERS = (
+    "human/ops", "human gate", "pending_human", "pending human", "authoritative",
+    "dataset", "attestation", "external-data", "external data", "mlflow",
+    "deploy dev", "live-e2e", "production alias", "merge queue",
+    "operator intervention", "manual approval", "requires operator",
+    "human approval", "awaiting human", "pending approval", "approval pending",
+    "awaiting approval", "approval required", "approval gate",
+    "deployment", "production", "sign-off", "signoff",
+    "credentials gate", "credential gate", "cross repo delivery",
+    "business gate", "operator approval", "operator sign-off",
+    "human sign-off", "human signoff", "manual sign-off", "manual signoff",
+)
+
+_BLOCKER_RECOVERY_HARD_GATE_WORDS_RE = re.compile(
+    r"\b(human|operator|approval|signoff|sign-off|missing|unclassified|business|consent|client|external|dataset|live|raw|masked|manual|attestation|mlflow|deploy|deployment|production)\b",
+    re.IGNORECASE,
+)
+
+
+
+def canonical_hard_gate_reason(task: dict[str, Any], status_snapshot: Any) -> str | None:
+    """Why one versioned canonical board still holds ``task`` behind a hard gate, or None.
+
+    The hard-gate half of the supervisor's blocked-task recovery, kept here so
+    that recovery and child-source admission ask one rule: the task's own
+    human or independent gate, a wait on Human/Ops, gate prose in its record,
+    and every open canonical blocker of the task -- its waiting party, its own
+    gate fields, its kind and its prose. A board with no write revision, or
+    whose blockers cannot be read, proves no blocker absent and holds the task.
+    It reads only: no approval is consumed or issued, and whether a released
+    gate makes the task recoverable is the supervisor's separate question.
+    """
+    if not isinstance(status_snapshot, dict) or not status_snapshot.get(STATUS_WRITE_REVISION_FIELD):
+        return "no versioned canonical board proves its blockers"
+    blockers = status_snapshot.get("blockers")
     if not isinstance(blockers, list):
-        return "the canonical blockers cannot be read"
-    child_id = str(child.get("id") or "").strip()
+        return "the canonical board's blockers cannot be read"
+    gate = task_unresolved_human_or_independent_gate_reason(task)
+    if gate:
+        return gate
+    if is_human_gate_agent(task.get("waiting_for")):
+        return f"task is waiting for {task.get('waiting_for')}"
+    declared_dependencies = [str(dep).strip() for dep in (task.get("depends_on") or []) if str(dep).strip()]
+    context = blocked_task_prose_context({
+        **task,
+        "next": f"{task.get('next') or ''} {task.get('blocked_reason') or ''}",
+    }, canonical_gate_prose=True)
+    if any(marker in context for marker in _BLOCKER_RECOVERY_HARD_GATE_MARKERS) or _BLOCKER_RECOVERY_HARD_GATE_WORDS_RE.search(
+        context
+    ):
+        return "task prose names a human, external or operator gate"
     for blocker in blockers:
         if not isinstance(blocker, dict):
-            return "the canonical blockers cannot be read"
-        if str(blocker.get("task_id") or "").strip() != child_id:
+            return "a canonical blocker cannot be read"
+        if blocker.get("task_id") != task.get("id") or blocker.get("status") == "resolved":
             continue
-        if str(blocker.get("status") or "open").strip().lower() == "resolved":
-            continue
-        kind = str(blocker.get("kind") or "").strip().casefold().replace("_", " ")
-        reason = (
-            (f"waiting for {blocker.get('waiting_for')}" if is_human_gate_agent(blocker.get("waiting_for")) else None)
-            or task_unresolved_human_or_independent_gate_reason(blocker)
-            or (f"a {kind} blocker" if kind in {"human", "human gate", "external data", "cross repo delivery",
-                                                "review churn"} else None)
-        )
-        if reason:
-            return f"an open canonical blocker holds the task ({reason})"
+        if blocker.get("status") != "open":
+            return f"a canonical blocker of the task is {blocker.get('status')!r}, neither open nor resolved"
+        if is_human_gate_agent(blocker.get("waiting_for")):
+            return f"an open canonical blocker of the task waits for {blocker.get('waiting_for')}"
+        blocker_gate = task_unresolved_human_or_independent_gate_reason(blocker)
+        if blocker_gate:
+            return f"an open canonical blocker of the task: {blocker_gate}"
+        # Inspect the durable blocker, not task.next. Preserve ambiguous gate
+        # labels before the task-note sanitizer can erase them as paths.
+        blocker_context = blocked_task_prose_context({
+            **blocker,
+            "id": task.get("id"),
+            "depends_on": declared_dependencies,
+            "next": " ".join(str(blocker.get(key) or "") for key in ("kind", "message", "reason")),
+        }, canonical_gate_prose=True)
+        # `kind` is structured classification, not a code identifier. Do not
+        # strip e.g. external_data / human_gate as snake_case prose noise.
+        blocker_kind = str(blocker.get("kind") or "").strip().casefold().replace("_", " ")
+        if (
+            blocker_kind in {"human", "human gate", "external data", "cross repo delivery"}
+            or any(marker in f"{blocker_kind} {blocker_context}" for marker in _BLOCKER_RECOVERY_HARD_GATE_MARKERS)
+            or _BLOCKER_RECOVERY_HARD_GATE_WORDS_RE.search(f"{blocker_kind} {blocker_context}")
+        ):
+            return "an open canonical blocker of the task names a human, external or operator gate"
     return None
 
 
-def registered_branch_head(slug: str, branch: str, *, cwd: Path) -> str | None:
-    """The commit the registered repository publishes ``branch`` at now, or None.
-
-    Asked of GitHub for the registered ``owner/name`` -- the same identity a
-    pull request of the task is looked up by -- never of whatever remote a
-    checkout happens to call origin: this is the initial publication proof of
-    a child source, so it has to be the registered repository's own fact.
-    """
-    try:
-        proc = subprocess.run(
-            [
-                resolve_github_cli() or "gh", "api", f"repos/{quote(slug)}/git/ref/heads/{quote(branch)}",
-                "--jq", ".object.sha",
-            ],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    sha = (proc.stdout or "").strip().lower()
-    return sha if proc.returncode == 0 and _SHA_RE.fullmatch(sha) else None
+def canonical_task_resolver(config: dict[str, Any]) -> TaskResolver:
+    """The canonical task records, active first and then the archive."""
+    return TaskResolver((load_status(config) or {}).get("tasks") or [])
 
 
 def source_helper_resolver(
@@ -452,15 +616,18 @@ def source_helper_resolver(
     caller supplies -- a bare `helper_parent`, prose or a list of commits --
     stands in for any of that, and it recognizes source, not approval: the
     child's own status, blockers and signoffs are left as they are. A child
-    its own record or an open canonical blocker still holds behind a human,
-    independent or churn gate (`source_child_gate_reason`) is not admitted at
-    all: its source cannot reach review through a parent while that is open.
+    the versioned canonical board still holds behind a hard gate -- its own,
+    a Human/Ops wait such as a review-churn escalation no continuation has
+    released, or an open canonical blocker -- is not admitted at all, by the
+    same `canonical_hard_gate_reason` blocked-task recovery asks: its source
+    cannot reach review through a parent while that gate is open.
 
     The child's branch must also have been published at that head. The first
-    scan proves it by asking the registered repository itself
-    (`registered_branch_head`), and only from a checkout whose origin is that
-    repository; afterwards the bound -- the registered repository it was
-    proven in included -- is `recorded` with the submission, and a replay
+    scan proves it by asking the origin of `publication_root`, and only once
+    that origin is the registered repository's own endpoint
+    (`registered_remote_endpoint`), so another remote -- even one with the same
+    owner/name -- proves nothing; afterwards the bound, the registered
+    repository it was proven in included, is `recorded` with the submission, and a replay
     compares the record with it instead, so it neither needs the branch to
     still exist nor accepts a branch moved to a replacement head or a
     repository retargeted since. Every answer is derived again from the
@@ -473,6 +640,7 @@ def source_helper_resolver(
     parent_id = str(parent.get("id") or "").strip()
     repository_id = task_repository_id(config, parent) or "pantheon"
     slug = repository_slug(config, repository_id)
+    endpoint = registered_remote_endpoint(config, repository_id)
     bounds = {
         str(entry.get("task_id") or ""): entry
         for entry in (recorded if isinstance(recorded, (list, tuple)) else ())
@@ -481,9 +649,9 @@ def source_helper_resolver(
 
     def resolve(child_id: str) -> Any:
         if not canonical:
-            status = load_status(config) or {}
-            canonical.append((TaskResolver(status.get("tasks") or []), status.get("blockers", [])))
-        tasks, blockers = canonical[0]
+            board = load_status(config) or {}
+            canonical.append((TaskResolver(board.get("tasks") or []), board))
+        tasks, board = canonical[0]
         child = tasks.get(child_id)
         if not isinstance(child, dict) or str(child.get("id") or "").strip() != child_id:
             return "it has no canonical or archived task record"
@@ -491,8 +659,8 @@ def source_helper_resolver(
             return f"its record is not a direct child of {parent_id}"
         if task_repository_id(config, child) != repository_id:
             return f"its record is not in the registered repository {repository_id}"
-        if not slug:
-            return f"the registered repository {repository_id} has no registered slug"
+        if not (slug and endpoint):
+            return f"the registered repository {repository_id} has no registered slug and endpoint"
         owned = child.get("owned_paths")
         if not (isinstance(owned, list) and owned and all(isinstance(entry, str) for entry in owned)):
             return "its record declares no literal nonempty owned_paths"
@@ -511,11 +679,11 @@ def source_helper_resolver(
         branch = task_explicit_branch(child)
         if not branch:
             return "its record names no branch of its own"
-        held = source_child_gate_reason(child, blockers)
+        held = canonical_hard_gate_reason(child, board)
         if held:
             return f"its record still carries an unresolved gate: {held}"
         source = toolchain.HelperSource(
-            task_id=child_id, repository=repository_id, repo_slug=slug, branch=branch,
+            task_id=child_id, repository=repository_id, repo_slug=slug, remote=endpoint, branch=branch,
             base_sha=base, head_sha=head, owned_paths=tuple(owned),
         )
         bound = bounds.get(child_id)
@@ -528,15 +696,15 @@ def source_helper_resolver(
             return source
         if publication_root is None:
             return "no initial publication of its branch was recorded with this submission"
-        origin = checkout_origin_slug(publication_root)
-        if origin is None or origin != normalized_repository_slug(slug):
+        origin = checkout_origin_endpoint(publication_root)
+        if origin != endpoint:
             return (
                 f"the origin asked for its publication is {origin or 'not configured'}, "
-                f"not the registered repository {slug}"
+                f"not the registered repository {slug} at {endpoint}"
             )
-        published_head = registered_branch_head(slug, branch, cwd=publication_root)
-        if published_head != head:
-            return f"the registered repository {slug} does not publish {branch} at its review-gate head {head[:12]}"
+        published_head = toolchain.published_branch_head(publication_root, branch)
+        if str(published_head or "").strip().lower() != head:
+            return f"origin does not publish {branch} at its review-gate head {head[:12]}"
         return source
 
     return resolve

@@ -679,7 +679,8 @@ def compose_source_only_child(repo: Path, tmp_path: Path) -> tuple[Path, dict, s
 
     Returns the status root whose canonical records the prepublication check
     reads, the child record in it, and the parent head. The checkout's origin
-    is the registered repository, example/repo.
+    is a local bare repository named example/repo; the registered
+    example/repo is GitHub's.
     """
     registered = tmp_path / "example" / "repo.git"
     subprocess.run(
@@ -722,31 +723,13 @@ def compose_source_only_child(repo: Path, tmp_path: Path) -> tuple[Path, dict, s
     return status_root, child, git(repo, "rev-parse", "HEAD").stdout.strip()
 
 
-#: GitHub, as far as a child's initial publication proof asks it:
-#: `gh api repos/<owner>/<name>/git/ref/heads/<branch> --jq .object.sha`,
-#: answered by real Git from the bare repository `<root>/<owner>/<name>.git`.
-GITHUB_DOUBLE = """#!/bin/sh
-[ "$1" = api ] && [ "$3" = --jq ] && [ "$4" = .object.sha ] || exit 2
-rest="${2#repos/}"; owner="${rest%%/*}"; rest="${rest#*/}"; name="${rest%%/*}"; rest="${rest#*/}"
-case "$rest" in git/ref/heads/*) branch="${rest#git/ref/heads/}" ;; *) exit 2 ;; esac
-sha=$(git ls-remote "$GITHUB_DOUBLE_ROOT/$owner/$name.git" "refs/heads/$branch" | cut -f1)
-[ -n "$sha" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
-echo "$sha"
-"""
-
-
 def finalize_with_records(repo: Path, status_root: Path, *tasks: dict) -> subprocess.CompletedProcess[str]:
-    (status_root / "ai-status.json").write_text(json.dumps({"tasks": list(tasks)}), encoding="utf-8")
-    gh = status_root.parent / "github-double" / "gh"
-    if not gh.exists():
-        gh.parent.mkdir()
-        gh.write_text(GITHUB_DOUBLE.replace("$GITHUB_DOUBLE_ROOT", str(status_root.parent)), encoding="utf-8")
-        gh.chmod(0o755)
+    board = {"tasks": list(tasks), "blockers": [], "_status_write_revision": "revision-1"}
+    (status_root / "ai-status.json").write_text(json.dumps(board), encoding="utf-8")
     env = {
         "ORCH_STATUS_ROOT": str(status_root),
         "PANTHEON_STATUS_ROOT": str(status_root),
         "ORCH_CONFIG_PATH": str(status_root / ".orchestrator" / "config.json"),
-        "PATH": f"{gh.parent}{os.pathsep}{os.environ.get('PATH', '')}",
     }
     return run(["bash", str(GIT_DIR / "task_finalize.sh"), TASK, "--dry-run"], repo, env=env)
 
@@ -754,19 +737,17 @@ def finalize_with_records(repo: Path, status_root: Path, *tasks: dict) -> subpro
 def test_task_finalize_prepublication_admits_only_the_canonical_source_child(repo: Path, tmp_path: Path):
     """The unchanged thin caller reaches the same canonical child rule.
 
-    The parent's own commit and Pi's published child commit pass; the same
-    composition is refused, with its original Task-ID refusal kept, as soon
-    as the record stops naming it a direct child, the child carries its own
-    unresolved gate, or the registered origin stops publishing the child's
-    head -- whatever some other remote publishes.
+    The composition is refused, with its original Task-ID refusal kept, while
+    the record does not name it a direct child or the child carries its own
+    unresolved gate; and with a valid record, as long as the checkout's origin
+    is not the registered repository's own endpoint -- here GitHub's
+    example/repo -- whatever a local repository of that owner/name publishes.
+    (Admitting it through a local endpoint needs that endpoint registered,
+    which the orchestrator config schema does not accept yet.)
     """
     status_root, child, _head = compose_source_only_child(repo, tmp_path)
     parent = {"id": TASK, "owner": "Claude2", "reviewer": "Codex", "status": "in_progress",
               "branch": f"task/{TASK}"}
-
-    admitted = finalize_with_records(repo, status_root, parent, child)
-    assert admitted.returncode == 0, admitted.stderr
-    assert "dry-run: git push" in admitted.stdout
 
     unrelated = finalize_with_records(repo, status_root, parent, dict(child, helper_parent="ODP-OTHER-1"))
     assert unrelated.returncode == 1
@@ -782,36 +763,30 @@ def test_task_finalize_prepublication_admits_only_the_canonical_source_child(rep
     assert gated.returncode == 1
     assert "still carries an unresolved gate: task carries an unresolved human approval gate" in gated.stderr
 
-    # Another remote carrying the exact child head proves no publication by
-    # the registered repository, which no longer publishes it.
+    # The checkout's origin publishes the child's exact head, and is named
+    # example/repo, but is not the registered repository.
+    registered = "not the registered repository example/repo at github.com/example/repo"
+    same_suffix = finalize_with_records(repo, status_root, parent, child)
+    assert same_suffix.returncode == 1
+    assert f"is file:{(tmp_path / 'example' / 'repo.git').resolve()}, {registered}" in same_suffix.stderr
+    assert f"Task-ID trailer '{CHILD}' does not match '{TASK}'" in same_suffix.stderr
+    assert "dry-run: git push" not in same_suffix.stdout
+
+    # Nor is another owner/name, or no origin at all.
     stray = tmp_path / "other-org" / "other-repo.git"
     subprocess.run(
         ["git", "clone", "--quiet", "--bare", str(tmp_path / "example" / "repo.git"), str(stray)],
         check=True, capture_output=True,
     )
-    git(repo, "push", "--quiet", "origin", f":task/{CHILD}")
     git(repo, "remote", "set-url", "origin", str(stray))
     stray_origin = finalize_with_records(repo, status_root, parent, child)
     assert stray_origin.returncode == 1
-    assert "is other-org/other-repo, not the registered repository example/repo" in stray_origin.stderr
-    assert "dry-run: git push" not in stray_origin.stdout
-
-    # Nor does a separate repository that only shares the owner/name suffix.
-    mirror = tmp_path / "unregistered" / "example" / "repo.git"
-    mirror.parent.mkdir(parents=True)
-    subprocess.run(["git", "clone", "--quiet", "--bare", str(stray), str(mirror)], check=True, capture_output=True)
-    git(repo, "remote", "set-url", "origin", str(mirror))
-    same_suffix = finalize_with_records(repo, status_root, parent, child)
-    assert same_suffix.returncode == 1
-    assert f"registered repository example/repo does not publish task/{CHILD} at its review-gate" in (
-        same_suffix.stderr
-    )
-    assert "dry-run: git push" not in same_suffix.stdout
-
-    git(repo, "remote", "set-url", "origin", str(tmp_path / "example" / "repo.git"))
-    unpublished = finalize_with_records(repo, status_root, parent, child)
-    assert unpublished.returncode == 1
-    assert f"example/repo does not publish task/{CHILD} at its review-gate head" in unpublished.stderr
+    assert f"is file:{stray.resolve()}, {registered}" in stray_origin.stderr
+    git(repo, "remote", "remove", "origin")
+    no_origin = finalize_with_records(repo, status_root, parent, child)
+    assert no_origin.returncode == 1
+    assert f"is not configured, {registered}" in no_origin.stderr
+    assert "dry-run: git push" not in no_origin.stdout
 
 
 def test_task_finalize_refuses_a_branch_whose_own_python_fails_lint(repo: Path, tmp_path: Path):

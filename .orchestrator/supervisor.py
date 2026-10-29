@@ -113,7 +113,11 @@ from coordination_file_watcher import sync_coordination_files
 # without importing the supervisor. They stay bound in this module's namespace,
 # which is the one every existing caller -- and every test patch point -- uses.
 from dispatch_policy import (
+    _BLOCKER_RECOVERY_HARD_GATE_MARKERS,
+    _BLOCKER_RECOVERY_HARD_GATE_WORDS_RE,
+    _CANONICAL_ROUTING_FAILURE_CLAUSE_RE,
     DISPATCH_STATUS_ACTIONS,
+    STATUS_WRITE_REVISION_FIELD,
     REASON_HELPER_CLAIM,
     REASON_OWNED_FINALIZE,
     REASON_OWNED_IN_PROGRESS,
@@ -125,6 +129,8 @@ from dispatch_policy import (
     agent_account_pool_id,
     agent_provider_id,
     agent_quota_group_id,
+    blocked_task_prose_context,
+    canonical_hard_gate_reason,
     dispatch_reason_priority,
     dispatch_reason_role,
     is_execution_dispatch_reason,
@@ -581,7 +587,6 @@ from watch_events import (
 _BOOT_RECONCILED = False
 
 SIDECAR_READY_PRIORITY_OFFSET = 10
-STATUS_WRITE_REVISION_FIELD = "_status_write_revision"
 # Max time the antigravity model-rotation will treat a pool as exhausted before
 # re-probing it. Kept SHORT because Gemini's 5-hour limit is a rolling window
 # that recovers within minutes — a longer cooldown (e.g. trusting the error's
@@ -4318,163 +4323,11 @@ def normalized_business_priority(value: Any, default: str = "P2") -> str:
     return status_transition.normalized_business_priority(value, default=default)
 
 
-# Canonical blocker prose (casefolded). A path or filename may name the
-# required deliverable itself (`waiting for dataset.csv`), so path syntax is
-# never release authority. Only two bounded reference grammars prove a path is
-# an incidental code pointer: a whole `refs=`/`ref:`/`see` clause, and the
-# location of a failure (`provider failure in scripts/deployment.py`), each
-# ending at a clause boundary.
-_CODE_REFERENCE_PATH = (
-    r"`?(?:(?:~|\.{1,2})?/[a-z0-9_.\-/]*[a-z0-9_\-]"
-    r"|[a-z0-9_.\-]+/[a-z0-9_.\-/]*[a-z0-9_\-]"
-    r"|[a-z0-9_.\-/]*[a-z0-9_\-]\.[a-z0-9]{1,8})`?"
-)
-_CODE_REFERENCE_CLAUSE_END = r"\s*(?=[;；\n]|$)"
-_CODE_REFERENCE_LABEL_CLAUSE_RE = re.compile(
-    # A label must end at a separator: `seed/dataset` and `reference.json`
-    # are artifacts, not `see`/`ref` clauses with an empty delimiter.
-    r"(?:^|(?<=[;；\n]))\s*(?:refs?|see)(?:\s*[:=]\s*|\s+)"
-    + _CODE_REFERENCE_PATH
-    + r"(?:\s*,\s*" + _CODE_REFERENCE_PATH + r")*"
-    + _CODE_REFERENCE_CLAUSE_END
-)
-_CODE_REFERENCE_FAILURE_LOCATION_RE = re.compile(
-    r"\b(failure|failures|failed|error|errors|crash|crashed|exception|traceback|timeout)"
-    r"\s+(?:in|at)\s+" + _CODE_REFERENCE_PATH + _CODE_REFERENCE_CLAUSE_END
-)
-# Only a complete routing-failure clause proves a slash compound describes
-# scheduler infrastructure rather than an awaited artifact. Anchor both ends:
-# `provider quota/worktree failure` is recoverable; `waiting for
-# provider/worktree` and `required provider/worktree failure` are not.
-_CANONICAL_ROUTING_FAILURE_CLAUSE_RE = re.compile(
-    r"(?:^|(?<=[;；\n]))\s*(?:stale\s+)?(?:provider\s+)?"
-    r"(?:provider|quota|worktree)(?:/(?:provider|quota|worktree))+\s+"
-    r"(?:failure|failures|failed|error|errors|crash|crashed|timeout)"
-    + _CODE_REFERENCE_CLAUSE_END
-)
 # Every remaining slash is ambiguous artifact evidence, including extensionless
 # relative paths whose components happen to be allowed routing words. Never
 # split these into individually allowlisted tokens. Dotted filenames likewise
 # remain unproven deliverables after explicit references have been removed.
 _CANONICAL_ARTIFACT_RE = re.compile(r"/|\w\.\w")
-
-
-def _strip_explicit_code_reference_clauses(context: str) -> str:
-    context = _CODE_REFERENCE_LABEL_CLAUSE_RE.sub(" ", context)
-    return _CODE_REFERENCE_FAILURE_LOCATION_RE.sub(lambda match: f"{match.group(1)} ", context)
-
-
-def blocked_task_prose_context(
-    task: dict[str, Any], *, canonical_gate_prose: bool = False,
-) -> str:
-    """Return prose without task/dependency identifiers and code references.
-
-    Canonical blocker prose is gate evidence, unlike an ordinary task note.
-    A bare slash compound (External-data/dataset, Human/Ops) is ambiguous:
-    do not erase it as a filesystem path. Only explicit paths/code references
-    may be removed there; ambiguous gate evidence must fail closed.
-
-    The gate keywords below are matched as substrings, so any task ID that
-    happens to contain one poisons every task that depends on it: a task
-    waiting on ``DPF-KRN-DATASET-001`` reads as an external-data gate purely
-    because its dependency list mentions "dataset". Dependency identity is
-    already carried structurally in ``depends_on``; strip those tokens before
-    keyword matching so only genuine prose is classified.
-    """
-    identifiers = [str(task.get("id") or "")]
-    identifiers.extend(str(dep) for dep in (task.get("depends_on") or []))
-    for agent_key in ("owner", "reviewer", "waiting_for"):
-        agent_val = str(task.get(agent_key) or "").strip()
-        if agent_val and agent_val.casefold() not in {"human", "human/ops", "ops"}:
-            identifiers.append(agent_val)
-    raw_context = " ".join(
-        str(task.get(key) or "")
-        for key in (
-            "next",
-            "waiting_for",
-            "blocker",
-            "blocked_by",
-            "failure_reason",
-            "last_failure_reason",
-            "push_status",
-        )
-    )
-
-    # Mask only complete structural identity tokens, never substrings in
-    # requirements (`Pi` inside `API`) or artifact/path components. Include
-    # path/identifier punctuation in the boundary so `Pi.json`, `src/Pi` and
-    # longer task IDs stay intact for fail-closed gate classification.
-    context = raw_context.casefold()
-    for identifier in identifiers:
-        token = identifier.strip().casefold()
-        if token:
-            context = re.sub(
-                r"(?<![\w./~+\-])" + re.escape(token) + r"(?![\w./~+\-])",
-                " ",
-                context,
-            )
-
-    # 1. Strip code blocks and inline backticks. In canonical blocker prose,
-    # Markdown quoting is not proof of code: `human approval`, `pending_human`
-    # or `docs/approval.json` may be the gate itself. Remove only the bounded
-    # explicit reference clauses, then unwrap every remaining span so
-    # hard/unknown/artifact classification still sees its content.
-    if canonical_gate_prose:
-        context = _strip_explicit_code_reference_clauses(context)
-        context = re.sub(
-            r"```([\s\S]*?)```|`([^`]*)`",
-            lambda match: f" {match.group(1) if match.group(1) is not None else match.group(2)} ",
-            context,
-        )
-    else:
-        context = re.sub(r"```[\s\S]*?```", " ", context)
-        context = re.sub(r"`[^`]*`", " ", context)
-
-    # 2. Strip <key>=<value> pairs. Canonical blocker prose keeps both sides
-    # as words: `approval=pending` is gate evidence, not a code reference.
-    if canonical_gate_prose:
-        context = re.sub(r"\s*=\s*", " ", context)
-    else:
-        context = re.sub(r"[A-Za-z0-9_.\-/]+\s*=\s*[A-Za-z0-9_.\-/]+", " ", context)
-
-    # 3. Strip filesystem paths and file references from ordinary notes only.
-    # In canonical blocker prose a path or filename may be the missing
-    # deliverable; it survives and fails closed unless step 1 proved it an
-    # explicit reference clause.
-    if not canonical_gate_prose:
-        context = re.sub(r"(?<!\S)/(?:[A-Za-z0-9_.\-]+/)*[A-Za-z0-9_.\-]*[A-Za-z0-9_\-]+", " ", context)
-        context = re.sub(r"(?:\./|\.\./)[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-]+", " ", context)
-        context = re.sub(
-            r"\b[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-]+\.(?:py|sh|tf|yml|yaml|json|toml|md|csv|txt|log|lock|ini|cfg)\b",
-            " ",
-            context,
-            flags=re.IGNORECASE,
-        )
-        context = re.sub(r"\b[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-]+\b", " ", context)
-
-    # 4. Strip snake_case identifiers containing underscore. In canonical
-    # blocker prose a snake_case label (pending_human) may be the gate itself;
-    # split it into words so hard/unknown classification still sees it.
-    # Explicit code references were already removed above (backticks, paths).
-    if canonical_gate_prose:
-        context = context.replace("_", " ")
-    else:
-        context = re.sub(r"\b[A-Za-z0-9_]*_[A-Za-z0-9_]*\b", " ", context)
-
-    # 5. Strip job references (e.g. 'deploy 相關 job', 'build job', 'deploy job')
-    # from ordinary notes only. In canonical blocker prose an unfinished job
-    # ('deployment job pending') is the gate itself, not a code reference.
-    if not canonical_gate_prose:
-        context = re.sub(
-            r"\b[A-Za-z0-9_.\-]+\s*(?:相關\s*)?job\b", " ", context, flags=re.IGNORECASE
-        )
-
-    if canonical_gate_prose:
-        context = _CANONICAL_ROUTING_FAILURE_CLAUSE_RE.sub(
-            lambda match: match.group(0).replace("/", " "), context,
-        )
-
-    return context
 
 
 def _continuation_approval_nonce_reused(
@@ -4714,27 +4567,9 @@ def consume_human_continuation_approvals(
     return True
 
 
-_BLOCKER_RECOVERY_HARD_GATE_MARKERS = (
-    "human/ops", "human gate", "pending_human", "pending human", "authoritative",
-    "dataset", "attestation", "external-data", "external data", "mlflow",
-    "deploy dev", "live-e2e", "production alias", "merge queue",
-    "operator intervention", "manual approval", "requires operator",
-    "human approval", "awaiting human", "pending approval", "approval pending",
-    "awaiting approval", "approval required", "approval gate",
-    "deployment", "production", "sign-off", "signoff",
-    "credentials gate", "credential gate", "cross repo delivery",
-    "business gate", "operator approval", "operator sign-off",
-    "human sign-off", "human signoff", "manual sign-off", "manual signoff",
-)
-
 _BLOCKER_RECOVERY_ROUTING_MARKERS = (
     "auto-reassigned", "sidecar-only", "quota", "auth", "credential", "worktree",
     "push failure", "dispatch", "provider", "handoff", "stale",
-)
-
-_BLOCKER_RECOVERY_HARD_GATE_WORDS_RE = re.compile(
-    r"\b(human|operator|approval|signoff|sign-off|missing|unclassified|business|consent|client|external|dataset|live|raw|masked|manual|attestation|mlflow|deploy|deployment|production)\b",
-    re.IGNORECASE,
 )
 
 _BLOCKER_RECOVERY_AGENT_NAMES = {
@@ -4880,14 +4715,10 @@ def blocked_task_auto_recovery_eligible(
         return False
     if str(task.get("status") or "").strip().lower() != "blocked":
         return False
-    if (
-        runtime_ai_status.task_unresolved_human_or_independent_gate_reason(task)
-        or task_is_human_gate(task)
-        or is_human_gate_agent(task.get("waiting_for"))
-        or str(task.get("waiting_for") or "").strip().casefold() in {"human/ops", "human", "ops"}
-        or task_is_sidecar(task)
-        or bool(task.get("non_dispatchable"))
-    ):
+    # The hard gates -- the task's own, a Human/Ops wait, gate prose and every
+    # open canonical blocker -- are the one shared rule child-source admission
+    # asks too. What follows is only whether the rest is a released gate.
+    if canonical_hard_gate_reason(task, status_snapshot) or task_is_sidecar(task):
         return False
     declared_dependencies = [str(dep).strip() for dep in (task.get("depends_on") or []) if str(dep).strip()]
     dependency_gate_released = False
@@ -4902,38 +4733,16 @@ def blocked_task_auto_recovery_eligible(
         **task,
         "next": f"{task.get('next') or ''} {task.get('blocked_reason') or ''}",
     }, canonical_gate_prose=True)
-    if any(marker in context for marker in _BLOCKER_RECOVERY_HARD_GATE_MARKERS) or _BLOCKER_RECOVERY_HARD_GATE_WORDS_RE.search(context):
-        return False
     for blocker in blockers:
-        if not isinstance(blocker, dict):
-            return False
         if blocker.get("task_id") != task.get("id") or blocker.get("status") == "resolved":
             continue
-        if blocker.get("status") != "open":
-            return False
-        if (
-            is_human_gate_agent(blocker.get("waiting_for"))
-            or runtime_ai_status.task_unresolved_human_or_independent_gate_reason(blocker)
-            or str(blocker.get("waiting_for") or "").strip().casefold() in {"human/ops", "human", "ops"}
-        ):
-            return False
-        # Inspect the durable blocker, not task.next. Preserve ambiguous gate
-        # labels before the task-note sanitizer can erase them as paths.
         blocker_context = blocked_task_prose_context({
             **blocker,
             "id": task.get("id"),
             "depends_on": declared_dependencies,
             "next": " ".join(str(blocker.get(key) or "") for key in ("kind", "message", "reason")),
         }, canonical_gate_prose=True)
-        # `kind` is structured classification, not a code identifier. Do not
-        # strip e.g. external_data / human_gate as snake_case prose noise.
         blocker_kind = str(blocker.get("kind") or "").strip().casefold().replace("_", " ")
-        if (
-            blocker_kind in {"human", "human gate", "external data", "cross repo delivery"}
-            or any(marker in f"{blocker_kind} {blocker_context}" for marker in _BLOCKER_RECOVERY_HARD_GATE_MARKERS)
-            or _BLOCKER_RECOVERY_HARD_GATE_WORDS_RE.search(f"{blocker_kind} {blocker_context}")
-        ):
-            return False
         is_dep_blocker = (
             blocker_kind == "dependency"
             or bool(_BLOCKER_RECOVERY_DEPENDENCY_WORDS_RE.search(blocker_context))
