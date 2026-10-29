@@ -13,6 +13,7 @@ Validates that:
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -291,6 +292,47 @@ def test_delivery_tooling_keeps_a_required_unconditional_owner(ci_workflow: dict
 
 def test_ci_workflow_pytest_addopts_are_reporting_only(ci_workflow: dict[str, Any]) -> None:
     assert pytest_addopts_reporting_errors(ci_workflow) == []
+
+
+def test_heatzone_latency_keeps_one_required_isolated_owner(ci_workflow: dict[str, Any]) -> None:
+    node = "tests/integration/test_heatzone_flow.py::test_heatzone_api_scores_batch_and_returns_map_results_within_fixture_target"
+    command = (f'uv run pytest -m performance {node} '
+               '--junitxml="performance-reports/heatzone_fixture_attempt_${attempt}.xml"')
+    jobs = ci_workflow["jobs"]
+    assert count_exact_command_occurrences(jobs, command) == {"performance-gate": 1}
+    assert count_exact_command_occurrences(jobs, "uv run pytest -m performance tests/performance") == {"performance-gate": 1}
+    gate = jobs["performance-gate"]
+    assert gate["needs"] == "change-scope"
+    assert "needs.change-scope.outputs.scope != 'development_tooling'" in gate["if"]
+    assert gate.get("continue-on-error", False) is False
+    step, = [step for step in gate["steps"] if node in step.get("run", "")]
+    assert step.get("if") is None and step.get("continue-on-error", False) is False
+    assert "for attempt in 1 2 3; do" in step["run"]
+    assert command + " || status=$?" in step["run"]
+    assert 'exit "${status}"' in step["run"]
+    artifact, = [step for step in gate["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")]
+    assert artifact["if"] == "always()" and artifact["with"]["path"] == "performance-reports/"
+    assert "performance-gate" in jobs["automatic-dev-release"]["needs"]
+    tree = ast.parse((ROOT / node.split("::")[0]).read_text())
+    function, = [item for item in tree.body if isinstance(item, ast.FunctionDef) and item.name == node.split("::")[1]]
+    assert [ast.unparse(item) for item in function.decorator_list] == ["pytest.mark.performance"]
+
+
+@pytest.mark.parametrize("damage", ["missing-selector", "duplicate-owner", "optional-step"])
+def test_heatzone_latency_owner_rejects_omitted_duplicated_or_optional_gate(
+    ci_workflow: dict[str, Any], damage: str,
+) -> None:
+    workflow = deepcopy(ci_workflow)
+    step = next(step for step in workflow["jobs"]["performance-gate"]["steps"]
+                if "heatzone_fixture_attempt_" in step.get("run", ""))
+    if damage == "missing-selector":
+        step["run"] = "echo omitted"
+    elif damage == "duplicate-owner":
+        workflow["jobs"]["product-lint-unit"]["steps"].append(deepcopy(step))
+    else:
+        step["continue-on-error"] = True
+    with pytest.raises(AssertionError):
+        test_heatzone_latency_keeps_one_required_isolated_owner(workflow)
 
 
 def test_ci_workflow_retains_main_database_report_after_failure(ci_workflow: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

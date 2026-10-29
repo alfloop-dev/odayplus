@@ -202,10 +202,11 @@ jobs:
       - name: Lint product code
         run: uv run ruff check tests modules apps shared models solver pipelines infra
 
-      # `not performance` deselects exactly one test:
+      # `not performance` leaves wall-clock SLO cases to their isolated owner:
       # tests/performance/test_load_and_soak.py::test_concurrency_and_soak_execution.
-      # It is a wall-clock SLO measurement, so it is enforced by the dedicated
-      # performance-gate job below instead of being measured on a runner that is
+      # tests/integration/test_heatzone_flow.py::test_heatzone_api_scores_batch_and_returns_map_results_within_fixture_target.
+      # Both retain their original assertions in the performance-gate job below
+      # instead of being measured on a runner that is
       # already loaded by ~1900 other tests and a Postgres service container.
       # `-n auto` is what makes this step tolerable. It was 17 of the job's 21
       # minutes, run serially, and with a merge queue every PR pays it at least
@@ -537,9 +538,10 @@ jobs:
       - name: Prepare local config
         run: make bootstrap
 
-      # No Node, no Postgres service, no other test module imported into the
-      # process: the runner stays clean so the measurement is reproducible.
-      - name: Enforce load and soak P95 budget
+      # No Node or Postgres service. Each SLO runs in its own pytest process;
+      # the HeatZone fixture does not share the load/soak process or change its
+      # original warmup, 20-row POST, 0.95s budget, or map/list assertions.
+      - name: Enforce load, soak and HeatZone latency budgets
         run: |
           set -uo pipefail
           mkdir -p performance-reports
@@ -553,6 +555,9 @@ jobs:
             rm -f /tmp/load_soak_performance_report.json
             status=0
             uv run pytest -m performance tests/performance || status=$?
+            if [[ "${status}" -eq 0 ]]; then
+              uv run pytest -m performance tests/integration/test_heatzone_flow.py::test_heatzone_api_scores_batch_and_returns_map_results_within_fixture_target --junitxml="performance-reports/heatzone_fixture_attempt_${attempt}.xml" || status=$?
+            fi
             capacity_status=0
             uv run python delivery_toolchain/load/assisted_listing_intake/run.py \
               --volume 120 --concurrency 20 --observe-only \
