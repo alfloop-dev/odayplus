@@ -3468,6 +3468,15 @@ class DeclaredOwnedScopeAdmissionTests(unittest.TestCase):
              r"declared owned_paths must be a list of literal"),
             ("whole-tree declared scope", {"write": ("lib/x.txt",)}, {"owned_paths": ["."]},
              r"declared owned_paths is not a usable literal scope"),
+            ("flag declared scope", {"write": ("lib/x.txt",)}, {"owned_paths": [*self.DECLARED, "-name"]},
+             r"declared owned_paths is not a usable literal scope: scope entry '-name' looks like a git flag"),
+            ("owned whitespace-only name", {"write": (" ",)}, {"owned_paths": [*self.DECLARED, " "]}, None),
+            ("owned flag-looking name once trimmed", {"write": (" -name",)},
+             {"owned_paths": [*self.DECLARED, " -name"]}, None),
+            ("unowned whitespace twin of an owned name", {"write": ("  ",)},
+             {"owned_paths": [*self.DECLARED, " "]}, r"1 net changed path\(s\).*: '  '"),
+            ("unowned flag twin of an owned name", {"write": ("-name",)},
+             {"owned_paths": [*self.DECLARED, " -name"]}, r"1 net changed path\(s\).*: '-name'"),
         ]
         for name, ops, task_fields, refusal in cases:
             with self.subTest(name):

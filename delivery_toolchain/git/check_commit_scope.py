@@ -52,16 +52,19 @@ def validate_scope(scope: list[str]) -> list[str]:
         problems.append("--scope is empty; declare the exact paths this task owns")
         return problems
     for entry in scope:
-        raw = str(entry).strip()
-        if raw in FORBIDDEN_SCOPE_ENTRIES:
+        # The entry is checked as the literal name it is matched as: trimming
+        # it first would refuse a real Git name such as " " or " -name".
+        raw = str(entry)
+        cleaned = normalize(raw)
+        if raw in FORBIDDEN_SCOPE_ENTRIES or cleaned in FORBIDDEN_SCOPE_ENTRIES:
             problems.append(
                 f"scope entry {raw!r} is a whole-worktree stage; declare explicit task paths instead"
             )
             continue
-        if raw.startswith("-"):
+        if cleaned.startswith("-"):
             problems.append(f"scope entry {raw!r} looks like a git flag, not a path")
             continue
-        if PurePosixPath(normalize(raw)).is_absolute():
+        if PurePosixPath(cleaned).is_absolute():
             problems.append(f"scope entry {raw!r} must be repo-relative")
     return problems
 

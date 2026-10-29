@@ -110,9 +110,23 @@ def test_scope_reports_every_leak():
     assert leaks == ["apps/api/x.py", "other.txt"]
 
 
-@pytest.mark.parametrize("entry", [".", "*", "-A", "", "/etc/passwd"])
+@pytest.mark.parametrize("entry", [".", "*", "-A", "", "/etc/passwd", "./", "./.", "-name", "./-A", "//etc"])
 def test_validate_scope_rejects_whole_worktree_spellings(entry):
     assert validate_scope([entry])
+
+
+@pytest.mark.parametrize("entry", [" ", "\t", " -name", " .", " lead.txt", "trail ", " /etc", "./owned.txt"])
+def test_validate_scope_accepts_literal_names_that_only_look_forbidden_once_trimmed(entry):
+    # A declared Git name is validated as written, never trimmed into "" or a flag.
+    assert validate_scope([entry]) == []
+
+
+def test_whitespace_and_flag_looking_scope_entries_own_only_their_literal_name():
+    scope = [" ", " -name"]
+    assert files_outside_scope([" ", " -name"], scope) == []
+    assert files_outside_scope(["  ", "\t", "-name", "name", " -name "], scope) == [
+        "\t", "  ", " -name ", "-name", "name",
+    ]
 
 
 def test_validate_scope_rejects_empty_scope():
