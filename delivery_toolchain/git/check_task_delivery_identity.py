@@ -354,7 +354,7 @@ def canonical_helper_resolver(repo: Path, task_id: str) -> HelperResolver:
                         config, parent, published=lambda branch: published_branch_head(repo, branch)
                     )
                 )
-            except Exception as exc:  # noqa: BLE001 - any unreadable context admits no child.
+            except Exception as exc:  # Any unreadable context admits no child.
                 reason = f"the canonical task records cannot be read ({exc})"
                 resolved.append(lambda _child_id: reason)
         return resolved[0](child_id)
@@ -411,4 +411,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # The canonical rule imports this module by name; run as a script it must
+    # find this one, so the child sources it answers are of the scanner's type.
+    sys.modules.setdefault("check_task_delivery_identity", sys.modules[__name__])
     raise SystemExit(main())

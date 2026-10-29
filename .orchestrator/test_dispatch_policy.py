@@ -2102,6 +2102,120 @@ def test_review_queue_reads_a_full_sha_base_as_that_commit_on_a_cold_cache(tmp_p
             )
 
 
+def test_review_queue_excludes_a_source_only_childs_pool_and_rereads_its_record(tmp_path: Path) -> None:
+    """A parent composing Pi's child is reviewed by no one who shares a source pool.
+
+    Codex writes the parent commit, Pi the child's frozen commit, Claude
+    merges the child in and submits. The recorded child bound is judged
+    against the canonical record on every queue ask, cold or warm: Pi, Codex
+    and Claude are refused, independent Codex2 is dispatched, and once the
+    record stops naming the child -- or the bound is dropped -- no one is.
+    """
+    cfg = _register_ci_failure_actors(_base_test_config())
+    cfg["agents"]["pi"] = {"id": "pi", "display_name": "Pi", "provider": "codex", "account_pool": "pi_chatgpt"}
+    repo = tmp_path / "source-git"
+    task_id, child_id = "TASK-SOURCE-REV-PARENT", "TASK-SOURCE-REV-CHILD"
+    repo.mkdir(parents=True)
+    _git(repo, "init", "-q", "-b", "dev")
+    _git(repo, "config", "user.email", "worker@pantheon.local")
+    _git(repo, "config", "user.name", "Worker")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "bootstrap")
+    frozen = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/remotes/origin/dev", "dev")
+    _git(repo, "checkout", "-q", "-b", f"task/{child_id}")
+    (repo / "uv.lock").write_text("patched\n", encoding="utf-8")
+    _git(repo, "add", "uv.lock")
+    _git(repo, "commit", "-q", "-m", f"{child_id}: lock\n\nLLM-Agent: Pi\nTask-ID: {child_id}\nReviewer: Codex\n")
+    child_head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", f"task/{task_id}", frozen)
+    _git(
+        repo, "commit", "-q", "--allow-empty", "-m",
+        f"{task_id}: parent\n\nLLM-Agent: Codex\nTask-ID: {task_id}\nReviewer: Codex2\n",
+    )
+    _git(
+        repo, "merge", "--no-ff", "-q", "-m",
+        f"{task_id}: compose\n\nLLM-Agent: Claude\nTask-ID: {task_id}\nReviewer: Codex2\n", child_head,
+    )
+    head = _git(repo, "rev-parse", "HEAD")
+    cfg["coordination"] = {"repositories": {"pantheon": {"local_path": str(repo), "repo": "example/repo"}}}
+    cfg["branch_workflow"] = {"dev_branch": "dev"}
+    child = {
+        "id": child_id,
+        "owner": "Pi",
+        "reviewer": "Codex",
+        "status": "blocked",
+        "branch": f"task/{child_id}",
+        "helper_parent": task_id,
+        "frozen_evidence_base_sha": frozen,
+        "review_gate_sha": child_head,
+        "review_gate_target": {"repo_slug": "example/repo", "sha": child_head, "context": "task-review-gate"},
+        "owned_paths": ["uv.lock"],
+    }
+    bound = {
+        "task_id": child_id,
+        "branch": f"task/{child_id}",
+        "source_base": frozen,
+        "source_head": child_head,
+        "owned_paths": ["uv.lock"],
+        "commits": [[child_head, "Pi"]],
+    }
+    task = {
+        "id": task_id,
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex2",
+        "review_submission": {
+            "pr_number": 104,
+            "branch": f"task/{task_id}",
+            "base_branch": "dev",
+            "remote_sha": head,
+            "source_head": head,
+            "source_base": frozen,
+            # Exactly as the scan writes them: each non-merge commit's actor, oldest first.
+            "source_authors": [
+                "Pi" if sha == child_head else "Codex"
+                for sha in _git(repo, "rev-list", "--reverse", "--no-merges", f"{frozen}..{head}").split()
+            ],
+            "source_helpers": [bound],
+            "submitted_by": "Claude",
+        },
+        "depends_on": [],
+    }
+    records = {"tasks": [task, child]}
+
+    def eligible(record: dict, agent: str) -> bool:
+        with (
+            mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=head),
+            mock.patch.object(
+                supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")
+            ),
+        ):
+            return dispatch_engine.is_task_review_dispatch_eligible(cfg, dict(record, reviewer=agent), agent)
+
+    with (
+        mock.patch.object(dispatch_policy, "immutable_review_source_authors", _READ_SOURCE_AUTHORS_FROM_GIT),
+        mock.patch.object(dispatch_policy, "load_status", side_effect=lambda _config: records),
+    ):
+        assert sorted(task["review_submission"]["source_authors"]) == ["Codex", "Pi"]
+        for cold in (True, False):
+            if cold:
+                dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.clear()
+            assert {agent: eligible(task, agent) for agent in ("Pi", "Codex", "Claude", "Codex2")} == {
+                "Pi": False, "Codex": False, "Claude": False, "Codex2": True,
+            }
+        child["helper_parent"] = "TASK-SOURCE-REV-OTHER"
+        assert "not a direct child" in str(dispatch_policy.review_source_block_reason(cfg, task, "Codex2"))
+        assert eligible(task, "Codex2") is False
+        child["helper_parent"] = task_id
+        dropped = dict(task, review_submission=dict(task["review_submission"], source_helpers=[]))
+        assert "no initial publication of its branch was recorded" in str(
+            dispatch_policy.review_source_block_reason(cfg, dropped, "Codex2")
+        )
+        assert eligible(dropped, "Codex2") is False
+        assert eligible(task, "Codex2") is True
+
+
 def test_review_queue_refuses_an_interior_commit_as_the_base_of_a_merged_range(tmp_path: Path) -> None:
     """After the merge, ancestry cannot tell the base from a commit of the range.
 

@@ -671,6 +671,92 @@ def test_task_finalize_allows_historical_commit_with_long_subject(repo: Path):
     assert "dry-run: git push" in result.stdout
 
 
+CHILD = "ODP-TEST-CHILD-002"
+
+
+def compose_source_only_child(repo: Path, tmp_path: Path) -> tuple[Path, dict, str]:
+    """Pi publishes a child branch; the parent branch merges its exact head.
+
+    Returns the status root whose canonical records the prepublication check
+    reads, the child record in it, and the parent head.
+    """
+    frozen = git(repo, "rev-parse", "HEAD").stdout.strip()
+    git(repo, "switch", "--quiet", "--create", f"task/{CHILD}")
+    (repo / "uv.lock").write_text("patched\n", encoding="utf-8")
+    git(repo, "add", "uv.lock")
+    git(repo, "commit", "-m", f"{CHILD}: patch lock\n\nLLM-Agent: Pi\nTask-ID: {CHILD}\nReviewer: Codex\n")
+    child_head = git(repo, "rev-parse", "HEAD").stdout.strip()
+    git(repo, "push", "--quiet", "origin", f"task/{CHILD}")
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}", frozen)
+    (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
+    git(repo, "add", "owned.txt")
+    git(repo, "commit", "-m", GOOD_MESSAGE)
+    git(
+        repo, "merge", "--no-ff", child_head, "-m",
+        f"{TASK}: compose {CHILD}\n\nLLM-Agent: Claude2\nTask-ID: {TASK}\nReviewer: Codex\n",
+    )
+    status_root = tmp_path / "status-root"
+    (status_root / ".orchestrator").mkdir(parents=True)
+    config = json.loads((REPO_ROOT / ".orchestrator" / "config.example.json").read_text(encoding="utf-8"))
+    config["coordination"]["repositories"]["pantheon"]["repo"] = "example/repo"
+    (status_root / ".orchestrator" / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    child = {
+        "id": CHILD,
+        "owner": "Pi",
+        "reviewer": "Codex",
+        "status": "blocked",
+        "branch": f"task/{CHILD}",
+        "helper_parent": TASK,
+        "frozen_evidence_base_sha": frozen,
+        "review_gate_sha": child_head,
+        "review_gate_target": {"repo_slug": "example/repo", "sha": child_head, "context": "task-review-gate"},
+        "owned_paths": ["uv.lock"],
+    }
+    return status_root, child, git(repo, "rev-parse", "HEAD").stdout.strip()
+
+
+def finalize_with_records(repo: Path, status_root: Path, *tasks: dict) -> subprocess.CompletedProcess[str]:
+    (status_root / "ai-status.json").write_text(json.dumps({"tasks": list(tasks)}), encoding="utf-8")
+    env = {
+        "ORCH_STATUS_ROOT": str(status_root),
+        "PANTHEON_STATUS_ROOT": str(status_root),
+        "ORCH_CONFIG_PATH": str(status_root / ".orchestrator" / "config.json"),
+    }
+    return run(["bash", str(GIT_DIR / "task_finalize.sh"), TASK, "--dry-run"], repo, env=env)
+
+
+def test_task_finalize_prepublication_admits_only_the_canonical_source_child(repo: Path, tmp_path: Path):
+    """The unchanged thin caller reaches the same canonical child rule.
+
+    The parent's own commit and Pi's published child commit pass; the same
+    composition is refused, with its original Task-ID refusal kept, as soon
+    as the record stops naming it a direct child or origin stops publishing
+    the child's head.
+    """
+    status_root, child, _head = compose_source_only_child(repo, tmp_path)
+    parent = {"id": TASK, "owner": "Claude2", "reviewer": "Codex", "status": "in_progress",
+              "branch": f"task/{TASK}"}
+
+    admitted = finalize_with_records(repo, status_root, parent, child)
+    assert admitted.returncode == 0, admitted.stderr
+    assert "dry-run: git push" in admitted.stdout
+
+    unrelated = finalize_with_records(repo, status_root, parent, dict(child, helper_parent="ODP-OTHER-1"))
+    assert unrelated.returncode == 1
+    assert "is not a direct child of ODP-TEST-001" in unrelated.stderr
+    assert f"Task-ID trailer '{CHILD}' does not match '{TASK}'" in unrelated.stderr
+    assert "dry-run: git push" not in unrelated.stdout
+
+    missing = finalize_with_records(repo, status_root, parent)
+    assert missing.returncode == 1
+    assert "has no canonical or archived task record" in missing.stderr
+
+    git(repo, "push", "--quiet", "origin", f":task/{CHILD}")
+    unpublished = finalize_with_records(repo, status_root, parent, child)
+    assert unpublished.returncode == 1
+    assert f"origin does not publish task/{CHILD} at its review-gate head" in unpublished.stderr
+
+
 def test_task_finalize_refuses_a_branch_whose_own_python_fails_lint(repo: Path, tmp_path: Path):
     """The lint preflight refuses here rather than letting CI find it 20 minutes later.
 

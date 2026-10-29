@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from common import load_status, normalize_agent_id
-from multi_repo_registry import repository_local_path, repository_slug, resolve_repository, task_repository_id
+from multi_repo_registry import (
+    repository_local_path,
+    repository_slug,
+    resolve_repository,
+    task_repository_id,
+)
 from provider_runtime import provider_config, provider_config_entry
 from task_archive import TaskResolver
 

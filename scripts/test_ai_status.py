@@ -3531,6 +3531,395 @@ class DeclaredOwnedScopeAdmissionTests(unittest.TestCase):
         self.assertEqual(self.task["review_submission"]["merge_commit"], self.git("rev-parse", "dev"))
 
 
+class ParentChildSourceHandoffTests(unittest.TestCase):
+    """Real synthetic Git and a real bare origin: a source-only child composed into its parent.
+
+    Pi writes the child from its frozen base and publishes its branch; Codex
+    writes the parent's own commit and Claude owns the parent and merges the
+    child's exact head. The child record is what admits Pi's commit -- through
+    the canonical records, active or archived -- and Pi stays an author the
+    parent's reviewer has to be independent of.
+    """
+
+    TASK_ID = "PARENT-001"
+    BRANCH = "task/PARENT-001"
+    CHILD_ID = "CHILD-001"
+    CHILD_BRANCH = "task/CHILD-001"
+    SLUG = "example/repo"
+    CHILD_SCOPE = ["uv.lock", "docs/evidence/sbom.json"]
+
+    git = SourceAuthorReviewIndependenceTests.git
+    pr = SourceAuthorReviewIndependenceTests.pr
+    run_as = SourceAuthorReviewIndependenceTests.run_as
+    assert_refused_without_mutation = SourceAuthorReviewIndependenceTests.assert_refused_without_mutation
+
+    def write(self, task_id: str, subject: str, agent: str, files: dict[str, str]) -> str:
+        for name, text in files.items():
+            (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / name).write_text(text, encoding="utf-8")
+            self.git("add", "--", name)
+        reviewer = "Codex2" if agent != "Codex2" else "Claude"
+        self.git(
+            "commit", "-q", "-m",
+            f"{task_id}: {subject}\n\nLLM-Agent: {agent}\nTask-ID: {task_id}\nReviewer: {reviewer}\n",
+        )
+        return self.git("rev-parse", "HEAD")
+
+    def merge_child(self, head: str) -> str:
+        self.git(
+            "merge", "--no-ff", "-q", "-m",
+            f"{self.TASK_ID}: compose {self.CHILD_ID}\n\nLLM-Agent: Claude\nTask-ID: {self.TASK_ID}\n"
+            "Reviewer: Codex2\n",
+            head,
+        )
+        return self.git("rev-parse", "HEAD")
+
+    def setUp(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="test-parent-child-source-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        self.origin = root / "origin.git"
+        self.repo = root / "work"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "dev", str(self.origin)], check=True)
+        self.repo.mkdir()
+        self.git("init", "-q", "-b", "dev")
+        self.git("config", "user.email", "worker@pantheon.local")
+        self.git("config", "user.name", "Worker")
+        (self.repo / "base.txt").write_text("base\n", encoding="utf-8")
+        self.git("add", "base.txt")
+        self.git("commit", "-q", "-m", "bootstrap")
+        self.git("remote", "add", "origin", str(self.origin))
+        self.git("push", "-q", "origin", "dev")
+        self.git("update-ref", "refs/remotes/origin/dev", "dev")
+        self.frozen = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-b", self.CHILD_BRANCH)
+        self.child_head = self.write(self.CHILD_ID, "patch dependencies", "Pi", {"uv.lock": "patched\n"})
+        self.git("push", "-q", "origin", self.CHILD_BRANCH)
+        self.git("checkout", "-q", "-b", self.BRANCH, self.frozen)
+        self.write(self.TASK_ID, "parent work", "Codex", {"app.txt": "parent\n"})
+        self.head = self.merge_child(self.child_head)
+        self.child = {
+            "id": self.CHILD_ID,
+            "title": "Source-only dependency patch for the parent",
+            "owner": "Pi",
+            "reviewer": "Codex",
+            "status": "blocked",
+            "waiting_for": "Codex",
+            "branch": self.CHILD_BRANCH,
+            "helper_parent": self.TASK_ID,
+            "frozen_evidence_base_sha": self.frozen,
+            "review_gate_sha": self.child_head,
+            "review_gate_target": {"repo_slug": self.SLUG, "sha": self.child_head, "context": "task-review-gate"},
+            "owned_paths": list(self.CHILD_SCOPE),
+            "depends_on": [],
+        }
+        self.state: dict[str, Any] = {
+            "tasks": [
+                {
+                    "id": self.TASK_ID,
+                    "title": "Parent composing a source-only child",
+                    "owner": "Claude",
+                    "reviewer": "Codex2",
+                    "status": "in_progress",
+                    "branch": self.BRANCH,
+                    "depends_on": [],
+                    "artifacts": [],
+                    "acceptance": [],
+                    "next": "Finalize",
+                    "last_update": "2026-10-29T00:00:00Z",
+                },
+                self.child,
+            ],
+            "handoffs": [],
+            "blockers": [],
+            "agents": [],
+            "workload": {},
+            "workload_summary": {},
+        }
+        self.task = self.state["tasks"][0]
+        self.archived: dict[str, dict[str, Any]] = {}
+        config = json.loads(json.dumps(ai_status.merged_orchestrator_config()))
+        config["agents"]["pi"] = dict(config["agents"]["codex2"], id="pi", display_name="Pi", account_pool="pi_chatgpt")
+        config["coordination"]["repositories"]["pantheon"]["repo"] = self.SLUG
+        self.config = config
+
+    def repo_patches(self, *, actor: str, head: str | None = None, **kwargs: Any) -> list[Any]:
+        return [
+            *SourceAuthorReviewIndependenceTests.repo_patches(self, actor=actor, head=head, **kwargs),
+            mock.patch.object(ai_status, "merged_orchestrator_config", return_value=self.config),
+            mock.patch.object(ai_status, "status_runtime_config", return_value=self.config),
+            # The canonical records: the live board, then the archive.
+            mock.patch.object(dispatch_policy, "load_status", side_effect=lambda _config: self.state),
+            mock.patch.object(
+                dispatch_policy.TaskResolver, "get",
+                autospec=True,
+                side_effect=lambda resolver, task_id: (
+                    json.loads(json.dumps(resolver._active[task_id]))
+                    if task_id in resolver._active
+                    else json.loads(json.dumps(self.archived[task_id])) if task_id in self.archived else None
+                ),
+            ),
+        ]
+
+    def submit(self, head: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.run_as(
+                "Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready"], head=head, **kwargs
+            )
+        return self.task["review_submission"]
+
+    def refuse_submission(self, pattern: str, head: str | None = None, **kwargs: Any) -> None:
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.assert_refused_without_mutation(
+                "Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready"], pattern,
+                head=head, **kwargs,
+            )
+
+    def block_reason(self, reviewer: str, head: str | None = None) -> str | None:
+        patches = self.repo_patches(actor=reviewer, head=head)
+        for patch in patches:
+            patch.start()
+        try:
+            return ai_status.review_source_independence_block_reason(self.task, reviewer, head or self.head)
+        finally:
+            for patch in reversed(patches):
+                patch.stop()
+
+    def expected_binding(self) -> dict[str, Any]:
+        return {
+            "task_id": self.CHILD_ID,
+            "branch": self.CHILD_BRANCH,
+            "source_base": self.frozen,
+            "source_head": self.child_head,
+            "owned_paths": list(self.CHILD_SCOPE),
+            "commits": [[self.child_head, "Pi"]],
+        }
+
+    def test_first_open_admits_the_bounded_child_and_keeps_pi_an_author(self) -> None:
+        child_before = json.loads(json.dumps(self.child))
+        submission = self.submit()
+
+        self.assertEqual(self.task["status"], "review")
+        # Claude only merged the child in; Codex and Pi wrote the range.
+        self.assertEqual(sorted(submission["source_authors"]), ["Codex", "Pi"])
+        self.assertEqual(submission["source_helpers"], [self.expected_binding()])
+        self.assertEqual(submission["submitted_by"], "Claude")
+        # Recognizing the source changes nothing about the child itself.
+        self.assertEqual(self.child, child_before)
+
+        # Every source pool, the submitter and the owner stay excluded.
+        for reviewer, pattern in (
+            ("Pi", r"reviewer Pi is itself a source author"),
+            ("Codex", r"reviewer Codex is itself a source author"),
+            ("Claude2", r"reviewer Claude2 shares account pool claude_main"),
+        ):
+            self.assertRegex(str(self.block_reason(reviewer)), pattern)
+        self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review"])
+        self.assertEqual((self.task["status"], self.task["approved_head"]), ("review_approved", self.head))
+        self.assertEqual(self.child, child_before)
+
+    def test_every_canonical_fact_of_the_child_is_required_on_first_open(self) -> None:
+        other_head = self.git("commit-tree", f"{self.child_head}^{{tree}}", "-p", self.frozen, "-m", "x")
+        cases: list[tuple[str, dict[str, Any], str]] = [
+            ("unrelated child", {"helper_parent": "PARENT-OTHER"}, r"not a direct child of PARENT-001"),
+            ("bare parent link only", {"owned_paths": None, "frozen_evidence_base_sha": None},
+             r"declares no literal nonempty owned_paths"),
+            ("wrong repository", {"repository": "front_ai_trading_system"}, r"not in the registered repository"),
+            ("missing scope", {"owned_paths": []}, r"declares no literal nonempty owned_paths"),
+            ("non-literal scope", {"owned_paths": ["uv.lock", 7]}, r"declares no literal nonempty owned_paths"),
+            ("scope missing the changed path", {"owned_paths": ["docs/evidence/sbom.json"]},
+             r"outside its owned_paths: 'uv.lock'"),
+            ("whole-tree scope", {"owned_paths": ["."]}, r"has no usable literal owned_paths"),
+            ("wrong frozen base", {"frozen_evidence_base_sha": self.head}, r"is not an ancestor of its own head"),
+            ("abbreviated base", {"frozen_evidence_base_sha": self.frozen[:12]}, r"no complete frozen base"),
+            ("wrong head", {"review_gate_sha": other_head,
+                            "review_gate_target": {"repo_slug": self.SLUG, "sha": other_head,
+                                                   "context": "task-review-gate"}},
+             r"origin does not publish task/CHILD-001 at its review-gate head"),
+            ("gate for another head", {"review_gate_target": {"repo_slug": self.SLUG, "sha": other_head,
+                                                              "context": "task-review-gate"}},
+             r"recorded review gate is not the task-review-gate"),
+            ("gate in another repository", {"review_gate_target": {"repo_slug": "other/repo",
+                                                                   "sha": self.child_head,
+                                                                   "context": "task-review-gate"}},
+             r"recorded review gate is not the task-review-gate"),
+            ("no recorded branch", {"branch": None}, r"names no branch of its own"),
+            ("branch never published", {"branch": "task/CHILD-001-unpublished"},
+             r"origin does not publish task/CHILD-001-unpublished"),
+        ]
+        for name, fields, pattern in cases:
+            with self.subTest(name):
+                original = json.loads(json.dumps(self.child))
+                for key, value in fields.items():
+                    if value is None:
+                        self.child.pop(key, None)
+                    else:
+                        self.child[key] = value
+                try:
+                    self.refuse_submission(pattern)
+                finally:
+                    self.child.clear()
+                    self.child.update(original)
+
+        # Nothing a caller says replaces the record: an unknown task is refused.
+        self.state["tasks"].remove(self.child)
+        self.refuse_submission(r"names task 'CHILD-001', which is not a source child.*no canonical or archived")
+        self.state["tasks"].append(self.child)
+
+        # The child published only on some other remote, or moved on origin.
+        self.git("push", "-q", "origin", f":{self.CHILD_BRANCH}")
+        self.git("remote", "add", "mirror", str(self.origin))
+        self.refuse_submission(r"origin does not publish task/CHILD-001 at its review-gate head")
+        self.git("push", "-q", "origin", f"{other_head}:refs/heads/{self.CHILD_BRANCH}")
+        self.refuse_submission(r"origin does not publish task/CHILD-001 at its review-gate head")
+        self.git("push", "-q", "-f", "origin", f"{self.child_head}:refs/heads/{self.CHILD_BRANCH}")
+        self.submit()
+        self.assertEqual(self.task["status"], "review")
+
+    def test_a_copied_child_commit_outside_its_range_and_hidden_drift_are_refused(self) -> None:
+        # Pi's change cherry-picked onto the parent is not the frozen commit.
+        self.git("checkout", "-q", "-B", self.BRANCH, self.frozen)
+        self.write(self.TASK_ID, "parent work", "Codex", {"app.txt": "parent\n"})
+        self.git("cherry-pick", "--allow-empty", self.child_head)
+        copied = self.git("rev-parse", "HEAD")
+        self.refuse_submission(r"is not an ancestor of delivery head", head=copied)
+
+        # The parent later rewrites a child-owned path: that is the parent's
+        # own change, judged by the parent's scope, never by the child's.
+        self.git("checkout", "-q", "-B", self.BRANCH, self.head)
+        drift = self.write(self.TASK_ID, "touch the lock", "Codex", {"uv.lock": "parent edit\n"})
+        self.task["owned_paths"] = ["app.txt"]
+        self.refuse_submission(r"outside the declared owned_paths: 'uv.lock'", head=drift)
+        self.task.pop("owned_paths")
+
+    def test_same_head_merged_replay_keeps_the_bounds_after_both_branches_are_deleted(self) -> None:
+        opened = self.submit()
+        self.task["status"] = "in_progress"
+        self.git("checkout", "-q", "dev")
+        self.git("merge", "--no-ff", "-q", "-m", "Merge pull request #4242", self.head)
+        merge_commit = self.git("rev-parse", "dev")
+        self.git("update-ref", "refs/remotes/origin/dev", "dev")
+        self.git("checkout", "-q", "--detach", self.head)
+        self.git("branch", "-D", self.BRANCH, self.CHILD_BRANCH)
+        self.git("push", "-q", "origin", f":{self.CHILD_BRANCH}")
+        merged = dict(
+            self.pr(self.head), state="MERGED", mergedAt="2026-10-29T01:00:00Z", mergeCommit={"oid": merge_commit},
+            statusCheckRollup=[
+                {"__typename": "CheckRun", "name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ],
+        )
+
+        recovered = self.submit(pr=merged)
+        self.assertEqual(recovered["merge_commit"], merge_commit)
+        self.assertEqual(recovered["source_base"], opened["source_base"])
+        self.assertEqual(recovered["source_helpers"], [self.expected_binding()])
+        self.assertIn("Pi", recovered["source_authors"])
+        self.assertRegex(str(self.block_reason("Pi")), r"reviewer Pi is itself a source author")
+        self.assertIsNone(self.block_reason("Codex2"))
+
+        # A head first submitted already merged has no recorded publication,
+        # and the deleted branch cannot provide one now.
+        self.task.pop("review_submission")
+        self.refuse_submission(r"origin does not publish task/CHILD-001", pr=merged)
+
+    def test_an_archived_child_record_still_answers(self) -> None:
+        self.state["tasks"].remove(self.child)
+        self.archived[self.CHILD_ID] = json.loads(json.dumps(self.child))
+        self.submit()
+        self.assertEqual(self.task["review_submission"]["source_helpers"], [self.expected_binding()])
+        self.assertRegex(str(self.block_reason("Pi")), r"reviewer Pi is itself a source author")
+
+        self.archived[self.CHILD_ID]["helper_parent"] = "PARENT-OTHER"
+        self.assertRegex(str(self.block_reason("Codex2")), r"refused: its record is not a direct child")
+
+    def test_canonical_or_recorded_drift_after_submission_fails_closed_on_a_warm_cache(self) -> None:
+        self.submit()
+        submission = self.task["review_submission"]
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.assertIsNone(self.block_reason("Codex2"))  # warms the cache
+            other = self.git("commit-tree", f"{self.child_head}^{{tree}}", "-p", self.frozen, "-m", "y")
+            for name, fields, pattern in (
+                ("parent", {"helper_parent": "PARENT-OTHER"}, r"not a direct child"),
+                ("repository", {"repository": "front_ai_trading_system"}, r"registered repository"),
+                ("scope", {"owned_paths": ["uv.lock", "NOTICE.md"]}, r"no longer matches the bound recorded"),
+                ("frozen base", {"frozen_evidence_base_sha": self.child_head}, r"no longer matches the bound"),
+                ("replacement head", {"review_gate_sha": other,
+                                      "review_gate_target": {"repo_slug": self.SLUG, "sha": other,
+                                                             "context": "task-review-gate"}},
+                 r"no longer matches the bound recorded"),
+                ("branch", {"branch": "task/CHILD-001-v2"}, r"no longer matches the bound recorded"),
+            ):
+                with self.subTest(name):
+                    original = json.loads(json.dumps(self.child))
+                    self.child.update(fields)
+                    try:
+                        self.assertRegex(str(self.block_reason("Codex2")), pattern)
+                        self.assert_refused_without_mutation(
+                            "Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], pattern
+                        )
+                    finally:
+                        self.child.clear()
+                        self.child.update(original)
+            self.assertIsNone(self.block_reason("Codex2"))
+
+            genuine = json.loads(json.dumps(submission["source_helpers"]))
+            for name, helpers, pattern in (
+                ("bound dropped", [], r"source child of this delivery: no initial publication of its branch"),
+                ("author rewritten", [dict(genuine[0], commits=[[self.child_head, "Codex2"]])],
+                 r"not the bounds the delivery scan"),
+                ("bound widened", [dict(genuine[0], owned_paths=["uv.lock", "docs/evidence/sbom.json", "app"])],
+                 r"no longer matches the bound recorded"),
+                ("unknown child", [*genuine, dict(genuine[0], task_id="CHILD-404")],
+                 r"recorded child source 'CHILD-404' is refused"),
+                ("not a list", {"CHILD-001": genuine[0]}, r"not a list of bounds"),
+            ):
+                with self.subTest(name):
+                    submission["source_helpers"] = helpers
+                    try:
+                        self.assertRegex(str(self.block_reason("Codex2")), pattern)
+                    finally:
+                        submission["source_helpers"] = genuine
+            self.assertIsNone(self.block_reason("Codex2"))
+
+    def test_a_new_head_starts_over_and_has_to_prove_the_child_again(self) -> None:
+        self.submit()
+        newer = self.write(self.TASK_ID, "follow-up", "Claude", {"app.txt": "follow-up\n"})
+        self.git("push", "-q", "origin", f":{self.CHILD_BRANCH}")
+        self.refuse_submission(r"origin does not publish task/CHILD-001", head=newer)
+        self.git("push", "-q", "origin", f"{self.child_head}:refs/heads/{self.CHILD_BRANCH}")
+        resubmitted = self.submit(head=newer)
+        self.assertEqual(resubmitted["source_head"], newer)
+        self.assertEqual(resubmitted["source_helpers"], [self.expected_binding()])
+
+    def test_re_review_failover_and_restore_ask_the_same_rule(self) -> None:
+        self.submit()
+        self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review"])
+        self.assertEqual(self.task["status"], "review_approved")
+
+        # Failover chooses among candidates by the same block reason.
+        with mock.patch.object(dispatch_policy, "load_status", side_effect=lambda _config: self.state):
+            with mock.patch.object(dispatch_policy, "repository_local_path", return_value=self.repo):
+                blocked = {
+                    candidate: bool(dispatch_policy.review_source_block_reason(self.config, self.task, candidate))
+                    for candidate in ("Pi", "Codex", "Claude", "Claude2", "Codex2")
+                }
+        self.assertEqual(blocked, {"Pi": True, "Codex": True, "Claude": True, "Claude2": True, "Codex2": False})
+
+        # A restore re-grants the approval only while the child still answers.
+        self.task["status"] = "in_progress"
+        self.task.pop("approved_head", None)
+        self.task.setdefault("review_notes_zh", "獨立審查通過")
+        for handoff in self.state["handoffs"]:
+            handoff["status"] = "done"  # the owner already took the approval handoff
+        self.child["helper_parent"] = "PARENT-OTHER"
+        self.assert_refused_without_mutation(
+            "Claude", ai_status.command_restore_approved, [self.TASK_ID, "Spurious downgrade"],
+            r"not a direct child",
+        )
+        self.child["helper_parent"] = self.TASK_ID
+        self.run_as("Claude", ai_status.command_restore_approved, [self.TASK_ID, "Spurious downgrade"])
+        self.assertEqual(self.task["status"], "review_approved")
+
+
 class ToolingCloseoutTests(unittest.TestCase):
     """Real Git, identity, scope and archival checks; only GitHub is synthetic."""
 
