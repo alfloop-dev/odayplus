@@ -58,6 +58,10 @@ import {
 
 
 // Presentation loads at the original open/admitted branch; header and workspace state stay here.
+const CanonicalIntakeCommandProvider = dynamic<ComponentProps<typeof import("./network/intake/useCanonicalIntakeCommand").CanonicalIntakeCommandProvider>>(
+  () => import("./network/intake/useCanonicalIntakeCommand").then((mod) => mod.CanonicalIntakeCommandProvider),
+  { ssr: false },
+);
 const OperatorShellCommandPalette = dynamic<ComponentProps<typeof import("./OperatorShellCommandPalette").OperatorShellCommandPalette>>(
   () => import("./OperatorShellCommandPalette").then((mod) => mod.OperatorShellCommandPalette),
   { ssr: false },
@@ -407,10 +411,6 @@ export function OperatorConsole({
   const [liveGovernanceDecisions, setLiveGovernanceDecisions] = useState<any[]>([]);
   const [liveGovernanceAuditRows, setLiveGovernanceAuditRows] = useState<any[]>([]);
 
-  const getSecurityHeaders = (roleId: OperatorRoleId) => {
-    return operatorSecurityHeaders(roleId);
-  };
-
   const applyOperatorEnvelope = (payload: unknown, allowFixtureFallback: boolean,
     admission: typeof import("./operatorBootstrapPayload")) => {
     const nextEnvelope = normalizeShellEnvelope(payload, {
@@ -423,34 +423,16 @@ export function OperatorConsole({
         ? nextEnvelope.notifications
         : notifications,
     );
-    // `nextEnvelope.approvals` is an alias of the Today decision cards, not a
-    // governance approval feed: it carries no module / requestor / submittedAt.
-    // The Govern workspace binds to /api/v1/operator/governance/snapshot, so
-    // only explicitly governance-shaped bootstrap side channels are forwarded,
-    // and always through the governance normalizers. Each envelope replaces the
-    // previous one, so a side channel the new envelope does not carry is
-    // cleared: rows from a superseded envelope are stale governance state.
-    setLiveApprovals(
-      Array.isArray(record?.governanceApprovals)
-        ? admission.normalizeGovernanceApprovals(record.governanceApprovals)
-        : [],
-    );
+    const governance = admission.normalizeBootstrapGovernance(record);
+    setLiveApprovals(governance.approvals);
 
     if (Array.isArray(record?.issues)) {
       setLiveIssues(record.issues as Issue[]);
     } else if (!allowFixtureFallback) {
       setLiveIssues([]);
     }
-    setLiveGovernanceDecisions(
-      Array.isArray(record?.governanceDecisions)
-        ? admission.normalizeGovernanceDecisionRows(record.governanceDecisions)
-        : [],
-    );
-    setLiveGovernanceAuditRows(
-      Array.isArray(record?.governanceAuditRows)
-        ? admission.normalizeGovernanceAuditRows(record.governanceAuditRows)
-        : [],
-    );
+    setLiveGovernanceDecisions(governance.decisions);
+    setLiveGovernanceAuditRows(governance.auditRows);
   };
 
   const rolesForShell = useMemo(() => {
@@ -644,6 +626,18 @@ export function OperatorConsole({
     return () => pinAuthenticatedRead(subject, current);
   }, [activeRoleId, bootstrapAuthMode, shellDataStatus, pinAuthenticatedRead]);
 
+  // One captured native command survives workspace presentation changes.
+  // This key follows verified account/persona/grants, never the current view.
+  // Browser scope hints only invalidate; the API remains the authority.
+  const canonicalCommandScope = !fixturesAllowed && bootstrapAuthMode === "authenticated" && shellDataStatus === "ready"
+    && bootstrapAccount.current !== null && bootstrapPersona.current?.roleId === activeRoleId
+    && shellEnvelope.navigation.allowedWorkspaces.includes("network")
+    && shellEnvelope.navigation.allowedTabs?.network?.some((tab) => tab === "areas" || tab === "radar")
+    ? JSON.stringify([bootstrapSequence.current, bootstrapPersona.current, shellEnvelope.navigation.allowedTabs.network]) : null;
+  const canonicalIntakeReadContext = useMemo(() => canonicalCommandScope === null ? null : {
+    contextKey: canonicalCommandScope, headers: operatorSecurityHeaders(activeRoleId), fetchImpl: fetch,
+  }, [activeRoleId, canonicalCommandScope]);
+
   useEffect(() => {
     if (!hasHydratedPreferences) return;
     const adopted = bootstrapAdoptedRole.current;
@@ -749,7 +743,7 @@ export function OperatorConsole({
         } else {
           setBootstrapAuthMode("fixture");
         }
-        headers = { ...getSecurityHeaders(activeRoleId), "X-Correlation-Id": correlationId };
+        headers = { ...operatorSecurityHeaders(activeRoleId), "X-Correlation-Id": correlationId };
         const roleIntent = bootstrapRoleIntent.current;
         const persona = bootstrapPersona.current;
         if (subject !== null && !(roleIntent?.subject === subject || persona?.subject === subject)) delete headers["X-Operator-Role"];
@@ -872,7 +866,7 @@ export function OperatorConsole({
       try {
         if (!await pinAuthenticatedRead(subject, current)) return;
         const res = await fetch("/api/v1/operator/shell/tasks", {
-          headers: getSecurityHeaders(activeRoleId),
+          headers: operatorSecurityHeaders(activeRoleId),
         });
         if (!await pinAuthenticatedRead(subject, current)) return;
         if (!res.ok) throw new Error(`Task center API returned ${res.status}`);
@@ -938,7 +932,7 @@ export function OperatorConsole({
         if (!current()) throw superseded();
         const client = createOdpApiClient({
           baseUrl: window.location.origin,
-          defaultHeaders: getSecurityHeaders(activeRoleId),
+          defaultHeaders: operatorSecurityHeaders(activeRoleId),
           fetchImpl: async (input, init) => {
             if (!await pinAuthenticatedRead(subject, current)) throw superseded();
             const response = await fetch(input, init);
@@ -1247,7 +1241,7 @@ export function OperatorConsole({
     try {
       if (!await pinAuthenticatedRead(subject, current)) return;
       const freshRes = await fetch("/api/v1/operator/bootstrap", {
-        headers: getSecurityHeaders(activeRoleId),
+        headers: operatorSecurityHeaders(activeRoleId),
       });
       if (!await pinAuthenticatedRead(subject, current)) return;
       if (!freshRes.ok) {
@@ -1418,7 +1412,7 @@ export function OperatorConsole({
               {shellView !== "notifications" && isNotificationOpen && canRenderWorkspace ? (
                 <ShellNotificationCenter
                   scopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current?.roleId, activeRoleId])}
-                  headers={getSecurityHeaders(activeRoleId)}
+                  headers={operatorSecurityHeaders(activeRoleId)}
                   createAuthenticatedReadGuard={createAuthenticatedReadGuard}
                   allowFixtureFallback={fixturesAllowed && bootstrapAuthMode === "fixture" && bootstrapAccount.current === null}
                   fixtureRows={liveNotifications}
@@ -1511,6 +1505,8 @@ export function OperatorConsole({
         </button>
       </div>
 
+      <CanonicalIntakeCommandProvider context={canonicalIntakeReadContext} createAuthenticatedReadGuard={createAuthenticatedReadGuard}>
+      {(boundCanonicalReadContext) => (
       <main
         className={[
           styles.shell,
@@ -1532,7 +1528,7 @@ export function OperatorConsole({
           <ShellNotificationPage preferencesPage={notificationPreferences} reportId={notificationReportId}
             scopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current?.roleId, activeRoleId])}
             expectedSubjectId={bootstrapAccount.current}
-            headers={getSecurityHeaders(activeRoleId)}
+            headers={operatorSecurityHeaders(activeRoleId)}
             createAuthenticatedReadGuard={createAuthenticatedReadGuard}
             allowFixtureFallback={fixturesAllowed && bootstrapAuthMode === "fixture" && bootstrapAccount.current === null}
             fixtureRows={liveNotifications}
@@ -1575,6 +1571,7 @@ export function OperatorConsole({
           <NetworkFindAreasWorkspace
             activeRoleId={activeRoleId}
             createAuthenticatedReadGuard={createAuthenticatedReadGuard}
+            canonicalIntakeReadContext={boundCanonicalReadContext}
             allowedTabIds={fixturesAllowed ? undefined : shellEnvelope.navigation.allowedTabs?.network ?? []}
             onReviewDecisionConfirmed={async () => {
               try { await refreshOperatorEnvelope(); }
@@ -1620,6 +1617,8 @@ export function OperatorConsole({
           <OperatorWorkspaceFallback activeRoleLabel={activeRole.label} workspace={activeWorkspace} workspaceId={activeWorkspaceId} />
         )}
       </main>
+      )}
+      </CanonicalIntakeCommandProvider>
 
       {activeStoreOpsDialog ? (
       <StoreOpsWorkflowDialogs

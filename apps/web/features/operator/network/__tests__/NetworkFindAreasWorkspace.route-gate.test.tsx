@@ -1,16 +1,26 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ComponentProps } from "react";
+import { useMemo, type ComponentProps } from "react";
 import type { ApiBinding } from "../../../../src/lib/api/binding";
 import { NetworkFindAreasWorkspace as Workspace } from "../../NetworkFindAreasWorkspace";
 import { NETWORK_TAB_IDS } from "../networkUrlState";
 import { CanonicalIntakeCasePicker } from "../intake/CanonicalIntakeCasePicker";
+import { CanonicalIntakeCommandProvider } from "../intake/useCanonicalIntakeCommand";
+import { operatorSecurityHeaders, operatorSubjectId } from "../../operatorSecurityHeaders";
 
 // Existing route/data-gate cases explicitly model all read grants. The
 // principal-projection cases below provide their exact bootstrap metadata.
 function NetworkFindAreasWorkspace(props: ComponentProps<typeof Workspace>) {
-  return <Workspace allowedTabIds={NETWORK_TAB_IDS} {...props} />;
+  // The isolated native controls explicitly compose the original owner that
+  // production now mounts in Console. They never manufacture a session grant.
+  const role = props.activeRoleId ?? "ops-lead";
+  const key = JSON.stringify([role, operatorSubjectId(role), props.allowedTabIds ?? NETWORK_TAB_IDS,
+    window.sessionStorage.getItem("oday.operator.tenant")]);
+  const context = useMemo(() => radarProps.showNativePicker
+    ? { fetchImpl: fetch, contextKey: key, headers: operatorSecurityHeaders(role) } : null, [key, role]);
+  const workspace = <Workspace allowedTabIds={NETWORK_TAB_IDS} {...props} canonicalIntakeReadContext={context} />;
+  return context ? <CanonicalIntakeCommandProvider context={context}>{workspace}</CanonicalIntakeCommandProvider> : workspace;
 }
 import type { Candidate, OperatorHeatZone } from "../../types";
 

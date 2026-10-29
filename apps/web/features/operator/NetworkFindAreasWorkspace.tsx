@@ -29,7 +29,7 @@ import {
 import styles from "./networkFindAreas.module.css";
 import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStore, SiteReview } from "./types";
 import { ListingRadarPanel } from "./network/ListingRadarPanel";
-import { CanonicalIntakeCommandProvider } from "./network/intake/useCanonicalIntakeCommand";
+import { bindCanonicalIntakeFetch, type CanonicalIntakeReadContext } from "./network/intake/canonicalIntakeTransport";
 import { CanonicalIntakeCommandStatus } from "./network/intake/CanonicalIntakeCasePicker";
 import { buildDurableDetailHref } from "./network/intake/AssistedIntakeSection";
 import { parseUrlState } from "./network/intake/urlState";
@@ -191,6 +191,8 @@ export type NetworkFindAreasWorkspaceProps = {
    * mount always supplies it. Optional only for standalone renderer/unit and
    * explicit POC callers; it never grants tabs, roles, or API permissions. */
   createAuthenticatedReadGuard?: (current: () => boolean) => NetworkReadSessionGuard;
+  /** Same Console-owned command binding used by its single command provider. */
+  canonicalIntakeReadContext?: CanonicalIntakeReadContext | null;
   trackedHeatZoneIds?: string[];
   /**
    * Active operator console role. Binds the Network Review read/decide security
@@ -663,6 +665,7 @@ export function NetworkFindAreasWorkspace({
   activeRoleId = DEFAULT_OPERATOR_ROLE_ID,
   allowedTabIds,
   createAuthenticatedReadGuard,
+  canonicalIntakeReadContext,
   callbacks,
   candidates: candidatesInput,
   heatZones: heatZonesInput,
@@ -725,38 +728,17 @@ export function NetworkFindAreasWorkspace({
     return async () => current() && (!authenticated || await authenticated()) && current();
   }, []);
 
-  // The existing native command packet belongs to the account/context, not
-  // an inbox query. Job polls retain their own location key and cancellation.
-  const nativeReadFetch = useMemo<typeof fetch>(() => {
-    const current = snapshotReadGuard(false);
-    const requireCurrent = async () => {
-      if (!await current()) throw new Error("Network read account or persona changed");
-    };
-    const guardBody = (response: Response): Response => {
-      const json = response.json.bind(response);
-      const text = response.text.bind(response);
-      const clone = response.clone.bind(response);
-      response.json = async () => { await requireCurrent(); const body: unknown = await json(); await requireCurrent(); return body; };
-      response.text = async () => { await requireCurrent(); const body = await text(); await requireCurrent(); return body; };
-      response.clone = () => guardBody(clone());
-      return response;
-    };
-    return async (input, init) => {
-      await requireCurrent();
-      const response = await fetchImpl(input, init);
-      await requireCurrent();
-      return guardBody(response);
-    };
-  }, [snapshotReadGuard, fetchImpl, navigationContextKey, createAuthenticatedReadGuard]);
+  // Polling belongs to this mounted page. Captured commands use the separate
+  // Console lease supplied below, so leaving Network cannot cancel a POST.
+  const nativeReadFetch = useMemo(() => bindCanonicalIntakeFetch(fetchImpl, snapshotReadGuard(false)),
+    [snapshotReadGuard, fetchImpl, navigationContextKey, createAuthenticatedReadGuard]);
   const [networkNavigationGeneration, setNetworkNavigationGeneration] = useState<number | null>(null);
   const [scoringNavigationGeneration, setScoringNavigationGeneration] = useState<number | null>(null);
   const [rebalanceNavigationGeneration, setRebalanceNavigationGeneration] = useState<number | null>(null);
   const [reviewsNavigationGeneration, setReviewsNavigationGeneration] = useState<number | null>(null);
   const [navigationError, setNavigationError] = useState<string | null>(null);
   const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId, navigationContextKey]);
-  const nativeCommandContext = !fixturesAllowed && canReadListings ? {
-    fetchImpl: nativeReadFetch, contextKey: navigationContextKey, headers: NETWORK_OPERATOR_HEADERS,
-  } : null;
+  const nativeCommandContext = !fixturesAllowed && canReadListings ? canonicalIntakeReadContext ?? null : null;
   const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
   const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : EMPTY_HEAT_ZONES);
   const listings = listingsInput ?? (fixturesAllowed ? LISTING_FIXTURES : EMPTY_LISTINGS);
@@ -2683,7 +2665,7 @@ export function NetworkFindAreasWorkspace({
    */
   if (intakeDetailOpen) {
     return (
-      <CanonicalIntakeCommandProvider context={nativeCommandContext}>
+      <>
       <section
         className={styles.workspace}
         data-intake-detail-open="true"
@@ -2694,20 +2676,20 @@ export function NetworkFindAreasWorkspace({
               {listingMergeDialog}
         {listingArchiveDialog}
       </section>
-      <CanonicalIntakeCommandStatus />
-      </CanonicalIntakeCommandProvider>
+      {nativeCommandContext ? <CanonicalIntakeCommandStatus /> : null}
+      </>
     );
   }
 
   if (activeTab < 0) {
-    return <CanonicalIntakeCommandProvider context={nativeCommandContext}>
+    return <>
       <section role="status">目前身分沒有可讀取的 Network 分頁。</section>
-      <CanonicalIntakeCommandStatus />
-    </CanonicalIntakeCommandProvider>;
+      {nativeCommandContext ? <CanonicalIntakeCommandStatus /> : null}
+    </>;
   }
 
   return (
-    <CanonicalIntakeCommandProvider context={nativeCommandContext}>
+    <>
     <section className={styles.workspace} data-screen-label="Network 展店與店網" data-testid="network-find-areas-workspace">
       {/* Package 10 S05: one row — title, flow summary, four truthful KPI chips. */}
       <header className={styles.header} data-testid="network-header">
@@ -2933,8 +2915,8 @@ export function NetworkFindAreasWorkspace({
           onClose={() => setAreaPlanningRequest(null)} /> : null}
         {listingArchiveDialog}
     </section>
-    <CanonicalIntakeCommandStatus />
-    </CanonicalIntakeCommandProvider>
+    {nativeCommandContext ? <CanonicalIntakeCommandStatus /> : null}
+    </>
   );
 }
 

@@ -1,7 +1,8 @@
 "use client";
 
 import { createContext, createElement, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { CanonicalIntakeReadError, type CanonicalIntakeReadContext } from "./canonicalIntakeReadClient";
+import { bindCanonicalIntakeFetch, CanonicalIntakeReadError, type CanonicalIntakeReadContext } from "./canonicalIntakeTransport";
+import { operatorSubjectId } from "../../operatorSecurityHeaders";
 
 type Receipt = { audit_event_id: string; correlation_id: string };
 type Captured = { source: symbol; description: string;
@@ -85,14 +86,32 @@ function useCommandOwner(context: CanonicalIntakeReadContext | null) {
 
 const CommandOwner = createContext<ReturnType<typeof useCommandOwner> | null>(null);
 
-/** One account-bound owner survives the workspace's dialog and tab presentation. */
-export function CanonicalIntakeCommandProvider({ context, children }: {
-  context: CanonicalIntakeReadContext | null; children: ReactNode;
+/** One Console account-bound owner survives workspace, dialog and tab presentation. */
+export function CanonicalIntakeCommandProvider({ context, createAuthenticatedReadGuard, children }: {
+  context: CanonicalIntakeReadContext | null;
+  createAuthenticatedReadGuard?: (current: () => boolean) => () => Promise<boolean>;
+  children: ReactNode | ((binding: CanonicalIntakeReadContext | null) => ReactNode);
 }) {
-  const binding = useMemo(() => context ? { fetchImpl: context.fetchImpl, contextKey: context.contextKey, headers: context.headers } : null,
-    [context?.fetchImpl, context?.contextKey, context?.headers]);
+  // Browser hints can invalidate the production binding, never grant access.
+  const contextKey = context === null ? "" : createAuthenticatedReadGuard ? JSON.stringify([
+    context.contextKey, operatorSubjectId(), typeof window === "undefined" ? null : window.sessionStorage.getItem("oday.operator.tenant"),
+  ]) : context.contextKey;
+  const raw = useMemo(() => context ? { fetchImpl: context.fetchImpl, contextKey, headers: context.headers } : null,
+    [context?.fetchImpl, contextKey, context?.headers]);
+  const lease = useRef({ raw, factory: createAuthenticatedReadGuard, mounted: true });
+  lease.current.raw = raw; lease.current.factory = createAuthenticatedReadGuard;
+  useEffect(() => {
+    lease.current.mounted = true;
+    return () => { lease.current.mounted = false; };
+  }, []);
+  const binding = useMemo(() => {
+    if (!raw) return null;
+    const current = createAuthenticatedReadGuard?.(() => lease.current.mounted && lease.current.raw === raw
+      && lease.current.factory === createAuthenticatedReadGuard);
+    return current ? { ...raw, fetchImpl: bindCanonicalIntakeFetch(raw.fetchImpl, current) } : raw;
+  }, [raw, createAuthenticatedReadGuard]);
   const owner = useCommandOwner(binding);
-  return createElement(CommandOwner.Provider, { value: owner }, children);
+  return createElement(CommandOwner.Provider, { value: owner }, typeof children === "function" ? children(binding) : children);
 }
 
 export function useCanonicalIntakeCommandState() {

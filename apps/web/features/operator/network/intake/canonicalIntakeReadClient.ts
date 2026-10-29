@@ -5,11 +5,8 @@ import type {
   DuplicateProposal, IdentityReviewRequest, ListingConfirmation, MatchCaseSummary, MergeProposal, NativeAssistedEntryCommand, SplitProposal, SubmitCanonicalIntakeRequest,
 } from "@oday-plus/openapi-client";
 
-export type CanonicalIntakeReadContext = {
-  fetchImpl: typeof fetch;
-  contextKey: string;
-  headers: HeadersInit;
-};
+import { CanonicalIntakeReadError, type CanonicalIntakeReadContext } from "./canonicalIntakeTransport";
+export { CanonicalIntakeReadError, type CanonicalIntakeReadContext } from "./canonicalIntakeTransport";
 
 // The native generated state vocabulary includes CANCELLED; the assisted
 // workflow's older hand-written label map does not cover that native state.
@@ -20,12 +17,6 @@ export const CANONICAL_INTAKE_STAGE_LABEL: Record<CanonicalIntakeSummary["proces
   PARSING: "解析中", MATCHING: "比對中", NEEDS_REVIEW: "待人工覆核", QUARANTINED: "已隔離",
   FAILED: "處理失敗", CANCELLED: "已取消",
 };
-
-export class CanonicalIntakeReadError extends Error {
-  constructor(public status: number, public code: string, public correlationId: string) {
-    super(code);
-  }
-}
 
 const object = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(v);

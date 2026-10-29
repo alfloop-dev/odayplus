@@ -84,6 +84,8 @@ afterEach(() => {
 });
 type Config = { actor?: string; role?: "expansion-manager" | "ops-lead"; storedRole?: string; session?: unknown;
   canonicalNetwork?: (actor: string) => Response | Promise<Response>;
+  canonicalTabs?: readonly string[];
+  nativeIntake?: (path: string, init: RequestInit | undefined, actor: string) => Response | Promise<Response>;
   firstBootstrap?: Response | Promise<Response>; refresh?: Response | Promise<Response>; decision?: boolean; tasks?: (actor: string) => Response | Promise<Response>; legacy?: (path: string, actor: string) => Response | Promise<Response>; workspace?: string; issues?: boolean; sessionStatus?: number; invalidRole?: string; denied?: number };
 function mount(config: Config = {}) {
   confirmedRefreshControl.enabled = config.decision === true;
@@ -108,7 +110,7 @@ function mount(config: Config = {}) {
       if (config.canonicalNetwork) {
         // The fixture grants only the read under test; no unrelated domain
         // request or hidden static persona is needed to start its HTTP/JSON.
-        body.navigation.allowedTabs.network = ["areas"];
+        body.navigation.allowedTabs.network = [...(config.canonicalTabs ?? ["areas"])];
         body.navigation.workspaces.push({ id: "network", label: "Network", shortLabel: "Network", description: "Current scope", allowed: true });
       }
       if (config.invalidRole) body.meta.role.id = config.invalidRole as typeof role;
@@ -116,6 +118,7 @@ function mount(config: Config = {}) {
       return json(body);
     }
     if (new URL(url, window.location.origin).pathname === "/api/v1/operator/network-listings" && config.canonicalNetwork) return config.canonicalNetwork(actor);
+    if (new URL(url, window.location.origin).pathname === "/api/v1/canonical-intakes" && config.nativeIntake) return config.nativeIntake(url, init, actor);
     if (url === "/api/v1/operator/shell/tasks" && config.tasks) return config.tasks(actor);
     if (config.legacy && ["/api/v1/heatzones", "/api/v1/listings/candidates", "/api/v1/sitescore/reports"].includes(new URL(url, window.location.origin).pathname)) return config.legacy(new URL(url, window.location.origin).pathname, actor);
     return json({ detail: "unrelated read unavailable" }, 403);
@@ -142,7 +145,134 @@ async function invokeConfirmedNetworkRefreshControl() {
   expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
 }
 
+async function beginCanonicalCommand(boundary: "HTTP" | "JSON" | "ERROR_JSON" | "uncertain") {
+  const response = deferred<Response>(), body = deferred<unknown>(), reading = deferred<boolean>();
+  const receipt = { intake_id: "00000000-0000-0000-0000-000000000095", intake_method: "URL",
+    processing_state: "SUBMITTED", version: 1, submitted_at: "2026-10-29T03:00:00Z",
+    correlation_id: "00000000-0000-0000-0000-000000000096", transition_id: "00000000-0000-0000-0000-000000000097",
+    audit_event_id: "00000000-0000-0000-0000-000000000098", outbox_event_id: "00000000-0000-0000-0000-000000000099" };
+  const writes: RequestInit[] = [];
+  const tabs = ["areas", "radar"];
+  const state = mount({ workspace: "network", canonicalTabs: tabs,
+    canonicalNetwork: () => json(canonicalNetworkSnapshot("Current native context")),
+    nativeIntake: (_path, init) => {
+      if (init?.method !== "POST") return json({ items: [], next_cursor: null });
+      writes.push(init);
+      if (writes.length > 1) return json(receipt, 201);
+      if (boundary === "JSON" || boundary === "ERROR_JSON") {
+        const pending = json({}, boundary === "ERROR_JSON" ? 503 : 200); pending.json = () => { reading.resolve(true); return body.promise; };
+        return pending;
+      }
+      reading.resolve(true); return response.promise;
+    } });
+  fireEvent.click(await screen.findByTestId("network-tab-1"));
+  fireEvent.click(await screen.findByRole("button", { name: "選取收件／比對案件" }));
+  fireEvent.click(await screen.findByRole("button", { name: "從網址建立正式收件" }));
+  fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://source.example/console-owned-command" } });
+  fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
+  fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "保留同一個送件及查詢編號" } });
+  fireEvent.click(screen.getByTestId("intake-submit-button"));
+  await reading.promise;
+  expect(writes).toHaveLength(1);
+  return { ...state, writes, receipt, tabs, finish: async () => {
+    await act(async () => {
+      if (boundary === "JSON" || boundary === "ERROR_JSON") body.resolve(receipt);
+      else response.resolve(boundary === "uncertain" ? json({ detail: "response lost" }, 503) : json(receipt, 201));
+    });
+  } };
+}
+
 describe("authenticated bootstrap persona ownership", () => {
+  it.each(["HTTP", "JSON", "uncertain"] as const)("retains the original canonical command across full Network teardown at %s", async (boundary) => {
+    const { fetch, writes, receipt, finish } = await beginCanonicalCommand(boundary);
+    const originalKey = new Headers(writes[0].headers).get("idempotency-key");
+    expect(originalKey).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Today/ }));
+    await screen.findByText("Account A current row");
+    expect(screen.queryByTestId("network-find-areas-workspace")).not.toBeInTheDocument();
+    expect(writes[0].signal?.aborted).toBe(false);
+    await finish();
+    fireEvent.click(screen.getByRole("button", { name: /^Network/ }));
+    await screen.findByTestId("network-find-areas-workspace");
+    const summary = await screen.findByRole("region", { name: "先前收件操作" });
+    if (boundary === "uncertain") fireEvent.click(within(summary).getByRole("button", { name: "重試原操作" }));
+    await within(summary).findByText(/原操作已收到回執/);
+    expect(summary).toHaveTextContent(receipt.intake_id);
+    expect(writes).toHaveLength(boundary === "uncertain" ? 2 : 1);
+    for (const write of writes) {
+      expect(write.body).toBe(writes[0].body);
+      expect(new Headers(write.headers).get("idempotency-key")).toBe(originalKey);
+      expect(new Headers(write.headers).has("if-match")).toBe(false);
+    }
+    expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(writes.length);
+    expect(screen.queryByTestId("intake-add-dialog")).not.toBeInTheDocument();
+  });
+
+  it.each(["HTTP", "JSON", "ERROR_JSON"] as const)("rejects late native %s after a cookie-only account change outside Network", async (boundary) => {
+    const state = await beginCanonicalCommand(boundary);
+    fireEvent.click(screen.getByRole("button", { name: /^Today/ }));
+    await screen.findByText("Account A current row");
+    state.setAccount(B);
+    await state.finish();
+    await screen.findByText("Account B current row");
+    fireEvent.click(screen.getByRole("button", { name: /^Network/ }));
+    await screen.findByTestId("network-find-areas-workspace");
+    expect(screen.queryByRole("region", { name: "先前收件操作" })).not.toBeInTheDocument();
+    expect(screen.queryByText(state.receipt.intake_id)).not.toBeInTheDocument();
+    expect(state.writes).toHaveLength(1);
+    expect(state.writes[0].signal?.aborted).toBe(true);
+  });
+
+  it.each(["tenant", "ABA", "expired", "unmount", "role", "grants"] as const)("invalidates a Console-owned native command on %s", async (change) => {
+    const state = await beginCanonicalCommand("JSON");
+    fireEvent.click(screen.getByRole("button", { name: /^Today/ }));
+    await screen.findByText("Account A current row");
+    if (change === "tenant") {
+      window.sessionStorage.setItem("oday.operator.tenant", "changed-observed-tenant");
+      state.view.rerender(<OperatorConsole searchParams={{ ws: "today" }} />);
+    } else if (change === "ABA") {
+      state.setAccount(B); fireEvent.click(screen.getByRole("button", { name: "重設視角" }));
+      await screen.findByText("Account B current row");
+      state.setAccount(A); fireEvent.click(screen.getByRole("button", { name: "重設視角" }));
+      await screen.findByText("Account A current row");
+    } else if (change === "role") {
+      state.setAccount(A, "ops-lead");
+      fireEvent.click(screen.getByRole("button", { name: /展店經理/ }));
+      fireEvent.click(await screen.findByRole("button", { name: /^營運主管/ }));
+      await screen.findByRole("button", { name: /營運主管/ });
+      await screen.findByText("Account A current row");
+    } else if (change === "grants") {
+      state.tabs.splice(0);
+      fireEvent.click(screen.getByRole("button", { name: "重設視角" }));
+      await screen.findByText("Account A current row");
+    } else if (change === "expired") state.setSession({ subject: A, expiresAt: 1 });
+    else state.view.unmount();
+    await state.finish();
+    if (change === "expired") await screen.findByTestId("operator-data-unavailable");
+    if (change === "tenant" || change === "ABA") {
+      fireEvent.click(screen.getByRole("button", { name: /^Network/ }));
+      await screen.findByTestId("network-find-areas-workspace");
+    }
+    expect(screen.queryByRole("region", { name: "先前收件操作" })).not.toBeInTheDocument();
+    expect(screen.queryByText(state.receipt.intake_id)).not.toBeInTheDocument();
+    expect(state.writes).toHaveLength(1);
+    expect(state.writes[0].signal?.aborted).toBe(true);
+  });
+
+  it("checks the current account before retrying the original uncertain command", async () => {
+    const state = await beginCanonicalCommand("uncertain");
+    await state.finish();
+    const summary = await screen.findByRole("region", { name: "先前收件操作" });
+    state.setAccount(B);
+    fireEvent.click(within(summary).getByRole("button", { name: "重試原操作" }));
+    await waitFor(() => expect(state.bootstrapObservations.at(-1)?.subject).toBe(B));
+    fireEvent.click(screen.getByRole("button", { name: /^Today/ }));
+    await screen.findByText("Account B current row");
+    expect(state.writes).toHaveLength(1);
+    expect(screen.queryByRole("region", { name: "先前收件操作" })).not.toBeInTheDocument();
+    expect(screen.queryByText(state.receipt.intake_id)).not.toBeInTheDocument();
+  });
+
   it.each([undefined, "ops-lead", "pm-audit"])("cold open ignores unverified %s preference and adopts actual server persona", async (storedRole) => {
     const { fetch } = mount({ storedRole });
     await screen.findByText("Account A current row");
