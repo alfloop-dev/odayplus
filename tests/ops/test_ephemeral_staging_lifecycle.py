@@ -8,7 +8,7 @@ import re
 import sys
 import tempfile
 import unittest
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -4421,6 +4421,227 @@ class StagingSmokeAudienceIntegrationTests(unittest.TestCase):
         self.assertEqual((refused[0], refused[1]), (401, {"detail": "audience_mismatch"}))
         self.assertEqual((served[0], served[1]), (status, models))
         self.assertEqual(no_transport[0], 403)
+
+
+class StagingWorkerIdempotencyStageTests(unittest.TestCase):
+    """ODP-STAGING-WORKER-IDEMPOTENCY-SELF-ENQUEUE-001: the worker stage feeds itself.
+
+    The fake worker job behaves like ``--max-jobs 1 --require-job``: it fails
+    when nothing has been enqueued and otherwise moves the probe job to
+    ``succeeded``. Nothing earlier in these tests enqueues.
+    """
+
+    SMOKE_TOKEN = StagingLiveE2EGateTests.SMOKE_TOKEN
+    API_TOKEN = StagingLiveE2EGateTests.API_TOKEN
+    WEB_TOKEN = StagingLiveE2EGateTests.WEB_TOKEN
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.fx = _load_gate_fixtures()
+
+    def setUp(self) -> None:
+        StagingLiveE2EGateTests.setUp(self)
+        self.worker = {"queued": 0, "executions": 0}
+
+    def _routes(self, *, processed_status: str = "succeeded", **overrides: Any) -> dict[str, Any]:
+        base = self.fx.base
+        worker = self.worker
+
+        def job_readback(_body: Any, _headers: Any) -> Any:
+            status = processed_status if worker["executions"] else "queued"
+            return base.terminal_job(base.JOB_ID, status=status)
+
+        return StagingLiveE2EGateTests._core_ops_routes(self, **{
+            f"GET /api/v1/jobs/{base.JOB_ID}": job_readback,
+            **overrides,
+        })
+
+    def _run_stage(
+        self, routes: dict[str, Any] | None = None, *, claims: bool = True
+    ) -> tuple[Mapping[str, Any], dict[str, Any]]:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        seen: dict[str, Any] = {"events": [], "tokens": [], "correlation": []}
+        routes = routes if routes is not None else self._routes()
+        tokens = {
+            lifecycle.staging_smoke_token_audience(self.release_id): self.SMOKE_TOKEN,
+            self.outputs["staging_api_uri"]: self.API_TOKEN,
+            self.outputs["staging_web_uri"]: self.WEB_TOKEN,
+        }
+        base_http = self.fx.base.FakeHttp
+
+        class RecordingHttp(base_http):
+            def request(self, method: str, path: str, **kwargs: Any) -> Any:
+                result = super().request(method, path, **kwargs)
+                seen["events"].append(self.calls[-1])
+                if method == "POST" and path == "/api/v1/jobs" and result.payload.get("created"):
+                    worker_state["queued"] += 1
+                return result
+
+        worker_state = self.worker
+
+        def gcloud(argv: Sequence[str], **_kwargs: Any) -> str:
+            if argv[0] == "iam":
+                return argv[3]
+            if list(argv[:3]) == ["run", "jobs", "execute"]:
+                seen["events"].append("gcloud " + " ".join(argv))
+                if not claims or worker_state["queued"] == 0:
+                    # --require-job: an empty queue is a failed execution.
+                    raise RuntimeError(f"gcloud run jobs execute {argv[3]} failed with exit status 1")
+                worker_state["queued"] -= 1
+                worker_state["executions"] += 1
+            return ""
+
+        def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
+            return {"template": {"template": {
+                "containers": [{"image": self.outputs["staging_worker_image"]}],
+                "vpcAccess": {"egress": "ALL_TRAFFIC"},
+            }}}
+
+        def mint(*, audience: str, operator_identity: str, gcloud_bin: str) -> str:
+            seen["tokens"].append(audience)
+            return tokens[audience]
+
+        def clients(config: Any, *, web_transport_token: str, correlation_id: str) -> Any:
+            seen["config"] = config
+            seen["web_transport_token"] = web_transport_token
+            return RecordingHttp(routes), None
+
+        def correlation(expected_sha: str, **kwargs: Any) -> str:
+            seen["correlation"].append(kwargs)
+            return self.fx.base.CORRELATION_ID
+
+        with patch.object(lifecycle, "_live_gcloud", side_effect=gcloud), \
+                patch.object(lifecycle, "_live_cloud_run_description", side_effect=describe), \
+                patch.object(lifecycle, "_live_identity_token", side_effect=mint), \
+                patch.object(lifecycle, "_live_gate_clients", side_effect=clients), \
+                patch.object(lifecycle, "_live_gate_correlation_id", side_effect=correlation), \
+                patch.object(lifecycle, "STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS", 0.001), \
+                patch.object(lifecycle, "STAGING_LIVE_E2E_WORKER_DEADLINE_SECONDS", 0.05):
+            executor = lifecycle.make_live_rehearsal_executor(
+                self.outputs,
+                project_id=self.project_id,
+                region="asia-east1",
+                operator_identity=self.outputs["staging_runtime_service_account"],
+            )
+            result = executor(
+                "worker_idempotency",
+                {"release_profile": "core-ops", "manifest_digest": self.manifest_digest},
+            )
+        return result, seen
+
+    def test_the_stage_enqueues_and_replays_its_probe_before_running_the_worker(self) -> None:
+        from product_ops.deployment.staging_lifecycle import staging_smoke_token_audience
+
+        result, seen = self._run_stage()
+
+        self.assertTrue(result["success"], result.get("detail"))
+        proof = result["worker_idempotency"]
+        self.assertTrue(proof["ok"])
+        self.assertEqual(
+            (proof["terminal_status"], proof["expected_terminal_status"]), ("succeeded", "succeeded")
+        )
+        self.assertTrue({
+            "worker:enqueue",
+            "worker:idempotent_replay",
+            "worker:drain_trigger",
+            "worker:terminal_disabled",
+            "audit:durable_receipt",
+            "audit:idempotent_replay_receipt",
+        } <= {check["name"] for check in proof["checks"]})
+        events = seen["events"]
+        executes = [i for i, event in enumerate(events) if event.startswith("gcloud run jobs execute")]
+        enqueues = [i for i, event in enumerate(events) if event == "POST /api/v1/jobs"]
+        self.assertEqual(len(executes), 1, events)
+        self.assertEqual(len(enqueues), 2, events)
+        self.assertLess(max(enqueues), executes[0])
+        self.assertIn(f"GET /api/v1/jobs/{self.fx.base.JOB_ID}", events[executes[0]:])
+        # The worker job keeps its Terraform args (--max-jobs 1 --require-job).
+        self.assertNotIn("--args", events[executes[0]])
+        self.assertIn(self.outputs["staging_worker_job_name"], events[executes[0]])
+        self.assertEqual(self.worker, {"queued": 0, "executions": 1})
+        # The probe is the gate's provider-disabled external-fetch, with the
+        # smoke principal and API transport token of the release.
+        config = seen["config"]
+        self.assertEqual((config.external_provider_mode, config.required_provider_ids), ("disabled", ()))
+        self.assertEqual(config.probe_provider_id, "listing.partner_feed")
+        self.assertEqual((config.bearer_token, config.api_transport_token), (self.SMOKE_TOKEN, self.API_TOKEN))
+        self.assertEqual(
+            sorted(set(seen["tokens"])),
+            sorted([staging_smoke_token_audience(self.release_id), self.outputs["staging_api_uri"]]),
+        )
+        self.assertEqual(seen["web_transport_token"], "")
+        self.assertEqual(seen["correlation"], [{"purpose": "worker-idempotency"}])
+
+    def test_a_replay_that_creates_a_new_job_fails_the_stage(self) -> None:
+        base = self.fx.base
+
+        def always_new(_body: Any, _headers: Any) -> Any:
+            return base.response(202, base.enqueue_payload(created=True))
+
+        result, _ = self._run_stage(self._routes(**{"POST /api/v1/jobs": always_new}))
+
+        self.assertFalse(result["success"])
+        self.assertIn("worker:idempotent_replay", result["detail"])
+        self.assertIn("created=True", result["detail"])
+
+    def test_a_worker_that_claims_nothing_fails_the_stage(self) -> None:
+        result, seen = self._run_stage(claims=False)
+
+        self.assertFalse(result["success"])
+        failed = {check["name"] for check in result["worker_idempotency"]["checks"] if not check["ok"]}
+        self.assertEqual(failed, {"worker:drain_trigger", "worker:terminal_disabled"})
+        self.assertIn("worker job execution failed", result["detail"])
+        self.assertIn("status=queued", result["detail"])
+        self.assertEqual(result["worker_idempotency"]["terminal_status"], "queued")
+
+    def test_an_unexpected_terminal_state_fails_the_stage(self) -> None:
+        result, _ = self._run_stage(self._routes(processed_status="failed"))
+
+        self.assertFalse(result["success"])
+        self.assertIn("worker:terminal_disabled", result["detail"])
+        self.assertIn("status=failed", result["detail"])
+
+    def test_a_runtime_not_confirming_disabled_providers_is_never_enqueued(self) -> None:
+        readiness = self.fx.missing_model_readiness("core-ops")
+        readiness["details"]["provider"]["mode"] = "live"
+        result, seen = self._run_stage(self._routes(**{
+            "anon GET /readiness": self.fx.base.response(200, readiness),
+        }))
+
+        self.assertFalse(result["success"])
+        self.assertIn("worker:provider_mode_alignment", result["detail"])
+        self.assertNotIn("POST /api/v1/jobs", seen["events"])
+        self.assertFalse(any(event.startswith("gcloud") for event in seen["events"]))
+
+    def test_tokens_never_reach_the_stage_result(self) -> None:
+        base = self.fx.base
+        echo = {"detail": f"Bearer {self.SMOKE_TOKEN} {self.API_TOKEN}"}
+        result, _ = self._run_stage(self._routes(**{"POST /api/v1/jobs": base.response(500, echo)}))
+
+        self.assertFalse(result["success"])
+        self.assertIn("worker:enqueue", result["detail"])
+        for secret in (self.SMOKE_TOKEN, self.API_TOKEN, self.WEB_TOKEN):
+            self.assertNotIn(secret, json.dumps(result))
+
+    def test_the_stage_proof_reaches_the_verify_receipt(self) -> None:
+        stage_result, _ = self._run_stage()
+
+        from product_ops.deployment.staging_lifecycle import verify_ephemeral_staging
+
+        receipt = verify_ephemeral_staging(
+            release_id=self.release_id,
+            candidate_sha=self.candidate_sha,
+            manifest_digest=self.manifest_digest,
+            project_id=self.project_id,
+            dry_run=True,
+            stage_executor=lambda stage, _c: stage_result if stage == "worker_idempotency" else True,
+            now=self.now,
+        )
+        stage = next(r for r in receipt.resources if r["stage"] == "worker_idempotency")
+        self.assertTrue(stage["proof"]["worker_idempotency"]["ok"])
 
 
 def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:
