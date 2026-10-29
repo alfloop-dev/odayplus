@@ -529,6 +529,162 @@ _BLOCKER_RECOVERY_HARD_GATE_WORDS_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Every remaining slash is ambiguous artifact evidence, including extensionless
+# relative paths whose components happen to be allowed routing words. Never
+# split these into individually allowlisted tokens. Dotted filenames likewise
+# remain unproven deliverables after explicit references have been removed.
+_CANONICAL_ARTIFACT_RE = re.compile(r"/|\w\.\w")
+
+_BLOCKER_RECOVERY_AGENT_NAMES = {
+    "claude", "codex", "pi", "gemini", "copilot", "antigravity", "openai", "anthropic",
+}
+
+_BLOCKER_RECOVERY_ALLOWED_TOKENS = {
+    # Provider & Agent terms
+    "provider", "providers", "agent", "agents", "worker", "workers", "model", "models",
+    "ai", "llm", "claude", "codex", "pi", "gemini", "copilot", "antigravity", "openai", "anthropic",
+    # Routing, Handoff & Dispatch terms
+    "route", "routes", "routed", "routing", "reroute", "rerouted", "rerouting",
+    "reassign", "reassigned", "reassigning", "reassignment", "reassignments",
+    "auto-reassigned", "auto-reassign", "auto", "sidecar", "sidecar-only", "mainline",
+    "guard", "guards", "dispatch", "dispatched", "dispatching", "dispatcher",
+    "dispatchable", "non-dispatchable", "handoff", "handoffs", "stale",
+    "lane", "lanes", "away", "unavailable", "owner", "owners", "ownership",
+    "reviewer", "reviewers", "review", "reviews", "reopen", "reopens", "reopened", "reopening",
+    "repeated", "automatic",
+    # Failure, Quota, Auth, Worktree terms
+    "quota", "quotas", "exhausted", "exceeded", "rate-limit", "rate-limited",
+    "ratelimit", "ratelimited", "rate", "limit", "limits", "limited", "limiting",
+    "auth", "auths", "authn", "authz", "authenticated", "authentication",
+    "credential", "credentials", "worktree", "worktrees", "workspace", "workspaces",
+    "lock", "locks", "locked", "locking", "lease", "leases", "leased",
+    "push", "pushed", "pushing", "push-failure", "fail", "fails", "failed", "failure",
+    "failures", "error", "errors", "timeout", "timeouts", "timed-out", "timed_out",
+    "timed", "out", "retry", "retrying", "retries", "recovery", "recover",
+    "recovering", "recovered", "recovers", "resume", "resuming", "resumed", "resumes",
+    "restart", "restarting", "restarted", "restarts", "disconnect", "disconnected",
+    "disconnecting", "connection", "crash", "crashed", "jam", "jammed", "stuck",
+    # Execution & Status terms
+    "process", "processes", "execution", "runtime", "environment", "boundary",
+    "interrupted", "terminated", "killed", "transient", "metadata", "correction",
+    "notification", "notifications", "note", "notes", "notice", "status", "task",
+    "tasks", "state", "code", "exit", "ordinary", "corrected", "unchanged",
+    # Code-reference labels whose explicit path value was already removed
+    "ref", "refs", "see",
+    # Waiting/status terms, not prerequisites. Dependency words are removed
+    # only in the resolver-authorized branch, never accepted as routing noise.
+    "waiting", "waits", "waited", "wait",
+    "completed", "satisfied", "resolved", "resolution", "release", "released", "releasing",
+    # Glue / Syntactic terms
+    "for", "to", "in", "on", "at", "of", "from", "with", "by", "about", "into",
+    "through", "during", "before", "after", "above", "below", "between", "under", "over",
+    "up", "down", "and", "or", "not", "no", "nor", "but", "yet", "so", "a", "an", "the",
+    "this", "that", "these", "those", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "due", "only", "pending",
+    "needed", "required", "again", "now", "then", "here", "there", "all", "any", "both",
+    "each", "few", "more", "most", "other", "some", "such", "than", "too", "very",
+    "can", "will", "just", "should", "may", "might",
+}
+
+
+# A colon or kind label is not prerequisite-release authority. Recognize the
+# same dependency vocabulary in canonical blockers and retained task prose;
+# only a nonempty, resolver-satisfied depends_on can authorize its removal.
+_BLOCKER_RECOVERY_DEPENDENCY_WORDS_RE = re.compile(
+    r"\b(?:depend|depends|depended|dependency|dependencies|dependent|upstream|prerequisites?)\b"
+)
+_BLOCKER_RECOVERY_DEPENDENCY_PROSE_RE = re.compile(
+    r"\b(?:waiting\s+for\s+)?(?:depend|depends|depended|dependency|dependencies|dependent|upstream|prerequisites?)\b"
+    r"(?:\s+gate\b)?\s*:?"
+)
+
+
+def _token_is_allowed(part: str) -> bool:
+    if part in _BLOCKER_RECOVERY_ALLOWED_TOKENS:
+        return True
+    if part.isdigit():
+        return True
+    if any(part.startswith(a) and part[len(a):].isdigit() for a in _BLOCKER_RECOVERY_AGENT_NAMES):
+        return True
+    return False
+
+
+def _prose_tokens_all_allowed(text: str) -> bool:
+    if not text or not text.strip():
+        return True
+    if _CANONICAL_ARTIFACT_RE.search(text):
+        return False
+    chunks = re.split(
+        r"[ ,;.:\-_\/&|+*~^@#$%=\(\)\[\]{}<>\"\'\`!?\s；，。：（）【】！？、—·“”‘’→]+",
+        text.casefold(),
+    )
+    for chunk in chunks:
+        if not chunk:
+            continue
+        if _token_is_allowed(chunk):
+            continue
+        parts = chunk.split("-")
+        if len(parts) > 1 and all(_token_is_allowed(p) for p in parts):
+            continue
+        return False
+    return True
+
+
+def canonical_blocker_prose(task: dict[str, Any], blocker: dict[str, Any]) -> tuple[str, str]:
+    """``(kind, prose)`` of one canonical blocker of ``task``, as gate classification reads them.
+
+    The durable blocker is read, not ``task.next``, and ambiguous gate labels
+    are kept before the task-note sanitizer could erase them as paths.
+    `kind` is structured classification, not a code identifier: e.g.
+    external_data / human_gate is not stripped as snake_case prose noise.
+    """
+    declared_dependencies = [str(dep).strip() for dep in (task.get("depends_on") or []) if str(dep).strip()]
+    prose = blocked_task_prose_context({
+        **blocker,
+        "id": task.get("id"),
+        "depends_on": declared_dependencies,
+        "next": " ".join(str(blocker.get(key) or "") for key in ("kind", "message", "reason")),
+    }, canonical_gate_prose=True)
+    return str(blocker.get("kind") or "").strip().casefold().replace("_", " "), prose
+
+
+def gate_prose_names_prerequisite(kind: str, prose: str) -> bool:
+    """Whether canonical gate prose waits on a prerequisite -- by its kind or its words."""
+    return kind == "dependency" or bool(_BLOCKER_RECOVERY_DEPENDENCY_WORDS_RE.search(prose))
+
+
+def unreleased_gate_prose_reason(kind: str, prose: str, *, prerequisites_released: bool) -> str | None:
+    """What canonical gate prose names that no released gate accounts for, or None.
+
+    Fail-closed: prose is released only when everything it says is either a
+    prerequisite that a nonempty, resolver-satisfied ``depends_on`` releases
+    (``prerequisites_released``) -- a colon or kind label is no such
+    authority -- or the routing, status and glue vocabulary every word of
+    which is known. Anything else -- a human, external or operator gate, a
+    path or filename that may name the awaited deliverable, a word in no
+    known vocabulary or another script -- is an unresolved requirement.
+    Whether known vocabulary also makes a blocked task recoverable is the
+    supervisor's separate question.
+    """
+    if (
+        kind in {"human", "human gate", "external data", "cross repo delivery"}
+        or any(marker in f"{kind} {prose}" for marker in _BLOCKER_RECOVERY_HARD_GATE_MARKERS)
+        or _BLOCKER_RECOVERY_HARD_GATE_WORDS_RE.search(f"{kind} {prose}")
+    ):
+        return "names a human, external or operator gate"
+    if gate_prose_names_prerequisite(kind, prose):
+        if not prerequisites_released:
+            return "names a prerequisite no satisfied depends_on releases"
+        prose = _BLOCKER_RECOVERY_DEPENDENCY_PROSE_RE.sub(" ", prose)
+        if _CANONICAL_ARTIFACT_RE.search(prose):
+            return "names a requirement no released prerequisite or routing failure accounts for"
+        # A dependency-only blocker need not name routing at all; unmasked
+        # IDs and non-ASCII requirements are still unknown residuals.
+        prose = re.sub(r"[ ,;.:\-_/&|]+", " ", prose).strip()
+    if prose and not _prose_tokens_all_allowed(prose):
+        return "names a requirement no released prerequisite or routing failure accounts for"
+    return None
+
 
 
 def canonical_hard_gate_reason(
@@ -547,8 +703,13 @@ def canonical_hard_gate_reason(
     (``resolver``, or one over the same board) does not report satisfied --
     named with the prerequisite's own hard gate when it has one -- and every
     open canonical blocker of the task -- its waiting party, its own gate
-    fields, its kind and its prose. A board with no write revision, or whose
-    blockers cannot be read, proves no blocker absent and holds the task.
+    fields, its kind and its prose. Prose, the task's ``blocked_reason`` and
+    each open blocker's, is classified fail-closed by
+    `unreleased_gate_prose_reason`: what it says has to be accounted for by
+    a released prerequisite or known routing vocabulary, and prerequisite
+    prose anywhere in the task needs a satisfied structured ``depends_on``.
+    A board with no write revision, or whose blockers cannot be read, proves
+    no blocker absent and holds the task.
     It reads only: no approval is consumed or issued, and whether a released
     gate makes the task recoverable is the supervisor's separate question.
     """
@@ -579,6 +740,9 @@ def canonical_hard_gate_reason(
             return f"its prerequisite {dep_id} is {resolver.dependency_status(dep_id)}, not satisfied" + (
                 f", and held: {held}" if held else ""
             )
+    # Every declared prerequisite is satisfied here, so a nonempty list is
+    # the only release authority prerequisite prose can have.
+    prerequisites_released = bool(declared_dependencies)
     context = blocked_task_prose_context({
         **task,
         "next": f"{task.get('next') or ''} {task.get('blocked_reason') or ''}",
@@ -587,6 +751,17 @@ def canonical_hard_gate_reason(
         context
     ):
         return "task prose names a human, external or operator gate"
+    if gate_prose_names_prerequisite("", context) and not prerequisites_released:
+        return "task prose names a prerequisite no satisfied depends_on releases"
+    # `next` is an ordinary note any command rewrites; `blocked_reason` is
+    # the task's own durable gate prose and is classified as a blocker is.
+    blocked_reason = str(task.get("blocked_reason") or "").strip()
+    if blocked_reason:
+        held = unreleased_gate_prose_reason("", blocked_task_prose_context({
+            key: task.get(key) for key in ("id", "depends_on", "owner", "reviewer")
+        } | {"next": blocked_reason}, canonical_gate_prose=True), prerequisites_released=prerequisites_released)
+        if held:
+            return f"task blocked_reason {held}"
     for blocker in blockers:
         if not isinstance(blocker, dict):
             return "a canonical blocker cannot be read"
@@ -599,23 +774,11 @@ def canonical_hard_gate_reason(
         blocker_gate = task_unresolved_human_or_independent_gate_reason(blocker)
         if blocker_gate:
             return f"an open canonical blocker of the task: {blocker_gate}"
-        # Inspect the durable blocker, not task.next. Preserve ambiguous gate
-        # labels before the task-note sanitizer can erase them as paths.
-        blocker_context = blocked_task_prose_context({
-            **blocker,
-            "id": task.get("id"),
-            "depends_on": declared_dependencies,
-            "next": " ".join(str(blocker.get(key) or "") for key in ("kind", "message", "reason")),
-        }, canonical_gate_prose=True)
-        # `kind` is structured classification, not a code identifier. Do not
-        # strip e.g. external_data / human_gate as snake_case prose noise.
-        blocker_kind = str(blocker.get("kind") or "").strip().casefold().replace("_", " ")
-        if (
-            blocker_kind in {"human", "human gate", "external data", "cross repo delivery"}
-            or any(marker in f"{blocker_kind} {blocker_context}" for marker in _BLOCKER_RECOVERY_HARD_GATE_MARKERS)
-            or _BLOCKER_RECOVERY_HARD_GATE_WORDS_RE.search(f"{blocker_kind} {blocker_context}")
-        ):
-            return "an open canonical blocker of the task names a human, external or operator gate"
+        held = unreleased_gate_prose_reason(
+            *canonical_blocker_prose(task, blocker), prerequisites_released=prerequisites_released
+        )
+        if held:
+            return f"an open canonical blocker of the task {held}"
     return None
 
 
@@ -644,8 +807,9 @@ def source_helper_resolver(
     the versioned canonical board still holds behind a hard gate -- its own,
     a Human/Ops wait such as a review-churn escalation no continuation has
     released, a prerequisite its `depends_on` names that the same resolver
-    does not report satisfied, or an open canonical blocker -- is not
-    admitted at all, by the
+    does not report satisfied, or an open canonical blocker whose prose the
+    fail-closed classification does not account for as a released
+    prerequisite or stale routing state -- is not admitted at all, by the
     same `canonical_hard_gate_reason` blocked-task recovery asks: its source
     cannot reach review through a parent while that gate is open.
 

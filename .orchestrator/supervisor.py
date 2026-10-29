@@ -113,8 +113,13 @@ from coordination_file_watcher import sync_coordination_files
 # without importing the supervisor. They stay bound in this module's namespace,
 # which is the one every existing caller -- and every test patch point -- uses.
 from dispatch_policy import (
+    _BLOCKER_RECOVERY_AGENT_NAMES,
+    _BLOCKER_RECOVERY_ALLOWED_TOKENS,
+    _BLOCKER_RECOVERY_DEPENDENCY_PROSE_RE,
+    _BLOCKER_RECOVERY_DEPENDENCY_WORDS_RE,
     _BLOCKER_RECOVERY_HARD_GATE_MARKERS,
     _BLOCKER_RECOVERY_HARD_GATE_WORDS_RE,
+    _CANONICAL_ARTIFACT_RE,
     _CANONICAL_ROUTING_FAILURE_CLAUSE_RE,
     DISPATCH_STATUS_ACTIONS,
     STATUS_WRITE_REVISION_FIELD,
@@ -129,8 +134,13 @@ from dispatch_policy import (
     agent_account_pool_id,
     agent_provider_id,
     agent_quota_group_id,
+    _prose_tokens_all_allowed,
+    _token_is_allowed,
     blocked_task_prose_context,
+    canonical_blocker_prose,
     canonical_hard_gate_reason,
+    gate_prose_names_prerequisite,
+    unreleased_gate_prose_reason,
     dispatch_reason_priority,
     dispatch_reason_role,
     is_execution_dispatch_reason,
@@ -4323,11 +4333,6 @@ def normalized_business_priority(value: Any, default: str = "P2") -> str:
     return status_transition.normalized_business_priority(value, default=default)
 
 
-# Every remaining slash is ambiguous artifact evidence, including extensionless
-# relative paths whose components happen to be allowed routing words. Never
-# split these into individually allowlisted tokens. Dotted filenames likewise
-# remain unproven deliverables after explicit references have been removed.
-_CANONICAL_ARTIFACT_RE = re.compile(r"/|\w\.\w")
 
 
 def _continuation_approval_nonce_reused(
@@ -4572,101 +4577,6 @@ _BLOCKER_RECOVERY_ROUTING_MARKERS = (
     "push failure", "dispatch", "provider", "handoff", "stale",
 )
 
-_BLOCKER_RECOVERY_AGENT_NAMES = {
-    "claude", "codex", "pi", "gemini", "copilot", "antigravity", "openai", "anthropic",
-}
-
-_BLOCKER_RECOVERY_ALLOWED_TOKENS = {
-    # Provider & Agent terms
-    "provider", "providers", "agent", "agents", "worker", "workers", "model", "models",
-    "ai", "llm", "claude", "codex", "pi", "gemini", "copilot", "antigravity", "openai", "anthropic",
-    # Routing, Handoff & Dispatch terms
-    "route", "routes", "routed", "routing", "reroute", "rerouted", "rerouting",
-    "reassign", "reassigned", "reassigning", "reassignment", "reassignments",
-    "auto-reassigned", "auto-reassign", "auto", "sidecar", "sidecar-only", "mainline",
-    "guard", "guards", "dispatch", "dispatched", "dispatching", "dispatcher",
-    "dispatchable", "non-dispatchable", "handoff", "handoffs", "stale",
-    "lane", "lanes", "away", "unavailable", "owner", "owners", "ownership",
-    "reviewer", "reviewers", "review", "reviews", "reopen", "reopens", "reopened", "reopening",
-    "repeated", "automatic",
-    # Failure, Quota, Auth, Worktree terms
-    "quota", "quotas", "exhausted", "exceeded", "rate-limit", "rate-limited",
-    "ratelimit", "ratelimited", "rate", "limit", "limits", "limited", "limiting",
-    "auth", "auths", "authn", "authz", "authenticated", "authentication",
-    "credential", "credentials", "worktree", "worktrees", "workspace", "workspaces",
-    "lock", "locks", "locked", "locking", "lease", "leases", "leased",
-    "push", "pushed", "pushing", "push-failure", "fail", "fails", "failed", "failure",
-    "failures", "error", "errors", "timeout", "timeouts", "timed-out", "timed_out",
-    "timed", "out", "retry", "retrying", "retries", "recovery", "recover",
-    "recovering", "recovered", "recovers", "resume", "resuming", "resumed", "resumes",
-    "restart", "restarting", "restarted", "restarts", "disconnect", "disconnected",
-    "disconnecting", "connection", "crash", "crashed", "jam", "jammed", "stuck",
-    # Execution & Status terms
-    "process", "processes", "execution", "runtime", "environment", "boundary",
-    "interrupted", "terminated", "killed", "transient", "metadata", "correction",
-    "notification", "notifications", "note", "notes", "notice", "status", "task",
-    "tasks", "state", "code", "exit", "ordinary", "corrected", "unchanged",
-    # Code-reference labels whose explicit path value was already removed
-    "ref", "refs", "see",
-    # Waiting/status terms, not prerequisites. Dependency words are removed
-    # only in the resolver-authorized branch, never accepted as routing noise.
-    "waiting", "waits", "waited", "wait",
-    "completed", "satisfied", "resolved", "resolution", "release", "released", "releasing",
-    # Glue / Syntactic terms
-    "for", "to", "in", "on", "at", "of", "from", "with", "by", "about", "into",
-    "through", "during", "before", "after", "above", "below", "between", "under", "over",
-    "up", "down", "and", "or", "not", "no", "nor", "but", "yet", "so", "a", "an", "the",
-    "this", "that", "these", "those", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "due", "only", "pending",
-    "needed", "required", "again", "now", "then", "here", "there", "all", "any", "both",
-    "each", "few", "more", "most", "other", "some", "such", "than", "too", "very",
-    "can", "will", "just", "should", "may", "might",
-}
-
-
-# A colon or kind label is not prerequisite-release authority. Recognize the
-# same dependency vocabulary in canonical blockers and retained task prose;
-# only a nonempty, resolver-satisfied depends_on can authorize its removal.
-_BLOCKER_RECOVERY_DEPENDENCY_WORDS_RE = re.compile(
-    r"\b(?:depend|depends|depended|dependency|dependencies|dependent|upstream|prerequisites?)\b"
-)
-_BLOCKER_RECOVERY_DEPENDENCY_PROSE_RE = re.compile(
-    r"\b(?:waiting\s+for\s+)?(?:depend|depends|depended|dependency|dependencies|dependent|upstream|prerequisites?)\b"
-    r"(?:\s+gate\b)?\s*:?"
-)
-
-
-def _token_is_allowed(part: str) -> bool:
-    if part in _BLOCKER_RECOVERY_ALLOWED_TOKENS:
-        return True
-    if part.isdigit():
-        return True
-    if any(part.startswith(a) and part[len(a):].isdigit() for a in _BLOCKER_RECOVERY_AGENT_NAMES):
-        return True
-    return False
-
-
-def _prose_tokens_all_allowed(text: str) -> bool:
-    if not text or not text.strip():
-        return True
-    if _CANONICAL_ARTIFACT_RE.search(text):
-        return False
-    chunks = re.split(
-        r"[ ,;.:\-_\/&|+*~^@#$%=\(\)\[\]{}<>\"\'\`!?\s；，。：（）【】！？、—·“”‘’→]+",
-        text.casefold(),
-    )
-    for chunk in chunks:
-        if not chunk:
-            continue
-        if _token_is_allowed(chunk):
-            continue
-        parts = chunk.split("-")
-        if len(parts) > 1 and all(_token_is_allowed(p) for p in parts):
-            continue
-        return False
-    return True
-
-
 def _is_recoverable_routing_prose(prose: str) -> bool:
     if not prose or not prose.strip():
         return False
@@ -4715,13 +4625,14 @@ def blocked_task_auto_recovery_eligible(
         return False
     if str(task.get("status") or "").strip().lower() != "blocked":
         return False
-    # The hard gates -- the task's own, a Human/Ops wait, gate prose and every
-    # open canonical blocker -- are the one shared rule child-source admission
-    # asks too. What follows is only whether the rest is a released gate.
+    # The hard gates -- the task's own, a Human/Ops wait, every unsatisfied
+    # prerequisite, and the fail-closed classification of its gate prose and
+    # every open canonical blocker -- are the one shared rule child-source
+    # admission asks too. What follows is only whether the rest is a
+    # released gate recovery may act on.
     if canonical_hard_gate_reason(task, status_snapshot) or task_is_sidecar(task):
         return False
     declared_dependencies = [str(dep).strip() for dep in (task.get("depends_on") or []) if str(dep).strip()]
-    dependency_gate_released = False
     done_statuses = {
         str(value).lower()
         for value in ready_dispatch_settings(config).get("dependency_done_statuses", ["done"])
@@ -4736,40 +4647,18 @@ def blocked_task_auto_recovery_eligible(
     for blocker in blockers:
         if blocker.get("task_id") != task.get("id") or blocker.get("status") == "resolved":
             continue
-        blocker_context = blocked_task_prose_context({
-            **blocker,
-            "id": task.get("id"),
-            "depends_on": declared_dependencies,
-            "next": " ".join(str(blocker.get(key) or "") for key in ("kind", "message", "reason")),
-        }, canonical_gate_prose=True)
-        blocker_kind = str(blocker.get("kind") or "").strip().casefold().replace("_", " ")
-        is_dep_blocker = (
-            blocker_kind == "dependency"
-            or bool(_BLOCKER_RECOVERY_DEPENDENCY_WORDS_RE.search(blocker_context))
-        )
-        if is_dep_blocker:
-            if not dependency_gate_released:
-                return False
-            remaining_dep_prose = _BLOCKER_RECOVERY_DEPENDENCY_PROSE_RE.sub(" ", blocker_context)
-            if _CANONICAL_ARTIFACT_RE.search(remaining_dep_prose):
-                return False
-            residual = re.sub(r"[ ,;.:\-_/&|]+", " ", remaining_dep_prose).strip()
-            # A dependency-only blocker need not contain a routing marker.
-            # Hard gates were rejected above; unknown residuals still fail
-            # closed, including non-ASCII requirements and unmasked IDs.
-            if residual and not _prose_tokens_all_allowed(residual):
-                return False
-        else:
-            if not _is_recoverable_routing_prose(blocker_context):
-                return False
+        # A released prerequisite blocker was classified by the shared rule
+        # and need not name routing; any other recovers only as stale
+        # routing/provider state.
+        blocker_kind, blocker_context = canonical_blocker_prose(task, blocker)
+        if not gate_prose_names_prerequisite(blocker_kind, blocker_context) and not _is_recoverable_routing_prose(
+            blocker_context
+        ):
+            return False
     if dependency_gate_released:
-        context_after_dep = _BLOCKER_RECOVERY_DEPENDENCY_PROSE_RE.sub(" ", context)
-        if _CANONICAL_ARTIFACT_RE.search(context_after_dep):
-            return False
-        residual_context = re.sub(r"[ ,;.:\-_/&|]+", " ", context_after_dep).strip()
-        if residual_context and not _prose_tokens_all_allowed(residual_context):
-            return False
-        return True
+        # Notes cannot release a gate either: the whole task prose, `next`
+        # included, has to be accounted for once the prerequisites are.
+        return unreleased_gate_prose_reason("", context, prerequisites_released=True) is None
     return bool(context) and _is_recoverable_routing_prose(context)
 
 

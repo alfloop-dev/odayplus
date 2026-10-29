@@ -2219,6 +2219,73 @@ def test_review_queue_excludes_a_source_only_childs_pool_and_rereads_its_record(
         assert eligible(task, "Codex2") is True
 
 
+@pytest.mark.parametrize(("message", "reason"), [
+    # Original fail-closed recovery forms: no structured depends_on, another
+    # script, a path naming a deliverable, an unknown requirement.
+    ("waiting for dependencies; provider handoff pending", "names a prerequisite no satisfied depends_on releases"),
+    ("仍欠業主准許；provider handoff pending", "names a requirement no released prerequisite or routing"),
+    ("Freigabe ausstehend; provider handoff pending", "names a requirement no released prerequisite or routing"),
+    ("waiting for payload.csv; provider handoff pending", "names a requirement no released prerequisite or routing"),
+    ("Need Codex/Root independent review and parent integration", "names a requirement no released"),
+    ("Human approval pending; provider retry still blocked", "names a human, external or operator gate"),
+])
+@pytest.mark.parametrize("location", ["blocker", "blocked_reason"])
+def test_hard_gate_classifies_blocker_prose_fail_closed_like_recovery(message, reason, location) -> None:
+    """The shared rule holds what blocked-task recovery holds -- the classification, not its routing.
+
+    One rule reads a durable blocker and a task's ``blocked_reason``: only a
+    prerequisite a satisfied ``depends_on`` releases, or known routing
+    vocabulary, is accounted for. Recovery, delegating to it, refuses the same
+    records; nothing is consumed or rewritten.
+    """
+    task = {"id": "GATE-001", "owner": "Codex", "reviewer": "Claude", "status": "blocked", "waiting_for": "Codex",
+            "next": "provider handoff stale notification", "depends_on": []}
+    board = {"_status_write_revision": "revision-1", "tasks": [task], "blockers": []}
+    if location == "blocker":
+        board["blockers"].append({"task_id": "GATE-001", "owner": "Codex", "waiting_for": "Codex",
+                                  "status": "open", "message": message})
+        prefixes = ("an open canonical blocker of the task ",)
+    else:
+        task["blocked_reason"] = message
+        # Gate words and prerequisite prose are found in the task's whole prose first.
+        prefixes = ("task prose ", "task blocked_reason ")
+    before = json.loads(json.dumps(board))
+    held = str(dispatch_policy.canonical_hard_gate_reason(task, board))
+    assert held.startswith(tuple(prefix + reason for prefix in prefixes)), held
+    assert supervisor.blocked_task_auto_recovery_eligible(_base_test_config(), task, status_snapshot=board) is False
+    assert board == before
+
+
+def test_hard_gate_releases_what_recovery_releases_and_leaves_routing_to_recovery() -> None:
+    """A satisfied prerequisite or routing vocabulary is no gate; only recovery asks for a routing failure."""
+    config = _base_test_config()
+    task = {"id": "GATE-001", "owner": "Codex", "reviewer": "Claude", "status": "blocked", "waiting_for": "Codex",
+            "next": "provider handoff stale notification", "depends_on": ["UPSTREAM-001"]}
+    upstream = {"id": "UPSTREAM-001", "status": "done", "depends_on": []}
+    blocker = {"task_id": "GATE-001", "owner": "Codex", "waiting_for": "Codex", "status": "open",
+               "kind": "dependency", "message": "waiting for dependencies: UPSTREAM-001"}
+    board = {"_status_write_revision": "revision-1", "tasks": [task, upstream], "blockers": [blocker]}
+    assert dispatch_policy.canonical_hard_gate_reason(task, board) is None
+    assert supervisor.blocked_task_auto_recovery_eligible(config, task, status_snapshot=board) is True
+    # Unsatisfied, the same blocker is held by the prerequisite itself.
+    upstream["status"] = "in_progress"
+    assert "its prerequisite UPSTREAM-001 is in_progress" in str(dispatch_policy.canonical_hard_gate_reason(task, board))
+    # With no structured depends_on the prose has no release authority.
+    upstream["status"] = "done"
+    task["depends_on"] = []
+    assert "names a prerequisite no satisfied depends_on releases" in str(
+        dispatch_policy.canonical_hard_gate_reason(task, board)
+    )
+    # Known vocabulary naming no routing failure is no gate -- and recovers nothing.
+    blocker.update(kind="", message="retry pending")
+    task["next"] = "retry pending"
+    assert dispatch_policy.canonical_hard_gate_reason(task, board) is None
+    assert supervisor.blocked_task_auto_recovery_eligible(config, task, status_snapshot=board) is False
+    blocker["message"] = task["next"] = "Codex provider handoff stale"
+    assert dispatch_policy.canonical_hard_gate_reason(task, board) is None
+    assert supervisor.blocked_task_auto_recovery_eligible(config, task, status_snapshot=board) is True
+
+
 def test_review_queue_refuses_an_interior_commit_as_the_base_of_a_merged_range(tmp_path: Path) -> None:
     """After the merge, ancestry cannot tell the base from a commit of the range.
 

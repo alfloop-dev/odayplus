@@ -3957,6 +3957,21 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
             "task_id": self.CHILD_ID, "owner": "Pi", "waiting_for": "Human/Ops", "status": "open",
             "message": "Needs a decision",
         }
+        # The child's own technical handoff to an automated reviewer, as its
+        # blocked finalizer left it: prose no released prerequisite or known
+        # routing vocabulary accounts for, so -- like a gate in another script
+        # or a prerequisite no depends_on names -- it holds the child until
+        # its own owners release it.
+        technical = {
+            "task_id": self.CHILD_ID, "owner": "Pi", "waiting_for": "Codex", "status": "open",
+            "message": (
+                "Finalizer exit1 rejects inherited parent task identities; no guard bypass/rewrite/duplicate PR "
+                "or review handoff without PR proof. Need Codex/Root independent review, failure disposition and "
+                "parentPR1477 integration after originalCIterminal; full acceptance/CI/release validators still "
+                "pending."
+            ),
+        }
+        unaccounted = r"open canonical blocker of the task names a requirement no released prerequisite or routing"
         held: tuple[tuple[str, dict[str, Any], list[dict[str, Any]], str], ...] = (
             ("churn escalation", churn, [], r"task is waiting for Human/Ops"),
             # A permit only the supervisor's own consumer may act on -- still
@@ -3985,6 +4000,19 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
              r"canonical blocker of the task is 'deferred', neither open nor resolved"),
             ("task prose naming a gate", {"blocked_reason": "awaiting human approval"}, [],
              r"task prose names a human, external or operator gate"),
+            ("open technical handoff blocker", {}, [technical], unaccounted),
+            ("open blocker in another script", {},
+             [dict(technical, message="仍欠業主准許；provider handoff pending")], unaccounted),
+            ("open blocker naming a path", {},
+             [dict(technical, message="waiting for payload.csv; provider handoff pending")], unaccounted),
+            ("open blocker naming a prerequisite no depends_on names", {},
+             [dict(technical, message="waiting for dependencies; provider handoff pending")],
+             r"open canonical blocker of the task names a prerequisite no satisfied depends_on releases"),
+            ("blocked_reason in another script", {"blocked_reason": "仍欠業主准許；provider handoff pending"}, [],
+             r"task blocked_reason names a requirement no released prerequisite or routing"),
+            ("task prose naming a prerequisite no depends_on names",
+             {"next": "waiting for prerequisite; provider handoff pending"}, [],
+             r"task prose names a prerequisite no satisfied depends_on releases"),
         )
 
         def apply(fields: dict[str, Any], blockers: list[dict[str, Any]]) -> tuple[dict[str, Any], list[Any]]:
@@ -4008,18 +4036,11 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
                 finally:
                     restore(saved)
 
-        # The child's own technical handoff to an automated reviewer -- the
-        # known finite source-only case -- is admitted while it stays open.
-        technical = {
-            "task_id": self.CHILD_ID, "owner": "Pi", "waiting_for": "Codex", "status": "open",
-            "message": (
-                "Finalizer exit1 rejects inherited parent task identities; no guard bypass/rewrite/duplicate PR "
-                "or review handoff without PR proof. Need Codex/Root independent review, failure disposition and "
-                "parentPR1477 integration after originalCIterminal; full acceptance/CI/release validators still "
-                "pending."
-            ),
-        }
-        self.state["blockers"].append(technical)
+        # Blocked waiting for its automated reviewer -- the known finite
+        # source-only case -- with an open blocker that is stale routing state
+        # only, the child is admitted.
+        routing = dict(technical, message="Pi provider handoff stale; review handoff pending")
+        self.state["blockers"].append(routing)
         submission = json.loads(json.dumps(self.submit()))
         for name, fields, blockers, pattern in held:
             with self.subTest(drift=name), mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
@@ -4061,10 +4082,10 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
             restore(saved)
         # Nothing about the child is cleared by the parent.
         self.assertEqual((self.child["status"], self.child["waiting_for"]), ("blocked", "Codex"))
-        self.assertEqual(self.state["blockers"], [technical])
+        self.assertEqual(self.state["blockers"], [routing])
         self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review"])
         self.assertEqual(self.task["status"], "review_approved")
-        self.assertEqual(self.state["blockers"], [technical])
+        self.assertEqual(self.state["blockers"], [routing])
 
     def test_a_child_whose_prerequisite_is_unsatisfied_is_never_admitted(self) -> None:
         # A structured prerequisite behind a human gate, with the child's own
