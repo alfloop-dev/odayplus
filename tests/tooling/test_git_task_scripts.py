@@ -868,14 +868,19 @@ def local_ssh_transport(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
 
     Git still invokes the real ``git-upload-pack``/``git-receive-pack`` for the
     exact URL path, so a path is the repository that server would serve; like
-    sshd, it runs them in the remote account's home, ``tmp_path/remote-home``,
-    which is where a home-relative path resolves.
+    sshd, it runs them in the home of the account Git asked to log in to --
+    ``tmp_path/remote-home`` for ``git``, ``tmp_path/remote-home-<user>`` for
+    any other -- which is where a home-relative path resolves.
     """
     home = tmp_path / "remote-home"
     home.mkdir()
     shim = tmp_path / "local-ssh-transport"
     shim.write_text(
-        f"#!/bin/sh\nfor last; do :; done\ncd '{home}' || exit 1\nexec sh -c \"$last\"\n", encoding="utf-8"
+        "#!/bin/sh\nhost=; last=\nfor arg; do host=$last; last=$arg; done\n"
+        'case "$host" in *@*) user=${host%%@*} ;; *) user=git ;; esac\n'
+        f'if [ "$user" = git ]; then home=\'{home}\'; else home=\'{home}\'-"$user"; fi\n'
+        'cd "$home" || exit 1\nexec sh -c "$last"\n',
+        encoding="utf-8",
     )
     shim.chmod(0o700)
     monkeypatch.setenv("GIT_SSH", str(shim))
@@ -912,8 +917,8 @@ def test_task_finalize_prepublication_keeps_a_custom_ssh_hosts_path_case(
     refused = finalize_with_records(repo, status_root, parent, child)
     assert refused.returncode == 1
     assert (
-        f"is ssh:fixture.example:{tmp_path}/example/repo.git, "
-        f"not the registered repository example/repo at ssh:fixture.example:{tmp_path}/EXAMPLE/repo.git"
+        f"is ssh:git@fixture.example:{tmp_path}/example/repo.git, "
+        f"not the registered repository example/repo at ssh:git@fixture.example:{tmp_path}/EXAMPLE/repo.git"
     ) in refused.stderr
     assert f"Task-ID trailer '{CHILD}' does not match '{TASK}'" in refused.stderr
     assert "dry-run: git push" not in refused.stdout
@@ -963,8 +968,8 @@ def test_task_finalize_prepublication_keeps_a_custom_ssh_hosts_suffix_and_root(
         refused = finalize_with_records(repo, status_root, parent, child)
         assert refused.returncode == 1, (registered, origin)
         assert (
-            f"is ssh:fixture.example:{shown_origin}, "
-            f"not the registered repository example/repo at ssh:fixture.example:{shown_registered}"
+            f"is ssh:git@fixture.example:{shown_origin}, "
+            f"not the registered repository example/repo at ssh:git@fixture.example:{shown_registered}"
         ) in refused.stderr
         assert f"Task-ID trailer '{CHILD}' does not match '{TASK}'" in refused.stderr
         assert "dry-run: git push" not in refused.stdout
@@ -988,6 +993,57 @@ def test_task_finalize_prepublication_keeps_a_custom_ssh_hosts_suffix_and_root(
             assert admitted.returncode == 0, (origin, admitted.stderr)
             assert "dry-run: git push --set-upstream origin" in admitted.stdout
             assert git(repo, "rev-parse", "HEAD").stdout.strip() == head
+
+
+def test_task_finalize_prepublication_keeps_a_custom_ssh_hosts_account(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Two accounts on one custom SSH host are two homes, so two repositories.
+
+    ``alice@host:example/repo.git`` is registered and does not publish the
+    child; ``bob@host:example/repo.git`` is another repository, in Bob's
+    home, publishing its exact head -- and so is Bob's rooted path reached
+    with no account, which leaves the login to the local SSH configuration. Through
+    the normal loader and the unchanged finalizer neither proves anything
+    about Alice's; hers, once it publishes the child, admits the composition.
+    """
+    local_ssh_transport(tmp_path, monkeypatch)
+    status_root, child, head = compose_source_only_child(repo, tmp_path)
+    parent = {"id": TASK, "owner": "Claude2", "reviewer": "Codex", "status": "in_progress",
+              "branch": f"task/{TASK}"}
+    ref = f"refs/heads/task/{CHILD}"
+    alice = tmp_path / "remote-home-alice" / "example" / "repo.git"
+    bob = tmp_path / "remote-home-bob" / "example" / "repo.git"
+    subprocess.run(["git", "clone", "--quiet", "--bare", str(tmp_path / "origin.git"), str(alice)],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "clone", "--quiet", "--bare", str(tmp_path / "example" / "repo.git"), str(bob)],
+                   check=True, capture_output=True)
+    registered = "alice@fixture.example:example/repo.git"
+    register_remote(status_root, registered)
+    assert not git(repo, "ls-remote", "--heads", registered, ref).stdout.strip()
+
+    for origin, shown in (
+        ("bob@fixture.example:example/repo.git", "ssh:bob@fixture.example:example/repo.git"),
+        (f"fixture.example:{bob}", f"ssh:fixture.example:{bob}"),
+    ):
+        git(repo, "remote", "set-url", "origin", origin)
+        assert git(repo, "ls-remote", "--heads", "origin", ref).stdout.split()[0] == child["review_gate_sha"]
+        refused = finalize_with_records(repo, status_root, parent, child)
+        assert refused.returncode == 1, origin
+        assert (
+            f"is {shown}, not the registered repository example/repo at ssh:alice@fixture.example:example/repo.git"
+        ) in refused.stderr
+        assert f"Task-ID trailer '{CHILD}' does not match '{TASK}'" in refused.stderr
+        assert "dry-run: git push" not in refused.stdout
+        assert git(repo, "rev-parse", "HEAD").stdout.strip() == head
+
+    git(repo, "push", "--quiet", registered, f"{child['review_gate_sha']}:{ref}")
+    for origin in (registered, "alice@Fixture.Example:example/repo.git/"):
+        git(repo, "remote", "set-url", "origin", origin)
+        admitted = finalize_with_records(repo, status_root, parent, child)
+        assert admitted.returncode == 0, (origin, admitted.stderr)
+        assert "dry-run: git push --set-upstream origin" in admitted.stdout
+        assert git(repo, "rev-parse", "HEAD").stdout.strip() == head
 
 
 def test_task_finalize_refuses_a_branch_whose_own_python_fails_lint(repo: Path, tmp_path: Path):

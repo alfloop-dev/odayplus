@@ -228,8 +228,10 @@ class MultiRepoRegistryTests(unittest.TestCase):
                 self.assertNotEqual(endpoint(url), "github.com/alfloop-dev/odayplus")
         # Only GitHub's paths are case-insensitive; a custom server's path is
         # whatever its filesystem says, so a case difference is another repository.
-        self.assertEqual(endpoint("ssh://git@Git.Example.com/srv/EXAMPLE/repo.git"), "ssh:git.example.com:/srv/EXAMPLE/repo.git")
-        self.assertEqual(endpoint("git@git.example.com:/srv/EXAMPLE/repo.git"), "ssh:git.example.com:/srv/EXAMPLE/repo.git")
+        self.assertEqual(endpoint("ssh://git@Git.Example.com/srv/EXAMPLE/repo.git"),
+                         "ssh:git@git.example.com:/srv/EXAMPLE/repo.git")
+        self.assertEqual(endpoint("git@git.example.com:/srv/EXAMPLE/repo.git"),
+                         "ssh:git@git.example.com:/srv/EXAMPLE/repo.git")
         for upper, lower in (
             ("ssh://git@git.example.com/srv/EXAMPLE/repo.git", "ssh://git@git.example.com/srv/example/repo.git"),
             ("git@git.example.com:EXAMPLE/repo.git", "git@git.example.com:example/repo.git"),
@@ -248,23 +250,34 @@ class MultiRepoRegistryTests(unittest.TestCase):
             ("ssh://git@git.example.com/srv/example/repo.git", "https://git.example.com/srv/example/repo.git"),
             ("https://git.example.com/srv/example/repo.git", "http://git.example.com/srv/example/repo.git"),
             ("ssh://git@git.example.com/srv/example/repo.git", "ssh://git@git.example.com:2222/srv/example/repo.git"),
+            # Two accounts on one custom server are two homes, or two services
+            # behind one sshd -- and no account leaves it to the local SSH config.
+            ("alice@git.example.com:example/repo.git", "bob@git.example.com:example/repo.git"),
+            ("ssh://alice@git.example.com/~/example/repo.git", "ssh://bob@git.example.com/~/example/repo.git"),
+            ("ssh://alice@git.example.com/srv/example/repo.git", "bob@git.example.com:/srv/example/repo.git"),
+            ("git@git.example.com:example/repo.git", "git.example.com:example/repo.git"),
+            ("ssh://git@git.example.com/srv/example/repo.git", "git+ssh://git.example.com/srv/example/repo.git"),
         ):
             with self.subTest(one=one, other=other):
                 self.assertIsNotNone(endpoint(one))
                 self.assertIsNotNone(endpoint(other))
                 self.assertNotEqual(endpoint(one), endpoint(other))
-        # What the same server is asked for is still one endpoint: its absolute
-        # path in either SSH spelling, a home-relative one in either, a
-        # trailing slash, a user name or the default port.
+        # What the same account on the same server is asked for is still one
+        # endpoint: its absolute path in either SSH spelling, a home-relative
+        # one in either, a trailing slash, host case or the default port; a
+        # password never reaches the identity.
         for spellings, expected in (
             (("ssh://git@git.example.com/srv/example/repo.git", "git@git.example.com:/srv/example/repo.git",
-              "ssh://other@Git.Example.com:22/srv/example/repo.git/", "git+ssh://git.example.com/srv/example/repo.git"),
-             "ssh:git.example.com:/srv/example/repo.git"),
-            (("git@git.example.com:example/repo.git", "git.example.com:example/repo.git/"),
-             "ssh:git.example.com:example/repo.git"),
+              "ssh://git@Git.Example.com:22/srv/example/repo.git/", "git+ssh://git@git.example.com/srv/example/repo.git",
+              "ssh://git:secret@git.example.com/srv/example/repo.git"),
+             "ssh:git@git.example.com:/srv/example/repo.git"),
+            (("git@git.example.com:example/repo.git", "git@Git.Example.com:example/repo.git/"),
+             "ssh:git@git.example.com:example/repo.git"),
             (("ssh://git@git.example.com/~/example/repo.git", "git@git.example.com:~/example/repo.git"),
-             "ssh:git.example.com:~/example/repo.git"),
-            (("ssh://git@git.example.com:2222/srv/repo.git",), "ssh:[git.example.com:2222]:/srv/repo.git"),
+             "ssh:git@git.example.com:~/example/repo.git"),
+            (("git.example.com:example/repo.git", "git.example.com:example/repo.git/"),
+             "ssh:git.example.com:example/repo.git"),
+            (("ssh://git@git.example.com:2222/srv/repo.git",), "ssh:git@[git.example.com:2222]:/srv/repo.git"),
             (("https://git.example.com:443/srv/repo.git/",), "https://git.example.com/srv/repo.git"),
         ):
             with self.subTest(expected):

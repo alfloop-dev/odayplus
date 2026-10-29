@@ -4228,13 +4228,17 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
         subprocess.run(["git", "init", "-q", "--bare", "-b", "dev", str(upper)], check=True)
         registered = self.config["coordination"]["repositories"]["pantheon"]
         # Other repositories on that host that GitHub's equivalences would have
-        # folded onto the origin: another case, no .git suffix, and the same
-        # path relative to the remote home instead of rooted.
+        # folded onto the origin: another case, no .git suffix, the same path
+        # relative to the remote home instead of rooted, and the same path
+        # reached through another account, or through none.
         others = (
-            ("path case", host + str(upper), f"ssh:fixture.example:{upper}"),
-            ("no .git suffix", host + str(self.origin.with_suffix("")), f"ssh:fixture.example:{self.origin.with_suffix('')}"),
+            ("path case", host + str(upper), f"ssh:git@fixture.example:{upper}"),
+            ("no .git suffix", host + str(self.origin.with_suffix("")),
+             f"ssh:git@fixture.example:{self.origin.with_suffix('')}"),
             ("home-relative path", f"git@fixture.example:{str(self.origin).lstrip('/')}",
-             f"ssh:fixture.example:{str(self.origin).lstrip('/')}"),
+             f"ssh:git@fixture.example:{str(self.origin).lstrip('/')}"),
+            ("another account", f"alice@fixture.example:{self.origin}", f"ssh:alice@fixture.example:{self.origin}"),
+            ("no account", f"fixture.example:{self.origin}", f"ssh:fixture.example:{self.origin}"),
         )
 
         # First OPEN: the origin that publishes the child is /example/repo.git,
@@ -4244,7 +4248,7 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
             with self.subTest(first_open=name):
                 registered["remote"] = remote
                 self.refuse_submission(
-                    r"origin asked for its publication is " + re.escape(f"ssh:fixture.example:{self.origin}")
+                    r"origin asked for its publication is " + re.escape(f"ssh:git@fixture.example:{self.origin}")
                     + r", not the registered repository example/repo at " + re.escape(endpoint) + r"(?![\w./])"
                 )
 
@@ -4252,7 +4256,7 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
         # registry retargeted to any of the others -- warm, cold and approval.
         registered["remote"] = host + str(self.origin)
         submission = json.loads(json.dumps(self.submit()))
-        self.assertEqual(submission["source_helpers"][0]["remote"], f"ssh:fixture.example:{self.origin}")
+        self.assertEqual(submission["source_helpers"][0]["remote"], f"ssh:git@fixture.example:{self.origin}")
         for name, remote, _endpoint in others:
             with self.subTest(replay=name), mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
                 self.assertIsNone(self.block_reason("Codex2"))  # warms the cache

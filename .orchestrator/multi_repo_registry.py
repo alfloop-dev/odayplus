@@ -451,13 +451,15 @@ def normalized_repository_slug(value: str | None) -> str | None:
 #: The port a scheme reaches when a remote URL names none; spelling it out
 #: does not make a different endpoint.
 _DEFAULT_REMOTE_PORTS = {"ssh": "22", "git+ssh": "22", "https": "443", "http": "80", "git": "9418"}
-_SCP_REMOTE_RE = re.compile(r"^(?:[^@/:]+@)?(?P<host>[^@/:\[\]]+):(?!//)(?P<path>.+)$")
+_SCP_REMOTE_RE = re.compile(r"^(?:(?P<user>[^@/:]+)@)?(?P<host>[^@/:\[\]]+):(?!//)(?P<path>.+)$")
 #: Hosts known to serve one repository as ``owner/name`` over every
 #: transport: case-insensitive, with or without ``.git`` or a leading slash.
 #: Anywhere else the path is whatever the server's filesystem makes of it, so
 #: ``/EXAMPLE/repo``, ``/example/repo``, ``/example/repo.git`` and the
 #: home-relative ``example/repo`` are four repositories until that server says
-#: otherwise, and SSH and HTTPS to it are two ways in, not one.
+#: otherwise, SSH and HTTPS to it are two ways in, not one, and so are two SSH
+#: accounts on it: ``alice@host`` and ``bob@host`` log in to different homes,
+#: or to different services behind one sshd.
 _OWNER_NAME_HOSTS = frozenset({"github.com"})
 
 
@@ -483,6 +485,7 @@ def _remote_endpoint_parts(url: str | None, base: Path | None) -> tuple[str, str
             host, port = (parts.hostname or "").casefold(), parts.port
         except ValueError:
             return None
+        user = unquote(parts.username) if parts.username else None
         path = unquote(parts.path)
         if scheme in ("ssh", "git+ssh") and path.startswith("/~"):
             # Git itself asks the server for ``~user/path`` here, as scp-like ``host:~user/path`` does.
@@ -491,6 +494,7 @@ def _remote_endpoint_parts(url: str | None, base: Path | None) -> tuple[str, str
         scp = _SCP_REMOTE_RE.match(raw)
         if scp and not Path(raw).is_absolute() and not raw.startswith((".", "~")):
             scheme, host, port, path = "ssh", scp.group("host").casefold(), None, scp.group("path")
+            user = scp.group("user")
         else:
             local = Path(os.path.expanduser(raw))
             if not local.is_absolute():
@@ -508,8 +512,12 @@ def _remote_endpoint_parts(url: str | None, base: Path | None) -> tuple[str, str
         where = host if port is None else f"{host}:{port}"
         return f"{where}/", re.sub(r"\.git$", "", path).casefold()
     if scheme in ("ssh", "git+ssh"):
-        # Git's own scp-like spelling: rooted and home-relative paths stay apart.
-        return ("ssh:" + (host if port is None else f"[{host}:{port}]") + ":"), ("/" if rooted else "") + path
+        # Git's own scp-like spelling: rooted and home-relative paths stay
+        # apart, and the account logged in to is part of where they lead.
+        account = f"{user}@" if user else ""
+        return (
+            "ssh:" + account + (host if port is None else f"[{host}:{port}]") + ":"
+        ), ("/" if rooted else "") + path
     return f"{scheme}://{host if port is None else f'{host}:{port}'}", "/" + path
 
 
@@ -520,13 +528,16 @@ def normalized_remote_endpoint(url: str | None, *, base: Path | None = None) -> 
     one repository -- SSH, scp-like ``git@host:``, HTTPS, a ``.git`` suffix,
     path case, the scheme's own default port -- yields ``github.com/owner/name``.
     Any other server is taken at its word: an SSH endpoint is Git's scp-like
-    ``ssh:host:path`` (``ssh:[host:port]:path`` off port 22), where
-    ``ssh://host/abs`` and ``host:/abs`` are one rooted path but ``host:abs``
-    is relative to the remote home, and path case, a ``.git`` suffix and the
-    transport all stay part of it (``https://host/path`` is another endpoint).
-    A different host, port or path prefix never collapses onto an endpoint by
-    suffix. Host names are case-insensitive everywhere. Credentials and user
-    names are dropped, never echoed; a URL carrying a query or fragment (a
+    ``ssh:user@host:path`` (``ssh:user@[host:port]:path`` off port 22), where
+    ``ssh://user@host/abs`` and ``user@host:/abs`` are one rooted path but
+    ``user@host:abs`` is relative to that account's remote home, and the
+    account -- or its absence, which leaves the choice to the local SSH
+    configuration -- path case, a ``.git`` suffix and the transport all stay
+    part of it (``https://host/path`` is another endpoint). A different host,
+    port, account or path prefix never collapses onto an endpoint by suffix.
+    Host names are case-insensitive everywhere. On GitHub, and over HTTP(S),
+    the user name only authenticates and is dropped; credentials are never
+    echoed; a URL carrying a query or fragment (a
     signed URL), or an IPv6 literal host, is not an identity at all. A local
     repository is ``file:`` its full resolved path, relative paths taken from
     ``base``.
