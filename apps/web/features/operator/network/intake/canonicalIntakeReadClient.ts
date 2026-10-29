@@ -1,6 +1,7 @@
 import type {
   CanonicalIdentityPlanningContext, CanonicalIdentityReceipt, CanonicalIdentitySummary,
   CanonicalIntakeAssistedEntryRequestReceipt, CanonicalIntakeDetail, CanonicalIntakePage, CanonicalIntakeReceipt, CanonicalIntakeSummary, CanonicalIntakeWorkflow,
+  CanonicalIntakeHistoryPage, CanonicalIntakeSourceInfo,
   CanonicalMatchCasePropertyPage, CreateMatchCaseRequest, MatchCaseReceipt,
   DuplicateProposal, IdentityReviewRequest, ListingConfirmation, MatchCaseSummary, MergeProposal, NativeAssistedEntryCommand, SplitProposal, SubmitCanonicalIntakeRequest,
   NativeReceiptCommitted_CanonicalIntakeReceipt_, NativeReceiptNotObserved,
@@ -76,12 +77,53 @@ function detail(v: unknown): v is CanonicalIntakeDetail {
   if (!object(v)) return false;
   const result = v.resolution;
   const savedWorkflow = v.workflow;
-  return intake(v) && (savedWorkflow === undefined || savedWorkflow === null || workflow(savedWorkflow))
+  const source = v.source_info, history = v.processing_history;
+  return intake(v) && sourceInfo(source) && historyPage(history, v)
+    && history.previous_cursor === null
+    && (savedWorkflow === undefined || savedWorkflow === null || workflow(savedWorkflow))
     && (result === undefined || result === null || object(result)
     && uuid(result.listing_id) && version(result.listing_version) && nullableUuid(result.current_revision_id)
     && ["ACTIVE", "REMOVED", "EXPIRED", "STALE", "QUARANTINED", "ARCHIVED"].includes(String(result.lifecycle_state))
     && uuid(result.property_id_at_creation) && uuid(result.effective_property_id) && version(result.property_version)
     && (result.fields === undefined || persistedFields(result.fields)));
+}
+
+const historyCursor = (v: unknown): v is string | null => v === null
+  || typeof v === "string" && v.length > 0 && v.length <= 2048 && /^[A-Za-z0-9_-]+={0,2}$/.test(v);
+
+function sourceInfo(v: unknown): v is CanonicalIntakeSourceInfo {
+  return object(v) && (v.source_id === null || text(v.source_id))
+    && (v.recorded_policy_state === null || ["APPROVED_RETRIEVAL", "ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED", "SOURCE_BLOCKED", "POLICY_UNKNOWN"].includes(String(v.recorded_policy_state)))
+    && timestamp(v.last_transition_at) && (v.completed_at === null || timestamp(v.completed_at))
+    && persistedFields(v.url_fields) && Array.isArray(v.url_fields) && v.url_fields.length === 2
+    && v.url_fields.every((field) => object(field) && ["originalUrl", "canonicalUrl"].includes(String(field.field_path))
+      && (field.effective === null || typeof field.effective === "string")
+      && (field.classification === "CONFIDENTIAL" || field.classification === null && field.masked === true));
+}
+
+function historyPage(v: unknown, parent: CanonicalIntakeSummary, through?: number): v is CanonicalIntakeHistoryPage {
+  if (!object(v) || v.intake_id !== parent.intake_id || v.intake_version !== parent.version
+    || !Number.isSafeInteger(v.through_sequence) || Number(v.through_sequence) < 0
+    || through !== undefined && v.through_sequence !== through
+    || !historyCursor(v.next_cursor) || !historyCursor(v.previous_cursor) || !Array.isArray(v.items) || v.items.length > 25) return false;
+  const items = v.items;
+  const valid = items.every((row) => object(row) && uuid(row.transition_id) && version(row.sequence_no)
+    && row.sequence_no <= Number(v.through_sequence)
+    && (row.from_state === null || typeof row.from_state === "string" && Object.hasOwn(CANONICAL_INTAKE_STAGE_LABEL, row.from_state))
+    && typeof row.to_state === "string" && Object.hasOwn(CANONICAL_INTAKE_STAGE_LABEL, row.to_state)
+    && nullableUuid(row.actor_subject_id) && (row.service_principal === null || text(row.service_principal))
+    && !(row.actor_subject_id !== null && row.service_principal !== null)
+    && text(row.permission) && (row.reason_code === null || text(row.reason_code))
+    && nullableVersion(row.expected_version) && version(row.resulting_version) && row.resulting_version <= parent.version
+    && (row.resulting_version !== parent.version || row.to_state === parent.processing_state)
+    && nullableUuid(row.job_id) && nullableVersion(row.source_policy_version) && nullableUuid(row.parser_release_id)
+    && nullableUuid(row.source_snapshot_id) && nullableUuid(row.match_case_id) && uuid(row.correlation_id)
+    && nullableUuid(row.causation_id) && timestamp(row.occurred_at));
+  if (!valid || new Set(items.map((row) => row.transition_id)).size !== items.length
+    || !items.every((row, i) => i === 0 || row.sequence_no > items[i - 1].sequence_no)) return false;
+  if (!items.length) return v.through_sequence === 0 && v.next_cursor === null && v.previous_cursor === null;
+  return Boolean(v.next_cursor) === (items.at(-1).sequence_no < Number(v.through_sequence))
+    && (v.previous_cursor === null || items[0].sequence_no > 1);
 }
 
 function matchCase(v: unknown): v is MatchCaseSummary {
@@ -171,7 +213,7 @@ export async function readCanonicalIntakePage(context: CanonicalIntakeReadContex
 
 export async function readCanonicalIntakeCase(context: CanonicalIntakeReadContext, intakeId: string, signal: AbortSignal) {
   if (!uuid(intakeId)) throw new CanonicalIntakeReadError(422, "CANONICAL_INTAKE_ID_INVALID", "");
-  const parent = await read(context, `/api/v1/canonical-intakes/${encodeURIComponent(intakeId)}`, signal);
+  const parent = await read(context, `/api/v1/canonical-intakes/${encodeURIComponent(intakeId)}?include_source=true&include_history=true`, signal);
   if (!detail(parent) || parent.intake_id !== intakeId) throw new CanonicalIntakeReadError(200, "CANONICAL_RESPONSE_INVALID", "");
   let selected: unknown;
   try { selected = await read(context, `/api/v1/intakes/${encodeURIComponent(intakeId)}/match-case`, signal); }
@@ -182,6 +224,19 @@ export async function readCanonicalIntakeCase(context: CanonicalIntakeReadContex
   if (!matchCase(selected) || selected.intake_id !== parent.intake_id) throw new CanonicalIntakeReadError(200, "CANONICAL_RESPONSE_INVALID", "");
   if (selected.intake_version !== parent.version) throw new CanonicalIntakeReadError(409, "CANONICAL_INTAKE_VERSION_CHANGED", "");
   return { intake: parent, matchCase: selected };
+}
+
+export async function readCanonicalIntakeHistory(context: CanonicalIntakeReadContext, parent: CanonicalIntakeSummary,
+  cursor: string, through: number, signal: AbortSignal): Promise<CanonicalIntakeHistoryPage> {
+  if (!uuid(parent.intake_id) || !version(parent.version) || cursor === null || !historyCursor(cursor)
+    || !Number.isSafeInteger(through) || through < 1) throw new CanonicalIntakeReadError(422, "CANONICAL_COMMAND_INVALID", "");
+  const query = new URLSearchParams({ intake_version: String(parent.version), cursor });
+  const v = await read(context, `/api/v1/canonical-intakes/${encodeURIComponent(parent.intake_id)}/processing-history?${query}`, signal);
+  if (object(v) && version(v.intake_version) && v.intake_version !== parent.version)
+    throw new CanonicalIntakeReadError(409, "CANONICAL_INTAKE_VERSION_CHANGED", "");
+  if (!historyPage(v, parent, through) || v.next_cursor === cursor || v.previous_cursor === cursor)
+    throw new CanonicalIntakeReadError(200, "CANONICAL_RESPONSE_INVALID", "");
+  return v;
 }
 
 const rows = (v: unknown, maximum: number, valid: (row: Record<string, unknown>) => boolean): v is Record<string, unknown>[] =>

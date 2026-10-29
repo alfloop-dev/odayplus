@@ -562,3 +562,239 @@ def test_exact_receipt_read_is_durable_without_any_legacy_refresh_or_business_re
             assert observed.status_code == 200, observed.text
             assert observed.json()["receipt"] == response.json()
     assert snapshot(canonical_graph) == before
+
+
+def test_native_processing_history_reads_real_submission_without_raw_reason_or_repeating_work(canonical_graph, native_api):
+    client, _, _ = native_api
+    submitted = client.post("/api/v1/canonical-intakes", json=command(),
+        headers={"Idempotency-Key": "synthetic-native-history-original-submit-001"})
+    assert submitted.status_code == 201, submitted.text
+    receipt = submitted.json()
+    before = snapshot(canonical_graph)
+    response = client.get(f'/api/v1/canonical-intakes/{receipt["intake_id"]}/processing-history',
+        params={"intake_version": receipt["version"]})
+    assert response.status_code == 200, response.text
+    value = response.json()
+    assert value["intake_id"] == receipt["intake_id"] and value["intake_version"] == receipt["version"]
+    assert value["next_cursor"] is None and value["previous_cursor"] is None
+    assert len(value["items"]) == 1
+    item = value["items"][0]
+    assert item["transition_id"] == receipt["transition_id"]
+    assert item["from_state"] is None and item["to_state"] == "SUBMITTED"
+    assert item["resulting_version"] == receipt["version"]
+    assert item["correlation_id"] == receipt["correlation_id"]
+    assert "idempotency_key" not in response.text and "reason_text" not in response.text
+    assert command()["reason"] not in response.text
+    assert response.headers["cache-control"] == "no-store"
+    embedded = client.get(f'/api/v1/canonical-intakes/{receipt["intake_id"]}', params={"include_history": "true"})
+    assert embedded.status_code == 200 and embedded.json()["processing_history"] == value, embedded.text
+    assert snapshot(canonical_graph) == before
+
+
+def test_native_detail_source_urls_keep_original_masking_and_never_return_legacy_credentials(canonical_graph, native_api):
+    from dataclasses import replace
+
+    from shared.auth import DataClassification
+
+    _, _, _, db = canonical_graph
+    client, caller, _ = native_api
+    original = "https://synthetic.example/source-history?private=synthetic-private-value"
+    submitted = client.post("/api/v1/canonical-intakes", json=command(intake_method="URL", original_url=original),
+        headers={"Idempotency-Key": "synthetic-native-source-masking-submit-001"})
+    assert submitted.status_code == 201, submitted.text
+    path = '/api/v1/canonical-intakes/' + submitted.json()["intake_id"]
+    basic = client.get(path)
+    assert basic.status_code == 200 and basic.json()["source_info"] is None
+    assert "synthetic-private-value" not in basic.text
+    caller["principal"] = replace(caller["principal"],
+        scope=replace(caller["principal"].scope, clearance=DataClassification.PUBLIC))
+    selected = client.get(path, params={"include_source": "true"})
+    assert selected.status_code == 200, selected.text
+    fields = selected.json()["source_info"]["url_fields"]
+    assert {v["field_path"] for v in fields} == {"originalUrl", "canonicalUrl"}
+    assert all(v["masked"] and v["effective"] is None for v in fields)
+    assert "synthetic-private-value" not in selected.text
+    caller["principal"] = replace(caller["principal"],
+        scope=replace(caller["principal"].scope, clearance=DataClassification.CONFIDENTIAL))
+    selected = client.get(path, params={"include_source": "true"})
+    assert selected.status_code == 200, selected.text
+    fields = {v["field_path"]: v for v in selected.json()["source_info"]["url_fields"]}
+    assert fields["originalUrl"]["effective"] == original and not fields["originalUrl"]["masked"]
+    with db.connect() as connection:
+        # Synthetic preexisting malformed evidence; no current submission or
+        # source grant is fabricated by this read-model test.
+        connection.execute("UPDATE intake.intakes SET original_url=%s WHERE intake_id=%s",
+            ("https://synthetic-user:synthetic-password@synthetic.example/private", submitted.json()["intake_id"]))
+    selected = client.get(path, params={"include_source": "true"})
+    assert selected.status_code == 200, selected.text
+    field = selected.json()["source_info"]["url_fields"][0]
+    assert field["field_path"] == "originalUrl" and field["masked"] and field["effective"] is None
+    assert "synthetic-password" not in selected.text
+
+
+@pytest.mark.parametrize("column", ["original_url", "canonical_url"])
+@pytest.mark.parametrize("legacy_url,private_marker", [
+    ("https://synthetic.example/a/sk-12345678ABCD", "sk-12345678ABCD"),
+    ("https://synthetic.example/a?note=Cookie:synthetic-private-value", "synthetic-private-value"),
+    ("https://synthetic.example/a?access_token=synthetic-private-value", "synthetic-private-value"),
+    ("https://synthetic.example/a#access_token=synthetic-private-value", "synthetic-private-value"),
+])
+def test_source_projection_never_reveals_historical_credentials_at_highest_clearance(canonical_graph, native_api, column, legacy_url, private_marker):
+    from dataclasses import replace
+
+    from shared.auth import DataClassification
+
+    _, _, _, db = canonical_graph
+    client, caller, _ = native_api
+    submitted = client.post("/api/v1/canonical-intakes", json=command(),
+        headers={"Idempotency-Key": "synthetic-historical-url-redaction-001"})
+    assert submitted.status_code == 201, submitted.text
+    intake_id = submitted.json()["intake_id"]
+    # These are retained malformed rows, never admitted credentials or a source grant.
+    with db.connect() as connection:
+        connection.execute("UPDATE intake.intakes SET " + column + "=%s WHERE intake_id=%s", (legacy_url, intake_id))
+    caller["principal"] = replace(caller["principal"],
+        scope=replace(caller["principal"].scope, clearance=DataClassification.HIGHLY_RESTRICTED))
+    before = snapshot(canonical_graph)
+    selected = client.get(f"/api/v1/canonical-intakes/{intake_id}", params={"include_source": "true"})
+    assert selected.status_code == 200, selected.text
+    fields = {v["field_path"]: v for v in selected.json()["source_info"]["url_fields"]}
+    value = fields["originalUrl" if column == "original_url" else "canonicalUrl"]
+    assert value["masked"] and value["effective"] is None
+    assert private_marker not in selected.text
+    assert snapshot(canonical_graph) == before
+
+
+def _retained_history_fixture(case, api, count):
+    """Read-model rows only; this does not prove any service execution or grant."""
+    graph, ids, _, db = case
+    client, _, _ = api
+    response = client.post("/api/v1/canonical-intakes", json=command(),
+        headers={"Idempotency-Key": "synthetic-retained-history-original-submit-001"})
+    assert response.status_code == 201, response.text
+    receipt = response.json()
+    previous = "SUBMITTED"
+    with db.connect() as connection:
+        for sequence in range(2, count + 1):
+            target = "CHECKING_IDENTITY" if sequence == 2 else "CHECKING_SOURCE_POLICY" if sequence % 2 else "AWAITING_ASSISTED_ENTRY"
+            connection.execute("INSERT INTO intake.intake_stage_transitions (transition_id,tenant_id,intake_id,sequence_no,"
+                "from_state,to_state,service_principal,permission,reason_code,reason_text,idempotency_key,expected_version,"
+                "resulting_version,correlation_id,occurred_at) SELECT %s,tenant_id,intake_id,%s,%s,%s,"
+                "'synthetic-read-history-fixture','intake.history.synthetic_read_fixture','SYNTHETIC_RETAINED_HISTORY',"
+                "'PRIVATE_SYNTHETIC_HISTORY_REASON','PRIVATE_SYNTHETIC_COMMAND_KEY',%s,%s,correlation_id,"
+                "submitted_at+%s*interval '1 microsecond' FROM intake.intakes WHERE intake_id=%s",
+                (str(uuid4()), sequence, previous, target, sequence - 1, sequence, sequence, receipt["intake_id"]))
+            previous = target
+        connection.execute("UPDATE intake.intakes SET version=%s,processing_state=%s,"
+            "last_transition_at=submitted_at+%s*interval '1 microsecond' WHERE intake_id=%s",
+            (count, previous, count, receipt["intake_id"]))
+    return receipt["intake_id"], count, ids
+
+
+def test_native_history_pages_real_sql_records_forward_and_backward_without_inventing_stages(canonical_graph, native_api):
+    client, _, _ = native_api
+    intake_id, current_version, _ = _retained_history_fixture(canonical_graph, native_api, 56)
+    path = f"/api/v1/canonical-intakes/{intake_id}/processing-history"
+    before = snapshot(canonical_graph)
+    first = client.get(path, params={"intake_version": current_version})
+    assert first.status_code == 200, first.text
+    first = first.json()
+    middle = client.get(path, params={"intake_version": current_version, "cursor": first["next_cursor"]})
+    assert middle.status_code == 200, middle.text
+    middle = middle.json()
+    last = client.get(path, params={"intake_version": current_version, "cursor": middle["next_cursor"]})
+    assert last.status_code == 200, last.text
+    last = last.json()
+    assert [len(page["items"]) for page in (first, middle, last)] == [25, 25, 6]
+    assert [item["sequence_no"] for page in (first, middle, last) for item in page["items"]] == list(range(1, 57))
+    assert all(page["through_sequence"] == 56 and page["intake_version"] == 56 for page in (first, middle, last))
+    assert first["previous_cursor"] is None and last["next_cursor"] is None
+    earlier = client.get(path, params={"intake_version": current_version, "cursor": last["previous_cursor"]})
+    assert earlier.status_code == 200 and earlier.json() == middle, earlier.text
+    beginning = client.get(path, params={"intake_version": current_version, "cursor": middle["previous_cursor"]})
+    assert beginning.status_code == 200 and beginning.json() == first, beginning.text
+    assert first["items"][0]["actor_subject_id"] is not None and first["items"][0]["service_principal"] is None
+    assert first["items"][1]["actor_subject_id"] is None and first["items"][1]["service_principal"] == "synthetic-read-history-fixture"
+    assert all("PRIVATE_SYNTHETIC" not in json.dumps(page) and "reason_text" not in json.dumps(page)
+        and "idempotency_key" not in json.dumps(page) for page in (first, middle, last))
+    assert snapshot(canonical_graph) == before
+
+
+def test_native_history_rejects_foreign_or_stale_cursor_before_mixing_snapshot_versions(canonical_graph, native_api):
+    import base64
+
+    _, _, _, db = canonical_graph
+    client, _, _ = native_api
+    intake_id, current_version, _ = _retained_history_fixture(canonical_graph, native_api, 30)
+    path = f"/api/v1/canonical-intakes/{intake_id}/processing-history"
+    first = client.get(path, params={"intake_version": current_version})
+    assert first.status_code == 200, first.text
+    cursor = first.json()["next_cursor"]
+    decoded = json.loads(base64.urlsafe_b64decode(cursor))
+    before = snapshot(canonical_graph)
+    for patch, status in [({"tenant_id": str(uuid4())}, 422), ({"intake_id": str(uuid4())}, 422),
+        ({"intake_version": current_version + 1}, 409), ({"through_sequence": 999}, 422),
+        ({"position": True}, 422), ({"position": 31}, 422), ({"direction": "invented"}, 422),
+        ({"position": 1, "direction": "backward"}, 422), ({"new_actor": "admin"}, 422)]:
+        changed = base64.urlsafe_b64encode(json.dumps({**decoded, **patch}).encode()).decode()
+        response = client.get(path, params={"intake_version": current_version, "cursor": changed})
+        assert response.status_code == status, (patch, response.text)
+        assert "items" not in response.json()
+    assert snapshot(canonical_graph) == before
+    with db.connect() as connection:
+        connection.execute("UPDATE intake.intakes SET version=version+1 WHERE intake_id=%s", (intake_id,))
+    before = snapshot(canonical_graph)
+    stale = client.get(path, params={"intake_version": current_version, "cursor": cursor})
+    assert stale.status_code == 409 and stale.json()["detail"] == "CANONICAL_INTAKE_VERSION_CHANGED"
+    assert snapshot(canonical_graph) == before
+
+
+@pytest.mark.parametrize("denial", ["anonymous", "role", "scope", "flag-disabled", "flag-owner"])
+def test_native_history_rechecks_original_current_authority_before_even_decoding_cursor(canonical_graph, native_api, monkeypatch, denial):
+    from dataclasses import replace
+
+    from shared.infrastructure.persistence.audit_log import DurableAuditLog
+
+    graph, _, _, _ = canonical_graph
+    client, caller, _ = native_api
+    submitted = client.post("/api/v1/canonical-intakes", json=command(),
+        headers={"Idempotency-Key": "synthetic-history-current-authority-001"})
+    assert submitted.status_code == 201, submitted.text
+    principal = caller["principal"]
+    if denial == "anonymous":
+        caller["principal"] = replace(principal, authenticated=False)
+    elif denial == "role":
+        caller["principal"] = replace(principal, roles=frozenset({Role.PLATFORM_ADMIN}))
+    elif denial == "scope":
+        caller["principal"] = replace(principal, scope=replace(principal.scope, region_ids=frozenset({str(uuid4())})))
+    elif denial == "flag-disabled":
+        graph.queue._flags.execute("disable", "assisted_intake_v1_read", actor="synthetic-admin",
+            correlation_id="synthetic-history-stop-read", audit_log=DurableAuditLog(graph.engine))
+    else:
+        monkeypatch.setattr(client.app.state.persistence_bundle, "feature_flag_registry", None)
+    before = snapshot(canonical_graph)
+    response = client.get(f'/api/v1/canonical-intakes/{submitted.json()["intake_id"]}/processing-history',
+        params={"intake_version": submitted.json()["version"], "cursor": "invalid-but-authorization-must-run-first"})
+    expected = 401 if denial == "anonymous" else 503 if denial == "flag-owner" else 403
+    assert response.status_code == expected, response.text
+    assert "items" not in response.json()
+    assert snapshot(canonical_graph) == before
+
+
+@pytest.mark.parametrize("damage", ["ambiguous-actor", "negative-sequence", "future-version", "contradictory-state"])
+def test_native_history_does_not_turn_corrupt_original_rows_into_fabricated_progress(canonical_graph, native_api, damage):
+    _, _, _, db = canonical_graph
+    client, _, _ = native_api
+    submitted = client.post("/api/v1/canonical-intakes", json=command(),
+        headers={"Idempotency-Key": "synthetic-corrupt-original-history-001"})
+    assert submitted.status_code == 201
+    sql = {"ambiguous-actor": "service_principal='synthetic-other-service'", "negative-sequence": "sequence_no=0",
+        "future-version": "resulting_version=99", "contradictory-state": "to_state='READY'"}[damage]
+    with db.connect() as connection:
+        connection.execute("UPDATE intake.intake_stage_transitions SET " + sql + " WHERE transition_id=%s", (submitted.json()["transition_id"],))
+    before = snapshot(canonical_graph)
+    response = client.get(f'/api/v1/canonical-intakes/{submitted.json()["intake_id"]}/processing-history',
+        params={"intake_version": submitted.json()["version"]})
+    assert response.status_code == 503, response.text
+    assert "items" not in response.json() and "SUBMITTED" not in response.text
+    assert snapshot(canonical_graph) == before

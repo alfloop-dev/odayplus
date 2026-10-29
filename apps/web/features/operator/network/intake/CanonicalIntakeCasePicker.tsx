@@ -15,7 +15,6 @@ import { AddListingFromUrlDialog } from "./AddListingFromUrlDialog";
 import { AssistedEntryForm } from "./AssistedEntryForm";
 import { useCanonicalIntakeCommand, useCanonicalIntakeCommandState } from "./useCanonicalIntakeCommand";
 import { CanonicalMatchCaseCreation } from "./CanonicalMatchCaseCreation";
-import { AssignmentSlaSummary } from "./AssignmentSlaSummary";
 import { parseUrlState, intakePathSelection, buildDurableDetailHref, buildInboxReturnHref, intakeNavigationHash } from "./urlState";
 import styles from "./intake.module.css";
 
@@ -121,35 +120,6 @@ function SelectionDialog({ context, selectedId, cursor, onClose, onSelect, onPag
   const selectedContent = (selectedId ? <section data-intake-section="identity" aria-label="所選收件與比對案件" className={styles.sectionBox}>
           {detail.status === "loading" ? <p role="status">正在讀取所選收件與案件…</p> : detail.status === "error" ? <ReadFailure error={detail.error} /> : (
             <>
-              <p>收件 {detail.value.intake.intake_id} · 版本 {detail.value.intake.version} · {CANONICAL_INTAKE_STAGE_LABEL[detail.value.intake.processing_state]}</p>
-              {detail.value.intake.workflow ? <AssignmentSlaSummary record={{
-                owner: null, ownerSubjectId: detail.value.intake.workflow.owner_subject_id,
-                assignedQueue: detail.value.intake.workflow.queue_key,
-                assignmentId: detail.value.intake.workflow.assignment_id,
-                assignmentStatus: detail.value.intake.workflow.assignment_status,
-                slaInstanceId: detail.value.intake.workflow.sla_instance_id,
-                slaState: detail.value.intake.workflow.sla_state, dueAt: detail.value.intake.workflow.due_at,
-              }} assignmentResourceVersion={detail.value.intake.workflow.assignment_version}
-                slaResourceVersion={detail.value.intake.workflow.sla_version} />
-                : <p>尚無可讀取的指派與 SLA 資料。</p>}
-              {detail.value.intake.resolution ? <section aria-label="已落庫物件" className={styles.noteBox}>
-                <p>物件 {detail.value.intake.resolution.listing_id} · 版本 {detail.value.intake.resolution.listing_version} · {detail.value.intake.resolution.lifecycle_state}</p>
-                <p>目前主體 {detail.value.intake.resolution.effective_property_id} · 版本 {detail.value.intake.resolution.property_version}</p>
-                <p>建立時主體 {detail.value.intake.resolution.property_id_at_creation}</p>
-                <p>目前修訂 {detail.value.intake.resolution.current_revision_id ?? "未提供"}</p>
-                {detail.value.intake.resolution.fields?.length ? <>
-                  <table className={styles.compareGrid} aria-label="已落庫欄位">
-                    <thead><tr><th>欄位</th><th>已保存值</th><th>資料分類</th></tr></thead>
-                    <tbody>{detail.value.intake.resolution.fields.map((field) => <tr key={field.field_path}>
-                      <th scope="row">{field.field_path}</th>
-                      <td className={styles.summaryValue}>{field.masked ? "無法檢視" : field.effective === null ? "未提供" : String(field.effective)}</td>
-                      <td>{field.classification ?? "分類未提供"}</td>
-                    </tr>)}</tbody>
-                  </table>
-                  {detail.value.intake.resolution.fields.some((field) => field.masked)
-                    ? <p>部分欄位因權限或分類資料不足而遮罩。</p> : null}
-                </> : <p>目前沒有可顯示的已保存欄位資料。</p>}
-              </section> : null}
               {detail.value.intake.intake_method === "URL" && detail.value.intake.processing_state === "AWAITING_ASSISTED_ENTRY"
                 ? <CanonicalAssistedEntry key={`${detail.value.intake.intake_id}:${detail.value.intake.version}`}
                   context={context} intake={detail.value.intake} /> : null}
@@ -179,6 +149,7 @@ function SelectionDialog({ context, selectedId, cursor, onClose, onSelect, onPag
           ...list.value.items.map((row) => ({ label: `沿用收件 ${row.intake_id} 的範圍`, scope: row.scope }))]}
         onClose={() => setAdding(false)} onCreated={(value) => { setCreated(value); setAdding(false); onSelect(value.intake_id); }} /> : null);
   if (selectedId) return <IntakeProcessingDetail intakeId={selectedId}
+    readContext={context}
     canonical={detail.status === "ready" ? detail.value.intake : null}
     matchCase={detail.status === "ready" ? detail.value.matchCase : null} detailHref={detailHref}
     activeSection={activeSection} onSectionChange={onSectionChange} busy={commandBusy}

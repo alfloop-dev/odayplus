@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CanonicalIntakeReadError, readCanonicalIntakeCase, readCanonicalIntakePage,
   readCanonicalMatchCaseProperties, submitCanonicalMatchCase,
+  readCanonicalIntakeHistory,
   readCanonicalURLReceipt, readCanonicalMatchCaseReceipt, readCanonicalIdentityReceipt, readCanonicalAssistedEntryReceipt,
   type CanonicalURLCommand, type CanonicalIdentityCommand, type CanonicalAssistedEntryCommand,
   type CanonicalIntakeReadContext, type CanonicalMatchCaseCommand,
@@ -11,7 +12,11 @@ const id = (n: number) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")
 const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status });
 const summary = (n = 1) => ({ intake_id: id(n), tenant_id: id(10), submitter_subject_id: id(11), correlation_id: id(12),
   intake_method: "MANUAL" as const, processing_state: "NEEDS_REVIEW" as const, version: 3, submitted_at: "2026-10-15T08:00:00Z",
-  scope: { brand_id: null, region_id: null, assigned_area_id: null, heat_zone_id: null } });
+  scope: { brand_id: null, region_id: null, assigned_area_id: null, heat_zone_id: null },
+  source_info: { source_id: null, recorded_policy_state: null, last_transition_at: "2026-10-15T08:00:00Z", completed_at: null,
+    url_fields: ["originalUrl", "canonicalUrl"].map((field_path) => ({ field_path, classification: "CONFIDENTIAL",
+      effective: null, masked: true, mask_reason_code: "FIELD_MASKED" as const })) },
+  processing_history: { intake_id: id(n), intake_version: 3, through_sequence: 0, items: [], next_cursor: null, previous_cursor: null } });
 const caseSummary = () => ({ match_case_id: id(20), intake_id: id(1), intake_version: 3, version: 1,
   status: "PENDING_REVIEW", outcome: "POSSIBLE_MATCH", candidates: [{ match_candidate_id: id(21),
     property_id: id(22), listing_id: null, rank: 1, confidence: "0.9000", observed_property_version: 2, observed_listing_version: null }] });
@@ -137,7 +142,7 @@ describe("canonical Intake read transport", () => {
   it("reads the selected native parent before its exact case and never creates a resource", async () => {
     const { value, fetchImpl, signal } = context(json(summary()), json(caseSummary()));
     await expect(readCanonicalIntakeCase(value, id(1), signal)).resolves.toMatchObject({ intake: { version: 3 }, matchCase: { match_case_id: id(20) } });
-    expect(fetchImpl.mock.calls.map(([path]) => path)).toEqual([`/api/v1/canonical-intakes/${id(1)}`, `/api/v1/intakes/${id(1)}/match-case`]);
+    expect(fetchImpl.mock.calls.map(([path]) => path)).toEqual([`/api/v1/canonical-intakes/${id(1)}?include_source=true&include_history=true`, `/api/v1/intakes/${id(1)}/match-case`]);
     expect(fetchImpl.mock.calls.every(([, init]) => init?.method === undefined)).toBe(true);
   });
 
@@ -189,6 +194,87 @@ describe("canonical Intake read transport", () => {
     await vi.waitFor(() => expect(resolve).toBeDefined());
     controller.abort(); resolve(summary());
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+const retainedTransition = (sequence = 1) => ({ transition_id: id(100 + sequence), sequence_no: sequence,
+  from_state: sequence === 1 ? null : "SUBMITTED", to_state: "CHECKING_IDENTITY",
+  actor_subject_id: sequence === 1 ? id(11) : null, service_principal: sequence === 1 ? null : "synthetic-history-worker",
+  permission: "intake.process", reason_code: null, expected_version: sequence === 1 ? null : sequence - 1,
+  resulting_version: sequence, job_id: null, source_policy_version: null, parser_release_id: null,
+  source_snapshot_id: null, match_case_id: null, correlation_id: id(12), causation_id: null,
+  occurred_at: "2026-10-15T08:00:00Z" });
+const retainedPage = () => ({ intake_id: id(1), intake_version: 3, through_sequence: 2,
+  items: [retainedTransition(2)], previous_cursor: "earlier-page", next_cursor: null });
+
+describe("native source and recorded processing history transport", () => {
+  it.each([
+    undefined, null,
+    { ...summary().source_info, recorded_policy_state: "CURRENT_REGISTRY_APPROVED" },
+    { ...summary().source_info, last_transition_at: "2026-10-15T08:00:00" },
+    { ...summary().source_info, url_fields: [] },
+    { ...summary().source_info, url_fields: [summary().source_info.url_fields[0], summary().source_info.url_fields[0]] },
+    { ...summary().source_info, url_fields: summary().source_info.url_fields.map((f) => ({ ...f, classification: "PUBLIC", masked: false, effective: "private-marker" })) },
+    { ...summary().source_info, url_fields: summary().source_info.url_fields.map((f) => ({ ...f, effective: "private-marker" })) },
+    { ...summary().source_info, url_fields: summary().source_info.url_fields.map((f) => ({ ...f, field_path: "parserBody" })) },
+  ])("rejects missing, contradictory or leaking source metadata without querying a case: %j", async (source_info) => {
+    const { value, fetchImpl, signal } = context(json({ ...summary(), source_info }));
+    await expect(readCanonicalIntakeCase(value, id(1), signal)).rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    undefined, null, { ...summary().processing_history, intake_id: id(2) },
+    { ...summary().processing_history, intake_version: 4 },
+    { ...summary().processing_history, through_sequence: 1 },
+    { ...summary().processing_history, previous_cursor: "earlier-page" },
+    { ...summary().processing_history, next_cursor: "next-page" },
+  ])("rejects an absent or unrelated embedded first history page: %j", async (processing_history) => {
+    const { value, fetchImpl, signal } = context(json({ ...summary(), processing_history }));
+    await expect(readCanonicalIntakeCase(value, id(1), signal)).rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the original scoped GET with captured parent version and unchanged opaque cursor", async () => {
+    const { value, signal, fetchImpl } = context(json(retainedPage()));
+    await expect(readCanonicalIntakeHistory(value, summary(), "next-page", 2, signal)).resolves.toEqual(retainedPage());
+    const [path, init] = fetchImpl.mock.calls[0];
+    const url = new URL(String(path), "https://unit.invalid");
+    expect(url.pathname).toBe(`/api/v1/canonical-intakes/${id(1)}/processing-history`);
+    expect(Object.fromEntries(url.searchParams)).toEqual({ intake_version: "3", cursor: "next-page" });
+    expect(init).toMatchObject({ cache: "no-store", credentials: "same-origin", signal });
+    expect(init?.method).toBeUndefined(); expect(init?.body).toBeUndefined();
+    const headers = new Headers(init?.headers);
+    expect(headers.get("X-Operator-Role")).toBe("expansion-manager");
+    expect(headers.has("If-Match")).toBe(false); expect(headers.has("Idempotency-Key")).toBe(false);
+  });
+
+  it.each([
+    { intake_id: id(2) }, { through_sequence: 3 }, { items: [] },
+    { next_cursor: "next-page" }, { previous_cursor: "next-page" },
+    { items: [retainedTransition(2), retainedTransition(2)] },
+    { items: [retainedTransition(2), retainedTransition(1)] },
+    { items: [{ ...retainedTransition(2), actor_subject_id: id(11) }] },
+    { items: [{ ...retainedTransition(2), resulting_version: 4 }] },
+    { items: [{ ...retainedTransition(2), resulting_version: 3, to_state: "READY" }] },
+    { items: [{ ...retainedTransition(2), sequence_no: 3 }] },
+    { items: [{ ...retainedTransition(2), occurred_at: "2026-10-15T08:00:00" }] },
+    { items: [{ ...retainedTransition(2), job_id: "legacy-job-1" }] },
+  ])("refuses unrelated, corrupt or cursor-repeating history instead of guessing progress: %j", async (change) => {
+    const { value, signal } = context(json({ ...retainedPage(), ...change }));
+    await expect(readCanonicalIntakeHistory(value, summary(), "next-page", 2, signal)).rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
+  });
+
+  it("reports a changed parent version as a conflict", async () => {
+    const { value, signal } = context(json({ ...retainedPage(), intake_version: 4 }));
+    await expect(readCanonicalIntakeHistory(value, summary(), "next-page", 2, signal)).rejects.toMatchObject({ status: 409, code: "CANONICAL_INTAKE_VERSION_CHANGED" });
+  });
+
+  it.each([401, 403, 409, 503])("preserves current history read denial or unavailability %s", async (status) => {
+    const { value, signal, fetchImpl } = context(json({ detail: "unavailable" }, status));
+    await expect(readCanonicalIntakeHistory(value, summary(), "next-page", 2, signal)).rejects.toMatchObject({ status });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });

@@ -3148,6 +3148,16 @@
             "title": "Intake Method",
             "type": "string"
           },
+          "processing_history": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanonicalIntakeHistoryPage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "processing_state": {
             "$ref": "#/components/schemas/IntakeStage"
           },
@@ -3163,6 +3173,16 @@
           },
           "scope": {
             "$ref": "#/components/schemas/NativeIntakeScope"
+          },
+          "source_info": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanonicalIntakeSourceInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "submitted_at": {
             "format": "date-time",
@@ -3207,6 +3227,65 @@
           "scope"
         ],
         "title": "CanonicalIntakeDetail",
+        "type": "object"
+      },
+      "CanonicalIntakeHistoryPage": {
+        "properties": {
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_version": {
+            "minimum": 1.0,
+            "title": "Intake Version",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CanonicalIntakeTransition"
+            },
+            "maxItems": 25,
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "previous_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Cursor"
+          },
+          "through_sequence": {
+            "minimum": 0.0,
+            "title": "Through Sequence",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "intake_id",
+          "intake_version",
+          "through_sequence",
+          "items",
+          "next_cursor",
+          "previous_cursor"
+        ],
+        "title": "CanonicalIntakeHistoryPage",
         "type": "object"
       },
       "CanonicalIntakePage": {
@@ -3365,6 +3444,75 @@
         "title": "CanonicalIntakeResolution",
         "type": "object"
       },
+      "CanonicalIntakeSourceInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "last_transition_at": {
+            "format": "date-time",
+            "title": "Last Transition At",
+            "type": "string"
+          },
+          "recorded_policy_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "APPROVED_RETRIEVAL",
+                  "ASSISTED_ENTRY_ONLY",
+                  "AUTH_REQUIRED",
+                  "SOURCE_BLOCKED",
+                  "POLICY_UNKNOWN"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded Policy State"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "url_fields": {
+            "items": {
+              "$ref": "#/components/schemas/CanonicalPersistedListingField"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Url Fields",
+            "type": "array"
+          }
+        },
+        "required": [
+          "source_id",
+          "recorded_policy_state",
+          "last_transition_at",
+          "completed_at",
+          "url_fields"
+        ],
+        "title": "CanonicalIntakeSourceInfo",
+        "type": "object"
+      },
       "CanonicalIntakeSourcePolicyRecheckReceipt": {
         "properties": {
           "audit_event_id": {
@@ -3483,6 +3631,193 @@
           "scope"
         ],
         "title": "CanonicalIntakeSummary",
+        "type": "object"
+      },
+      "CanonicalIntakeTransition": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Subject Id"
+          },
+          "causation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Causation Id"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          },
+          "from_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IntakeStage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "match_case_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Case Id"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "parser_release_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Release Id"
+          },
+          "permission": {
+            "title": "Permission",
+            "type": "string"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          },
+          "resulting_version": {
+            "minimum": 1.0,
+            "title": "Resulting Version",
+            "type": "integer"
+          },
+          "sequence_no": {
+            "minimum": 1.0,
+            "title": "Sequence No",
+            "type": "integer"
+          },
+          "service_principal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Principal"
+          },
+          "source_policy_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Policy Version"
+          },
+          "source_snapshot_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Snapshot Id"
+          },
+          "to_state": {
+            "$ref": "#/components/schemas/IntakeStage"
+          },
+          "transition_id": {
+            "format": "uuid",
+            "title": "Transition Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "transition_id",
+          "sequence_no",
+          "from_state",
+          "to_state",
+          "actor_subject_id",
+          "service_principal",
+          "permission",
+          "reason_code",
+          "expected_version",
+          "resulting_version",
+          "job_id",
+          "source_policy_version",
+          "parser_release_id",
+          "source_snapshot_id",
+          "match_case_id",
+          "correlation_id",
+          "causation_id",
+          "occurred_at"
+        ],
+        "title": "CanonicalIntakeTransition",
         "type": "object"
       },
       "CanonicalIntakeWorkflow": {
@@ -22408,6 +22743,26 @@
               "title": "Intake Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "include_source",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Source",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_history",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include History",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -22777,6 +23132,97 @@
           }
         },
         "summary": "Cancel Authorization Wait",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-intakes/{intake_id}/processing-history": {
+      "get": {
+        "operationId": "getCanonicalIntakeProcessingHistory",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "intake_version",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Intake Version",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 25,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIntakeHistoryPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Processing History",
         "tags": [
           "assisted-listing-intake",
           "assisted-listing-intake"

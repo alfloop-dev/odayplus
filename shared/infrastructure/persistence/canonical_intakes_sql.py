@@ -38,6 +38,33 @@ class CanonicalIntakeRepository:
                 (tenant, intake_id),
             )
 
+    def processing_history_span(self, tenant: str, intake_id: str, through: int | None = None) -> dict:
+        """Bound the original transition rows, after the caller authorizes Intake.
+
+        The HTTP owner retains the same SERIALIZABLE root and current-version
+        fence. These are recorded sequences, never a reconstructed stage path.
+        """
+        with self.graph.transaction(tenant):
+            return self.engine.query_one(
+                "SELECT MIN(sequence_no) AS first_sequence,MAX(sequence_no) AS last_sequence "
+                "FROM intake.intake_stage_transitions WHERE tenant_id=? AND intake_id=? "
+                "AND (?::bigint IS NULL OR sequence_no<=?::bigint)", (tenant, intake_id, through, through))
+
+    def processing_history(self, tenant: str, intake_id: str, *, through: int, position: int,
+                           backward: bool, limit: int) -> list[dict]:
+        """Project bounded metadata only, without raw reasons or command keys."""
+        if type(limit) is not int or not 1 <= limit <= 26:
+            raise ValueError("Native history read bound is required")
+        comparison, order = ("<", "DESC") if backward else (">", "ASC")
+        with self.graph.transaction(tenant):
+            return self.engine.query(
+                "SELECT transition_id,sequence_no,from_state,to_state,actor_subject_id,service_principal,"
+                "permission,reason_code,expected_version,resulting_version,job_id,source_policy_version,"
+                "parser_release_id,source_snapshot_id,match_case_id,correlation_id,causation_id,occurred_at "
+                "FROM intake.intake_stage_transitions WHERE tenant_id=? AND intake_id=? "
+                f"AND sequence_no{comparison}? AND sequence_no<=? ORDER BY sequence_no {order} LIMIT ?",
+                (tenant, intake_id, position, through, limit))
+
     def workflow(self, tenant: str, intake_id: str) -> dict | None:
         """Read recorded workflow facts after the caller authorizes its Intake.
 

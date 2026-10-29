@@ -33,7 +33,11 @@ const id = (n: number) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 const intake = (n: number) => ({ intake_id: id(n), tenant_id: id(10), submitter_subject_id: id(11), correlation_id: id(12),
   intake_method: "MANUAL", processing_state: "NEEDS_REVIEW", version: 3, submitted_at: "2026-10-15T08:00:00Z",
-  scope: { brand_id: null, region_id: null, assigned_area_id: null, heat_zone_id: null } });
+  scope: { brand_id: null, region_id: null, assigned_area_id: null, heat_zone_id: null },
+  source_info: { source_id: null, recorded_policy_state: null, last_transition_at: "2026-10-15T08:00:00Z", completed_at: null,
+    url_fields: ["originalUrl", "canonicalUrl"].map((field_path) => ({ field_path, classification: "CONFIDENTIAL",
+      effective: null, masked: true, mask_reason_code: "FIELD_MASKED" as const })) },
+  processing_history: { intake_id: id(n), intake_version: 3, through_sequence: 0, items: [], next_cursor: null, previous_cursor: null } });
 const matchCase = (n: number) => ({ match_case_id: id(n + 20), intake_id: id(n), intake_version: 3, version: 1,
   status: "PENDING_REVIEW", outcome: "POSSIBLE_MATCH", candidates: [{ match_candidate_id: id(n + 30), property_id: id(n + 40),
     listing_id: null, rank: 1, confidence: "0.9000", observed_property_version: 2, observed_listing_version: null }] });
@@ -66,7 +70,7 @@ describe("native Intake and case selection", () => {
     let secondReads = 0;
     const context = makeContext((path) => {
       if (path.startsWith("/api/v1/canonical-intakes?")) throw new Error("Exact navigation must not discover a collection");
-      if (path === "/api/v1/canonical-intakes/" + id(2) && ++secondReads === 1) {
+      if (new URL(path, window.location.origin).pathname === "/api/v1/canonical-intakes/" + id(2) && ++secondReads === 1) {
         const response = json({});
         response.json = () => { reading.resolve(true); return body.promise; };
         return response;
@@ -261,7 +265,7 @@ describe("native Intake and case selection", () => {
     await within(detail).findByText(new RegExp(`比對案件 ${id(22)}`));
     expect(within(detail).getByText(new RegExp(`主體 ${id(42)}`))).toBeVisible();
     expect(vi.mocked(context.fetchImpl).mock.calls.map(([path]) => path)).toEqual([
-      "/api/v1/canonical-intakes?page_size=25", `/api/v1/canonical-intakes/${id(2)}`, `/api/v1/intakes/${id(2)}/match-case`,
+      "/api/v1/canonical-intakes?page_size=25", `/api/v1/canonical-intakes/${id(2)}?include_source=true&include_history=true`, `/api/v1/intakes/${id(2)}/match-case`,
     ]);
     await select(2);
     expect(within(detail).getByText(new RegExp(`比對案件 ${id(22)}`))).toBeVisible();
@@ -294,7 +298,7 @@ describe("native Intake and case selection", () => {
     const body = deferred<unknown>(); const reading = deferred<boolean>();
     const late = json({}); late.json = () => { reading.resolve(true); return body.promise; };
     const normal = makeContext();
-    const context = makeContext((path) => path === `/api/v1/canonical-intakes/${id(1)}` ? late : normal.fetchImpl(path));
+    const context = makeContext((path) => new URL(path, window.location.origin).pathname === `/api/v1/canonical-intakes/${id(1)}` ? late : normal.fetchImpl(path));
     render(<CanonicalIntakeCasePicker context={context} />); open();
     await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1); await reading.promise;
     await select(2);

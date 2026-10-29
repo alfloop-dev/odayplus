@@ -130,7 +130,7 @@ function mount(config: Config = {}) {
     }
     if (new URL(url, window.location.origin).pathname === "/api/v1/operator/network-listings" && config.canonicalNetwork) return config.canonicalNetwork(actor);
     if (config.nativeIntake && (/^\/api\/v1\/canonical-intakes(?:\/|$)/.test(new URL(url, window.location.origin).pathname)
-      || /^\/api\/v1\/intakes\/[^/]+\/match-case$/.test(new URL(url, window.location.origin).pathname))) return config.nativeIntake(url, init, actor);
+      || /^\/api\/v1\/intakes\/[^/]+\/match-case$/.test(new URL(url, window.location.origin).pathname))) return config.nativeIntake(new URL(url, window.location.origin).pathname, init, actor);
     if (url === "/api/v1/operator/shell/tasks" && config.tasks) return config.tasks(actor);
     if (config.legacy && ["/api/v1/heatzones", "/api/v1/listings/candidates", "/api/v1/sitescore/reports"].includes(new URL(url, window.location.origin).pathname)) return config.legacy(new URL(url, window.location.origin).pathname, actor);
     return json({ detail: "unrelated read unavailable" }, 403);
@@ -157,6 +157,14 @@ async function invokeConfirmedNetworkRefreshControl() {
   expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
 }
 
+// Synthetic typed transport values, not source evidence or processing proof.
+function nativeReadProjection(intake_id: string, version: number, submitted_at: string) {
+  return { source_info: { source_id: null, recorded_policy_state: null, last_transition_at: submitted_at, completed_at: null,
+    url_fields: ["originalUrl", "canonicalUrl"].map((field_path) => ({ field_path, classification: "CONFIDENTIAL",
+      effective: null, masked: true, mask_reason_code: "FIELD_MASKED" as const })) },
+    processing_history: { intake_id, intake_version: version, through_sequence: 0, items: [], next_cursor: null, previous_cursor: null } };
+}
+
 async function beginCanonicalCommand(boundary: "HTTP" | "JSON" | "ERROR_JSON" | "uncertain",
   probe?: (init: RequestInit | undefined, actor: string) => Response | Promise<Response>) {
   const response = deferred<Response>(), body = deferred<unknown>(), reading = deferred<boolean>();
@@ -172,7 +180,7 @@ async function beginCanonicalCommand(boundary: "HTTP" | "JSON" | "ERROR_JSON" | 
       if (init?.method !== "POST") {
         if (path === "/api/v1/canonical-intakes/submissions/receipt" && probe) return probe(init, actor);
         if (path.endsWith("/match-case")) return json({ detail: "CANONICAL_MATCH_CASE_NOT_FOUND" }, 404);
-        if (path === "/api/v1/canonical-intakes/" + receipt.intake_id) return json({ ...receipt, tenant_id: B,
+        if (path === "/api/v1/canonical-intakes/" + receipt.intake_id) return json({ ...receipt, ...nativeReadProjection(receipt.intake_id, receipt.version, receipt.submitted_at), tenant_id: B,
           submitter_subject_id: actor, scope: { brand_id: null, region_id: null, assigned_area_id: null, heat_zone_id: null } });
         return json({ items: [], next_cursor: null });
       }
@@ -275,7 +283,7 @@ describe("authenticated bootstrap persona ownership", () => {
     expect(new URL(exactHref).searchParams.get("intakeKind")).toBe("canonical");
     expect(new URL(exactHref).searchParams.get("canonicalCursor")).toBe("");
     expect(exactHref).not.toContain("source.example");
-    const selected = await screen.findByRole("region", { name: "所選收件與比對案件" });
+    const selected = await screen.findByRole("region", { name: "收件處理詳情" });
     await within(selected).findByText("收件 " + receipt.intake_id + " · 版本 1 · 已送出");
     act(() => {
       window.history.replaceState(null, "", browseHref);
@@ -287,7 +295,7 @@ describe("authenticated bootstrap persona ownership", () => {
       window.history.replaceState(null, "", exactHref);
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
-    const restored = await screen.findByRole("region", { name: "所選收件與比對案件" });
+    const restored = await screen.findByRole("region", { name: "收件處理詳情" });
     await within(restored).findByText("收件 " + receipt.intake_id + " · 版本 1 · 已送出");
     expect(screen.getByTestId("network-find-areas-workspace")).toBeVisible();
     expect(fetch.mock.calls.slice(nativeReadStart).filter(([path]) => String(path).includes("/api/v1/operator/network-listings/intake"))).toHaveLength(0);
@@ -309,14 +317,14 @@ describe("authenticated bootstrap persona ownership", () => {
       initialSearchParams: { ws: "network", tab: "radar", selected: target, dialog: "detail", intakeKind: "canonical" },
       canonicalNetwork: () => json(canonicalNetworkSnapshot("Current native detail")),
       nativeIntake: (path) => path.includes("/match-case") ? json({ detail: "CANONICAL_MATCH_CASE_NOT_FOUND" }, 404)
-        : path === "/api/v1/canonical-intakes/" + target ? json({ intake_id: target, tenant_id: B, submitter_subject_id: A,
+        : path === "/api/v1/canonical-intakes/" + target ? json({ ...nativeReadProjection(target, 7, "2026-10-29T03:00:00Z"), intake_id: target, tenant_id: B, submitter_subject_id: A,
           correlation_id: "00000000-0000-0000-0000-000000000088", intake_method: "URL", processing_state: "SUBMITTED",
           version: 7, submitted_at: "2026-10-29T03:00:00Z", scope: { brand_id: null, region_id: null, assigned_area_id: null, heat_zone_id: null } })
         : json({ detail: "collection deliberately refused" }, 403) };
     for (let reload = 0; reload < 2; reload += 1) {
       const { view, fetch } = mount(config);
       const selected = await screen.findByRole("region", { name: "所選收件與比對案件" });
-      await within(selected).findByText("收件 " + target + " · 版本 7 · 已送出");
+      await within(screen.getByRole("region", { name: "收件處理詳情" })).findByText("收件 " + target + " · 版本 7 · 已送出");
       expect(screen.getByRole("region", { name: "收件處理詳情" })).toHaveAttribute("data-screen-label", "Intake 收件處理詳情頁");
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       expect(fetch.mock.calls.filter(([path]) => String(path).startsWith("/api/v1/canonical-intakes?"))).toHaveLength(0);

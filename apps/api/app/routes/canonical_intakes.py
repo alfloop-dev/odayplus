@@ -180,9 +180,16 @@ class CanonicalIntakeWorkflow(BaseModel):
     breach_at: AwareDatetime
 
 
-class CanonicalIntakeDetail(CanonicalIntakeSummary):
-    resolution: CanonicalIntakeResolution | None = None
-    workflow: CanonicalIntakeWorkflow | None = None
+class CanonicalIntakeSourceInfo(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str | None
+    recorded_policy_state: Literal["APPROVED_RETRIEVAL", "ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED", "SOURCE_BLOCKED", "POLICY_UNKNOWN"] | None
+    last_transition_at: AwareDatetime
+    completed_at: AwareDatetime | None
+    url_fields: list[CanonicalPersistedListingField] = Field(min_length=2, max_length=2)
+
+
 
 
 class CancelCanonicalIntakeAuthorizationWaitRequest(BaseModel):
@@ -317,6 +324,74 @@ class _IntakeCursor(BaseModel):
     intake_id: UUID
 
 
+class CanonicalIntakeTransition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transition_id: UUID
+    sequence_no: int = Field(ge=1, strict=True)
+    from_state: IntakeStage | None
+    to_state: IntakeStage
+    actor_subject_id: UUID | None
+    service_principal: str | None
+    permission: str
+    reason_code: str | None
+    expected_version: int | None = Field(ge=1, strict=True)
+    resulting_version: int = Field(ge=1, strict=True)
+    job_id: UUID | None
+    source_policy_version: int | None = Field(ge=1, strict=True)
+    parser_release_id: UUID | None
+    source_snapshot_id: UUID | None
+    match_case_id: UUID | None
+    correlation_id: UUID
+    causation_id: UUID | None
+    occurred_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def unambiguous_actor(self):
+        if self.actor_subject_id is not None and self.service_principal is not None:
+            raise ValueError("Recorded transition has ambiguous actor attribution")
+        return self
+
+
+class CanonicalIntakeHistoryPage(BaseModel):
+    intake_id: UUID
+    intake_version: int = Field(ge=1, strict=True)
+    through_sequence: int = Field(ge=0, strict=True)
+    items: list[CanonicalIntakeTransition] = Field(max_length=25)
+    next_cursor: str | None
+    previous_cursor: str | None
+
+
+class CanonicalIntakeDetail(CanonicalIntakeSummary):
+    resolution: CanonicalIntakeResolution | None = None
+    workflow: CanonicalIntakeWorkflow | None = None
+    source_info: CanonicalIntakeSourceInfo | None = None
+
+    processing_history: CanonicalIntakeHistoryPage | None = None
+
+
+class _IntakeHistoryCursor(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[1]
+    tenant_id: UUID
+    intake_id: UUID
+    intake_version: int = Field(ge=1, strict=True)
+    through_sequence: int = Field(ge=1, strict=True)
+    position: int = Field(ge=1, strict=True)
+    direction: Literal["forward", "backward"]
+
+    @model_validator(mode="after")
+    def bounded_position(self):
+        if self.position > self.through_sequence:
+            raise ValueError("History position is outside its recorded range")
+        return self
+
+
+def _encode_cursor(value: BaseModel) -> str:
+    return base64.urlsafe_b64encode(value.model_dump_json().encode()).decode()
+
+
 def create_canonical_intakes_router(store) -> APIRouter:
     router = APIRouter(tags=["assisted-listing-intake"], route_class=_SubmissionValidationRoute)
 
@@ -375,6 +450,54 @@ def create_canonical_intakes_router(store) -> APIRouter:
         (422, "Invalid native submission"), (503, "Canonical storage or audit unavailable"),
     )}
 
+    def history_page(principal, repo, row, intake_version, cursor, page_size):
+        tenant, selected_id = principal.tenant_id, row["intake_id"]
+        if row["version"] != intake_version:
+            raise HTTPException(409, "CANONICAL_INTAKE_VERSION_CHANGED")
+        decoded = None
+        if cursor is not None:
+            try:
+                decoded = _IntakeHistoryCursor.model_validate_json(base64.b64decode(cursor, altchars=b"-_", validate=True))
+            except ValueError:
+                raise HTTPException(422, "INVALID_CANONICAL_INTAKE_HISTORY_CURSOR") from None
+            if str(decoded.tenant_id) != tenant or str(decoded.intake_id) != selected_id:
+                raise HTTPException(422, "CANONICAL_INTAKE_HISTORY_CURSOR_RESOURCE_MISMATCH")
+            if decoded.intake_version != intake_version:
+                raise HTTPException(409, "CANONICAL_INTAKE_VERSION_CHANGED")
+        span = repo.processing_history_span(tenant, selected_id)
+        first, last = span["first_sequence"], span["last_sequence"]
+        if first is not None and (type(first) is not int or first < 1 or type(last) is not int or last < first):
+            raise HTTPException(503, "CANONICAL_INTAKE_HISTORY_UNAVAILABLE")
+        through = decoded.through_sequence if decoded else last or 0
+        if decoded and (last is None or through > last):
+            raise HTTPException(422, "INVALID_CANONICAL_INTAKE_HISTORY_CURSOR")
+        span = repo.processing_history_span(tenant, selected_id, through)
+        backward = decoded is not None and decoded.direction == "backward"
+        rows = repo.processing_history(tenant, selected_id, through=through,
+            position=decoded.position if decoded else 0, backward=backward, limit=page_size + 1)
+        if decoded and not rows:
+            raise HTTPException(422, "INVALID_CANONICAL_INTAKE_HISTORY_CURSOR")
+        chosen = rows[:page_size]
+        if backward:
+            chosen.reverse()
+        try:
+            items = [CanonicalIntakeTransition.model_validate(item) for item in chosen]
+        except (ValueError, TypeError):
+            raise HTTPException(503, "CANONICAL_INTAKE_HISTORY_UNAVAILABLE") from None
+        if any(item.resulting_version > intake_version or (item.resulting_version == intake_version
+                and item.to_state != row["processing_state"]) for item in items):
+            raise HTTPException(503, "CANONICAL_INTAKE_HISTORY_UNAVAILABLE")
+
+        def at(sequence, direction):
+            return _encode_cursor(_IntakeHistoryCursor(version=1, tenant_id=tenant, intake_id=selected_id,
+                intake_version=intake_version, through_sequence=through, position=sequence, direction=direction))
+
+        return {"intake_id": selected_id, "intake_version": intake_version, "through_sequence": through,
+            "items": items,
+            "next_cursor": at(items[-1].sequence_no, "forward") if items and items[-1].sequence_no < span["last_sequence"] else None,
+            "previous_cursor": at(items[0].sequence_no, "backward") if items and items[0].sequence_no > span["first_sequence"] else None}
+
+
     @router.get("/canonical-intakes", operation_id="listCanonicalIntakes",
                 response_model=CanonicalIntakePage, responses=errors)
     def page(request: Request, processing_state: IntakeStage | None = None,
@@ -410,13 +533,14 @@ def create_canonical_intakes_router(store) -> APIRouter:
                     last = selected[-1]
                     value = _IntakeCursor(version=1, tenant_id=tenant, processing_state=processing_state,
                                           submitted_at=last["submitted_at"], intake_id=last["intake_id"])
-                    next_cursor = base64.urlsafe_b64encode(value.model_dump_json().encode()).decode()
+                    next_cursor = _encode_cursor(value)
                 return {"items": [{**row, "scope": {key: row[key] for key in NativeIntakeScope.model_fields}}
                                   for row in selected], "next_cursor": next_cursor}
 
     @router.get("/canonical-intakes/{intake_id}", operation_id="getCanonicalIntake",
                 response_model=CanonicalIntakeDetail, responses=errors)
-    def get(intake_id: UUID, request: Request, response: Response):
+    def get(intake_id: UUID, request: Request, response: Response,
+            include_source: bool = False, include_history: bool = False):
         with _http_errors():
             principal, repo = context(request)
             flags = read_flag_owner(request, repo)
@@ -462,8 +586,50 @@ def create_canonical_intakes_router(store) -> APIRouter:
                         "property_version": prop["version"], "fields": fields}
                 response.headers["ETag"] = f'W/"{row["version"]}"'
                 response.headers["Cache-Control"] = "no-store"
+                source_info = None
+                if include_source:
+                    url_fields = []
+                    for field, column in (("originalUrl", "original_url"), ("canonicalUrl", "canonical_url")):
+                        classification = "CONFIDENTIAL"
+                        value = row[column]
+                        if value is not None:
+                            try:
+                                # Original native validation has no DNS/network IO.
+                                # Historical credentials remain hidden even at the
+                                # highest clearance; this grants no source action.
+                                validate_native_intake_url(value)
+                                if contains_sensitive_submission_material({field: value}):
+                                    classification = None
+                            except ValueError:
+                                classification = None
+                        url_fields.append({"field_path": field, "classification": classification,
+                                           "effective": value, "masked": False})
+                    source_info = {"source_id": row["source_id"], "recorded_policy_state": row["source_policy_state"],
+                        "last_transition_at": row["last_transition_at"], "completed_at": row["completed_at"],
+                        "url_fields": mask_intake(principal, {"fields": url_fields})["fields"]}
                 return {**row, "scope": {key: row[key] for key in NativeIntakeScope.model_fields},
-                        "resolution": resolution, "workflow": repo.workflow(principal.tenant_id, str(intake_id))}
+                        "resolution": resolution, "workflow": repo.workflow(principal.tenant_id, str(intake_id)),
+                        "source_info": source_info,
+                        "processing_history": history_page(principal, repo, row, row["version"], None, 25) if include_history else None}
+
+    @router.get("/canonical-intakes/{intake_id}/processing-history", operation_id="getCanonicalIntakeProcessingHistory",
+                response_model=CanonicalIntakeHistoryPage, responses=errors)
+    def processing_history(intake_id: UUID, request: Request, response: Response,
+        intake_version: Annotated[int, Query(ge=1)],
+        cursor: Annotated[str | None, Query(max_length=2048)] = None,
+        page_size: Annotated[int, Query(ge=1, le=25)] = 25,
+    ):
+        with _http_errors():
+            principal, repo = context(request)
+            flags = read_flag_owner(request, repo)
+            tenant, selected_id = principal.tenant_id, str(intake_id)
+            with repo.graph.transaction(tenant):
+                row = repo.get(tenant, selected_id)
+                authorize(request, principal, repo, row, flag_owner=flags)
+                value = history_page(principal, repo, row, intake_version, cursor, page_size)
+                response.headers["Cache-Control"] = "no-store"
+                response.headers["ETag"] = f'W/"{intake_version}"'
+                return value
 
     @router.get("/canonical-intakes/submissions/receipt", operation_id="getCanonicalIntakeSubmissionReceipt",
                 response_model=NativeReceiptCommitted[CanonicalIntakeReceipt] | NativeReceiptNotObserved, responses=errors)

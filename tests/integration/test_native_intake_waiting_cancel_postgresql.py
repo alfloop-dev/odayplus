@@ -73,6 +73,52 @@ def state(case):
     return result
 
 
+def test_actual_worker_authorization_wait_and_cancel_history_are_recorded_not_inferred(waiting):
+    start, prior = waiting
+    client = start[1][0]
+    path = f'/api/v1/canonical-intakes/{prior["intake_id"]}'
+    before = state(waiting)
+    response = client.get(path, params={"include_source": "true", "include_history": "true"})
+    assert response.status_code == 200, response.text
+    detail = response.json()
+    history = detail["processing_history"]
+    assert detail["processing_state"] == "AWAITING_SOURCE_AUTHORIZATION"
+    assert detail["source_info"]["recorded_policy_state"] == "AUTH_REQUIRED"
+    assert detail["source_info"]["completed_at"] is None
+    rows = sorted((r for r in before["intake.intake_stage_transitions"] if r["intake_id"] == prior["intake_id"]),
+                  key=lambda r: r["sequence_no"])
+    assert [r["transition_id"] for r in history["items"]] == [r["transition_id"] for r in rows]
+    assert [(r["from_state"], r["to_state"]) for r in history["items"]] == [(r["from_state"], r["to_state"]) for r in rows]
+    assert history["items"][-1]["to_state"] == "AWAITING_SOURCE_AUTHORIZATION"
+    assert history["items"][-1]["service_principal"] is not None
+    assert history["items"][-1]["actor_subject_id"] is None
+    assert history["intake_version"] == prior["version"]
+    assert state(waiting) == before
+
+    _, cancel_path, headers, body = command(waiting)
+    cancelled = client.post(cancel_path, headers=headers, json=body)
+    assert cancelled.status_code == 200, cancelled.text
+    receipt = cancelled.json()
+    after = state(waiting)
+    stale = client.get(path + "/processing-history", params={"intake_version": prior["version"]})
+    assert stale.status_code == 409 and stale.json()["detail"] == "CANONICAL_INTAKE_VERSION_CHANGED"
+    response = client.get(path, params={"include_source": "true", "include_history": "true"})
+    assert response.status_code == 200, response.text
+    detail = response.json()
+    assert detail["processing_state"] == "CANCELLED"
+    assert detail["source_info"]["completed_at"] is None  # Actual cancellation never writes a completion time.
+    assert detail["source_info"]["last_transition_at"] == receipt["cancelled_at"]
+    history = detail["processing_history"]
+    assert history["items"][-1]["transition_id"] == receipt["transition_id"]
+    assert history["items"][-1]["from_state"] == "AWAITING_SOURCE_AUTHORIZATION"
+    assert history["items"][-1]["to_state"] == "CANCELLED"
+    assert history["items"][-1]["actor_subject_id"] == start[1][1]["principal"].subject_id
+    assert history["items"][-1]["service_principal"] is None
+    assert history["intake_version"] == receipt["version"]
+    assert "reason_text" not in response.text and "idempotency_key" not in response.text and body["reason"] not in response.text
+    assert state(waiting) == after
+
+
 @pytest.mark.parametrize("role", [Role.EXPANSION_USER, Role.SITE_REVIEWER, Role.DATA_OWNER])
 def test_actual_wait_cancellation_is_once_only_durable_scoped_and_preserves_evidence(waiting, role):
     start, prior = waiting

@@ -577,14 +577,26 @@ export type CanonicalIntakeDetail = {
   correlation_id: string;
   intake_id: string;
   intake_method: "URL" | "MANUAL" | "CSV" | "APPROVED_FEED" | "OPERATOR_SNAPSHOT";
+  processing_history?: CanonicalIntakeHistoryPage | null;
   processing_state: IntakeStage;
   resolution?: CanonicalIntakeResolution | null;
   scope: NativeIntakeScope;
+  source_info?: CanonicalIntakeSourceInfo | null;
   submitted_at: string;
   submitter_subject_id: string;
   tenant_id: string;
   version: number;
   workflow?: CanonicalIntakeWorkflow | null;
+};
+
+/** CanonicalIntakeHistoryPage */
+export type CanonicalIntakeHistoryPage = {
+  intake_id: string;
+  intake_version: number;
+  items: CanonicalIntakeTransition[];
+  next_cursor: string | null;
+  previous_cursor: string | null;
+  through_sequence: number;
 };
 
 /** CanonicalIntakePage */
@@ -618,6 +630,15 @@ export type CanonicalIntakeResolution = {
   property_version: number;
 };
 
+/** CanonicalIntakeSourceInfo */
+export type CanonicalIntakeSourceInfo = {
+  completed_at: string | null;
+  last_transition_at: string;
+  recorded_policy_state: "APPROVED_RETRIEVAL" | "ASSISTED_ENTRY_ONLY" | "AUTH_REQUIRED" | "SOURCE_BLOCKED" | "POLICY_UNKNOWN" | null;
+  source_id: string | null;
+  url_fields: CanonicalPersistedListingField[];
+};
+
 /** CanonicalIntakeSourcePolicyRecheckReceipt */
 export type CanonicalIntakeSourcePolicyRecheckReceipt = {
   audit_event_id: string;
@@ -641,6 +662,28 @@ export type CanonicalIntakeSummary = {
   submitter_subject_id: string;
   tenant_id: string;
   version: number;
+};
+
+/** CanonicalIntakeTransition */
+export type CanonicalIntakeTransition = {
+  actor_subject_id: string | null;
+  causation_id: string | null;
+  correlation_id: string;
+  expected_version: number | null;
+  from_state: IntakeStage | null;
+  job_id: string | null;
+  match_case_id: string | null;
+  occurred_at: string;
+  parser_release_id: string | null;
+  permission: string;
+  reason_code: string | null;
+  resulting_version: number;
+  sequence_no: number;
+  service_principal: string | null;
+  source_policy_version: number | null;
+  source_snapshot_id: string | null;
+  to_state: IntakeStage;
+  transition_id: string;
 };
 
 /** CanonicalIntakeWorkflow */
@@ -3151,6 +3194,7 @@ export const API_PATHS = {
   "/api/v1/canonical-intakes/{intake_id}/assisted-entry-completions/receipt": ["GET"],
   "/api/v1/canonical-intakes/{intake_id}/assisted-entry-completions/{request_id}/cancel": ["POST"],
   "/api/v1/canonical-intakes/{intake_id}/cancel": ["POST"],
+  "/api/v1/canonical-intakes/{intake_id}/processing-history": ["GET"],
   "/api/v1/canonical-intakes/{intake_id}/source-policy-rechecks": ["POST"],
   "/api/v1/canonical-intakes/{intake_id}/source-policy-rechecks/{request_id}/cancel": ["POST"],
   "/api/v1/external-data/freshness": ["GET"],

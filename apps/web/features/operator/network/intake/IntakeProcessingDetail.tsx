@@ -6,7 +6,7 @@ import type {
   FieldValue, IntakeSubmissionReceipt, JobReceipt, MatchCaseSummary, PromotionDecisionReceipt, SlaReceipt, TransitionReceipt,
 } from "@oday-plus/openapi-client";
 import { AssistedEntryForm } from "./AssistedEntryForm";
-import { CANONICAL_INTAKE_STAGE_LABEL } from "./canonicalIntakeReadClient";
+import { CANONICAL_INTAKE_STAGE_LABEL, type CanonicalIntakeReadContext } from "./canonicalIntakeReadClient";
 import { AssignmentSlaSummary } from "./AssignmentSlaSummary";
 import { DurableReceiptPanel } from "./DurableReceiptPanel";
 import { EvidencePanel } from "./EvidencePanel";
@@ -56,6 +56,7 @@ type AssistedIntakeProcessingDetailProps = {
 export type IntakeProcessingDetailProps = AssistedIntakeProcessingDetailProps | {
   /** Same continuous detail composition, without inventing a legacy DTO. */
   canonical: CanonicalIntakeDetail | null;
+  readContext: CanonicalIntakeReadContext;
   matchCase: MatchCaseSummary | null;
   intakeId: string;
   children: ReactNode;
@@ -115,9 +116,72 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
         </div>
         {onRefresh ? <button className={styles.secondaryButton} disabled={busy} onClick={onRefresh} type="button" data-testid="intake-refresh-button">重新整理</button> : null}
       </header>
-      {native ? props.children : <AssistedIntakeSections {...props} />}
+      {native ? <>{canonical ? <NativeIntakeSections canonical={canonical} context={props.readContext} /> : null}{props.children}</> : <AssistedIntakeSections {...props} />}
     </section>
   );
+}
+
+function NativeIntakeSections({ canonical, context }: { canonical: CanonicalIntakeDetail; context: CanonicalIntakeReadContext }) {
+  return <>
+    <section data-intake-section="submission" className={styles.sectionBox} data-testid="intake-submission-summary">
+      <div className={styles.sectionHead}>送件摘要 SUBMISSION SUMMARY</div>
+      <p>收件 {canonical.intake_id} · 版本 {canonical.version} · {CANONICAL_INTAKE_STAGE_LABEL[canonical.processing_state]}</p>
+      <div className={styles.metaGrid}>
+        <Meta label="送件方式" value={canonical.intake_method} />
+        <Meta label="送件時間 Submitted At" value={canonical.submitted_at} />
+        <Meta label="提交者識別碼" value={canonical.submitter_subject_id} />
+        <Meta label="查詢編號 Correlation ID" value={canonical.correlation_id} />
+        <Meta label="品牌識別碼" value={canonical.scope.brand_id ?? null} />
+        <Meta label="區域識別碼" value={canonical.scope.region_id ?? null} />
+        <Meta label="指派區域識別碼" value={canonical.scope.assigned_area_id ?? null} />
+        <Meta label="HeatZone 識別碼" value={canonical.scope.heat_zone_id ?? null} />
+      </div>
+    </section>
+    {canonical.workflow ? <AssignmentSlaSummary record={{
+      owner: null, ownerSubjectId: canonical.workflow.owner_subject_id,
+      assignedQueue: canonical.workflow.queue_key,
+      assignmentId: canonical.workflow.assignment_id,
+      assignmentStatus: canonical.workflow.assignment_status,
+      slaInstanceId: canonical.workflow.sla_instance_id,
+      slaState: canonical.workflow.sla_state, dueAt: canonical.workflow.due_at,
+    }} assignmentResourceVersion={canonical.workflow.assignment_version}
+      slaResourceVersion={canonical.workflow.sla_version} />
+      : <p>尚無可讀取的指派與 SLA 資料。</p>}
+    <section data-intake-section="processing" data-testid="intake-processing-stages">
+      <IntakeStageTimeline canonical={canonical} context={context} />
+    </section>
+    <section data-intake-section="source" className={styles.sectionBox} data-testid="intake-source-policy-evidence">
+      <div className={styles.sectionHead}>來源資訊 SOURCE</div>
+      {canonical.source_info ? <div className={styles.metaGrid}>
+        {canonical.source_info.url_fields.map((field) => <Meta key={field.field_path}
+          label={field.field_path === "originalUrl" ? "原始 URL" : "Canonical URL"}
+          value={field.masked ? "無法檢視" : field.effective === null ? null : String(field.effective)} />)}
+        <Meta label="來源識別碼" value={canonical.source_info.source_id} />
+        <Meta label="來源政策（記錄值）" value={canonical.source_info.recorded_policy_state} />
+        <Meta label="最後轉移時間" value={canonical.source_info.last_transition_at} />
+        <Meta label="完成時間（已記錄）" value={canonical.source_info.completed_at} />
+      </div> : <p>尚未取得可讀取的來源資訊。</p>}
+    </section>
+              {canonical.resolution ? <section data-intake-section="lineage" aria-label="已落庫物件" className={styles.noteBox}>
+                <p>物件 {canonical.resolution.listing_id} · 版本 {canonical.resolution.listing_version} · {canonical.resolution.lifecycle_state}</p>
+                <p>目前主體 {canonical.resolution.effective_property_id} · 版本 {canonical.resolution.property_version}</p>
+                <p>建立時主體 {canonical.resolution.property_id_at_creation}</p>
+                <p>目前修訂 {canonical.resolution.current_revision_id ?? "未提供"}</p>
+                {canonical.resolution.fields?.length ? <>
+                  <table className={styles.compareGrid} aria-label="已落庫欄位">
+                    <thead><tr><th>欄位</th><th>已保存值</th><th>資料分類</th></tr></thead>
+                    <tbody>{canonical.resolution.fields.map((field) => <tr key={field.field_path}>
+                      <th scope="row">{field.field_path}</th>
+                      <td className={styles.summaryValue}>{field.masked ? "無法檢視" : field.effective === null ? "未提供" : String(field.effective)}</td>
+                      <td>{field.classification ?? "分類未提供"}</td>
+                    </tr>)}</tbody>
+                  </table>
+                  {canonical.resolution.fields.some((field) => field.masked)
+                    ? <p>部分欄位因權限或分類資料不足而遮罩。</p> : null}
+                </> : <p>目前沒有可顯示的已保存欄位資料。</p>}
+              </section> : null}
+
+  </>;
 }
 
 function AssistedIntakeSections(props: AssistedIntakeProcessingDetailProps) {

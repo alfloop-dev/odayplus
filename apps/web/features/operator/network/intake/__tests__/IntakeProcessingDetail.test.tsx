@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AssistedIntake, IntakeInboxPage } from "@oday-plus/openapi-client";
+import type { AssistedIntake, CanonicalIntakeDetail, CanonicalIntakeHistoryPage, CanonicalIntakeTransition, IntakeInboxPage } from "@oday-plus/openapi-client";
 import { OperatorConsole, isIntakeDetailOpen } from "../../../OperatorConsole";
 import "../../../NetworkFindAreasWorkspace";
 import {
@@ -17,7 +17,8 @@ import {
 import { IntakeProcessingDetail, buildPreservedInput, hasAuthoritativeTargetEvidence } from "../IntakeProcessingDetail";
 import { IntakeDecisionDialog } from "../IntakeDecisionDialog";
 import { decisionOptions, matchConfidence } from "../intakeTypes";
-import { jobStatusBadgeColors } from "../IntakeStageTimeline";
+import { IntakeStageTimeline, jobStatusBadgeColors } from "../IntakeStageTimeline";
+import type { CanonicalIntakeReadContext } from "../canonicalIntakeReadClient";
 import { isSnapshotStale } from "../intakeFreshness";
 
 const nav = vi.hoisted(() => {
@@ -1469,5 +1470,115 @@ describe("decision drafts belong to one client, principal, record and decision i
     expect(screen.getByTestId("intake-decide-risk-ack")).not.toBeChecked();
     expect(screen.queryByTestId("intake-decide-error")).not.toBeInTheDocument();
     expect(new URLSearchParams(nav.state.search).get("dialog")).toBe("decide");
+  });
+});
+
+const nativeId = (n: number) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")}`;
+const nativeJson = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+function nativeTransition(sequence: number, marker: string): CanonicalIntakeTransition {
+  return { transition_id: nativeId(100 + sequence), sequence_no: sequence,
+    from_state: sequence === 1 ? null : "SUBMITTED", to_state: sequence === 1 ? "SUBMITTED" : "CHECKING_IDENTITY",
+    actor_subject_id: sequence === 1 ? nativeId(11) : null, service_principal: sequence === 1 ? null : marker,
+    permission: marker, reason_code: null, expected_version: sequence === 1 ? null : sequence - 1,
+    resulting_version: sequence, job_id: null, source_policy_version: null, parser_release_id: null,
+    source_snapshot_id: null, match_case_id: null, correlation_id: nativeId(12), causation_id: null,
+    occurred_at: "2026-10-15T08:00:00Z" };
+}
+function nativeDetail(n = 1, marker = "synthetic-first-page"): CanonicalIntakeDetail {
+  return { intake_id: nativeId(n), tenant_id: nativeId(10), submitter_subject_id: nativeId(11), correlation_id: nativeId(12),
+    intake_method: "URL", processing_state: "NEEDS_REVIEW", version: 3, submitted_at: "2026-10-15T08:00:00Z",
+    scope: { brand_id: null, region_id: null, assigned_area_id: null, heat_zone_id: null },
+    source_info: { source_id: null, recorded_policy_state: null, last_transition_at: "2026-10-15T08:00:00Z", completed_at: null,
+      url_fields: ["originalUrl", "canonicalUrl"].map((field_path) => ({ field_path, classification: "CONFIDENTIAL",
+        effective: null, masked: true, mask_reason_code: "FIELD_MASKED" })) },
+    processing_history: { intake_id: nativeId(n), intake_version: 3, through_sequence: 2,
+      items: [nativeTransition(1, marker)], previous_cursor: null, next_cursor: "next-page" } };
+}
+function nativeNextPage(parent: CanonicalIntakeDetail, marker = "synthetic-next-page"): CanonicalIntakeHistoryPage {
+  return { intake_id: parent.intake_id, intake_version: parent.version, through_sequence: 2,
+    items: [nativeTransition(2, marker)], previous_cursor: "earlier-page", next_cursor: null };
+}
+function nativeContext(fetchImpl = vi.fn<typeof fetch>()): CanonicalIntakeReadContext {
+  return { fetchImpl, contextKey: "synthetic-native-A", headers: { "X-Operator-Role": "expansion-manager" } };
+}
+
+describe("native recorded history in the original continuous detail", () => {
+  it("keeps the specified submission, Assignment/SLA, processing and source order without duplicate sections or inferred progress", () => {
+    const canonical = nativeDetail();
+    canonical.workflow = { assignment_id: nativeId(61), assignment_version: 2, assignment_status: "UNASSIGNED",
+      owner_subject_id: null, owner_role: null, queue_key: "synthetic-original-queue", sla_instance_id: nativeId(62), sla_version: 3,
+      sla_state: "ON_TRACK", policy_version: "synthetic-policy-v1", calendar_version: "synthetic-calendar-v1",
+      started_at: "2026-10-15T08:00:00Z", due_soon_at: "2026-10-15T09:00:00Z", due_at: "2026-10-15T10:00:00Z", breach_at: "2026-10-15T11:00:00Z" };
+    const context = nativeContext();
+    render(<IntakeProcessingDetail canonical={canonical} readContext={context} matchCase={null} intakeId={canonical.intake_id}
+      detailHref={`/intake/${canonical.intake_id}`} onClose={vi.fn()} onRefresh={vi.fn()}><p>Original identity owner</p></IntakeProcessingDetail>);
+    const root = screen.getByTestId("intake-detail-dialog");
+    const ids = ["intake-submission-summary", "assignment-sla-summary", "intake-processing-stages", "intake-source-policy-evidence"];
+    const positions = ids.map((id) => Array.from(root.querySelectorAll("[data-testid]")).indexOf(screen.getByTestId(id)));
+    expect(positions.every((position, i) => position >= 0 && (i === 0 || position > positions[i - 1]!))).toBe(true);
+    ids.forEach((id) => expect(screen.getAllByTestId(id)).toHaveLength(1));
+    expect(screen.getByTestId("native-intake-stage-timeline")).toHaveTextContent("synthetic-first-page");
+    expect(screen.queryByTestId("timeline-stepper")).toBeNull();
+    expect(screen.queryByText("100%")).toBeNull();
+    expect(context.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("reads only actual later/earlier pages through the existing injected GET transport", async () => {
+    const canonical = nativeDetail(); const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(nativeJson(nativeNextPage(canonical)))
+      .mockResolvedValueOnce(nativeJson(canonical.processing_history));
+    const context = nativeContext(fetchImpl);
+    render(<IntakeStageTimeline canonical={canonical} context={context} />);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "較後的階段歷程" }));
+    expect(await screen.findByText("synthetic-next-page")).toBeInTheDocument();
+    expect(screen.queryByText("synthetic-first-page")).toBeNull();
+    expect(screen.getByRole("button", { name: "較後的階段歷程" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "較早的階段歷程" }));
+    expect(await screen.findByText("synthetic-first-page")).toBeInTheDocument();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls.every(([, init]) => init?.method === undefined && init?.body === undefined)).toBe(true);
+  });
+
+  it.each(["HTTP", "JSON"])("does not adopt a late %s page after its parent and actor binding change", async (phase) => {
+    const old = nativeDetail(); let resolveHttp!: (value: Response) => void; let resolveBody!: (value: unknown) => void;
+    const delayedResponse = nativeJson({}); delayedResponse.json = () => new Promise((resolve) => { resolveBody = resolve; });
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(() => phase === "HTTP"
+      ? new Promise<Response>((resolve) => { resolveHttp = resolve; }) : Promise.resolve(delayedResponse));
+    const firstContext = nativeContext(fetchImpl);
+    const { rerender } = render(<IntakeStageTimeline canonical={old} context={firstContext} />);
+    fireEvent.click(screen.getByRole("button", { name: "較後的階段歷程" }));
+    await waitFor(() => expect(phase === "HTTP" ? resolveHttp : resolveBody).toBeDefined());
+    const current = nativeDetail(2, "current-parent-first-page");
+    const currentFetch = vi.fn<typeof fetch>(); const currentContext = { ...nativeContext(currentFetch), contextKey: "synthetic-native-B" };
+    rerender(<IntakeStageTimeline canonical={current} context={currentContext} />);
+    expect(screen.getByText("current-parent-first-page")).toBeInTheDocument();
+    expect(currentFetch).not.toHaveBeenCalled();
+    expect((fetchImpl.mock.calls[0]![1]!.signal as AbortSignal).aborted).toBe(true);
+    await act(async () => { if (phase === "HTTP") resolveHttp(nativeJson(nativeNextPage(old, "PRIVATE_OLD_HISTORY")));
+      else resolveBody(nativeNextPage(old, "PRIVATE_OLD_HISTORY")); });
+    expect(screen.queryByText("PRIVATE_OLD_HISTORY")).toBeNull();
+    expect(screen.getByText("current-parent-first-page")).toBeInTheDocument();
+    expect(currentFetch).not.toHaveBeenCalled();
+  });
+
+  it("removes an already displayed page synchronously when the parent changes", async () => {
+    const old = nativeDetail(); const context = nativeContext(vi.fn<typeof fetch>().mockResolvedValue(nativeJson(nativeNextPage(old, "PRIVATE_OLD_PAGE"))));
+    const { rerender } = render(<IntakeStageTimeline canonical={old} context={context} />);
+    fireEvent.click(screen.getByRole("button", { name: "較後的階段歷程" }));
+    expect(await screen.findByText("PRIVATE_OLD_PAGE")).toBeInTheDocument();
+    rerender(<IntakeStageTimeline canonical={nativeDetail(2, "new-initial-page")} context={context} />);
+    expect(screen.queryByText("PRIVATE_OLD_PAGE")).toBeNull();
+    expect(screen.getByText("new-initial-page")).toBeInTheDocument();
+    expect(context.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([403, 409, 503])("shows a current page failure %s without restoring old rows or inventing completion", async (status) => {
+    const canonical = nativeDetail(); const context = nativeContext(vi.fn<typeof fetch>().mockResolvedValue(nativeJson({ detail: "unavailable" }, status)));
+    render(<IntakeStageTimeline canonical={canonical} context={context} />);
+    fireEvent.click(screen.getByRole("button", { name: "較後的階段歷程" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText("synthetic-first-page")).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
   });
 });
