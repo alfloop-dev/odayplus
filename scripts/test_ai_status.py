@@ -567,6 +567,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                     head=remote_sha,
                     expected_branch="task/REG-002",
                     actual_branch="task/REG-002",
+                    resolve_helper=mock.ANY,
                 )
                 for base in (task["review_submission"]["source_base"], "dev")
             ],

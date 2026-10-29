@@ -12,6 +12,15 @@ those actors is what an independent reviewer has to be independent of -- not
 whoever later merged a base into the branch or submitted the PR. The scan
 reports them exactly as written; resolving a name to a registered account is
 the caller's job, so an unknown label stays visible instead of being guessed.
+
+A commit of another task is not part of the delivery unless the caller's
+``resolve_helper`` answers for that task: it names a direct child the
+canonical record composes into this one, with its frozen range and declared
+scope. The scan then proves the commit is genuinely that child's -- its own
+trailers, inside the child's frozen range, whose whole net change stays in
+the child's scope and is contained in this delivery -- and reports the bound
+it admitted, so the caller can keep exactly that bound with the submission.
+The child's authors are authors of the delivery like any other.
 """
 
 from __future__ import annotations
@@ -20,12 +29,15 @@ import argparse
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 try:
+    from .check_commit_scope import files_outside_scope, net_changed_files, validate_scope
     from .check_commit_trailers import parse_trailers, validate_message
 except ImportError:  # Direct script execution from task_finalize.sh.
+    from check_commit_scope import files_outside_scope, net_changed_files, validate_scope
     from check_commit_trailers import parse_trailers, validate_message
 
 
@@ -68,6 +80,37 @@ def resolve_base_ref(repo: Path, base: str) -> str:
 
 
 @dataclass(frozen=True)
+class HelperSource:
+    """A direct child task's source contribution, as its canonical record states it.
+
+    ``base_sha``..``head_sha`` is the child's frozen range and ``owned_paths``
+    its declared literal scope. It recognizes source only: it is not an
+    approval of the child.
+    """
+
+    task_id: str
+    branch: str
+    base_sha: str
+    head_sha: str
+    owned_paths: tuple[str, ...]
+
+    def binding(self, commits: tuple[tuple[str, str], ...] = ()) -> dict:
+        """The immutable bound a review submission records for this child."""
+        return {
+            "task_id": self.task_id,
+            "branch": self.branch,
+            "source_base": self.base_sha,
+            "source_head": self.head_sha,
+            "owned_paths": list(self.owned_paths),
+            "commits": [[sha, agent] for sha, agent in commits],
+        }
+
+
+#: Answers a foreign ``Task-ID`` with that child's source, or why it is none.
+HelperResolver = Callable[[str], "HelperSource | str"]
+
+
+@dataclass(frozen=True)
 class DeliveryIdentity:
     """What one immutable ``base..head`` delivery range proves.
 
@@ -80,6 +123,8 @@ class DeliveryIdentity:
     head_sha: str = ""
     #: ``(commit sha, LLM-Agent)`` for every non-merge commit, oldest first.
     commits: tuple[tuple[str, str], ...] = ()
+    #: The bound of every child source admitted into the range, in first-commit order.
+    helpers: tuple[dict, ...] = ()
 
     @property
     def source_agents(self) -> tuple[str, ...]:
@@ -95,8 +140,13 @@ def inspect_delivery_identity(
     head: str,
     expected_branch: str | None = None,
     actual_branch: str | None = None,
+    resolve_helper: HelperResolver | None = None,
 ) -> DeliveryIdentity:
-    """Validate the delivery range and report the source actor of every commit."""
+    """Validate the delivery range and report the source actor of every commit.
+
+    Without ``resolve_helper`` every commit must be this task's own. With it,
+    a commit naming another task is admitted only as that child's source.
+    """
     errors: list[str] = []
     repo = repo.resolve()
     task_id = task_id.strip()
@@ -130,26 +180,186 @@ def inspect_delivery_identity(
         )
 
     sources: list[tuple[str, str]] = []
+    commit_tasks: dict[str, str] = {}
+    children: dict[str, tuple[HelperSource | None, list[str]]] = {}
     for commit in commits:
         try:
             message = _git(repo, "show", "-s", "--format=%B", commit)
         except ValueError as exc:
             errors.append(f"commit {commit[:12]} cannot be inspected: {exc}")
             continue
+        trailers = parse_trailers(message)
+        commit_task = trailers.get("task-id", "").strip()
+        commit_tasks[commit] = commit_task
+        sources.append((commit, trailers.get("llm-agent", "").strip()))
+        scope_task = task_id
+        if resolve_helper is not None and commit_task and commit_task.lower() != task_id.lower():
+            if commit_task not in children:
+                children[commit_task] = _child_source(
+                    repo, resolve_helper, commit_task, head_sha=head_sha, delivery=set(commits)
+                )
+            child, child_range = children[commit_task]
+            if child is None:
+                # Not a child source, so it is judged as this task's own
+                # commit and keeps every refusal that already gives.
+                errors.append(f"commit {commit[:12]}: {child_range[0]}")
+            elif commit not in child_range:
+                errors.append(
+                    f"commit {commit[:12]}: names child {commit_task!r} but is not in its frozen range "
+                    f"{child.base_sha[:12]}..{child.head_sha[:12]}"
+                )
+                scope_task = child.task_id
+            else:
+                scope_task = child.task_id
         violations = validate_message(
             message,
-            task_id=task_id,
+            task_id=scope_task,
             allow_maintenance_skip=False,
             require_subject_length_limit=False,
         )
         errors.extend(f"commit {commit[:12]}: {violation}" for violation in violations)
-        sources.append((commit, parse_trailers(message).get("llm-agent", "").strip()))
+    helpers: list[dict] = []
+    for child, child_range in children.values():
+        if child is None:
+            continue
+        # The frozen range is the child's own work: a commit inside it that
+        # names some other task is not the child's to contribute.
+        for commit in child_range:
+            if commit_tasks.get(commit, "").lower() != child.task_id.lower():
+                errors.append(
+                    f"commit {commit[:12]}: is in {child.task_id}'s frozen range but names task "
+                    f"{commit_tasks.get(commit, '')!r}"
+                )
+        helpers.append(child.binding(tuple(source for source in sources if source[0] in child_range)))
     return DeliveryIdentity(
         errors=errors,
         base_sha=base_sha,
         head_sha=head_sha,
         commits=tuple(sources),
+        helpers=tuple(helpers),
     )
+
+
+def _child_source(
+    repo: Path,
+    resolve_helper: HelperResolver,
+    child_id: str,
+    *,
+    head_sha: str,
+    delivery: set[str],
+) -> tuple[HelperSource | None, list[str]]:
+    """The child's admitted source and its frozen commits, or ``None`` and why not.
+
+    The canonical answer only names the child's frozen range and scope; what
+    is in that range is read from Git here. The range has to be exactly the
+    commits it names, wholly contained in this delivery, and its net change
+    -- merges included, so nothing rides in through a merge resolution --
+    has to stay inside the child's declared scope.
+    """
+    answer = resolve_helper(child_id)
+    if not isinstance(answer, HelperSource):
+        return None, [f"names task {child_id!r}, which is not a source child of this delivery: {answer}"]
+    child = answer
+    if child.task_id != child_id:
+        return None, [f"names task {child_id!r}, but its source answer is for {child.task_id!r}"]
+    bound = f"{child_id} frozen range {child.base_sha[:12]}..{child.head_sha[:12]}"
+    if not (_FULL_OID.fullmatch(child.base_sha) and _FULL_OID.fullmatch(child.head_sha)):
+        return None, [f"{bound} is not a pair of complete commit names"]
+    try:
+        for name in (child.base_sha, child.head_sha):
+            if _git(repo, "rev-parse", "--verify", f"{name}^{{commit}}").lower() != name.lower():
+                raise ValueError(f"{name[:12]} resolves to a different commit")
+        for ancestor, descendant, what in (
+            (child.base_sha, child.head_sha, "its own head"),
+            (child.head_sha, head_sha, f"delivery head {head_sha[:12]}"),
+        ):
+            if subprocess.run(
+                ["git", "merge-base", "--is-ancestor", ancestor, descendant], cwd=repo, capture_output=True
+            ).returncode != 0:
+                raise ValueError(f"{ancestor[:12]} is not an ancestor of {what}")
+        child_range = [
+            line
+            for line in _git(repo, "rev-list", "--reverse", "--no-merges", f"{child.base_sha}..{child.head_sha}")
+            .splitlines()
+            if line
+        ]
+        changed = net_changed_files(child.base_sha, child.head_sha, cwd=str(repo))
+    except (ValueError, OSError, subprocess.CalledProcessError) as exc:
+        return None, [f"{bound} cannot be proven: {exc}"]
+    if not child_range:
+        return None, [f"{bound} contains no non-merge commits"]
+    outside = [commit for commit in child_range if commit not in delivery]
+    if outside:
+        return None, [
+            f"{bound} is only partly in this delivery; missing " + ", ".join(c[:12] for c in outside)
+        ]
+    scope = list(child.owned_paths)
+    problems = validate_scope(scope) if all(isinstance(entry, str) for entry in scope) else ["not literal"]
+    if problems:
+        return None, [f"{bound} has no usable literal owned_paths: " + "; ".join(problems)]
+    leaks = files_outside_scope(changed, scope)
+    if leaks:
+        return None, [
+            f"{bound} changes {len(leaks)} net path(s) outside its owned_paths: "
+            + ", ".join(repr(path) for path in leaks)
+        ]
+    return child, child_range
+
+
+def published_branch_head(repo: Path, branch: str) -> str | None:
+    """The commit ``origin`` publishes ``branch`` at now, or None.
+
+    Asked of the remote itself, not of a local ``refs/remotes`` copy that any
+    checkout can point anywhere: this is the initial publication proof of a
+    child source, so it has to be the published fact.
+    """
+    ref = f"refs/heads/{branch}"
+    try:
+        listing = _git(repo, "ls-remote", "--heads", "origin", ref)
+    except ValueError:
+        return None
+    for line in listing.splitlines():
+        sha, _, name = line.partition("\t")
+        if name == ref and _FULL_OID.fullmatch(sha):
+            return sha.lower()
+    return None
+
+
+def canonical_helper_resolver(repo: Path, task_id: str) -> HelperResolver:
+    """The canonical child-source rule, for a delivery checked before it is published.
+
+    The same rule review submission and every reviewer path use, read from
+    the live status root's records; this module only supplies the published
+    branch proof. Nothing is loaded unless a commit actually names another
+    task, and if the records cannot be read no child is admitted.
+    """
+    resolved: list[HelperResolver] = []
+
+    def resolve(child_id: str) -> HelperSource | str:
+        if not resolved:
+            try:
+                orchestrator = Path(__file__).resolve().parents[2] / ".orchestrator"
+                if str(orchestrator) not in sys.path:
+                    sys.path.insert(0, str(orchestrator))
+                from common import load_config_for_status_root
+                from dispatch_policy import canonical_task_resolver, source_helper_resolver
+                from task_archive import STATUS_ROOT
+
+                config = load_config_for_status_root(STATUS_ROOT)
+                parent = canonical_task_resolver(config).get(task_id)
+                if parent is None:
+                    raise ValueError(f"{task_id} has no canonical task record")
+                resolved.append(
+                    source_helper_resolver(
+                        config, parent, published=lambda branch: published_branch_head(repo, branch)
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - any unreadable context admits no child.
+                reason = f"the canonical task records cannot be read ({exc})"
+                resolved.append(lambda _child_id: reason)
+        return resolved[0](child_id)
+
+    return resolve
 
 
 def validate_delivery_identity(
@@ -160,6 +370,7 @@ def validate_delivery_identity(
     head: str,
     expected_branch: str | None = None,
     actual_branch: str | None = None,
+    resolve_helper: HelperResolver | None = None,
 ) -> list[str]:
     """Return delivery identity violations; empty means the range is coherent."""
     return inspect_delivery_identity(
@@ -169,6 +380,7 @@ def validate_delivery_identity(
         head=head,
         expected_branch=expected_branch,
         actual_branch=actual_branch,
+        resolve_helper=resolve_helper,
     ).errors
 
 
@@ -188,6 +400,7 @@ def main(argv: list[str] | None = None) -> int:
         head=args.head,
         expected_branch=args.expected_branch,
         actual_branch=args.actual_branch,
+        resolve_helper=canonical_helper_resolver(Path(args.repo).resolve(), args.task_id.strip()),
     )
     if errors:
         print("check_task_delivery_identity: delivery rejected:", file=sys.stderr)

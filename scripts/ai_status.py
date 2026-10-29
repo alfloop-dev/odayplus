@@ -68,13 +68,14 @@ if str(DELIVERY_GOVERNANCE_DIR) not in sys.path:
     sys.path.insert(0, str(DELIVERY_GOVERNANCE_DIR))
 
 import common as orchestrator_common
-from check_task_delivery_identity import inspect_delivery_identity
+from check_task_delivery_identity import inspect_delivery_identity, published_branch_head
 from classify_change_review_scope import classify_paths
 from common import (
     classify_reopen_reason,
 )
 from dispatch_policy import (
     delivery_merge_target_branch,
+    source_helper_resolver,
     task_branch_name,
     task_explicit_branch,
 )
@@ -7865,11 +7866,17 @@ def review_submission_source_evidence(identity: Any) -> dict[str, Any]:
     that finalizes -- often only merging a base into someone else's commits --
     is not thereby an author of them.
     """
-    return {
+    evidence = {
         "source_base": identity.base_sha,
         "source_head": identity.head_sha,
         "source_authors": list(identity.source_agents),
     }
+    # The bound of each child source the same scan admitted, kept with the
+    # range it belongs to: a replay of this head is judged against exactly it.
+    helpers = list(getattr(identity, "helpers", ()) or ())
+    if helpers:
+        evidence["source_helpers"] = helpers
+    return evidence
 
 
 def declared_owned_scope_admission_error(task: dict[str, Any], repository_root: Path, identity: Any) -> str | None:
@@ -8065,6 +8072,19 @@ def review_submission_for_task(
             return None
         return source_base
 
+    # The child sources that range was submitted with are kept with it, by the
+    # same rule: a replay of the unchanged head is compared with those bounds
+    # instead of asking for the child's published branch again, and any other
+    # head starts over and has to prove each child's publication afresh.
+    def child_sources(merge_commit: str = "") -> Any:
+        recorded = prior.get("source_helpers") if submitted_range_base(merge_commit) else None
+        return source_helper_resolver(
+            config,
+            task,
+            recorded=recorded,
+            published=lambda child_branch: published_branch_head(repository_root, child_branch),
+        )
+
     if pr_state == "OPEN":
         try:
             remote_sha = resolve_task_sha(task_id, force_refresh=True)
@@ -8090,6 +8110,7 @@ def review_submission_for_task(
             head=remote_sha,
             expected_branch=branch,
             actual_branch=head_branch,
+            resolve_helper=child_sources(),
         )
         if identity.errors:
             details = "; ".join(identity.errors)
@@ -8172,6 +8193,7 @@ def review_submission_for_task(
             head=head_oid,
             expected_branch=branch,
             actual_branch=head_branch,
+            resolve_helper=child_sources(merge_commit),
         )
         if identity.errors:
             details = "; ".join(identity.errors)

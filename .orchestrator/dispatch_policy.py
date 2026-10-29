@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from common import normalize_agent_id
-from multi_repo_registry import repository_local_path, resolve_repository, task_repository_id
+from common import load_status, normalize_agent_id
+from multi_repo_registry import repository_local_path, repository_slug, resolve_repository, task_repository_id
 from provider_runtime import provider_config, provider_config_entry
+from task_archive import TaskResolver
 
 REASON_REVIEW_READY = "review_ready_dispatch"
 REASON_OWNED_FINALIZE = "owned_finalize_dispatch"
@@ -305,14 +307,111 @@ def _is_integration_point(repo_root: Path, commit: str, target_ref: str) -> bool
     return len(last) > 1 and last[1].lower() == commit
 
 
-def _inspect_delivery_identity(repo_root: Path, **kwargs: Any) -> Any:
-    """The delivery-identity scanner `submit_review` validates a range with."""
+def _delivery_toolchain() -> Any:
+    """The delivery-identity scanner module `submit_review` validates a range with."""
     git_dir = Path(__file__).resolve().parents[1] / "delivery_toolchain" / "git"
     if str(git_dir) not in sys.path:
         sys.path.insert(0, str(git_dir))
-    from check_task_delivery_identity import inspect_delivery_identity
+    import check_task_delivery_identity
 
-    return inspect_delivery_identity(repo_root, **kwargs)
+    return check_task_delivery_identity
+
+
+def _inspect_delivery_identity(repo_root: Path, **kwargs: Any) -> Any:
+    """The delivery-identity scanner `submit_review` validates a range with."""
+    return _delivery_toolchain().inspect_delivery_identity(repo_root, **kwargs)
+
+
+def canonical_task_resolver(config: dict[str, Any]) -> TaskResolver:
+    """The canonical task records, active first and then the archive."""
+    return TaskResolver((load_status(config) or {}).get("tasks") or [])
+
+
+def source_helper_resolver(
+    config: dict[str, Any],
+    parent: dict[str, Any],
+    *,
+    recorded: Any = None,
+    published: Any = None,
+    resolver: TaskResolver | None = None,
+) -> Any:
+    """The one rule for which other task's commits a delivery may contain.
+
+    A commit naming another task is that task's source only when the task's
+    own canonical or archived record says so: a direct child of exactly this
+    parent, in the same registered repository, with an explicit literal
+    nonempty `owned_paths`, a complete frozen base and review-gate head, the
+    gate target recorded for that head and its own recorded branch. Nothing a
+    caller supplies -- a bare `helper_parent`, prose or a list of commits --
+    stands in for any of that, and it recognizes source, not approval: the
+    child's own status, blockers and signoffs are left as they are.
+
+    The child's branch must also have been published at that head. The first
+    scan proves it through `published`, the live remote; afterwards the bound
+    is `recorded` with the submission, and a replay compares the record with
+    it instead, so it neither needs the branch to still exist nor accepts a
+    branch moved to a replacement head. Every answer is derived again from the
+    records; any difference from the recorded bound refuses the child.
+    """
+    toolchain = _delivery_toolchain()
+    tasks: list[TaskResolver] = [resolver] if resolver is not None else []
+    parent_id = str(parent.get("id") or "").strip()
+    repository_id = task_repository_id(config, parent) or "pantheon"
+    slug = repository_slug(config, repository_id)
+    bounds = {
+        str(entry.get("task_id") or ""): entry
+        for entry in (recorded if isinstance(recorded, (list, tuple)) else ())
+        if isinstance(entry, dict)
+    }
+
+    def resolve(child_id: str) -> Any:
+        if not tasks:
+            tasks.append(canonical_task_resolver(config))
+        child = tasks[0].get(child_id)
+        if not isinstance(child, dict) or str(child.get("id") or "").strip() != child_id:
+            return "it has no canonical or archived task record"
+        if str(child.get("helper_parent") or "").strip() != parent_id:
+            return f"its record is not a direct child of {parent_id}"
+        if task_repository_id(config, child) != repository_id:
+            return f"its record is not in the registered repository {repository_id}"
+        owned = child.get("owned_paths")
+        if not (isinstance(owned, list) and owned and all(isinstance(entry, str) for entry in owned)):
+            return "its record declares no literal nonempty owned_paths"
+        base = str(child.get("frozen_evidence_base_sha") or "").strip().lower()
+        head = str(child.get("review_gate_sha") or "").strip().lower()
+        if not (_SHA_RE.fullmatch(base) and _SHA_RE.fullmatch(head)):
+            return "its record has no complete frozen base and review-gate head"
+        gate = child.get("review_gate_target")
+        if not (
+            isinstance(gate, dict)
+            and str(gate.get("sha") or "").strip().lower() == head
+            and str(gate.get("context") or "").strip() == "task-review-gate"
+            and slug
+            and str(gate.get("repo_slug") or "").strip() == slug
+        ):
+            return f"its recorded review gate is not the task-review-gate of {head[:12]} in {slug or repository_id}"
+        branch = task_explicit_branch(child)
+        if not branch:
+            return "its record names no branch of its own"
+        source = toolchain.HelperSource(
+            task_id=child_id, branch=branch, base_sha=base, head_sha=head, owned_paths=tuple(owned)
+        )
+        bound = bounds.get(child_id)
+        if bound is not None:
+            expected = source.binding()
+            if {key: bound.get(key) for key in expected if key != "commits"} != {
+                key: value for key, value in expected.items() if key != "commits"
+            }:
+                return "its canonical record no longer matches the bound recorded with this submission"
+            return source
+        if published is None:
+            return "no initial publication of its branch was recorded with this submission"
+        published_head = published(branch)
+        if str(published_head or "").strip().lower() != head:
+            return f"origin does not publish {branch} at its review-gate head {head[:12]}"
+        return source
+
+    return resolve
 
 
 #: Ranges whose Git authorship has already been established. Commits are
@@ -350,9 +449,21 @@ def immutable_review_source_authors(
     expected_branch = task_branch_name(task, task_id)
     actual_branch = str(submission.get("branch") or "").strip() or None
     merge_commit = str(submission.get("merge_commit") or "").strip().lower()
+    # A child source the submission recorded is judged against its canonical
+    # record on every ask, before any cached answer: the Git facts of a bound
+    # cannot change, but the record that made it a child of this task can.
+    recorded_helpers = submission.get("source_helpers", [])
+    if not (isinstance(recorded_helpers, list) and all(isinstance(entry, dict) for entry in recorded_helpers)):
+        return (), "the recorded child sources are not a list of bounds"
+    resolve_helper = source_helper_resolver(config, task, recorded=recorded_helpers)
+    for entry in recorded_helpers:
+        child_id = str(entry.get("task_id") or "")
+        answer = resolve_helper(child_id)
+        if isinstance(answer, str):
+            return (), f"the recorded child source {child_id!r} is refused: {answer}"
     key = (
         str(repo_root), base_branch, task_id, source_base, source_head, expected_branch, actual_branch or "",
-        merge_commit,
+        merge_commit, json.dumps(recorded_helpers, sort_keys=True),
     )
     actual = _IMMUTABLE_SOURCE_AUTHORS.get(key)
     if actual is None:
@@ -412,9 +523,15 @@ def immutable_review_source_authors(
             head=source_head,
             expected_branch=expected_branch,
             actual_branch=actual_branch,
+            resolve_helper=resolve_helper,
         )
         if scan.errors:
             return (), "the submitted range fails delivery identity: " + "; ".join(scan.errors)
+        if list(scan.helpers) != recorded_helpers:
+            return (), (
+                "the recorded child sources are not the bounds the delivery scan of "
+                f"{source_base[:12]}..{source_head[:12]} admits"
+            )
         # The authors are only those of the recorded range if the scan read
         # that range: a base or head that resolved to some other commit scanned
         # other commits, and its authors are not an answer to cache.
