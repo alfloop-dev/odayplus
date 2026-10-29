@@ -44,6 +44,7 @@ from delivery_toolchain.release.release_manifest import (
     env_var_belongs_to_source,
     extract_rollback_release_binding,
     initial_release_recovery_errors,
+    is_placeholder_digest,
     release_candidate_job_name,
     sources_off_attestation_errors,
     sources_off_posture_payload,
@@ -310,6 +311,13 @@ def test_blocked_manifest_requires_blocker_record() -> None:
 
     errors = validate_manifest(manifest)
     assert any("non-empty blockers list" in error for error in errors)
+
+
+def test_placeholder_digest_predicate_rejects_repeated_fixture_values() -> None:
+    assert is_placeholder_digest("sha256:" + "1" * 64)
+    assert is_placeholder_digest("registry.example/image@sha256:" + "ab" * 32)
+    assert not is_placeholder_digest("sha256:" + "0123456789abcdef" * 4)
+    assert not is_placeholder_digest("sha256:" + "g" * 64)
 
 
 def test_registry_stage_contract_breaks_closed() -> None:
