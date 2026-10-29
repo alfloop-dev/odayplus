@@ -722,12 +722,31 @@ def compose_source_only_child(repo: Path, tmp_path: Path) -> tuple[Path, dict, s
     return status_root, child, git(repo, "rev-parse", "HEAD").stdout.strip()
 
 
+#: GitHub, as far as a child's initial publication proof asks it:
+#: `gh api repos/<owner>/<name>/git/ref/heads/<branch> --jq .object.sha`,
+#: answered by real Git from the bare repository `<root>/<owner>/<name>.git`.
+GITHUB_DOUBLE = """#!/bin/sh
+[ "$1" = api ] && [ "$3" = --jq ] && [ "$4" = .object.sha ] || exit 2
+rest="${2#repos/}"; owner="${rest%%/*}"; rest="${rest#*/}"; name="${rest%%/*}"; rest="${rest#*/}"
+case "$rest" in git/ref/heads/*) branch="${rest#git/ref/heads/}" ;; *) exit 2 ;; esac
+sha=$(git ls-remote "$GITHUB_DOUBLE_ROOT/$owner/$name.git" "refs/heads/$branch" | cut -f1)
+[ -n "$sha" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+echo "$sha"
+"""
+
+
 def finalize_with_records(repo: Path, status_root: Path, *tasks: dict) -> subprocess.CompletedProcess[str]:
     (status_root / "ai-status.json").write_text(json.dumps({"tasks": list(tasks)}), encoding="utf-8")
+    gh = status_root.parent / "github-double" / "gh"
+    if not gh.exists():
+        gh.parent.mkdir()
+        gh.write_text(GITHUB_DOUBLE.replace("$GITHUB_DOUBLE_ROOT", str(status_root.parent)), encoding="utf-8")
+        gh.chmod(0o755)
     env = {
         "ORCH_STATUS_ROOT": str(status_root),
         "PANTHEON_STATUS_ROOT": str(status_root),
         "ORCH_CONFIG_PATH": str(status_root / ".orchestrator" / "config.json"),
+        "PATH": f"{gh.parent}{os.pathsep}{os.environ.get('PATH', '')}",
     }
     return run(["bash", str(GIT_DIR / "task_finalize.sh"), TASK, "--dry-run"], repo, env=env)
 
@@ -777,10 +796,22 @@ def test_task_finalize_prepublication_admits_only_the_canonical_source_child(rep
     assert "is other-org/other-repo, not the registered repository example/repo" in stray_origin.stderr
     assert "dry-run: git push" not in stray_origin.stdout
 
+    # Nor does a separate repository that only shares the owner/name suffix.
+    mirror = tmp_path / "unregistered" / "example" / "repo.git"
+    mirror.parent.mkdir(parents=True)
+    subprocess.run(["git", "clone", "--quiet", "--bare", str(stray), str(mirror)], check=True, capture_output=True)
+    git(repo, "remote", "set-url", "origin", str(mirror))
+    same_suffix = finalize_with_records(repo, status_root, parent, child)
+    assert same_suffix.returncode == 1
+    assert f"registered repository example/repo does not publish task/{CHILD} at its review-gate" in (
+        same_suffix.stderr
+    )
+    assert "dry-run: git push" not in same_suffix.stdout
+
     git(repo, "remote", "set-url", "origin", str(tmp_path / "example" / "repo.git"))
     unpublished = finalize_with_records(repo, status_root, parent, child)
     assert unpublished.returncode == 1
-    assert f"origin does not publish task/{CHILD} at its review-gate head" in unpublished.stderr
+    assert f"example/repo does not publish task/{CHILD} at its review-gate head" in unpublished.stderr
 
 
 def test_task_finalize_refuses_a_branch_whose_own_python_fails_lint(repo: Path, tmp_path: Path):

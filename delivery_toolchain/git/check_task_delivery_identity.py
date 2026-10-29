@@ -84,11 +84,14 @@ class HelperSource:
     """A direct child task's source contribution, as its canonical record states it.
 
     ``base_sha``..``head_sha`` is the child's frozen range and ``owned_paths``
-    its declared literal scope. It recognizes source only: it is not an
+    its declared literal scope, in the registered ``repository`` (``repo_slug``)
+    its publication was proven in. It recognizes source only: it is not an
     approval of the child.
     """
 
     task_id: str
+    repository: str
+    repo_slug: str
     branch: str
     base_sha: str
     head_sha: str
@@ -98,6 +101,8 @@ class HelperSource:
         """The immutable bound a review submission records for this child."""
         return {
             "task_id": self.task_id,
+            "repository": self.repository,
+            "repo_slug": self.repo_slug,
             "branch": self.branch,
             "source_base": self.base_sha,
             "source_head": self.head_sha,
@@ -306,32 +311,14 @@ def _child_source(
     return child, child_range
 
 
-def published_branch_head(repo: Path, branch: str) -> str | None:
-    """The commit ``origin`` publishes ``branch`` at now, or None.
-
-    Asked of the remote itself, not of a local ``refs/remotes`` copy that any
-    checkout can point anywhere: this is the initial publication proof of a
-    child source, so it has to be the published fact.
-    """
-    ref = f"refs/heads/{branch}"
-    try:
-        listing = _git(repo, "ls-remote", "--heads", "origin", ref)
-    except ValueError:
-        return None
-    for line in listing.splitlines():
-        sha, _, name = line.partition("\t")
-        if name == ref and _FULL_OID.fullmatch(sha):
-            return sha.lower()
-    return None
-
-
 def canonical_helper_resolver(repo: Path, task_id: str) -> HelperResolver:
     """The canonical child-source rule, for a delivery checked before it is published.
 
     The same rule review submission and every reviewer path use, read from
-    the live status root's records, asking this checkout's origin -- once it is
-    the registered repository -- for the published branch. Nothing is loaded unless a commit actually names another
-    task, and if the records cannot be read no child is admitted.
+    the live status root's records, from this checkout -- once its origin is
+    the registered repository, which is asked for the published branch.
+    Nothing is loaded unless a commit actually names another task, and if the
+    records cannot be read no child is admitted.
     """
     resolved: list[HelperResolver] = []
 

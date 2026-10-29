@@ -2153,6 +2153,8 @@ def test_review_queue_excludes_a_source_only_childs_pool_and_rereads_its_record(
     }
     bound = {
         "task_id": child_id,
+        "repository": "pantheon",
+        "repo_slug": "example/repo",
         "branch": f"task/{child_id}",
         "source_base": frozen,
         "source_head": child_head,

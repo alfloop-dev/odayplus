@@ -8034,20 +8034,41 @@ def review_submission_for_task(
     # from Git before anything is recorded.
     prior = task.get("review_submission")
 
-    def submitted_range_base(merge_commit: str = "") -> str | None:
+    # Evidence recorded for this same submitted head is either intact or
+    # damaged; it is never mistaken for a new head. A damaged range or source
+    # head is not kept, so the scan starts over and keeps any refusal of its
+    # own -- but a scan that passes does not silently replace what the head
+    # was submitted with, child bounds included: it fails closed. Only a
+    # submission recorded before any source evidence existed has none to keep.
+    def recorded_source_evidence(merge_commit: str) -> tuple[str | None, bool]:
         if not (
             isinstance(prior, dict)
             and prior.get("pr_number") == int(pr_number)
             and str(prior.get("branch") or "").strip() == branch
             and str(prior.get("remote_sha") or "").strip().lower() == head_oid.lower()
-            and str(prior.get("source_head") or "").strip().lower() == head_oid.lower()
-            and str(prior.get("merge_commit") or "").strip() in ("", merge_commit)
         ):
-            return None
+            return None, False
+        if not any(key in prior for key in ("source_base", "source_head", "source_authors", "source_helpers")):
+            return None, False
         source_base = str(prior.get("source_base") or "").strip()
-        if not (re.fullmatch(r"[0-9a-fA-F]{40}", source_base) or re.fullmatch(r"[0-9a-fA-F]{64}", source_base)):
-            return None
-        return source_base
+        if not (
+            str(prior.get("source_head") or "").strip().lower() == head_oid.lower()
+            and str(prior.get("merge_commit") or "").strip() in ("", merge_commit)
+            and (re.fullmatch(r"[0-9a-fA-F]{40}", source_base) or re.fullmatch(r"[0-9a-fA-F]{64}", source_base))
+        ):
+            return None, True
+        return source_base, False
+
+    def submitted_range_base(merge_commit: str = "") -> str | None:
+        return recorded_source_evidence(merge_commit)[0]
+
+    def refuse_damaged_source_evidence(merge_commit: str = "") -> None:
+        if recorded_source_evidence(merge_commit)[1]:
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: the source evidence recorded for PR #{pr_number} "
+                f"head {head_oid[:8]} is damaged (base, source head or merge commit); the same head is "
+                "not resubmitted over it."
+            )
 
     # The child sources that range was submitted with are kept with it, by the
     # same rule: a replay of the unchanged head is compared with those bounds
@@ -8101,6 +8122,7 @@ def review_submission_for_task(
             raise SystemExit(
                 f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
             )
+        refuse_damaged_source_evidence()
         refuse_rewritten_child_sources(recorded, identity)
         scope_error = declared_owned_scope_admission_error(task, repository_root, identity)
         if scope_error:
@@ -8186,6 +8208,7 @@ def review_submission_for_task(
             raise SystemExit(
                 f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
             )
+        refuse_damaged_source_evidence(merge_commit)
         refuse_rewritten_child_sources(recorded, identity)
         scope_error = declared_owned_scope_admission_error(task, repository_root, identity)
         if scope_error:

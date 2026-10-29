@@ -6,8 +6,9 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, NamedTuple
+from urllib.parse import quote
 
-from common import load_status, normalize_agent_id
+from common import load_status, normalize_agent_id, resolve_github_cli
 from multi_repo_registry import (
     checkout_origin_slug,
     normalized_repository_slug,
@@ -17,7 +18,7 @@ from multi_repo_registry import (
     task_repository_id,
 )
 from provider_runtime import provider_config, provider_config_entry
-from task_archive import TaskResolver
+from task_archive import TaskResolver, unresolved_required_delivery_blockers
 
 REASON_REVIEW_READY = "review_ready_dispatch"
 REASON_OWNED_FINALIZE = "owned_finalize_dispatch"
@@ -359,13 +360,87 @@ def canonical_task_resolver(config: dict[str, Any]) -> TaskResolver:
     return TaskResolver((load_status(config) or {}).get("tasks") or [])
 
 
+def source_child_gate_reason(child: dict[str, Any], blockers: Any) -> str | None:
+    """Why a child's own record still holds it behind a human, independent or churn gate.
+
+    The gate state is the child's canonical record and the open canonical
+    blockers about it -- the same structured facts the supervisor's blocker
+    recovery refuses to release by itself: the task's and each blocker's
+    human or independent gate, a wait on Human/Ops, a review-churn escalation
+    no continuation approval has released yet, and an unresolved required
+    delivery. A child waiting on an automated reviewer for its technical
+    handoff is not held. Nothing here is cleared: the gate stays the child's.
+    """
+    held = task_unresolved_human_or_independent_gate_reason(child)
+    if held:
+        return held
+    if is_human_gate_agent(child.get("waiting_for")):
+        return f"task is waiting for {child.get('waiting_for')}"
+    try:
+        escalated = max(0, int(child.get("review_churn_escalated_at_count", 0) or 0))
+        released = max(0, int(child.get("review_churn_reassigned_at_count", 0) or 0))
+    except (TypeError, ValueError):
+        return "task carries an unreadable review-churn escalation"
+    # A consumed continuation approval moves the checkpoint up to the reopen
+    # count it released; an escalation past the checkpoint is still open.
+    if escalated > released:
+        return "task carries a review-churn escalation no continuation approval has released"
+    if unresolved_required_delivery_blockers(child):
+        return "task carries an unresolved required delivery"
+    if not isinstance(blockers, list):
+        return "the canonical blockers cannot be read"
+    child_id = str(child.get("id") or "").strip()
+    for blocker in blockers:
+        if not isinstance(blocker, dict):
+            return "the canonical blockers cannot be read"
+        if str(blocker.get("task_id") or "").strip() != child_id:
+            continue
+        if str(blocker.get("status") or "open").strip().lower() == "resolved":
+            continue
+        kind = str(blocker.get("kind") or "").strip().casefold().replace("_", " ")
+        reason = (
+            (f"waiting for {blocker.get('waiting_for')}" if is_human_gate_agent(blocker.get("waiting_for")) else None)
+            or task_unresolved_human_or_independent_gate_reason(blocker)
+            or (f"a {kind} blocker" if kind in {"human", "human gate", "external data", "cross repo delivery",
+                                                "review churn"} else None)
+        )
+        if reason:
+            return f"an open canonical blocker holds the task ({reason})"
+    return None
+
+
+def registered_branch_head(slug: str, branch: str, *, cwd: Path) -> str | None:
+    """The commit the registered repository publishes ``branch`` at now, or None.
+
+    Asked of GitHub for the registered ``owner/name`` -- the same identity a
+    pull request of the task is looked up by -- never of whatever remote a
+    checkout happens to call origin: this is the initial publication proof of
+    a child source, so it has to be the registered repository's own fact.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                resolve_github_cli() or "gh", "api", f"repos/{quote(slug)}/git/ref/heads/{quote(branch)}",
+                "--jq", ".object.sha",
+            ],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    sha = (proc.stdout or "").strip().lower()
+    return sha if proc.returncode == 0 and _SHA_RE.fullmatch(sha) else None
+
+
 def source_helper_resolver(
     config: dict[str, Any],
     parent: dict[str, Any],
     *,
     recorded: Any = None,
     publication_root: Path | None = None,
-    resolver: TaskResolver | None = None,
 ) -> Any:
     """The one rule for which other task's commits a delivery may contain.
 
@@ -377,22 +452,24 @@ def source_helper_resolver(
     caller supplies -- a bare `helper_parent`, prose or a list of commits --
     stands in for any of that, and it recognizes source, not approval: the
     child's own status, blockers and signoffs are left as they are. A child
-    still carrying an unresolved human or independent gate is not admitted at
-    all, by the same rule its own submission is held to: its source cannot
-    reach review through a parent while that gate is open.
+    its own record or an open canonical blocker still holds behind a human,
+    independent or churn gate (`source_child_gate_reason`) is not admitted at
+    all: its source cannot reach review through a parent while that is open.
 
     The child's branch must also have been published at that head. The first
-    scan proves it by asking the origin of `publication_root`, and only once
-    that origin is the registered repository, so another remote that happens
-    to carry the commit proves nothing; afterwards the bound is `recorded`
-    with the submission, and a replay compares the record with it instead, so
-    it neither needs the branch to still exist nor accepts a branch moved to a
-    replacement head. Every answer is derived again from the records; any
-    difference from the recorded bound refuses the child, and the commits a
-    bound records are compared with the scan by `recorded_source_helpers_error`.
+    scan proves it by asking the registered repository itself
+    (`registered_branch_head`), and only from a checkout whose origin is that
+    repository; afterwards the bound -- the registered repository it was
+    proven in included -- is `recorded` with the submission, and a replay
+    compares the record with it instead, so it neither needs the branch to
+    still exist nor accepts a branch moved to a replacement head or a
+    repository retargeted since. Every answer is derived again from the
+    records; any difference from the recorded bound refuses the child, and the
+    commits a bound records are compared with the scan by
+    `recorded_source_helpers_error`.
     """
     toolchain = _delivery_toolchain()
-    tasks: list[TaskResolver] = [resolver] if resolver is not None else []
+    canonical: list[tuple[TaskResolver, Any]] = []
     parent_id = str(parent.get("id") or "").strip()
     repository_id = task_repository_id(config, parent) or "pantheon"
     slug = repository_slug(config, repository_id)
@@ -403,15 +480,19 @@ def source_helper_resolver(
     }
 
     def resolve(child_id: str) -> Any:
-        if not tasks:
-            tasks.append(canonical_task_resolver(config))
-        child = tasks[0].get(child_id)
+        if not canonical:
+            status = load_status(config) or {}
+            canonical.append((TaskResolver(status.get("tasks") or []), status.get("blockers", [])))
+        tasks, blockers = canonical[0]
+        child = tasks.get(child_id)
         if not isinstance(child, dict) or str(child.get("id") or "").strip() != child_id:
             return "it has no canonical or archived task record"
         if str(child.get("helper_parent") or "").strip() != parent_id:
             return f"its record is not a direct child of {parent_id}"
         if task_repository_id(config, child) != repository_id:
             return f"its record is not in the registered repository {repository_id}"
+        if not slug:
+            return f"the registered repository {repository_id} has no registered slug"
         owned = child.get("owned_paths")
         if not (isinstance(owned, list) and owned and all(isinstance(entry, str) for entry in owned)):
             return "its record declares no literal nonempty owned_paths"
@@ -424,18 +505,18 @@ def source_helper_resolver(
             isinstance(gate, dict)
             and str(gate.get("sha") or "").strip().lower() == head
             and str(gate.get("context") or "").strip() == "task-review-gate"
-            and slug
             and str(gate.get("repo_slug") or "").strip() == slug
         ):
-            return f"its recorded review gate is not the task-review-gate of {head[:12]} in {slug or repository_id}"
+            return f"its recorded review gate is not the task-review-gate of {head[:12]} in {slug}"
         branch = task_explicit_branch(child)
         if not branch:
             return "its record names no branch of its own"
-        held = task_unresolved_human_or_independent_gate_reason(child)
+        held = source_child_gate_reason(child, blockers)
         if held:
             return f"its record still carries an unresolved gate: {held}"
         source = toolchain.HelperSource(
-            task_id=child_id, branch=branch, base_sha=base, head_sha=head, owned_paths=tuple(owned)
+            task_id=child_id, repository=repository_id, repo_slug=slug, branch=branch,
+            base_sha=base, head_sha=head, owned_paths=tuple(owned),
         )
         bound = bounds.get(child_id)
         if bound is not None:
@@ -453,9 +534,9 @@ def source_helper_resolver(
                 f"the origin asked for its publication is {origin or 'not configured'}, "
                 f"not the registered repository {slug}"
             )
-        published_head = toolchain.published_branch_head(publication_root, branch)
-        if str(published_head or "").strip().lower() != head:
-            return f"origin does not publish {branch} at its review-gate head {head[:12]}"
+        published_head = registered_branch_head(slug, branch, cwd=publication_root)
+        if published_head != head:
+            return f"the registered repository {slug} does not publish {branch} at its review-gate head {head[:12]}"
         return source
 
     return resolve

@@ -3531,6 +3531,27 @@ class DeclaredOwnedScopeAdmissionTests(unittest.TestCase):
         self.assertEqual(self.task["review_submission"]["merge_commit"], self.git("rev-parse", "dev"))
 
 
+#: GitHub, as far as a child's initial publication proof asks it:
+#: `gh api repos/<owner>/<name>/git/ref/heads/<branch> --jq .object.sha`,
+#: answered by real Git from the bare repository `<root>/<owner>/<name>.git`.
+GITHUB_DOUBLE = """#!/bin/sh
+[ "$1" = api ] && [ "$3" = --jq ] && [ "$4" = .object.sha ] || exit 2
+rest="${2#repos/}"; owner="${rest%%/*}"; rest="${rest#*/}"; name="${rest%%/*}"; rest="${rest#*/}"
+case "$rest" in git/ref/heads/*) branch="${rest#git/ref/heads/}" ;; *) exit 2 ;; esac
+sha=$(git ls-remote "$GITHUB_DOUBLE_ROOT/$owner/$name.git" "refs/heads/$branch" | cut -f1)
+[ -n "$sha" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+echo "$sha"
+"""
+
+
+def write_github_double(root: Path) -> Path:
+    gh = root / "github-double" / "gh"
+    gh.parent.mkdir(parents=True)
+    gh.write_text(GITHUB_DOUBLE.replace("$GITHUB_DOUBLE_ROOT", str(root)), encoding="utf-8")
+    gh.chmod(0o755)
+    return gh
+
+
 class ParentChildSourceHandoffTests(unittest.TestCase):
     """Real synthetic Git and a real bare origin: a source-only child composed into its parent.
 
@@ -3578,8 +3599,10 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
         root = Path(tempfile.mkdtemp(prefix="test-parent-child-source-"))
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         self.root = root
-        # The registered repository is example/repo; its origin answers to that name.
+        # The registered repository is example/repo: GitHub answers for it from
+        # this bare repository, which is also the checkout's origin.
         self.origin = root / "example" / "repo.git"
+        self.gh = write_github_double(root)
         self.repo = root / "work"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "dev", str(self.origin)], check=True)
         self.repo.mkdir()
@@ -3651,6 +3674,7 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
             mock.patch.object(ai_status, "status_runtime_config", return_value=self.config),
             # The canonical records: the live board, then the archive.
             mock.patch.object(dispatch_policy, "load_status", side_effect=lambda _config: self.state),
+            mock.patch.object(dispatch_policy, "resolve_github_cli", return_value=str(self.gh)),
             mock.patch.object(
                 dispatch_policy.TaskResolver, "get",
                 autospec=True,
@@ -3689,6 +3713,8 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
     def expected_binding(self) -> dict[str, Any]:
         return {
             "task_id": self.CHILD_ID,
+            "repository": "pantheon",
+            "repo_slug": self.SLUG,
             "branch": self.CHILD_BRANCH,
             "source_base": self.frozen,
             "source_head": self.child_head,
@@ -3736,7 +3762,7 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
             ("wrong head", {"review_gate_sha": other_head,
                             "review_gate_target": {"repo_slug": self.SLUG, "sha": other_head,
                                                    "context": "task-review-gate"}},
-             r"origin does not publish task/CHILD-001 at its review-gate head"),
+             r"example/repo does not publish task/CHILD-001 at its review-gate head"),
             ("gate for another head", {"review_gate_target": {"repo_slug": self.SLUG, "sha": other_head,
                                                               "context": "task-review-gate"}},
              r"recorded review gate is not the task-review-gate"),
@@ -3746,7 +3772,7 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
              r"recorded review gate is not the task-review-gate"),
             ("no recorded branch", {"branch": None}, r"names no branch of its own"),
             ("branch never published", {"branch": "task/CHILD-001-unpublished"},
-             r"origin does not publish task/CHILD-001-unpublished"),
+             r"example/repo does not publish task/CHILD-001-unpublished"),
         ]
         for name, fields, pattern in cases:
             with self.subTest(name):
@@ -3770,9 +3796,9 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
         # The child published only on some other remote, or moved on origin.
         self.git("push", "-q", "origin", f":{self.CHILD_BRANCH}")
         self.git("remote", "add", "mirror", str(self.origin))
-        self.refuse_submission(r"origin does not publish task/CHILD-001 at its review-gate head")
+        self.refuse_submission(r"example/repo does not publish task/CHILD-001 at its review-gate head")
         self.git("push", "-q", "origin", f"{other_head}:refs/heads/{self.CHILD_BRANCH}")
-        self.refuse_submission(r"origin does not publish task/CHILD-001 at its review-gate head")
+        self.refuse_submission(r"example/repo does not publish task/CHILD-001 at its review-gate head")
         self.git("push", "-q", "-f", "origin", f"{self.child_head}:refs/heads/{self.CHILD_BRANCH}")
         self.submit()
         self.assertEqual(self.task["status"], "review")
@@ -3821,7 +3847,7 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
         # A head first submitted already merged has no recorded publication,
         # and the deleted branch cannot provide one now.
         self.task.pop("review_submission")
-        self.refuse_submission(r"origin does not publish task/CHILD-001", pr=merged)
+        self.refuse_submission(r"example/repo does not publish task/CHILD-001", pr=merged)
 
     def test_an_archived_child_record_still_answers(self) -> None:
         self.state["tasks"].remove(self.child)
@@ -3886,7 +3912,7 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
         self.submit()
         newer = self.write(self.TASK_ID, "follow-up", "Claude", {"app.txt": "follow-up\n"})
         self.git("push", "-q", "origin", f":{self.CHILD_BRANCH}")
-        self.refuse_submission(r"origin does not publish task/CHILD-001", head=newer)
+        self.refuse_submission(r"example/repo does not publish task/CHILD-001", head=newer)
         self.git("push", "-q", "origin", f"{self.child_head}:refs/heads/{self.CHILD_BRANCH}")
         resubmitted = self.submit(head=newer)
         self.assertEqual(resubmitted["source_head"], newer)
@@ -3934,6 +3960,94 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
         self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review"])
         self.assertEqual(self.task["status"], "review_approved")
 
+    def test_a_child_held_by_churn_or_an_open_human_blocker_is_never_admitted(self) -> None:
+        # The fields worker_failure_policy writes when review churn escalates.
+        churn = {
+            "status": "blocked", "waiting_for": "Human/Ops", "review_reopen_count": 6,
+            "review_churn_escalated_at_count": 6, "review_churn_escalated_at": "2026-10-29T00:30:00Z",
+        }
+        human_blocker = {
+            "task_id": self.CHILD_ID, "owner": "Pi", "waiting_for": "Human/Ops", "status": "open",
+            "requires_human_approval": True, "message": "Needs a human decision",
+        }
+        held: tuple[tuple[str, dict[str, Any], list[dict[str, Any]], str], ...] = (
+            ("churn escalation", churn, [], r"task is waiting for Human/Ops"),
+            ("churn escalation reassigned without a continuation",
+             {**churn, "waiting_for": "Codex"}, [],
+             r"review-churn escalation no continuation approval has released"),
+            ("open Human/Ops blocker", {}, [human_blocker], r"open canonical blocker holds the task \(waiting for Human/Ops\)"),
+            ("open human-approval blocker", {}, [dict(human_blocker, waiting_for="Codex")],
+             r"open canonical blocker holds the task \(task carries an unresolved human approval gate\)"),
+            ("open review-churn blocker", {}, [dict(human_blocker, waiting_for=None, requires_human_approval=None,
+                                                    kind="review_churn")],
+             r"open canonical blocker holds the task \(a review churn blocker\)"),
+            ("open required delivery", {"delivery_blockers": [{"message": "front PR unmerged"}]}, [],
+             r"unresolved required delivery"),
+        )
+
+        def apply(fields: dict[str, Any], blockers: list[dict[str, Any]]) -> tuple[dict[str, Any], list[Any]]:
+            saved = (json.loads(json.dumps(self.child)), json.loads(json.dumps(self.state["blockers"])))
+            self.child.update(json.loads(json.dumps(fields)))
+            self.state["blockers"].extend(json.loads(json.dumps(blockers)))
+            return saved
+
+        def restore(saved: tuple[dict[str, Any], list[Any]]) -> None:
+            self.child.clear()
+            self.child.update(saved[0])
+            self.state["blockers"][:] = saved[1]
+
+        for name, fields, blockers, pattern in held:
+            with self.subTest(initial=name):
+                saved = apply(fields, blockers)
+                try:
+                    self.refuse_submission(r"CHILD-001.*still carries an unresolved gate: .*" + pattern)
+                finally:
+                    restore(saved)
+
+        # The child's own technical handoff to an automated reviewer is the
+        # known finite case, and is admitted while it stays open.
+        technical = {
+            "task_id": self.CHILD_ID, "owner": "Pi", "waiting_for": "Codex", "status": "open",
+            "message": "Finalizer rejects inherited parent task identities; need Codex independent review",
+        }
+        self.state["blockers"].append(technical)
+        submission = json.loads(json.dumps(self.submit()))
+        for name, fields, blockers, pattern in held:
+            with self.subTest(drift=name), mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+                self.assertIsNone(self.block_reason("Codex2"))  # warms the cache
+                saved = apply(fields, blockers)
+                try:
+                    self.assertRegex(str(self.block_reason("Codex2")), pattern)
+                    dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.clear()
+                    self.assertRegex(str(self.block_reason("Codex2")), pattern)
+                    self.assert_refused_without_mutation(
+                        "Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], pattern
+                    )
+                    self.refuse_submission(r"still carries an unresolved gate")
+                finally:
+                    restore(saved)
+                self.assertEqual(self.task["review_submission"], submission)
+
+        # Released gates no longer hold it: a resolved Human/Ops blocker, and
+        # the record a consumed continuation approval leaves behind.
+        released = {
+            "status": "todo", "review_reopen_count": 6, "review_churn_escalated_at_count": 6,
+            "review_churn_escalated_at": "2026-10-29T00:30:00Z", "review_churn_reassigned_at_count": 6,
+            "review_churn_continuation_consumed_at": "2026-10-29T00:40:00Z",
+        }
+        saved = apply(released, [dict(human_blocker, status="resolved")])
+        try:
+            self.child.pop("waiting_for")
+            self.assertIsNone(self.block_reason("Codex2"))
+        finally:
+            restore(saved)
+        # Nothing about the child is cleared by the parent.
+        self.assertEqual((self.child["status"], self.child["waiting_for"]), ("blocked", "Codex"))
+        self.assertEqual(self.state["blockers"], [technical])
+        self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review"])
+        self.assertEqual(self.task["status"], "review_approved")
+        self.assertEqual(self.state["blockers"][0]["status"], "open")
+
     def test_publication_is_only_proven_by_the_registered_repository(self) -> None:
         # An unrelated remote carries the child's exact head; the registered
         # origin no longer publishes it.
@@ -3947,11 +4061,118 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
         self.git("remote", "remove", "origin")
         self.refuse_submission(r"origin asked for its publication is not configured")
 
+        # A separate repository that merely shares the owner/name suffix is not
+        # the registered one either: the registered repository is asked itself.
+        mirror = self.root / "unregistered" / "example" / "repo.git"
+        mirror.parent.mkdir(parents=True)
+        subprocess.run(["git", "clone", "-q", "--bare", str(stray), str(mirror)], check=True)
+        self.git("remote", "add", "origin", str(mirror))
+        self.assertEqual(self.git("ls-remote", "origin", f"refs/heads/{self.CHILD_BRANCH}").split()[0], self.child_head)
+        self.refuse_submission(r"registered repository example/repo does not publish task/CHILD-001 at its review-gate")
+
         # Pointing at the registered origin again proves nothing it does not publish.
-        self.git("remote", "add", "origin", str(self.origin))
-        self.refuse_submission(r"origin does not publish task/CHILD-001 at its review-gate head")
+        self.git("remote", "set-url", "origin", str(self.origin))
+        self.refuse_submission(r"example/repo does not publish task/CHILD-001 at its review-gate head")
         self.git("push", "-q", "origin", f"{self.child_head}:refs/heads/{self.CHILD_BRANCH}")
         self.assertEqual(self.submit()["source_helpers"], [self.expected_binding()])
+
+    def test_a_retargeted_registered_repository_fails_closed_on_replay(self) -> None:
+        # The record and the registry agree with each other again after the
+        # retarget, but no longer with the repository the bound was proven in.
+        self.submit()
+        child_before = json.loads(json.dumps(self.child))
+        registered = self.config["coordination"]["repositories"]["pantheon"]
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.assertIsNone(self.block_reason("Codex2"))  # warms the cache
+            registered["repo"] = "new-org/new-repo"
+            self.child["review_gate_target"] = dict(self.child["review_gate_target"], repo_slug="new-org/new-repo")
+            try:
+                pattern = r"CHILD-001' is refused: its canonical record no longer matches the bound recorded"
+                self.assertRegex(str(self.block_reason("Codex2")), pattern)
+                dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.clear()
+                self.assertRegex(str(self.block_reason("Codex2")), pattern)
+                self.assert_refused_without_mutation(
+                    "Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], pattern
+                )
+                # A same-head replay is held to the recorded bound too.
+                self.refuse_submission(r"no longer matches the bound recorded")
+            finally:
+                registered["repo"] = self.SLUG
+                self.child.clear()
+                self.child.update(child_before)
+            self.assertIsNone(self.block_reason("Codex2"))
+        self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review"])
+        self.assertEqual(self.task["status"], "review_approved")
+
+    def test_damaged_same_head_evidence_is_never_resubmitted_over(self) -> None:
+        genuine = json.loads(json.dumps(self.submit()))
+        damage: tuple[tuple[str, dict[str, Any]], ...] = (
+            ("invalid base, rewritten author", {
+                "source_base": "invalid",
+                "source_helpers": [dict(genuine["source_helpers"][0], commits=[[self.child_head, "Codex2"]])],
+            }),
+            ("base dropped", {"source_base": None}),
+            ("source head of another commit", {"source_head": self.frozen}),
+            ("source head dropped", {"source_head": None}),
+        )
+        merged: dict[str, Any] = {}
+        for mode in ("OPEN", "MERGED"):
+            for name, fields in damage:
+                with self.subTest(mode=mode, damage=name):
+                    submission = self.task["review_submission"]
+                    for key, value in fields.items():
+                        if value is None:
+                            submission.pop(key, None)
+                        else:
+                            submission[key] = json.loads(json.dumps(value))
+                    try:
+                        self.refuse_submission(
+                            r"source evidence recorded for PR #4242 head .* is damaged",
+                            **({"pr": merged} if mode == "MERGED" else {}),
+                        )
+                    finally:
+                        submission.clear()
+                        submission.update(json.loads(json.dumps(genuine)))
+            if mode == "OPEN":
+                # Merge the unchanged head for the MERGED round. The child
+                # branch stays published, so a fresh scan would pass: only
+                # the damage itself refuses.
+                self.git("checkout", "-q", "dev")
+                self.git("merge", "--no-ff", "-q", "-m", "Merge pull request #4242", self.head)
+                merge_commit = self.git("rev-parse", "dev")
+                self.git("update-ref", "refs/remotes/origin/dev", "dev")
+                self.git("checkout", "-q", "--detach", self.head)
+                self.git("branch", "-D", self.BRANCH, self.CHILD_BRANCH)
+                self.task["status"] = "in_progress"
+                merged = dict(
+                    self.pr(self.head), state="MERGED", mergedAt="2026-10-29T01:00:00Z",
+                    mergeCommit={"oid": merge_commit},
+                    statusCheckRollup=[{"__typename": "CheckRun", "name": "orchestrator", "status": "COMPLETED",
+                                        "conclusion": "SUCCESS"}],
+                )
+        # A merge commit other than the recorded one is damage as well.
+        self.task["review_submission"]["merge_commit"] = self.frozen
+        self.refuse_submission(r"is damaged", pr=merged)
+        self.task["review_submission"] = json.loads(json.dumps(genuine))
+        # Once the child branch is gone, damage cannot even be rescanned, yet
+        # the intact evidence still replays.
+        self.git("push", "-q", "origin", f":{self.CHILD_BRANCH}")
+        self.task["review_submission"]["source_base"] = "invalid"
+        self.refuse_submission(r"example/repo does not publish task/CHILD-001", pr=merged)
+        self.task["review_submission"] = json.loads(json.dumps(genuine))
+        recovered = self.submit(pr=merged)
+        self.assertEqual(
+            (recovered["source_base"], recovered["source_helpers"]),
+            (genuine["source_base"], genuine["source_helpers"]),
+        )
+        # A head submitted before any source evidence existed has none to keep,
+        # so it is scanned afresh and has to prove the child's publication.
+        self.task["status"] = "in_progress"
+        legacy = {key: genuine[key] for key in ("pr_number", "pr_url", "branch", "remote_sha", "base_branch")}
+        self.task["review_submission"] = legacy
+        self.refuse_submission(r"example/repo does not publish task/CHILD-001", pr=merged)
+        self.git("push", "-q", "origin", f"{self.child_head}:refs/heads/{self.CHILD_BRANCH}")
+        self.assertEqual(self.submit(pr=merged)["source_helpers"], genuine["source_helpers"])
 
     def test_a_same_head_replay_never_rewrites_the_recorded_bounds(self) -> None:
         genuine = json.loads(json.dumps(self.submit()["source_helpers"]))
@@ -3979,7 +4200,7 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
                         kwargs, pattern = {}, r"not the bounds the delivery scan"
                         if mode == "MERGED":
                             kwargs = {"pr": merged}
-                            pattern += r"|origin does not publish task/CHILD-001"
+                            pattern += r"|example/repo does not publish task/CHILD-001"
                         self.refuse_submission(pattern, **kwargs)
                     finally:
                         submission["source_helpers"] = json.loads(json.dumps(genuine))
