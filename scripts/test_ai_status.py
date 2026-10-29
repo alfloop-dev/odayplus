@@ -5777,6 +5777,16 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
             ):
                 stack.enter_context(mock.patch.object(dispatch_engine, name, return_value=False))
             stack.enter_context(mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None))
+            # worker_failure_policy copies supervisor's globals at each entry
+            # point, so the patched predicate lands there too; holding its own
+            # binding here restores it when this dispatch is done.
+            import worker_failure_policy
+
+            stack.enter_context(
+                mock.patch.object(
+                    worker_failure_policy, "agent_can_take_task", worker_failure_policy.agent_can_take_task
+                )
+            )
             stack.enter_context(mock.patch.object(supervisor, "agent_can_take_task", return_value=True))
             stack.enter_context(mock.patch.object(supervisor, "resolve_task_progress_head", return_value=None))
             # Real CAS writer is retained; no subprocess may launch a live CLI.
