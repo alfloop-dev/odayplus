@@ -180,7 +180,11 @@ def web_routes(**overrides: Any) -> dict[str, Any]:
         ),
         "anon GET /auth/session": denied,
         "anon GET /api/v1/operator/bootstrap": denied,
+        # apps/web/src/app/auth/session/route.ts returns the account UUID.
         "GET /auth/session [session]": base.response(200, {"subject": ADMIN_ACCOUNT_ID, "expiresAt": 1}),
+        "GET /api/v1/auth/principal [session]": base.response(200, {
+            "account_id": ADMIN_ACCOUNT_ID, "tenant_id": ADMIN_TENANT_ID, "roles": ["platform_admin"],
+        }),
         "GET /api/v1/operator/users [session]": base.response(200, admin_users()),
         "POST /api/v1/operator/users [session]": save_user_route,
         "GET /api/v1/operator/users/audit-trail [session]": base.response(200, admin_audit_trail()),
@@ -1701,6 +1705,145 @@ def test_invited_pure_admin_requires_cookie_to_verified_principal_binding(field:
     _, report, _ = run_invited_admin(user, events, principal)
     assert report["ok"] is False
     assert blockers(report)["admin:invitation_principal_bound"] == "auth"
+
+
+# ---------------------------------------------------------------------------
+# /auth/session subject is the authoritative account UUID, never the username
+# ---------------------------------------------------------------------------
+
+OTHER_ACCOUNT_ID = "9d4e2f71-6a3b-4c58-9e07-2b1f4c6d8a90"
+WRONG_SESSION_SUBJECTS = [
+    pytest.param({"subject": USERNAME, "expiresAt": 1}, id="username"),
+    pytest.param({"subject": OTHER_ACCOUNT_ID, "expiresAt": 1}, id="other-account-uuid"),
+    pytest.param({"subject": "", "expiresAt": 1}, id="empty"),
+    pytest.param({"expiresAt": 1}, id="missing"),
+]
+
+
+def with_session(routes: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    routes["GET /auth/session [session]"] = base.response(200, payload)
+    return routes
+
+
+@pytest.mark.parametrize("payload", WRONG_SESSION_SUBJECTS)
+def test_bootstrap_admin_session_must_name_the_account_uuid(payload: dict[str, Any]) -> None:
+    _, report, _ = run_dev_admin(web=AdminWeb(with_session(web_routes(), payload)))
+    found = blockers(report)
+    assert report["ok"] is False
+    assert found["session:session_resolves_account"] == "session"
+    assert found["session:html_form_session_resolves_account"] == "session"
+
+
+@pytest.mark.parametrize("payload", WRONG_SESSION_SUBJECTS)
+def test_read_admin_session_must_name_the_principal_account_uuid(payload: dict[str, Any]) -> None:
+    routes = with_session(read_admin_routes(["platform_admin", "auditor"]), payload)
+    _, report, _ = run_dev_admin(web=AdminWeb(routes))
+    found = blockers(report)
+    assert found["session:session_resolves_account"] == "session"
+    assert found["admin:read_principal_bound"] == "auth"
+
+
+@pytest.mark.parametrize("payload", WRONG_SESSION_SUBJECTS)
+def test_invited_admin_session_must_name_the_principal_account_uuid(payload: dict[str, Any]) -> None:
+    user, events, principal = invited_admin_inputs()
+    _, report, _ = run_dev_admin(web=AdminWeb(with_session(web_routes(**{
+        "GET /api/v1/operator/users [session]": base.response(200, {"users": [user], "count": 1}),
+        "GET /api/v1/operator/users/audit-trail [session]": base.response(200, {"events": events}),
+        "GET /api/v1/auth/principal [session]": base.response(200, principal),
+    }), payload)))
+    found = blockers(report)
+    assert found["session:session_resolves_account"] == "session"
+    assert found["admin:invitation_principal_bound"] == "auth"
+
+
+WRONG_PRINCIPALS = [
+    pytest.param(base.response(200, {"account_id": OTHER_ACCOUNT_ID, "tenant_id": ADMIN_TENANT_ID,
+                                     "roles": ["platform_admin"]}), id="other-account-uuid"),
+    pytest.param(base.response(200, {"account_id": USERNAME, "tenant_id": ADMIN_TENANT_ID,
+                                     "roles": ["platform_admin"]}), id="username"),
+    pytest.param(base.response(200, {"tenant_id": ADMIN_TENANT_ID, "roles": ["platform_admin"]}),
+                 id="missing-account"),
+    pytest.param(base.response(401, {"detail": "Authentication required"}), id="unauthenticated"),
+    pytest.param(DB_DOWN, id="unavailable"),
+    pytest.param(base.response(0, error="connection reset"), id="transport-failure"),
+]
+
+
+@pytest.mark.parametrize("principal", WRONG_PRINCIPALS)
+def test_bootstrap_admin_session_must_match_the_principal_account_uuid(principal: Any) -> None:
+    routes = web_routes(**{"GET /api/v1/auth/principal [session]": principal})
+    _, report, web = run_dev_admin(web=AdminWeb(routes))
+    assert report["ok"] is False
+    assert report["dev_admin"]["account_mode"] == "pure-admin"
+    assert blockers(report) == {"session:session_resolves_account": "session"}
+    assert web.calls.count("GET /api/v1/auth/principal [session]") == 1
+
+
+@pytest.mark.parametrize("principal", WRONG_PRINCIPALS)
+def test_read_admin_session_must_match_the_principal_account_uuid(principal: Any) -> None:
+    routes = read_admin_routes(["platform_admin", "auditor"])
+    routes["GET /api/v1/auth/principal [session]"] = principal
+    _, report, web = run_dev_admin(web=AdminWeb(routes))
+    found = blockers(report)
+    assert found["session:session_resolves_account"] == "session"
+    assert found["admin:read_principal_bound"] == "auth"
+    assert web.calls.count("GET /api/v1/auth/principal [session]") == 1
+
+
+@pytest.mark.parametrize("principal", WRONG_PRINCIPALS)
+def test_invited_admin_session_must_match_the_principal_account_uuid(principal: Any) -> None:
+    user, events, _ = invited_admin_inputs()
+    _, report, web = run_dev_admin(web=AdminWeb(web_routes(**{
+        "GET /api/v1/operator/users [session]": base.response(200, {"users": [user], "count": 1}),
+        "GET /api/v1/operator/users/audit-trail [session]": base.response(200, {"events": events}),
+        "GET /api/v1/auth/principal [session]": principal,
+    })))
+    found = blockers(report)
+    assert found["session:session_resolves_account"] == "session"
+    assert found["admin:invitation_principal_bound"] == "auth"
+    assert web.calls.count("GET /api/v1/auth/principal [session]") == 1
+
+
+@pytest.mark.parametrize("field,value,absent", [
+    ("tenant_id", gate.FOREIGN_TENANT_PROBE_ID, False),
+    ("tenant_id", None, False), ("tenant_id", None, True),
+    ("roles", None, False), ("roles", None, True), ("roles", [], False),
+    ("roles", ["platform_admin", "auditor"], False),
+    ("roles", ["platform_admin", "platform_admin"], False),
+    ("roles", "platform_admin", False), ("roles", {"platform_admin": True}, False),
+])
+def test_bootstrap_principal_requires_the_same_tenant_and_exact_pure_roles(
+    field: str, value: Any, absent: bool,
+) -> None:
+    routes = web_routes()
+    principal = routes["GET /api/v1/auth/principal [session]"].payload
+    if absent:
+        principal.pop(field)
+    else:
+        principal[field] = value
+    checks, report, web = run_dev_admin(web=RecordingAdminWeb(routes))
+    assert report["ok"] is False
+    assert blockers(report) == {"admin:bootstrap_principal_bound": "auth"}
+    assert next(check for check in checks if check.name == "session:session_resolves_account").ok
+    assert web.calls.count("GET /api/v1/auth/principal [session]") == 1
+    assert web.post_bodies == []  # Refuse before the tenant mutation probe.
+
+
+def test_html_form_session_must_name_the_account_uuid() -> None:
+    served = iter([ADMIN_ACCOUNT_ID, USERNAME])
+    routes = web_routes(**{"GET /auth/session [session]": lambda body, headers: base.response(
+        200, {"subject": next(served), "expiresAt": 1})})
+    _, report, _ = run_dev_admin(web=AdminWeb(routes))
+    assert blockers(report) == {"session:html_form_session_resolves_account": "session"}
+
+
+def test_a_non_uuid_identity_subject_never_binds_the_session() -> None:
+    users = admin_users()
+    users["users"][0]["subject_id"] = USERNAME
+    _, report, _ = run_dev_admin(web=AdminWeb(with_session(web_routes(**{
+        "GET /api/v1/operator/users [session]": base.response(200, users),
+    }), {"subject": USERNAME, "expiresAt": 1})))
+    assert blockers(report)["session:session_resolves_account"] == "session"
 
 
 def credential_bundle_input() -> dict[str, Any]:

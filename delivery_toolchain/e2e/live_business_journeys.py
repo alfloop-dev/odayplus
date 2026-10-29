@@ -2051,6 +2051,7 @@ class JourneyRunner:
             "/auth/session",
             headers={"accept": "application/json", "cookie": _cookie_header(cookies)},
         )
+        # /auth/session names the server-side account UUID, never the username.
         if not self.result.check(
             not session.failed
             and session.status == 200
