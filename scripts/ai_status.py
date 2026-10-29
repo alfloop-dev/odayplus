@@ -68,17 +68,21 @@ if str(DELIVERY_GOVERNANCE_DIR) not in sys.path:
     sys.path.insert(0, str(DELIVERY_GOVERNANCE_DIR))
 
 import common as orchestrator_common
-from check_task_delivery_identity import validate_delivery_identity
+from check_task_delivery_identity import inspect_delivery_identity
 from classify_change_review_scope import classify_paths
 from common import (
     classify_reopen_reason,
+)
+from dispatch_policy import (
+    delivery_merge_target_branch,
+    task_branch_name,
+    task_explicit_branch,
 )
 from multi_repo_registry import (
     canonical_repository_id_for_root,
     cross_repo_delivery_requirements,
     repository_local_path,
     repository_slug,
-    resolve_repository,
     resolve_task_repository,
     task_artifact_repository_ids,
     task_repository_id,
@@ -2378,16 +2382,6 @@ def classify_push_status(ahead: int, behind: int) -> str:
     return "diverged"
 
 
-def delivery_merge_target_branch(config: dict[str, Any], repository_id: str) -> str:
-    if repository_id == "pantheon":
-        branch = str((config.get("branch_workflow") or {}).get("dev_branch") or "").strip()
-        if branch:
-            return branch
-    repo = resolve_repository(config, repository_id)
-    branch = str(repo.get("default_branch") or "").strip()
-    return branch or "main"
-
-
 PR_PROVENANCE_JSON_FIELDS = (
     "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url,"
     "headRefOid,headRefName,baseRefName,statusCheckRollup"
@@ -2542,41 +2536,6 @@ _TASK_SHA_CACHE: dict[str, tuple[float, str | None]] = {}
 def clear_ai_status_caches() -> None:
     _CI_STATUS_CACHE.clear()
     _TASK_SHA_CACHE.clear()
-
-
-_UNUSABLE_BRANCH_CHARS = re.compile(r"[\s~^:?*\[\\]")
-
-
-def task_explicit_branch(
-    task: dict[str, Any] | None = None,
-    branch: str | None = None,
-) -> str | None:
-    """The branch explicitly recorded on the task, or None if absent/invalid.
-
-    Reuses the validity rules from ``task_branch_name`` (rejecting whitespace,
-    git ref metacharacters, and empty strings) without falling back to the
-    derived ``task/<id>`` default name.
-    """
-    candidate = branch if branch is not None else (task or {}).get("branch")
-    recorded = str(candidate or "").strip()
-    if recorded and not _UNUSABLE_BRANCH_CHARS.search(recorded) and ".." not in recorded:
-        return recorded
-    return None
-
-
-def task_branch_name(task: dict[str, Any] | None, task_id: str | None = None) -> str:
-    """The task's branch as recorded, falling back to the derived name.
-
-    Building `task/<id>` unconditionally invented a branch for every task
-    reimported from an existing GitHub PR, whose branch does not follow that
-    convention. Looking a task up by an invented ref finds nothing, and the
-    caller reads that as missing work rather than as a wrong question.
-    """
-    explicit = task_explicit_branch(task)
-    if explicit:
-        return explicit
-    resolved_id = str(task_id or (task or {}).get("id") or "").strip()
-    return f"task/{resolved_id}"
 
 
 def task_pr_lookup_scope(task_id: str) -> tuple[Path, list[str], int | None]:
@@ -3864,6 +3823,27 @@ def collect_done_delivery_metadata(
         )
 
     return delivery
+
+
+# Fields that record what the review lifecycle did: who signed which head, the
+# freeze, the reviewer's notes and reopen, the submitted source range, and the
+# status they add up to. Only `submit_review`, `approve`, `reopen`,
+# `restore_approved_head` and their kin write them, each after its own checks.
+# `restore_approved` re-grants authority from exactly these records, so an
+# assignment -- which any registered caller may invoke for a task it owns --
+# must not be able to write one: naming a different signer would make an old
+# same-source or unsigned approval look independent without anyone reviewing.
+REVIEW_PROVENANCE_FIELDS = frozenset(
+    {
+        "status",
+        "approved_head",
+        "last_approved_head",
+        "last_approved_by",
+        "review_notes_zh",
+        "review_submission",
+        "last_reopened_by",
+    }
+)
 
 
 def task_metadata_from_env() -> dict[str, Any]:
@@ -7291,6 +7271,14 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
     metadata = task_metadata_from_env()
+    provenance_fields = sorted(REVIEW_PROVENANCE_FIELDS.intersection(metadata))
+    if provenance_fields:
+        raise SystemExit(
+            f"Cannot assign {task_id}: TASK_METADATA_JSON may not set review provenance "
+            f"{provenance_fields}; those record what a reviewer or submission actually did and "
+            "are written only by the review lifecycle commands. Run `re_review` so an "
+            "independent reviewer signs the head. 未寫入任何 assignment。"
+        )
     requested_dependencies = parse_csv_env("TASK_DEPENDS_ON")
     task = get_task(state, task_id)
     if task is not None and "TASK_DEPENDS_ON" in os.environ:
@@ -7868,6 +7856,83 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def review_submission_source_evidence(identity: Any) -> dict[str, Any]:
+    """The source-author provenance a review submission carries.
+
+    Bound to the exact validated range: the resolved base and head commits and
+    every distinct `LLM-Agent` of its non-merge commits, exactly as written.
+    `submitted_by` is recorded separately by the caller, because the account
+    that finalizes -- often only merging a base into someone else's commits --
+    is not thereby an author of them.
+    """
+    return {
+        "source_base": identity.base_sha,
+        "source_head": identity.head_sha,
+        "source_authors": list(identity.source_agents),
+    }
+
+
+def declared_owned_scope_admission_error(task: dict[str, Any], repository_root: Path, identity: Any) -> str | None:
+    """Refuse a submitted range whose net change leaves the task's declared scope.
+
+    The trusted scope is the task's own canonical ``owned_paths`` -- never the
+    PR body, a worker ``--scope`` or caller-chosen metadata -- and the range is
+    the one ``identity`` already validated. Its net paths are the tree diff
+    from that base's merge-base with the exact head, so neither a base advance
+    nor a merged-in base counts as task work, while a corrective commit that
+    restores the scope admits a range still holding the offending ancestor.
+
+    Only an already-declared nonempty list is enforced. A legacy task with a
+    missing, empty or non-list ``owned_paths`` keeps its preexisting admission:
+    no policy or owner fallback is invented for it here.
+    """
+    from check_commit_scope import files_outside_scope, net_changed_files, validate_scope
+
+    declared = task.get("owned_paths")
+    if not isinstance(declared, list) or not declared:
+        return None
+    if not all(isinstance(entry, str) for entry in declared):
+        return "declared owned_paths must be a list of literal repo-relative path strings"
+    problems = validate_scope(declared)
+    if problems:
+        return "declared owned_paths is not a usable literal scope: " + "; ".join(problems)
+    base_sha = str(getattr(identity, "base_sha", "") or "").strip()
+    head_sha = str(getattr(identity, "head_sha", "") or "").strip()
+    if not base_sha or not head_sha:
+        return "the validated range has no immutable base and head to check owned_paths against"
+    merge_base = run_git_command(["merge-base", base_sha, head_sha], cwd=repository_root, required=False)
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", merge_base):
+        return f"the merge-base of {base_sha[:12]} and {head_sha[:12]} cannot be resolved"
+    try:
+        changed = net_changed_files(merge_base, head_sha, cwd=str(repository_root))
+    except (subprocess.CalledProcessError, OSError) as exc:
+        return f"net changed paths of {merge_base[:12]}..{head_sha[:12]} cannot be read ({exc})"
+    leaks = files_outside_scope(changed, declared)
+    if leaks:
+        return (
+            f"{len(leaks)} net changed path(s) of {merge_base[:12]}..{head_sha[:12]} fall outside the "
+            "declared owned_paths: " + ", ".join(repr(path) for path in leaks)
+        )
+    return None
+
+
+def review_source_independence_block_reason(
+    task: dict[str, Any],
+    reviewer: str | None,
+    head: str,
+) -> str | None:
+    """Judge a reviewer signature on `head` by the one `dispatch_policy` rule.
+
+    That rule re-reads the submitted range's authors from Git rather than from
+    the board's record, exactly as every dispatch path does, so the approval
+    cannot admit a reviewer the queue would refuse -- nor the queue one the
+    approval would.
+    """
+    from dispatch_policy import review_source_block_reason
+
+    return review_source_block_reason(merged_orchestrator_config(), task, reviewer, head=head)
+
+
 def review_submission_for_task(
     task: dict[str, Any],
     pr_number: str,
@@ -7971,6 +8036,35 @@ def review_submission_for_task(
             f"Cannot submit {task_id} for review: PR #{pr_number} has invalid head commit SHA '{head_oid}'."
         )
 
+    # The same submitted head keeps the range it was submitted with. Once the
+    # integration branch has merged in part of that range, rescanning from its
+    # new tip reads fewer commits and would drop their authors from the record
+    # -- and from every pool a reviewer has to avoid -- with nothing in the
+    # submission changed; for a head that is only a merge, it reads no commits
+    # at all. Merging the unchanged head does not change it either: the first
+    # merged recovery of a head submitted while open keeps that range, since
+    # the merge commit's first parent may be just such a tip. So that range is
+    # what is scanned again here, not merely copied after a narrower scan
+    # succeeded. Only a head first submitted already merged reads the range
+    # from that parent; `task_review_source_identity` re-validates either base
+    # from Git before anything is recorded.
+    prior = task.get("review_submission")
+
+    def submitted_range_base(merge_commit: str = "") -> str | None:
+        if not (
+            isinstance(prior, dict)
+            and prior.get("pr_number") == int(pr_number)
+            and str(prior.get("branch") or "").strip() == branch
+            and str(prior.get("remote_sha") or "").strip().lower() == head_oid.lower()
+            and str(prior.get("source_head") or "").strip().lower() == head_oid.lower()
+            and str(prior.get("merge_commit") or "").strip() in ("", merge_commit)
+        ):
+            return None
+        source_base = str(prior.get("source_base") or "").strip()
+        if not (re.fullmatch(r"[0-9a-fA-F]{40}", source_base) or re.fullmatch(r"[0-9a-fA-F]{64}", source_base)):
+            return None
+        return source_base
+
     if pr_state == "OPEN":
         try:
             remote_sha = resolve_task_sha(task_id, force_refresh=True)
@@ -7989,19 +8083,22 @@ def review_submission_for_task(
                 f"Cannot submit {task_id} for review: PR #{pr_number} remote head {head_oid[:8]} "
                 f"does not match origin/{branch} ({remote_sha[:8]})."
             )
-        identity_errors = validate_delivery_identity(
+        identity = inspect_delivery_identity(
             repository_root,
             task_id=task_id,
-            base=base_branch,
+            base=submitted_range_base() or base_branch,
             head=remote_sha,
             expected_branch=branch,
             actual_branch=head_branch,
         )
-        if identity_errors:
-            details = "; ".join(identity_errors)
+        if identity.errors:
+            details = "; ".join(identity.errors)
             raise SystemExit(
                 f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
             )
+        scope_error = declared_owned_scope_admission_error(task, repository_root, identity)
+        if scope_error:
+            raise SystemExit(f"Cannot submit {task_id} for review: {scope_error}.")
         return {
             "pr_number": int(pr_number),
             "pr_url": pr_url,
@@ -8009,6 +8106,7 @@ def review_submission_for_task(
             "remote_sha": remote_sha,
             "base_branch": base_branch,
             "verified_at": iso_now(),
+            **review_submission_source_evidence(identity),
         }
 
     if pr_state == "MERGED":
@@ -8067,19 +8165,22 @@ def review_submission_for_task(
         if not git_command_succeeds(["rev-parse", "--verify", f"{pre_merge_base}^{{commit}}"], cwd=repository_root):
             pre_merge_base = base_branch
 
-        identity_errors = validate_delivery_identity(
+        identity = inspect_delivery_identity(
             repository_root,
             task_id=task_id,
-            base=pre_merge_base,
+            base=submitted_range_base(merge_commit) or pre_merge_base,
             head=head_oid,
             expected_branch=branch,
             actual_branch=head_branch,
         )
-        if identity_errors:
-            details = "; ".join(identity_errors)
+        if identity.errors:
+            details = "; ".join(identity.errors)
             raise SystemExit(
                 f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
             )
+        scope_error = declared_owned_scope_admission_error(task, repository_root, identity)
+        if scope_error:
+            raise SystemExit(f"Cannot submit {task_id} for review: {scope_error}.")
         return {
             "pr_number": int(pr_number),
             "pr_url": pr_url,
@@ -8091,6 +8192,7 @@ def review_submission_for_task(
             "merge_commit": merge_commit,
             "ci_status": "success",
             "ci_checks": checks,
+            **review_submission_source_evidence(identity),
         }
 
     raise SystemExit(
@@ -8118,11 +8220,12 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"{task_id} has no assigned reviewer")
 
     submission = review_submission_for_task(task, pr_number, actor=actor)
-    # Who authored what is now under review. The owner field can legitimately be
-    # rewritten later -- by an operator, or by a reconcile pass -- and once it is,
-    # nothing else on the record still names the account whose commits the
-    # reviewer is supposed to be independent of. Recorded here, at the one moment
-    # it is certain, so the independence check keeps working afterwards.
+    # Who submitted is recorded here, at the one moment it is certain. It is the
+    # finalizer, kept distinct from the source authors the submission already
+    # carries: the owner field can legitimately be rewritten later, and a
+    # finalizer that only merged a base into another account's commits must
+    # not be mistaken for their author -- nor its pool for the only one the
+    # reviewer has to avoid.
     submission["submitted_by"] = actor
 
     existing_sub = task.get("review_submission")
@@ -8132,13 +8235,26 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
         and str(existing_sub.get("remote_sha") or "").strip() == str(submission.get("remote_sha") or "").strip()
         and str(existing_sub.get("branch") or "").strip() == str(submission.get("branch") or "").strip()
     )
+    if is_same_submission and "submitted_by" in existing_sub:
+        submission["submitted_by"] = existing_sub["submitted_by"]
+
+    # Every actor of the submitted work has to resolve to a registered account
+    # before review can start: an unknown author is not an independent one, so
+    # submission refuses rather than recording a range nobody can review.
+    from dispatch_policy import task_review_source_identity
+
+    source = task_review_source_identity(
+        merged_orchestrator_config(), {**task, "review_submission": submission}
+    )
+    if source.error:
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: {source.error}. No review submission was recorded."
+        )
 
     if is_same_submission:
         # Stable submission provenance: preserve earlier verified_at, submitted_by, recovery_at, recovery_by
         if "verified_at" in existing_sub:
             submission["verified_at"] = existing_sub["verified_at"]
-        if "submitted_by" in existing_sub:
-            submission["submitted_by"] = existing_sub["submitted_by"]
         if "recovery_at" in existing_sub:
             submission["recovery_at"] = existing_sub["recovery_at"]
         if "recovery_by" in existing_sub:
@@ -8617,6 +8733,8 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
     - actor is the owner
     - current status is in_progress
     - task has review_notes_zh (evidence of a prior approval)
+    - the reviewer who signed `last_approved_head` is recorded and still
+      independent of the submitted work
     """
     if len(args) < 2:
         raise SystemExit("Usage: restore_approved <task-id> <message>")
@@ -8685,6 +8803,26 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
             f"Run `re_review {task_id} <reason>` so the reviewer stamps the new head. "
             "No restore was recorded."
         )
+    # Restoring re-grants the earlier approval's authority, so that approval has
+    # to pass what `approve` checks today: an approval a same-source reviewer
+    # signed, or one a human gate has since overtaken, is not restored. It is
+    # judged by the reviewer who signed it -- assigning a different reviewer
+    # since does not make someone else's old signature independent -- and an
+    # approval that does not record its signer cannot be judged at all.
+    gate_reason = task_unresolved_human_or_independent_gate_reason(task)
+    if gate_reason:
+        raise SystemExit(f"Cannot restore {task_id}: {gate_reason}. No restore was recorded.")
+    signer = canonical_agent_name(task.get("last_approved_by"))
+    if not signer:
+        raise SystemExit(
+            f"Cannot restore {task_id}: the approval of {last_approved_head[:8]} does not record "
+            "which reviewer signed it, so its independence cannot be checked. Run "
+            f"`re_review {task_id} <reason>` so an independent reviewer signs the head. "
+            "No restore was recorded."
+        )
+    source_reason = review_source_independence_block_reason(task, signer, last_approved_head)
+    if source_reason:
+        raise SystemExit(f"Cannot restore {task_id}: {source_reason}. No restore was recorded.")
 
     timestamp = iso_now()
     task["status"] = "review_approved"
@@ -8773,10 +8911,23 @@ def command_restore_approved_head(state: dict[str, Any], args: list[str]) -> Non
             f"does not match the task branch head ({current_sha[:8]}). Only the exact current head "
             f"can be restored; run `re_review {task_id} <reason>` if the branch has moved."
         )
+    # The attestation is a reviewer signature on one head, so it is held to the
+    # same gates as `approve`.
+    gate_reason = task_unresolved_human_or_independent_gate_reason(task)
+    if gate_reason:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: {gate_reason}. Nothing was recorded."
+        )
+    source_reason = review_source_independence_block_reason(task, actor, requested_sha)
+    if source_reason:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: {source_reason}. Nothing was recorded."
+        )
 
     timestamp = iso_now()
     task["approved_head"] = requested_sha
     task["last_approved_head"] = requested_sha
+    task["last_approved_by"] = actor
     task["last_update"] = timestamp
     task["next"] = message
     append_log(
@@ -9052,6 +9203,12 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         )
     if task.get("status") != "review":
         raise SystemExit(f"{task_id} must be in review before it can move to review_approved")
+    # The same gate that refuses submission refuses the signature: a human or
+    # independent gate raised while the task sat in review is not cleared by an
+    # automated reviewer approving the head.
+    gate_reason = task_unresolved_human_or_independent_gate_reason(task)
+    if gate_reason:
+        raise SystemExit(f"Cannot approve task {task_id}: {gate_reason}. No approval was recorded.")
 
     # B20: the approved head is the whole basis of the post-review freeze.
     # command_done and both supervisor dispatch gates are guarded by
@@ -9107,6 +9264,16 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
             "No approval was recorded."
         )
 
+    # Independence of the owner is not independence of the work. The reviewer
+    # has to share no account pool with any source author of the exact head,
+    # with its genuine submitter or with the owner, and those authors are read
+    # from Git again here rather than taken from the board's record.
+    source_reason = review_source_independence_block_reason(task, actor, approved_sha)
+    if source_reason:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: {source_reason}. No approval was recorded."
+        )
+
     # Required CI terminal success check on exact head
     try:
         pr_status, ci_status = task_pr_ci_status(task_id)
@@ -9133,7 +9300,10 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     # `last_approved_head` is the durable record of the last commit a reviewer
     # actually stamped: it is never popped, so `restore_approved` can re-freeze a
     # spurious supervisor downgrade without the owner getting to name the head.
+    # The reviewer who signed it is recorded with it: a restore re-grants that
+    # signature, not one from whoever is assigned to review later.
     task["last_approved_head"] = approved_sha
+    task["last_approved_by"] = actor
 
     review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     if review_notes:

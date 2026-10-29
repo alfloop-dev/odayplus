@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -818,6 +819,7 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
     missing_provider_id = ""
     failed_provider_id = ""
     probe_age_seconds = 0
+    operator_section_meta: dict[str, object] = {}
 
     @classmethod
     def _operator_origin(cls) -> dict[str, object]:
@@ -927,6 +929,7 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
                                 else "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE"
                             ),
                         },
+                        **self.operator_section_meta,
                     },
                     "today": {"queue": []},
                 }
@@ -2217,6 +2220,271 @@ def test_deterministic_smoke_requires_ready_operator_live_repository_probe() -> 
     assert by_name["smoke:/api/v1/operator/bootstrap:provenance"].ok is True
 
 
+def _degraded_operator_sections() -> dict[str, object]:
+    # Shape emitted by OperatorStateService from OperatorLiveRepository: one
+    # unavailable section degrades the whole bootstrap.
+    return {
+        "sections": {
+            "stores": {"state": "available", "source": "postgresql", "recordCount": 3},
+            "storeOpsIssues": {
+                "state": "unavailable",
+                "source": "store_ops_issue_repository",
+                "recordCount": None,
+                "reasonCode": "OPERATOR_STOREOPSISSUES_UNAVAILABLE",
+                "message": (
+                    "connection to postgresql://odp_app:hunter2-db-pass@10.0.0.5:5432/odp "
+                    "failed: password=hunter2-db-pass api_key='sk-live-abc123' "
+                    "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig "
+                )
+                + "x" * 600,
+            },
+            "interventions": {
+                "state": "degraded",
+                "source": "intervention_store",
+                "recordCount": 1,
+                "reasonCode": "OPERATOR_INTERVENTIONS_PARTIAL",
+                "message": "store s-2: timeout",
+            },
+        },
+        "unavailableSections": ["storeOpsIssues"],
+        "degradedSections": ["interventions"],
+    }
+
+
+def test_deterministic_smoke_records_degraded_operator_sections_and_reason_codes() -> None:
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _degraded_operator_sections()
+    server, url = start_server()
+    try:
+        checks, report = run_smoke(url)
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    bootstrap = report["operator_bootstrap"]
+    assert bootstrap["data_mode"] == "degraded"
+    assert bootstrap["origin_kind"] == "degraded"
+    assert bootstrap["unavailable_sections"] == ["storeOpsIssues"]
+    assert bootstrap["degraded_sections"] == ["interventions"]
+    sections = bootstrap["non_available_sections"]
+    # Available sections are not listed; only the ones that degraded the bootstrap.
+    assert set(sections) == {"storeOpsIssues", "interventions"}
+    assert sections["storeOpsIssues"]["state"] == "unavailable"
+    assert sections["storeOpsIssues"]["reason_code"] == "OPERATOR_STOREOPSISSUES_UNAVAILABLE"
+    assert sections["interventions"] == {
+        "state": "degraded",
+        "reason_code": "OPERATOR_INTERVENTIONS_PARTIAL",
+        "message": "store s-2: timeout",
+    }
+
+    # The pass/fail verdict is unchanged: degraded is still not live.
+    by_name = {check.name: check for check in checks}
+    for name in (
+        "smoke:/api/v1/operator/bootstrap:provenance",
+        "smoke:/api/v1/operator/bootstrap:read_provenance",
+    ):
+        assert by_name[name].ok is False
+        assert "storeOpsIssues:OPERATOR_STOREOPSISSUES_UNAVAILABLE" in by_name[name].detail
+        assert "interventions:OPERATOR_INTERVENTIONS_PARTIAL" in by_name[name].detail
+
+
+def test_deterministic_smoke_masks_suspected_secrets_in_operator_section_messages() -> None:
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _degraded_operator_sections()
+    server, url = start_server()
+    try:
+        _, report = run_smoke(url)
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    message = report["operator_bootstrap"]["non_available_sections"]["storeOpsIssues"]["message"]
+    rendered = json.dumps(report)
+    for leaked in ("hunter2-db-pass", "sk-live-abc123", "eyJhbGciOiJIUzI1NiJ9", "odp_app"):
+        assert leaked not in rendered
+    assert "postgresql://<redacted>@10.0.0.5:5432/odp" in message
+    assert "password=<redacted>" in message
+    assert "api_key=<redacted>" in message
+    assert "Bearer <redacted>" in message
+    assert len(message) <= validator.OPERATOR_SECTION_MESSAGE_MAX_CHARS
+    assert message.endswith("...")
+
+
+def _quoted_credential_operator_sections() -> dict[str, object]:
+    # Repository errors are ``str(exc)``: a driver may print a JSON body or a dict
+    # repr, and an API error may echo the invoker token near the length cap.
+    return {
+        "sections": {
+            "survey_assignments": {
+                "state": "unavailable",
+                "reasonCode": "OPERATOR_SURVEY_ASSIGNMENTS_UNAVAILABLE",
+                "message": 'db rejected {"password": "synthetic-db-secret", "user": "odp"}',
+            },
+            "providers": {
+                "state": "unavailable",
+                "reasonCode": "OPERATOR_PROVIDERS_UNAVAILABLE",
+                "message": "provider config {'api_key': 'synthetic-provider-key'}",
+            },
+            "notices": {
+                "state": "degraded",
+                "reasonCode": "OPERATOR_NOTICES_PARTIAL",
+                "message": r"upstream body {\"token\": \"synthetic-escaped-token\"}",
+            },
+            # The known token straddles the 240-character cap.
+            "storeOpsIssues": {
+                "state": "unavailable",
+                "reasonCode": "OPERATOR_STOREOPSISSUES_UNAVAILABLE",
+                "message": "x" * 225 + SMOKE_API_INVOKER + "y" * 20,
+            },
+        },
+        "unavailableSections": ["survey_assignments", "providers", "storeOpsIssues"],
+        "degradedSections": ["notices"],
+    }
+
+
+def _quoted_credential_leaks() -> tuple[str, ...]:
+    return (
+        "synthetic-db-secret",
+        "synthetic-provider-key",
+        "synthetic-escaped-token",
+        SMOKE_API_INVOKER[:8],
+    )
+
+
+def _assert_quoted_credentials_masked(bootstrap: dict[str, object]) -> None:
+    sections = bootstrap["non_available_sections"]
+    assert sections["survey_assignments"]["message"] == (
+        'db rejected {"password": <redacted>, "user": "odp"}'
+    )
+    assert sections["providers"]["message"] == "provider config {'api_key': <redacted>}"
+    assert sections["notices"]["message"] == r"upstream body {\"token\": <redacted>}"
+    # Known-token redaction runs before the cut, so no prefix of it survives.
+    assert sections["storeOpsIssues"]["message"] == "x" * 225 + "<redacted>" + "yy..."
+    assert sections["storeOpsIssues"]["reason_code"] == "OPERATOR_STOREOPSISSUES_UNAVAILABLE"
+
+
+def test_deterministic_smoke_masks_quoted_and_boundary_secrets_in_operator_sections() -> None:
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _quoted_credential_operator_sections()
+    server, url = start_server()
+    try:
+        checks, report = validator.smoke_checks(
+            api_url=url,
+            web_url=url,
+            expected_sha=EXPECTED_SHA,
+            bearer_token=SMOKE_BEARER,
+            operator_role="ops-lead",
+            operator_subject="smoke-operator",
+            operator_tenant="tenant-live",
+            correlation_id="corr-operator-quoted-secrets",
+            timeout=2,
+            api_invoker_token=SMOKE_API_INVOKER,
+        )
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    rendered = json.dumps(report) + json.dumps([[c.name, c.detail] for c in checks])
+    for leaked in _quoted_credential_leaks():
+        assert leaked not in rendered
+    _assert_quoted_credentials_masked(report["operator_bootstrap"])
+    by_name = {check.name: check for check in checks}
+    assert by_name["smoke:/api/v1/operator/bootstrap:provenance"].ok is False
+
+
+def test_smoke_cli_report_masks_quoted_and_boundary_secrets_in_operator_sections(
+    tmp_path: Path,
+) -> None:
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _quoted_credential_operator_sections()
+    server, url = start_server()
+    report_path = tmp_path / "cloud-run-smoke.json"
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(VALIDATOR_PATH),
+                "smoke",
+                "--api-url",
+                url,
+                "--web-url",
+                url,
+                "--expected-sha",
+                EXPECTED_SHA,
+                "--smoke-retry-attempts",
+                "1",
+                "--output",
+                str(report_path),
+            ],
+            cwd=ROOT,
+            env=_smoke_cli_env(),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    # Degraded stays fail-closed; the report says which sections and why.
+    assert result.returncode == 1, result.stdout + result.stderr
+    text = report_path.read_text(encoding="utf-8")
+    for leaked in _quoted_credential_leaks():
+        assert leaked not in text
+        assert leaked not in result.stdout + result.stderr
+    report = json.loads(text)
+    assert report["ok"] is False
+    _assert_quoted_credentials_masked(report["operator_bootstrap"])
+    provenance = next(
+        check
+        for check in report["checks"]
+        if check["name"] == "smoke:/api/v1/operator/bootstrap:provenance"
+    )
+    assert "providers:OPERATOR_PROVIDERS_UNAVAILABLE" in provenance["detail"]
+    assert "notices:OPERATOR_NOTICES_PARTIAL" in provenance["detail"]
+
+
+def test_deterministic_smoke_live_operator_bootstrap_report_is_unchanged() -> None:
+    DeterministicRuntimeHandler.operator_section_meta = {
+        "sections": {
+            "stores": {"state": "available", "source": "postgresql", "recordCount": 3},
+        },
+        "unavailableSections": [],
+        "degradedSections": [],
+    }
+    server, url = start_server()
+    try:
+        checks, report = run_smoke(url)
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    assert all(check.ok for check in checks)
+    assert set(report["operator_bootstrap"]) == {
+        "status",
+        "data_mode",
+        "data_source",
+        "origin_kind",
+    }
+    by_name = {check.name: check for check in checks}
+    assert by_name["smoke:/api/v1/operator/bootstrap:provenance"].detail == (
+        "data_mode=live data_source=postgresql"
+    )
+    assert "sections=" not in by_name["smoke:/api/v1/operator/bootstrap:read_provenance"].detail
+
+
 def test_workflows_do_not_reference_secrets_in_step_if() -> None:
     for workflow in WORKFLOWS:
         text = workflow.read_text(encoding="utf-8")
@@ -2364,6 +2632,263 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     assert result.returncode == 0, result.stderr
 
 
+REVISION_RELEASE_SHA = "4fc05643b17165d54ef841d5d1343bafed94a02f"
+REVISION_NAME_PATTERN = re.compile(r"[a-z]([-a-z0-9]*[a-z0-9])?")
+
+
+def _run_release_naming(
+    name: str, *args: str, **env: str
+) -> subprocess.CompletedProcess[str]:
+    """Execute one of the deploy script's own revision-naming functions."""
+    function = _extract_shell_function(DEPLOY_SCRIPT.read_text(encoding="utf-8"), name)
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"GITHUB_ACTIONS", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"}
+    }
+    environment.update({"ODAY_RELEASE_SHA": REVISION_RELEASE_SHA, **env})
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'set -euo pipefail\n{function}{name} "$@"',
+            "bash",
+            *args,
+        ],
+        cwd=ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_release_revision_suffix(*services: str, **env: str) -> subprocess.CompletedProcess[str]:
+    return _run_release_naming("release_revision_suffix", *services, **env)
+
+
+def _run_release_revision_tag(
+    suffix: str, *services: str, **env: str
+) -> subprocess.CompletedProcess[str]:
+    return _run_release_naming("release_revision_tag", suffix, *services, **env)
+
+
+def test_revision_suffix_is_defined_once_and_shared_by_api_and_web() -> None:
+    """ODP-CLOUD-RUN-REVISION-SUFFIX-PER-ATTEMPT-001: one definition, both deploys."""
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assignments = re.findall(r"^\s*REVISION_SUFFIX=.*$", text, flags=re.MULTILINE)
+    assert assignments == [
+        'REVISION_SUFFIX="$(release_revision_suffix "${API_SERVICE}" "${WEB_SERVICE}")"'
+    ]
+    assert text.count('--revision-suffix="${REVISION_SUFFIX}"') == 2
+    assert "--revision-suffix=" not in text.replace('--revision-suffix="${REVISION_SUFFIX}"', "")
+    tags = re.findall(r"^\s*(?:API_|WEB_)?REVISION_TAG=.*$", text, flags=re.MULTILINE)
+    assert tags == [
+        'REVISION_TAG="$(release_revision_tag "${REVISION_SUFFIX}" "${API_SERVICE}" "${WEB_SERVICE}")"',
+        'API_REVISION_TAG="${REVISION_TAG}"',
+        'WEB_REVISION_TAG="${REVISION_TAG}"',
+    ]
+    assert text.count('--tag="${API_REVISION_TAG}"') == 1
+    assert text.count('--tag="${WEB_REVISION_TAG}"') == 1
+    # Both candidates are checked against the pre-deploy snapshot after it is
+    # captured and before the first Cloud Run mutation (the migration job).
+    guards = [
+        'assert_candidate_unused "${API_TRAFFIC_SNAPSHOT}" "${API_REVISION_TAG}" '
+        '"${API_SERVICE}-${REVISION_SUFFIX}"',
+        'assert_candidate_unused "${WEB_TRAFFIC_SNAPSHOT}" "${WEB_REVISION_TAG}" '
+        '"${WEB_SERVICE}-${REVISION_SUFFIX}"',
+    ]
+    for guard in guards:
+        assert text.count(guard) == 1
+        assert text.index('capture_service_traffic "${WEB_SERVICE}"') < text.index(guard)
+        assert text.index(guard) < text.index('gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}"')
+    # Resolved after the read-only preflight and before the first Cloud Run mutation.
+    assignment = text.index(assignments[0])
+    assert text.index("validate_cloud_run_live_deployment.py preflight") < assignment
+    assert assignment < text.index('gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}"')
+    assert assignment < text.index('gcloud run deploy "${API_SERVICE}"')
+
+
+def test_revision_suffix_differs_per_github_run_attempt_for_the_same_sha() -> None:
+    first = _run_release_revision_suffix(
+        "oday-api",
+        "oday-web",
+        GITHUB_ACTIONS="true",
+        GITHUB_RUN_ID="40598998837",
+        GITHUB_RUN_ATTEMPT="1",
+    )
+    retry = _run_release_revision_suffix(
+        "oday-api",
+        "oday-web",
+        GITHUB_ACTIONS="true",
+        GITHUB_RUN_ID="40598998837",
+        GITHUB_RUN_ATTEMPT="2",
+    )
+    rerun = _run_release_revision_suffix(
+        "oday-api",
+        "oday-web",
+        GITHUB_ACTIONS="true",
+        GITHUB_RUN_ID="40611111111",
+        GITHUB_RUN_ATTEMPT="1",
+    )
+
+    assert (first.returncode, retry.returncode, rerun.returncode) == (0, 0, 0), (
+        first.stderr + retry.stderr + rerun.stderr
+    )
+    assert first.stdout == "4fc05643b171-r40598998837-a1"
+    assert retry.stdout == "4fc05643b171-r40598998837-a2"
+    assert rerun.stdout == "4fc05643b171-r40611111111-a1"
+    # The failed attempt-2 name from Runtime Release run 40598998837 is gone.
+    assert "oday-api-release-4fc05643b171" not in {
+        f"oday-api-{result.stdout}" for result in (first, retry, rerun)
+    }
+
+
+def test_revision_suffix_outside_github_actions_is_explicit_and_time_bound() -> None:
+    before = int(time.time())
+    result = _run_release_revision_suffix("oday-api", "oday-web")
+    after = int(time.time())
+
+    assert result.returncode == 0, result.stderr
+    match = re.fullmatch(r"4fc05643b171-l([0-9]+)-p([0-9]+)", result.stdout)
+    assert match, result.stdout
+    assert before <= int(match.group(1)) <= after
+    # A local name can never take the form an Actions attempt uses.
+    assert "-r" not in result.stdout
+
+
+def test_local_revision_suffixes_started_in_the_same_second_differ(tmp_path: Path) -> None:
+    """Two local attempts in one fixed second are told apart by the deploy shell."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_date = bin_dir / "date"
+    fake_date.write_text("#!/bin/sh\necho 1793180000\n", encoding="utf-8")
+    fake_date.chmod(0o755)
+    path = f"{bin_dir}:{os.environ.get('PATH', '')}"
+
+    first = _run_release_revision_suffix("oday-api", "oday-web", PATH=path)
+    second = _run_release_revision_suffix("oday-api", "oday-web", PATH=path)
+
+    assert (first.returncode, second.returncode) == (0, 0), first.stderr + second.stderr
+    for result in (first, second):
+        assert re.fullmatch(r"4fc05643b171-l1793180000-p[0-9]+", result.stdout), result.stdout
+    assert first.stdout != second.stdout
+    tags = [_run_release_revision_tag(r.stdout, "oday-api", "oday-web") for r in (first, second)]
+    assert all(tag.returncode == 0 for tag in tags), [tag.stderr for tag in tags]
+
+
+def test_candidate_tag_names_the_attempt_and_keeps_the_release_prefix() -> None:
+    suffixes = [
+        "4fc05643b171-r40598998837-a1",
+        "4fc05643b171-r40598998837-a2",
+        "4fc05643b171-r40611111111-a1",
+        "4fc05643b171-l1793180000-p4242",
+    ]
+    tags = [_run_release_revision_tag(suffix, "oday-api", "oday-web") for suffix in suffixes]
+
+    assert all(tag.returncode == 0 for tag in tags), [tag.stderr for tag in tags]
+    for suffix, tag in zip(suffixes, tags, strict=True):
+        digest = hashlib.sha256(suffix.encode()).hexdigest()[:4]
+        assert tag.stdout == f"candidate-4fc05643b17165d5-{digest}"
+        assert REVISION_NAME_PATTERN.fullmatch(tag.stdout)
+    assert len({tag.stdout for tag in tags}) == len(suffixes)
+    # Deterministic: the same attempt always names the same tag.
+    again = _run_release_revision_tag(suffixes[1], "oday-api", "oday-web")
+    assert again.stdout == tags[1].stdout
+
+
+@pytest.mark.parametrize(
+    ("service", "fits"),
+    [
+        ("oday-api", True),
+        ("oday-prod-api", True),  # infra/terraform/cloud_run.tf, environment=prod
+        ("oday-prod-web", True),
+        ("s" * 15, True),
+        ("s" * 16, False),
+    ],
+)
+def test_candidate_tag_fits_the_tagged_url_host(service: str, fits: bool) -> None:
+    result = _run_release_revision_tag("4fc05643b171-r40598998837-a2", "oday-api", service)
+
+    if fits:
+        assert result.returncode == 0, result.stderr
+        # <tag>---<service>-<10-character hash>-<2-character region> is one DNS label.
+        assert len(f"{result.stdout}---{service}-abcdefghij-de") <= 63
+    else:
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert "exceed the 46 characters" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"GITHUB_ACTIONS": "true"},
+        {"GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "40598998837"},
+        {"GITHUB_RUN_ID": "40598998837"},
+        {"GITHUB_RUN_ATTEMPT": "2"},
+        {"GITHUB_RUN_ID": "40598998837", "GITHUB_RUN_ATTEMPT": "0"},
+        {"GITHUB_RUN_ID": "4059899883x", "GITHUB_RUN_ATTEMPT": "1"},
+    ],
+)
+def test_revision_suffix_refuses_partial_github_attempt_identity(env: dict[str, str]) -> None:
+    result = _run_release_revision_suffix("oday-api", "oday-web", **env)
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("api_service", "web_service"),
+    [
+        ("oday-api", "oday-web"),  # dev (Runtime Release run 40598998837)
+        ("oday-prod-api", "oday-prod-web"),  # infra/terraform/cloud_run.tf, environment=prod
+    ],
+)
+def test_revision_names_for_deployed_services_fit_cloud_run_limit(
+    api_service: str, web_service: str
+) -> None:
+    # A two-digit attempt and a run id one digit longer than today's leave headroom.
+    result = _run_release_revision_suffix(
+        api_service,
+        web_service,
+        GITHUB_ACTIONS="true",
+        GITHUB_RUN_ID="405989988370",
+        GITHUB_RUN_ATTEMPT="50",
+    )
+
+    assert result.returncode == 0, result.stderr
+    for service in (api_service, web_service):
+        revision = f"{service}-{result.stdout}"
+        assert len(revision) <= 63, revision
+        assert REVISION_NAME_PATTERN.fullmatch(revision), revision
+
+
+def test_revision_suffix_refuses_a_name_cloud_run_would_reject() -> None:
+    longest = "s" * 34
+    attempt = {"GITHUB_RUN_ID": "40598998837", "GITHUB_RUN_ATTEMPT": "2"}
+
+    fits = _run_release_revision_suffix("oday-api", longest, **attempt)
+    too_long = _run_release_revision_suffix("oday-api", longest + "s", **attempt)
+    uppercase = _run_release_revision_suffix("Oday-api", "oday-web", **attempt)
+
+    assert fits.returncode == 0, fits.stderr
+    assert len(f"{longest}-{fits.stdout}") == 63
+    assert too_long.returncode == 1
+    assert too_long.stdout == ""
+    assert f"'{longest}s-4fc05643b171-r40598998837-a2' (64 characters)" in too_long.stderr
+    assert uppercase.returncode == 1
+    assert "Oday-api-4fc05643b171-r40598998837-a2" in uppercase.stderr
+
+
+def test_release_traffic_check_still_accepts_the_deploy_script() -> None:
+    checks = {check.name: check for check in validator.repository_capability_checks(ROOT)}
+
+    assert checks["repository:release_traffic"].ok, checks["repository:release_traffic"].detail
+
+
 def _traffic_description(
     *,
     service_url: str = "https://service.example.test",
@@ -2379,6 +2904,38 @@ def _traffic_description(
             ],
         }
     }
+
+
+def test_traffic_helper_refuses_a_candidate_the_service_already_has() -> None:
+    description = _traffic_description(
+        traffic=[
+            {"revisionName": "oday-api-4fc05643b171-r1-a1", "percent": 100},
+            {
+                "revisionName": "oday-api-4fc05643b171-r1-a1",
+                "tag": "candidate-4fc05643b17165d5-aaaa",
+                "url": "https://candidate-4fc05643b17165d5-aaaa---oday-api.example.test",
+            },
+        ]
+    )
+
+    traffic_helper.assert_candidate_unused(
+        description, "candidate-4fc05643b17165d5-bbbb", "oday-api-4fc05643b171-r1-a2"
+    )
+    traffic_helper.assert_candidate_unused(
+        traffic_helper.absent_snapshot("oday-api"),
+        "candidate-4fc05643b17165d5-aaaa",
+        "oday-api-4fc05643b171-r1-a1",
+    )
+    with pytest.raises(ValueError, match="would move it off"):
+        traffic_helper.assert_candidate_unused(
+            description, "candidate-4fc05643b17165d5-aaaa", "oday-api-4fc05643b171-r1-a2"
+        )
+    with pytest.raises(ValueError, match="already exists"):
+        traffic_helper.assert_candidate_unused(
+            description, "candidate-4fc05643b17165d5-bbbb", "oday-api-4fc05643b171-r1-a1"
+        )
+    with pytest.raises(ValueError, match="missing status.traffic"):
+        traffic_helper.assert_candidate_unused({"status": {}}, "tag", "revision")
 
 
 def test_traffic_helper_resolves_tagged_revision_and_exact_restore_split() -> None:

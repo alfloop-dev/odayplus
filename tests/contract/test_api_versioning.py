@@ -6,6 +6,12 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from shared.api.versioning import API_V1_PREFIX, alias_paths, versioned_paths
+from shared.audit import AuditEvent
+from tests.integration._authz import AUDIT_HEADERS
+
+# The audit read is RBAC-guarded and tenant-scoped; read as an auditor of the
+# tenant that owns the seeded event.
+AUDIT_READ_HEADERS = {**AUDIT_HEADERS, "x-tenant-id": "tenant-ver"}
 
 # Probes are infrastructure, not product contract: they are wired into deploy
 # manifests and load balancers, so they stay unversioned by design.
@@ -55,26 +61,47 @@ def test_versioned_and_alias_paths_return_identical_bodies() -> None:
     A 307 would drop the body on mutations, so the alias is a real mount; this
     asserts the two mounts stay the same handler.
     """
-    client = TestClient(create_app())
-    versioned = client.get("/api/v1/audit/events", headers={"x-correlation-id": "corr-ver-1"})
-    alias = client.get("/audit/events", headers={"x-correlation-id": "corr-ver-1"})
+    app = create_app()
+    app.state.audit_log.record(
+        AuditEvent(
+            event_type="versioning.probe.v1",
+            actor="seed",
+            action="seed",
+            resource="probe/ver",
+            outcome="recorded",
+            correlation_id="corr-ver-1",
+            metadata={"tenant_id": "tenant-ver"},
+        )
+    )
+    client = TestClient(app, headers=AUDIT_READ_HEADERS)
+    # Each read records its own authorization event under its request
+    # correlation id, so both reads filter on the same fixed, seeded correlation
+    # rather than comparing the whole (growing) log.
+    params = {"correlation_id": "corr-ver-1"}
+    versioned = client.get(
+        "/api/v1/audit/events", params=params, headers={"x-correlation-id": "corr-ver-read-1"}
+    )
+    alias = client.get("/audit/events", params=params, headers={"x-correlation-id": "corr-ver-read-2"})
 
     assert versioned.status_code == alias.status_code == 200
     assert versioned.json() == alias.json()
+    assert [e["event_type"] for e in versioned.json()["events"]] == ["versioning.probe.v1"]
 
 
 def test_alias_responses_advertise_deprecation_and_successor() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(), headers=AUDIT_READ_HEADERS)
     response = client.get("/audit/events")
 
+    assert response.status_code == 200
     assert response.headers["Deprecation"] == "true"
     assert response.headers["Link"] == '</api/v1/audit/events>; rel="successor-version"'
 
 
 def test_versioned_responses_are_not_marked_deprecated() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(), headers=AUDIT_READ_HEADERS)
     response = client.get("/api/v1/audit/events")
 
+    assert response.status_code == 200
     assert "Deprecation" not in response.headers
 
 

@@ -473,8 +473,9 @@ def service_description(name: str, *, project: str, region: str) -> dict[str, An
 def serving_release(description: dict[str, Any]) -> str:
     """The one release (16-hex tag prefix) that serves all traffic of a service.
 
-    The deploy script tags every candidate revision ``candidate-<sha16>`` and
-    restores traffic by explicit revision name, so a restored service routes
+    The deploy script tags every candidate revision ``candidate-<sha16>-<attempt>``
+    (``candidate-<sha16>`` before ODP-CLOUD-RUN-REVISION-SUFFIX-PER-ATTEMPT-001)
+    and restores traffic by explicit revision name, so a restored service routes
     100% to pinned revisions carrying exactly one such tag, all of one release.
     """
     status = description.get("status")
@@ -487,7 +488,7 @@ def serving_release(description: dict[str, Any]) -> str:
         if not isinstance(item, dict):
             raise Refused("Unreadable Cloud Run traffic entry; live state unproven.")
         revision = str(item.get("revisionName") or "")
-        match = re.fullmatch(r"candidate-([0-9a-f]{16})", str(item.get("tag") or ""))
+        match = re.fullmatch(r"candidate-([0-9a-f]{16})(?:-[0-9a-f]{4})?", str(item.get("tag") or ""))
         if match and revision:
             tags.setdefault(revision, set()).add(match.group(1))
         percent = item.get("percent") or 0

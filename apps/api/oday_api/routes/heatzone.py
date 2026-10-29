@@ -397,6 +397,7 @@ else:
                 "idempotency_key": effective_idempotency_key,
                 "feature_count": len(body.features),
                 "created": created,
+                "tenant_id": tid,
             }
             if executed_binding is not None:
                 metadata["model_binding"] = executed_binding.to_audit_metadata()

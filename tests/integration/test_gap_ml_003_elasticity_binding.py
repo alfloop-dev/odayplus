@@ -21,11 +21,16 @@ import math
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
-from tests.integration._authz import PRICEOPS_HEADERS
+from tests.integration._authz import AUDIT_HEADERS, PRICEOPS_HEADERS
+
+TENANT_ID = "tenant-ml3"
+# The audit read is RBAC-guarded and scoped to the reader's tenant, so the
+# pricing writes run in the plan's tenant and an auditor of it reads them back.
+AUDIT_READ_HEADERS = {**AUDIT_HEADERS, "x-tenant-id": TENANT_ID}
 
 
 def _client() -> TestClient:
-    return TestClient(create_app(), headers=PRICEOPS_HEADERS)
+    return TestClient(create_app(), headers={**PRICEOPS_HEADERS, "x-tenant-id": TENANT_ID})
 
 
 def _loglog_observations() -> list[dict[str, float]]:
@@ -82,7 +87,10 @@ def test_plan_estimates_elasticity_from_observations() -> None:
     assert sim.status_code == 200, sim.text
 
     # the model binding is captured on the audit trail
-    audit = client.get("/audit/events", params={"correlation_id": "corr-ml3-est"})
+    audit = client.get(
+        "/audit/events", params={"correlation_id": "corr-ml3-est"}, headers=AUDIT_READ_HEADERS
+    )
+    assert audit.status_code == 200, audit.text
     created = [e for e in audit.json()["events"] if e["event_type"] == "priceops.plan_created.v1"]
     assert created, "plan-created audit event missing"
     audited = created[0]["metadata"]["elasticity_bindings"][0]
