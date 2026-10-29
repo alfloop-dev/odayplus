@@ -35,6 +35,7 @@ from modules.listing.application.native_intake_source_policy_rules import (
 )
 from modules.listing.application.native_intake_url_identity import normalize_native_intake_url
 from shared.domain.events import validate_event
+from shared.infrastructure.persistence.identity_graph_sql import NATIVE_OUTBOX_PROOF_COLUMNS
 from shared.jobs.queue import JobFenceRejectedError, JobRequest, JobStatus
 
 ADMISSION_MILLISECONDS = 750
@@ -121,7 +122,9 @@ class NativeIntakeRetrievalOwner:
         # The bounded read-only view covers recursive original identity OR
         # bounded recheck proof, including every SQL/queue read it performs.
         parent = NativeIntakeSourcePolicyOwner(self.source._producer_reads(before))
-        row = parent.graph._one("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, event_id))
+        row = parent.graph.native_one("SELECT " + ",".join(NATIVE_OUTBOX_PROOF_COLUMNS) +
+            " FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, event_id),
+            columns=NATIVE_OUTBOX_PROOF_COLUMNS)
         event = _object(row["payload"])
         if (validate_event(event) or row["event_type"] != "intake.state_changed"
                 or row["event_version"] != 1 or event.get("event_type") != row["event_type"]
@@ -142,11 +145,11 @@ class NativeIntakeRetrievalOwner:
                 or event["payload"].get("to_state") != "RETRIEVING"
                 or event["payload"].get("version") != event["aggregate_version"]):
             raise NativeIntakeRetrievalConflict("NATIVE_RETRIEVAL_PARENT_EVENT_REJECTED")
-        transition = parent.graph._one("SELECT job_id FROM intake.intake_stage_transitions "
+        transition = parent.graph.native_one("SELECT job_id FROM intake.intake_stage_transitions "
             "WHERE tenant_id=? AND transition_id=? AND intake_id=?",
-            (tenant, event["payload"]["transition_id"], row["aggregate_id"]))
-        business = parent.graph._one("SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
-                                     (tenant, transition["job_id"]))
+            (tenant, event["payload"]["transition_id"], row["aggregate_id"]), columns=("job_id",))
+        business = parent.graph.native_one("SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
+                                     (tenant, transition["job_id"]), columns=("payload",))
         delivery = parent.queue.get(transition["job_id"])
         proof = parent._committed_result(delivery, tenant, _object(business["payload"]).get("delivery_generation")) if delivery else None
         if (proof is None or proof["outbox_event_id"] != event_id or proof["processing_state"] != "RETRIEVING"
@@ -200,11 +203,13 @@ class NativeIntakeRetrievalOwner:
                 or _time(receipt["timeout_at"]) != _time(job["timeout_at"])):
             raise JobFenceRejectedError("NATIVE_RETRIEVAL_ADMISSION_RECEIPT_REJECTED")
         before()
-        audit = self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
-            "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
-            "AND actor_role='SVC_RETRIEVAL' AND action='intake.retrieval_requested.v1' AND result='SUCCEEDED' "
-            "AND causation_id=? AND correlation_id=?", (job["tenant_id"], receipt["audit_event_id"],
-                job["aggregate_id"], JOB_TYPE, payload["event_id"], job["correlation_id"]))
+        audit = self.engine.native_query(
+            'SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? AND resource_type='
+            "'intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? AND actor_role='SVC_"
+            "RETRIEVAL' AND action='intake.retrieval_requested.v1' AND result='SUCCEEDED' AND causation_id=? AND "
+            'correlation_id=?',
+            (job["tenant_id"], receipt["audit_event_id"],
+                job["aggregate_id"], JOB_TYPE, payload["event_id"], job["correlation_id"]), columns=('after_value',), one=True)
         if audit is None or not audited_value_matches(_object(audit["after_value"]),
                 {**receipt, "native_retrieval_provenance": self._provenance(payload)}):
             raise JobFenceRejectedError("NATIVE_RETRIEVAL_ADMISSION_AUDIT_REJECTED")

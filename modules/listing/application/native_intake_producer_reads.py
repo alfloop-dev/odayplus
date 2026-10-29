@@ -7,23 +7,28 @@ logical read, invocation or positive boundary.
 """
 from __future__ import annotations
 
+from functools import partial
 from types import SimpleNamespace
 
-from psycopg import Transaction
-from psycopg.pq import TransactionStatus
-
 from modules.listing.application.native_intake_job_runtime import native_intake_uuid
+from shared.infrastructure.persistence.identity_graph_sql import (
+    NATIVE_JOB_COLUMNS,
+    CanonicalIdentityGraphRepository,
+)
+from shared.infrastructure.persistence.job_queue import (
+    DURABLE_JOB_COLUMNS as _PHYSICAL_COLUMNS,
+)
 from shared.infrastructure.persistence.job_queue import DurableJobQueue
-from shared.infrastructure.persistence.postgresql import PostgresEngine
+from shared.infrastructure.persistence.postgresql import (
+    PostgresEngine,
+)
+from shared.infrastructure.persistence.postgresql import (
+    postgresql_root_is_current as _native_root_is_current,
+)
 from shared.jobs.queue import JobFenceRejectedError
 
 _QUEUE_GET = DurableJobQueue.get
 _QUEUE_DECODE = DurableJobQueue._row_to_record
-_PHYSICAL_COLUMNS = (
-    "job_id", "job_type", "status", "delivery_state", "correlation_id", "idempotency_key",
-    "payload_json", "created_at", "fence_token", "version", "locked_by", "heartbeat_at",
-    "lease_expires_at", "attempts", "error_message", "leased_until", "available_at", "max_retries",
-)
 # Fixed transport aliases preserve native cell types. Independently joined
 # physical rows remain visible even when the tenant workflow row is missing.
 _PAIR_SQL = (
@@ -49,17 +54,6 @@ def _native_producer_noop():
     return None
 
 
-def _native_root_is_current(engine, connection, root_transaction):
-    """Observe the actual engine-owned psycopg transaction, never caller flags."""
-    local = getattr(engine, "_local", None)
-    return (type(engine) is PostgresEngine and type(root_transaction) is Transaction
-            and root_transaction.connection is connection
-            and getattr(local, "root_transaction", None) is root_transaction
-            and getattr(local, "connection", None) is connection
-            and not connection.closed and root_transaction.status is Transaction.Status.ACTIVE
-            and connection.info.transaction_status is TransactionStatus.INTRANS)
-
-
 def _reject():
     raise JobFenceRejectedError("NATIVE_PARENT_TERMINAL_ROWS_REJECTED") from None
 
@@ -69,7 +63,8 @@ class _ProducerReadView:
 
     def __init__(self, graph, before, conflict):
         self._graph, self._before, self._conflict = graph, before, conflict
-        self.engine = SimpleNamespace(dialect="postgresql", query=self._query, query_one=self._query_one)
+        self.engine = SimpleNamespace(dialect="postgresql", query=self._query, query_one=self._query_one,
+            native_query=self._native_query)
         self.queue = SimpleNamespace(get=self._get)
         base = graph._native_base if type(graph) is _ProducerReadView else graph
         self._native_base = base
@@ -96,12 +91,24 @@ class _ProducerReadView:
     def _query_one(self, sql, params=()):
         return self._read(self._graph.engine.query_one, sql, params)
 
-    def _one(self, sql, params):
-        return self._read(self._graph._one, sql, params)
+    def _native_query(self, sql, params=(), *, columns, groups=None, one=False, order_by=()):
+        return self._read(partial(self._graph.engine.native_query,
+            columns=columns, groups=groups, one=one, order_by=order_by), sql, params)
+
+    def _one(self, sql, params, *, native_columns=None, native_groups=None):
+        reader = self._graph._one if native_columns is None else partial(
+            self._graph.native_one, columns=native_columns, groups=native_groups)
+        return self._read(reader, sql, params)
+
+    def native_one(self, sql, params, *, columns, groups=None):
+        return self._one(sql, params, native_columns=columns, native_groups=groups)
 
     def _get(self, job_id):
         self._check_native_root()
         self._before()
+        engine = getattr(self._native_base, "engine", None)
+        if isinstance(engine, PostgresEngine):
+            engine.enable_native_acquisition()
         return self._graph.queue.get(job_id)
 
     def _terminal_pair(self, tenant, job_id):
@@ -110,11 +117,12 @@ class _ProducerReadView:
         # Alternate repositories, per-instance fault/read adapters and changed
         # queue readers keep their original two calls. No failed query or
         # predicate ever falls back in search of a successful outcome.
-        if (type(engine) is not PostgresEngine or type(queue) is not DurableJobQueue
+        if (not _native_read_surface(self)
+                or type(engine) is not PostgresEngine or type(queue) is not DurableJobQueue
                 or queue._engine is not engine
                 or getattr(queue.get, "__func__", None) is not _QUEUE_GET
                 or queue._row_to_record is not _QUEUE_DECODE
-                or any(name in vars(engine) for name in ("query", "query_one", "execute"))
+                or any(name in vars(engine) for name in ("query", "query_one", "execute", "native_query"))
                 or self._connection is None):
             return None
         if not _native_root_is_current(engine, self._connection, self._root_transaction):
@@ -123,7 +131,9 @@ class _ProducerReadView:
         # This invokes every original enclosing view's guard before the one
         # actual SELECT. Neither the SQL clock nor its two GUCs are combined
         # with the fact query, throttled, restarted or replaced.
-        rows = self._query(_PAIR_SQL, (tenant, job_id, job_id))
+        physical_columns = tuple("physical_" + name for name in _PHYSICAL_COLUMNS)
+        rows = self._native_query(_PAIR_SQL, (tenant, job_id, job_id),
+            columns=(*NATIVE_JOB_COLUMNS, *physical_columns), groups=(NATIVE_JOB_COLUMNS, physical_columns))
         if not _native_root_is_current(engine, self._connection, self._root_transaction) or len(rows) != 1:
             _reject()
         row = rows[0]
@@ -146,6 +156,31 @@ class _ProducerReadView:
             # used to fill omitted transport fields.
             current = queue._row_to_record(physical)
         return current, job
+
+
+_GRAPH_ONE = CanonicalIdentityGraphRepository._one
+_GRAPH_NATIVE_ONE = CanonicalIdentityGraphRepository.native_one
+_VIEW_METHODS = {name: getattr(_ProducerReadView, name)
+    for name in ("_read", "_query", "_query_one", "_native_query", "_one", "native_one", "_get")}
+
+
+def _native_read_surface(graph):
+    """One declaration of the original guarded acquisition surface."""
+    cursor = graph
+    while type(cursor) is _ProducerReadView:
+        if any(getattr(getattr(cursor, name), "__func__", None) is not original
+               for name, original in _VIEW_METHODS.items()):
+            return False
+        if any(getattr(method, "__self__", None) is not cursor
+                or getattr(method, "__func__", None) is not _VIEW_METHODS[name]
+                for method, name in ((cursor.engine.query, "_query"),
+                    (cursor.engine.query_one, "_query_one"),
+                    (cursor.engine.native_query, "_native_query"), (cursor.queue.get, "_get"))):
+            return False
+        cursor = cursor._graph
+    return (type(cursor) is CanonicalIdentityGraphRepository
+        and getattr(cursor._one, "__func__", None) is _GRAPH_ONE
+        and getattr(cursor.native_one, "__func__", None) is _GRAPH_NATIVE_ONE)
 
 
 def producer_read_view(graph, before, conflict):

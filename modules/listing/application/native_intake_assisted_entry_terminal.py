@@ -17,6 +17,10 @@ from modules.listing.application.native_intake_pending_commands import NativeInt
 from modules.listing.application.native_intake_retrieval import audited_value_matches
 from modules.listing.application.native_intake_retrieval_policy import canonical_sha256
 from shared.domain.events import validate_event
+from shared.infrastructure.persistence.identity_graph_sql import (
+    NATIVE_JOB_COLUMNS,
+    NATIVE_OUTBOX_PROOF_COLUMNS,
+)
 from shared.jobs.queue import JobDeliveryState, JobFenceRejectedError, JobStatus
 
 NEGATIVE_FIELDS = frozenset({"job_id", "request_id", "intake_id", "status", "settled_at", "prior_status",
@@ -35,7 +39,13 @@ class NativeAssistedEntryTerminal:
     def replay(self, delivery, tenant, generation, *, before):
         """An explicit discriminator keeps negative success distinct from active."""
         before()
-        job = self.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?", (tenant, delivery.job_id))
+        job = self.engine.native_query(
+            'SELECT job_id,tenant_id,job_type,aggregate_type,aggregate_id,status,checkpoint,attempt,max_attempts,'
+            'fence_token,heartbeat_at,lease_expires_at,next_attempt_at,timeout_at,cancellation_requested_at,paylo'
+            'ad,result,last_error,correlation_id,idempotency_key,version,created_at,updated_at,lease_owner,availa'
+            'ble_at,acknowledged_at,dead_lettered_at,cloud_task_name,attempt_token_sha256 FROM workflow.jobs WHER'
+            'E tenant_id=? AND job_id=?',
+            (tenant, delivery.job_id), columns=NATIVE_JOB_COLUMNS, one=True)
         if job is None:
             raise JobFenceRejectedError("NATIVE_ASSISTED_REPLAY_JOB_MISSING")
         payload = _object(job["payload"])
@@ -47,8 +57,9 @@ class NativeAssistedEntryTerminal:
         if job["status"] in {"QUEUED", "RUNNING", "RETRYING"}:
             return {"terminal": False, "result": None}
         before()
-        original = self.graph._one("SELECT payload FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?",
-            (tenant, payload["request_id"]))
+        original = self.graph.native_one(
+            'SELECT payload FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?',
+            (tenant, payload["request_id"]), columns=('payload',))
         closure = self.read(_object(original["payload"]), job, before=before)
         if closure is None:
             reject()
@@ -129,20 +140,22 @@ class NativeAssistedEntryTerminal:
                     or _time(job["cancellation_requested_at"]) > _time(receipt["settled_at"])):
                 reject()
         before()
-        audit = self.engine.query_one("SELECT after_value,before_value,occurred_at FROM audit.audit_events "
-            "WHERE tenant_id=? AND audit_event_id=? AND resource_type='intake' AND resource_id=? "
-            "AND actor_subject_id IS NULL AND service_principal=? AND actor_role='SVC_INTAKE' "
-            "AND action='intake.assisted_entry_delivery_settled.v1' AND result='SUCCEEDED' "
-            "AND causation_id=? AND correlation_id=?", (job["tenant_id"], receipt["audit_event_id"],
-                payload["intake_id"], JOB_TYPE, payload["request_id"], job["correlation_id"]))
+        audit = self.engine.native_query(
+            'SELECT after_value,before_value,occurred_at FROM audit.audit_events WHERE tenant_id=? AND audit_even'
+            "t_id=? AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_princip"
+            "al=? AND actor_role='SVC_INTAKE' AND action='intake.assisted_entry_delivery_settled.v1' AND result='"
+            "SUCCEEDED' AND causation_id=? AND correlation_id=?",
+            (job["tenant_id"], receipt["audit_event_id"],
+                payload["intake_id"], JOB_TYPE, payload["request_id"], job["correlation_id"]), columns=('after_value', 'before_value', 'occurred_at'), one=True)
         if (audit is None or _time(audit["occurred_at"]) != _time(receipt["settled_at"])
                 or _object(audit["before_value"]) != {"job_id": job["job_id"], "status": receipt["prior_status"]}
                 or not audited_value_matches(_object(audit["after_value"]),
                     {**receipt, "intake_mutated": False, "native_assisted_provenance": assisted_job_provenance(payload)})):
             reject()
         before()
-        if self.engine.query_one("SELECT transition_id FROM intake.intake_stage_transitions WHERE tenant_id=? AND job_id=? LIMIT 1",
-                (job["tenant_id"], job["job_id"])):
+        if self.engine.native_query(
+            'SELECT transition_id FROM intake.intake_stage_transitions WHERE tenant_id=? AND job_id=? LIMIT 1',
+            (job["tenant_id"], job["job_id"]), columns=('transition_id',), one=True):
             reject()
         self._dead_letter(job, receipt, before)
         before()
@@ -151,8 +164,11 @@ class NativeAssistedEntryTerminal:
 
     def _dead_letter(self, job, receipt, before):
         before()
-        rows = self.engine.query("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_type='job.dead_lettered' "
-            "AND aggregate_type='job' AND aggregate_id=? LIMIT 2", (job["tenant_id"], job["job_id"]))
+        rows = self.engine.native_query(
+            'SELECT tenant_id,event_id,event_type,event_version,aggregate_type,aggregate_id,aggregate_version,par'
+            'tition_key,correlation_id,occurred_at,retention_until,payload FROM workflow.outbox_events WHERE tena'
+            "nt_id=? AND event_type='job.dead_lettered' AND aggregate_type='job' AND aggregate_id=? LIMIT 2",
+            (job["tenant_id"], job["job_id"]), columns=NATIVE_OUTBOX_PROOF_COLUMNS)
         if receipt["status"] == "CANCELLED":
             if rows or receipt["dead_letter_event_id"] is not None:
                 reject()

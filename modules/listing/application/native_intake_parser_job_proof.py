@@ -135,12 +135,13 @@ class NativeParserJobProof:
                     or physical.max_retries != job["max_attempts"]):
                 _reject()
             before()
-            audit = self.engine.query_one("SELECT after_value,before_value,occurred_at FROM audit.audit_events "
-                "WHERE tenant_id=? AND audit_event_id=? AND resource_type='intake' AND resource_id=? "
-                "AND actor_subject_id IS NULL AND service_principal=? AND actor_role='SVC_PARSER' "
-                "AND action='intake.parser_admitted.v1' AND result='SUCCEEDED' "
-                "AND causation_id=? AND correlation_id=?", (tenant, receipt["audit_event_id"],
-                    run["intake_id"], JOB_TYPE, binding["original_input"]["parent_event_id"], job["correlation_id"]))
+            audit = self.engine.native_query(
+                'SELECT after_value,before_value,occurred_at FROM audit.audit_events WHERE tenant_id=? AND audit_even'
+                "t_id=? AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_princip"
+                "al=? AND actor_role='SVC_PARSER' AND action='intake.parser_admitted.v1' AND result='SUCCEEDED' AND c"
+                'ausation_id=? AND correlation_id=?',
+                (tenant, receipt["audit_event_id"],
+                    run["intake_id"], JOB_TYPE, binding["original_input"]["parent_event_id"], job["correlation_id"]), columns=('after_value', 'before_value', 'occurred_at'), one=True)
             if (audit is None or _object(audit["before_value"]) != {
                     "processing_state": "PARSING", "version": receipt["admitted_intake_version"]}
                     or not audited_value_matches(_object(audit["after_value"]),

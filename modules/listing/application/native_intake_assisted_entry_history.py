@@ -42,6 +42,7 @@ from shared.domain.events import validate_event
 from shared.infrastructure.persistence.assisted_listing_intake import (
     NativeIntakeSnapshotMetadataRepository,
 )
+from shared.infrastructure.persistence.identity_graph_sql import NATIVE_OUTBOX_PROOF_COLUMNS
 from shared.jobs.queue import JobFenceRejectedError, JobStatus
 
 
@@ -105,21 +106,25 @@ class NativeAssistedEntryHistory:
                 or physical.max_retries != job["max_attempts"] or not job["attempt"] <= physical.attempts <= physical.max_retries):
             _reject()
         before()
-        transition = self.engine.query_one("SELECT * FROM intake.intake_stage_transitions WHERE tenant_id=? "
-            "AND transition_id=? AND intake_id=? AND job_id=? AND from_state='AWAITING_ASSISTED_ENTRY' AND to_state='PARSING' "
-            "AND actor_subject_id=? AND service_principal IS NULL AND permission='intake.assisted_entry' "
-            "AND reason_code='ASSISTED_ENTRY_HUMAN_COMMAND_VERIFIED' AND expected_version=? AND resulting_version=? "
-            "AND idempotency_key=? AND causation_id=? AND correlation_id=? AND source_snapshot_id=?",
+        transition = self.engine.native_query(
+            'SELECT occurred_at,source_policy_version,reason_text FROM intake.intake_stage_transitions WHERE tena'
+            "nt_id=? AND transition_id=? AND intake_id=? AND job_id=? AND from_state='AWAITING_ASSISTED_ENTRY' AN"
+            "D to_state='PARSING' AND actor_subject_id=? AND service_principal IS NULL AND permission='intake.ass"
+            "isted_entry' AND reason_code='ASSISTED_ENTRY_HUMAN_COMMAND_VERIFIED' AND expected_version=? AND resu"
+            'lting_version=? AND idempotency_key=? AND causation_id=? AND correlation_id=? AND source_snapshot_id'
+            '=?',
             (tenant, result["transition_id"], payload["intake_id"], job["job_id"], payload["requested_by"],
                 payload["expected_intake_version"], result["version"], payload["request_id"], payload["request_id"],
-                job["correlation_id"], result["source_snapshot_id"]))
+                job["correlation_id"], result["source_snapshot_id"]), columns=('occurred_at', 'source_policy_version', 'reason_text'), one=True)
         if rows is None:
             before()
-            audit = self.engine.query_one("SELECT * FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
-                "AND resource_type='intake' AND resource_id=? AND actor_subject_id=? AND service_principal IS NULL "
-                "AND actor_role=? AND action='intake.assisted_entry_completed.v1' AND result='SUCCEEDED' "
-                "AND causation_id=? AND correlation_id=?", (tenant, result["audit_event_id"], payload["intake_id"],
-                    payload["requested_by"], result["human_role"], payload["request_id"], job["correlation_id"]))
+            audit = self.engine.native_query(
+                'SELECT before_value,after_value,occurred_at,reason FROM audit.audit_events WHERE tenant_id=? AND aud'
+                "it_event_id=? AND resource_type='intake' AND resource_id=? AND actor_subject_id=? AND service_princi"
+                "pal IS NULL AND actor_role=? AND action='intake.assisted_entry_completed.v1' AND result='SUCCEEDED' "
+                'AND causation_id=? AND correlation_id=?',
+                (tenant, result["audit_event_id"], payload["intake_id"],
+                    payload["requested_by"], result["human_role"], payload["request_id"], job["correlation_id"]), columns=('before_value', 'after_value', 'occurred_at', 'reason'), one=True)
         else:
             audit = rows.audit("completion", tenant_id=tenant, audit_event_id=result["audit_event_id"],
                 resource_type="intake", resource_id=payload["intake_id"], actor_subject_id=payload["requested_by"],
@@ -147,8 +152,9 @@ class NativeAssistedEntryHistory:
         command = self._corrections(tenant, payload, result, snapshot, before)
         if rows is None:
             before()
-            request_audit = self.engine.query_one("SELECT reason FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=?",
-                (tenant, request_audit_id(payload["request_id"])))
+            request_audit = self.engine.native_query(
+                'SELECT reason FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=?',
+                (tenant, request_audit_id(payload["request_id"])), columns=('reason',), one=True)
         else:
             request_audit = rows.request_reason()
         if (request_audit is None or request_audit["reason"] != command.reason
@@ -221,8 +227,11 @@ class NativeAssistedEntryHistory:
         if set(bindings) != set(payload["correction_ids"]):
             _reject()
         before()
-        rows = self.engine.query("SELECT *,corrected_value::text AS corrected_json FROM intake.human_corrections WHERE tenant_id=? AND intake_id=? "
-            "AND correction_id=ANY(?::uuid[]) ORDER BY correction_id", (tenant, payload["intake_id"], payload["correction_ids"]))
+        rows = self.engine.native_query(
+            'SELECT correction_id,field_path,reason,created_at,proposed_by,field_classification,source_snapshot_i'
+            'd,identity_affecting,status,version,corrected_value::text AS corrected_json FROM intake.human_correc'
+            'tions WHERE tenant_id=? AND intake_id=? AND correction_id=ANY(?::uuid[]) ORDER BY correction_id',
+            (tenant, payload["intake_id"], payload["correction_ids"]), columns=('correction_id', 'field_path', 'reason', 'created_at', 'proposed_by', 'field_classification', 'source_snapshot_id', 'identity_affecting', 'status', 'version', 'corrected_json'), order_by=(('correction_id', False),))
         if len(rows) != len(bindings) or len({r["field_path"] for r in rows}) != len(rows):
             _reject()
         fields, ids, reasons = {}, {}, set()
@@ -264,7 +273,11 @@ class NativeAssistedEntryHistory:
                actor, schema, data, sensitive, _history_rows=None, _history_role=None):
         if _history_rows is None:
             before()
-            row = self.graph._one("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (job["tenant_id"], event_id))
+            row = self.graph.native_one(
+                'SELECT tenant_id,event_id,event_type,event_version,aggregate_type,aggregate_id,aggregate_version,par'
+                'tition_key,correlation_id,occurred_at,retention_until,payload FROM workflow.outbox_events WHERE tena'
+                'nt_id=? AND event_id=?',
+                (job["tenant_id"], event_id), columns=NATIVE_OUTBOX_PROOF_COLUMNS)
         else:
             row = _history_rows.event(_history_role, tenant_id=job["tenant_id"], event_id=event_id)
             if row is None:

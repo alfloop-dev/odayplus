@@ -13,6 +13,7 @@ from modules.listing.application.native_intake_source_policy_recheck_history imp
     NativeHistoricalRecheckProof,
 )
 from shared.domain.events import validate_event
+from shared.infrastructure.persistence.identity_graph_sql import NATIVE_OUTBOX_PROOF_COLUMNS
 from shared.jobs.queue import JobDeliveryState, JobStatus
 
 JOB_TYPE = "native-intake-source-policy-recheck"
@@ -83,13 +84,14 @@ class NativeRecheckTerminalProof:
                 or not isinstance(error["error_class"], str) or not error["error_class"]):
             self.reject()
         before()
-        rows = self.engine.query("SELECT * FROM audit.audit_events WHERE tenant_id=? "
-            "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL "
-            "AND service_principal=? AND actor_role='SVC_INTAKE' "
-            "AND action='intake.source_policy_recheck_delivery_settled.v1' AND result='SUCCEEDED' "
-            "AND causation_id=? AND correlation_id=? AND after_value->>'job_id'=? "
-            "AND after_value->>'status'=? LIMIT 2", (tenant, data["intake_id"], JOB_TYPE,
-                original["event_id"], job["correlation_id"], job["job_id"], job["status"]))
+        rows = self.engine.native_query(
+            'SELECT audit_event_id,before_value,after_value,occurred_at FROM audit.audit_events WHERE tenant_id=?'
+            " AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? A"
+            "ND actor_role='SVC_INTAKE' AND action='intake.source_policy_recheck_delivery_settled.v1' AND result="
+            "'SUCCEEDED' AND causation_id=? AND correlation_id=? AND after_value->>'job_id'=? AND after_value->>'"
+            "status'=? LIMIT 2",
+            (tenant, data["intake_id"], JOB_TYPE,
+                original["event_id"], job["correlation_id"], job["job_id"], job["status"]), columns=('audit_event_id', 'before_value', 'after_value', 'occurred_at'))
         if len(rows) != 1:
             self.reject()
         audit = rows[0]
@@ -102,8 +104,9 @@ class NativeRecheckTerminalProof:
                 or _time(audit["occurred_at"]) != _time(job["updated_at"])):
             self.reject()
         before()
-        if self.engine.query_one("SELECT transition_id FROM intake.intake_stage_transitions "
-                "WHERE tenant_id=? AND job_id=? LIMIT 1", (tenant, job["job_id"])):
+        if self.engine.native_query(
+            'SELECT transition_id FROM intake.intake_stage_transitions WHERE tenant_id=? AND job_id=? LIMIT 1',
+            (tenant, job["job_id"]), columns=('transition_id',), one=True):
             self.reject()
         dead_letter_id = self._dead_letter(original, job, audit, error, cancelled, before)
         before()
@@ -112,9 +115,11 @@ class NativeRecheckTerminalProof:
 
     def _dead_letter(self, original, job, audit, error, cancelled, before):
         before()
-        rows = self.engine.query("SELECT * FROM workflow.outbox_events WHERE tenant_id=? "
-            "AND event_type='job.dead_lettered' AND aggregate_type='job' AND aggregate_id=? LIMIT 2",
-            (job["tenant_id"], job["job_id"]))
+        rows = self.engine.native_query(
+            'SELECT tenant_id,event_id,event_type,event_version,aggregate_type,aggregate_id,aggregate_version,par'
+            'tition_key,correlation_id,occurred_at,retention_until,payload FROM workflow.outbox_events WHERE tena'
+            "nt_id=? AND event_type='job.dead_lettered' AND aggregate_type='job' AND aggregate_id=? LIMIT 2",
+            (job["tenant_id"], job["job_id"]), columns=NATIVE_OUTBOX_PROOF_COLUMNS)
         if cancelled:
             if rows:
                 self.reject()

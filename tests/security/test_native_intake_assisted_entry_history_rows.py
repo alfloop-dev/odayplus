@@ -115,6 +115,13 @@ class MockTransportEngine:
             return self._respond("audits", params, self.rows["audits"])
         pytest.fail("Transport attempted an undeclared row-set query")
 
+    def native_query(self, sql, params=(), *, columns, groups=None, one=False, order_by=()):
+        # This double still returns every adversarial row without filtering.
+        # Actual SQL acquisition/metadata/quota is covered by the PG controls,
+        # rather than implemented again inside this lookup-only fixture.
+        assert not one and groups is None and order_by == ()
+        return self.query(sql, params)
+
 
 class TransportCase:
     def __init__(self):

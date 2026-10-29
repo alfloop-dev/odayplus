@@ -30,7 +30,11 @@ from modules.listing.application.native_intake_terminal_evidence import (
 )
 from shared.infrastructure.persistence.postgresql import PostgresEngine
 from shared.jobs.queue import JobFenceRejectedError
-from tests.integration.test_native_intake_parent_terminal_rows_postgresql import _source_delivery
+from tests.integration.test_native_intake_parent_terminal_rows_postgresql import (
+    _WORKFLOW_READ_SQL,
+    _native_parameters,
+    _source_delivery,
+)
 from tests.integration.test_native_intake_parser_admission_postgresql import authority as authority
 from tests.integration.test_native_intake_parser_admission_postgresql import (
     canonical_graph as canonical_graph,
@@ -118,7 +122,7 @@ def _observe(case, monkeypatch, corrupt=None):
         rows = query(engine, statement, params)
         if engine is case[0].engine:
             calls.append((statement, params))
-            if statement == _TERMINAL_SQL and corrupt is not None:
+            if _native_parameters(statement, params, _TERMINAL_SQL) is not None and corrupt is not None:
                 return corrupt(rows)
         return rows
 
@@ -134,7 +138,8 @@ def _observe(case, monkeypatch, corrupt=None):
 
 
 def _batch_calls(calls):
-    return [params for statement, params in calls if statement == _TERMINAL_SQL]
+    return [base for statement, params in calls
+        if (base := _native_parameters(statement, params, _TERMINAL_SQL)) is not None]
 
 
 def _specs(job, role):
@@ -251,7 +256,8 @@ def test_actual_owner_matches_legacy_on_the_same_genuine_facts(parser_admission_
         assert len(calls) == before
         legacy = _OWNERS[role](owner.graph)._committed_result(delivery, ids["tenant"], 1)
         assert legacy is not None and _batch_calls(calls) == []
-        assert (_WORKFLOW_SQL, (ids["tenant"], delivery.job_id)) in calls
+        assert any(_native_parameters(statement, params, _WORKFLOW_READ_SQL) == (ids["tenant"], delivery.job_id)
+            for statement, params in calls)
     # Deliberate differential roots, not retries or replacement budgets.
     with owner.graph.transaction(ids["tenant"]):
         view = _view(case, NativeParserCommandBudget(owner.clock))
@@ -308,7 +314,8 @@ def test_real_header_corruption_is_excluded_by_sql_and_both_actual_owners(
         observed = calls[begin:]
         assert _batch_calls(observed) == ([(ids["tenant"], delivery.job_id, delivery.job_id)] if native else [])
         if native:
-            assert not any(query in {_WORKFLOW_SQL, _PAIR_SQL} for query, _ in observed)
+            assert not any((_native_parameters(query, params, _WORKFLOW_READ_SQL) is not None or
+                _native_parameters(query, params, _PAIR_SQL) is not None) for query, params in observed)
         assert _persisted(case) == original
 
 
@@ -427,7 +434,8 @@ def test_wrong_current_tenant_refuses_the_actual_select_without_retry(parser_adm
         with pytest.raises(JobFenceRejectedError, match="^NATIVE_PARENT_TERMINAL_EVIDENCE_REJECTED$"):
             NativeIntakeSourcePolicyOwner(view)._committed_result(delivery, ids["tenant"], 1)
     assert _batch_calls(calls) == [(ids["tenant"], delivery.job_id, delivery.job_id)]
-    assert not any(statement in {_PAIR_SQL, _WORKFLOW_SQL} for statement, _ in calls)
+    assert not any((_native_parameters(statement, params, _PAIR_SQL) is not None or
+        _native_parameters(statement, params, _WORKFLOW_READ_SQL) is not None) for statement, params in calls)
     assert _persisted(case) == original
 
 
@@ -458,7 +466,7 @@ def test_callback_and_instance_fault_adapters_choose_existing_reads_before_batch
 
         def changed_status(statement, params=()):
             actual = query_one(statement, params)
-            if statement == _WORKFLOW_SQL and params == (ids["tenant"], delivery.job_id):
+            if _native_parameters(statement, params, _WORKFLOW_READ_SQL) == (ids["tenant"], delivery.job_id):
                 adapted.append(statement)
                 return {**actual, "status": "RUNNING"}
             return actual
@@ -518,10 +526,12 @@ def test_one_actual_batch_with_corrupt_transport_refuses_without_retry_or_fallba
         return [row]
 
     calls = _observe(case, monkeypatch, corrupt)
-    with pytest.raises(JobFenceRejectedError, match="^NATIVE_PARENT_TERMINAL_EVIDENCE_REJECTED$"):
+    code = {"duplicate": "NATIVE_ACQUISITION_LIMIT_OR_TRANSPORT_REJECTED", "missing_column": "NATIVE_ACQUISITION_TRANSPORT_REJECTED"}.get(damage, "NATIVE_PARENT_TERMINAL_EVIDENCE_REJECTED")
+    with pytest.raises(JobFenceRejectedError, match="^" + code + "$"):
         with owner.graph.transaction(ids["tenant"]):
             view = _view(case, NativeParserCommandBudget(owner.clock))
             NativeIntakeSourcePolicyOwner(view)._committed_result(delivery, ids["tenant"], 1)
     assert _batch_calls(calls) == [(ids["tenant"], delivery.job_id, delivery.job_id)]
-    assert not any(statement in {_PAIR_SQL, _WORKFLOW_SQL} for statement, _ in calls)
+    assert not any((_native_parameters(statement, params, _PAIR_SQL) is not None or
+        _native_parameters(statement, params, _WORKFLOW_READ_SQL) is not None) for statement, params in calls)
     assert _persisted(case) == original

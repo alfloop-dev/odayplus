@@ -336,3 +336,112 @@ def test_worker_result_and_both_jobs_roll_back_with_transition_and_audit(recheck
     assert state(recheck[0]) == before
     assert native_row(start, prior["intake_id"])["version"] == prior["version"]
     assert owner.execute(delivery)["version"] == prior["version"] + 1
+
+
+def _genuine_completed_recheck(recheck):
+    response = request(recheck)
+    assert response.status_code == 202, response.text
+    checked = drive(recheck, response)
+    assert checked["processing_state"] == "CHECKING_SOURCE_POLICY"
+    graph, ids = recheck[0][0][0][:2]
+    assert graph.queue.get(checked["job_id"]).status == JobStatus.SUCCEEDED
+    with graph.transaction(ids["tenant"]):
+        event = graph._one("SELECT payload FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?",
+            (ids["tenant"], checked["outbox_event_id"]))["payload"]
+    return graph, ids, checked, event
+
+
+@pytest.mark.parametrize("kind", ["event", "final_recorded_job_payload"])
+def test_original_normal_recheck_producer_bounds_the_actual_target_read(recheck, monkeypatch, kind):
+    from modules.listing.application.native_intake_pending_commands import NativeIntakeCommandBudget
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+    graph, ids, checked, _ = _genuine_completed_recheck(recheck)
+    target = checked["outbox_event_id"] if kind == "event" else checked["job_id"]
+    if kind == "event":
+        with graph.transaction(ids["tenant"]):
+            graph.engine.execute("UPDATE workflow.outbox_events SET payload=payload || "
+                "jsonb_build_object('oversized',repeat('店',1500000)) WHERE tenant_id=? AND event_id=?",
+                (ids["tenant"], target))
+    previous = state(recheck[0])
+    query, acquired, mutations = PostgresEngine.query_one, [], []
+
+    def observe(engine, statement, parameters=()):
+        row = query(engine, statement, parameters)
+        selected = ("workflow.outbox_events" in statement if kind == "event" else
+            statement.startswith("WITH facts AS MATERIALIZED (SELECT payload FROM workflow.jobs "))
+        if engine is graph.engine and selected and tuple(parameters)[:2] == (ids["tenant"], target):
+            assert row is not None
+            acquired.append(row["payload"] is None and row.get("_odp_native_allowed") is False)
+        return row
+
+    monkeypatch.setattr(PostgresEngine, "query_one", observe)
+    with pytest.raises(JobFenceRejectedError, match="^NATIVE_ACQUISITION_LIMIT_OR_TRANSPORT_REJECTED$"):
+        with graph.transaction(ids["tenant"]):
+            before = NativeIntakeCommandBudget(recheck[1].source)
+            normal = NativeIntakeSourcePolicyRecheckOwner(recheck[1].source._producer_reads(before))
+            if kind != "event":
+                original = normal._committed_result
+
+                def after_full_original_proof(*args, **kwargs):
+                    result = original(*args, **kwargs)
+                    assert result == checked
+                    before()
+                    graph.engine.execute("UPDATE workflow.jobs SET payload=payload || "
+                        "jsonb_build_object('oversized',repeat('店',1500000)) WHERE tenant_id=? AND job_id=?",
+                        (ids["tenant"], checked["job_id"]))
+                    mutations.append(True)
+                    return result
+
+                monkeypatch.setattr(normal, "_committed_result", after_full_original_proof)
+            normal._source_producer(ids["tenant"], checked["outbox_event_id"], before)
+    assert acquired == [True]
+    assert mutations == ([] if kind == "event" else [True])
+    assert state(recheck[0]) == previous  # Own-root late mutation rolls back.
+
+
+def test_original_normal_recheck_UUID_read_is_metered_without_publisher_payload(recheck, monkeypatch):
+    from modules.listing.application.native_intake_pending_commands import NativeIntakeCommandBudget
+    from modules.listing.application.native_intake_retrieval_policy import canonical_sha256
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+    from tests.integration.test_native_intake_parent_terminal_rows_postgresql import (
+        _native_parameters,
+    )
+
+    graph, ids, checked, event = _genuine_completed_recheck(recheck)
+    with graph.transaction(ids["tenant"]):
+        graph.engine.execute("UPDATE workflow.outbox_events SET last_error=jsonb_build_object('publisher',"
+            "repeat('店',2100000)) WHERE tenant_id=? AND event_id=?", (ids["tenant"], checked["outbox_event_id"]))
+    statement = ("SELECT job_id FROM intake.intake_stage_transitions WHERE tenant_id=? "
+        "AND transition_id=? AND intake_id=?")
+    parameters = (ids["tenant"], event["payload"]["transition_id"], event["aggregate_id"])
+    query, native, driver, charged = PostgresEngine.query_one, PostgresEngine.native_query, [], []
+
+    def raw(engine, sql, params=()):
+        row = query(engine, sql, params)
+        if engine is graph.engine and _native_parameters(sql, params, statement) == parameters:
+            assert row["job_id"] == checked["job_id"] and row["_odp_native_allowed"] is True
+            assert row["_odp_native_rows"] == 1 and row["_odp_native_present"] is True
+            driver.append(row["_odp_native_bytes"])
+        return row
+
+    def metered(engine, sql, params=(), **kwargs):
+        if engine is not graph.engine or sql != statement or tuple(params) != parameters:
+            return native(engine, sql, params, **kwargs)
+        before = engine.enable_native_acquisition()[2]
+        result = native(engine, sql, params, **kwargs)
+        charged.append(before - engine.enable_native_acquisition()[2])
+        assert result == {"job_id": checked["job_id"]}
+        return result
+
+    monkeypatch.setattr(PostgresEngine, "query_one", raw)
+    monkeypatch.setattr(PostgresEngine, "native_query", metered)
+    with graph.transaction(ids["tenant"]):
+        before = NativeIntakeCommandBudget(recheck[1].source)
+        normal = NativeIntakeSourcePolicyRecheckOwner(recheck[1].source._producer_reads(before))
+        row, found, digest, producer = normal._source_producer(ids["tenant"], checked["outbox_event_id"], before)
+        assert row["event_id"] == checked["outbox_event_id"] and "last_error" not in row
+        assert found == event and digest == canonical_sha256(event)
+        assert producer["recheck"] is True and producer["recheck_provenance"]["job_id"] == checked["job_id"]
+        assert graph.engine.enable_native_acquisition()[2] > 31 * 1024 * 1024
+    assert len(driver) == 1 and charged == driver and driver[0] > 0

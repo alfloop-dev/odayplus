@@ -56,6 +56,16 @@ from tests.integration.test_native_intake_terminal_evidence_postgresql import _p
 pytestmark = pytest.mark.requires_live_env
 
 
+# Only headers and payload consumed by the original producer proofs belong to
+# discovery's factual projection. Publisher bookkeeping is not proof evidence.
+_PROVEN_EVENT_COLUMNS = ("tenant_id", "event_id", "event_type", "event_version", "aggregate_type",
+    "aggregate_id", "aggregate_version", "correlation_id", "partition_key", "payload")
+
+
+def _event_projection(row):
+    return {key: row[key] for key in _PROVEN_EVENT_COLUMNS}
+
+
 def _event_ids(case):
     owner, ids = case[:2]
     with owner.graph.transaction(ids["tenant"]):
@@ -91,7 +101,7 @@ def _reference(graph, tenant, event_id):
         (tenant, event["payload"]["transition_id"], row["aggregate_id"]))
     business = graph._one("SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
         (tenant, transition["job_id"]))
-    return row, transition, business, graph.queue.get(transition["job_id"])
+    return _event_projection(row), transition, business, graph.queue.get(transition["job_id"])
 
 
 def _view(case, budget):
@@ -104,8 +114,9 @@ def _observe(case, monkeypatch, corrupt=None):
 
     def query(engine, statement, params=()):
         rows = original(engine, statement, params)
-        if engine is case[0].engine and statement == _DISCOVERY_SQL:
-            calls.append(tuple(params))
+        if engine is case[0].engine and _DISCOVERY_SQL in statement:
+            assert len(params) == 4 and all(type(p) is int for p in params[-2:])
+            calls.append(tuple(params[:2]))
             if corrupt is not None:
                 return corrupt(rows)
         return rows
@@ -172,7 +183,11 @@ def test_full_original_callers_still_prove_the_same_lineage(parser_admission_cas
             current = NativeIntakeSourcePolicyOwner(owner.graph)._event(ids["tenant"], event_id, before=budget)
         else:
             current = NativeIntakeIdentityOwner(_view(case, budget))._event(ids["tenant"], event_id)
-        assert current == legacy
+        if role == "source":
+            assert current == legacy
+        else:
+            assert _event_projection(current[0]) == _event_projection(legacy[0])
+            assert current[1:] == legacy[1:]
         expected = {"source": ("source", "identity", "start"),
                     "identity": ("identity", "start"), "start": ("start",)}[role]
         assert calls == [(ids["tenant"], events[name]) for name in expected]
@@ -180,7 +195,7 @@ def test_full_original_callers_still_prove_the_same_lineage(parser_admission_cas
     assert _persisted(case) == original
 
 
-@pytest.mark.parametrize("adapter", ["falsey_callback", "graph", "queue"])
+@pytest.mark.parametrize("adapter", ["falsey_callback", "graph", "native_graph", "queue"])
 def test_unknown_read_surface_selects_original_read_before_any_discovery_sql(parser_admission_case, monkeypatch, adapter):
     case = parser_admission_case
     owner, ids = case[:2]
@@ -205,6 +220,8 @@ def test_unknown_read_surface_selects_original_read_before_any_discovery_sql(par
         budget = NativeParserCommandBudget(owner.clock)
         if adapter == "graph":
             monkeypatch.setattr(owner.graph, "_one", refuse)
+        elif adapter == "native_graph":
+            monkeypatch.setattr(owner.graph, "native_one", refuse)
         elif adapter == "queue":
             monkeypatch.setattr(owner.queue, "get", refuse)
         guard = FalseyCallback() if adapter == "falsey_callback" else budget
@@ -235,7 +252,8 @@ def test_corrupt_discovery_transport_is_refused_without_legacy_retry(parser_admi
         return [row]
 
     calls = _observe(case, monkeypatch, corrupt)
-    with pytest.raises(JobFenceRejectedError, match="^NATIVE_PARENT_DISCOVERY_REJECTED$"):
+    code = "NATIVE_PARENT_DISCOVERY_REJECTED" if damage == "foreign_event" else "NATIVE_ACQUISITION_.*REJECTED"
+    with pytest.raises(JobFenceRejectedError, match="^" + code + "$"):
         with owner.graph.transaction(ids["tenant"]):
             NativeAssistedEntrySourceProof(owner.graph).parent(ids["tenant"], event_id,
                 NativeParserCommandBudget(owner.clock))

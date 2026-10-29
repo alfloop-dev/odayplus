@@ -137,8 +137,7 @@ class NativeParserUnacceptedCancellation:
                 with self.graph.transaction(tenant):
                     before = NativeParserCommandBudget(self.owner.clock)
                     before()
-                    job = self.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
-                        (tenant, delivery.job_id))
+                    job = self.graph.native_history_job(tenant, delivery.job_id)
                     if job is not None and job["status"] == "CANCELLED":
                         NativeParserTerminalHistory(self.graph).read(delivery, tenant, generation, before=before)
                         return _object(job["payload"])["cancellation_receipt"]
@@ -355,7 +354,9 @@ def read_cancelled_unaccepted_parser(history, job, run, physical, tenant, genera
                     or receipt["physical_version_before"]-retry["physical_version"] < claims):
                 _reject()
             before()
-            available = history.engine.query_one("SELECT available_at FROM durable_jobs WHERE job_id=?", (job["job_id"],))
+            available = history.engine.native_query(
+                'SELECT available_at FROM durable_jobs WHERE job_id=?',
+                (job["job_id"],), columns=('available_at',), one=True)
             if available is None or _time(available["available_at"]) != _time(retry["available_at"]):
                 _reject()
         derived = _derived_cause(job, payload, physical, at, receipt["business_lease_expires_at"] if accepted else None)
@@ -367,11 +368,13 @@ def read_cancelled_unaccepted_parser(history, job, run, physical, tenant, genera
         for key in ("audit_event_id", "parser_completed_event_id"):
             native_intake_uuid(receipt[key])
         before()
-        audit = history.engine.query_one("SELECT * FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
-            "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
-            "AND actor_role='SVC_PARSER' AND action='parser.run_completed.v1' AND result='SUCCEEDED' "
-            "AND causation_id=? AND correlation_id=?", (tenant, receipt["audit_event_id"], run["intake_id"], JOB_TYPE,
-                payload["admission"]["binding"]["original_input"]["parent_event_id"], job["correlation_id"]))
+        audit = history.engine.native_query(
+            'SELECT before_value,after_value,occurred_at,reason FROM audit.audit_events WHERE tenant_id=? AND aud'
+            "it_event_id=? AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_"
+            "principal=? AND actor_role='SVC_PARSER' AND action='parser.run_completed.v1' AND result='SUCCEEDED' "
+            'AND causation_id=? AND correlation_id=?',
+            (tenant, receipt["audit_event_id"], run["intake_id"], JOB_TYPE,
+                payload["admission"]["binding"]["original_input"]["parent_event_id"], job["correlation_id"]), columns=('before_value', 'after_value', 'occurred_at', 'reason'), one=True)
         if (audit is None or canonical_json(_object(audit["before_value"])) != canonical_json({
                 "job_id": job["job_id"], "status": receipt["prior_status"], "parser_run_status": "RUNNING" if accepted else "QUEUED"})
                 or not _audited_exact(_object(audit["after_value"]), {**receipt, "status": "CANCELLED", "parser_run_status": "CANCELLED",

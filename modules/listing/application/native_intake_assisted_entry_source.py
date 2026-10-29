@@ -25,6 +25,7 @@ from modules.listing.application.native_intake_source_policy_rules import (
 )
 from modules.listing.application.native_intake_url_identity import normalize_native_intake_url
 from shared.domain.events import validate_event
+from shared.infrastructure.persistence.identity_graph_sql import NATIVE_OUTBOX_PROOF_COLUMNS
 
 
 def _object(value):
@@ -63,8 +64,11 @@ class NativeAssistedEntrySourceProof:
         # bounded recheck proof, including every SQL/queue read it performs.
         parent = HistoricalSourcePolicyProof(self.source._producer_reads(before))
         discovery = native_producer_discovery(parent.graph, tenant, event_id)
-        row = (discovery.event() if discovery is not None else parent.graph._one(
-            "SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, event_id)))
+        row = (discovery.event() if discovery is not None else parent.graph.native_one(
+            'SELECT tenant_id,event_id,event_type,event_version,aggregate_type,aggregate_id,aggregate_version,par'
+            'tition_key,correlation_id,occurred_at,retention_until,payload FROM workflow.outbox_events WHERE tena'
+            'nt_id=? AND event_id=?',
+            (tenant, event_id), columns=NATIVE_OUTBOX_PROOF_COLUMNS))
         event = _object(row["payload"])
         if (validate_event(event) or row["event_type"] != "intake.state_changed"
                 or row["event_version"] != 1 or event.get("event_type") != row["event_type"]
@@ -86,11 +90,13 @@ class NativeAssistedEntrySourceProof:
                 or event["payload"].get("version") != event["aggregate_version"]):
             raise NativeAssistedEntryConflict("NATIVE_ASSISTED_SOURCE_PARENT_EVENT_REJECTED")
         transition = (discovery.transition(tenant, event["payload"]["transition_id"], row["aggregate_id"])
-            if discovery is not None else parent.graph._one("SELECT job_id FROM intake.intake_stage_transitions "
-            "WHERE tenant_id=? AND transition_id=? AND intake_id=?",
-            (tenant, event["payload"]["transition_id"], row["aggregate_id"])))
-        business = (discovery.business(tenant, transition["job_id"]) if discovery is not None else parent.graph._one(
-            "SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?", (tenant, transition["job_id"])))
+            if discovery is not None else parent.graph.native_one(
+                'SELECT job_id FROM intake.intake_stage_transitions WHERE tenant_id=? AND transition_id=? AND intake_'
+                'id=?',
+                (tenant, event["payload"]["transition_id"], row["aggregate_id"]), columns=('job_id',)))
+        business = (discovery.business(tenant, transition["job_id"]) if discovery is not None else parent.graph.native_one(
+            'SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?',
+            (tenant, transition["job_id"]), columns=('payload',)))
         delivery = (discovery.delivery(transition["job_id"]) if discovery is not None
                     else parent.queue.get(transition["job_id"]))
         payload = _object(business["payload"])
@@ -114,11 +120,11 @@ class NativeAssistedEntrySourceProof:
 
     def current_parent(self, intake, *, before) -> NativeAssistedSourceParent:
         before()
-        rows = self.engine.query("SELECT event_id FROM workflow.outbox_events "
-            "WHERE tenant_id=? AND event_type='intake.state_changed' AND aggregate_type='intake' "
-            "AND aggregate_id=? AND aggregate_version=? "
-            "AND payload->'payload'->>'to_state'='AWAITING_ASSISTED_ENTRY' LIMIT 2",
-            (intake["tenant_id"], intake["intake_id"], intake["version"]))
+        rows = self.engine.native_query(
+            "SELECT event_id FROM workflow.outbox_events WHERE tenant_id=? AND event_type='intake.state_changed' "
+            "AND aggregate_type='intake' AND aggregate_id=? AND aggregate_version=? AND payload->'payload'->>'to_"
+            "state'='AWAITING_ASSISTED_ENTRY' LIMIT 2",
+            (intake["tenant_id"], intake["intake_id"], intake["version"]), columns=('event_id',))
         if len(rows) != 1:
             raise NativeAssistedEntryConflict("NATIVE_ASSISTED_SOURCE_PARENT_NOT_UNIQUE")
         proof = self.parent(intake["tenant_id"], rows[0]["event_id"], before)
@@ -146,9 +152,10 @@ class NativeAssistedEntrySourceProof:
                 or intake["canonical_url_sha256"] != identity.canonical_url_sha256):
             raise NativeAssistedEntryConflict("NATIVE_ASSISTED_CURRENT_INPUT_REJECTED")
         before()
-        matches = self.engine.query("SELECT source_id FROM intake.source_registry s WHERE EXISTS "
-            "(SELECT 1 FROM unnest(s.allowed_hosts) AS h(host) WHERE lower(h.host)=?) "
-            "ORDER BY source_id LIMIT 2 FOR SHARE", (identity.source_host,))
+        matches = self.engine.native_query(
+            'SELECT source_id FROM intake.source_registry s WHERE EXISTS (SELECT 1 FROM unnest(s.allowed_hosts) A'
+            'S h(host) WHERE lower(h.host)=?) ORDER BY source_id LIMIT 2 FOR SHARE',
+            (identity.source_host,), columns=('source_id',), order_by=(('source_id', False),))
         before()
         source = self.graph._one("SELECT * FROM intake.source_registry WHERE source_id=? FOR SHARE", (intake["source_id"],))
         before()

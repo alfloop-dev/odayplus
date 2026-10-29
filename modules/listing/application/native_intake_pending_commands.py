@@ -23,6 +23,10 @@ from modules.listing.application.native_intake_assisted_entry_request_proof impo
 from modules.listing.application.native_intake_retrieval import audited_value_matches
 from modules.listing.application.native_intake_retrieval_policy import canonical_sha256
 from shared.domain.events import validate_event
+from shared.infrastructure.persistence.identity_graph_sql import (
+    NATIVE_JOB_COLUMNS,
+    NATIVE_OUTBOX_PROOF_COLUMNS,
+)
 
 LANES = {
     "ASSISTED_ENTRY": ("intake.assisted_entry_requested", "intake_assisted_entry", "native-intake-assisted-entry",
@@ -36,7 +40,8 @@ _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _TERMINAL = {("SUCCEEDED", "succeeded", None), ("FAILED", "failed", "dead_letter"),
     ("DEAD_LETTER", "failed", "dead_letter"), ("CANCELLED", "cancelled", None)}
 PROOF_BATCH_SIZE = 64
-_WITHDRAWAL_ROWS = ("SELECT * FROM workflow.outbox_events WHERE tenant_id=? "
+_WITHDRAWAL_ROWS = ("SELECT " + ",".join(NATIVE_OUTBOX_PROOF_COLUMNS) +
+    " FROM workflow.outbox_events WHERE tenant_id=? "
     "AND aggregate_type=? AND aggregate_id=? AND event_type=? LIMIT 2")
 _WITHDRAWAL_AUDIT = ("SELECT after_value,reason,actor_role FROM audit.audit_events "
     "WHERE tenant_id=? AND audit_event_id=? AND resource_type='intake' AND resource_id=? "
@@ -62,6 +67,16 @@ class NativeIntakeCommandBudget:
         # Counting the clock query's elapsed time makes the SQL deadline
         # conservative. A later callback never starts another 750 ms period.
         self.deadline = observed + timedelta(seconds=remaining)
+        self._activate_native_acquisition()
+
+    def _activate_native_acquisition(self):
+        # Resource accounting belongs to the actual SQL root, not this budget
+        # instance or each invocation of before(). New nested budgets adopt it.
+        from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+        engine = getattr(self.source, "engine", None)
+        if isinstance(engine, PostgresEngine):
+            engine.enable_native_acquisition()
 
     def check_in_memory(self):
         if time.monotonic() >= self._monotonic_deadline:
@@ -110,6 +125,15 @@ class _WithdrawalBatch:
         if any(row.get(k) != v for k, v in expected.items()):
             return None
         return row
+
+    def native_query(self, statement, parameters=(), *, columns, groups=None, one=False, order_by=()):
+        # This invocation's already acquired rows. The original exact-statement
+        # adapters below still own all matching; no SQL or second byte charge
+        # occurs when the same original withdrawal verifier consumes them.
+        result = self.query_one(statement, parameters) if one else self.query(statement, parameters)
+        if one:
+            return None if result is None else {key: result[key] for key in columns}
+        return [{key: row[key] for key in columns} for row in result]
 
 
 def cancellation_id(request_id, tenant, actor, kind, key_sha256):
@@ -164,8 +188,8 @@ class NativeIntakePendingCommands:
         tenant, intake = original["tenant_id"], original["payload"]["intake_id"]
         request_id = original["event_id"]
         before()
-        rows = self.engine.query(_WITHDRAWAL_ROWS,
-            (tenant, aggregate, request_id, event_type))
+        rows = self.engine.native_query(_WITHDRAWAL_ROWS,
+            (tenant, aggregate, request_id, event_type), columns=NATIVE_OUTBOX_PROOF_COLUMNS)
         if not rows:
             return None
         if len(rows) != 1:
@@ -194,9 +218,9 @@ class NativeIntakePendingCommands:
                 or _time(row["retention_until"]) != _time(row["occurred_at"]) + timedelta(days=30)):
             raise NativeAssistedEntryConflict("NATIVE_COMMAND_WITHDRAWAL_EVENT_CONFLICT")
         before()
-        audit = self.engine.query_one(_WITHDRAWAL_AUDIT,
+        audit = self.engine.native_query(_WITHDRAWAL_AUDIT,
             (tenant, cancellation_audit_id(event["event_id"]), intake, data["requested_by"], action,
-             request_id, event["correlation_id"]))
+             request_id, event["correlation_id"]), columns=("after_value", "reason", "actor_role"), one=True)
         if audit is None or audit["actor_role"] not in ({"DATA_STEWARD"} if kind == "SOURCE_POLICY_RECHECK" else _HUMAN_ROLES):
             raise NativeAssistedEntryConflict("NATIVE_COMMAND_WITHDRAWAL_AUDIT_MISSING")
         snapshot = _object(audit["after_value"])
@@ -253,17 +277,23 @@ class NativeIntakePendingCommands:
         if not rows:
             return NativeIntakePendingCommands(_WithdrawalBatch([], []))
         before()
-        cancellations = self.engine.query("SELECT * FROM workflow.outbox_events WHERE tenant_id=? "
-            "AND aggregate_type=ANY(?::text[]) AND aggregate_id=ANY(?::uuid[]) "
-            "AND event_type=ANY(?::text[]) LIMIT ?", (tenant,
+        cancellations = self.engine.native_query(
+            'SELECT tenant_id,event_id,event_type,event_version,aggregate_type,aggregate_id,aggregate_version,par'
+            'tition_key,correlation_id,occurred_at,retention_until,payload FROM workflow.outbox_events WHERE tena'
+            'nt_id=? AND aggregate_type=ANY(?::text[]) AND aggregate_id=ANY(?::uuid[]) AND event_type=ANY(?::text'
+            '[]) LIMIT ?',
+            (tenant,
                 [v[1] for v in LANES.values()], [r["event_id"] for r in rows],
-                [v[3] for v in LANES.values()], 2 * len(rows) + 1))
+                [v[3] for v in LANES.values()], 2 * len(rows) + 1), columns=NATIVE_OUTBOX_PROOF_COLUMNS)
         if len(cancellations) > 2 * len(rows):
             raise NativeAssistedEntryConflict("NATIVE_COMMAND_WITHDRAWAL_NOT_UNIQUE")
         ids = [cancellation_audit_id(r["event_id"]) for r in cancellations]
         before()
-        audits = self.engine.query("SELECT * FROM audit.audit_events WHERE tenant_id=? "
-            "AND audit_event_id=ANY(?::uuid[])", (tenant, ids)) if ids else []
+        audits = self.engine.native_query(
+            'SELECT tenant_id,audit_event_id,resource_type,resource_id,actor_subject_id,service_principal,actor_r'
+            'ole,action,result,causation_id,correlation_id,after_value,before_value,occurred_at,reason FROM audit'
+            '.audit_events WHERE tenant_id=? AND audit_event_id=ANY(?::uuid[])',
+            (tenant, ids), columns=('tenant_id', 'audit_event_id', 'resource_type', 'resource_id', 'actor_subject_id', 'service_principal', 'actor_role', 'action', 'result', 'causation_id', 'correlation_id', 'after_value', 'before_value', 'occurred_at', 'reason')) if ids else []
         return NativeIntakePendingCommands(_WithdrawalBatch(cancellations, audits))
 
     def terminal_closure(self, original, job, kind, before):
@@ -296,7 +326,7 @@ class NativeIntakePendingCommands:
         cursor_time, cursor_id = None, None
         while True:
             before()
-            rows = self.engine.query("WITH candidates AS ("
+            rows = self.engine.native_query("WITH candidates AS ("
                 "SELECT e.event_id::text AS request_id,e.occurred_at FROM workflow.outbox_events e WHERE e.tenant_id=? "
                 "AND ((e.event_type='intake.assisted_entry_requested' AND e.aggregate_type='intake_assisted_entry') "
                 "OR (e.event_type='intake.source_policy_recheck_requested' AND e.aggregate_type='intake_policy_recheck')) "
@@ -306,21 +336,29 @@ class NativeIntakePendingCommands:
                 "AND a.action IN ('intake.assisted_entry_requested.v1','intake.source_policy_recheck_requested.v1') "
                 "AND a.result='SUCCEEDED'), identities AS ("
                 "SELECT request_id,min(occurred_at) AS occurred_at FROM candidates GROUP BY request_id) "
-                "SELECT e.*,c.request_id AS journal_request_id,c.occurred_at AS journal_occurred_at FROM identities c "
+                "SELECT " + ",".join("e." + name for name in NATIVE_OUTBOX_PROOF_COLUMNS) +
+                ",c.request_id AS journal_request_id,c.occurred_at AS journal_occurred_at FROM identities c "
                 "LEFT JOIN workflow.outbox_events e ON e.tenant_id=? AND e.event_id::text=c.request_id "
                 "WHERE (?::text IS NULL OR c.request_id<>?::text) "
                 "AND (?::timestamptz IS NULL OR (c.occurred_at,c.request_id)>(?::timestamptz,?::text)) "
                 "ORDER BY c.occurred_at,c.request_id LIMIT ?",
                 (tenant, intake_id, tenant + ':' + intake_id, tenant, intake_id, tenant,
-                 own_request_id, own_request_id, cursor_time, cursor_time, cursor_id, PROOF_BATCH_SIZE))
+                 own_request_id, own_request_id, cursor_time, cursor_time, cursor_id, PROOF_BATCH_SIZE),
+                columns=(*NATIVE_OUTBOX_PROOF_COLUMNS, "journal_request_id", "journal_occurred_at"),
+                groups=(NATIVE_OUTBOX_PROOF_COLUMNS, ("journal_request_id", "journal_occurred_at")),
+                order_by=(("journal_occurred_at", False), ("journal_request_id", False)))
             if not rows:
                 break
             if any(r["event_id"] is None or r["event_id"] != r["journal_request_id"] for r in rows):
                 raise NativeAssistedEntryConflict("NATIVE_COMMAND_REQUEST_JOURNAL_INCOMPLETE")
             before()
-            jobs = self.engine.query("SELECT * FROM workflow.jobs WHERE tenant_id=? "
-                "AND aggregate_type=ANY(?::text[]) AND aggregate_id=ANY(?::uuid[]) LIMIT ?",
-                (tenant, [v[1] for v in LANES.values()], [r["event_id"] for r in rows], 2 * len(rows) + 1))
+            jobs = self.engine.native_query(
+                'SELECT job_id,tenant_id,job_type,aggregate_type,aggregate_id,status,checkpoint,attempt,max_attempts,'
+                'fence_token,heartbeat_at,lease_expires_at,next_attempt_at,timeout_at,cancellation_requested_at,paylo'
+                'ad,result,last_error,correlation_id,idempotency_key,version,created_at,updated_at,lease_owner,availa'
+                'ble_at,acknowledged_at,dead_lettered_at,cloud_task_name,attempt_token_sha256 FROM workflow.jobs WHER'
+                'E tenant_id=? AND aggregate_type=ANY(?::text[]) AND aggregate_id=ANY(?::uuid[]) LIMIT ?',
+                (tenant, [v[1] for v in LANES.values()], [r["event_id"] for r in rows], 2 * len(rows) + 1), columns=NATIVE_JOB_COLUMNS)
             if len(jobs) > 2 * len(rows):
                 raise NativeAssistedEntryConflict("NATIVE_COMMAND_JOB_NOT_UNIQUE")
             by_request = {}
@@ -329,8 +367,8 @@ class NativeIntakePendingCommands:
             expected_ids = [str(uuid5(UUID(r["event_id"]), LANES[
                 "ASSISTED_ENTRY" if r["event_type"] == LANES["ASSISTED_ENTRY"][0] else "SOURCE_POLICY_RECHECK"][2])) for r in rows]
             before()
-            physical_ids = {r["job_id"] for r in self.engine.query("SELECT job_id FROM durable_jobs "
-                "WHERE job_id=ANY(?::text[])", (expected_ids,))}
+            physical_ids = {r["job_id"] for r in self.engine.native_query("SELECT job_id FROM durable_jobs "
+                "WHERE job_id=ANY(?::text[])", (expected_ids,), columns=("job_id",))}
             jobless = [r for r in rows if r["event_id"] not in by_request]
             evidence = self._withdrawal_batch(tenant, jobless, before)
             for row, expected_id in zip(rows, expected_ids, strict=True):

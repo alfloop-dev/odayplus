@@ -130,8 +130,10 @@ def _cause(owner, intake, run, payload, physical, before):
 def _closed_slots(engine, facts, before):
     if facts.reservation_ids:
         before()
-        if engine.query_one("SELECT reservation_id FROM intake.native_retrieval_inflight_slots "
-                "WHERE reservation_id=ANY(?::uuid[]) LIMIT 1", (list(facts.reservation_ids),)) is not None:
+        if engine.native_query(
+            'SELECT reservation_id FROM intake.native_retrieval_inflight_slots WHERE reservation_id=ANY(?::uuid[]'
+            ') LIMIT 1',
+            (list(facts.reservation_ids),), columns=('reservation_id',), one=True) is not None:
             reject()
 
 
@@ -384,11 +386,13 @@ def read_unavailable_terminal(history, job, run, physical, tenant, generation, *
             _failure_reject()
         _closed_slots(history.engine, facts, before)
         before()
-        audit = history.engine.query_one("SELECT * FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
-            "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
-            "AND actor_role='SVC_PARSER' AND action='parser.run_completed.v1' AND result='SUCCEEDED' "
-            "AND causation_id=? AND correlation_id=?", (tenant, receipt["audit_event_id"], run["intake_id"], JOB_TYPE,
-                original.parent_event_id, job["correlation_id"]))
+        audit = history.engine.native_query(
+            'SELECT before_value,after_value,occurred_at,reason FROM audit.audit_events WHERE tenant_id=? AND aud'
+            "it_event_id=? AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_"
+            "principal=? AND actor_role='SVC_PARSER' AND action='parser.run_completed.v1' AND result='SUCCEEDED' "
+            'AND causation_id=? AND correlation_id=?',
+            (tenant, receipt["audit_event_id"], run["intake_id"], JOB_TYPE,
+                original.parent_event_id, job["correlation_id"]), columns=('before_value', 'after_value', 'occurred_at', 'reason'), one=True)
         if (audit is None or _object(audit["before_value"]) != {"parser_run_id": run["parser_run_id"], "status": "RUNNING"}
                 or not _audited_exact(_object(audit["after_value"]), {**receipt, "intake_mutated": False})
                 or audit["reason"] != _REASON or _time(audit["occurred_at"]) != at):

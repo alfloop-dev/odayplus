@@ -324,13 +324,15 @@ def read_permanent_terminal(history, job, run, physical, tenant, generation, *, 
         for k in ("audit_event_id", "parser_completed_event_id", "dead_letter_event_id", "transition_id", "intake_audit_event_id", "outbox_event_id"):
             native_intake_uuid(receipt[k])
         before()
-        transition = history.engine.query_one("SELECT * FROM intake.intake_stage_transitions WHERE tenant_id=? "
-            "AND transition_id=? AND intake_id=? AND job_id=? AND from_state='PARSING' AND to_state='FAILED' "
-            "AND actor_subject_id IS NULL AND service_principal=? AND permission='parser.execute' AND expected_version=? "
-            "AND resulting_version=? AND idempotency_key=? AND source_snapshot_id=? AND source_policy_version=? "
-            "AND correlation_id=? AND causation_id=?", (tenant, receipt["transition_id"], run["intake_id"], job["job_id"],
+        transition = history.engine.native_query(
+            'SELECT occurred_at,sequence_no,reason_code,reason_text FROM intake.intake_stage_transitions WHERE te'
+            "nant_id=? AND transition_id=? AND intake_id=? AND job_id=? AND from_state='PARSING' AND to_state='FA"
+            "ILED' AND actor_subject_id IS NULL AND service_principal=? AND permission='parser.execute' AND expec"
+            'ted_version=? AND resulting_version=? AND idempotency_key=? AND source_snapshot_id=? AND source_poli'
+            'cy_version=? AND correlation_id=? AND causation_id=?',
+            (tenant, receipt["transition_id"], run["intake_id"], job["job_id"],
                 JOB_TYPE, receipt["intake_version_before"], receipt["version"], run["parser_run_id"], run["source_snapshot_id"],
-                payload["admission"]["binding"]["source_version"], job["correlation_id"], receipt["parser_completed_event_id"]))
+                payload["admission"]["binding"]["source_version"], job["correlation_id"], receipt["parser_completed_event_id"]), columns=('occurred_at', 'sequence_no', 'reason_code', 'reason_text'), one=True)
         if (transition is None or transition["sequence_no"] != receipt["transition_sequence"]
                 or transition["reason_code"] != policy["reason_code"] or transition["reason_text"] != policy["transition_reason"]
                 or _time(transition["occurred_at"]) != at):
@@ -338,10 +340,12 @@ def read_permanent_terminal(history, job, run, physical, tenant, generation, *, 
         for key, action, previous in (("audit_event_id", "parser.run_completed.v1", {"parser_run_id": run["parser_run_id"], "status": "RUNNING"}),
                 ("intake_audit_event_id", "intake.processing_failed.v1", {"processing_state": "PARSING", "version": receipt["intake_version_before"]})):
             before()
-            audit = history.engine.query_one("SELECT * FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
-                "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
-                "AND actor_role='SVC_PARSER' AND action=? AND result='SUCCEEDED' AND causation_id=? AND correlation_id=?",
-                (tenant, receipt[key], run["intake_id"], JOB_TYPE, action, original.parent_event_id, job["correlation_id"]))
+            audit = history.engine.native_query(
+                'SELECT before_value,after_value,occurred_at,reason FROM audit.audit_events WHERE tenant_id=? AND aud'
+                "it_event_id=? AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_"
+                "principal=? AND actor_role='SVC_PARSER' AND action=? AND result='SUCCEEDED' AND causation_id=? AND c"
+                'orrelation_id=?',
+                (tenant, receipt[key], run["intake_id"], JOB_TYPE, action, original.parent_event_id, job["correlation_id"]), columns=('before_value', 'after_value', 'occurred_at', 'reason'), one=True)
             if (audit is None or canonical_json(_object(audit["before_value"])) != canonical_json(previous)
                     or not _audited_exact(_object(audit["after_value"]), {**receipt, "intake_mutated": True})
                     or audit["reason"] != policy["reason"] or _time(audit["occurred_at"]) != at):

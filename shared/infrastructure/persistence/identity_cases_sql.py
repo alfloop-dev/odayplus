@@ -361,9 +361,13 @@ class CanonicalMatchCaseRepository:
                 or case["outcome"] != "POSSIBLE_MATCH" or intake["processing_state"] != "NEEDS_REVIEW"):
             reject()
         before()
-        rows = self.engine.query("SELECT * FROM intake.intake_stage_transitions WHERE tenant_id=? "
+        transition_columns = ("actor_subject_id", "service_principal", "occurred_at", "from_state",
+            "to_state", "expected_version", "permission", "reason_code", "correlation_id", "job_id",
+            "source_snapshot_id", "reason_text", "transition_id", "sequence_no")
+        rows = self.engine.native_query("SELECT " + ",".join(transition_columns) +
+            " FROM intake.intake_stage_transitions WHERE tenant_id=? "
             "AND intake_id=? AND match_case_id=? AND resulting_version=? LIMIT 2",
-            (tenant, intake["intake_id"], case["match_case_id"], intake["version"]))
+            (tenant, intake["intake_id"], case["match_case_id"], intake["version"]), columns=transition_columns)
         if len(rows) != 1:
             reject()
         transition = rows[0]
@@ -377,9 +381,10 @@ class CanonicalMatchCaseRepository:
                 or transition["job_id"] is not None or transition["source_snapshot_id"] is not None):
             reject()
         before()
-        audits = self.engine.query("SELECT audit_event_id FROM audit.audit_events WHERE tenant_id=? "
+        audits = self.engine.native_query("SELECT audit_event_id FROM audit.audit_events WHERE tenant_id=? "
             "AND resource_type='intake' AND resource_id=? AND action='intake.review_required.v1' "
-            "AND occurred_at=? AND result='SUCCEEDED' LIMIT 2", (tenant, intake["intake_id"], at))
+            "AND occurred_at=? AND result='SUCCEEDED' LIMIT 2", (tenant, intake["intake_id"], at),
+            columns=("audit_event_id",))
         if len(audits) != 1:
             reject()
         before()
@@ -391,9 +396,12 @@ class CanonicalMatchCaseRepository:
                 or audit["before_value"] != previous or not audited_value_matches(audit["after_value"], current)):
             reject()
         before()
-        events = self.engine.query("SELECT * FROM workflow.outbox_events WHERE tenant_id=? "
+        event_columns = ("event_id", "event_version", "partition_key", "correlation_id", "occurred_at", "payload")
+        events = self.engine.native_query("SELECT " + ",".join(event_columns) +
+            " FROM workflow.outbox_events WHERE tenant_id=? "
             "AND aggregate_type='intake' AND aggregate_id=? AND aggregate_version=? "
-            "AND event_type='intake.state_changed' LIMIT 2", (tenant, intake["intake_id"], intake["version"]))
+            "AND event_type='intake.state_changed' LIMIT 2", (tenant, intake["intake_id"], intake["version"]),
+            columns=event_columns)
         if len(events) != 1:
             reject()
         row = events[0]

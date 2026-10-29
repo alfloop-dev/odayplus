@@ -90,6 +90,57 @@ masking and confirmation/execution checks. Historical proof grants no current
 action authority and does not require reactivating retired settings.
 Lifecycle-only metadata projections still omit all payloads.
 
+Explicit native historical acquisitions now share `PostgresEngine.native_query`.
+Each existing owner declares its necessary typed projection and logical row
+groups. PostgreSQL measures each group's `row_to_json` UTF-8 text before the
+driver receives data: the engineering limits are 4 MiB per logical group and
+32 MiB cumulatively on the same actual root transaction. A multirow query
+counts every selected row; one oversized group or a batch exceeding the
+remaining allowance suppresses every data cell and raises a typed refusal.
+It never becomes a missing row or a truncated successful batch. SQL NULL,
+column types, original predicates, requested locks and explicit ordering remain
+part of each owner's contract. These are projection limits, not a bound on
+all database traffic, PostgreSQL/Python memory or compressed storage.
+
+The existing native command budgets activate the counter. Nested budgets and
+transactions adopt it; savepoint rollback does not refund acquired bytes, and
+zero remaining bytes cannot fall through to an ordinary queue read. The
+original `DurableJobQueue.get` participates once that root is active. The
+engine reserves before the original query/normalization seam; a transport
+failure retains the reservation. A validated response settles actual bytes
+before the original graph or queue decoder runs, so a subsequent decode or
+proof failure retains that acquisition's charge. No fact or successful proof
+is cached on the root. Existing deadlines, tenant checks, authority, versions,
+fences and final positive rechecks continue independently.
+
+`CanonicalIdentityGraphRepository.native_one` delegates to its original `_one`
+with explicit projection arguments. Owned read adapters must forward those
+arguments or refuse; an incompatible adapter is never retried as an unbounded
+read. The parser's required job read and manual parent's optional raw job read
+retain their different original decoding boundaries. Physical, event, audit,
+transition and pending-command batch reads use these same acquisition owners.
+The independently executed graph-continuation proof starts byte accounting
+before its historical event/decision/job/audit/queue reads; the later parser
+budget adopts that counter without moving or resetting either time contract.
+The canonical audit getter retains its full immutable hash and original codec.
+
+This integration does not qualify every early generic Intake/case read, current
+grant query, positive audit write or database operation as bounded. Whole
+current-head checks, remaining acquisition review, migration/canary gates and
+human acceptance remain separate rollout requirements.
+
+The unpublished local integration connects the nine identified historical reads:
+the identity and source-policy admission audit fallbacks (one each),
+retrieval `_parent` (three), normal recheck `_source_producer` (three), and the
+parser cancellation lost-commit-response resolver (one). Real PostgreSQL controls
+now cover the two original audit counterexamples, five other large necessary
+cells, and the two UUID-only projections' actual acquisition charges. The recheck
+last-payload control mutates its real row only after the earlier full proof; the
+cancellation control preserves the original lost-response error after an actual
+cancel COMMIT. Original predicates, codecs and authority remain with these owners.
+Full affected-module regression and current-source qualification are still
+required; these controls do not approve a rollout.
+
 The existing canonical case picker now exposes native CREATE/REVISE and human
 DUPLICATE proposals. It displays the actual parser fields and the same observed
 resource plan submitted to the existing confirmation API. The case read also

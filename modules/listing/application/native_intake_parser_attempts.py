@@ -109,12 +109,13 @@ class NativeParserAttemptHistory:
             reject()
         native_intake_uuid(receipt["audit_event_id"])
         before()
-        audit = self.engine.query_one("SELECT after_value,before_value,occurred_at FROM audit.audit_events "
-            "WHERE tenant_id=? AND audit_event_id=? AND resource_type='intake' AND resource_id=? "
-            "AND actor_subject_id IS NULL AND service_principal=? AND actor_role='SVC_PARSER' "
-            "AND action='intake.parser_attempt_accepted.v1' AND result='SUCCEEDED' AND causation_id=? AND correlation_id=?",
+        audit = self.engine.native_query(
+            'SELECT after_value,before_value,occurred_at FROM audit.audit_events WHERE tenant_id=? AND audit_even'
+            "t_id=? AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_princip"
+            "al=? AND actor_role='SVC_PARSER' AND action='intake.parser_attempt_accepted.v1' AND result='SUCCEEDE"
+            "D' AND causation_id=? AND correlation_id=?",
             (job["tenant_id"], receipt["audit_event_id"], run["intake_id"], JOB_TYPE,
-                admission["binding"]["original_input"]["parent_event_id"], job["correlation_id"]))
+                admission["binding"]["original_input"]["parent_event_id"], job["correlation_id"]), columns=('after_value', 'before_value', 'occurred_at'), one=True)
         previous = {"job_id": job["job_id"], "status": "QUEUED" if attempt == 1 else "RETRYING", "parser_run_status": "QUEUED"}
         after = {**receipt, "status": "RUNNING", "parser_run_status": "RUNNING", "intake_mutated": False,
             "accepted_binding": binding, "native_parser_provenance": parser_admission_provenance(_object(job["payload"]))}
@@ -175,12 +176,13 @@ class NativeParserAttemptHistory:
             reject()
         native_intake_uuid(receipt["audit_event_id"])
         before()
-        audit = self.engine.query_one("SELECT before_value,after_value,occurred_at,reason FROM audit.audit_events "
-            "WHERE tenant_id=? AND audit_event_id=? AND resource_type='intake' AND resource_id=? "
-            "AND actor_subject_id IS NULL AND service_principal=? AND actor_role='SVC_PARSER' "
-            "AND action='intake.parser_retry_prepared.v1' AND result='SUCCEEDED' AND causation_id=? AND correlation_id=?",
+        audit = self.engine.native_query(
+            'SELECT before_value,after_value,occurred_at,reason FROM audit.audit_events WHERE tenant_id=? AND aud'
+            "it_event_id=? AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_"
+            "principal=? AND actor_role='SVC_PARSER' AND action='intake.parser_retry_prepared.v1' AND result='SUC"
+            "CEEDED' AND causation_id=? AND correlation_id=?",
             (job["tenant_id"], receipt["audit_event_id"], run["intake_id"], JOB_TYPE,
-                admission["binding"]["original_input"]["parent_event_id"], job["correlation_id"]))
+                admission["binding"]["original_input"]["parent_event_id"], job["correlation_id"]), columns=('before_value', 'after_value', 'occurred_at', 'reason'), one=True)
         previous = {"job_id": job["job_id"], "status": "RUNNING", "parser_run_status": "RUNNING", "attempt": receipt["attempt"]}
         after = {**receipt, "status": "RETRYING", "parser_run_status": "QUEUED", "intake_mutated": False}
         if (audit is None or canonical_json(_object(audit["before_value"])) != canonical_json(previous)
@@ -247,8 +249,10 @@ class NativeParserAttemptHistory:
             reject()
         if seen_slots:
             before()
-            if self.engine.query_one("SELECT reservation_id FROM intake.native_retrieval_inflight_slots "
-                    "WHERE reservation_id=ANY(?::uuid[]) LIMIT 1", (list(seen_slots),)) is not None:
+            if self.engine.native_query(
+                'SELECT reservation_id FROM intake.native_retrieval_inflight_slots WHERE reservation_id=ANY(?::uuid[]'
+                ') LIMIT 1',
+                (list(seen_slots),), columns=('reservation_id',), one=True) is not None:
                 reject()
         before.check_in_memory()
         return NativeParserPreviousAttempts(tuple(journals), current_items, canonical_sha256(entries))

@@ -43,6 +43,10 @@ from modules.listing.domain.intake_states import (
 )
 from shared.audit.errors import CanonicalAuditUnavailable
 from shared.domain.events import DomainEvent, validate_event
+from shared.infrastructure.persistence.identity_graph_sql import (
+    NATIVE_JOB_COLUMNS,
+    NATIVE_OUTBOX_PROOF_COLUMNS,
+)
 from shared.jobs.queue import JobDeliveryState, JobFenceRejectedError, JobRequest, JobStatus
 
 NATIVE_INTAKE_IDENTITY_JOB_TYPE = "native-intake-identity"
@@ -135,8 +139,10 @@ class NativeIntakeIdentityOwner:
 
     def _event(self, tenant: str, event_id: str) -> tuple[dict, dict, str]:
         discovery = native_producer_discovery(self.graph, tenant, _uuid(event_id))
-        row = (discovery.event() if discovery is not None else self.graph._one(
-            "SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, _uuid(event_id))))
+        row = (discovery.event() if discovery is not None else self.graph.native_one(
+            "SELECT " + ",".join(NATIVE_OUTBOX_PROOF_COLUMNS) +
+            " FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, _uuid(event_id)),
+            columns=NATIVE_OUTBOX_PROOF_COLUMNS))
         event = _object(row["payload"])
         if (validate_event(event) or row["event_type"] != "intake.state_changed"
                 or event.get("event_type") != row["event_type"]
@@ -160,11 +166,12 @@ class NativeIntakeIdentityOwner:
                 or event["payload"]["version"] != event["aggregate_version"]):
             raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_START_EVENT_CONFLICT")
         transition = (discovery.transition(tenant, _uuid(event["payload"]["transition_id"]), row["aggregate_id"])
-            if discovery is not None else self.graph._one("SELECT job_id FROM intake.intake_stage_transitions "
+            if discovery is not None else self.graph.native_one("SELECT job_id FROM intake.intake_stage_transitions "
             "WHERE tenant_id=? AND transition_id=? AND intake_id=?", (tenant,
-                _uuid(event["payload"]["transition_id"]), row["aggregate_id"])))
-        start_job = (discovery.business(tenant, transition["job_id"]) if discovery is not None else self.graph._one(
-            "SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?", (tenant, transition["job_id"])))
+                _uuid(event["payload"]["transition_id"]), row["aggregate_id"]), columns=("job_id",)))
+        start_job = (discovery.business(tenant, transition["job_id"]) if discovery is not None else self.graph.native_one(
+            "SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?", (tenant, transition["job_id"]),
+            columns=("payload",)))
         generation = _object(start_job["payload"]).get("delivery_generation")
         delivery = (discovery.delivery(transition["job_id"]) if discovery is not None
                     else self.queue.get(transition["job_id"]))
@@ -301,11 +308,12 @@ class NativeIntakeIdentityOwner:
                     'result': 'SUCCEEDED',
                     'causation_id': payload["event_id"],
                     'correlation_id': job["correlation_id"],
-                }) if terminal_rows is not None else self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
+                }) if terminal_rows is not None else self.engine.native_query("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
             "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
             "AND actor_role='SVC_INTAKE' AND action='intake.identity_resolution_requested.v1' AND result='SUCCEEDED' "
             "AND causation_id=? AND correlation_id=?", (job["tenant_id"], receipt["audit_event_id"], job["aggregate_id"],
-                NATIVE_INTAKE_IDENTITY_JOB_TYPE, payload["event_id"], job["correlation_id"])))
+                NATIVE_INTAKE_IDENTITY_JOB_TYPE, payload["event_id"], job["correlation_id"]),
+                columns=("after_value",), one=True))
         if audit is None:
             raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_ADMISSION_AUDIT_MISSING")
         snapshot = _object(audit["after_value"])
@@ -379,8 +387,13 @@ class NativeIntakeIdentityOwner:
                 else native_terminal_pair(self.graph, tenant, delivery.job_id))
         if pair is None:
             current = self.queue.get(delivery.job_id)
-            job = self.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
-                                        (tenant, delivery.job_id))
+            job = self.engine.native_query(
+                'SELECT job_id,tenant_id,job_type,aggregate_type,aggregate_id,status,checkpoint,attempt,max_attempts,'
+                'fence_token,heartbeat_at,lease_expires_at,next_attempt_at,timeout_at,cancellation_requested_at,paylo'
+                'ad,result,last_error,correlation_id,idempotency_key,version,created_at,updated_at,lease_owner,availa'
+                'ble_at,acknowledged_at,dead_lettered_at,cloud_task_name,attempt_token_sha256 FROM workflow.jobs WHER'
+                'E tenant_id=? AND job_id=?',
+                (tenant, delivery.job_id), columns=NATIVE_JOB_COLUMNS, one=True)
         else:
             current, job = pair
         if job is None or job["status"] != "SUCCEEDED":
@@ -439,14 +452,14 @@ class NativeIntakeIdentityOwner:
                    'source_policy_version': proof["source_version"],
                    'causation_id': payload["event_id"],
                    'correlation_id': job["correlation_id"],
-               }) if terminal_rows is not None else self.engine.query_one("SELECT transition_id FROM intake.intake_stage_transitions "
-            "WHERE tenant_id=? AND transition_id=? AND intake_id=? AND job_id=? "
-            "AND from_state='CHECKING_IDENTITY' AND to_state=? AND resulting_version=? "
-            "AND expected_version=? AND actor_subject_id IS NULL AND service_principal=? "
-            "AND permission=? AND source_policy_version=? AND causation_id=? AND correlation_id=?",
-            (tenant, result["transition_id"], job["aggregate_id"], delivery.job_id, target,
+               }) if terminal_rows is not None else self.engine.native_query(
+                   'SELECT transition_id FROM intake.intake_stage_transitions WHERE tenant_id=? AND transition_id=? AND '
+                   "intake_id=? AND job_id=? AND from_state='CHECKING_IDENTITY' AND to_state=? AND resulting_version=? A"
+                   'ND expected_version=? AND actor_subject_id IS NULL AND service_principal=? AND permission=? AND sour'
+                   'ce_policy_version=? AND causation_id=? AND correlation_id=?',
+                   (tenant, result["transition_id"], job["aggregate_id"], delivery.job_id, target,
              result["version"], payload["intake_version"], NATIVE_INTAKE_IDENTITY_JOB_TYPE,
-             permission, proof["source_version"], payload["event_id"], job["correlation_id"]))):
+             permission, proof["source_version"], payload["event_id"], job["correlation_id"]), columns=('transition_id',), one=True)):
             raise JobFenceRejectedError("NATIVE_IDENTITY_TERMINAL_TRANSITION_CONFLICT")
         audit = (terminal_rows.result_audit({
                     'tenant_id': tenant,
@@ -460,11 +473,12 @@ class NativeIntakeIdentityOwner:
                     'result': 'SUCCEEDED',
                     'causation_id': payload["event_id"],
                     'correlation_id': job["correlation_id"],
-                }) if terminal_rows is not None else self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
-            "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
-            "AND actor_role='SVC_INTAKE' AND action=? AND result='SUCCEEDED' AND causation_id=? AND correlation_id=?",
-            (tenant, result["audit_event_id"], job["aggregate_id"], NATIVE_INTAKE_IDENTITY_JOB_TYPE,
-             action, payload["event_id"], job["correlation_id"])))
+                }) if terminal_rows is not None else self.engine.native_query(
+                    'SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? AND resource_type='
+                    "'intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? AND actor_role='SVC_"
+                    "INTAKE' AND action=? AND result='SUCCEEDED' AND causation_id=? AND correlation_id=?",
+                    (tenant, result["audit_event_id"], job["aggregate_id"], NATIVE_INTAKE_IDENTITY_JOB_TYPE,
+             action, payload["event_id"], job["correlation_id"]), columns=('after_value',), one=True))
         outbox = (terminal_rows.outbox({
                      'tenant_id': tenant,
                      'event_id': result["outbox_event_id"],
@@ -473,10 +487,12 @@ class NativeIntakeIdentityOwner:
                      'aggregate_id': job["aggregate_id"],
                      'aggregate_version': result["version"],
                      'correlation_id': job["correlation_id"],
-                 }) if terminal_rows is not None else self.engine.query_one("SELECT payload FROM workflow.outbox_events WHERE tenant_id=? AND event_id=? "
-            "AND event_type='intake.state_changed' AND aggregate_type='intake' AND aggregate_id=? "
-            "AND aggregate_version=? AND correlation_id=?", (tenant, result["outbox_event_id"],
-                job["aggregate_id"], result["version"], job["correlation_id"])))
+                 }) if terminal_rows is not None else self.engine.native_query(
+                     "SELECT payload FROM workflow.outbox_events WHERE tenant_id=? AND event_id=? AND event_type='intake.s"
+                     "tate_changed' AND aggregate_type='intake' AND aggregate_id=? AND aggregate_version=? AND correlation"
+                     '_id=?',
+                     (tenant, result["outbox_event_id"],
+                job["aggregate_id"], result["version"], job["correlation_id"]), columns=('payload',), one=True))
         if audit is None or outbox is None:
             raise JobFenceRejectedError("NATIVE_IDENTITY_TERMINAL_EVIDENCE_MISSING")
         snapshot, event = _object(audit["after_value"]), _object(outbox["payload"])

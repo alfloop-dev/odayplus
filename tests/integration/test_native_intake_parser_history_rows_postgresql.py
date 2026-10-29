@@ -133,7 +133,7 @@ def test_real_batch_read_elapsed_time_cannot_restart_original_monotonic_deadline
 
     def delayed_canonical_rows(statement, parameters=()):
         result = query(statement, parameters)
-        if statement.startswith("SELECT * FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=ANY("):
+        if " FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=ANY(" in statement:
             assert not delayed
             delayed.append(True)
             time.sleep(.8)

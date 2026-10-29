@@ -28,10 +28,14 @@ class CapturedOutbox:
         columns = sql.split("(", 1)[1].split(")", 1)[0].split(",")
         self.row = dict(zip(columns, params, strict=True))
 
-    def _one(self, sql, params):
-        assert sql == "SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?"
+    def native_one(self, sql, params, *, columns, groups=None):
+        assert columns == ("tenant_id", "event_id", "event_type", "event_version", "aggregate_type",
+            "aggregate_id", "aggregate_version", "partition_key", "correlation_id", "occurred_at",
+            "retention_until", "payload")
+        assert groups is None
+        assert sql == "SELECT " + ",".join(columns) + " FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?"
         assert params == (self.row["tenant_id"], self.row["event_id"])
-        return deepcopy(self.row)
+        return {key: deepcopy(self.row[key]) for key in columns}
 
 
 @pytest.fixture(params=["state", "snapshot"])

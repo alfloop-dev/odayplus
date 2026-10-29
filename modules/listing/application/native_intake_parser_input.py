@@ -90,10 +90,11 @@ class NativeParserManualInputReader:
             if root["isolation"] != "serializable" or root["tenant"] != tenant:
                 _reject()
             before()
-            rows = self.engine.query("SELECT job_id,source_snapshot_id FROM intake.intake_stage_transitions "
+            rows = self.engine.native_query("SELECT job_id,source_snapshot_id FROM intake.intake_stage_transitions "
                 "WHERE tenant_id=? AND intake_id=? AND resulting_version=? AND to_state='PARSING' "
                 "AND from_state='AWAITING_ASSISTED_ENTRY' AND service_principal IS NULL "
-                "AND actor_subject_id IS NOT NULL LIMIT 2", (tenant, intake_id, intake["version"]))
+                "AND actor_subject_id IS NOT NULL LIMIT 2", (tenant, intake_id, intake["version"]),
+                columns=("job_id", "source_snapshot_id"))
             if len(rows) != 1:
                 _reject()
             parent_job_id = native_intake_uuid(rows[0]["job_id"])
@@ -174,12 +175,15 @@ class NativeParserManualInputReader:
         normalized = {} if run["normalized_payload"] is None else _object(run["normalized_payload"])
         confidence = _object(run["field_confidence"])
         before()
-        corrections = self.engine.query(
+        corrections = self.engine.native_query(
             "SELECT correction_id,field_path,field_classification,status,version,identity_affecting,proposed_by,"
             "corrected_value::text AS corrected_json,reason,created_at,reviewed_by,reviewed_at "
             "FROM intake.human_corrections WHERE tenant_id=? AND intake_id=? AND correction_id=ANY(?::uuid[]) "
             "ORDER BY field_path", (original.lineage.tenant_id, original.lineage.intake_id,
-                [identity for _, identity in original.lineage.correction_ids]))
+                [identity for _, identity in original.lineage.correction_ids]),
+            columns=("correction_id", "field_path", "field_classification", "status", "version", "identity_affecting",
+                "proposed_by", "corrected_json", "reason", "created_at", "reviewed_by", "reviewed_at"),
+            order_by=(("field_path", False),))
         fields = [{"correction_id": row["correction_id"], "field_path": row["field_path"],
             "classification": row["field_classification"], "status": row["status"], "version": row["version"],
             "proposed_by": row["proposed_by"], "identity_affecting": row["identity_affecting"],

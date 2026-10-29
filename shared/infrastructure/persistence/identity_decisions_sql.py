@@ -19,6 +19,8 @@ from shared.infrastructure.persistence.identity_cases_sql import (
     CanonicalMatchCaseRepository,
     _version,
 )
+from shared.infrastructure.persistence.identity_graph_sql import NATIVE_JOB_COLUMNS
+from shared.jobs.queue import JobFenceRejectedError
 
 
 def _uuid(value: str) -> str:
@@ -263,16 +265,27 @@ class CanonicalIdentityDecisionRepository:
         def reject():
             raise IdentityConflictError("IDENTITY_GRAPH_CONTINUATION_PROOF_REQUIRED")
 
-        rows = self.engine.query("SELECT * FROM workflow.outbox_events WHERE tenant_id=? "
-            "AND aggregate_type='match_case' AND aggregate_id=? AND aggregate_version=? "
-            "AND event_type='match.decided' LIMIT 2", (tenant, case["match_case_id"], case["version"]))
-        if len(rows) != 1:
-            reject()
-        row = rows[0]
         try:
+            # This historical continuation precedes the parser's original
+            # deadline. Start only actual-root byte accounting here; the later
+            # native budget adopts it without changing either time contract.
+            self.engine.enable_native_acquisition()
+            event_columns = ("event_id", "event_version", "partition_key", "correlation_id", "occurred_at", "payload")
+            rows = self.engine.native_query("SELECT " + ",".join(event_columns) +
+                " FROM workflow.outbox_events WHERE tenant_id=? "
+                "AND aggregate_type='match_case' AND aggregate_id=? AND aggregate_version=? "
+                "AND event_type='match.decided' LIMIT 2", (tenant, case["match_case_id"], case["version"]),
+                columns=event_columns)
+            if len(rows) != 1:
+                reject()
+            row = rows[0]
             event = json.loads(row["payload"]) if isinstance(row["payload"], str) else row["payload"]
-            decision = self.graph._one("SELECT * FROM identity.match_decisions WHERE tenant_id=? "
-                "AND match_decision_id=? FOR UPDATE", (tenant, _uuid(event["payload"]["match_decision_id"])))
+            decision_columns = ("tenant_id", "match_decision_id", "match_case_id", "decision_type", "status",
+                "proposer_subject_id", "reviewer_subject_id", "proposer_service_principal", "risk_acknowledged",
+                "reviewed_at", "after_graph", "executed_at", "version", "reason")
+            decision = self.graph.native_one("SELECT " + ",".join(decision_columns) +
+                " FROM identity.match_decisions WHERE tenant_id=? AND match_decision_id=? FOR UPDATE",
+                (tenant, _uuid(event["payload"]["match_decision_id"])), columns=decision_columns)
             expected = {"tenant_id": tenant, "event_id": row["event_id"], "event_type": "match.decided",
                 "event_version": 1, "aggregate_type": "match_case", "aggregate_id": case["match_case_id"],
                 "aggregate_version": case["version"], "partition_key": tenant + ":" + case["match_case_id"],
@@ -288,9 +301,10 @@ class CanonicalIdentityDecisionRepository:
                     or event["occurred_at"] != decision["executed_at"] or row["occurred_at"] != decision["executed_at"]):
                 reject()
             self.require_approval(tenant, decision)
-            job = self.graph._one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_type=? "
+            job = self.graph.native_one("SELECT " + ",".join(NATIVE_JOB_COLUMNS) +
+                " FROM workflow.jobs WHERE tenant_id=? AND job_type=? "
                 "AND aggregate_type='identity_decision' AND aggregate_id=? FOR UPDATE",
-                (tenant, self.graph.job_type, decision["match_decision_id"]))
+                (tenant, self.graph.job_type, decision["match_decision_id"]), columns=NATIVE_JOB_COLUMNS)
             result = self.graph.execution_receipt(tenant, job, decision)
             delivery = self.graph.queue.get(job["job_id"])
             if (job["payload"]["match_case_version"] + 1 != case["version"]
@@ -404,7 +418,8 @@ class CanonicalIdentityDecisionRepository:
                 raise IdentityConflictError("IDENTITY_LISTING_SOURCE_INPUT_EXPIRED")
             before.check_in_memory()
             return reference
-        except (NativeParserConflict, NativeAssistedEntryConflict, NativeIntakeSourcePolicyConflict) as error:
+        except (NativeParserConflict, NativeAssistedEntryConflict, NativeIntakeSourcePolicyConflict,
+                JobFenceRejectedError) as error:
             raise IdentityConflictError(str(error)) from error
         except (NativeParserUnavailable, NativeAssistedEntryUnavailable,
                 NativeIntakeRequesterAuthorityUnavailable, NativeIntakeSourcePolicyUnavailable, PermissionError) as error:

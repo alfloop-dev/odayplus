@@ -24,6 +24,10 @@ from shared.domain.events import DomainEvent, validate_event
 from shared.infrastructure.persistence.assisted_listing_intake import (
     NativeIntakeSnapshotMetadataRepository,
 )
+from shared.infrastructure.persistence.identity_graph_sql import (
+    NATIVE_JOB_COLUMNS,
+    NATIVE_OUTBOX_PROOF_COLUMNS,
+)
 from shared.jobs.queue import JobDeliveryState, JobFenceRejectedError, JobStatus
 
 _BRANCHES = {
@@ -58,7 +62,11 @@ def _snapshot_payload(snapshot):
 def _read_event(owner, tenant, event_id, *, event_type, aggregate_type, aggregate_id, aggregate_version,
                 partition, correlation, causation, actor, before):
     before()
-    row = owner.graph._one("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, event_id))
+    row = owner.graph.native_one(
+        'SELECT tenant_id,event_id,event_type,event_version,aggregate_type,aggregate_id,aggregate_version,par'
+        'tition_key,correlation_id,occurred_at,retention_until,payload FROM workflow.outbox_events WHERE tena'
+        'nt_id=? AND event_id=?',
+        (tenant, event_id), columns=NATIVE_OUTBOX_PROOF_COLUMNS)
     event = _object(row["payload"])
     if (validate_event(event) or row["event_id"] != event_id or event.get("event_id") != event_id
             or row["event_type"] != event_type or event.get("event_type") != event_type
@@ -237,7 +245,13 @@ def committed_result(owner, delivery, tenant, generation):
         owner._admission_budget(bound)
 
     before()
-    job = owner.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?", (tenant, delivery.job_id))
+    job = owner.engine.native_query(
+        'SELECT job_id,tenant_id,job_type,aggregate_type,aggregate_id,status,checkpoint,attempt,max_attempts,'
+        'fence_token,heartbeat_at,lease_expires_at,next_attempt_at,timeout_at,cancellation_requested_at,paylo'
+        'ad,result,last_error,correlation_id,idempotency_key,version,created_at,updated_at,lease_owner,availa'
+        'ble_at,acknowledged_at,dead_lettered_at,cloud_task_name,attempt_token_sha256 FROM workflow.jobs WHER'
+        'E tenant_id=? AND job_id=?',
+        (tenant, delivery.job_id), columns=NATIVE_JOB_COLUMNS, one=True)
     if job is None or job["result"] is None:
         return None
     payload, result = _object(job["payload"]), _object(job["result"])
@@ -274,18 +288,21 @@ def committed_result(owner, delivery, tenant, generation):
         raise JobFenceRejectedError("NATIVE_RETRIEVAL_TERMINAL_RECEIPT_REJECTED")
     owner._receipt(job, payload, before)
     before()
-    transition = owner.engine.query_one("SELECT * FROM intake.intake_stage_transitions WHERE tenant_id=? AND transition_id=? "
-        "AND intake_id=? AND job_id=? AND from_state='RETRIEVING' AND to_state=? AND expected_version=? AND resulting_version=? "
-        "AND actor_subject_id IS NULL AND service_principal=? AND permission=? AND reason_code=? AND correlation_id=? AND causation_id=?",
+    transition = owner.engine.native_query(
+        'SELECT transition_id,source_snapshot_id FROM intake.intake_stage_transitions WHERE tenant_id=? AND t'
+        "ransition_id=? AND intake_id=? AND job_id=? AND from_state='RETRIEVING' AND to_state=? AND expected_"
+        'version=? AND resulting_version=? AND actor_subject_id IS NULL AND service_principal=? AND permissio'
+        'n=? AND reason_code=? AND correlation_id=? AND causation_id=?',
         (tenant, result["transition_id"], job["aggregate_id"], job["job_id"], target, payload["intake_version"], result["version"],
-         JOB_TYPE, permission, result["error_code"], job["correlation_id"], payload["event_id"]))
+         JOB_TYPE, permission, result["error_code"], job["correlation_id"], payload["event_id"]), columns=('transition_id', 'source_snapshot_id'), one=True)
     if transition is None:
         raise JobFenceRejectedError("NATIVE_RETRIEVAL_TERMINAL_TRANSITION_MISSING")
     before()
-    audit = owner.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
-        "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
-        "AND actor_role='SVC_RETRIEVAL' AND action=? AND result='SUCCEEDED' AND correlation_id=? AND causation_id=?",
-        (tenant, result["audit_event_id"], job["aggregate_id"], JOB_TYPE, action, job["correlation_id"], payload["event_id"]))
+    audit = owner.engine.native_query(
+        'SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? AND resource_type='
+        "'intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? AND actor_role='SVC_"
+        "RETRIEVAL' AND action=? AND result='SUCCEEDED' AND correlation_id=? AND causation_id=?",
+        (tenant, result["audit_event_id"], job["aggregate_id"], JOB_TYPE, action, job["correlation_id"], payload["event_id"]), columns=('after_value',), one=True)
     if audit is None or not audited_value_matches(_object(audit["after_value"]),
             {**result, "native_retrieval_provenance": owner._provenance(payload)}):
         raise JobFenceRejectedError("NATIVE_RETRIEVAL_TERMINAL_AUDIT_REJECTED")

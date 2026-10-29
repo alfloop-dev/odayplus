@@ -871,6 +871,17 @@ class NativeIntakeSnapshotMetadataRepository:
         self.graph = graph
         self.engine = graph.engine
 
+    _COLUMNS = (
+        "source_snapshot_id", "tenant_id", "intake_id", "source_id", "original_url", "canonical_url",
+        "raw_object_uri", "content_sha256", "media_type", "byte_length", "captured_at", "observed_at",
+        "capture_method", "retention_class", "encryption_key_ref", "object_generation", "residency_mode",
+        "version", "stored_at", "purge_after", "legal_hold",
+    )
+    _METADATA_COLUMNS = (
+        "source_snapshot_id", "intake_id", "source_id", "content_sha256", "media_type", "byte_length",
+        "captured_at", "observed_at", "stored_at", "capture_method", "version", "retention_class",
+        "purge_after", "legal_hold", "object_generation", "residency_mode",
+    )
     _METADATA = (
         "SELECT source_snapshot_id,intake_id,"
         "CASE WHEN octet_length(source_id)<=1024 THEN source_id END AS source_id,content_sha256,"
@@ -882,13 +893,15 @@ class NativeIntakeSnapshotMetadataRepository:
     )
 
     def referenced_object(self, tenant: str, uri: str, generation: int) -> dict | None:
-        return self.engine.query_one("SELECT source_snapshot_id FROM intake.source_snapshots "
+        return self.engine.native_query("SELECT source_snapshot_id FROM intake.source_snapshots "
             "WHERE tenant_id=? AND raw_object_uri=? AND (object_generation=? OR object_generation IS NULL) LIMIT 1",
-            (tenant, uri, generation))
+            (tenant, uri, generation), columns=("source_snapshot_id",), one=True)
 
     def find_content(self, tenant: str, intake: str, source: str, content_sha256: str) -> dict | None:
-        return self.engine.query_one("SELECT * FROM intake.source_snapshots WHERE tenant_id=? AND intake_id=? "
-            "AND source_id=? AND content_sha256=? FOR UPDATE", (tenant, intake, source, content_sha256))
+        return self.engine.native_query("SELECT " + ",".join(self._COLUMNS) +
+            " FROM intake.source_snapshots WHERE tenant_id=? AND intake_id=? "
+            "AND source_id=? AND content_sha256=? FOR UPDATE", (tenant, intake, source, content_sha256),
+            columns=self._COLUMNS, one=True)
 
     def insert(self, values: tuple[object, ...]) -> None:
         self.engine.execute("INSERT INTO intake.source_snapshots (source_snapshot_id,tenant_id,intake_id,source_id,"
@@ -897,13 +910,15 @@ class NativeIntakeSnapshotMetadataRepository:
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values)
 
     def required_for_intake(self, tenant: str, snapshot: str, intake: str) -> dict:
-        return self.graph._one("SELECT * FROM intake.source_snapshots WHERE tenant_id=? AND source_snapshot_id=? "
-            "AND intake_id=?", (tenant, snapshot, intake))
+        return self.graph.native_one("SELECT " + ",".join(self._COLUMNS) +
+            " FROM intake.source_snapshots WHERE tenant_id=? AND source_snapshot_id=? "
+            "AND intake_id=?", (tenant, snapshot, intake), columns=self._COLUMNS)
 
     def metadata_for_intake(self, tenant: str, intake: str, snapshot: str, *, before) -> dict | None:
         """Read only lifecycle metadata, with exact tenant/Intake membership."""
         before()
-        row = self.engine.query_one(self._METADATA + " AND source_snapshot_id=?", (tenant, intake, snapshot))
+        row = self.engine.native_query(self._METADATA + " AND source_snapshot_id=?", (tenant, intake, snapshot),
+            columns=self._METADATA_COLUMNS, one=True)
         before.check_in_memory()
         return row
 
@@ -917,6 +932,8 @@ class NativeIntakeSnapshotMetadataRepository:
             sql += f" AND (stored_at,0,source_snapshot_id){comparison}(?::timestamptz,?::int,?::uuid)"
             params.extend(position)
         before()
-        rows = self.engine.query(sql + f" ORDER BY stored_at {order},source_snapshot_id {order} LIMIT ?", (*params, limit))
+        rows = self.engine.native_query(sql + f" ORDER BY stored_at {order},source_snapshot_id {order} LIMIT ?",
+            (*params, limit), columns=self._METADATA_COLUMNS,
+            order_by=(("stored_at", backward), ("source_snapshot_id", backward)))
         before.check_in_memory()
         return rows

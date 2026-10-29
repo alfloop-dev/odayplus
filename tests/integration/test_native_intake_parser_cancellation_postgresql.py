@@ -334,3 +334,54 @@ def test_terminal_cancellation_rejects_tampered_receipt_audit_or_event(parser_ad
     with pytest.raises(NativeParserConflict):
         case[0].cancel_unaccepted(delivery)
     assert snapshot(case) == previous
+
+
+def test_lost_cancel_commit_bounds_first_recovery_read_and_keeps_original_error(parser_admission_case, monkeypatch):
+    from modules.listing.application.native_intake_parser_cancellation import (
+        NativeParserUnacceptedCancellation,
+    )
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+    case = parser_admission_case
+    owner, ids, database = case[:3]
+    _, delivery = claimed(case)
+    withdraw(case, "key", monkeypatch)
+    transaction, query, cancel = owner.graph.transaction, PostgresEngine.query_one, NativeParserUnacceptedCancellation._cancel
+    lost_error = OSError("Synthetic lost response after actual cancelled COMMIT")
+    lost, acquired, cancel_calls, committed = False, [], [], []
+
+    @contextmanager
+    def lose(tenant):
+        nonlocal lost
+        with transaction(tenant):
+            yield
+        if not lost:
+            lost = True
+            with database.connect() as connection:
+                assert connection.execute("SELECT status FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s",
+                    (ids["tenant"], delivery.job_id)).fetchone() == ("CANCELLED",)
+                connection.execute("UPDATE workflow.jobs SET last_error=jsonb_build_object('oversized',"
+                    "repeat('店',1500000)) WHERE tenant_id=%s AND job_id=%s", (ids["tenant"], delivery.job_id))
+            committed.append(snapshot(case))
+            raise lost_error
+
+    def observe(engine, statement, parameters=()):
+        row = query(engine, statement, parameters)
+        if engine is owner.engine and lost and " FROM workflow.jobs WHERE tenant_id=? AND job_id=?" in statement and tuple(parameters)[:2] == (ids["tenant"], delivery.job_id):
+            assert row is not None
+            acquired.append(all(row[name] is None for name in ("payload", "result", "last_error"))
+                and row.get("_odp_native_allowed") is False)
+        return row
+
+    def original_cancel(self, *args, **kwargs):
+        cancel_calls.append(True)
+        return cancel(self, *args, **kwargs)
+
+    monkeypatch.setattr(owner.graph, "transaction", lose)
+    monkeypatch.setattr(PostgresEngine, "query_one", observe)
+    monkeypatch.setattr(NativeParserUnacceptedCancellation, "_cancel", original_cancel)
+    with pytest.raises(OSError) as error:
+        owner.cancel_unaccepted(delivery)
+    assert error.value is lost_error and lost and cancel_calls == [True]
+    assert acquired == [True] and len(committed) == 1
+    assert snapshot(case) == committed[0]

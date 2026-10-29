@@ -14,9 +14,11 @@ from modules.listing.application.native_intake_job_runtime import native_intake_
 from modules.listing.application.native_intake_producer_reads import (
     _PHYSICAL_COLUMNS,
     _native_producer_noop,
+    _native_read_surface,
     _native_root_is_current,
     _ProducerReadView,
 )
+from shared.infrastructure.persistence.identity_graph_sql import NATIVE_JOB_COLUMNS
 from shared.infrastructure.persistence.job_queue import DurableJobQueue
 from shared.infrastructure.persistence.postgresql import PostgresEngine
 from shared.jobs.queue import JobFenceRejectedError
@@ -121,7 +123,7 @@ def _reject():
 
 
 def _native_context(graph):
-    if type(graph) is not _ProducerReadView:
+    if type(graph) is not _ProducerReadView or not _native_read_surface(graph):
         return None
     base, guards, cursor = graph._native_base, [], graph
     engine, queue = getattr(base, "engine", None), getattr(base, "queue", None)
@@ -129,7 +131,7 @@ def _native_context(graph):
             or queue._engine is not engine
             or getattr(queue.get, "__func__", None) is not _QUEUE_GET
             or queue._row_to_record is not _QUEUE_DECODE
-            or any(name in vars(engine) for name in ("query", "query_one", "execute"))
+            or any(name in vars(engine) for name in ("query", "query_one", "execute", "native_query"))
             or graph._connection is None):
         return None
     if not _native_root_is_current(engine, graph._connection, graph._root_transaction):
@@ -264,7 +266,10 @@ def native_terminal_evidence(graph, tenant, job_id):
         _reject()
     for before in guards:
         before.check_in_memory()
-    rows = graph._query(_TERMINAL_SQL, (tenant, job_id, job_id))
+    groups = (NATIVE_JOB_COLUMNS, *(tuple("terminal_" + group + "_" + name for name in names)
+        for group, (_, names, _) in _GROUPS.items()))
+    rows = graph._native_query(_TERMINAL_SQL, (tenant, job_id, job_id),
+        columns=tuple(name for group in groups for name in group), groups=groups)
     if len(rows) != 1:
         _reject()
     return _TerminalEvidence(context, rows[0], tenant, job_id)

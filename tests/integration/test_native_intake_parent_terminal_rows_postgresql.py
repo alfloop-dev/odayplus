@@ -15,6 +15,7 @@ from modules.listing.application.native_intake_parser_prerequisites import Nativ
 from modules.listing.application.native_intake_producer_reads import _PAIR_SQL, native_terminal_pair
 from modules.listing.application.native_intake_source_policy import NativeIntakeSourcePolicyOwner
 from modules.listing.application.native_intake_start import NativeIntakeStartOwner
+from shared.infrastructure.persistence.identity_graph_sql import NATIVE_JOB_COLUMNS
 from shared.infrastructure.persistence.postgresql import PostgresEngine
 from shared.jobs.queue import JobFenceRejectedError
 from tests.integration.test_native_intake_parser_admission_postgresql import authority as authority
@@ -47,6 +48,26 @@ from tests.integration.test_native_intake_parser_admission_postgresql import (
 )
 
 pytestmark = pytest.mark.requires_live_env
+
+
+# Observational key for the complete job projection, independent SELECT *
+# remains the equality oracle below. Never rewrite raw SQL in a trace.
+_WORKFLOW_READ_SQL = "SELECT " + ",".join(NATIVE_JOB_COLUMNS) + " FROM workflow.jobs WHERE tenant_id=? AND job_id=?"
+
+
+def _native_parameters(statement, parameters, fixed_select):
+    """Recognize an actual envelope of this exact original fixed SELECT.
+
+    Raw (statement, full parameters) stays in every observer. A bare fused
+    SELECT is an unbounded attempt, never an invisible non-match.
+    """
+    assert statement != fixed_select, "Native fixed SELECT executed without acquisition bounds"
+    if not statement.startswith("WITH facts AS MATERIALIZED (" + fixed_select + "),sized AS MATERIALIZED ("):
+        return None
+    assert all(name in statement for name in ("_odp_native_allowed", "_odp_native_bytes", "_odp_native_rows", "_odp_native_present"))
+    assert len(parameters) >= 2 and all(type(value) is int for value in parameters[-2:])
+    assert 0 < parameters[-1] == parameters[-2] <= 32 * 1024 * 1024
+    return tuple(parameters[:-2])
 
 
 def _view(case, budget):
@@ -82,8 +103,8 @@ def test_one_fresh_native_query_preserves_every_original_terminal_cell(parser_ad
     query = PostgresEngine.query
 
     def observe(engine, statement, params=()):
-        if engine is owner.engine and statement == _PAIR_SQL:
-            queries.append(params)
+        if engine is owner.engine and _native_parameters(statement, params, _PAIR_SQL) is not None:
+            queries.append(_native_parameters(statement, params, _PAIR_SQL))
         return query(engine, statement, params)
 
     monkeypatch.setattr(PostgresEngine, "query", observe)
@@ -222,7 +243,7 @@ def test_expired_original_budget_refuses_before_the_fact_query(parser_admission_
     query = PostgresEngine.query
 
     def observe(engine, statement, params=()):
-        if statement == _PAIR_SQL:
+        if _native_parameters(statement, params, _PAIR_SQL) is not None:
             queries.append(statement)
         return query(engine, statement, params)
 
@@ -266,7 +287,7 @@ def test_instance_engine_adapter_keeps_the_original_workflow_read(parser_admissi
 
     def changed_status(statement, params=()):
         value = query(statement, params)
-        if statement == "SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?" and params[1] == delivery.job_id:
+        if _native_parameters(statement, params, _WORKFLOW_READ_SQL) == (ids["tenant"], delivery.job_id):
             calls.append(statement)
             return {**value, "status": "RUNNING"}
         return value
@@ -288,7 +309,7 @@ def test_malformed_join_transport_is_not_collapsed_or_filled(parser_admission_ca
 
     def corrupt(engine, statement, params=()):
         rows = query(engine, statement, params)
-        if engine is not owner.engine or statement != _PAIR_SQL:
+        if engine is not owner.engine or _native_parameters(statement, params, _PAIR_SQL) is None:
             return rows
         if damage == "duplicate":
             return [*rows, dict(rows[0])]
@@ -303,7 +324,8 @@ def test_malformed_join_transport_is_not_collapsed_or_filled(parser_admission_ca
 
     original = persisted(case)
     monkeypatch.setattr(PostgresEngine, "query", corrupt)
-    with pytest.raises(JobFenceRejectedError, match="^NATIVE_PARENT_TERMINAL_ROWS_REJECTED$"):
+    code = {"duplicate": "NATIVE_ACQUISITION_LIMIT_OR_TRANSPORT_REJECTED", "missing_column": "NATIVE_ACQUISITION_TRANSPORT_REJECTED"}.get(damage, "NATIVE_PARENT_TERMINAL_ROWS_REJECTED")
+    with pytest.raises(JobFenceRejectedError, match="^" + code + "$"):
         with owner.graph.transaction(ids["tenant"]):
             native_terminal_pair(_view(case, NativeParserCommandBudget(owner.clock)), ids["tenant"], case[3]["job_id"])
     assert persisted(case) == original

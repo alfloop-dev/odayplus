@@ -35,6 +35,7 @@ class NativeSourcePolicyAdmissionBudget(NativeIntakeCommandBudget):
         # reset by a later metadata lookup or guard callback.
         self._monotonic_deadline = started + remaining
         self.check_in_memory()
+        self._activate_native_acquisition()
 
     def check_in_memory(self):
         try:

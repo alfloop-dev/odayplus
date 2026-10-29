@@ -33,6 +33,11 @@ _READ = (
     "FROM intake.parser_runs WHERE tenant_id=? AND parser_run_id=?"
 )
 _READS = (_READ, _READ + " FOR UPDATE")
+_READ_COLUMNS = (
+    "parser_run_id", "tenant_id", "intake_id", "source_snapshot_id", "parser_release_id", "status",
+    "started_at", "completed_at", "correlation_id", "version", "created_at", *_OUTPUT_COLUMNS,
+    "_native_output_within_bound",
+)
 _METADATA = (
     "SELECT r.parser_run_id,r.intake_id,r.source_snapshot_id,r.parser_release_id,r.status,"
     "r.started_at,r.completed_at,r.correlation_id,r.version,r.created_at,"
@@ -46,6 +51,11 @@ _METADATA = (
     "ON s.tenant_id=r.tenant_id AND s.intake_id=r.intake_id AND s.source_snapshot_id=r.source_snapshot_id "
     "LEFT JOIN intake.parser_releases p ON p.parser_release_id=r.parser_release_id "
     "WHERE r.tenant_id=? AND r.intake_id=?"
+)
+_METADATA_COLUMNS = (
+    "parser_run_id", "intake_id", "source_snapshot_id", "parser_release_id", "status", "started_at",
+    "completed_at", "correlation_id", "version", "created_at", "snapshot_intake_id", "source_id",
+    "release_source_id", "semantic_version", "package_name", "output_schema_version",
 )
 _EDGES = {
     "accept": ({"QUEUED"},
@@ -107,7 +117,7 @@ class CanonicalNativeParserRunRepository:
         if type(for_update) is not bool:
             _reject()
         before()
-        row = self.engine.query_one(_READS[int(for_update)], (tenant, run_id))
+        row = self.engine.native_query(_READS[int(for_update)], (tenant, run_id), columns=_READ_COLUMNS, one=True)
         before.check_in_memory()
         # None means genuinely absent. An oversized existing run must neither
         # become absent at admission nor masquerade as an empty-output run.
@@ -127,7 +137,8 @@ class CanonicalNativeParserRunRepository:
         tenant = self._root(tenant, before)
         intake_id, run_id = native_intake_uuid(intake_id), native_intake_uuid(run_id)
         before()
-        row = self.engine.query_one(_METADATA + " AND r.parser_run_id=?", (tenant, intake_id, run_id))
+        row = self.engine.native_query(_METADATA + " AND r.parser_run_id=?", (tenant, intake_id, run_id),
+            columns=_METADATA_COLUMNS, one=True)
         before.check_in_memory()
         return self._metadata_lineage(row)
 
@@ -143,7 +154,9 @@ class CanonicalNativeParserRunRepository:
             sql += f" AND (r.created_at,1,r.parser_run_id){comparison}(?::timestamptz,?::int,?::uuid)"
             params.extend(position)
         before()
-        rows = self.engine.query(sql + f" ORDER BY r.created_at {order},r.parser_run_id {order} LIMIT ?", (*params, limit))
+        rows = self.engine.native_query(sql + f" ORDER BY r.created_at {order},r.parser_run_id {order} LIMIT ?",
+            (*params, limit), columns=_METADATA_COLUMNS,
+            order_by=(("created_at", backward), ("parser_run_id", backward)))
         before.check_in_memory()
         return [self._metadata_lineage(row) for row in rows]
 

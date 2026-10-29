@@ -21,6 +21,10 @@ from modules.listing.application.native_intake_source_policy import (
 )
 from modules.listing.domain.identity_graph import IdentityConflictError
 from shared.domain.events import validate_event
+from shared.infrastructure.persistence.identity_graph_sql import (
+    NATIVE_JOB_COLUMNS,
+    NATIVE_OUTBOX_PROOF_COLUMNS,
+)
 from shared.jobs.queue import JobFenceRejectedError, JobStatus
 
 NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE = "native-intake-source-policy-recheck"
@@ -84,11 +88,13 @@ class NativeHistoricalRecheckProof:
                 or receipt["job_status_at_admission"] != "QUEUED" or _time(receipt["timeout_at"]) != _time(job["timeout_at"])):
             raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_ADMISSION_RECEIPT_CONFLICT")
         before()
-        audit = self.graph._one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
-            "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
-            "AND actor_role='SVC_INTAKE' AND action='intake.source_policy_recheck_admitted.v1' AND result='SUCCEEDED' "
-            "AND causation_id=? AND correlation_id=?", (job["tenant_id"], receipt["audit_event_id"], payload["intake_id"],
-                NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE, payload["event_id"], job["correlation_id"]))
+        audit = self.graph.native_one(
+            'SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? AND resource_type='
+            "'intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? AND actor_role='SVC_"
+            "INTAKE' AND action='intake.source_policy_recheck_admitted.v1' AND result='SUCCEEDED' AND causation_i"
+            'd=? AND correlation_id=?',
+            (job["tenant_id"], receipt["audit_event_id"], payload["intake_id"],
+                NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE, payload["event_id"], job["correlation_id"]), columns=('after_value',))
         snapshot = _object(audit["after_value"])
         if (any(snapshot.get(k) != v for k, v in receipt.items())
                 or snapshot.get("native_recheck_provenance") != self._origin._provenance(payload)):
@@ -98,7 +104,13 @@ class NativeHistoricalRecheckProof:
     def _committed_result(self, delivery, tenant, generation, *, before=_native_producer_noop):
         """Return the receipt and its origin producer after the full proof."""
         before()
-        job = self.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?", (tenant, delivery.job_id))
+        job = self.engine.native_query(
+            'SELECT job_id,tenant_id,job_type,aggregate_type,aggregate_id,status,checkpoint,attempt,max_attempts,'
+            'fence_token,heartbeat_at,lease_expires_at,next_attempt_at,timeout_at,cancellation_requested_at,paylo'
+            'ad,result,last_error,correlation_id,idempotency_key,version,created_at,updated_at,lease_owner,availa'
+            'ble_at,acknowledged_at,dead_lettered_at,cloud_task_name,attempt_token_sha256 FROM workflow.jobs WHER'
+            'E tenant_id=? AND job_id=?',
+            (tenant, delivery.job_id), columns=NATIVE_JOB_COLUMNS, one=True)
         if job is None or job["status"] != "SUCCEEDED":
             return None
         payload, result = _object(job["payload"]), _object(job["result"])
@@ -129,23 +141,28 @@ class NativeHistoricalRecheckProof:
             raise JobFenceRejectedError("NATIVE_RECHECK_TERMINAL_RECEIPT_CONFLICT")
         before()
         waiting_state = self._waiting_state(payload)
-        transition = self.engine.query_one("SELECT transition_id FROM intake.intake_stage_transitions "
-            "WHERE tenant_id=? AND transition_id=? AND intake_id=? AND job_id=? "
-            "AND from_state=? AND to_state='CHECKING_SOURCE_POLICY' "
-            "AND expected_version=? AND resulting_version=? AND actor_subject_id IS NULL AND service_principal=? "
-            "AND permission='intake.recheck_source_policy' AND reason_code='SOURCE_POLICY_RECHECK_VERIFIED' "
-            "AND idempotency_key=? AND causation_id=? AND correlation_id=?",
+        transition = self.engine.native_query(
+            'SELECT transition_id FROM intake.intake_stage_transitions WHERE tenant_id=? AND transition_id=? AND '
+            "intake_id=? AND job_id=? AND from_state=? AND to_state='CHECKING_SOURCE_POLICY' AND expected_version"
+            "=? AND resulting_version=? AND actor_subject_id IS NULL AND service_principal=? AND permission='inta"
+            "ke.recheck_source_policy' AND reason_code='SOURCE_POLICY_RECHECK_VERIFIED' AND idempotency_key=? AND"
+            ' causation_id=? AND correlation_id=?',
             (tenant, result["transition_id"], payload["intake_id"], job["job_id"], waiting_state, payload["expected_intake_version"],
-             result["version"], NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE, payload["event_id"], payload["event_id"], job["correlation_id"]))
+             result["version"], NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE, payload["event_id"], payload["event_id"], job["correlation_id"]), columns=('transition_id',), one=True)
         before()
-        audit = self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
-            "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
-            "AND actor_role='SVC_INTAKE' AND action='intake.source_policy_recheck_completed.v1' AND result='SUCCEEDED' "
-            "AND causation_id=? AND correlation_id=?", (tenant, result["audit_event_id"], payload["intake_id"],
-                NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE, payload["event_id"], job["correlation_id"]))
+        audit = self.engine.native_query(
+            'SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? AND resource_type='
+            "'intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? AND actor_role='SVC_"
+            "INTAKE' AND action='intake.source_policy_recheck_completed.v1' AND result='SUCCEEDED' AND causation_"
+            'id=? AND correlation_id=?',
+            (tenant, result["audit_event_id"], payload["intake_id"],
+                NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE, payload["event_id"], job["correlation_id"]), columns=('after_value',), one=True)
         before()
-        row = self.engine.query_one("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?",
-                                    (tenant, result["outbox_event_id"]))
+        row = self.engine.native_query(
+            'SELECT tenant_id,event_id,event_type,event_version,aggregate_type,aggregate_id,aggregate_version,par'
+            'tition_key,correlation_id,occurred_at,retention_until,payload FROM workflow.outbox_events WHERE tena'
+            'nt_id=? AND event_id=?',
+            (tenant, result["outbox_event_id"]), columns=NATIVE_OUTBOX_PROOF_COLUMNS, one=True)
         if not transition or not audit or not row:
             raise JobFenceRejectedError("NATIVE_RECHECK_TERMINAL_EVIDENCE_MISSING")
         snapshot, event = _object(audit["after_value"]), _object(row["payload"])
@@ -174,19 +191,26 @@ class NativeHistoricalRecheckProof:
     def source_producer(self, tenant, event_id, before):
         """Constant-depth evidence for a child policy job, without live grants."""
         before()
-        row = self.graph._one("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, _uuid(event_id)))
+        row = self.graph.native_one(
+            'SELECT tenant_id,event_id,event_type,event_version,aggregate_type,aggregate_id,aggregate_version,par'
+            'tition_key,correlation_id,occurred_at,retention_until,payload FROM workflow.outbox_events WHERE tena'
+            'nt_id=? AND event_id=?',
+            (tenant, _uuid(event_id)), columns=NATIVE_OUTBOX_PROOF_COLUMNS)
         event = _object(row["payload"])
         data = _object(event.get("payload"))
         before()
-        transition = self.graph._one("SELECT job_id FROM intake.intake_stage_transitions WHERE tenant_id=? "
-            "AND transition_id=? AND intake_id=?", (tenant, _uuid(data.get("transition_id")), row["aggregate_id"]))
+        transition = self.graph.native_one(
+            'SELECT job_id FROM intake.intake_stage_transitions WHERE tenant_id=? AND transition_id=? AND intake_'
+            'id=?',
+            (tenant, _uuid(data.get("transition_id")), row["aggregate_id"]), columns=('job_id',))
         before()
         delivery = self.queue.get(transition["job_id"])
         if delivery is None:
             raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_PRODUCER_DELIVERY_MISSING")
         before()
-        job = self.graph._one("SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
-                              (tenant, transition["job_id"]))
+        job = self.graph.native_one(
+            'SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?',
+            (tenant, transition["job_id"]), columns=('payload',))
         payload = _object(job["payload"])
         generation = payload.get("delivery_generation")
         if type(generation) is not int or generation < 1:

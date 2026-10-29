@@ -20,20 +20,32 @@ from modules.listing.domain.identity_graph import (
     IdentityNotFoundError,
 )
 from shared.domain.events import DomainEvent, validate_event
+from shared.infrastructure.persistence.postgresql import NATIVE_ACQUISITION_ROW_MAX_BYTES
 from shared.jobs.queue import JobFenceRejectedError, JobRecord, JobStatus
 
-# An acquisition resource ceiling for the two native full-history job reads,
-# not a workflow schema limit, grant, proof, or whole-root/driver-RSS budget.
-# Measure PostgreSQL's UTF-8 row JSON text, including required job metadata.
-NATIVE_HISTORY_JOB_MAX_BYTES = 4 * 1024 * 1024
+NATIVE_HISTORY_JOB_MAX_BYTES = NATIVE_ACQUISITION_ROW_MAX_BYTES
+
+# The existing canonical workflow schema. These original cells are transported
+# without JSON round-tripping their SQL types. Publisher-only outbox state is
+# deliberately absent from its proof projection below.
+NATIVE_JOB_COLUMNS = (
+    "job_id", "tenant_id", "job_type", "aggregate_type", "aggregate_id", "status", "checkpoint",
+    "attempt", "max_attempts", "fence_token", "heartbeat_at", "lease_expires_at", "next_attempt_at",
+    "timeout_at", "cancellation_requested_at", "payload", "result", "last_error", "correlation_id",
+    "idempotency_key", "version", "created_at", "updated_at", "lease_owner", "available_at",
+    "acknowledged_at", "dead_lettered_at", "cloud_task_name", "attempt_token_sha256",
+)
+NATIVE_OUTBOX_PROOF_COLUMNS = (
+    "tenant_id", "event_id", "event_type", "event_version", "aggregate_type", "aggregate_id",
+    "aggregate_version", "partition_key", "correlation_id", "occurred_at", "retention_until", "payload",
+)
+NATIVE_AUDIT_PROOF_COLUMNS = (
+    "tenant_id", "audit_event_id", "resource_type", "resource_id", "actor_subject_id",
+    "service_principal", "actor_role", "action", "result", "causation_id", "correlation_id",
+    "after_value", "before_value", "occurred_at", "reason",
+)
 _NATIVE_HISTORY_JOB_READS = tuple(
-    "SELECT (bounded.job_row).*,bounded._native_job_within_bound FROM ("
-    "WITH selected AS MATERIALIZED (SELECT j AS job_row,"
-    "octet_length(row_to_json(j)::text) AS proof_bytes FROM workflow.jobs j "
-    "WHERE tenant_id=? AND job_id=?" + lock + ") "
-    "SELECT CASE WHEN proof_bytes<=" + str(NATIVE_HISTORY_JOB_MAX_BYTES) +
-    " THEN job_row END AS job_row,proof_bytes<=" + str(NATIVE_HISTORY_JOB_MAX_BYTES) +
-    " AS _native_job_within_bound FROM selected) bounded"
+    "SELECT " + ",".join(NATIVE_JOB_COLUMNS) + " FROM workflow.jobs WHERE tenant_id=? AND job_id=?" + lock
     for lock in ("", " FOR SHARE")
 )
 
@@ -44,6 +56,15 @@ def _json(value: Any) -> str:
 
 def _time(value: Any) -> datetime:
     return value if isinstance(value, datetime) else datetime.fromisoformat(value)
+
+
+def _decoded_graph_row(row):
+    if row is None:
+        raise IdentityNotFoundError("CANONICAL_IDENTITY_RESOURCE_NOT_FOUND")
+    for name in ("before_graph", "after_graph", "payload", "result"):
+        if isinstance(row.get(name), str):
+            row[name] = json.loads(row[name])
+    return row
 
 
 class CanonicalIdentityGraphRepository:
@@ -89,14 +110,19 @@ class CanonicalIdentityGraphRepository:
             self.engine.query_one("SELECT set_config('app.tenant_id', ?, true)", (tenant_id,))
             yield
 
-    def _one(self, sql: str, params: tuple) -> dict:
-        row = self.engine.query_one(sql, params)
-        if row is None:
-            raise IdentityNotFoundError("CANONICAL_IDENTITY_RESOURCE_NOT_FOUND")
-        for name in ("before_graph", "after_graph", "payload", "result"):
-            if isinstance(row.get(name), str):
-                row[name] = json.loads(row[name])
-        return row
+    def _one(self, sql: str, params: tuple, *, native_columns=None, native_groups=None) -> dict:
+        row = (self.engine.query_one(sql, params) if native_columns is None else
+            self.engine.native_query(sql, params, columns=native_columns,
+                groups=native_groups, one=True))
+        return _decoded_graph_row(row)
+
+    def native_one(self, sql, params, *, columns, groups=None):
+        # Settle the actual acquisition before this original graph decoder.
+        # Optional/raw engine callers never pass through this normalization.
+        # The original graph read remains the adapter/refusal boundary. Known
+        # adapters forward the explicit projection; an incompatible adapter
+        # fails closed rather than being bypassed with a base-engine read.
+        return self._one(sql, params, native_columns=columns, native_groups=groups)
 
     def native_history_job(self, tenant: str, job_id: str, *, required: bool = False,
                            for_share: bool = False) -> dict | None:
@@ -108,19 +134,17 @@ class CanonicalIdentityGraphRepository:
         engine values and its original single JSON decode. Combining these
         decode boundaries could accept an extra JSONB-string wrapper. Both
         owners still perform their original complete proofs.
-        A real oversized row returns only SQL NULL cells and a false private
-        guard, then raises the existing opaque-evidence error family. It must
-        never appear absent or become an empty job. The named-table composite
-        retains column types, and FOR SHARE still locks the original job even
-        when its evidence is too large. Generic graph/queue reads are unchanged.
+        The common native acquisition settles its original-root allowance
+        before either decoder. SQL retains the original types and FOR SHARE
+        lock, including a refused existing row. Generic graph reads keep their
+        original acquisition and decoder contracts.
         """
         if type(required) is not bool or type(for_share) is not bool:
             raise ValueError("NATIVE_HISTORY_JOB_READ_MODE_REQUIRED")
-        reader = self._one if required else self.engine.query_one
-        row = reader(_NATIVE_HISTORY_JOB_READS[int(for_share)], (tenant, job_id))
-        if row is not None and row.pop("_native_job_within_bound", None) is not True:
-            raise JobFenceRejectedError("NATIVE_HISTORY_JOB_ACQUISITION_LIMIT") from None
-        return row
+        sql, params = _NATIVE_HISTORY_JOB_READS[int(for_share)], (tenant, job_id)
+        if required:
+            return self.native_one(sql, params, columns=NATIVE_JOB_COLUMNS)
+        return self.engine.native_query(sql, params, columns=NATIVE_JOB_COLUMNS, one=True)
 
     def _case(self, tenant: str, case_id: str, *, for_update: bool = True) -> tuple[dict, dict]:
         case = self._one(

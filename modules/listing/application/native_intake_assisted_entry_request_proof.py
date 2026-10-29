@@ -27,6 +27,7 @@ from modules.listing.application.native_intake_job_runtime import native_intake_
 from modules.listing.application.native_intake_retrieval import audited_value_matches
 from modules.listing.application.native_intake_retrieval_policy import canonical_sha256
 from shared.domain.events import validate_event
+from shared.infrastructure.persistence.identity_graph_sql import NATIVE_OUTBOX_PROOF_COLUMNS
 
 REQUEST_EVENT = "intake.assisted_entry_requested"
 REQUEST_AGGREGATE = "intake_assisted_entry"
@@ -106,9 +107,12 @@ class NativeAssistedEntryRequestProof:
             if self.engine.query_one("SELECT current_setting('app.tenant_id',true) AS tenant")["tenant"] != tenant:
                 _reject()
             before()
-            row = self.graph._one("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=? "
-                "AND aggregate_type='intake_assisted_entry' AND payload->'payload'->>'intake_id'=?",
-                (tenant, request_id, intake_id))
+            row = self.graph.native_one(
+                'SELECT tenant_id,event_id,event_type,event_version,aggregate_type,aggregate_id,aggregate_version,par'
+                'tition_key,correlation_id,occurred_at,retention_until,payload FROM workflow.outbox_events WHERE tena'
+                "nt_id=? AND event_id=? AND aggregate_type='intake_assisted_entry' AND payload->'payload'->>'intake_i"
+                "d'=?",
+                (tenant, request_id, intake_id), columns=NATIVE_OUTBOX_PROOF_COLUMNS)
         else:
             _history_rows.root(tenant)
             row = _history_rows.event("request", tenant_id=tenant, event_id=request_id,
@@ -144,12 +148,13 @@ class NativeAssistedEntryRequestProof:
             native_intake_uuid(value)
         if _history_rows is None:
             before()
-            audit = self.engine.query_one("SELECT after_value,reason,actor_role FROM audit.audit_events "
-                "WHERE tenant_id=? AND audit_event_id=? AND resource_type='intake' AND resource_id=? "
-                "AND action='intake.assisted_entry_requested.v1' AND result='SUCCEEDED' "
-                "AND actor_subject_id=? AND service_principal IS NULL AND correlation_id=? AND causation_id=?",
+            audit = self.engine.native_query(
+                'SELECT after_value,reason,actor_role FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? '
+                "AND resource_type='intake' AND resource_id=? AND action='intake.assisted_entry_requested.v1' AND res"
+                "ult='SUCCEEDED' AND actor_subject_id=? AND service_principal IS NULL AND correlation_id=? AND causat"
+                'ion_id=?',
                 (tenant, request_audit_id(request_id), intake_id, data["requested_by"], row["correlation_id"],
-                 data["source_policy_event_id"]))
+                 data["source_policy_event_id"]), columns=('after_value', 'reason', 'actor_role'), one=True)
         else:
             audit = _history_rows.audit("request", tenant_id=tenant, audit_event_id=request_audit_id(request_id),
                 resource_type="intake", resource_id=intake_id, action=REQUEST_ACTION, result="SUCCEEDED",
@@ -182,12 +187,14 @@ class NativeAssistedEntryRequestProof:
         event, audit, parent = self._envelope_with_parent(tenant, intake_id, request_id, before=before)
         data = event["payload"]
         before()
-        rows = self.engine.query("SELECT correction_id,tenant_id,intake_id,listing_id,field_path,field_classification,"
-            "parsed_value,normalized_value,before_effective_value,corrected_value::text AS corrected_json,"
-            "after_effective_value::text AS after_json,reason,proposed_by,reviewed_by,status,identity_affecting,"
-            "source_snapshot_id,parser_run_id,supersedes_correction_id,reversal_of_correction_id,version,created_at,reviewed_at "
-            "FROM intake.human_corrections WHERE tenant_id=? AND intake_id=? AND correction_id=ANY(?::uuid[]) "
-            "ORDER BY correction_id FOR SHARE", (tenant, intake_id, data["correction_ids"]))
+        rows = self.engine.native_query(
+            'SELECT correction_id,tenant_id,intake_id,listing_id,field_path,field_classification,parsed_value,nor'
+            'malized_value,before_effective_value,corrected_value::text AS corrected_json,after_effective_value::'
+            'text AS after_json,reason,proposed_by,reviewed_by,status,identity_affecting,source_snapshot_id,parse'
+            'r_run_id,supersedes_correction_id,reversal_of_correction_id,version,created_at,reviewed_at FROM inta'
+            'ke.human_corrections WHERE tenant_id=? AND intake_id=? AND correction_id=ANY(?::uuid[]) ORDER BY cor'
+            'rection_id FOR SHARE',
+            (tenant, intake_id, data["correction_ids"]), columns=('correction_id', 'tenant_id', 'intake_id', 'listing_id', 'field_path', 'field_classification', 'parsed_value', 'normalized_value', 'before_effective_value', 'corrected_json', 'after_json', 'reason', 'proposed_by', 'reviewed_by', 'status', 'identity_affecting', 'source_snapshot_id', 'parser_run_id', 'supersedes_correction_id', 'reversal_of_correction_id', 'version', 'created_at', 'reviewed_at'), order_by=(('correction_id', False),))
         if (len(rows) != len(data["correction_ids"])
                 or {r["correction_id"] for r in rows} != set(data["correction_ids"])
                 or len({r["field_path"] for r in rows}) != len(rows)):

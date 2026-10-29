@@ -8,6 +8,7 @@ No deadline failure is retried, and no runtime/SLO qualification is claimed.
 import pytest
 
 from modules.listing.application.native_intake_identity import NativeIntakeIdentityOwner
+from modules.listing.application.native_intake_parser_policy import NativeParserConflict
 from modules.listing.application.native_intake_parser_prerequisites import NativeParserCommandBudget
 from modules.listing.application.native_intake_producer_reads import _PAIR_SQL
 from modules.listing.application.native_intake_source_policy import NativeIntakeSourcePolicyOwner
@@ -16,7 +17,11 @@ from modules.listing.application.native_intake_terminal_evidence import (
     native_terminal_evidence,
 )
 from shared.infrastructure.persistence.postgresql import PostgresEngine
-from tests.integration.test_native_intake_parent_terminal_rows_postgresql import _source_delivery
+from tests.integration.test_native_intake_parent_terminal_rows_postgresql import (
+    _WORKFLOW_READ_SQL,
+    _native_parameters,
+    _source_delivery,
+)
 from tests.integration.test_native_intake_parser_admission_postgresql import authority as authority
 from tests.integration.test_native_intake_parser_admission_postgresql import (
     canonical_graph as canonical_graph,
@@ -113,8 +118,9 @@ def _legacy_result(case, monkeypatch, role, delivery):
             calls = _observe(case, patch)
             result = _OWNERS[role](owner.graph)._committed_result(delivery, ids["tenant"], 1)
     assert result is not None
-    assert (_WORKFLOW_SQL, (ids["tenant"], delivery.job_id)) in calls
-    assert not any(statement == _TERMINAL_SQL for statement, _ in calls)
+    assert any(_native_parameters(statement, params, _WORKFLOW_READ_SQL) == (ids["tenant"], delivery.job_id)
+        for statement, params in calls)
+    assert not any(_native_parameters(statement, params, _TERMINAL_SQL) is not None for statement, params in calls)
     return result
 
 
@@ -124,7 +130,7 @@ def _assert_original_bounds(calls, budget):
     assert calls and len(calls) % 2 == 0
     for guard, read in zip(calls[::2], calls[1::2], strict=True):
         assert guard == (_BUDGET_SQL, (budget.deadline.isoformat(),))
-        assert read[0].startswith("SELECT ")
+        assert read[0].startswith("WITH facts AS MATERIALIZED (SELECT ")
         assert read[0] != "SELECT clock_timestamp() AS now"
 
 
@@ -152,11 +158,12 @@ def test_each_linked_descendant_batches_once_under_the_original_root_budget(
     assert current == legacy
     # Exact real parameters expose missing descendant batches, extra batches,
     # and replacement IDs; checking only the top-level job misses this defect.
-    assert [params for statement, params in calls if statement == _TERMINAL_SQL] == [
+    assert [base for statement, params in calls if (base := _native_parameters(statement, params, _TERMINAL_SQL)) is not None] == [
         (ids["tenant"], deliveries[name].job_id, deliveries[name].job_id)
         for name in _DESCENDANTS[role]
     ]
-    assert not any(statement in {_PAIR_SQL, _WORKFLOW_SQL} for statement, _ in calls)
+    assert not any((_native_parameters(statement, params, _PAIR_SQL) is not None or
+        _native_parameters(statement, params, _WORKFLOW_READ_SQL) is not None) for statement, params in calls)
     _assert_original_bounds(calls, budget)
 
 
@@ -189,8 +196,8 @@ def test_unknown_callback_completes_before_every_actual_legacy_producer_read(
         assert (budget.deadline, budget._monotonic_deadline) == deadline
     assert _persisted(case) == original
     assert current == legacy
-    assert not any(statement == _TERMINAL_SQL for statement, _ in calls)
-    assert [params for statement, params in calls if statement == _PAIR_SQL] == [
+    assert not any(_native_parameters(statement, params, _TERMINAL_SQL) is not None for statement, params in calls)
+    assert [base for statement, params in calls if (base := _native_parameters(statement, params, _PAIR_SQL)) is not None] == [
         (ids["tenant"], deliveries[name].job_id, deliveries[name].job_id)
         for name in _DESCENDANTS[role]
     ]
@@ -234,3 +241,46 @@ def test_explicit_falsey_event_callback_escapes_unchanged_before_any_producer_sq
             assert invoked == ["called"]
             assert calls == []
     assert _persisted(case) == original
+
+
+@pytest.mark.parametrize("role", ["source", "identity"])
+def test_unknown_callback_admission_audit_is_bounded_before_driver_materialization(
+        parser_admission_case, monkeypatch, role):
+    from modules.listing.application.native_intake_identity import NativeIntakeIdentityConflict
+    from modules.listing.application.native_intake_source_policy import (
+        NativeIntakeSourcePolicyConflict,
+    )
+    from shared.jobs.queue import JobFenceRejectedError
+
+    case = parser_admission_case
+    owner, ids = case[:2]
+    delivery = _source_delivery(case, role)
+    with owner.graph.transaction(ids["tenant"]):
+        payload = owner.graph._one("SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
+            (ids["tenant"], delivery.job_id))["payload"]
+        audit_id = payload["admission_receipt"]["audit_event_id"]
+        owner.engine.execute("UPDATE audit.audit_events SET after_value=jsonb_build_object('oversized',"
+            "repeat('店',1500000)) WHERE tenant_id=? AND audit_event_id=?", (ids["tenant"], audit_id))
+    previous, query_one, acquired = _persisted(case), PostgresEngine.query_one, []
+
+    def observe(engine, statement, parameters=()):
+        row = query_one(engine, statement, parameters)
+        if engine is owner.engine and "SELECT after_value FROM audit.audit_events" in statement and audit_id in parameters:
+            assert row is not None
+            acquired.append(row["after_value"] is None)
+        return row
+
+    monkeypatch.setattr(PostgresEngine, "query_one", observe)
+    with owner.graph.transaction(ids["tenant"]):
+        budget = NativeParserCommandBudget(owner.clock)
+        bounds = budget.deadline, budget._monotonic_deadline
+
+        def original_unknown_before():
+            budget()
+
+        view = NativeIntakeSourcePolicyOwner(owner.graph)._producer_reads(original_unknown_before)
+        with pytest.raises((JobFenceRejectedError, NativeIntakeIdentityConflict, NativeIntakeSourcePolicyConflict, NativeParserConflict)):
+            _OWNERS[role](view)._committed_result(delivery, ids["tenant"], 1)
+        assert (budget.deadline, budget._monotonic_deadline) == bounds
+    assert acquired == [True]
+    assert _persisted(case) == previous

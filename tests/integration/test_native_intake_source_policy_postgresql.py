@@ -674,17 +674,26 @@ def test_nested_producer_reads_recompute_remaining_admission_budget(source_polic
     import time
     from concurrent.futures import ThreadPoolExecutor
 
+    from tests.integration.test_native_intake_parent_terminal_rows_postgresql import (
+        _native_parameters,
+    )
+
     identity, owner = source_policy_case
     graph, ids, _, db = identity[0][0]
     _, producer, _ = prepare(source_policy_case, admit=False)
     before = phase_snapshot(identity)
-    original, slow, caps = graph.engine.query_one, [True], []
+    original, slow, caps, observed = graph.engine.query_one, [True], [], []
 
     def query(sql, params=()):
-        if sql.startswith("SELECT payload FROM workflow.jobs WHERE") and slow[0]:
+        prefix = "WITH facts AS MATERIALIZED ("
+        fixed = sql[len(prefix):].split("),sized AS MATERIALIZED (", 1)[0] if sql.startswith(prefix) else sql
+        if fixed.startswith(("SELECT payload FROM workflow.jobs WHERE", "SELECT after_value FROM audit.audit_events")):
+            assert _native_parameters(sql, params, fixed) is not None
+            observed.append(sql)
+        if fixed.startswith("SELECT payload FROM workflow.jobs WHERE") and slow[0]:
             slow[0] = False
             original("SELECT pg_sleep(0.4)")
-        if sql.startswith("SELECT after_value FROM audit.audit_events"):
+        if fixed.startswith("SELECT after_value FROM audit.audit_events"):
             cap = original("SHOW statement_timeout")["statement_timeout"]
             caps.append(float(cap[:-2]) if cap.endswith("ms") else float(cap[:-1])*1000)
         return original(sql, params)
@@ -713,6 +722,7 @@ def test_nested_producer_reads_recompute_remaining_admission_budget(source_polic
     record_property("actual_postgresql_backend_pids", f"{blocker_pid},{worker_pid}")
     record_property("remaining_admission_statement_timeout_ms", caps[0])
     record_property("elapsed_admission_seconds", elapsed)
+    record_property("actual_bounded_query_sql", json.dumps(observed))
 
 
 def test_source_lock_wait_uses_the_remaining_command_deadline(source_policy_case, monkeypatch, record_property):

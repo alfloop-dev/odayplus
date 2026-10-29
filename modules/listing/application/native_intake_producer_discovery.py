@@ -14,25 +14,27 @@ from copy import deepcopy
 from modules.listing.application.native_intake_job_runtime import native_intake_uuid
 from modules.listing.application.native_intake_producer_reads import (
     _PHYSICAL_COLUMNS,
+    _native_read_surface,
     _native_root_is_current,
     _ProducerReadView,
 )
 from modules.listing.application.native_intake_terminal_evidence import _native_context
 from modules.listing.domain.identity_graph import IdentityNotFoundError
-from shared.infrastructure.persistence.identity_graph_sql import CanonicalIdentityGraphRepository
 from shared.jobs.queue import JobFenceRejectedError
 
-_GRAPH_ONE = CanonicalIdentityGraphRepository._one
-_VIEW_METHODS = {name: getattr(_ProducerReadView, name)
-                 for name in ("_read", "_query", "_query_one", "_one", "_get")}
 _TRANSITION = ("tenant_id", "transition_id", "intake_id", "job_id")
 _BUSINESS = ("tenant_id", "job_id", "payload")
 _EVENT_REQUIRED = {
     "tenant_id", "event_id", "event_type", "event_version", "aggregate_type",
     "aggregate_id", "aggregate_version", "correlation_id", "partition_key", "payload",
 }
+_EVENT_COLUMNS = (
+    "tenant_id", "event_id", "event_type", "event_version", "aggregate_type",
+    "aggregate_id", "aggregate_version", "correlation_id", "partition_key", "payload",
+)
 _DISCOVERY_SQL = (
-    "SELECT e.*,t.tenant_id AS discovery_transition_tenant_id,"
+    "SELECT " + ",".join("e." + name for name in _EVENT_COLUMNS) + ","
+    "t.tenant_id AS discovery_transition_tenant_id,"
     "t.transition_id AS discovery_transition_transition_id,t.intake_id AS discovery_transition_intake_id,"
     "t.job_id AS discovery_transition_job_id,w.tenant_id AS discovery_business_tenant_id,"
     "w.job_id AS discovery_business_job_id,w.payload AS discovery_business_payload,"
@@ -60,24 +62,6 @@ _DISCOVERY_SQL = (
 
 def _reject():
     raise JobFenceRejectedError("NATIVE_PARENT_DISCOVERY_REJECTED") from None
-
-
-def _native_read_surface(graph):
-    cursor = graph
-    while type(cursor) is _ProducerReadView:
-        if any(getattr(getattr(cursor, name), "__func__", None) is not original
-               for name, original in _VIEW_METHODS.items()):
-            return False
-        if (getattr(cursor.engine.query, "__self__", None) is not cursor
-                or getattr(cursor.engine.query, "__func__", None) is not _VIEW_METHODS["_query"]
-                or getattr(cursor.engine.query_one, "__self__", None) is not cursor
-                or getattr(cursor.engine.query_one, "__func__", None) is not _VIEW_METHODS["_query_one"]
-                or getattr(cursor.queue.get, "__self__", None) is not cursor
-                or getattr(cursor.queue.get, "__func__", None) is not _VIEW_METHODS["_get"]):
-            return False
-        cursor = cursor._graph
-    return (type(cursor) is CanonicalIdentityGraphRepository
-            and getattr(cursor._one, "__func__", None) is _GRAPH_ONE)
 
 
 class _ProducerDiscovery:
@@ -160,7 +144,10 @@ def native_producer_discovery(graph, tenant, event_id):
     tenant, event_id = native_intake_uuid(tenant), native_intake_uuid(event_id)
     for before in context[3]:
         before.check_in_memory()
-    rows = graph._query(_DISCOVERY_SQL, (tenant, event_id))
+    groups = (_EVENT_COLUMNS, *(tuple("discovery_" + group + "_" + name for name in names)
+        for group, names in (("transition", _TRANSITION), ("business", _BUSINESS), ("physical", _PHYSICAL_COLUMNS))))
+    rows = graph._native_query(_DISCOVERY_SQL, (tenant, event_id),
+        columns=tuple(name for group in groups for name in group), groups=groups)
     if len(rows) != 1:
         _reject()
     return _ProducerDiscovery(context, rows[0], tenant, event_id)

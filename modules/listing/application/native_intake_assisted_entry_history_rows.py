@@ -21,6 +21,10 @@ from modules.listing.application.native_intake_producer_reads import (
 )
 from modules.listing.application.native_intake_retrieval_policy import canonical_sha256
 from modules.listing.application.native_intake_terminal_evidence import _native_context
+from shared.infrastructure.persistence.identity_graph_sql import (
+    NATIVE_AUDIT_PROOF_COLUMNS,
+    NATIVE_OUTBOX_PROOF_COLUMNS,
+)
 from shared.jobs.queue import JobFenceRejectedError
 
 _SETTINGS_PHYSICAL_SQL = (
@@ -98,8 +102,11 @@ class _SuccessHistoryRows:
             # The existing settings acquisition also reads all real physical
             # cells. Two later reads inside this one complete history proof
             # consume these facts; every subsequent invocation reloads them.
-            row = engine.query_one(_SETTINGS_PHYSICAL_SQL,
-                (native_intake_uuid(job["job_id"]), self.tenant))
+            physical_columns = tuple("history_physical_" + name for name in _PHYSICAL_COLUMNS)
+            row = engine.native_query(_SETTINGS_PHYSICAL_SQL,
+                (native_intake_uuid(job["job_id"]), self.tenant),
+                columns=("isolation", "tenant", *physical_columns),
+                groups=(("isolation", "tenant"), physical_columns), one=True)
             if (row is None or not {"isolation", "tenant"} <= row.keys()
                     or not {"history_physical_" + name for name in _PHYSICAL_COLUMNS} <= row.keys()):
                 _reject()
@@ -113,10 +120,12 @@ class _SuccessHistoryRows:
         self._check()
         if self.settings != {"isolation": "serializable", "tenant": self.tenant}:
             _reject()
-        self.events = self._load("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=ANY(?::uuid[])",
-            "event_id", self.event_ids)
-        self.audits = self._load("SELECT * FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=ANY(?::uuid[])",
-            "audit_event_id", self.audit_ids)
+        self.events = self._load("SELECT " + ",".join(NATIVE_OUTBOX_PROOF_COLUMNS) +
+            " FROM workflow.outbox_events WHERE tenant_id=? AND event_id=ANY(?::uuid[])",
+            "event_id", self.event_ids, NATIVE_OUTBOX_PROOF_COLUMNS)
+        self.audits = self._load("SELECT " + ",".join(NATIVE_AUDIT_PROOF_COLUMNS) +
+            " FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=ANY(?::uuid[])",
+            "audit_event_id", self.audit_ids, NATIVE_AUDIT_PROOF_COLUMNS)
         self.consumed = set()
         self.failed = set()
 
@@ -138,10 +147,10 @@ class _SuccessHistoryRows:
         self._check()
         return result
 
-    def _load(self, statement, id_column, roles):
+    def _load(self, statement, id_column, roles, columns):
         # Only the two fixed statements above; IDs remain parameters.
         self.before()
-        rows = self.engine.query(statement, (self.tenant, list(roles.values())))
+        rows = self.engine.native_query(statement, (self.tenant, list(roles.values())), columns=columns)
         self._check()
         indexed = {}
         for row in rows:

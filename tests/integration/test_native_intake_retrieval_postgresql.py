@@ -699,3 +699,91 @@ def test_fixed_child_prohibited_http_errors_quarantine_without_rewriting_source_
     assert intake["source_policy_state"] == "APPROVED_RETRIEVAL"
     assert io.calls == ["gcs_bucket", "http_hop"] and not io.objects
     assert owner.execute(physical) == job["result"]
+
+
+def _actual_retrieval_parent(retrieval_case):
+    parent, _ = admitted(retrieval_case)
+    source_case, owner, _ = retrieval_case
+    start = source_case[0][0]
+    graph, ids = start[0][:2]
+    with graph.transaction(ids["tenant"]):
+        event = graph._one("SELECT payload FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?",
+            (ids["tenant"], parent["outbox_event_id"]))["payload"]
+        transition = event["payload"]["transition_id"]
+        job_id = graph._one("SELECT job_id FROM intake.intake_stage_transitions WHERE tenant_id=? "
+            "AND transition_id=? AND intake_id=?", (ids["tenant"], transition, event["aggregate_id"]))["job_id"]
+    return owner, graph, ids, parent, event, transition, job_id
+
+
+@pytest.mark.parametrize("kind", ["event", "job_payload"])
+def test_genuine_retrieval_parent_bounds_its_first_necessary_acquisition(retrieval_case, monkeypatch, kind):
+    from modules.listing.application.native_intake_pending_commands import NativeIntakeCommandBudget
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+    owner, graph, ids, parent, event, _, job_id = _actual_retrieval_parent(retrieval_case)
+    target = parent["outbox_event_id"] if kind == "event" else job_id
+    relation, identity = ("workflow.outbox_events", "event_id") if kind == "event" else ("workflow.jobs", "job_id")
+    with graph.transaction(ids["tenant"]):
+        graph.engine.execute(f"UPDATE {relation} SET payload=payload || jsonb_build_object('oversized',"
+            f"repeat('店',1500000)) WHERE tenant_id=? AND {identity}=?", (ids["tenant"], target))
+    query, acquired = PostgresEngine.query_one, []
+
+    def observe(engine, statement, parameters=()):
+        row = query(engine, statement, parameters)
+        if engine is graph.engine and relation in statement and tuple(parameters)[:2] == (ids["tenant"], target):
+            assert row is not None
+            acquired.append(row["payload"] is None and row.get("_odp_native_allowed") is False)
+        return row
+
+    monkeypatch.setattr(PostgresEngine, "query_one", observe)
+    with pytest.raises(JobFenceRejectedError, match="^NATIVE_ACQUISITION_LIMIT_OR_TRANSPORT_REJECTED$"):
+        with graph.transaction(ids["tenant"]):
+            owner._parent(ids["tenant"], parent["outbox_event_id"], NativeIntakeCommandBudget(owner.source))
+    assert acquired == [True]  # First target read, never a later full-job guard.
+    assert event["payload"]["intake_id"] == parent["intake_id"]
+    assert retrieval_case[2].calls == []
+
+
+def test_genuine_retrieval_parent_charges_UUID_read_and_omits_unused_publisher(retrieval_case, monkeypatch):
+    from modules.listing.application.native_intake_pending_commands import NativeIntakeCommandBudget
+    from modules.listing.application.native_intake_retrieval_policy import canonical_sha256
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+    from tests.integration.test_native_intake_parent_terminal_rows_postgresql import (
+        _native_parameters,
+    )
+
+    owner, graph, ids, parent, event, transition, job_id = _actual_retrieval_parent(retrieval_case)
+    with graph.transaction(ids["tenant"]):
+        graph.engine.execute("UPDATE workflow.outbox_events SET last_error=jsonb_build_object('publisher',"
+            "repeat('店',2100000)) WHERE tenant_id=? AND event_id=?", (ids["tenant"], parent["outbox_event_id"]))
+    statement = ("SELECT job_id FROM intake.intake_stage_transitions "
+        "WHERE tenant_id=? AND transition_id=? AND intake_id=?")
+    parameters = (ids["tenant"], transition, event["aggregate_id"])
+    query, native, driver, charged = PostgresEngine.query_one, PostgresEngine.native_query, [], []
+
+    def raw(engine, sql, params=()):
+        row = query(engine, sql, params)
+        if engine is graph.engine and _native_parameters(sql, params, statement) == parameters:
+            assert row["job_id"] == job_id and row["_odp_native_allowed"] is True
+            assert row["_odp_native_rows"] == 1 and row["_odp_native_present"] is True
+            driver.append(row["_odp_native_bytes"])
+        return row
+
+    def metered(engine, sql, params=(), **kwargs):
+        if engine is not graph.engine or sql != statement or tuple(params) != parameters:
+            return native(engine, sql, params, **kwargs)
+        before = engine.enable_native_acquisition()[2]
+        value = native(engine, sql, params, **kwargs)
+        charged.append(before - engine.enable_native_acquisition()[2])
+        assert value == {"job_id": job_id}
+        return value
+
+    monkeypatch.setattr(PostgresEngine, "query_one", raw)
+    monkeypatch.setattr(PostgresEngine, "native_query", metered)
+    with graph.transaction(ids["tenant"]):
+        found, digest, proof = owner._parent(ids["tenant"], parent["outbox_event_id"],
+            NativeIntakeCommandBudget(owner.source))
+        assert found == event and digest == canonical_sha256(event) and proof == parent
+        assert graph.engine.enable_native_acquisition()[2] > 31 * 1024 * 1024
+    assert len(driver) == 1 and charged == driver and driver[0] > 0
+    assert retrieval_case[2].calls == []

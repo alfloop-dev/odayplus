@@ -40,8 +40,10 @@ from shared.jobs.queue import JobDeliveryState, JobFenceRejectedError, JobStatus
 def require_closed_slots(engine, facts, before):
     if facts.reservation_ids:
         before()
-        if engine.query_one("SELECT reservation_id FROM intake.native_retrieval_inflight_slots "
-                "WHERE reservation_id=ANY(?::uuid[]) LIMIT 1", (list(facts.reservation_ids),)) is not None:
+        if engine.native_query(
+            'SELECT reservation_id FROM intake.native_retrieval_inflight_slots WHERE reservation_id=ANY(?::uuid[]'
+            ') LIMIT 1',
+            (list(facts.reservation_ids),), columns=('reservation_id',), one=True) is not None:
             raise JobFenceRejectedError("NATIVE_PARSER_RETRY_UNRESOLVED_IO")
 
 
@@ -213,7 +215,9 @@ def require_prepared_parser_retry_state(history, job, run, physical, facts, *, b
     else:
         reject()
     before()
-    row = history.engine.query_one("SELECT available_at FROM durable_jobs WHERE job_id=?", (job["job_id"],))
+    row = history.engine.native_query(
+        'SELECT available_at FROM durable_jobs WHERE job_id=?',
+        (job["job_id"],), columns=('available_at',), one=True)
     if row is None or _time(row["available_at"]) != _time(receipt["available_at"]):
         reject()
     before.check_in_memory()

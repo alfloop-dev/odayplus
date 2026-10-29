@@ -205,14 +205,19 @@ class NativeParserTerminalHistory:
         if len(set(reservations)) != 4:
             _reject()
         before()
-        if self.engine.query_one("SELECT reservation_id FROM intake.native_retrieval_inflight_slots "
-                "WHERE reservation_id=ANY(?::uuid[]) LIMIT 1", (reservations,)) is not None:
+        if self.engine.native_query(
+            'SELECT reservation_id FROM intake.native_retrieval_inflight_slots WHERE reservation_id=ANY(?::uuid[]'
+            ') LIMIT 1',
+            (reservations,), columns=('reservation_id',), one=True) is not None:
             _reject()
 
     def _event(self, job, ident, at, before, **expected):
         before()
-        row = self.graph._one("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?",
-            (job["tenant_id"], ident))
+        row = self.graph.native_one(
+            'SELECT tenant_id,event_id,event_type,event_version,aggregate_type,aggregate_id,aggregate_version,par'
+            'tition_key,correlation_id,occurred_at,retention_until,payload,causation_id,sensitive_fields FROM wor'
+            'kflow.outbox_events WHERE tenant_id=? AND event_id=?',
+            (job["tenant_id"], ident), columns=('tenant_id', 'event_id', 'event_type', 'event_version', 'aggregate_type', 'aggregate_id', 'aggregate_version', 'partition_key', 'correlation_id', 'occurred_at', 'retention_until', 'payload', 'causation_id', 'sensitive_fields'))
         event = _object(row["payload"])
         sensitive = row["sensitive_fields"]
         # PostgresEngine serializes both JSON values and SQL arrays. Compare
@@ -398,14 +403,16 @@ class NativeParserTerminalHistory:
             if result["processing_state"] != target:
                 _reject()
             before()
-            transition = self.engine.query_one("SELECT * FROM intake.intake_stage_transitions WHERE tenant_id=? "
-                "AND transition_id=? AND intake_id=? AND job_id=? AND from_state='PARSING' AND to_state=? "
-                "AND actor_subject_id IS NULL AND service_principal=? AND permission=? AND expected_version=? "
-                "AND resulting_version=? AND idempotency_key=? AND source_snapshot_id=? AND source_policy_version=? "
-                "AND correlation_id=? AND causation_id=?", (tenant, result["transition_id"], run["intake_id"],
+            transition = self.engine.native_query(
+                'SELECT occurred_at,sequence_no,reason_code,reason_text FROM intake.intake_stage_transitions WHERE te'
+                "nant_id=? AND transition_id=? AND intake_id=? AND job_id=? AND from_state='PARSING' AND to_state=? A"
+                'ND actor_subject_id IS NULL AND service_principal=? AND permission=? AND expected_version=? AND resu'
+                'lting_version=? AND idempotency_key=? AND source_snapshot_id=? AND source_policy_version=? AND corre'
+                'lation_id=? AND causation_id=?',
+                (tenant, result["transition_id"], run["intake_id"],
                     job["job_id"], target, JOB_TYPE, permission, result["intake_version_before"], result["version"],
                     run["parser_run_id"], run["source_snapshot_id"], binding["source_version"], job["correlation_id"],
-                    result["parser_completed_event_id"]))
+                    result["parser_completed_event_id"]), columns=('occurred_at', 'sequence_no', 'reason_code', 'reason_text'), one=True)
             if (transition is None or _time(transition["occurred_at"]) != at
                     or transition["sequence_no"] != result["transition_sequence"]
                     or transition["reason_code"] != ("PARSER_VALIDATED_OUTPUT" if target == "MATCHING" else "PARSER_PARTIAL_OUTPUT")
@@ -415,10 +422,12 @@ class NativeParserTerminalHistory:
                     (result["parser_audit_event_id"], "parser.run_completed.v1", {"parser_run_id": run["parser_run_id"], "status": "RUNNING"}),
                     (result["audit_event_id"], action, {"processing_state": "PARSING", "version": result["intake_version_before"]})):
                 before()
-                audit = self.engine.query_one("SELECT * FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
-                    "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
-                    "AND actor_role='SVC_PARSER' AND action=? AND result='SUCCEEDED' AND causation_id=? AND correlation_id=?",
-                    (tenant, audit_id, run["intake_id"], JOB_TYPE, audit_action, original.parent_event_id, job["correlation_id"]))
+                audit = self.engine.native_query(
+                    'SELECT before_value,after_value,occurred_at,reason FROM audit.audit_events WHERE tenant_id=? AND aud'
+                    "it_event_id=? AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_"
+                    "principal=? AND actor_role='SVC_PARSER' AND action=? AND result='SUCCEEDED' AND causation_id=? AND c"
+                    'orrelation_id=?',
+                    (tenant, audit_id, run["intake_id"], JOB_TYPE, audit_action, original.parent_event_id, job["correlation_id"]), columns=('before_value', 'after_value', 'occurred_at', 'reason'), one=True)
                 if (audit is None or _object(audit["before_value"]) != previous
                         or not _audited_exact(_object(audit["after_value"]), result)
                         or _time(audit["occurred_at"]) != at

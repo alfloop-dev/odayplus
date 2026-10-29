@@ -20,8 +20,10 @@ from modules.listing.application.native_intake_parser_prerequisites import Nativ
 from modules.listing.application.native_intake_producer_discovery import _DISCOVERY_SQL
 from modules.listing.application.native_intake_source_policy import NativeIntakeSourcePolicyOwner
 from modules.listing.application.native_intake_terminal_evidence import _TERMINAL_SQL
+from shared.infrastructure.persistence.identity_graph_sql import NATIVE_OUTBOX_PROOF_COLUMNS
 from shared.infrastructure.persistence.postgresql import PostgresEngine
 from shared.jobs.queue import JobFenceRejectedError
+from tests.integration.test_native_intake_parent_terminal_rows_postgresql import _native_parameters
 from tests.integration.test_native_intake_parser_admission_postgresql import authority as authority
 from tests.integration.test_native_intake_parser_admission_postgresql import (
     canonical_graph as canonical_graph,
@@ -49,13 +51,14 @@ from tests.integration.test_native_intake_parser_admission_postgresql import (
 )
 from tests.integration.test_native_intake_producer_discovery_postgresql import (
     _event_ids,
+    _event_projection,
     _reference,
 )
 from tests.integration.test_native_intake_terminal_evidence_postgresql import _persisted
 
 pytestmark = pytest.mark.requires_live_env
 
-_EVENT_SQL = "SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?"
+_EVENT_SQL = "SELECT " + ",".join(NATIVE_OUTBOX_PROOF_COLUMNS) + " FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?"
 _TRANSITION_SQL = (
     "SELECT job_id FROM intake.intake_stage_transitions "
     "WHERE tenant_id=? AND transition_id=? AND intake_id=?"
@@ -93,7 +96,7 @@ def _observe(case, monkeypatch, corrupt=None):
         if engine is case[0].engine:
             calls.append((statement, tuple(params)))
         rows = query(engine, statement, params)
-        if engine is case[0].engine and statement == _DISCOVERY_SQL and corrupt is not None:
+        if engine is case[0].engine and _native_parameters(statement, params, _DISCOVERY_SQL) is not None and corrupt is not None:
             return corrupt(rows)
         return rows
 
@@ -108,19 +111,33 @@ def _observe(case, monkeypatch, corrupt=None):
 
 
 def _facts(calls):
-    # Exclude only the unchanged native clock/settings statements. Every other
-    # attempted read remains visible, including speculative or fallback reads.
-    return [(statement, params) for statement, params in calls
-        if statement != "SELECT clock_timestamp() AS now"
-        and not statement.startswith("WITH observed AS MATERIALIZED (")]
+    # Raw SQL and full parameters stay in `calls`. These are explicit logical
+    # acquisition keys, never claims that a bare fixed SELECT executed. Any
+    # unrecognized attempted read remains visible and fails equality below.
+    facts = []
+    for statement, params in calls:
+        if statement == "SELECT clock_timestamp() AS now" or statement.startswith("WITH observed AS MATERIALIZED ("):
+            continue
+        for fixed in (_EVENT_SQL, _TRANSITION_SQL, _BUSINESS_SQL, _PHYSICAL_SQL, _DISCOVERY_SQL, _TERMINAL_SQL):
+            base = _native_parameters(statement, params, fixed)
+            if base is not None:
+                facts.append((("native_acquisition", fixed), base))
+                break
+        else:
+            facts.append((statement, params))
+    return facts
+
+
+def _identity_projection(value):
+    return (_event_projection(value[0]), *value[1:])
 
 
 def _legacy_reads(tenant, event_id, reference):
     row, transition, _, _ = reference
-    return [(_EVENT_SQL, (tenant, event_id)),
-        (_TRANSITION_SQL, (tenant, row["payload"]["payload"]["transition_id"], row["aggregate_id"])),
-        (_BUSINESS_SQL, (tenant, transition["job_id"])),
-        (_PHYSICAL_SQL, (transition["job_id"],))]
+    return [(("native_acquisition", _EVENT_SQL), (tenant, event_id)),
+        (("native_acquisition", _TRANSITION_SQL), (tenant, row["payload"]["payload"]["transition_id"], row["aggregate_id"])),
+        (("native_acquisition", _BUSINESS_SQL), (tenant, transition["job_id"])),
+        (("native_acquisition", _PHYSICAL_SQL), (transition["job_id"],))]
 
 
 def test_identity_full_caller_matches_bare_graph_with_one_start_discovery(parser_admission_case, monkeypatch):
@@ -135,8 +152,8 @@ def test_identity_full_caller_matches_bare_graph_with_one_start_discovery(parser
             calls = _observe(case, trace)
             legacy = NativeIntakeIdentityOwner(owner.graph)._event(tenant, event_id)
             assert _facts(calls)[:4] == _legacy_reads(tenant, event_id, reference)
-            assert all(statement != _DISCOVERY_SQL for statement, _ in calls)
-        assert legacy[:2] == (reference[0], reference[0]["payload"])
+            assert all(_native_parameters(statement, params, _DISCOVERY_SQL) is None for statement, params in calls)
+        assert _identity_projection(legacy)[:2] == (reference[0], reference[0]["payload"])
         assert legacy[2] == hashlib.sha256(json.dumps(
             reference[0]["payload"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     # Separate differential invocation, with no reference SQL inside its budget.
@@ -147,9 +164,9 @@ def test_identity_full_caller_matches_bare_graph_with_one_start_discovery(parser
         with monkeypatch.context() as trace:
             calls = _observe(case, trace)
             current = _caller(case, budget)._event(tenant, event_id)
-            assert current == legacy
-            assert _facts(calls) == [(_DISCOVERY_SQL, (tenant, event_id)),
-                (_TERMINAL_SQL, (tenant, reference[3].job_id, reference[3].job_id))]
+            assert _identity_projection(current) == _identity_projection(legacy)
+            assert _facts(calls) == [(("native_acquisition", _DISCOVERY_SQL), (tenant, event_id)),
+                (("native_acquisition", _TERMINAL_SQL), (tenant, reference[3].job_id, reference[3].job_id))]
         assert owner.engine._local.root_transaction is root
         assert owner.engine._local.connection is connection
         assert (budget.deadline, budget._monotonic_deadline) == bounds
@@ -191,7 +208,7 @@ def test_identity_unknown_surface_preserves_exact_original_refusal(parser_admiss
             with pytest.raises(RuntimeError) as error:
                 _caller(case, before)._event(tenant, event_id)
             assert error.value is sentinel and invocations == [adapter]
-            assert all(statement != _DISCOVERY_SQL for statement, _ in calls)
+            assert all(_native_parameters(statement, params, _DISCOVERY_SQL) is None for statement, params in calls)
             expected = _legacy_reads(tenant, event_id, reference)[:3] if adapter == "queue_get" else []
             assert _facts(calls) == expected
         assert owner.engine._local.root_transaction is root
@@ -223,9 +240,10 @@ def test_identity_corrupt_selected_discovery_refuses_without_fallback(parser_adm
         bounds = budget.deadline, budget._monotonic_deadline
         with monkeypatch.context() as trace:
             calls = _observe(case, trace, corrupt)
-            with pytest.raises(JobFenceRejectedError, match="^NATIVE_PARENT_DISCOVERY_REJECTED$"):
+            code = {"duplicate_result": "NATIVE_ACQUISITION_LIMIT_OR_TRANSPORT_REJECTED", "missing_physical_column": "NATIVE_ACQUISITION_TRANSPORT_REJECTED"}.get(damage, "NATIVE_PARENT_DISCOVERY_REJECTED")
+            with pytest.raises(JobFenceRejectedError, match="^" + code + "$"):
                 _caller(case, budget)._event(tenant, event_id)
-            assert _facts(calls) == [(_DISCOVERY_SQL, (tenant, event_id))]
+            assert _facts(calls) == [(("native_acquisition", _DISCOVERY_SQL), (tenant, event_id))]
         assert owner.engine._local.root_transaction is root
         assert (budget.deadline, budget._monotonic_deadline) == bounds
     assert _persisted(case) == original
@@ -250,7 +268,7 @@ def test_identity_missing_actual_start_delivery_is_not_reconstructed(parser_admi
             calls = _observe(case, trace)
             with pytest.raises(NativeIntakeIdentityConflict, match="^NATIVE_IDENTITY_START_PROOF_MISSING$"):
                 _caller(case, budget)._event(tenant, event_id)
-            assert _facts(calls) == [(_DISCOVERY_SQL, (tenant, event_id))]
+            assert _facts(calls) == [(("native_acquisition", _DISCOVERY_SQL), (tenant, event_id))]
         assert (budget.deadline, budget._monotonic_deadline) == bounds
     assert _persisted(case) == damaged
 
@@ -273,7 +291,7 @@ def test_identity_same_caller_reacquires_after_real_mutation_and_rollback(parser
         caller = _caller(case, budget)
         with monkeypatch.context() as trace:
             calls = _observe(case, trace)
-            assert caller._event(tenant, event_id) == legacy
+            assert _identity_projection(caller._event(tenant, event_id)) == _identity_projection(legacy)
             budget()
             owner.engine.execute("SAVEPOINT identity_discovery_negative")
             try:
@@ -288,9 +306,9 @@ def test_identity_same_caller_reacquires_after_real_mutation_and_rollback(parser
                 # fixture patch or copied success record is written back.
                 owner.engine.execute("ROLLBACK TO SAVEPOINT identity_discovery_negative")
                 owner.engine.execute("RELEASE SAVEPOINT identity_discovery_negative")
-            assert caller._event(tenant, event_id) == legacy
-            discovery = (_DISCOVERY_SQL, (tenant, event_id))
-            terminal = (_TERMINAL_SQL, (tenant, reference[3].job_id, reference[3].job_id))
+            assert _identity_projection(caller._event(tenant, event_id)) == _identity_projection(legacy)
+            discovery = (("native_acquisition", _DISCOVERY_SQL), (tenant, event_id))
+            terminal = (("native_acquisition", _TERMINAL_SQL), (tenant, reference[3].job_id, reference[3].job_id))
             assert _facts(calls) == [discovery, terminal, discovery, discovery, terminal]
         assert owner.engine._local.root_transaction is root
         assert owner.engine._local.connection is connection

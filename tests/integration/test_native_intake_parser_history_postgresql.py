@@ -121,7 +121,7 @@ def test_complete_history_bounds_both_actual_business_jobs_before_driver_acquisi
 
     def observe_actual_driver_result(statement, parameters=()):
         row = query_one(statement, parameters)
-        if "workflow.jobs" in statement and tuple(parameters)[-2:] == (ids["tenant"], target):
+        if "workflow.jobs" in statement and tuple(parameters)[:2] == (ids["tenant"], target) and len(parameters) == 4:
             acquired.append(row is not None and all(row.get(key) is None
                 for key in ("payload", "result", "last_error")))
         return row
@@ -156,7 +156,7 @@ def test_native_history_job_acquisition_uses_inclusive_real_UTF8_row_boundary(co
         original = owner.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
             (ids["tenant"], delivery.job_id))
         if extra_bytes > 0:
-            with pytest.raises(JobFenceRejectedError, match="^NATIVE_HISTORY_JOB_ACQUISITION_LIMIT$"):
+            with pytest.raises(JobFenceRejectedError, match="^NATIVE_ACQUISITION_LIMIT_OR_TRANSPORT_REJECTED$"):
                 owner.graph.native_history_job(ids["tenant"], delivery.job_id)
         else:
             actual = owner.graph.native_history_job(ids["tenant"], delivery.job_id)
@@ -168,7 +168,7 @@ def test_native_history_job_acquisition_uses_inclusive_real_UTF8_row_boundary(co
                 (ids["tenant"], delivery.job_id))
             assert isinstance(required["payload"], dict) and isinstance(required["result"], dict)
             assert actual["lease_expires_at"] is None
-            assert not any(key.startswith("_native_") for key in actual)
+            assert not any(key.startswith(("_native_", "_odp_native_")) for key in actual)
 
 
 @pytest.mark.parametrize("oversized", [False, True])
@@ -183,7 +183,7 @@ def test_native_history_job_retains_share_lock_even_when_guard_rejects_row(compl
                 "WHERE tenant_id=? AND job_id=?", (4 * 1024 * 1024, ids["tenant"], delivery.job_id))
     with owner.graph.transaction(ids["tenant"]):
         if oversized:
-            with pytest.raises(JobFenceRejectedError, match="^NATIVE_HISTORY_JOB_ACQUISITION_LIMIT$"):
+            with pytest.raises(JobFenceRejectedError, match="^NATIVE_ACQUISITION_LIMIT_OR_TRANSPORT_REJECTED$"):
                 owner.graph.native_history_job(ids["tenant"], delivery.job_id, for_share=True)
         else:
             assert owner.graph.native_history_job(ids["tenant"], delivery.job_id, for_share=True)["job_id"] == delivery.job_id
@@ -1180,3 +1180,161 @@ def test_extra_unproved_prior_operations_cannot_be_ignored_by_positive_writer(pa
     with pytest.raises(JobFenceRejectedError, match="^NATIVE_PARSER_OUTPUT_JOURNAL_REJECTED$"):
         commit_parser_output(owner, delivery, leases, observed)
     assert persisted(case) == previous
+
+
+def _genuine_review_successor(completed_parser, canonical_graph, case_api, monkeypatch, *, execute_merge):
+    """Use the completed parser, original case API, distinct reviewer and worker."""
+    from modules.listing.application.identity_delivery import (
+        IDENTITY_POLICY_ENV,
+        IDENTITY_SIGNING_KEY_ENV,
+    )
+    from tests.integration.test_canonical_identity_admission_postgresql import _claim
+    from tests.integration.test_canonical_identity_cases_postgresql import _http_command
+    from tests.integration.test_canonical_identity_http_postgresql import _headers, _review_request
+    from tests.integration.test_canonical_identity_planning_context_postgresql import _plan
+
+    _, _, _, parsed = completed_parser
+    graph, ids = canonical_graph[:2]
+    client = case_api[0]
+    response = client.post(f'/api/v1/intakes/{parsed["intake_id"]}/match-case',
+        json=_http_command(canonical_graph), headers=_headers(parsed["version"], "native-real-parser-review-case"))
+    assert response.status_code == 201, response.text
+    created = response.json()
+    path = f'/api/v1/match-cases/{created["match_case_id"]}/identity-context'
+    response = client.get(path, params={"include_listing_input": "true"})
+    assert response.status_code == 200, response.text
+    assert response.json()["listing_input"]["parser_job_id"] == parsed["job_id"]
+    if execute_merge:
+        monkeypatch.setenv(IDENTITY_SIGNING_KEY_ENV, "Explicit synthetic real-parser review execution key only")
+        monkeypatch.setenv(IDENTITY_POLICY_ENV, canonical_json({"policy_id": "synthetic-real-parser-review",
+            "version": 19, "max_attempts": 3, "deadline_seconds": 120, "backoff_seconds": [1, 2]}))
+        observed = client.get(path, params={"include_listing_input": "false"})
+        assert observed.status_code == 200, observed.text
+        proposed = client.post(f'/api/v1/match-cases/{created["match_case_id"]}/identity-decisions',
+            json={"decision_type": "MERGE", "plan": _plan(observed.json(), ids["source"], ids["target"]),
+                "risk_acknowledged": True, "reason": "Real independent graph review before fresh listing confirmation"},
+            headers=_headers(created["version"], "native-real-parser-merge-proposal"))
+        assert proposed.status_code == 201, proposed.text
+        reviewer, review_path, body, headers = _review_request(canonical_graph, case_api, proposed.json())
+        approved = reviewer.post(review_path, json=body, headers=headers)
+        assert approved.status_code == 200, approved.text
+        delivery, registry, bundle = _claim(canonical_graph, approved.json()["job_id"])
+        registry.handle(delivery, bundle)
+        assert graph.queue.get(delivery.job_id).status.value == "succeeded"
+    return path
+
+
+@pytest.mark.parametrize("execute_merge", [False, True])
+def test_real_review_and_executed_graph_continue_the_same_parser_input_without_publisher_cells(
+        completed_parser, canonical_graph, case_api, monkeypatch, execute_merge):
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+    path = _genuine_review_successor(completed_parser, canonical_graph, case_api, monkeypatch,
+        execute_merge=execute_merge)
+    owner, ids = completed_parser[0][:2]
+    with owner.graph.transaction(ids["tenant"]):
+        owner.engine.execute("UPDATE workflow.outbox_events SET last_error=jsonb_build_object('error',repeat('店',2100000)) WHERE tenant_id=?",
+            (ids["tenant"],))
+    original, observations = PostgresEngine.native_query, []
+
+    def observe(engine, statement, params=(), **kwargs):
+        value = original(engine, statement, params, **kwargs)
+        if engine is owner.engine:
+            rows = [value] if kwargs.get("one") else value
+            if "workflow.outbox_events" in statement:
+                # The full workflow job retains its own NULL last_error;
+                # publisher errors were all changed to a huge non-NULL value.
+                assert all(value is None for row in rows if row is not None
+                    for key, value in row.items() if key.endswith("last_error"))
+            observations.append((id(engine._local.root_transaction), engine.enable_native_acquisition()[2], statement))
+        return value
+
+    monkeypatch.setattr(PostgresEngine, "native_query", observe)
+    response = case_api[0].get(path, params={"include_listing_input": "true"})
+    assert response.status_code == 200, response.text
+    reference = response.json()["listing_input"]
+    assert reference["parser_job_id"] == completed_parser[3]["job_id"]
+    assert reference["fields"] and all("effective" not in field for field in reference["fields"])
+    assert observations and len({item[0] for item in observations}) == 1
+    assert all(a[1] >= b[1] for a, b in zip(observations, observations[1:], strict=False))
+    assert observations[-1][1] > 31 * 1024 * 1024
+    assert any("intake_stage_transitions" in item[2] and "match_case_id=?" in item[2] for item in observations)
+    if execute_merge:
+        assert "match.decided" in observations[0][2]
+        assert any("identity.match_decisions" in item[2] and "FOR UPDATE" in item[2] for item in observations)
+        assert any("audit.audit_events" in item[2] and "event_sha256" in item[2] for item in observations)
+
+
+@pytest.mark.parametrize("kind,execute_merge", [
+    ("review_transition", False), ("review_audit", False), ("review_event", False),
+    ("execution_event", True), ("execution_decision", True), ("execution_job", True), ("execution_audit", True),
+])
+def test_real_review_history_refuses_oversized_necessary_cells_before_driver_materialization(
+        completed_parser, canonical_graph, case_api, monkeypatch, kind, execute_merge):
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+    path = _genuine_review_successor(completed_parser, canonical_graph, case_api, monkeypatch,
+        execute_merge=execute_merge)
+    owner, ids = completed_parser[0][:2]
+    intake = completed_parser[3]["intake_id"]
+    with owner.graph.transaction(ids["tenant"]):
+        case = owner.graph._one("SELECT match_case_id,version FROM identity.match_cases WHERE tenant_id=? AND intake_id=?",
+            (ids["tenant"], intake))
+        if kind.startswith("review_"):
+            if kind == "review_transition":
+                table, key, column = "intake.intake_stage_transitions", "transition_id", "reason_text"
+                target = owner.graph._one("SELECT transition_id FROM intake.intake_stage_transitions WHERE tenant_id=? "
+                    "AND intake_id=? AND match_case_id=?", (ids["tenant"], intake, case["match_case_id"]))[key]
+            elif kind == "review_audit":
+                table, key, column = "audit.audit_events", "audit_event_id", "before_value"
+                target = owner.graph._one("SELECT audit_event_id FROM audit.audit_events WHERE tenant_id=? "
+                    "AND resource_id=? AND action='intake.review_required.v1'", (ids["tenant"], intake))[key]
+            else:
+                table, key, column = "workflow.outbox_events", "event_id", "payload"
+                target = owner.graph._one("SELECT event_id FROM workflow.outbox_events WHERE tenant_id=? "
+                    "AND aggregate_id=? AND event_type='intake.state_changed' AND aggregate_version=?",
+                    (ids["tenant"], intake, completed_parser[3]["version"] + 1))[key]
+        else:
+            decision = owner.graph._one("SELECT match_decision_id FROM identity.match_decisions WHERE tenant_id=? "
+                "AND match_case_id=? AND status='EXECUTED'", (ids["tenant"], case["match_case_id"]))["match_decision_id"]
+            if kind == "execution_decision":
+                table, key, column, target = "identity.match_decisions", "match_decision_id", "after_graph", decision
+            elif kind == "execution_job":
+                table, key, column = "workflow.jobs", "job_id", "last_error"
+                target = owner.graph._one("SELECT job_id FROM workflow.jobs WHERE tenant_id=? "
+                    "AND job_type='identity-execution' AND aggregate_id=?", (ids["tenant"], decision))[key]
+            elif kind == "execution_audit":
+                table, key, column = "audit.audit_events", "audit_event_id", "before_value"
+                target = owner.graph._one("SELECT audit_event_id FROM audit.audit_events WHERE tenant_id=? "
+                    "AND resource_id=? AND action='identity.executed.v1'", (ids["tenant"], decision))[key]
+            else:
+                table, key, column = "workflow.outbox_events", "event_id", "payload"
+                target = owner.graph._one("SELECT event_id FROM workflow.outbox_events WHERE tenant_id=? "
+                    "AND aggregate_id=? AND event_type='match.decided' AND aggregate_version=?",
+                    (ids["tenant"], case["match_case_id"], case["version"]))[key]
+        # Only fixed relations/columns selected above; this changes genuine
+        # committed evidence, never constructs an accepted terminal label.
+        oversized = "repeat('店',1500000)" if column == "reason_text" else "jsonb_build_object('oversized',repeat('店',1500000))"
+        owner.engine.execute(f"UPDATE {table} SET {column}={oversized} WHERE tenant_id=? AND {key}=?", (ids["tenant"], target))
+    query, query_one, acquired = PostgresEngine.query, PostgresEngine.query_one, []
+
+    def inspect(engine, sql, rows):
+        if engine is owner.engine and table in sql and rows and rows[0].get("_odp_native_allowed") is False:
+            acquired.append(all(row[name] is None for row in rows for name in row if not name.startswith("_odp_native_")))
+
+    def many(engine, sql, params=()):
+        rows = query(engine, sql, params)
+        inspect(engine, sql, rows)
+        return rows
+
+    def one(engine, sql, params=()):
+        row = query_one(engine, sql, params)
+        inspect(engine, sql, [] if row is None else [row])
+        return row
+
+    monkeypatch.setattr(PostgresEngine, "query", many)
+    monkeypatch.setattr(PostgresEngine, "query_one", one)
+    response = case_api[0].get(path, params={"include_listing_input": "true"})
+    assert response.status_code == 409, response.text
+    assert "listing_input" not in response.json() and "oversized" not in response.text
+    assert acquired == [True]
