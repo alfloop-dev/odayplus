@@ -1022,9 +1022,7 @@ def web_lifecycle(
                     s.sessions.revoke_session(UUID(principal.attributes["sid"]), "logout")
                     return HttpResponse(200, {"ok": True})
                 if path == "/auth/session":
-                    row = s.engine.query_one("SELECT username FROM identity.accounts WHERE account_id = ?",
-                                             (principal.subject_id,))
-                    return HttpResponse(200, {"subject": row["username"]})
+                    return HttpResponse(200, {"subject": principal.subject_id})
                 return HttpResponse(200, {"account_id": principal.subject_id,
                                          "tenant_id": principal.tenant_id,
                                          "roles": sorted(r.value for r in principal.roles)})
@@ -1083,6 +1081,43 @@ def test_web_executor_actual_router_lifecycle_provenance_and_session_cleanup(web
     assert web.calls.count(("POST", PATH)) == 1
     assert web.calls.count(("POST", "/auth/invitations")) == 1
     assert s.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("session_read", [1, 2])
+def test_web_executor_refuses_display_subject_at_each_account_boundary(
+    web_lifecycle: Any, monkeypatch: Any, session_read: int,
+) -> None:
+    from delivery_toolchain.e2e.check_live_e2e_gate import HttpResponse
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+
+    s, web, executor, journal, plan, args = web_lifecycle
+    before = _snapshot(s)
+    original_request = web.request
+    reads = 0
+
+    def wrong_subject(method: str, path: str, **kwargs: Any) -> Any:
+        nonlocal reads
+        response = original_request(method, path, **kwargs)
+        if method == "GET" and path == "/auth/session" and response.status == 200:
+            reads += 1
+            if reads == session_read:
+                return HttpResponse(200, {"subject": "ajoe734" if session_read == 1 else plan["username"]})
+        return response
+
+    monkeypatch.setattr(web, "request", wrong_subject)
+    expected = "PROVISIONING_LIFECYCLE_REFUSED" if session_read == 1 else "PROVISIONING_LIFECYCLE_RECOVERY_REQUIRED"
+    with pytest.raises(ProvisioningRefused, match=expected):
+        executor.execute(plan, **args)
+    assert _q(s, "SELECT count(*) FROM identity.accounts") == [(session_read,)]
+    if session_read == 1:
+        assert journal.inspect() is None
+        assert ("POST", PATH) not in web.calls
+    else:
+        assert journal.inspect().stage == "recovery-required"
+        assert web.calls.count(("POST", "/auth/invitations")) == 1
+    after = _snapshot(s)
+    assert {k: v for k, v in before.items() if k != "sessions"} == {k: v for k, v in after.items() if k != "sessions"}
+    assert _q(s, "SELECT count(*) FROM identity.sessions WHERE revoked_at IS NOT NULL") == [(session_read,)]
 
 
 def test_web_executor_preserves_actual_fresh_roles_without_restoring_receipt_roles(web_lifecycle: Any) -> None:

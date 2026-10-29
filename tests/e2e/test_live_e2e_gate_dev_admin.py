@@ -180,7 +180,7 @@ def web_routes(**overrides: Any) -> dict[str, Any]:
         ),
         "anon GET /auth/session": denied,
         "anon GET /api/v1/operator/bootstrap": denied,
-        "GET /auth/session [session]": base.response(200, {"subject": USERNAME, "expiresAt": 1}),
+        "GET /auth/session [session]": base.response(200, {"subject": ADMIN_ACCOUNT_ID, "expiresAt": 1}),
         "GET /api/v1/operator/users [session]": base.response(200, admin_users()),
         "POST /api/v1/operator/users [session]": save_user_route,
         "GET /api/v1/operator/users/audit-trail [session]": base.response(200, admin_audit_trail()),
@@ -304,9 +304,9 @@ class AdminWeb(base.FakeHttp):
                     if callable(route):
                         return route(kwargs.get("body"), headers)
                     return deepcopy(route)
-                return base.response(200, {"subject": USERNAME, "expiresAt": 1})
+                return base.response(200, {"subject": ADMIN_ACCOUNT_ID, "expiresAt": 1})
             if has_fresh_session:
-                return base.response(200, {"subject": USERNAME, "expiresAt": 1})
+                return base.response(200, {"subject": ADMIN_ACCOUNT_ID, "expiresAt": 1})
             if "anon GET /auth/session" in self.routes:
                 route = self.routes["anon GET /auth/session"]
                 if callable(route):
@@ -401,6 +401,31 @@ def run_dev_admin(
 
 def blockers(report: dict[str, Any]) -> dict[str, str]:
     return {b["check"]: b["dependency"] for b in report["blockers"]}
+
+
+@pytest.mark.parametrize("phase", ["json", "html"])
+@pytest.mark.parametrize("wrong_subject", [USERNAME, "22222222-2222-4222-8222-222222222222", None])
+def test_session_actor_must_match_the_authoritative_account_in_each_login_path(
+    phase: str, wrong_subject: Any,
+) -> None:
+    reads = 0
+
+    def session_response(body: Any, headers: dict[str, str]) -> Any:
+        nonlocal reads
+        reads += 1
+        rejected_read = 1 if phase == "json" else 2
+        subject = wrong_subject if reads == rejected_read else ADMIN_ACCOUNT_ID
+        return base.response(200, {"subject": subject, "expiresAt": 1})
+
+    routes = web_routes(**{"GET /auth/session [session]": session_response})
+    checks, report, _ = run_dev_admin(web=AdminWeb(routes))
+
+    assert report["ok"] is False
+    name = "session:session_resolves_account" if phase == "json" else "session:html_form_session_resolves_account"
+    assert blockers(report)[name] == "session"
+    if phase == "html":
+        assert next(c for c in checks if c.name == "session:session_resolves_account").ok is True
+        assert reads == 2
 
 
 # ---------------------------------------------------------------------------
@@ -911,7 +936,7 @@ def test_a_role_outside_the_account_grants_that_is_served_blocks() -> None:
 
 def test_a_session_that_survives_logout_blocks() -> None:
     routes = web_routes(
-        **{"GET /auth/session [session]": base.response(200, {"subject": USERNAME, "expiresAt": 1})}
+        **{"GET /auth/session [session]": base.response(200, {"subject": ADMIN_ACCOUNT_ID, "expiresAt": 1})}
     )
     _, report, _ = run_dev_admin(web=AdminWeb(routes, revoke_on_logout=False))
 

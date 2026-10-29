@@ -2020,23 +2020,11 @@ def _check_dev_admin_session(
         )
         return
 
-    # 4. The session resolves to the signed-in account.
+    # 4. Read the canonical actor. GET /auth/session returns account_id;
+    # POST /login's subject is the username used for display. Bind this read
+    # below to the same authoritative user record, never to the login label.
     current = web.request(
         "GET", "/auth/session", authenticated=False, headers=session_headers(cookies)
-    )
-    _check(
-        checks,
-        (not current.failed)
-        and current.status == 200
-        and current.payload.get("subject") == username,
-        "session:session_resolves_account",
-        (
-            f"status={current.status} subjectMatches="
-            f"{current.payload.get('subject') == username}"
-            if not current.failed
-            else current.error
-        ),
-        "session",
     )
     operations.append("session_read")
 
@@ -2089,6 +2077,18 @@ def _check_dev_admin_session(
     report["dev_admin"]["account_mode"] = "read-enabled-admin" if read_admin else "pure-admin"
     if users.failed or users.status != 200 or not (pure_admin or read_admin):
         return
+    account_id = own_record.get("subject_id")
+    session_matches_account = (
+        _canonical_uuid(account_id) is not None
+        and not current.failed and current.status == 200
+        and current.payload.get("subject") == account_id
+    )
+    _check(
+        checks, session_matches_account, "session:session_resolves_account",
+        (f"status={current.status} subjectMatches={session_matches_account}"
+         if not current.failed else current.error),
+        "session",
+    )
     if config.dev_admin_bundle_account_id:
         matched = (pure_admin and own_record.get("subject_id") == config.dev_admin_bundle_account_id
                    and _as_dict(own_record.get("scope")).get("tenant_id") == config.dev_admin_bundle_tenant_id)
@@ -2108,8 +2108,7 @@ def _check_dev_admin_session(
             and principal.payload.get("tenant_id") == snapshot["scope"]["tenant_id"]
             and _read_admin_roles(principal.payload.get("roles"))
             and sorted(principal.payload["roles"]) == snapshot["roles"]
-            and not current.failed and current.status == 200
-            and current.payload.get("subject") == snapshot["username"]
+            and session_matches_account
         )
         _check(checks, bound, "admin:read_principal_bound",
                f"status={principal.status} accountTenantRolesBound={bound}", "auth")
@@ -2179,7 +2178,7 @@ def _check_dev_admin_session(
             and principal.payload.get("account_id") == own_record["subject_id"]
             and principal.payload.get("tenant_id") == own_record["scope"]["tenant_id"]
             and principal.payload.get("roles") == ["platform_admin"]
-            and not current.failed and current.status == 200 and current.payload.get("subject") == username
+            and session_matches_account
         )
         _check(checks, bound, "admin:invitation_principal_bound",
                f"status={principal.status} accountTenantRolesBound={bound}", "auth")
@@ -2485,9 +2484,10 @@ def _check_dev_admin_session(
         )
         _check(
             checks, (not form_session.failed) and form_session.status == 200
-            and form_session.payload.get("subject") == username,
+            and _canonical_uuid(account_id) is not None
+            and form_session.payload.get("subject") == account_id,
             "session:html_form_session_resolves_account",
-            f"status={form_session.status} subjectMatches={form_session.payload.get('subject') == username}",
+            f"status={form_session.status} subjectMatches={form_session.payload.get('subject') == account_id}",
             "session",
         )
         form_page = web.request(

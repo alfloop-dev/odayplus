@@ -308,7 +308,7 @@ class BusinessWeb:
                 )
             return Resp(401, {"ok": False, "error": "invalid_credentials"})
         if bare == "/auth/session":
-            return Resp(200, {"subject": actor}) if actor else Resp(401, {})
+            return Resp(200, {"subject": account_id(actor)}) if actor else Resp(401, {})
         if not actor:
             return Resp(401, {"error": {"code": "unauthenticated"}})
         if method in MUTATING and not headers.get("idempotency-key"):
@@ -1244,6 +1244,23 @@ def test_platform_admin_is_never_promoted_into_a_business_role() -> None:
     assert receipt["journeys"]["governance"]["status"] == "BLOCKED"
     assert blockers(receipt, "governance") == {"actor:primary_authoritative_roles": "business-role"}
     _zero_writes(receipt, web, "governance")
+
+
+@pytest.mark.parametrize("wrong_subject", ["franchisee.owner", "22222222-2222-4222-8222-222222222222", None])
+def test_business_session_requires_the_scope_authorized_account_id(wrong_subject: Any) -> None:
+    class WrongSessionWeb(BusinessWeb):
+        def request(self, method: str, path: str, **kwargs: Any) -> Resp:
+            response = super().request(method, path, **kwargs)
+            if path == "/auth/session" and response.status == 200:
+                response.payload["subject"] = wrong_subject
+            return response
+
+    receipt, web, _ = run(WrongSessionWeb(), selection=["franchise"])
+
+    assert blockers(receipt, "franchise") == {
+        "session:primary_resolves_account": "business-credential",
+    }
+    _zero_writes(receipt, web, "franchise")
 
 
 def test_wrong_password_blocks_on_business_credential() -> None:
