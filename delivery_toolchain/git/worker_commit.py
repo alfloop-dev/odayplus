@@ -49,7 +49,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from check_commit_scope import files_outside_scope, normalize, staged_files, validate_scope  # noqa: E402
+from check_commit_scope import (  # noqa: E402
+    files_outside_scope,
+    normalize,
+    staged_files,
+    validate_scope,
+)
 from check_commit_trailers import validate_message  # noqa: E402
 
 PROTECTED_BRANCHES = {"dev", "main", "master"}
