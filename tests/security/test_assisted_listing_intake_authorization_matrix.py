@@ -504,3 +504,42 @@ def test_http_intake_projection_omits_internal_match_history_at_every_clearance_
         assert marker not in serialized
     assert input_record == stored_before
     assert repository.get_intake(original["id"]) == stored_before
+
+
+@pytest.mark.parametrize("layout", ["fields", "parsedFields"])
+@pytest.mark.parametrize("upstream_masked", [False, True])
+def test_masked_field_values_and_correction_reasons_share_the_original_policy(layout, upstream_masked):
+    from copy import deepcopy
+
+    from modules.listing.application.intake_authorization import mask_intake
+    from shared.auth import Principal, Scope
+
+    principal = Principal(subject_id="synthetic-mask-reader", scope=Scope(tenant_id="tenant-a",
+        clearance=DataClassification.HIGHLY_RESTRICTED if upstream_masked else DataClassification.PUBLIC))
+    reasons = {"correction_reason": "PRIVATE_SNAKE_REASON", "correctionReason": "PRIVATE_CAMEL_REASON"}
+    if layout == "fields":
+        values = {key: "PRIVATE_FIELD_VALUE" for key in ("parsed", "normalized", "corrected", "effective")}
+        original = {"fields": [{"field_path": "contactPhone", "classification": "RESTRICTED", "masked": upstream_masked, **values, **reasons}]}
+    else:
+        values = {key: "PRIVATE_FIELD_VALUE" for key in ("sourceValue", "normalizedValue", "correctedValue")}
+        original = {"parsedFields": {"contactPhone": {"masked": upstream_masked, **values, **reasons}}}
+    retained = deepcopy(original)
+    masked = mask_intake(principal, original)
+    field = masked["fields"][0] if layout == "fields" else masked["parsedFields"]["contactPhone"]
+    assert field["masked"] is True and field["mask_reason_code"] == "FIELD_MASKED"
+    assert all(field[key] is None for key in (*values, *reasons))
+    assert original == retained  # Read projection never erases the retained evidence.
+
+
+@pytest.mark.parametrize("layout", ["fields", "parsedFields"])
+def test_authorized_unmasked_correction_reason_is_retained(layout):
+    from modules.listing.application.intake_authorization import mask_intake
+    from shared.auth import Principal, Scope
+
+    principal = Principal(subject_id="synthetic-allowed-reader", scope=Scope(tenant_id="tenant-a", clearance=DataClassification.HIGHLY_RESTRICTED))
+    field = {"field_path": "contactPhone", "classification": "RESTRICTED", "effective": "saved-value",
+        "correctedValue": "saved-value", "masked": False, "correction_reason": "Authorized reason", "correctionReason": "Authorized reason"}
+    original = {"fields": [field]} if layout == "fields" else {"parsedFields": {"contactPhone": field}}
+    projected = mask_intake(principal, original)
+    actual = projected["fields"][0] if layout == "fields" else projected["parsedFields"]["contactPhone"]
+    assert actual["correction_reason"] == actual["correctionReason"] == "Authorized reason"

@@ -3,6 +3,7 @@ import {
   CanonicalIntakeReadError, readCanonicalIntakeCase, readCanonicalIntakePage,
   readCanonicalMatchCaseProperties, submitCanonicalMatchCase,
   readCanonicalIntakeHistory,
+  readCanonicalIntakeEvidence,
   readCanonicalURLReceipt, readCanonicalMatchCaseReceipt, readCanonicalIdentityReceipt, readCanonicalAssistedEntryReceipt,
   type CanonicalURLCommand, type CanonicalIdentityCommand, type CanonicalAssistedEntryCommand,
   type CanonicalIntakeReadContext, type CanonicalMatchCaseCommand,
@@ -16,7 +17,8 @@ const summary = (n = 1) => ({ intake_id: id(n), tenant_id: id(10), submitter_sub
   source_info: { source_id: null, recorded_policy_state: null, last_transition_at: "2026-10-15T08:00:00Z", completed_at: null,
     url_fields: ["originalUrl", "canonicalUrl"].map((field_path) => ({ field_path, classification: "CONFIDENTIAL",
       effective: null, masked: true, mask_reason_code: "FIELD_MASKED" as const })) },
-  processing_history: { intake_id: id(n), intake_version: 3, through_sequence: 0, items: [], next_cursor: null, previous_cursor: null } });
+  processing_history: { intake_id: id(n), intake_version: 3, through_sequence: 0, items: [], next_cursor: null, previous_cursor: null },
+  processing_evidence: { intake_id: id(n), intake_version: 3, through_at: "2026-10-15T08:00:00Z", observed_at: "2026-10-15T08:00:00Z", items: [], next_cursor: null, previous_cursor: null } });
 const caseSummary = () => ({ match_case_id: id(20), intake_id: id(1), intake_version: 3, version: 1,
   status: "PENDING_REVIEW", outcome: "POSSIBLE_MATCH", candidates: [{ match_candidate_id: id(21),
     property_id: id(22), listing_id: null, rank: 1, confidence: "0.9000", observed_property_version: 2, observed_listing_version: null }] });
@@ -142,7 +144,7 @@ describe("canonical Intake read transport", () => {
   it("reads the selected native parent before its exact case and never creates a resource", async () => {
     const { value, fetchImpl, signal } = context(json(summary()), json(caseSummary()));
     await expect(readCanonicalIntakeCase(value, id(1), signal)).resolves.toMatchObject({ intake: { version: 3 }, matchCase: { match_case_id: id(20) } });
-    expect(fetchImpl.mock.calls.map(([path]) => path)).toEqual([`/api/v1/canonical-intakes/${id(1)}?include_source=true&include_history=true`, `/api/v1/intakes/${id(1)}/match-case`]);
+    expect(fetchImpl.mock.calls.map(([path]) => path)).toEqual([`/api/v1/canonical-intakes/${id(1)}?include_source=true&include_history=true&include_evidence=true`, `/api/v1/intakes/${id(1)}/match-case`]);
     expect(fetchImpl.mock.calls.every(([, init]) => init?.method === undefined)).toBe(true);
   });
 
@@ -368,5 +370,93 @@ describe("exact original command receipt observations", () => {
     const { value, signal, fetchImpl } = context(json({ detail: "current authority refused" }, 403));
     await expect(exactReceiptOperation(kind).lookup(value, signal)).rejects.toMatchObject({ status: 403, code: "CANONICAL_READ_FAILED" });
     expect(fetchImpl).toHaveBeenCalledTimes(1); expect(fetchImpl.mock.calls[0][1]?.method).toBeUndefined();
+  });
+});
+
+const evidenceSnapshot = () => ({ kind: "SNAPSHOT" as const, recorded_at: "2026-10-15T08:00:00Z", metadata: {
+  source_snapshot_id: id(71), intake_id: id(1), source_id: "synthetic-source", content_sha256: "a".repeat(64), media_type: "application/json",
+  byte_length: 4, captured_at: "2026-10-15T08:00:00Z", observed_at: "2026-10-15T08:00:00Z", stored_at: "2026-10-15T08:00:00Z",
+  capture_method: "MANUAL_ENTRY" as const, version: 1, retention_class: "STANDARD", purge_after: null, legal_hold: false,
+  object_generation: "9223372036854775798", residency_mode: "TW_ONLY" as const } });
+const evidenceParser = () => ({ kind: "PARSER_RUN" as const, recorded_at: "2026-10-15T08:00:00Z", metadata: {
+  parser_run_id: id(72), intake_id: id(1), source_snapshot_id: id(71), parser_release_id: id(73), source_id: "synthetic-source",
+  status: "PARTIAL" as const, version: 3, created_at: "2026-10-15T08:00:00Z", started_at: null, completed_at: null,
+  correlation_id: id(12), semantic_version: "1.0.0", package_name: "synthetic.manual", output_schema_version: "synthetic-output/1" } });
+const evidenceProjection = () => ({ intake_id: id(1), intake_version: 3, through_at: "2026-10-15T08:00:00Z",
+  observed_at: "2026-10-15T08:00:01Z", items: [evidenceSnapshot(), evidenceParser()], previous_cursor: null, next_cursor: null });
+const evidenceParent = () => ({ ...summary(), source_info: { ...summary().source_info, source_id: "synthetic-source" },
+  processing_evidence: evidenceProjection() });
+
+describe("native saved snapshot and parser lifecycle read transport", () => {
+  it("accepts the actual typed records and preserves generation precision and unknown execution timestamps", async () => {
+    const parent = evidenceParent(); const { value, signal, fetchImpl } = context(json(parent), json(caseSummary()));
+    const result = await readCanonicalIntakeCase(value, id(1), signal);
+    expect(result.intake.processing_evidence).toEqual(parent.processing_evidence);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls[0]![0]).toBe(`/api/v1/canonical-intakes/${id(1)}?include_source=true&include_history=true&include_evidence=true`);
+  });
+
+  it.each([
+    undefined, null, { ...evidenceProjection(), intake_id: id(2) }, { ...evidenceProjection(), intake_version: 4 },
+    { ...evidenceProjection(), previous_cursor: "earlier-page" },
+    { ...evidenceProjection(), through_at: "2026-10-15T08:00:02Z" },
+    { ...evidenceProjection(), observed_at: "2026-10-15T08:00:00" },
+    { ...evidenceProjection(), parsed_payload: "PRIVATE_UNEXPECTED_BODY" },
+    { ...evidenceProjection(), items: Array.from({ length: 26 }, () => evidenceSnapshot()) },
+  ])("rejects missing, foreign or unbounded embedded metadata before another resource is read: %j", async (processing_evidence) => {
+    const { value, signal, fetchImpl } = context(json({ ...evidenceParent(), processing_evidence }));
+    await expect(readCanonicalIntakeCase(value, id(1), signal)).rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { intake_id: id(2) }, { source_id: "another-source" }, { object_generation: 9223372036854775000 },
+    { object_generation: "0" }, { object_generation: "01" }, { content_sha256: "invalid" },
+    { version: 0 }, { byte_length: -1 }, { legal_hold: "false" }, { capture_method: ["MANUAL_ENTRY"] },
+    { captured_at: "2026-10-15T08:00:00" }, { raw_object_uri: "PRIVATE_OBJECT" }, { encryption_key_ref: "PRIVATE_KEY" },
+  ])("refuses contradictory or leaking snapshot metadata: %j", async (change) => {
+    const page = { ...evidenceProjection(), items: [{ ...evidenceSnapshot(), metadata: { ...evidenceSnapshot().metadata, ...change } }] };
+    const { value, signal, fetchImpl } = context(json({ ...evidenceParent(), processing_evidence: page }));
+    await expect(readCanonicalIntakeCase(value, id(1), signal)).rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { intake_id: id(2) }, { parser_run_id: "derived-job-label" }, { source_snapshot_id: null }, { parser_release_id: "unknown" },
+    { status: "VERIFIED" }, { status: ["SUCCEEDED"] }, { version: 0 }, { completed_at: "2026-10-15T08:00:00" },
+    { parsed_payload: { secret: "PRIVATE_BODY" } }, { validation_errors: ["PRIVATE_DETAIL"] },
+  ])("refuses unproven, malformed or body-bearing parser metadata: %j", async (change) => {
+    const page = { ...evidenceProjection(), items: [{ ...evidenceParser(), metadata: { ...evidenceParser().metadata, ...change } }] };
+    const { value, signal } = context(json({ ...evidenceParent(), processing_evidence: page }));
+    await expect(readCanonicalIntakeCase(value, id(1), signal)).rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
+  });
+
+  it("uses the existing injected GET and exact parent/captured time bound for later pages", async () => {
+    const parent = evidenceParent(), page = { ...evidenceProjection(), previous_cursor: "earlier-evidence" };
+    const { value, signal, fetchImpl } = context(json(page));
+    await expect(readCanonicalIntakeEvidence(value, parent, "next-evidence", page.through_at, signal)).resolves.toEqual(page);
+    const [path, init] = fetchImpl.mock.calls[0]!; const url = new URL(String(path), "https://unit.invalid");
+    expect(url.pathname).toBe(`/api/v1/canonical-intakes/${id(1)}/processing-evidence`);
+    expect(Object.fromEntries(url.searchParams)).toEqual({ intake_version: "3", cursor: "next-evidence" });
+    expect(init).toMatchObject({ credentials: "same-origin", cache: "no-store", signal });
+    expect(init?.method).toBeUndefined(); expect(init?.body).toBeUndefined();
+    expect(new Headers(init?.headers).get("X-Operator-Role")).toBe("expansion-manager");
+    expect(new Headers(init?.headers).has("If-Match")).toBe(false);
+    expect(new Headers(init?.headers).has("Idempotency-Key")).toBe(false);
+  });
+
+  it.each([
+    { intake_id: id(2) }, { through_at: "2026-10-15T07:00:00Z" }, { next_cursor: "next-evidence" },
+    { previous_cursor: "next-evidence" }, { items: [] , next_cursor: "another-page" },
+    { items: [evidenceSnapshot(), evidenceSnapshot()] },
+  ])("rejects later pages which change binding or repeat a cursor: %j", async (change) => {
+    const parent = evidenceParent(), page = evidenceProjection();
+    const { value, signal } = context(json({ ...page, ...change }));
+    await expect(readCanonicalIntakeEvidence(value, parent, "next-evidence", page.through_at, signal)).rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
+  });
+
+  it.each([401, 403, 409, 503])("preserves current evidence read failure %s", async (status) => {
+    const parent = evidenceParent(); const { value, signal } = context(json({ detail: "unavailable" }, status));
+    await expect(readCanonicalIntakeEvidence(value, parent, "next-evidence", parent.processing_evidence.through_at, signal)).rejects.toMatchObject({ status });
   });
 });

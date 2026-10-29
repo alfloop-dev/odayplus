@@ -31,7 +31,7 @@ following owners are maintained; the migration phases below govern their cutover
 | Native handoff and recovery | Existing `ODayScheduler.run_once` calls parser admission, `CanonicalMatchCaseRepository.match_partition` (also used by the parser CLI), and `NativeIntakeIdentityOwner.confirm_exact_partition`; canonical states and receipts retain progress |
 | Scoped rollout policy and administration | `FeatureFlag` in `shared/auth/feature_flags.py` holds exact tenant or tenant/source units; `DurableFeatureFlagRegistry` retains one global CAS/audit owner. The existing admin routes register, configure scope, approve and enable that same record. Scope changes and explicit disable invalidate prior confirmation versions; they never reuse old approvals. Inside an existing same-engine business transaction, `is_enabled` protects the policy read through that transaction's commit or rollback. Outside that boundary it remains a preflight read; it cannot make a later external saga atomic. |
 | Release governance configuration | `modules/listing/application/intake_release_governance.py` is the shared owner of the existing governed YAML loader and release-authority/live-evidence checks, moved from the release-only config module. Runtime activation and the existing release harness use this same implementation; neither writes approvals. |
-| Native target reads | The two canonical Intake GETs bind the same-engine flag owner/queue and pass `assisted_intake_v1_read` into the existing `authorize_intake_action` decision. Verified tenant eligibility is additional to current role/ownership/field scope. Missing/corrupt owner is unavailable; missing enrollment is disabled. This read flag does not select a writer or gate submission. |
+| Native target reads | The canonical Intake detail, processing-history and processing-evidence GETs bind the same-engine flag owner/queue and pass `assisted_intake_v1_read` into the existing `authorize_intake_action` decision. Verified tenant eligibility is additional to current role/ownership/field scope. Missing/corrupt owner is unavailable; missing enrollment is disabled. This read flag does not select a writer or gate submission. |
 
 The native parser can reach `MATCHING`. The canonical case and decision API now
 support human NEW/REVISION proposals and manager confirmation of the exact
@@ -163,6 +163,28 @@ The response is not stored in caches. Browser
 qualification must exercise the real production web session: the native picker
 is disabled in the older poc-mode browser composition. A poc browser run cannot
 attest this native UI flow.
+
+The same detail GET can opt into saved parser/snapshot metadata with
+`include_evidence=true`. The original `CanonicalNativeParserRunRepository` and
+`NativeIntakeSnapshotMetadataRepository` retain ownership of those records;
+`CanonicalIntakeRepository` composes their bounded reads in the existing
+same-engine, same-tenant SQL transaction and parser command budget. The
+`processing-evidence` page binds the actual Intake version, source, record
+references and observation high-water time. It returns at most 25 records;
+parser status/version observations may change between reads without changing
+the Intake version. Neither path loads object contents, payload fields, storage
+credentials or a current deployment configuration. Snapshot generation is a
+decimal string when recorded, otherwise unavailable. A recorded hash/generation
+or legal-hold boolean is metadata, not proof of current object verification or
+the absence of other holds.
+
+The existing `EvidencePanel` renders this native metadata through the same
+account-bound read client. It and the existing processing timeline share one
+extracted read-page lifetime; neither creates another store, parser, grant or
+fallback to the legacy writer. Field values and correction reasons continue to
+use the original `mask_intake` policy. An upstream field mask remains protective
+at every reader clearance, and both original field layouts conceal their
+correction reasons along with their values without altering retained evidence.
 
 Complete scope-catalog selection, actual browser-to-SQL
 qualification, stale exact-case adjudication/recovery and load/fairness

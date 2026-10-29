@@ -798,3 +798,274 @@ def test_native_history_does_not_turn_corrupt_original_rows_into_fabricated_prog
     assert response.status_code == 503, response.text
     assert "items" not in response.json() and "SUBMITTED" not in response.text
     assert snapshot(canonical_graph) == before
+
+
+def _retained_processing_evidence(case, api, count=1):
+    """Synthetic read-model rows only; no parser execution, grant or verification."""
+    _, ids, _, db = case
+    client, _, _ = api
+    submitted = client.post("/api/v1/canonical-intakes", json=command(),
+        headers={"Idempotency-Key": "synthetic-metadata-read-model-" + uuid4().hex})
+    assert submitted.status_code == 201, submitted.text
+    receipt = submitted.json()
+    release = str(uuid4())
+    snapshots, runs = [], []
+    with db.connect() as connection:
+        connection.execute("UPDATE intake.intakes SET source_id='synthetic-feed' WHERE intake_id=%s", (receipt["intake_id"],))
+        connection.execute("INSERT INTO intake.parser_releases (parser_release_id,source_id,package_name,semantic_version,"
+            "input_schema_version,output_schema_version,artifact_uri,artifact_sha256,test_corpus_version,validation_status) "
+            "VALUES (%s,'synthetic-feed','synthetic.metadata.reader',%s,'synthetic-input/1','synthetic-output/1',"
+            "'gs://PRIVATE_NATIVE_ARTIFACT/never-return','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',"
+            "'synthetic-corpus/1','DRAFT')", (release, '1.0.0+' + uuid4().hex))
+        for index in range(count):
+            snapshot_id, run_id = str(uuid4()), str(uuid4())
+            snapshots.append(snapshot_id)
+            runs.append(run_id)
+            connection.execute("INSERT INTO intake.source_snapshots (source_snapshot_id,tenant_id,intake_id,source_id,"
+                "original_url,raw_object_uri,content_sha256,media_type,byte_length,captured_at,observed_at,stored_at,"
+                "capture_method,retention_class,encryption_key_ref,object_generation) "
+                "SELECT %s,tenant_id,intake_id,'synthetic-feed','https://PRIVATE_NATIVE_URL/?token=PRIVATE',"
+                "'gs://PRIVATE_NATIVE_OBJECT/never-read',%s,'application/json',4,"
+                "submitted_at+%s*interval '1 microsecond',submitted_at+%s*interval '1 microsecond',"
+                "submitted_at+%s*interval '1 microsecond','MANUAL_ENTRY','STANDARD','PRIVATE_NATIVE_KMS',%s "
+                "FROM intake.intakes WHERE intake_id=%s",
+                (snapshot_id, uuid4().hex * 2, index, index, index,
+                 None if index == 0 else 9_223_372_036_854_775_798, receipt["intake_id"]))
+            connection.execute("INSERT INTO intake.parser_runs (parser_run_id,tenant_id,intake_id,source_snapshot_id,"
+                "parser_release_id,status,parsed_payload,normalized_payload,validation_errors,correlation_id,created_at) "
+                "SELECT %s,tenant_id,intake_id,%s,%s,'PARTIAL','{\"private\":\"PRIVATE_NATIVE_PARSED\"}',"
+                "'{\"private\":\"PRIVATE_NATIVE_NORMALIZED\"}','[\"PRIVATE_NATIVE_VALIDATION_ERROR\"]',correlation_id,"
+                "submitted_at+%s*interval '1 microsecond' FROM intake.intakes WHERE intake_id=%s",
+                (run_id, snapshot_id, release, index, receipt["intake_id"]))
+    return receipt, snapshots, runs, release
+
+
+@pytest.mark.parametrize("kind,column,value", [
+    ("snapshot", "retention_class", "https://u:PRIVATE@public.example/"),
+    ("parser", "semantic_version", "https://u:PRIVATE@public.example/"),
+    ("parser", "output_schema_version", "https://public.example/?access_token=PRIVATE"),
+    ("snapshot", "media_type", "https://public.example/#route?token=PRIVATE"),
+    ("snapshot", "retention_class", "v1 (https://u:PRIVATE@public.example/)"),
+    ("parser", "package_name", "access_token=PRIVATE"),
+])
+def test_retained_processing_metadata_cannot_expose_url_or_query_credentials(canonical_graph, native_api, kind, column, value):
+    _, _, _, db = canonical_graph
+    client, _, _ = native_api
+    receipt, snapshots, _, release = _retained_processing_evidence(canonical_graph, native_api)
+    table, key, reference = ("intake.source_snapshots", "source_snapshot_id", snapshots[0]) if kind == "snapshot" else (
+        "intake.parser_releases", "parser_release_id", release)
+    with db.connect() as connection:
+        connection.execute("UPDATE " + table + " SET " + column + "=%s WHERE " + key + "=%s", (value, reference))
+    before = snapshot(canonical_graph)
+    response = client.get(f'/api/v1/canonical-intakes/{receipt["intake_id"]}', params={"include_evidence": "true"})
+    assert response.status_code == 503, response.text
+    assert response.json() == {"detail": "CANONICAL_INTAKE_EVIDENCE_UNAVAILABLE"}
+    assert "PRIVATE" not in response.text and snapshot(canonical_graph) == before
+
+
+def _processing_evidence_state(case):
+    graph, ids, _, _ = case
+    saved = snapshot(case)
+    with graph.transaction(ids["tenant"]):
+        for table, key in (("intake.source_snapshots", "source_snapshot_id"), ("intake.parser_runs", "parser_run_id")):
+            saved[table] = graph.engine.query("SELECT * FROM " + table + " WHERE tenant_id=? ORDER BY " + key, (ids["tenant"],))
+    return saved
+
+
+def test_native_processing_evidence_is_opt_in_and_empty_is_an_actual_saved_read(canonical_graph, native_api):
+    client, _, _ = native_api
+    submitted = client.post("/api/v1/canonical-intakes", json=command(),
+        headers={"Idempotency-Key": "synthetic-empty-saved-metadata-001"})
+    assert submitted.status_code == 201
+    path = '/api/v1/canonical-intakes/' + submitted.json()["intake_id"]
+    before = _processing_evidence_state(canonical_graph)
+    basic = client.get(path)
+    assert basic.status_code == 200 and basic.json()["processing_evidence"] is None
+    selected = client.get(path, params={"include_evidence": "true"})
+    assert selected.status_code == 200, selected.text
+    page = selected.json()["processing_evidence"]
+    assert page["items"] == [] and page["next_cursor"] is None and page["previous_cursor"] is None
+    assert datetime.fromisoformat(page["through_at"]) <= datetime.fromisoformat(page["observed_at"])
+    assert _processing_evidence_state(canonical_graph) == before
+
+
+def test_processing_evidence_merges_real_sql_rows_in_both_directions_and_reads_no_payload(canonical_graph, native_api, monkeypatch):
+    from modules.external_data.application.source_snapshots import SourceSnapshotService
+    from modules.listing.application.native_intake_parser_runs import (
+        CanonicalNativeParserRunRepository,
+    )
+    from shared.infrastructure.persistence.assisted_listing_intake import (
+        NativeIntakeSnapshotMetadataRepository,
+    )
+
+    graph, _, _, _ = canonical_graph
+    client, _, _ = native_api
+    receipt, snapshots, runs, _ = _retained_processing_evidence(canonical_graph, native_api, 31)
+    before = _processing_evidence_state(canonical_graph)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Metadata GET must not use body/execution/replay readers or SELECT-star owners")
+    monkeypatch.setattr(CanonicalNativeParserRunRepository, "get", forbidden)
+    monkeypatch.setattr(NativeIntakeSnapshotMetadataRepository, "required_for_intake", forbidden)
+    monkeypatch.setattr(SourceSnapshotService, "get_snapshot", forbidden)
+    query, fetched = graph.engine.query, []
+    def observe(sql, params=()):
+        rows = query(sql, params)
+        if "FROM intake.source_snapshots" in sql or "FROM intake.parser_runs" in sql:
+            fetched.extend(rows)
+        return rows
+    monkeypatch.setattr(graph.engine, "query", observe)
+    path = f'/api/v1/canonical-intakes/{receipt["intake_id"]}/processing-evidence'
+    pages = []
+    cursor = None
+    for _ in range(3):
+        response = client.get(path, params={"intake_version": receipt["version"], **({"cursor": cursor} if cursor else {})})
+        assert response.status_code == 200, response.text
+        assert response.headers["cache-control"] == "no-store"
+        page = response.json()
+        pages.append(page)
+        cursor = page["next_cursor"]
+    assert cursor is None and [len(p["items"]) for p in pages] == [25, 25, 12]
+    items = [item for page in pages for item in page["items"]]
+    assert [(item["kind"], item["metadata"].get("parser_run_id") or item["metadata"]["source_snapshot_id"]) for item in items] == [
+        item for pair in zip([("SNAPSHOT", v) for v in snapshots], [("PARSER_RUN", v) for v in runs], strict=True) for item in pair]
+    assert all(p["through_at"] == pages[0]["through_at"] for p in pages)
+    assert items[0]["metadata"]["object_generation"] is None
+    assert items[2]["metadata"]["object_generation"] == "9223372036854775798"
+    assert all("PRIVATE_NATIVE" not in json.dumps(p) and "VERIFIED" not in json.dumps(p) for p in pages)
+    for expected, cursor in ((pages[1], pages[2]["previous_cursor"]), (pages[0], pages[1]["previous_cursor"])):
+        response = client.get(path, params={"intake_version": receipt["version"], "cursor": cursor})
+        assert response.status_code == 200, response.text
+        observed = response.json()
+        assert {k: v for k, v in observed.items() if k != "observed_at"} == {k: v for k, v in expected.items() if k != "observed_at"}
+        assert datetime.fromisoformat(observed["observed_at"]) >= datetime.fromisoformat(expected["observed_at"])
+    assert fetched and all(not ({"raw_object_uri", "redacted_object_uri", "encryption_key_ref", "legal_hold_id",
+        "parsed_payload", "normalized_payload", "validation_errors", "field_confidence"} & row.keys()) for row in fetched)
+    # Undo observation before the broad read-state comparison; no query is substituted.
+    monkeypatch.setattr(graph.engine, "query", query)
+    assert _processing_evidence_state(canonical_graph) == before
+
+
+@pytest.mark.parametrize("denial", ["anonymous", "role", "tenant", "scope", "ownership", "flag-disabled", "flag-owner"])
+def test_processing_evidence_rechecks_current_original_authority_before_cursor_or_metadata(canonical_graph, native_api, monkeypatch, denial):
+    from shared.infrastructure.persistence.audit_log import DurableAuditLog
+
+    graph, ids, _, _ = canonical_graph
+    client, caller, _ = native_api
+    receipt, _, _, _ = _retained_processing_evidence(canonical_graph, native_api)
+    p = caller["principal"]
+    if denial == "anonymous":
+        caller["principal"] = replace(p, authenticated=False)
+    elif denial == "role":
+        caller["principal"] = replace(p, roles=frozenset({Role.PLATFORM_ADMIN}))
+    elif denial == "tenant":
+        caller["principal"] = replace(p, scope=Scope(tenant_id=str(uuid4())))
+    elif denial == "scope":
+        caller["principal"] = replace(p, scope=replace(p.scope, region_ids=frozenset({str(uuid4())})))
+    elif denial == "ownership":
+        caller["principal"] = replace(p, subject_id=str(uuid4()))
+    elif denial == "flag-disabled":
+        graph.queue._flags.execute("disable", "assisted_intake_v1_read", actor="synthetic-admin",
+            correlation_id="synthetic-stop-native-metadata", audit_log=DurableAuditLog(graph.engine))
+    else:
+        monkeypatch.setattr(client.app.state.persistence_bundle, "feature_flag_registry", None)
+    before = _processing_evidence_state(canonical_graph)
+    path = f'/api/v1/canonical-intakes/{receipt["intake_id"]}'
+    expected = {"anonymous": 401, "tenant": 404, "flag-owner": 503}.get(denial, 403)
+    for url, params in ((path, {"include_evidence": "true"}), (path + "/processing-evidence",
+            {"intake_version": receipt["version"], "cursor": "must-not-decode-before-authority"})):
+        response = client.get(url, params=params, headers={"X-Operator-Role": "expansion-manager"})
+        assert response.status_code == expected, response.text
+        assert "items" not in response.json() and "PRIVATE_NATIVE" not in response.text
+    assert _processing_evidence_state(canonical_graph) == before
+
+
+def test_processing_evidence_cursor_binds_exact_parent_position_version_and_time_bound(canonical_graph, native_api):
+    import base64
+
+    _, _, _, db = canonical_graph
+    client, _, _ = native_api
+    receipt, snapshots, _, _ = _retained_processing_evidence(canonical_graph, native_api, 14)
+    other, foreign_snapshots, foreign_runs, _ = _retained_processing_evidence(canonical_graph, native_api)
+    with db.connect() as connection:
+        stamp = connection.execute("SELECT stored_at FROM intake.source_snapshots WHERE source_snapshot_id=%s", (snapshots[0],)).fetchone()[0]
+        connection.execute("UPDATE intake.source_snapshots SET stored_at=%s WHERE source_snapshot_id=%s", (stamp, foreign_snapshots[0]))
+        connection.execute("UPDATE intake.parser_runs SET created_at=%s WHERE parser_run_id=%s", (stamp, foreign_runs[0]))
+    path = f'/api/v1/canonical-intakes/{receipt["intake_id"]}/processing-evidence'
+    first = client.get(path, params={"intake_version": receipt["version"]})
+    assert first.status_code == 200, first.text
+    encoded = first.json()["next_cursor"]
+    decoded = json.loads(base64.urlsafe_b64decode(encoded))
+    before = _processing_evidence_state(canonical_graph)
+    future = (datetime.fromisoformat(first.json()["observed_at"]) + timedelta(hours=1)).isoformat()
+    for change, expected in [({"tenant_id": str(uuid4())}, 422), ({"intake_id": other["intake_id"]}, 422),
+        ({"intake_version": receipt["version"] + 1}, 409), ({"through_at": future}, 422),
+        ({"position_at": future}, 422), ({"position_kind": "invented"}, 422), ({"direction": "invented"}, 422),
+        ({"position_id": str(uuid4())}, 422), ({"position_at": stamp.isoformat(), "position_kind": "SNAPSHOT", "position_id": foreign_snapshots[0]}, 422),
+        ({"position_at": stamp.isoformat(), "position_kind": "PARSER_RUN", "position_id": foreign_runs[0]}, 422),
+        ({"position_kind": "PARSER_RUN", "position_id": "00000000-0000-0000-0000-000000000000"}, 422),
+        ({"actor_override": "manager"}, 422)]:
+        cursor = base64.urlsafe_b64encode(json.dumps({**decoded, **change}).encode()).decode()
+        response = client.get(path, params={"intake_version": receipt["version"], "cursor": cursor})
+        assert response.status_code == expected, (change, response.text)
+    for page_size in (0, 26, "true"):
+        assert client.get(path, params={"intake_version": receipt["version"], "page_size": page_size}).status_code == 422
+    assert _processing_evidence_state(canonical_graph) == before
+    with db.connect() as connection:
+        connection.execute("UPDATE intake.intakes SET version=version+1 WHERE intake_id=%s", (receipt["intake_id"],))
+    before = _processing_evidence_state(canonical_graph)
+    stale = client.get(path, params={"intake_version": receipt["version"], "cursor": encoded})
+    assert stale.status_code == 409 and stale.json()["detail"] == "CANONICAL_INTAKE_VERSION_CHANGED"
+    assert _processing_evidence_state(canonical_graph) == before
+
+
+@pytest.mark.parametrize("damage", ["snapshot-version", "generation", "hash", "oversize-media", "oversize-release", "foreign-snapshot", "release-source"])
+def test_processing_evidence_preserves_corrupt_or_unknown_lineage_as_unavailable(canonical_graph, native_api, damage):
+    _, ids, _, db = canonical_graph
+    client, _, _ = native_api
+    receipt, snapshots, runs, release = _retained_processing_evidence(canonical_graph, native_api)
+    with db.connect() as connection:
+        if damage == "snapshot-version":
+            connection.execute("UPDATE intake.source_snapshots SET version=0 WHERE source_snapshot_id=%s", (snapshots[0],))
+        elif damage == "generation":
+            connection.execute("UPDATE intake.source_snapshots SET object_generation=-1 WHERE source_snapshot_id=%s", (snapshots[0],))
+        elif damage == "hash":
+            connection.execute("UPDATE intake.source_snapshots SET content_sha256=%s WHERE source_snapshot_id=%s", ("z" * 64, snapshots[0]))
+        elif damage == "oversize-media":
+            connection.execute("UPDATE intake.source_snapshots SET media_type=%s WHERE source_snapshot_id=%s", ("a" * 5000, snapshots[0]))
+        elif damage == "oversize-release":
+            connection.execute("UPDATE intake.parser_releases SET package_name=%s WHERE parser_release_id=%s", ("a" * 5000, release))
+        elif damage == "release-source":
+            connection.execute("INSERT INTO intake.source_registry (source_id,display_name,canonicalization_rule_version,retrieval_mode,policy_owner_subject_id) "
+                "VALUES ('synthetic-other-metadata-source','Synthetic only','1','ASSISTED_ENTRY_ONLY',%s)", (ids["actor"],))
+            connection.execute("UPDATE intake.parser_releases SET source_id='synthetic-other-metadata-source' WHERE parser_release_id=%s", (release,))
+    if damage == "foreign-snapshot":
+        _, foreign_snapshots, _, _ = _retained_processing_evidence(canonical_graph, native_api)
+        with db.connect() as connection:
+            connection.execute("UPDATE intake.parser_runs SET source_snapshot_id=%s WHERE parser_run_id=%s", (foreign_snapshots[0], runs[0]))
+    before = _processing_evidence_state(canonical_graph)
+    response = client.get(f'/api/v1/canonical-intakes/{receipt["intake_id"]}', params={"include_evidence": "true"})
+    assert response.status_code == 503, response.text
+    assert response.json() == {"detail": "CANONICAL_INTAKE_EVIDENCE_UNAVAILABLE"}
+    assert _processing_evidence_state(canonical_graph) == before
+
+
+def test_processing_evidence_keeps_safe_mime_profile_urls_and_observes_current_run_version(canonical_graph, native_api):
+    _, _, _, db = canonical_graph
+    client, _, _ = native_api
+    receipt, snapshots, runs, _ = _retained_processing_evidence(canonical_graph, native_api)
+    mime = 'application/ld+json; profile="https://schema.org/"'
+    with db.connect() as connection:
+        connection.execute("UPDATE intake.source_snapshots SET media_type=%s WHERE source_snapshot_id=%s", (mime, snapshots[0]))
+    path = f'/api/v1/canonical-intakes/{receipt["intake_id"]}'
+    first = client.get(path, params={"include_evidence": "true"})
+    assert first.status_code == 200, first.text
+    first = first.json()["processing_evidence"]
+    assert first["items"][0]["metadata"]["media_type"] == mime
+    with db.connect() as connection:
+        connection.execute("UPDATE intake.parser_runs SET version=version+1 WHERE parser_run_id=%s", (runs[0],))
+    second = client.get(path, params={"include_evidence": "true"})
+    assert second.status_code == 200, second.text
+    second = second.json()["processing_evidence"]
+    assert second["intake_version"] == first["intake_version"]
+    assert second["items"][1]["metadata"]["version"] == first["items"][1]["metadata"]["version"] + 1
+    assert datetime.fromisoformat(second["observed_at"]) >= datetime.fromisoformat(first["observed_at"])

@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from apps.api.app.routes._common import reset_allowed_guard
 from apps.api.app.routes.operator_modules.live_service import resolve_service
+from modules.external_data.application.assisted_intake import validate_url
 from modules.external_data.security import contains_sensitive_submission_material
 from modules.listing.application.intake_authorization import (
     authorize_intake_action,
@@ -232,6 +233,10 @@ def create_network_listings_sub_router(
         payload.update(body.model_extra or {})
         offenders = contains_sensitive_submission_material(payload)
         if offenders:
+            if offenders == ["url"]:
+                # Preserve this route's original 400 URL-validation response.
+                # Other secret fields and token-shaped paths retain 422.
+                validate_url(body.url)
             fields = ", ".join(sorted(offenders))
             raise HTTPException(
                 status_code=422,

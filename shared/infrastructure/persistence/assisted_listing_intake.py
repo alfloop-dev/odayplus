@@ -871,6 +871,16 @@ class NativeIntakeSnapshotMetadataRepository:
         self.graph = graph
         self.engine = graph.engine
 
+    _METADATA = (
+        "SELECT source_snapshot_id,intake_id,"
+        "CASE WHEN octet_length(source_id)<=1024 THEN source_id END AS source_id,content_sha256,"
+        "CASE WHEN octet_length(media_type)<=1024 THEN media_type END AS media_type,byte_length,"
+        "captured_at,observed_at,stored_at,capture_method,version,"
+        "CASE WHEN octet_length(retention_class)<=256 THEN retention_class END AS retention_class,purge_after,"
+        "legal_hold,object_generation,residency_mode FROM intake.source_snapshots "
+        "WHERE tenant_id=? AND intake_id=?"
+    )
+
     def referenced_object(self, tenant: str, uri: str, generation: int) -> dict | None:
         return self.engine.query_one("SELECT source_snapshot_id FROM intake.source_snapshots "
             "WHERE tenant_id=? AND raw_object_uri=? AND (object_generation=? OR object_generation IS NULL) LIMIT 1",
@@ -890,27 +900,23 @@ class NativeIntakeSnapshotMetadataRepository:
         return self.graph._one("SELECT * FROM intake.source_snapshots WHERE tenant_id=? AND source_snapshot_id=? "
             "AND intake_id=?", (tenant, snapshot, intake))
 
-    @staticmethod
-    def _selected_parameters(tenant: str, snapshots: list[str], row_limit: int) -> tuple:
-        if (type(snapshots) is not list or type(row_limit) is not int or row_limit < 1
-                or len(snapshots) >= row_limit):
-            raise ValueError("NATIVE_SNAPSHOT_METADATA_SELECTION_BOUND_REQUIRED")
-        return tenant, snapshots, row_limit
+    def metadata_for_intake(self, tenant: str, intake: str, snapshot: str, *, before) -> dict | None:
+        """Read only lifecycle metadata, with exact tenant/Intake membership."""
+        before()
+        row = self.engine.query_one(self._METADATA + " AND source_snapshot_id=?", (tenant, intake, snapshot))
+        before.check_in_memory()
+        return row
 
-    def selected_sizes(self, tenant: str, snapshots: list[str], row_limit: int) -> list[dict]:
-        """Size only exact referenced metadata before the caller fetches cells.
-
-        The caller owns the current tenant authority, whole-read byte budget
-        and original SQL root/clock. A guarded graph keeps those checks around
-        this fixed parameterized read. No provider object or raw body is read.
-        """
-        params = self._selected_parameters(tenant, snapshots, row_limit)
-        return self.engine.query("SELECT source_snapshot_id AS id,octet_length(to_jsonb(t)::text) AS bytes "
-            "FROM intake.source_snapshots t WHERE tenant_id=? AND source_snapshot_id=ANY(?::uuid[]) "
-            "ORDER BY source_snapshot_id LIMIT ?", params)
-
-    def selected_metadata(self, tenant: str, snapshots: list[str], row_limit: int) -> list[dict]:
-        """Read selected existing metadata after the caller's size preflight."""
-        params = self._selected_parameters(tenant, snapshots, row_limit)
-        return self.engine.query("SELECT * FROM intake.source_snapshots WHERE tenant_id=? "
-            "AND source_snapshot_id=ANY(?::uuid[]) ORDER BY source_snapshot_id LIMIT ? FOR SHARE", params)
+    def metadata_page_for_intake(self, tenant: str, intake: str, *, through, position, backward, limit, before) -> list[dict]:
+        """Original metadata owner; no raw-object references, bytes or grants."""
+        if type(limit) is not int or not 1 <= limit <= 26 or type(backward) is not bool:
+            raise ValueError("NATIVE_SNAPSHOT_METADATA_READ_BOUND_REQUIRED")
+        comparison, order = ("<", "DESC") if backward else (">", "ASC")
+        sql, params = self._METADATA + " AND stored_at<=?::timestamptz", [tenant, intake, through]
+        if position is not None:
+            sql += f" AND (stored_at,0,source_snapshot_id){comparison}(?::timestamptz,?::int,?::uuid)"
+            params.extend(position)
+        before()
+        rows = self.engine.query(sql + f" ORDER BY stored_at {order},source_snapshot_id {order} LIMIT ?", (*params, limit))
+        before.check_in_memory()
+        return rows

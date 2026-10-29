@@ -626,9 +626,12 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
                 # disclose values before policy support is deployed.
                 field_class = None
 
-            if field_class is None or clearance < field_class:
+            if field_info_copy.get("masked") is True or field_class is None or clearance < field_class:
                 for value_key in ("parsed", "normalized", "corrected", "effective"):
                     field_info_copy[value_key] = None
+                for reason_key in ("correction_reason", "correctionReason"):
+                    if reason_key in field_info_copy:
+                        field_info_copy[reason_key] = None
                 field_info_copy["masked"] = True
                 field_info_copy["mask_reason_code"] = "FIELD_MASKED"
                 field_path = field_info_copy.get("field_path")
@@ -657,10 +660,13 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
             elif key in ("contactPhone", "brokerEmail", "privateNotes"):
                 field_class = DataClassification.RESTRICTED
 
-            if clearance < field_class:
+            if field_info_copy.get("masked") is True or clearance < field_class:
                 field_info_copy["sourceValue"] = None
                 field_info_copy["normalizedValue"] = None
                 field_info_copy["correctedValue"] = None
+                for reason_key in ("correction_reason", "correctionReason"):
+                    if reason_key in field_info_copy:
+                        field_info_copy[reason_key] = None
                 field_info_copy["masked"] = True
                 field_info_copy["mask_reason_code"] = "FIELD_MASKED"
 

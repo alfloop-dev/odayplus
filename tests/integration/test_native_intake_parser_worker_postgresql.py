@@ -6,7 +6,7 @@ engineering seams; no production/staging/UAT or complete Intake claim follows.
 """
 import json
 from contextlib import nullcontext
-from dataclasses import fields
+from dataclasses import fields, replace
 from types import SimpleNamespace
 
 import pytest
@@ -154,6 +154,26 @@ def test_real_default_worker_uses_startup_registry_and_commits_both_jobs_and_int
         historical = bundle.canonical_intake_parser()
         assert historical.replay(physical) == {"terminal": True, "result": job["result"]}
     assert case[5].calls == calls and native_owner.artifact_registry is not None
+    # Read the saved native facts through the actual original HTTP owner after
+    # parser activation has been removed. Historical metadata grants no IO.
+    client = case[6][1][0]
+    path = f'/api/v1/canonical-intakes/{receipt["intake_id"]}'
+    response = client.get(path, params={"include_evidence": "true"})
+    assert response.status_code == 200, response.text
+    page = response.json()["processing_evidence"]
+    assert page["intake_id"] == receipt["intake_id"] and page["intake_version"] == intake["version"]
+    assert page["previous_cursor"] is None and page["next_cursor"] is None
+    assert [item["kind"] for item in page["items"]] == ["SNAPSHOT", "PARSER_RUN"]
+    saved_snapshot, saved_run = [item["metadata"] for item in page["items"]]
+    assert saved_snapshot["source_snapshot_id"] == run["source_snapshot_id"]
+    assert saved_snapshot["intake_id"] == saved_run["intake_id"] == receipt["intake_id"]
+    assert saved_run["parser_run_id"] == run["parser_run_id"]
+    assert saved_run["source_snapshot_id"] == saved_snapshot["source_snapshot_id"]
+    assert saved_run["parser_release_id"] == run["parser_release_id"]
+    assert saved_run["status"] == status and saved_run["version"] == run["version"]
+    assert all(name not in response.text for name in ("raw_object_uri", "redacted_object_uri", "encryption_key_ref",
+        "parsed_payload", "normalized_payload", "validation_errors", "attempt_intents", _PRIVATE))
+    assert case[5].calls == calls and persisted(case) == current
 
 
 @pytest.mark.parametrize("loss", ["absent", "malformed", "installed_unavailable"])
@@ -190,3 +210,32 @@ def test_real_default_worker_unaccepted_capability_loss_cancels_atomically_witho
     elif loss == "installed_unavailable":
         with pytest.raises(artifacts.NativeParserArtifactUnavailable, match="^NATIVE_PARSER_ARTIFACT_READ_UNAVAILABLE$"):
             native_owner.require_deployment()
+    response = case[6][1][0].get(f'/api/v1/canonical-intakes/{receipt["intake_id"]}', params={"include_evidence": "true"})
+    assert response.status_code == 200, response.text
+    saved = next(item["metadata"] for item in response.json()["processing_evidence"]["items"] if item["kind"] == "PARSER_RUN")
+    assert saved["parser_run_id"] == run["parser_run_id"] and saved["status"] == "CANCELLED"
+    assert saved["started_at"] is None and saved["completed_at"] is not None
+    assert case[5].calls == calls and persisted(case) == current
+
+
+def test_actual_default_worker_failure_metadata_is_readable_without_repeating_io(parser_admission_case, monkeypatch):
+    case = parser_admission_case
+    settle_seed(case)
+    startup(case, monkeypatch)
+    receipt = admit(case)
+    head = case[5].head_version
+    def wrong_type(*args, **kwargs):
+        return replace(head(*args, **kwargs), media_type="text/html")
+    monkeypatch.setattr(case[5], "head_version", wrong_type)
+    run_default(case, monkeypatch)
+    job, run, physical = rows(case, receipt["job_id"])
+    assert job["status"] == run["status"] == "FAILED" and physical.status == JobStatus.FAILED
+    current, calls = persisted(case), list(case[5].calls)
+    response = case[6][1][0].get(f'/api/v1/canonical-intakes/{receipt["intake_id"]}', params={"include_evidence": "true"})
+    assert response.status_code == 200, response.text
+    assert response.json()["processing_state"] == "FAILED"
+    saved = next(item["metadata"] for item in response.json()["processing_evidence"]["items"] if item["kind"] == "PARSER_RUN")
+    assert saved["parser_run_id"] == run["parser_run_id"] and saved["status"] == "FAILED"
+    assert saved["started_at"] is not None and saved["completed_at"] is not None
+    assert "attempt_intents" not in response.text and "PRIVATE" not in response.text
+    assert case[5].calls == calls and persisted(case) == current

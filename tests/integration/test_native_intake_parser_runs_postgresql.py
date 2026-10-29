@@ -221,11 +221,11 @@ def test_foreign_transaction_tenant_cannot_read_an_existing_run(parser_storage_c
             store.get(str(uuid4()), row["parser_run_id"], before=before)
 
 
-@pytest.mark.parametrize("method", ["admission", "acceptance", "get"])
+@pytest.mark.parametrize("method", ["admission", "acceptance", "get", "metadata", "metadata_page"])
 @pytest.mark.parametrize("root_change", ["read_committed", "foreign_tenant"])
 def test_parser_owners_require_current_serializable_tenant_root(parser_storage_case, method, root_change):
     owner, tenant, *_ = parser_storage_case
-    error = "NATIVE_PARSER_RUN_CAS_REJECTED" if method == "get" else "NATIVE_PARSER_ADMISSION_PROOF_REJECTED"
+    error = "NATIVE_PARSER_RUN_CAS_REJECTED" if method in {"get", "metadata", "metadata_page"} else "NATIVE_PARSER_ADMISSION_PROOF_REJECTED"
     with owner.engine.transaction():
         if root_change == "foreign_tenant":
             owner.engine.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
@@ -237,5 +237,10 @@ def test_parser_owners_require_current_serializable_tenant_root(parser_storage_c
         with pytest.raises(NativeParserConflict, match="^" + error + "$"):
             if method == "get":
                 CanonicalNativeParserRunRepository(owner.engine).get(tenant, str(uuid4()), before=before)
+            elif method == "metadata":
+                CanonicalNativeParserRunRepository(owner.engine).metadata_for_intake(tenant, str(uuid4()), str(uuid4()), before=before)
+            elif method == "metadata_page":
+                CanonicalNativeParserRunRepository(owner.engine).metadata_page_for_intake(tenant, str(uuid4()),
+                    through=datetime.now(UTC).isoformat(), position=None, backward=False, limit=26, before=before)
             else:
                 getattr(NativeParserJobProof(owner.graph), method)(RootGuardedJob(tenant_id=tenant), {}, before=before)

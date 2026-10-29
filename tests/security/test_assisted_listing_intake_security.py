@@ -14,6 +14,7 @@ from modules.external_data.security import (
     FetchResponse,
     RetrievalLimits,
     RetrievalSecurityGate,
+    contains_sensitive_submission_material,
     redact_sensitive_snapshot,
 )
 
@@ -289,6 +290,41 @@ def test_embedded_credentials_and_token_query_urls_are_rejected() -> None:
 
     assert userinfo.status_code == 400
     assert token_query.status_code in {400, 422}
+
+
+@pytest.mark.parametrize("text", [
+    "https://operator:PRIVATE@public.example/", "v1 (https://operator:PRIVATE@public.example/)",
+    'application/json; profile="https://public.example/?access_token=PRIVATE"',
+    "https://public.example/#route?token=PRIVATE", "https://public.example/?%61ccess_token=PRIVATE",
+    "//operator:PRIVATE@public.example/", "gs://operator:PRIVATE@synthetic-bucket/object", "access_token=PRIVATE",
+])
+def test_shared_text_policy_rejects_uri_credentials_and_query_material_without_network(text, monkeypatch):
+    def forbidden_network(*args, **kwargs):
+        pytest.fail("Credential detection must not perform DNS or retrieval")
+    monkeypatch.setattr("socket.getaddrinfo", forbidden_network)
+    assert contains_sensitive_submission_material({"value": text}) == ["value"]
+
+
+@pytest.mark.parametrize("text", [
+    "1.0.0+build.5", "native-manual-parser-fields/1", "STANDARD",
+    'application/ld+json; profile="https://schema.org/"',
+    "See https://schema.org/Thing for the public schema.",
+    "https://[2001:4860:4860::8888]/public", "count=1", "//public.example/schema",
+])
+def test_shared_text_policy_preserves_safe_versions_mime_profiles_and_public_references(text):
+    assert contains_sensitive_submission_material({"value": text}) == []
+
+
+def test_operator_rejects_credentials_embedded_in_extra_text_before_creating_intake(monkeypatch):
+    from modules.opsboard.application.network_listings import NetworkListingService
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Credential rejection must precede the actual submission owner")
+    monkeypatch.setattr(NetworkListingService, "submit_intake", forbidden)
+    client = TestClient(create_app())
+    response = client.post("/api/v1/operator/network-listings/intake/submit", headers=_write_headers("private-text"),
+        json={"url": "https://www.synthetic.example/detail-77120345.html", "note": "v1 (https://u:PRIVATE@public.example/)"})
+    assert response.status_code == 422 and "PRIVATE" not in response.text
 
 
 def test_blocked_source_submit_and_retry_never_call_retrieve(

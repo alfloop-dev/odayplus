@@ -162,7 +162,8 @@ function nativeReadProjection(intake_id: string, version: number, submitted_at: 
   return { source_info: { source_id: null, recorded_policy_state: null, last_transition_at: submitted_at, completed_at: null,
     url_fields: ["originalUrl", "canonicalUrl"].map((field_path) => ({ field_path, classification: "CONFIDENTIAL",
       effective: null, masked: true, mask_reason_code: "FIELD_MASKED" as const })) },
-    processing_history: { intake_id, intake_version: version, through_sequence: 0, items: [], next_cursor: null, previous_cursor: null } };
+    processing_history: { intake_id, intake_version: version, through_sequence: 0, items: [], next_cursor: null, previous_cursor: null },
+    processing_evidence: { intake_id, intake_version: version, through_at: submitted_at, observed_at: submitted_at, items: [], next_cursor: null, previous_cursor: null } };
 }
 
 async function beginCanonicalCommand(boundary: "HTTP" | "JSON" | "ERROR_JSON" | "uncertain",

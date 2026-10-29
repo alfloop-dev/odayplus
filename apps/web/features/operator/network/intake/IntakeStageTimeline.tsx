@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
 import type {
   AssistedIntake,
   CanonicalIntakeDetail,
@@ -13,6 +12,7 @@ import styles from "./intake.module.css";
 import { stageLabel, stageSteps, stageTone } from "./intakeTypes";
 import { CANONICAL_INTAKE_STAGE_LABEL, readCanonicalIntakeHistory, type CanonicalIntakeReadContext } from "./canonicalIntakeReadClient";
 import { CanonicalIntakeFailure } from "./CanonicalIdentityDecisionPanel";
+import { useCanonicalIntakeReadPage, type CanonicalIntakePageLoader } from "./useCanonicalIntakeReadPage";
 
 type AssistedTimelineProps = {
   record: AssistedIntake;
@@ -33,32 +33,12 @@ export function IntakeStageTimeline(props: IntakeStageTimelineProps) {
   return "canonical" in props ? <NativeTimeline {...props} /> : <AssistedTimeline {...props} />;
 }
 
+const loadHistoryPage: CanonicalIntakePageLoader<CanonicalIntakeHistoryPage> = (context, parent, cursor, signal, initial) =>
+  readCanonicalIntakeHistory(context, parent, cursor, initial.through_sequence, signal);
+
 function NativeTimeline({ canonical, context }: NativeTimelineProps) {
-  const initial = canonical.processing_history ?? null;
-  const [selection, setSelection] = useState<{ context: CanonicalIntakeReadContext; canonical: CanonicalIntakeDetail; cursor: string | null }>(
-    { context, canonical, cursor: null });
-  const cursor = selection.context === context && selection.canonical === canonical ? selection.cursor : null;
-  const [read, setRead] = useState<{ context: CanonicalIntakeReadContext; canonical: CanonicalIntakeDetail;
-    cursor: string | null; page: CanonicalIntakeHistoryPage | null; busy: boolean; error: unknown | null }>(
-    { context, canonical, cursor: null, page: initial, busy: false, error: null });
-  const latest = useRef({ context, canonical, cursor });
-  latest.current = { context, canonical, cursor };
-  useEffect(() => {
-    const controller = new AbortController();
-    const current = () => !controller.signal.aborted && latest.current.context === context
-      && latest.current.canonical === canonical && latest.current.cursor === cursor;
-    if (cursor !== null && initial) {
-      setRead({ context, canonical, cursor, page: null, busy: true, error: null });
-      void readCanonicalIntakeHistory(context, canonical, cursor, initial.through_sequence, controller.signal).then(
-        (page) => { if (current()) setRead({ context, canonical, cursor, page, busy: false, error: null }); },
-        (error) => { if (current()) setRead({ context, canonical, cursor, page: null, busy: false, error }); },
-      );
-    }
-    return () => controller.abort();
-  }, [context, canonical, cursor, initial]);
-  const bound = read.context === context && read.canonical === canonical && read.cursor === cursor;
-  const page = cursor === null ? initial : bound ? read.page : null;
-  const busy = cursor !== null && (!bound || read.busy);
+  const { page, busy, error, selectCursor } = useCanonicalIntakeReadPage(context, canonical,
+    canonical.processing_history ?? null, loadHistoryPage);
   return <div className={styles.sectionBox} data-testid="native-intake-stage-timeline">
     <div className={styles.timelineHeader}>
       <h4>階段時序與執行歷程 STAGE TIMELINE</h4>
@@ -66,7 +46,7 @@ function NativeTimeline({ canonical, context }: NativeTimelineProps) {
     </div>
     <p>目前版本 {canonical.version} · 歷程只顯示實際記錄的轉移。</p>
     {busy ? <p role="status">正在讀取階段歷程…</p>
-      : cursor !== null && bound && read.error ? <CanonicalIntakeFailure error={read.error} />
+      : error ? <CanonicalIntakeFailure error={error} />
       : page ? <>
         <p>歷程截點：序號 {page.through_sequence} · 收件版本 {page.intake_version}</p>
         {page.items.length ? <div style={{ overflowX: "auto" }}>
@@ -91,9 +71,9 @@ function NativeTimeline({ canonical, context }: NativeTimelineProps) {
         </div> : <p>尚無已記錄的階段轉移；目前狀態以詳情讀取為準。</p>}
         <div className={styles.timelineActions}>
           <button className={styles.secondaryButton} disabled={!page.previous_cursor} type="button"
-            onClick={() => setSelection({ context, canonical, cursor: page.previous_cursor })}>較早的階段歷程</button>
+            onClick={() => selectCursor(page.previous_cursor)}>較早的階段歷程</button>
           <button className={styles.secondaryButton} disabled={!page.next_cursor} type="button"
-            onClick={() => setSelection({ context, canonical, cursor: page.next_cursor })}>較後的階段歷程</button>
+            onClick={() => selectCursor(page.next_cursor)}>較後的階段歷程</button>
         </div>
       </> : <p>尚未取得處理歷程，請重新整理詳情。</p>}
   </div>;

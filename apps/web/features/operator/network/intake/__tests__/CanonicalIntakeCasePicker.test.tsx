@@ -37,7 +37,8 @@ const intake = (n: number) => ({ intake_id: id(n), tenant_id: id(10), submitter_
   source_info: { source_id: null, recorded_policy_state: null, last_transition_at: "2026-10-15T08:00:00Z", completed_at: null,
     url_fields: ["originalUrl", "canonicalUrl"].map((field_path) => ({ field_path, classification: "CONFIDENTIAL",
       effective: null, masked: true, mask_reason_code: "FIELD_MASKED" as const })) },
-  processing_history: { intake_id: id(n), intake_version: 3, through_sequence: 0, items: [], next_cursor: null, previous_cursor: null } });
+  processing_history: { intake_id: id(n), intake_version: 3, through_sequence: 0, items: [], next_cursor: null, previous_cursor: null },
+  processing_evidence: { intake_id: id(n), intake_version: 3, through_at: "2026-10-15T08:00:00Z", observed_at: "2026-10-15T08:00:00Z", items: [], next_cursor: null, previous_cursor: null } });
 const matchCase = (n: number) => ({ match_case_id: id(n + 20), intake_id: id(n), intake_version: 3, version: 1,
   status: "PENDING_REVIEW", outcome: "POSSIBLE_MATCH", candidates: [{ match_candidate_id: id(n + 30), property_id: id(n + 40),
     listing_id: null, rank: 1, confidence: "0.9000", observed_property_version: 2, observed_listing_version: null }] });
@@ -265,7 +266,7 @@ describe("native Intake and case selection", () => {
     await within(detail).findByText(new RegExp(`比對案件 ${id(22)}`));
     expect(within(detail).getByText(new RegExp(`主體 ${id(42)}`))).toBeVisible();
     expect(vi.mocked(context.fetchImpl).mock.calls.map(([path]) => path)).toEqual([
-      "/api/v1/canonical-intakes?page_size=25", `/api/v1/canonical-intakes/${id(2)}?include_source=true&include_history=true`, `/api/v1/intakes/${id(2)}/match-case`,
+      "/api/v1/canonical-intakes?page_size=25", `/api/v1/canonical-intakes/${id(2)}?include_source=true&include_history=true&include_evidence=true`, `/api/v1/intakes/${id(2)}/match-case`,
     ]);
     await select(2);
     expect(within(detail).getByText(new RegExp(`比對案件 ${id(22)}`))).toBeVisible();

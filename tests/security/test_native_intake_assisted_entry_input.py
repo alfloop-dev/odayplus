@@ -29,6 +29,9 @@ def command(**kwargs):
     ("address", " "), ("address", 18), ("address", "a" * 513),
     ("address", "<script>page</script>"), ("address", "human\x00text"),
     ("providerListingId", "Bearer sensitive-token-value"), ("floor", "<html>"),
+    ("providerListingId", "https://u:PRIVATE@public.example/"),
+    ("providerListingId", "https://public.example/#route?access_token=PRIVATE"),
+    ("providerListingId", "access_token=PRIVATE"),
     ("listingType", {}), ("listingStatus", ""),
 ])
 def test_typed_fields_reject_coercion_nonfinite_html_secrets_and_unbounded_text(field, value):

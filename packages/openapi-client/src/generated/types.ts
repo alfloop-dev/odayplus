@@ -577,6 +577,7 @@ export type CanonicalIntakeDetail = {
   correlation_id: string;
   intake_id: string;
   intake_method: "URL" | "MANUAL" | "CSV" | "APPROVED_FEED" | "OPERATOR_SNAPSHOT";
+  processing_evidence?: CanonicalIntakeEvidencePage | null;
   processing_history?: CanonicalIntakeHistoryPage | null;
   processing_state: IntakeStage;
   resolution?: CanonicalIntakeResolution | null;
@@ -587,6 +588,17 @@ export type CanonicalIntakeDetail = {
   tenant_id: string;
   version: number;
   workflow?: CanonicalIntakeWorkflow | null;
+};
+
+/** CanonicalIntakeEvidencePage */
+export type CanonicalIntakeEvidencePage = {
+  intake_id: string;
+  intake_version: number;
+  items: (CanonicalIntakeSnapshotRecord | CanonicalIntakeParserRunRecord)[];
+  next_cursor: string | null;
+  observed_at: string;
+  previous_cursor: string | null;
+  through_at: string;
 };
 
 /** CanonicalIntakeHistoryPage */
@@ -603,6 +615,31 @@ export type CanonicalIntakeHistoryPage = {
 export type CanonicalIntakePage = {
   items: CanonicalIntakeSummary[];
   next_cursor: string | null;
+};
+
+/** CanonicalIntakeParserRunMetadata */
+export type CanonicalIntakeParserRunMetadata = {
+  completed_at: string | null;
+  correlation_id: string;
+  created_at: string;
+  intake_id: string;
+  output_schema_version: string;
+  package_name: string;
+  parser_release_id: string;
+  parser_run_id: string;
+  semantic_version: string;
+  source_id: string;
+  source_snapshot_id: string;
+  started_at: string | null;
+  status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIAL" | "FAILED" | "CANCELLED";
+  version: number;
+};
+
+/** CanonicalIntakeParserRunRecord */
+export type CanonicalIntakeParserRunRecord = {
+  kind: "PARSER_RUN";
+  metadata: CanonicalIntakeParserRunMetadata;
+  recorded_at: string;
 };
 
 /** CanonicalIntakeReceipt */
@@ -628,6 +665,33 @@ export type CanonicalIntakeResolution = {
   listing_version: number;
   property_id_at_creation: string;
   property_version: number;
+};
+
+/** CanonicalIntakeSnapshotMetadata */
+export type CanonicalIntakeSnapshotMetadata = {
+  byte_length: number;
+  capture_method: "SERVER_RETRIEVAL" | "OPERATOR_UPLOAD" | "APPROVED_FEED" | "MANUAL_ENTRY";
+  captured_at: string;
+  content_sha256: string;
+  intake_id: string;
+  legal_hold: boolean;
+  media_type: string;
+  object_generation: string | null;
+  observed_at: string;
+  purge_after: string | null;
+  residency_mode: "TW_ONLY" | "APPROVED_APAC_DR";
+  retention_class: string;
+  source_id: string;
+  source_snapshot_id: string;
+  stored_at: string;
+  version: number;
+};
+
+/** CanonicalIntakeSnapshotRecord */
+export type CanonicalIntakeSnapshotRecord = {
+  kind: "SNAPSHOT";
+  metadata: CanonicalIntakeSnapshotMetadata;
+  recorded_at: string;
 };
 
 /** CanonicalIntakeSourceInfo */
@@ -3194,6 +3258,7 @@ export const API_PATHS = {
   "/api/v1/canonical-intakes/{intake_id}/assisted-entry-completions/receipt": ["GET"],
   "/api/v1/canonical-intakes/{intake_id}/assisted-entry-completions/{request_id}/cancel": ["POST"],
   "/api/v1/canonical-intakes/{intake_id}/cancel": ["POST"],
+  "/api/v1/canonical-intakes/{intake_id}/processing-evidence": ["GET"],
   "/api/v1/canonical-intakes/{intake_id}/processing-history": ["GET"],
   "/api/v1/canonical-intakes/{intake_id}/source-policy-rechecks": ["POST"],
   "/api/v1/canonical-intakes/{intake_id}/source-policy-rechecks/{request_id}/cancel": ["POST"],

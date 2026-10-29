@@ -65,6 +65,51 @@ class CanonicalIntakeRepository:
                 f"AND sequence_no{comparison}? AND sequence_no<=? ORDER BY sequence_no {order} LIMIT ?",
                 (tenant, intake_id, position, through, limit))
 
+    def processing_evidence_position(self, tenant: str, intake_id: str, position, *, source_id, before) -> bool:
+        """Validate a cursor's exact saved parent/reference, never a derived ID."""
+        from modules.listing.application.native_intake_assisted_entry_request_proof import _time
+        from modules.listing.application.native_intake_parser_runs import (
+            CanonicalNativeParserRunRepository,
+        )
+        from shared.infrastructure.persistence.assisted_listing_intake import (
+            NativeIntakeSnapshotMetadataRepository,
+        )
+
+        at, kind, reference = position
+        with self.graph.transaction(tenant):
+            if kind == "SNAPSHOT":
+                row = NativeIntakeSnapshotMetadataRepository(self.graph).metadata_for_intake(
+                    tenant, intake_id, reference, before=before)
+                column = "stored_at"
+            else:
+                row = CanonicalNativeParserRunRepository(self.engine).metadata_for_intake(
+                    tenant, intake_id, reference, before=before)
+                column = "created_at"
+            return row is not None and row["source_id"] == source_id and _time(row[column]) == at
+
+    def processing_evidence(self, tenant: str, intake_id: str, *, through, position, backward, limit, before) -> list[dict]:
+        """Merge bounded existing lifecycle records; no bodies or execution IO."""
+        from modules.listing.application.native_intake_assisted_entry_request_proof import _time
+        from modules.listing.application.native_intake_parser_runs import (
+            CanonicalNativeParserRunRepository,
+        )
+        from shared.infrastructure.persistence.assisted_listing_intake import (
+            NativeIntakeSnapshotMetadataRepository,
+        )
+
+        marker = None if position is None else (position[0].isoformat(), 0 if position[1] == "SNAPSHOT" else 1, position[2])
+        with self.graph.transaction(tenant):
+            runs = CanonicalNativeParserRunRepository(self.engine).metadata_page_for_intake(
+                tenant, intake_id, through=through.isoformat(), position=marker, backward=backward, limit=limit, before=before)
+            snapshots = NativeIntakeSnapshotMetadataRepository(self.graph).metadata_page_for_intake(
+                tenant, intake_id, through=through.isoformat(), position=marker, backward=backward, limit=limit, before=before)
+            records = [{"kind": "SNAPSHOT", "recorded_at": item["stored_at"], "metadata": item} for item in snapshots]
+            records += [{"kind": "PARSER_RUN", "recorded_at": item["created_at"], "metadata": item} for item in runs]
+            before.check_in_memory()
+            records.sort(key=lambda item: (_time(item["recorded_at"]), 0 if item["kind"] == "SNAPSHOT" else 1,
+                item["metadata"]["source_snapshot_id" if item["kind"] == "SNAPSHOT" else "parser_run_id"]), reverse=backward)
+            return records[:limit]
+
     def workflow(self, tenant: str, intake_id: str) -> dict | None:
         """Read recorded workflow facts after the caller authorizes its Intake.
 

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AssistedIntake, CanonicalIntakeDetail, CanonicalIntakeHistoryPage, CanonicalIntakeTransition, IntakeInboxPage } from "@oday-plus/openapi-client";
+import type { AssistedIntake, CanonicalIntakeDetail, CanonicalIntakeEvidencePage, CanonicalIntakeHistoryPage, CanonicalIntakeTransition, IntakeInboxPage } from "@oday-plus/openapi-client";
 import { OperatorConsole, isIntakeDetailOpen } from "../../../OperatorConsole";
 import "../../../NetworkFindAreasWorkspace";
 import {
@@ -18,6 +18,7 @@ import { IntakeProcessingDetail, buildPreservedInput, hasAuthoritativeTargetEvid
 import { IntakeDecisionDialog } from "../IntakeDecisionDialog";
 import { decisionOptions, matchConfidence } from "../intakeTypes";
 import { IntakeStageTimeline, jobStatusBadgeColors } from "../IntakeStageTimeline";
+import { EvidencePanel } from "../EvidencePanel";
 import type { CanonicalIntakeReadContext } from "../canonicalIntakeReadClient";
 import { isSnapshotStale } from "../intakeFreshness";
 
@@ -1492,7 +1493,8 @@ function nativeDetail(n = 1, marker = "synthetic-first-page"): CanonicalIntakeDe
       url_fields: ["originalUrl", "canonicalUrl"].map((field_path) => ({ field_path, classification: "CONFIDENTIAL",
         effective: null, masked: true, mask_reason_code: "FIELD_MASKED" })) },
     processing_history: { intake_id: nativeId(n), intake_version: 3, through_sequence: 2,
-      items: [nativeTransition(1, marker)], previous_cursor: null, next_cursor: "next-page" } };
+      items: [nativeTransition(1, marker)], previous_cursor: null, next_cursor: "next-page" },
+    processing_evidence: { intake_id: nativeId(n), intake_version: 3, through_at: "2026-10-15T08:00:00Z", observed_at: "2026-10-15T08:00:00Z", items: [], next_cursor: null, previous_cursor: null } };
 }
 function nativeNextPage(parent: CanonicalIntakeDetail, marker = "synthetic-next-page"): CanonicalIntakeHistoryPage {
   return { intake_id: parent.intake_id, intake_version: parent.version, through_sequence: 2,
@@ -1580,5 +1582,119 @@ describe("native recorded history in the original continuous detail", () => {
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.queryByText("synthetic-first-page")).toBeNull();
     expect(screen.queryByRole("table")).toBeNull();
+  });
+});
+
+function nativeEvidence(n = 1, marker = "application/x-synthetic-first"): CanonicalIntakeDetail {
+  const parent = nativeDetail(n);
+  parent.source_info = { ...parent.source_info!, source_id: "synthetic-source" };
+  parent.processing_evidence = { intake_id: parent.intake_id, intake_version: parent.version,
+    through_at: "2026-10-15T08:00:00Z", observed_at: "2026-10-15T08:00:00Z", previous_cursor: null, next_cursor: "next-evidence",
+    items: [{ kind: "SNAPSHOT", recorded_at: "2026-10-15T08:00:00Z", metadata: {
+      source_snapshot_id: nativeId(700 + n), intake_id: parent.intake_id, source_id: "synthetic-source", content_sha256: "a".repeat(64),
+      media_type: marker, byte_length: 4, captured_at: "2026-10-15T08:00:00Z", observed_at: "2026-10-15T08:00:00Z",
+      stored_at: "2026-10-15T08:00:00Z", capture_method: "MANUAL_ENTRY", version: 1, retention_class: "STANDARD", purge_after: null,
+      legal_hold: false, object_generation: null, residency_mode: "TW_ONLY" } }] };
+  return parent;
+}
+function nativeParserEvidencePage(parent: CanonicalIntakeDetail, marker = "synthetic-next-parser"): CanonicalIntakeEvidencePage {
+  return { intake_id: parent.intake_id, intake_version: parent.version, through_at: "2026-10-15T08:00:00Z",
+    observed_at: "2026-10-15T08:00:01Z", previous_cursor: "earlier-evidence", next_cursor: null,
+    items: [{ kind: "PARSER_RUN", recorded_at: "2026-10-15T08:00:00Z", metadata: {
+      parser_run_id: nativeId(800), intake_id: parent.intake_id, source_snapshot_id: nativeId(701), parser_release_id: nativeId(801),
+      source_id: "synthetic-source", status: "PARTIAL", version: 3, created_at: "2026-10-15T08:00:00Z", started_at: null,
+      completed_at: null, correlation_id: nativeId(12), semantic_version: "1.0.0", package_name: marker, output_schema_version: "synthetic-output/1" } }] };
+}
+
+describe("native saved evidence inside the original source section", () => {
+  it("shows the exact saved source/snapshot facts and unknown generation without claiming verification or enabling actions", () => {
+    const parent = nativeEvidence(), context = nativeContext();
+    render(<EvidencePanel canonical={parent} context={context} />);
+    expect(screen.getByText("application/x-synthetic-first")).toBeInTheDocument();
+    expect(screen.getByText("a".repeat(64))).toBeInTheDocument();
+    expect(screen.getByText("已記錄物件版本").parentElement).toHaveTextContent("UNAVAILABLE");
+    expect(screen.getAllByText("無法檢視")).toHaveLength(2);
+    expect(screen.queryByText("VERIFIED")).toBeNull();
+    expect(screen.queryByRole("button", { name: /重跑|下載|清除|核准/ })).toBeNull();
+    expect(context.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("keeps saved generation references exact beyond JavaScript's safe integer range", () => {
+    const parent = nativeEvidence();
+    if (parent.processing_evidence?.items[0]?.kind === "SNAPSHOT")
+      parent.processing_evidence.items[0].metadata.object_generation = "9223372036854775798";
+    render(<EvidencePanel canonical={parent} context={nativeContext()} />);
+    expect(screen.getByText("已記錄物件版本").parentElement).toHaveTextContent("9223372036854775798");
+  });
+
+  it("uses the same scoped GET lifetime to page recorded metadata forward and back", async () => {
+    const parent = nativeEvidence(), fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(nativeJson(nativeParserEvidencePage(parent)))
+      .mockResolvedValueOnce(nativeJson(parent.processing_evidence));
+    render(<EvidencePanel canonical={parent} context={nativeContext(fetchImpl)} />);
+    fireEvent.click(screen.getByRole("button", { name: "較後的快照與解析紀錄" }));
+    expect(await screen.findByText("synthetic-next-parser")).toBeInTheDocument();
+    expect(screen.getByText("開始時間").parentElement).toHaveTextContent("UNAVAILABLE");
+    expect(screen.queryByText("application/x-synthetic-first")).toBeNull();
+    expect(screen.getByRole("button", { name: "較後的快照與解析紀錄" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "較早的快照與解析紀錄" }));
+    expect(await screen.findByText("application/x-synthetic-first")).toBeInTheDocument();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls.every(([, init]) => init?.method === undefined && init?.body === undefined)).toBe(true);
+  });
+
+  it.each(["HTTP", "JSON"])("ignores a previous actor's late %s metadata page", async (phase) => {
+    const old = nativeEvidence(); let resolveHttp!: (value: Response) => void; let resolveBody!: (value: unknown) => void;
+    const delayed = nativeJson({}); delayed.json = () => new Promise((resolve) => { resolveBody = resolve; });
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(() => phase === "HTTP"
+      ? new Promise<Response>((resolve) => { resolveHttp = resolve; }) : Promise.resolve(delayed));
+    const context = nativeContext(fetchImpl);
+    const { rerender } = render(<EvidencePanel canonical={old} context={context} />);
+    fireEvent.click(screen.getByRole("button", { name: "較後的快照與解析紀錄" }));
+    await waitFor(() => expect(phase === "HTTP" ? resolveHttp : resolveBody).toBeDefined());
+    const current = nativeEvidence(2, "application/x-current-parent"), currentFetch = vi.fn<typeof fetch>();
+    rerender(<EvidencePanel canonical={current} context={{ ...nativeContext(currentFetch), contextKey: "current-actor-B" }} />);
+    expect(screen.getByText("application/x-current-parent")).toBeInTheDocument();
+    expect((fetchImpl.mock.calls[0]![1]!.signal as AbortSignal).aborted).toBe(true);
+    await act(async () => { if (phase === "HTTP") resolveHttp(nativeJson(nativeParserEvidencePage(old, "PRIVATE_OLD_EVIDENCE")));
+      else resolveBody(nativeParserEvidencePage(old, "PRIVATE_OLD_EVIDENCE")); });
+    expect(screen.queryByText("PRIVATE_OLD_EVIDENCE")).toBeNull();
+    expect(currentFetch).not.toHaveBeenCalled();
+  });
+
+  it("does not restore an abandoned cursor or page after A-B-A bindings return", async () => {
+    const old = nativeEvidence(), context = nativeContext(vi.fn<typeof fetch>().mockResolvedValue(nativeJson(nativeParserEvidencePage(old, "ABANDONED_PAGE"))));
+    const { rerender } = render(<EvidencePanel canonical={old} context={context} />);
+    fireEvent.click(screen.getByRole("button", { name: "較後的快照與解析紀錄" }));
+    expect(await screen.findByText("ABANDONED_PAGE")).toBeInTheDocument();
+    rerender(<EvidencePanel canonical={nativeEvidence(2, "application/x-B")} context={{ ...nativeContext(), contextKey: "B" }} />);
+    rerender(<EvidencePanel canonical={old} context={context} />);
+    expect(screen.queryByText("ABANDONED_PAGE")).toBeNull();
+    expect(screen.getByText("application/x-synthetic-first")).toBeInTheDocument();
+    expect(context.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([403, 409, 503])("keeps a current metadata failure %s distinct from empty or verified evidence", async (status) => {
+    const parent = nativeEvidence(), context = nativeContext(vi.fn<typeof fetch>().mockResolvedValue(nativeJson({ detail: "unavailable" }, status)));
+    render(<EvidencePanel canonical={parent} context={context} />);
+    fireEvent.click(screen.getByRole("button", { name: "較後的快照與解析紀錄" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText("application/x-synthetic-first")).toBeNull();
+    expect(screen.queryByText("目前沒有已保存的快照或解析紀錄。")).toBeNull();
+  });
+});
+
+describe("existing field-lineage correction reasons follow the same visual mask", () => {
+  it.each(["legacy", "fields"])("conceals %s reasons for upstream and visual masks", (layout) => {
+    const field = { key: "contactPhone", label: "聯絡電話", sourceValue: "PRIVATE_FIELD_VALUE", normalizedValue: "PRIVATE_FIELD_VALUE",
+      correctedValue: "PRIVATE_FIELD_VALUE", correctionReason: "PRIVATE_CORRECTION_REASON", masked: true, identity: false, lowConfidence: false };
+    const supplied = { field_path: "contactPhone", classification: "RESTRICTED" as const, parsed: "PRIVATE_FIELD_VALUE",
+      normalized: "PRIVATE_FIELD_VALUE", corrected: "PRIVATE_FIELD_VALUE", masked: true, correction_reason: "PRIVATE_CORRECTION_REASON" };
+    const { rerender } = render(<EvidencePanel record={intake({ parsedFields: { contactPhone: field } })} section="lineage"
+      {...(layout === "fields" ? { fields: [supplied] } : {})} />);
+    expect(screen.getByTestId("lineage-row-contactPhone")).not.toHaveTextContent("PRIVATE");
+    rerender(<EvidencePanel record={intake({ parsedFields: { contactPhone: { ...field, masked: false } } })} section="lineage" maskedView
+      {...(layout === "fields" ? { fields: [{ ...supplied, masked: false }] } : {})} />);
+    expect(screen.getByTestId("lineage-row-contactPhone")).not.toHaveTextContent("PRIVATE");
   });
 });

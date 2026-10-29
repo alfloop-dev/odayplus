@@ -3148,6 +3148,16 @@
             "title": "Intake Method",
             "type": "string"
           },
+          "processing_evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanonicalIntakeEvidencePage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "processing_history": {
             "anyOf": [
               {
@@ -3227,6 +3237,86 @@
           "scope"
         ],
         "title": "CanonicalIntakeDetail",
+        "type": "object"
+      },
+      "CanonicalIntakeEvidencePage": {
+        "additionalProperties": false,
+        "properties": {
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_version": {
+            "minimum": 1.0,
+            "title": "Intake Version",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "PARSER_RUN": "#/components/schemas/CanonicalIntakeParserRunRecord",
+                  "SNAPSHOT": "#/components/schemas/CanonicalIntakeSnapshotRecord"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/CanonicalIntakeSnapshotRecord"
+                },
+                {
+                  "$ref": "#/components/schemas/CanonicalIntakeParserRunRecord"
+                }
+              ]
+            },
+            "maxItems": 25,
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "previous_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Cursor"
+          },
+          "through_at": {
+            "format": "date-time",
+            "title": "Through At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "intake_id",
+          "intake_version",
+          "through_at",
+          "observed_at",
+          "items",
+          "next_cursor",
+          "previous_cursor"
+        ],
+        "title": "CanonicalIntakeEvidencePage",
         "type": "object"
       },
       "CanonicalIntakeHistoryPage": {
@@ -3314,6 +3404,150 @@
           "next_cursor"
         ],
         "title": "CanonicalIntakePage",
+        "type": "object"
+      },
+      "CanonicalIntakeParserRunMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "output_schema_version": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Output Schema Version",
+            "type": "string"
+          },
+          "package_name": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Package Name",
+            "type": "string"
+          },
+          "parser_release_id": {
+            "format": "uuid",
+            "title": "Parser Release Id",
+            "type": "string"
+          },
+          "parser_run_id": {
+            "format": "uuid",
+            "title": "Parser Run Id",
+            "type": "string"
+          },
+          "semantic_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Semantic Version",
+            "type": "string"
+          },
+          "source_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_snapshot_id": {
+            "format": "uuid",
+            "title": "Source Snapshot Id",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "SUCCEEDED",
+              "PARTIAL",
+              "FAILED",
+              "CANCELLED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "maximum": 9007199254740991.0,
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "parser_run_id",
+          "intake_id",
+          "source_snapshot_id",
+          "parser_release_id",
+          "source_id",
+          "status",
+          "version",
+          "created_at",
+          "started_at",
+          "completed_at",
+          "correlation_id",
+          "semantic_version",
+          "package_name",
+          "output_schema_version"
+        ],
+        "title": "CanonicalIntakeParserRunMetadata",
+        "type": "object"
+      },
+      "CanonicalIntakeParserRunRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "PARSER_RUN",
+            "title": "Kind",
+            "type": "string"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/CanonicalIntakeParserRunMetadata"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "recorded_at",
+          "metadata"
+        ],
+        "title": "CanonicalIntakeParserRunRecord",
         "type": "object"
       },
       "CanonicalIntakeReceipt": {
@@ -3442,6 +3676,162 @@
           "property_version"
         ],
         "title": "CanonicalIntakeResolution",
+        "type": "object"
+      },
+      "CanonicalIntakeSnapshotMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "byte_length": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Byte Length",
+            "type": "integer"
+          },
+          "capture_method": {
+            "enum": [
+              "SERVER_RETRIEVAL",
+              "OPERATOR_UPLOAD",
+              "APPROVED_FEED",
+              "MANUAL_ENTRY"
+            ],
+            "title": "Capture Method",
+            "type": "string"
+          },
+          "captured_at": {
+            "format": "date-time",
+            "title": "Captured At",
+            "type": "string"
+          },
+          "content_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "legal_hold": {
+            "title": "Legal Hold",
+            "type": "boolean"
+          },
+          "media_type": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Media Type",
+            "type": "string"
+          },
+          "object_generation": {
+            "anyOf": [
+              {
+                "pattern": "^[1-9][0-9]{0,18}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Object Generation"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "purge_after": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purge After"
+          },
+          "residency_mode": {
+            "enum": [
+              "TW_ONLY",
+              "APPROVED_APAC_DR"
+            ],
+            "title": "Residency Mode",
+            "type": "string"
+          },
+          "retention_class": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Retention Class",
+            "type": "string"
+          },
+          "source_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_snapshot_id": {
+            "format": "uuid",
+            "title": "Source Snapshot Id",
+            "type": "string"
+          },
+          "stored_at": {
+            "format": "date-time",
+            "title": "Stored At",
+            "type": "string"
+          },
+          "version": {
+            "maximum": 9007199254740991.0,
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source_snapshot_id",
+          "intake_id",
+          "source_id",
+          "content_sha256",
+          "media_type",
+          "byte_length",
+          "captured_at",
+          "observed_at",
+          "stored_at",
+          "capture_method",
+          "version",
+          "retention_class",
+          "purge_after",
+          "legal_hold",
+          "object_generation",
+          "residency_mode"
+        ],
+        "title": "CanonicalIntakeSnapshotMetadata",
+        "type": "object"
+      },
+      "CanonicalIntakeSnapshotRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "SNAPSHOT",
+            "title": "Kind",
+            "type": "string"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/CanonicalIntakeSnapshotMetadata"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "recorded_at",
+          "metadata"
+        ],
+        "title": "CanonicalIntakeSnapshotRecord",
         "type": "object"
       },
       "CanonicalIntakeSourceInfo": {
@@ -22763,6 +23153,16 @@
               "title": "Include History",
               "type": "boolean"
             }
+          },
+          {
+            "in": "query",
+            "name": "include_evidence",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Evidence",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -23132,6 +23532,98 @@
           }
         },
         "summary": "Cancel Authorization Wait",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-intakes/{intake_id}/processing-evidence": {
+      "get": {
+        "description": "Read saved snapshot and parser lifecycle metadata. No object content or verification grant.",
+        "operationId": "getCanonicalIntakeProcessingEvidence",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "intake_version",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Intake Version",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 25,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIntakeEvidencePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Processing Evidence",
         "tags": [
           "assisted-listing-intake",
           "assisted-listing-intake"

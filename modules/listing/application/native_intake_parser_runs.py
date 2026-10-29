@@ -19,6 +19,20 @@ _READS = (
     "SELECT * FROM intake.parser_runs WHERE tenant_id=? AND parser_run_id=?",
     "SELECT * FROM intake.parser_runs WHERE tenant_id=? AND parser_run_id=? FOR UPDATE",
 )
+_METADATA = (
+    "SELECT r.parser_run_id,r.intake_id,r.source_snapshot_id,r.parser_release_id,r.status,"
+    "r.started_at,r.completed_at,r.correlation_id,r.version,r.created_at,"
+    "s.intake_id AS snapshot_intake_id,"
+    "CASE WHEN octet_length(s.source_id)<=1024 THEN s.source_id END AS source_id,"
+    "CASE WHEN octet_length(p.source_id)<=1024 THEN p.source_id END AS release_source_id,"
+    "CASE WHEN octet_length(p.semantic_version)<=512 THEN p.semantic_version END AS semantic_version,"
+    "CASE WHEN octet_length(p.package_name)<=1024 THEN p.package_name END AS package_name,"
+    "CASE WHEN octet_length(p.output_schema_version)<=1024 THEN p.output_schema_version END AS output_schema_version "
+    "FROM intake.parser_runs r LEFT JOIN intake.source_snapshots s "
+    "ON s.tenant_id=r.tenant_id AND s.intake_id=r.intake_id AND s.source_snapshot_id=r.source_snapshot_id "
+    "LEFT JOIN intake.parser_releases p ON p.parser_release_id=r.parser_release_id "
+    "WHERE r.tenant_id=? AND r.intake_id=?"
+)
 _EDGES = {
     "accept": ({"QUEUED"},
         "UPDATE intake.parser_runs SET status='RUNNING',started_at=COALESCE(started_at,?),version=version+1 "
@@ -82,6 +96,38 @@ class CanonicalNativeParserRunRepository:
         row = self.engine.query_one(_READS[int(for_update)], (tenant, run_id))
         before.check_in_memory()
         return row
+
+    @staticmethod
+    def _metadata_lineage(row):
+        if (row is not None and (row["snapshot_intake_id"] != row["intake_id"] or row["source_id"] is None
+                or row["source_id"] != row["release_source_id"])):
+            raise NativeParserConflict("NATIVE_PARSER_METADATA_LINEAGE_UNAVAILABLE")
+        return row
+
+    def metadata_for_intake(self, tenant, intake_id, run_id, *, before):
+        """An exact saved reference, without payloads, jobs or execution proof."""
+        tenant = self._root(tenant, before)
+        intake_id, run_id = native_intake_uuid(intake_id), native_intake_uuid(run_id)
+        before()
+        row = self.engine.query_one(_METADATA + " AND r.parser_run_id=?", (tenant, intake_id, run_id))
+        before.check_in_memory()
+        return self._metadata_lineage(row)
+
+    def metadata_page_for_intake(self, tenant, intake_id, *, through, position, backward, limit, before):
+        """Bounded lifecycle metadata in the same original tenant SQL root."""
+        tenant = self._root(tenant, before)
+        intake_id = native_intake_uuid(intake_id)
+        if type(limit) is not int or not 1 <= limit <= 26 or type(backward) is not bool:
+            raise ValueError("NATIVE_PARSER_METADATA_READ_BOUND_REQUIRED")
+        comparison, order = ("<", "DESC") if backward else (">", "ASC")
+        sql, params = _METADATA + " AND r.created_at<=?::timestamptz", [tenant, intake_id, through]
+        if position is not None:
+            sql += f" AND (r.created_at,1,r.parser_run_id){comparison}(?::timestamptz,?::int,?::uuid)"
+            params.extend(position)
+        before()
+        rows = self.engine.query(sql + f" ORDER BY r.created_at {order},r.parser_run_id {order} LIMIT ?", (*params, limit))
+        before.check_in_memory()
+        return [self._metadata_lineage(row) for row in rows]
 
     def insert_queued(self, *, tenant, run_id, intake_id, snapshot_id, release_id, correlation_id, at, before):
         tenant = self._root(tenant, before)

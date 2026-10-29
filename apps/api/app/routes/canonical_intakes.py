@@ -40,6 +40,14 @@ from modules.listing.application.native_intake_assisted_entry_request import (
 from modules.listing.application.native_intake_command_withdrawal import (
     NativeIntakeCommandWithdrawalOwner,
 )
+from modules.listing.application.native_intake_parser_policy import (
+    NativeParserConflict,
+    NativeParserUnavailable,
+)
+from modules.listing.application.native_intake_parser_prerequisites import (
+    NativeParserCommandBudget,
+    NativeParserSQLClock,
+)
 from modules.listing.application.native_intake_pending_commands import NativeIntakeCommandBudget
 from modules.listing.application.native_intake_requester_authority import (
     NativeIntakeRequesterAuthorityUnavailable,
@@ -362,12 +370,115 @@ class CanonicalIntakeHistoryPage(BaseModel):
     previous_cursor: str | None
 
 
+class _CanonicalRecordedMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("*")
+    @classmethod
+    def safe_recorded_text(cls, value):
+        if isinstance(value, str) and (not value.strip() or any(ord(char) < 32 for char in value)
+                or contains_sensitive_submission_material({"value": value})):
+            raise ValueError("Recorded metadata is unavailable")
+        return value
+
+
+class CanonicalIntakeSnapshotMetadata(_CanonicalRecordedMetadata):
+    source_snapshot_id: UUID
+    intake_id: UUID
+    source_id: str = Field(min_length=1, max_length=256)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    media_type: str = Field(min_length=1, max_length=256)
+    byte_length: int = Field(ge=0, le=9_007_199_254_740_991, strict=True)
+    captured_at: AwareDatetime
+    observed_at: AwareDatetime
+    stored_at: AwareDatetime
+    capture_method: Literal["SERVER_RETRIEVAL", "OPERATOR_UPLOAD", "APPROVED_FEED", "MANUAL_ENTRY"]
+    version: int = Field(ge=1, le=9_007_199_254_740_991, strict=True)
+    retention_class: str = Field(min_length=1, max_length=64)
+    purge_after: AwareDatetime | None
+    legal_hold: bool = Field(strict=True)
+    object_generation: str | None = Field(pattern=r"^[1-9][0-9]{0,18}$", strict=True)
+    residency_mode: Literal["TW_ONLY", "APPROVED_APAC_DR"]
+
+
+class CanonicalIntakeParserRunMetadata(_CanonicalRecordedMetadata):
+    parser_run_id: UUID
+    intake_id: UUID
+    source_snapshot_id: UUID
+    parser_release_id: UUID
+    source_id: str = Field(min_length=1, max_length=256)
+    status: Literal["QUEUED", "RUNNING", "SUCCEEDED", "PARTIAL", "FAILED", "CANCELLED"]
+    version: int = Field(ge=1, le=9_007_199_254_740_991, strict=True)
+    created_at: AwareDatetime
+    started_at: AwareDatetime | None
+    completed_at: AwareDatetime | None
+    correlation_id: UUID
+    semantic_version: str = Field(min_length=1, max_length=128)
+    package_name: str = Field(min_length=1, max_length=256)
+    output_schema_version: str = Field(min_length=1, max_length=256)
+
+
+class CanonicalIntakeSnapshotRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["SNAPSHOT"]
+    recorded_at: AwareDatetime
+    metadata: CanonicalIntakeSnapshotMetadata
+
+
+class CanonicalIntakeParserRunRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["PARSER_RUN"]
+    recorded_at: AwareDatetime
+    metadata: CanonicalIntakeParserRunMetadata
+
+
+class CanonicalIntakeEvidencePage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    intake_id: UUID
+    intake_version: int = Field(ge=1, strict=True)
+    through_at: AwareDatetime
+    observed_at: AwareDatetime
+    items: list[Annotated[CanonicalIntakeSnapshotRecord | CanonicalIntakeParserRunRecord, Field(discriminator="kind")]] = Field(max_length=25)
+    next_cursor: str | None
+    previous_cursor: str | None
+
+    @model_validator(mode="after")
+    def recorded_parent_and_times(self):
+        if self.through_at > self.observed_at:
+            raise ValueError("Evidence bound exceeds its observation")
+        for item in self.items:
+            stamp = item.metadata.stored_at if item.kind == "SNAPSHOT" else item.metadata.created_at
+            if item.metadata.intake_id != self.intake_id or item.recorded_at != stamp or stamp > self.through_at:
+                raise ValueError("Evidence record differs from its parent or recorded time")
+        return self
+
+
 class CanonicalIntakeDetail(CanonicalIntakeSummary):
     resolution: CanonicalIntakeResolution | None = None
     workflow: CanonicalIntakeWorkflow | None = None
     source_info: CanonicalIntakeSourceInfo | None = None
 
     processing_history: CanonicalIntakeHistoryPage | None = None
+    processing_evidence: CanonicalIntakeEvidencePage | None = None
+
+
+class _IntakeEvidenceCursor(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: Literal[1]
+    tenant_id: UUID
+    intake_id: UUID
+    intake_version: int = Field(ge=1, strict=True)
+    through_at: AwareDatetime
+    position_at: AwareDatetime
+    position_kind: Literal["SNAPSHOT", "PARSER_RUN"]
+    position_id: UUID
+    direction: Literal["forward", "backward"]
+
+    @model_validator(mode="after")
+    def bounded_position(self):
+        if self.position_at > self.through_at or not self.position_id.int:
+            raise ValueError("Evidence position is outside its recorded range")
+        return self
 
 
 class _IntakeHistoryCursor(BaseModel):
@@ -390,6 +501,18 @@ class _IntakeHistoryCursor(BaseModel):
 
 def _encode_cursor(value: BaseModel) -> str:
     return base64.urlsafe_b64encode(value.model_dump_json().encode()).decode()
+
+
+@contextmanager
+def _evidence_errors():
+    try:
+        yield
+    except (NativeParserConflict, NativeParserUnavailable):
+        raise HTTPException(503, "CANONICAL_INTAKE_EVIDENCE_UNAVAILABLE") from None
+    except Exception as error:
+        if getattr(error, "sqlstate", None) in {"57014", "55P03"}:
+            raise HTTPException(503, "CANONICAL_INTAKE_EVIDENCE_UNAVAILABLE") from None
+        raise
 
 
 def create_canonical_intakes_router(store) -> APIRouter:
@@ -497,6 +620,70 @@ def create_canonical_intakes_router(store) -> APIRouter:
             "next_cursor": at(items[-1].sequence_no, "forward") if items and items[-1].sequence_no < span["last_sequence"] else None,
             "previous_cursor": at(items[0].sequence_no, "backward") if items and items[0].sequence_no > span["first_sequence"] else None}
 
+    def evidence_page(principal, repo, row, intake_version, cursor, page_size, before):
+        tenant, selected_id = principal.tenant_id, row["intake_id"]
+        if row["version"] != intake_version:
+            raise HTTPException(409, "CANONICAL_INTAKE_VERSION_CHANGED")
+        before()
+        observed = before.source._clock()
+        before.check_in_memory()
+        decoded = None
+        if cursor is not None:
+            try:
+                decoded = _IntakeEvidenceCursor.model_validate_json(base64.b64decode(cursor, altchars=b"-_", validate=True))
+            except ValueError:
+                raise HTTPException(422, "INVALID_CANONICAL_INTAKE_EVIDENCE_CURSOR") from None
+            if str(decoded.tenant_id) != tenant or str(decoded.intake_id) != selected_id:
+                raise HTTPException(422, "CANONICAL_INTAKE_EVIDENCE_CURSOR_RESOURCE_MISMATCH")
+            if decoded.intake_version != intake_version:
+                raise HTTPException(409, "CANONICAL_INTAKE_VERSION_CHANGED")
+        through = decoded.through_at if decoded else observed
+        if through > observed:
+            raise HTTPException(422, "INVALID_CANONICAL_INTAKE_EVIDENCE_CURSOR")
+        position = (decoded.position_at, decoded.position_kind, str(decoded.position_id)) if decoded else None
+        backward = decoded is not None and decoded.direction == "backward"
+        try:
+            if position is not None and not repo.processing_evidence_position(tenant, selected_id, position,
+                    source_id=row["source_id"], before=before):
+                raise HTTPException(422, "INVALID_CANONICAL_INTAKE_EVIDENCE_CURSOR")
+            records = repo.processing_evidence(tenant, selected_id, through=through, position=position,
+                backward=backward, limit=page_size + 1, before=before)
+            if decoded and not records:
+                raise HTTPException(422, "INVALID_CANONICAL_INTAKE_EVIDENCE_CURSOR")
+            chosen = records[:page_size]
+            if backward:
+                chosen.reverse()
+            items = []
+            for record in chosen:
+                snapshot = record["kind"] == "SNAPSHOT"
+                model = CanonicalIntakeSnapshotMetadata if snapshot else CanonicalIntakeParserRunMetadata
+                metadata = {key: record["metadata"][key] for key in model.model_fields}
+                if metadata["source_id"] != row["source_id"]:
+                    raise ValueError("Recorded evidence source differs")
+                if snapshot and metadata["object_generation"] is not None:
+                    if type(metadata["object_generation"]) is not int:
+                        raise ValueError("Recorded generation differs")
+                    metadata["object_generation"] = str(metadata["object_generation"])
+                record_model = CanonicalIntakeSnapshotRecord if snapshot else CanonicalIntakeParserRunRecord
+                items.append(record_model.model_validate({"kind": record["kind"],
+                    "recorded_at": record["recorded_at"], "metadata": metadata}))
+
+            def at(item, direction):
+                reference = item.metadata.source_snapshot_id if item.kind == "SNAPSHOT" else item.metadata.parser_run_id
+                return _encode_cursor(_IntakeEvidenceCursor(version=1, tenant_id=tenant, intake_id=selected_id,
+                    intake_version=intake_version, through_at=through, position_at=item.recorded_at,
+                    position_kind=item.kind, position_id=reference, direction=direction))
+
+            more = len(records) > page_size
+            page = CanonicalIntakeEvidencePage(intake_id=selected_id, intake_version=intake_version,
+                through_at=through, observed_at=observed, items=items,
+                next_cursor=at(items[-1], "forward") if items and (decoded is not None if backward else more) else None,
+                previous_cursor=at(items[0], "backward") if items and (more if backward else decoded is not None) else None)
+            before()
+            return page
+        except (ValueError, TypeError, KeyError):
+            raise HTTPException(503, "CANONICAL_INTAKE_EVIDENCE_UNAVAILABLE") from None
+
 
     @router.get("/canonical-intakes", operation_id="listCanonicalIntakes",
                 response_model=CanonicalIntakePage, responses=errors)
@@ -540,11 +727,14 @@ def create_canonical_intakes_router(store) -> APIRouter:
     @router.get("/canonical-intakes/{intake_id}", operation_id="getCanonicalIntake",
                 response_model=CanonicalIntakeDetail, responses=errors)
     def get(intake_id: UUID, request: Request, response: Response,
-            include_source: bool = False, include_history: bool = False):
-        with _http_errors():
+            include_source: bool = False, include_history: bool = False, include_evidence: bool = False):
+        with _http_errors(), _evidence_errors():
             principal, repo = context(request)
             flags = read_flag_owner(request, repo)
             with repo.graph.transaction(principal.tenant_id):
+                evidence_before = NativeParserCommandBudget(NativeParserSQLClock(repo.engine)) if include_evidence else None
+                if evidence_before:
+                    evidence_before()
                 row = repo.get(principal.tenant_id, str(intake_id))
                 authorize(request, principal, repo, row, flag_owner=flags)
                 resolution = None
@@ -610,7 +800,29 @@ def create_canonical_intakes_router(store) -> APIRouter:
                 return {**row, "scope": {key: row[key] for key in NativeIntakeScope.model_fields},
                         "resolution": resolution, "workflow": repo.workflow(principal.tenant_id, str(intake_id)),
                         "source_info": source_info,
-                        "processing_history": history_page(principal, repo, row, row["version"], None, 25) if include_history else None}
+                        "processing_history": history_page(principal, repo, row, row["version"], None, 25) if include_history else None,
+                        "processing_evidence": evidence_page(principal, repo, row, row["version"], None, 25, evidence_before)
+                            if include_evidence else None}
+
+    @router.get("/canonical-intakes/{intake_id}/processing-evidence", operation_id="getCanonicalIntakeProcessingEvidence",
+                response_model=CanonicalIntakeEvidencePage, responses=errors,
+                description="Read saved snapshot and parser lifecycle metadata. No object content or verification grant.")
+    def processing_evidence(intake_id: UUID, request: Request, response: Response,
+        intake_version: Annotated[int, Query(ge=1)],
+        cursor: Annotated[str | None, Query(max_length=2048)] = None,
+        page_size: Annotated[int, Query(ge=1, le=25)] = 25,
+    ):
+        with _http_errors(), _evidence_errors():
+            principal, repo = context(request)
+            flags = read_flag_owner(request, repo)
+            with repo.graph.transaction(principal.tenant_id):
+                before = NativeParserCommandBudget(NativeParserSQLClock(repo.engine))
+                before()
+                row = repo.get(principal.tenant_id, str(intake_id))
+                authorize(request, principal, repo, row, flag_owner=flags)
+                page = evidence_page(principal, repo, row, intake_version, cursor, page_size, before)
+                response.headers["Cache-Control"] = "no-store"
+                return page
 
     @router.get("/canonical-intakes/{intake_id}/processing-history", operation_id="getCanonicalIntakeProcessingHistory",
                 response_model=CanonicalIntakeHistoryPage, responses=errors)

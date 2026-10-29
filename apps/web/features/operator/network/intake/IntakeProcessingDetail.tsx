@@ -150,17 +150,8 @@ function NativeIntakeSections({ canonical, context }: { canonical: CanonicalInta
     <section data-intake-section="processing" data-testid="intake-processing-stages">
       <IntakeStageTimeline canonical={canonical} context={context} />
     </section>
-    <section data-intake-section="source" className={styles.sectionBox} data-testid="intake-source-policy-evidence">
-      <div className={styles.sectionHead}>來源資訊 SOURCE</div>
-      {canonical.source_info ? <div className={styles.metaGrid}>
-        {canonical.source_info.url_fields.map((field) => <Meta key={field.field_path}
-          label={field.field_path === "originalUrl" ? "原始 URL" : "Canonical URL"}
-          value={field.masked ? "無法檢視" : field.effective === null ? null : String(field.effective)} />)}
-        <Meta label="來源識別碼" value={canonical.source_info.source_id} />
-        <Meta label="來源政策（記錄值）" value={canonical.source_info.recorded_policy_state} />
-        <Meta label="最後轉移時間" value={canonical.source_info.last_transition_at} />
-        <Meta label="完成時間（已記錄）" value={canonical.source_info.completed_at} />
-      </div> : <p>尚未取得可讀取的來源資訊。</p>}
+    <section data-intake-section="source" data-testid="intake-source-policy-evidence">
+      <EvidencePanel canonical={canonical} context={context} />
     </section>
               {canonical.resolution ? <section data-intake-section="lineage" aria-label="已落庫物件" className={styles.noteBox}>
                 <p>物件 {canonical.resolution.listing_id} · 版本 {canonical.resolution.listing_version} · {canonical.resolution.lifecycle_state}</p>
