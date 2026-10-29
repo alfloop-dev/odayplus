@@ -40,7 +40,11 @@ from shared.infrastructure.persistence import (
 )
 from shared.infrastructure.persistence.factory import _durable_bundle
 from shared.jobs.queue import JobDeliveryState, JobRequest, JobStatus
-from tests.integration._authz import FORECASTOPS_HEADERS
+from tests.integration._authz import AUDIT_HEADERS, FORECASTOPS_HEADERS
+
+# The audit read is RBAC-guarded and tenant-scoped; read as an auditor of the
+# tenant the ForecastOps calls run in.
+AUDIT_READ_HEADERS = {**AUDIT_HEADERS, "x-tenant-id": FORECASTOPS_HEADERS["x-tenant-id"]}
 
 PREDICTION_TIME = datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
 TENANT_ID = FORECASTOPS_HEADERS["x-tenant-id"]
@@ -247,7 +251,12 @@ def test_durable_forecastops_acknowledge_and_handoff_api_survive_restart(db_path
         assert executed.status_code == 200
         assert executed.json()["status"] == "dispatched"
 
-        audit = client.get("/audit/events", params={"correlation_id": correlation_id})
+        audit = client.get(
+            "/audit/events",
+            params={"correlation_id": correlation_id},
+            headers=AUDIT_READ_HEADERS,
+        )
+        assert audit.status_code == 200, audit.text
         event_types = {event["event_type"] for event in audit.json()["events"]}
         assert "forecastops.alert.acknowledged.v1" in event_types
         assert "forecastops.handoff.executed.v1" in event_types
@@ -328,7 +337,13 @@ def test_api_jobs_and_audit_persist_across_restart(db_path) -> None:
         assert got.json()["correlation_id"] == correlation_id
 
         # Decision/audit metadata persisted and is queryable by correlation id.
-        events = client2.get("/audit/events", params={"correlation_id": correlation_id}).json()
+        audit = client2.get(
+            "/audit/events",
+            params={"correlation_id": correlation_id},
+            headers=AUDIT_READ_HEADERS,
+        )
+        assert audit.status_code == 200, audit.text
+        events = audit.json()
         assert len(events["events"]) == 1
         assert events["events"][0]["event_type"] == "job.enqueue"
         assert events["events"][0]["correlation_id"] == correlation_id

@@ -133,8 +133,9 @@ from dispatch_policy import (
     ready_dispatch_settings,
     review_is_independent,
     role_provider_block_reason,
+    review_source_block_reason,
     task_priority_rank,
-    task_submitted_author,
+    task_review_source_identity,
 )
 from github_reconciliation import (
     CI_FAILURE,
@@ -4094,6 +4095,16 @@ def task_assignment_integrity_issues(
         and not review_is_independent(config, owner, reviewer)
     ):
         issues.append("owner_reviewer_same_account_pool")
+    # Independence of the owner is not independence of the work. Once a range
+    # is submitted, the reviewer must also be independent of every source
+    # author and the genuine submitter; a record that cannot say who those are
+    # is reported as such rather than repaired by guessing.
+    if reviewer and not is_human_gate_agent(reviewer):
+        source = task_review_source_identity(config, task)
+        if source.error:
+            issues.append(f"review_source_unresolved:{source.error}")
+        elif review_source_block_reason(config, task, reviewer):
+            issues.append("reviewer_shares_source_account_pool")
     if str(task.get("status") or "").strip().lower() == "review" and not review_submission_is_complete(config, task):
         issues.append("review_submission_missing_or_invalid")
     waiting_for = str(task.get("waiting_for") or "").strip()
@@ -4160,6 +4171,7 @@ def normalize_task_assignment_integrity(
         if issue.startswith("owner_unavailable:")
         or issue.startswith("reviewer_unavailable:")
         or issue == "owner_reviewer_same_account_pool"
+        or issue == "reviewer_shares_source_account_pool"
     }
     waiting_for_missing = "waiting_for_missing" in issues
     waiting_for_unavailable = any(issue.startswith("waiting_for_unavailable:") for issue in issues)
@@ -4174,20 +4186,17 @@ def normalize_task_assignment_integrity(
     new_waiting_for: str | None = None
     changes: list[str] = []
 
-    # Once work has been submitted, the owner field is the author of the commits
-    # under review, not a slot the reconciler may re-fill. Replacing it here
-    # would do more than relabel the record: the reviewer search below excludes
-    # the *new* owner's pool, so rewriting a Codex author to Claude would leave
-    # the author's own Codex pool eligible to review its own commits -- exactly
-    # the self-review a provider policy is supposed to prevent, reached by
-    # obeying that policy. The author is therefore pinned for every reason, not
-    # only for policy ones: a disabled or out-of-quota author on a pinned head
-    # is a task that waits, not a task that changes hands.
-    submitted_author = task_submitted_author(config, task)
-    author_pool_exclusions = (
-        {agent_account_pool_id(config, submitted_author)} if submitted_author else set()
-    )
-    author_is_pinned = bool(submitted_author) and submitted_author == owner
+    # Once work has been submitted, the owner field names the finalizer of the
+    # head under review, not a slot the reconciler may re-fill. Replacing it
+    # would relabel who submitted, and the reviewer search below would then
+    # exclude the *new* owner's pool instead -- so the finalizer is pinned for
+    # every reason, not only for policy ones: a disabled or out-of-quota
+    # finalizer on a pinned head is a task that waits, not one that changes
+    # hands. Independently of the pin, the reviewer search excludes every pool
+    # of the submitted work: each source author, the submitter and the owner.
+    source = task_review_source_identity(config, task)
+    author_pool_exclusions = set(source.pools)
+    author_is_pinned = source.pins_owner(owner)
 
     if (
         "owner_unavailable" in assignment_issues
@@ -4220,21 +4229,24 @@ def normalize_task_assignment_integrity(
             and not review_is_independent(config, new_owner, new_reviewer)
         )
     )
-    if reviewer_needs_replacement and not is_human_gate_agent(reviewer):
+    reviewer_needs_replacement = reviewer_needs_replacement or (
+        "reviewer_shares_source_account_pool" in assignment_issues
+    )
+    if reviewer_needs_replacement and not is_human_gate_agent(reviewer) and not source.error:
         reviewer_candidates = get_agent_reassignment_candidates(config, reviewer or owner, role="reviewer", task=task)
         replacement = first_viable_agent(
             config,
             reviewer_candidates,
-            exclude={new_owner, reviewer} | ({submitted_author} if submitted_author else set()),
+            exclude={new_owner, reviewer} | set(source.agents),
             state=state,
             task=task,
             status=status,
             role="reviewer",
-            # The submitted author's pool is excluded alongside the current
-            # owner's. They are the same pool while the author is still the
-            # owner; they differ exactly when an earlier pass already moved the
-            # owner, and that is the case where dropping it would hand the
-            # review back to whoever wrote the branch.
+            # Every pool of the submitted work is excluded alongside the
+            # current owner's. A finalizer that merged a base into another
+            # account's commits is not their author, and an owner moved by an
+            # earlier pass is not either; dropping any of those pools hands the
+            # review back to an account that wrote part of the branch.
             exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
         )
         if replacement:
@@ -4274,6 +4286,8 @@ def normalize_task_assignment_integrity(
         and not is_human_gate_agent(new_reviewer)
         and not review_is_independent(config, new_owner, new_reviewer)
     ):
+        return False
+    if new_reviewer != reviewer and review_source_block_reason(config, task, new_reviewer):
         return False
 
     message = f"Auto-reconciled task assignment integrity: {', '.join(changes)}."
@@ -4994,16 +5008,14 @@ def normalize_mainline_task_assignment(
 
     # A reopen returns the task to `in_progress` -- an eligible status here --
     # while `review_submission` and `approved_head` stay on the record. So this
-    # path can also reach work whose owner is the author of an already-submitted
-    # branch, and the same rule applies: the author is preserved, and its pool
-    # stays out of the reviewer search.
-    submitted_author = task_submitted_author(config, task)
-    author_pool_exclusions = (
-        {agent_account_pool_id(config, submitted_author)} if submitted_author else set()
-    )
+    # path can also reach the finalizer of an already-submitted branch, and the
+    # same rule applies: the finalizer is preserved, and every pool of the
+    # submitted work stays out of the reviewer search.
+    source = task_review_source_identity(config, task)
+    author_pool_exclusions = set(source.pools)
 
     if owner and not owner_allowed:
-        if is_human_gate_agent(owner) or submitted_author == owner:
+        if is_human_gate_agent(owner) or source.pins_owner(owner):
             return False
         owner_candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=task)
         replacement_owner = first_viable_agent(config, owner_candidates, exclude={owner, reviewer}, task=task, role="owner")
@@ -5013,7 +5025,7 @@ def normalize_mainline_task_assignment(
         changed_fields.append(f"owner {owner} -> {new_owner}")
 
     if not reviewer or not reviewer_allowed or reviewer == new_owner:
-        if reviewer and is_human_gate_agent(reviewer):
+        if (reviewer and is_human_gate_agent(reviewer)) or source.error:
             return False
         reviewer_candidates: list[str] = []
         if reviewer:
@@ -5025,7 +5037,7 @@ def normalize_mainline_task_assignment(
         replacement_reviewer = first_viable_agent(
             config,
             reviewer_candidates,
-            exclude={new_owner} | ({submitted_author} if submitted_author else set()),
+            exclude={new_owner} | set(source.agents),
             task=task,
             role="reviewer",
             exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,

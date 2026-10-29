@@ -35,13 +35,35 @@ os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 
 import ai_status
 import common
+import dispatch_policy
 import github_bus
+import pytest
 import runtime_state
 import supervisor
 import task_archive
 import watch_events
 import worker_failure_policy
 import worker_workspace
+
+#: The real Git reader behind the source-author rule. Tests about the rule
+#: itself restore it and run against a real synthetic repository.
+_READ_SOURCE_AUTHORS_FROM_GIT = dispatch_policy.immutable_review_source_authors
+
+
+def _git_finds_the_recorded_authors(_config: Any, _task: Any, submission: dict[str, Any]) -> tuple[Any, None]:
+    """Stand-in for the Git reader only, for tests about the Supervisor's other gates.
+
+    Their heads are synthetic SHAs with no repository behind them. The rest of
+    the source-author rule -- binding to the submitted (or approved) head and
+    base, registration and every account pool -- still judges each path.
+    """
+    return tuple(str(author).strip() for author in submission.get("source_authors") or ()), None
+
+
+@pytest.fixture(autouse=True)
+def _synthetic_heads_have_their_recorded_authors():
+    with mock.patch.object(dispatch_policy, "immutable_review_source_authors", _git_finds_the_recorded_authors):
+        yield
 
 
 def tearDownModule() -> None:
@@ -3754,7 +3776,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "reviewer": "Claude2",
             "depends_on": [],
             "last_update": "2026-04-13T14:20:00Z",
-            "review_submission": {"remote_sha": "a" * 40},
+            "review_submission": _bound_review_submission("Codex", submitted_by="Codex"),
         }
         provider_report = {
             "agent_adapters": {
@@ -4205,7 +4227,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "owner": "Antigravity",
                     "reviewer": "Codex",
                     "depends_on": [],
-                    "review_submission": {"remote_sha": "a" * 40},
+                    "review_submission": _bound_review_submission("Antigravity", submitted_by="Antigravity"),
                 },
             ]
         }
@@ -4652,7 +4674,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "owner": "Antigravity",
                     "reviewer": "Codex",
                     "depends_on": [],
-                    "review_submission": {"remote_sha": "a" * 40},
+                    "review_submission": _bound_review_submission("Antigravity", submitted_by="Antigravity"),
                 }
             ]
         }
@@ -4665,7 +4687,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "reviewer": "Antigravity2",
                     "depends_on": [],
                     "last_update": "2026-08-02T14:05:00Z",
-                    "review_submission": {"remote_sha": "a" * 40},
+                    "review_submission": _bound_review_submission("Antigravity", submitted_by="Antigravity"),
                 }
             ]
         }
@@ -4783,12 +4805,12 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         }
         initial_status = {
             "tasks": [
-                {"id": "WB-012", "status": "review", "owner": "Claude", "reviewer": "Helper", "depends_on": [], "review_submission": {"remote_sha": "a" * 40}},
+                {"id": "WB-012", "status": "review", "owner": "Claude", "reviewer": "Helper", "depends_on": [], "review_submission": _bound_review_submission("Claude", submitted_by="Claude")},
             ]
         }
         normalized_status = {
             "tasks": [
-                {"id": "WB-012", "status": "review", "owner": "Claude", "reviewer": "Codex", "depends_on": [], "review_submission": {"remote_sha": "a" * 40}},
+                {"id": "WB-012", "status": "review", "owner": "Claude", "reviewer": "Codex", "depends_on": [], "review_submission": _bound_review_submission("Claude", submitted_by="Claude")},
             ]
         }
 
@@ -9741,6 +9763,62 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
         self.assertTrue(status.startswith("unverifiable_refs:"), status)
 
 
+def _bound_review_submission(*authors: str, submitted_by: str, head: str = "a" * 40) -> dict[str, Any]:
+    """A review submission carrying the source provenance `submit_review` binds.
+
+    `source_authors` are the immutable `LLM-Agent` actors of the validated
+    range and `submitted_by` is the finalizer; they are different facts.
+    """
+    return {
+        "pr_number": 7,
+        "remote_sha": head,
+        "source_head": head,
+        "source_base": "b" * 40,
+        "source_authors": list(authors),
+        "submitted_by": submitted_by,
+    }
+
+
+def _real_review_submission(repo: Path, task_id: str, *authors: str, submitted_by: str) -> dict[str, Any]:
+    """A review submission over a real synthetic range, as `submit_review` records it.
+
+    Each of `authors` commits on the task branch; `dev` then advances and
+    `submitted_by` merges it back -- the finalizer's base advance, which is not
+    a source commit.
+    """
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-c", "commit.gpgsign=false", *args], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    repo.mkdir(parents=True)
+    git("init", "-q", "-b", "dev")
+    git("config", "user.email", "worker@pantheon.local")
+    git("config", "user.name", "Worker")
+    git("commit", "-q", "--allow-empty", "-m", "bootstrap")
+    git("checkout", "-q", "-b", f"task/{task_id}")
+    for index, author in enumerate(authors):
+        reviewer = "Claude" if author != "Claude" else "Grok"
+        git(
+            "commit", "-q", "--allow-empty", "-m",
+            f"{task_id}: change {index}\n\nLLM-Agent: {author}\nTask-ID: {task_id}\nReviewer: {reviewer}\n",
+        )
+    git("checkout", "-q", "dev")
+    git("commit", "-q", "--allow-empty", "-m", "OTHER-1: unrelated dev work")
+    git("update-ref", "refs/remotes/origin/dev", "dev")
+    git("checkout", "-q", f"task/{task_id}")
+    git("merge", "--no-ff", "-q", "-m", f"Merge dev\n\nLLM-Agent: {submitted_by}\n", "dev")
+    head = git("rev-parse", "HEAD")
+    return {
+        "pr_number": 7,
+        "remote_sha": head,
+        "source_head": head,
+        "source_base": git("rev-parse", "dev"),
+        "source_authors": list(authors),
+        "submitted_by": submitted_by,
+    }
+
+
 class WorkerReassignmentTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = {
@@ -9777,6 +9855,7 @@ class WorkerReassignmentTests(unittest.TestCase):
                     "status": "review",
                     "owner": "Claude",
                     "reviewer": "Gemini",
+                    "review_submission": _bound_review_submission("Claude", submitted_by="Claude"),
                 }
             ]
         }
@@ -9801,6 +9880,71 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["handoff_to"], "Codex")
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "task_reassigned")
+
+    def _bind_real_source_repo(self) -> Path:
+        tmp = tempfile.TemporaryDirectory(prefix="test-source-author-")
+        self.addCleanup(tmp.cleanup)
+        repo = Path(tmp.name) / "source-git"
+        self.config["coordination"] = {"repositories": {"pantheon": {"local_path": str(repo)}}}
+        self.config["branch_workflow"] = {"dev_branch": "dev"}
+        real_reader = mock.patch.object(
+            dispatch_policy, "immutable_review_source_authors", _READ_SOURCE_AUTHORS_FROM_GIT
+        )
+        real_reader.start()
+        self.addCleanup(real_reader.stop)
+        return repo
+
+    def test_review_failover_skips_the_source_author_behind_a_different_finalizer(self) -> None:
+        """Codex wrote the range and Claude finalized it: Codex is not next."""
+        repo = self._bind_real_source_repo()
+        worker = {"task_id": "P3-001", "agent_id": "gemini", "retry_count": 1, "run_id": "gemini-run-1"}
+        status = {
+            "tasks": [
+                {
+                    "id": "P3-001",
+                    "status": "review",
+                    "owner": "Claude",
+                    "reviewer": "Gemini",
+                    "review_submission": _real_review_submission(repo, "P3-001", "Codex", submitted_by="Claude"),
+                }
+            ]
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(self.config, worker, "status: 429")
+        self.assertEqual(reassigned_to, "Grok")
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Claude")
+
+    def test_review_failover_refuses_a_review_without_source_provenance(self) -> None:
+        """A review that cannot say who wrote it has no independent reviewer."""
+        repo = self._bind_real_source_repo()
+        worker = {"task_id": "P3-001", "agent_id": "gemini", "retry_count": 1, "run_id": "gemini-run-1"}
+        genuine = _real_review_submission(repo, "P3-001", "Codex", submitted_by="Claude")
+        for label, submission in (
+            ("missing", None),
+            ("unknown", {**genuine, "source_authors": ["Codex-Root"]}),
+            ("empty", {**genuine, "source_authors": []}),
+            # Same real head, base and remote: only the recorded author is
+            # rewritten, to a registered actor, which would leave Codex next.
+            ("rewritten", {**genuine, "source_authors": ["Grok"]}),
+            ("stale base", {**genuine, "source_base": genuine["source_head"]}),
+        ):
+            task = {"id": "P3-001", "status": "review", "owner": "Claude", "reviewer": "Gemini"}
+            if submission is not None:
+                task["review_submission"] = submission
+            with (
+                self.subTest(label=label),
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                self.assertIsNone(
+                    supervisor.maybe_reassign_task_after_worker_failure(self.config, worker, "status: 429")
+                )
+                persist.assert_not_called()
 
     def test_review_churn_second_review_reopen_reassigns_owner_to_different_account_pool(self) -> None:
         config = {
@@ -10874,6 +11018,7 @@ class WorkerReassignmentTests(unittest.TestCase):
                     "id": "P3-002",
                     "status": "review",
                     "owner": "Codex",
+                    "review_submission": _bound_review_submission("Codex", submitted_by="Codex"),
                     "reviewer": "Claude",
                 }
             ]
@@ -10926,6 +11071,7 @@ class WorkerReassignmentTests(unittest.TestCase):
                     "id": "P3-003",
                     "status": "review",
                     "owner": "Codex",
+                    "review_submission": _bound_review_submission("Codex", submitted_by="Codex"),
                     "reviewer": "Claude",
                 }
             ]
@@ -11461,6 +11607,7 @@ class AutomaticRecoveryTests(unittest.TestCase):
             "status": "review",
             "owner": "Antigravity",
             "reviewer": "CodexCoordinator",
+            "review_submission": _bound_review_submission("Antigravity", submitted_by="Antigravity"),
             "depends_on": [],
         }
         with (
@@ -11853,6 +12000,7 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
                     "id": "RUN-001",
                     "status": "review_approved",
                     "owner": "Claude",
+                    "review_submission": _bound_review_submission("Claude", submitted_by="Claude"),
                     "reviewer": "Codex",
                 }
             ]
@@ -12094,7 +12242,7 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
                 "status": "review",
                 "owner": "Codex",
                 "reviewer": "Antigravity",
-                "review_submission": {"remote_sha": DISPATCHABLE_REVIEW_HEAD},
+                "review_submission": _bound_review_submission("Codex", submitted_by="Codex", head=DISPATCHABLE_REVIEW_HEAD),
                 "depends_on": [],
             },
         }
@@ -12159,7 +12307,7 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
                 "status": "review",
                 "owner": "Codex",
                 "reviewer": "Antigravity",
-                "review_submission": {"remote_sha": DISPATCHABLE_REVIEW_HEAD},
+                "review_submission": _bound_review_submission("Codex", submitted_by="Codex", head=DISPATCHABLE_REVIEW_HEAD),
                 "depends_on": [],
             },
         }
@@ -12477,7 +12625,7 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
                 "owner": "Codex",
                 "reviewer": "Antigravity",
                 "priority": "P1",
-                "review_submission": {"remote_sha": DISPATCHABLE_REVIEW_HEAD},
+                "review_submission": _bound_review_submission("Codex", submitted_by="Codex", head=DISPATCHABLE_REVIEW_HEAD),
                 "depends_on": [],
             },
         }
@@ -15099,6 +15247,24 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         ai_status.STATUS_FILE.write_text("{}", encoding="utf-8")
         ai_status.LOG_FILE.write_text("", encoding="utf-8")
         ai_status.clear_ai_status_caches()
+        # These tests are about the head freeze. Their synthetic heads go
+        # through the module's stand-in Git reader, so the source-author rule
+        # itself -- including binding to the head being approved -- still runs
+        # on every approval and restore here; its Git re-derivation is
+        # exercised against real synthetic repositories in
+        # scripts/test_ai_status.py.
+
+    @staticmethod
+    def _sourced(head: str, author: str = "Antigravity4", **extra: Any) -> dict[str, Any]:
+        """A review submission whose source provenance is bound to `head`."""
+        return {
+            "remote_sha": head,
+            "source_head": head,
+            "source_base": "b" * 40,
+            "source_authors": [author],
+            "submitted_by": author,
+            **extra,
+        }
 
     def tearDown(self) -> None:
         for name, value in self._original_paths.items():
@@ -15137,7 +15303,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                     "owner": "Antigravity4",
                     "reviewer": "Codex2",
                     "status": "review",
-                    "review_submission": {"remote_sha": "1111111122222222333333334444444455555555"},
+                    "review_submission": self._sourced("1111111122222222333333334444444455555555"),
                 },
                 {
                     "id": "FREEZE-TEST-002",
@@ -15567,7 +15733,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                         "owner": "Antigravity4",
                         "reviewer": "Codex2",
                         "status": "review",
-                        "review_submission": {"remote_sha": "1111111122222222333333334444444455555555"},
+                        "review_submission": self._sourced("1111111122222222333333334444444455555555"),
                     }
                 ]
             }
@@ -15625,7 +15791,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                     "reviewer": "Codex2",
                     "status": "review",
                     "approved_head": old_head,
-                    "review_submission": {"remote_sha": new_head},
+                    "review_submission": self._sourced(new_head),
                 }
             ]
         }
@@ -15641,7 +15807,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
 
         # Positive control: re-approving at the *same* head is not a conflict,
         # so the guard cannot be satisfied by rejecting every stale-head task.
-        state["tasks"][0]["review_submission"]["remote_sha"] = old_head
+        state["tasks"][0]["review_submission"] = self._sourced(old_head)
         with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex2"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=old_head), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
@@ -16376,7 +16542,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         head = "e0147acb22222222333333334444444455555555"
         merge = "4b32949322222222333333334444444455555555"
         task_id = "ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001"
-        state = {"tasks": [self._missing_head_task(task_id)]}
+        state = {"tasks": [{**self._missing_head_task(task_id), "review_submission": self._sourced(head)}]}
         task = ai_status.get_task(state, task_id)
         config = self._build_freeze_test_config()
         ai_status.clear_ai_status_caches()
@@ -16496,6 +16662,8 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             "review_notes_zh": "已審核通過",
         }
         task.update(task_extra)
+        if task.get("last_approved_head") and "review_submission" not in task:
+            task["review_submission"] = self._sourced(task["last_approved_head"])
         return {"tasks": [task]}
 
     def test_restore_approved_refuses_without_a_durable_approved_head(self) -> None:
@@ -16511,7 +16679,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                     "reviewer": "Codex2",
                     "status": "review",
                     "review_notes_zh": "已審核通過",
-                    "review_submission": {"remote_sha": approved},
+                    "review_submission": self._sourced(approved),
                 }
             ]
         }
@@ -16552,7 +16720,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         """Positive control for the two refusals above: a genuinely spurious
         downgrade still recovers, and it recovers *with* the freeze intact."""
         approved = "1111111122222222333333334444444455555555"
-        state = self._restore_state(id="FREEZE-TEST-021C", last_approved_head=approved)
+        state = self._restore_state(id="FREEZE-TEST-021C", last_approved_head=approved, last_approved_by="Claude")
         task = ai_status.get_task(state, "FREEZE-TEST-021C")
         ai_status.clear_ai_status_caches()
         with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
@@ -17280,7 +17448,10 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                 {
                     "id": "ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001",
                     "status": "review",
-                    "owner": "Codex6",
+                    # A registered owner: an unregistered one has no account
+                    # pool, so no reviewer could be shown independent of it.
+                    "owner": "Codex",
+                    "review_submission": _bound_review_submission("Codex", submitted_by="Codex"),
                     "reviewer": "Antigravity7",
                 }
             ]
@@ -17312,7 +17483,7 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
 
         self.assertIsNotNone(reassigned_to)
         self.assertNotEqual(reassigned_to, "Antigravity7")
-        self.assertNotEqual(reassigned_to, "Codex6")
+        self.assertNotEqual(reassigned_to, "Codex")
         self.assertEqual(persist.call_args.kwargs["new_reviewer"], reassigned_to)
 
     def test_fail_closed_human_ops_gate_never_auto_reassigned(self) -> None:
@@ -19363,7 +19534,15 @@ class BlockedTaskRoleReassignmentTests(unittest.TestCase):
 
     def test_blocked_reviewer_at_review_still_reassigns_the_reviewer(self) -> None:
         status = {
-            "tasks": [{"id": "T-3", "status": "review", "owner": "Antigravity", "reviewer": "Codex"}]
+            "tasks": [
+                {
+                    "id": "T-3",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "review_submission": _bound_review_submission("Antigravity", submitted_by="Antigravity"),
+                }
+            ]
         }
 
         persist = self._run(status)
@@ -19412,7 +19591,13 @@ class BlockedTaskRoleReassignmentTests(unittest.TestCase):
         }
         status = {
             "tasks": [
-                {"id": "T-7", "status": "review", "owner": "Antigravity", "reviewer": "Antigravity2"}
+                {
+                    "id": "T-7",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Antigravity2",
+                    "review_submission": _bound_review_submission("Antigravity", submitted_by="Antigravity"),
+                }
             ]
         }
 

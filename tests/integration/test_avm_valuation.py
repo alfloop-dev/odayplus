@@ -35,6 +35,32 @@ from shared.infrastructure.persistence.repositories import DurableAVMRepository
 from shared.jobs.queue import JobRequest, JobStatus
 from tests.integration._authz import AVM_HEADERS
 
+# Explicit-nonlive compatibility: the AVM writers below run with no verified
+# tenant, so their legacy audit records carry no tenant. The domain lifecycle is
+# read back through the app's own audit log; the public audit read only proves
+# that such unscoped records never leak through the tenant-scoped boundary.
+AVM_AUDIT_READ_TENANT = "tenant-avm-audit-reader"
+
+
+def _assert_public_audit_read_withholds_unscoped(
+    client: TestClient, correlation_id: str, legacy_event_types: set[str]
+) -> None:
+    missing_tenant = client.get("/audit/events", params={"correlation_id": correlation_id})
+    assert missing_tenant.status_code == 403, missing_tenant.text
+    assert missing_tenant.json()["detail"]["code"] == "TENANT_SCOPE_REQUIRED"
+
+    scoped = client.get(
+        "/audit/events",
+        params={"correlation_id": correlation_id},
+        headers={"x-tenant-id": AVM_AUDIT_READ_TENANT},
+    )
+    assert scoped.status_code == 200, scoped.text
+    events = scoped.json()["events"]
+    assert not legacy_event_types & {event["event_type"] for event in events}
+    assert all(
+        event["metadata"].get("tenant_id") == AVM_AUDIT_READ_TENANT for event in events
+    )
+
 
 def _provision_canonical_schema(database: Any) -> None:
     # Validate the AVM bundle against the complete deployed schema rather than
@@ -282,8 +308,9 @@ def test_finance_approval_state_gates_versions_and_dataroom_export() -> None:
 
 
 def test_avm_api_runs_e2e_valuation_dataroom_export_and_audit() -> None:
+    app = create_app()
     client = TestClient(
-        create_app(),
+        app,
         headers=AVM_HEADERS,
         backend_options={"use_uvloop": True},
     )
@@ -387,15 +414,19 @@ def test_avm_api_runs_e2e_valuation_dataroom_export_and_audit() -> None:
     assert exported.status_code == 200
     assert exported.json()["export_audit"][0]["reason"] == "finance diligence package"
 
-    audit = client.get("/audit/events", params={"correlation_id": "corr-avm-1"})
-    event_types = {event["event_type"] for event in audit.json()["events"]}
-    assert {
+    expected_event_types = {
         "avm.case_created.v1",
         "avm.valued.v1",
         "avm.finance_approved.v1",
         "avm.dataroom_ready.v1",
         "avm.dataroom_exported.v1",
-    }.issubset(event_types)
+    }
+    event_types = {
+        event.event_type
+        for event in app.state.audit_log.list_events(correlation_id="corr-avm-1")
+    }
+    assert expected_event_types.issubset(event_types)
+    _assert_public_audit_read_withholds_unscoped(client, "corr-avm-1", expected_event_types)
 
 
 def test_avm_durable_loop_survives_restart(tmp_path) -> None:
@@ -457,8 +488,9 @@ def test_avm_durable_loop_survives_restart(tmp_path) -> None:
 
     reopened = build_persistence(mode="durable", db_path=db_path)
     try:
+        app = create_app(persistence=reopened)
         client = TestClient(
-            create_app(persistence=reopened),
+            app,
             headers=AVM_HEADERS,
             backend_options={"use_uvloop": True},
         )
@@ -492,14 +524,20 @@ def test_avm_durable_loop_survives_restart(tmp_path) -> None:
         assert dataroom.json()["completeness"] == 1.0
         assert dataroom.json()["export_audit"][0]["reason"] == "durable export audit"
 
-        audit = client.get("/audit/events", params={"correlation_id": correlation_id})
-        event_types = {event["event_type"] for event in audit.json()["events"]}
-        assert {
+        expected_event_types = {
             "avm.valued.v1",
             "avm.finance_approved.v1",
             "avm.dataroom_ready.v1",
             "avm.dataroom_exported.v1",
-        }.issubset(event_types)
+        }
+        event_types = {
+            event.event_type
+            for event in app.state.audit_log.list_events(correlation_id=correlation_id)
+        }
+        assert expected_event_types.issubset(event_types)
+        _assert_public_audit_read_withholds_unscoped(
+            client, correlation_id, expected_event_types
+        )
     finally:
         reopened.engine.close()
 

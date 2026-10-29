@@ -16,7 +16,7 @@ from modules.adlift import (
     run_adlift_incrementality_batch,
     run_incrementality,
 )
-from tests.integration._authz import ADLIFT_HEADERS
+from tests.integration._authz import ADLIFT_HEADERS, AUDIT_HEADERS
 
 GENERATED_AT = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
 
@@ -339,7 +339,10 @@ def test_batch_worker_succeeds_and_serialises() -> None:
 
 
 def test_adlift_api_runs_incrementality_and_is_idempotent() -> None:
-    client = TestClient(create_app(), headers=ADLIFT_HEADERS)
+    # The audit read is scoped to the reader's tenant, so the job runs in an
+    # explicit tenant that an auditor of the same tenant reads back.
+    tenant = {"x-tenant-id": "tenant-adlift"}
+    client = TestClient(create_app(), headers={**ADLIFT_HEADERS, **tenant})
     campaign_payload: dict = {
         "campaign_id": "camp-api-001",
         "name": "API Spring Campaign",
@@ -408,7 +411,12 @@ def test_adlift_api_runs_incrementality_and_is_idempotent() -> None:
     fetched = client.get("/adlift/reports/camp-api-001")
     assert fetched.json()["report_version"] == 1
 
-    audit = client.get("/audit/events", params={"correlation_id": "corr-adlift-1"})
+    audit = client.get(
+        "/audit/events",
+        params={"correlation_id": "corr-adlift-1"},
+        headers={**AUDIT_HEADERS, **tenant},
+    )
+    assert audit.status_code == 200, audit.text
     assert any(
         event["event_type"] == "adlift.incrementality_evaluated.v1"
         for event in audit.json()["events"]

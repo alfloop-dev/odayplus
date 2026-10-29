@@ -15,7 +15,11 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from shared.infrastructure.persistence.factory import _durable_bundle
-from tests.integration._authz import FORECASTOPS_HEADERS
+from tests.integration._authz import AUDIT_HEADERS, FORECASTOPS_HEADERS
+
+# The audit read is RBAC-guarded and tenant-scoped; read as an auditor of the
+# tenant the forecast jobs run in.
+AUDIT_READ_HEADERS = {**AUDIT_HEADERS, "x-tenant-id": FORECASTOPS_HEADERS["x-tenant-id"]}
 
 
 @pytest.fixture
@@ -100,9 +104,16 @@ def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
             assert resp_get.json()["job_id"] == job_id
 
             # Step C: Write and Read Audit Log (Read/Write from Audit DB)
-            resp_audit = client.get("/audit/events", params={"correlation_id": correlation_id})
+            resp_audit = client.get(
+                "/audit/events",
+                params={"correlation_id": correlation_id},
+                headers=AUDIT_READ_HEADERS,
+            )
             assert resp_audit.status_code == 200
-            assert len(resp_audit.json()["events"]) >= 1
+            assert any(
+                event["event_type"] == "job.enqueue" and event["job_id"] == job_id
+                for event in resp_audit.json()["events"]
+            )
 
             # Ratified P95 target check (<= 3.0s)
             latency = time.perf_counter() - t0

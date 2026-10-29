@@ -35,6 +35,7 @@ from modules.heatzone.domain.scoring import HEATZONE_FEATURE_VERSION, HEATZONE_M
 from modules.learninghub.infrastructure import InMemoryLearningHubRepository
 from modules.sitescore.domain.scoring import SITESCORE_FEATURE_VERSION, SITESCORE_MODEL_VERSION
 from tests.integration._authz import (
+    AUDIT_HEADERS,
     FORECASTOPS_HEADERS,
     HEATZONE_HEADERS,
     SITESCORE_HEADERS,
@@ -142,7 +143,14 @@ def test_heatzone_score_job_binds_model_and_fails_closed() -> None:
     assert binding["model_service"] == "heatzone"
     assert binding["model_stage"] == "production"
 
-    audit = client.get("/audit/events", params={"correlation_id": "corr-hz-ok"})
+    # The audit read needs audit:view and is scoped to the reader's tenant: an
+    # auditor of the scoring tenant reads the run back.
+    audit = client.get(
+        "/audit/events",
+        params={"correlation_id": "corr-hz-ok"},
+        headers={**AUDIT_HEADERS, "x-tenant-id": HEATZONE_HEADERS["x-tenant-id"]},
+    )
+    assert audit.status_code == 200, audit.text
     run_events = [e for e in audit.json()["events"] if e["action"] == "run_model"]
     assert run_events
     assert run_events[0]["metadata"]["model_binding"]["model_id"]
