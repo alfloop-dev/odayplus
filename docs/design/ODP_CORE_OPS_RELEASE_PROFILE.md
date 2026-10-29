@@ -361,7 +361,7 @@ Task: ODP-CORE-OPS-STAGING-LIVE-GATE-001 · Owner: Claude2 · Reviewer: Codex2
 2. **Cloud Run invoker**：模組只授予 web SA 與 worker SA `run.invoker`。verify 以 runtime SA 的 token 讀 API 與 Web，需要 runtime SA 對兩個 service 有 `roles/run.invoker`（或在專案層級已有同等權限）。
 3. **API 可達性**：staging API 的 ingress 是 `INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER`。執行 verify 的 runner 必須在可到達它的網路路徑上（既有 `/platform/health` 讀取也是如此）。
 4. **JWKS 連線**：API 的 egress 是 `ALL_TRAFFIC`，經過 default-deny 的 VPC。驗證 smoke token 需要從 API 連到 `www.googleapis.com`（Private Google Access 與對應的 firewall/DNS）。GCS、Pub/Sub 本來就需要同樣的路徑。
-5. **既有 stage 的已知問題（不屬於本 task）**：`worker_idempotency` 以 `--max-jobs 1 --require-job` 執行 worker job。scheduler trigger 是 paused，演練中沒有其他步驟先 enqueue，所以佇列為空時這個 stage 會以 `required_job_not_claimed` 失敗。gate 的 worker 檢查（enqueue、replay、drain、terminal、audit）是自足的，不依賴這個 stage。
+5. **`worker_idempotency` 自行 enqueue（ODP-STAGING-WORKER-IDEMPOTENCY-SELF-ENQUEUE-001 已修正）**：worker job 以 `--max-jobs 1 --require-job` 執行，scheduler trigger 是 paused，演練中沒有其他步驟先 enqueue，原本佇列為空時這個 stage 必定以 `required_job_not_claimed` 失敗。現在這個 stage 以 gate 的 `_check_worker_and_audit` 透過 staging API 排入 provider disabled 的 `external-fetch` 探測（smoke principal 與 API transport token 與 `release_profile_readback` 相同），重放確認 `created=False`，再以 Terraform 原參數執行 worker job，最後讀回終態 `succeeded` 與 audit receipt。`--require-job` 保留，worker 沒有處理工作時 stage 仍失敗。
 
 這些條件不成立時，gate 會如實失敗（例如 `auth:operator_bootstrap` 401 的 dependency 是 `auth`），stage 失敗並進入 hold，不會被當成通過。
 
@@ -399,6 +399,9 @@ Task: ODP-STAGING-REHEARSAL-NETWORK-IDENTITY-001 · Owner: Claude2 · Reviewer: 
 - Terraform 的 audience、角色、principal map 與 Python 釘選值一致。
 - 沒有新增 secret、IAM 或 dev 輸入。
 - smoke 身分是 release 擁有、會隨 release 刪除的資源。
+
+`tests/ops/test_ephemeral_staging_lifecycle.py::StagingWorkerIdempotencyStageTests`：
+- `worker_idempotency` 先 enqueue 並重放，再執行保留 `--require-job` 的 worker job；重放建立新 job、worker 沒有處理、終態不符、runtime 未確認 provider disabled 時 stage 失敗，且結果不含 token。
 
 本 task 沒有部署、沒有觸發 deploy workflow、沒有修改 `RELEASE_GATE_REGISTRY`、IAM 或 secret。
 
