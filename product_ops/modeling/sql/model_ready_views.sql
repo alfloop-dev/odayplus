@@ -31,7 +31,126 @@ COMMENT ON TABLE model_ready.view_contracts IS
     'Fail-closed registry for versioned model-ready relations and outcome readiness.';
 
 CREATE OR REPLACE VIEW model_ready.forecast_training_view AS
-WITH transaction_source AS (
+WITH clean_order_runs AS (
+    -- One reconciliation rule for EOF candidates, bounded predecessors and
+    -- the historical bad-run veto below. No per-chunk EOF requirement.
+    SELECT ingestion.*
+    FROM data_plane.ingestion_runs AS ingestion
+    WHERE ingestion.source_kind = 'orders'
+      AND ingestion.status = 'SUCCEEDED'
+      AND ingestion.reconciled
+      AND ingestion.quarantined_count = 0
+      AND ingestion.processed_count = ingestion.valid_loaded
+      AND ingestion.finished_at IS NOT NULL
+),
+authoritative_order_partitions AS (
+    -- EOF proof for an exact orders source partition, not an event date.
+    -- A backfill key can prove only its own bounded source window complete;
+    -- it never proves a full UTC day (daily_partition_proof below), because
+    -- ingestion_runs persists no backfill window bounds. A resumed chunk that
+    -- stopped at its record bound is legitimate once a later run of the same
+    -- partition reaches EOF, but every orders run that read this partition must
+    -- itself have succeeded, reconciled and loaded every record it processed.
+    -- A FAILED or abandoned RUNNING chunk keeps its schema-default zero
+    -- counters while its checkpoint may already have advanced past a
+    -- quarantined record, so a later resumed EOF cannot clear that failure.
+    -- An attempt failing before any projection/quarantine is different. Walk
+    -- backwards from EOF through clean persisted final_cursor/resumed_from
+    -- matches on this exact source/day and non-overlapping run intervals. A
+    -- segment starting after the empty failure can recover it either by reading
+    -- from the beginning (NULL cursor), or by resuming the very same boundary
+    -- the failed attempt read. This applies before, between and after bounded
+    -- chunks, including retries after an earlier EOF. A changed checkpoint is
+    -- not recovery: it may have skipped failed work. Every other bad chunk is
+    -- still vetoed independently, and the actual recovering EOF finished_at
+    -- remains the availability/maturity boundary below.
+    -- This holds for runs finishing after the proof as well: a later
+    -- rematerialization or a backfill window reaching the day that quarantined
+    -- or failed on an order adds no canonical lineage and leaves the earlier
+    -- EOF untouched, so it must revoke that proof rather than be ignored.
+    -- A clean bounded chunk finishing no earlier than the proof revokes it too:
+    -- the orders source reads every tenant and store in one _id order, so a
+    -- chunk that stopped at its record bound after loading another store's
+    -- later-inserted order leaves this day's remaining records unread, and the
+    -- older EOF no longer proves any store of the day complete until a later
+    -- run of the partition reaches EOF again.
+    -- Backfill keys are compared as ISO date text (no cast) over the inclusive
+    -- start/end dates that _windows derives from the window bounds.
+    SELECT
+        completion.partition_key,
+        completion.finished_at
+    FROM clean_order_runs AS completion
+    WHERE completion.partition_complete
+      AND NOT EXISTS (
+          SELECT 1
+          FROM data_plane.ingestion_runs AS chunk
+          WHERE chunk.source_kind = completion.source_kind
+            AND (
+                chunk.partition_key = completion.partition_key
+                OR (
+                    completion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                    AND chunk.partition_key
+                        ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}__[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                    AND completion.partition_key
+                        BETWEEN split_part(chunk.partition_key, '__', 1)
+                            AND split_part(chunk.partition_key, '__', 2)
+                )
+            )
+            AND (
+                NOT EXISTS (
+                    SELECT 1 FROM clean_order_runs AS clean
+                    WHERE clean.run_id = chunk.run_id
+                )
+                OR (
+                    NOT chunk.partition_complete
+                    AND chunk.finished_at >= completion.finished_at
+                )
+            )
+            AND NOT coalesce(
+                chunk.status = 'FAILED'
+                AND chunk.partition_key = completion.partition_key
+                AND chunk.started_at <= chunk.finished_at
+                AND completion.started_at <= completion.finished_at
+                AND EXISTS (
+                    WITH RECURSIVE reread AS (
+                        SELECT completion.run_id, completion.resumed_from,
+                               completion.started_at
+                        UNION
+                        SELECT predecessor.run_id, predecessor.resumed_from,
+                               predecessor.started_at
+                        FROM clean_order_runs AS predecessor
+                        INNER JOIN reread AS successor
+                            ON predecessor.final_cursor = successor.resumed_from
+                           AND predecessor.finished_at <= successor.started_at
+                           AND predecessor.started_at < successor.started_at
+                        WHERE predecessor.partition_key = completion.partition_key
+                          AND predecessor.started_at <= predecessor.finished_at
+                    )
+                    SELECT 1 FROM reread
+                    WHERE (
+                        reread.resumed_from IS NULL
+                        OR reread.resumed_from = chunk.resumed_from
+                    )
+                      AND chunk.finished_at < reread.started_at
+                )
+                AND chunk.processed_count = 0
+                AND chunk.valid_loaded = 0
+                AND chunk.quarantined_count = 0
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM data_plane.canonical_lineage AS failed_lineage
+                    WHERE failed_lineage.run_id = chunk.run_id
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM data_plane.quarantined_records AS failed_quarantine
+                    WHERE failed_quarantine.run_id = chunk.run_id
+                ),
+                FALSE
+            )
+      )
+),
+transaction_source AS (
     SELECT
         store.tenant_id,
         txn.transaction_id,
@@ -40,32 +159,88 @@ WITH transaction_source AS (
         txn.observation_time,
         txn.ingested_at,
         txn.net_amount,
+        (txn.transaction_status = 'succeeded' AND txn.currency = 'TWD')
+            AS contributes_revenue,
         source.source_snapshot_ids,
-        source.source_run_complete,
-        source.source_run_finished_at
+        (
+            source.source_run_complete
+            -- The orders source windows on updatedAt as well as createdAt, so
+            -- a later update of an already projected order is read by another
+            -- day's partition. When that update is quarantined -- including by
+            -- a FAILED chunk whose counters keep their schema-default zero --
+            -- the retained canonical row is stale and this day's EOF proof
+            -- cannot see it; an unresolved quarantine of the same order that
+            -- is no older than its newest projection keeps it incomplete.
+            AND NOT EXISTS (
+                SELECT 1
+                FROM data_plane.quarantined_records AS quarantine
+                WHERE quarantine.source_kind = 'orders'
+                  AND quarantine.source_id = ANY(source.order_source_ids)
+                  AND quarantine.resolved_at IS NULL
+                  AND quarantine.quarantined_at >= source.source_projected_at
+            )
+        ) AS source_run_complete,
+        source.source_run_finished_at,
+        source.source_partition_finished_at
     FROM core.transactions AS txn
     INNER JOIN core.stores AS store
         ON store.store_id = txn.store_id
+    LEFT JOIN data_plane.transaction_authority AS authority
+        ON authority.transaction_id = txn.transaction_id
     LEFT JOIN LATERAL (
         SELECT
             array_agg(
                 DISTINCT lineage.source_snapshot_id::text
                 ORDER BY lineage.source_snapshot_id::text
             ) AS source_snapshot_ids,
-            bool_and(
-                ingestion.status = 'SUCCEEDED'
-                AND ingestion.finished_at IS NOT NULL
+            (
+                authority.source_kind = 'orders'
+                AND coalesce(
+                    bool_or(
+                        lineage.source_snapshot_id = authority.source_snapshot_id
+                        AND ingestion.source_kind = 'orders'
+                    ),
+                    FALSE
+                )
+                AND bool_and(
+                    ingestion.status = 'SUCCEEDED'
+                    AND ingestion.reconciled
+                    AND ingestion.quarantined_count = 0
+                    AND ingestion.processed_count = ingestion.valid_loaded
+                    AND ingestion.finished_at IS NOT NULL
+                    AND (
+                        ingestion.source_kind <> 'orders'
+                        OR partition_proof.finished_at IS NOT NULL
+                    )
+                )
             ) AS source_run_complete,
-            max(ingestion.finished_at) AS source_run_finished_at
+            max(ingestion.finished_at) AS source_run_finished_at,
+            max(partition_proof.finished_at) AS source_partition_finished_at,
+            array_agg(DISTINCT lineage.source_id)
+                FILTER (WHERE lineage.source_kind = 'orders') AS order_source_ids,
+            max(lineage.projected_at) AS source_projected_at
         FROM data_plane.canonical_lineage AS lineage
         INNER JOIN data_plane.ingestion_runs AS ingestion
             ON ingestion.run_id = lineage.run_id
+        -- createdAt sets event_time, but updatedAt can put a correction in a
+        -- different source partition. Event-day EOF cannot finish that read:
+        -- require the same shared proof for every contributing orders run's
+        -- actual partition, retaining earlier clean partial chunks as lineage.
+        LEFT JOIN LATERAL (
+            SELECT min(proof.finished_at) AS finished_at
+            FROM authoritative_order_partitions AS proof
+            WHERE ingestion.source_kind = 'orders'
+              AND proof.partition_key = ingestion.partition_key
+              AND proof.finished_at >= ingestion.finished_at
+        ) AS partition_proof ON TRUE
         WHERE lineage.tenant_id = store.tenant_id
           AND lineage.canonical_table = 'core.transactions'
           AND lineage.canonical_id = txn.transaction_id
     ) AS source ON TRUE
-    WHERE txn.transaction_status = 'succeeded'
-      AND txn.currency = 'TWD'
+    -- Status/currency select revenue, not evidence. A refund or currency exit
+    -- can remove revenue while another order in this day remains stale until
+    -- the correction's updatedAt partition reaches EOF. Retain its identity,
+    -- lineage, completion proof and real availability in the daily verdict.
 ),
 daily_source_ids AS (
     SELECT
@@ -88,27 +263,34 @@ transaction_daily AS (
         source_txn.tenant_id,
         source_txn.store_id,
         (source_txn.event_time AT TIME ZONE 'UTC')::date AS date,
-        sum(source_txn.net_amount)::double precision AS daily_net_revenue,
-        count(*)::bigint AS transaction_count,
+        sum(source_txn.net_amount) FILTER (WHERE source_txn.contributes_revenue)
+            ::double precision AS daily_net_revenue,
+        count(*) FILTER (WHERE source_txn.contributes_revenue)::bigint AS transaction_count,
         max(
             greatest(
                 source_txn.observation_time,
-                source_txn.ingested_at
+                source_txn.ingested_at,
+                source_txn.source_partition_finished_at
             )
         ) AS source_available_at,
+        -- bool_and ignores NULL, so a transaction without lineage rows must
+        -- be folded to FALSE rather than vanish from the daily verdict.
         coalesce(
-            bool_and(cardinality(source_txn.source_snapshot_ids) > 0),
+            bool_and(coalesce(cardinality(source_txn.source_snapshot_ids), 0) > 0),
             FALSE
         )
             AS lineage_complete,
         coalesce(
             bool_and(
-                source_txn.observation_time >= source_txn.event_time
-                AND source_txn.ingested_at >= source_txn.observation_time
-                AND source_txn.source_run_complete
+                coalesce(
+                    source_txn.observation_time >= source_txn.event_time
+                    AND source_txn.ingested_at >= source_txn.observation_time
+                    AND source_txn.source_run_complete,
+                    FALSE
+                )
             ),
             FALSE
-        ) AS source_run_complete,
+        ) AS transaction_runs_complete,
         daily_source_ids.source_snapshot_ids,
         max(source_txn.source_run_finished_at) AS source_run_finished_at
     FROM transaction_source AS source_txn
@@ -122,16 +304,48 @@ transaction_daily AS (
         source_txn.store_id,
         (source_txn.event_time AT TIME ZONE 'UTC')::date,
         daily_source_ids.source_snapshot_ids
+    -- Preserve the original revenue-day domain: an all-nonrevenue day is a
+    -- real gap, not a manufactured zero label or a zero-filled feature day.
+    HAVING count(*) FILTER (WHERE source_txn.contributes_revenue) > 0
+),
+daily_partition_proof AS (
+    -- Full-day coverage is separate from the contributing source-partition
+    -- proofs above: only the exact UTC-day key proves the full event day.
+    -- Backfill keys may represent sub-day windows and never satisfy this join.
+    -- Do not order this EOF after another partition's loading/completion run:
+    -- the updatedAt read has its own proof and real availability above. A
+    -- zero-row event-day resume says nothing about that read, in either order.
+    SELECT
+        transaction_daily.tenant_id,
+        transaction_daily.store_id,
+        transaction_daily.date,
+        min(proof.finished_at) AS finished_at
+    FROM transaction_daily
+    INNER JOIN authoritative_order_partitions AS proof
+        ON proof.partition_key = transaction_daily.date::text
+    GROUP BY
+        transaction_daily.tenant_id,
+        transaction_daily.store_id,
+        transaction_daily.date
 ),
 mature_daily AS (
     SELECT
         transaction_daily.*,
+        (
+            transaction_daily.transaction_runs_complete
+            AND partition_proof.finished_at IS NOT NULL
+        ) AS source_run_complete,
         greatest(
-            source_available_at,
-            source_run_finished_at,
-            (date + 1)::timestamp AT TIME ZONE 'UTC'
+            transaction_daily.source_available_at,
+            transaction_daily.source_run_finished_at,
+            partition_proof.finished_at,
+            (transaction_daily.date + 1)::timestamp AT TIME ZONE 'UTC'
         ) AS label_maturity_time
     FROM transaction_daily
+    LEFT JOIN daily_partition_proof AS partition_proof
+        ON partition_proof.tenant_id = transaction_daily.tenant_id
+       AND partition_proof.store_id = transaction_daily.store_id
+       AND partition_proof.date = transaction_daily.date
 ),
 point_in_time AS (
     SELECT
@@ -141,6 +355,7 @@ point_in_time AS (
         causal.rolling_mean_7,
         causal.rolling_mean_28,
         causal.prior_day_count_28,
+        causal.prior_complete_day_count_28,
         causal.prior_feature_maturity_time,
         lineage_window.source_snapshot_ids AS lineage_window_snapshot_ids
     FROM mature_daily AS target
@@ -154,6 +369,9 @@ point_in_time AS (
                 FILTER (WHERE prior.date >= target.date - 7) AS rolling_mean_7,
             avg(prior.daily_net_revenue) AS rolling_mean_28,
             count(*)::integer AS prior_day_count_28,
+            count(*) FILTER (
+                WHERE prior.lineage_complete AND prior.source_run_complete
+            )::integer AS prior_complete_day_count_28,
             max(prior.label_maturity_time) AS prior_feature_maturity_time
         FROM mature_daily AS prior
         WHERE prior.tenant_id = target.tenant_id
@@ -206,6 +424,7 @@ SELECT
         AND source_run_complete
         AND cardinality(lineage_window_snapshot_ids) > 0
         AND prior_day_count_28 = 28
+        AND prior_complete_day_count_28 = 28
         AND revenue_lag_1 IS NOT NULL
         AND revenue_lag_7 IS NOT NULL
         AND rolling_mean_7 IS NOT NULL
@@ -220,6 +439,8 @@ SELECT
         WHEN NOT lineage_complete THEN 'SOURCE_LINEAGE_INCOMPLETE'
         WHEN NOT source_run_complete THEN 'SOURCE_RUN_NOT_COMPLETE'
         WHEN cardinality(lineage_window_snapshot_ids) = 0 THEN 'SOURCE_LINEAGE_MISSING'
+        WHEN prior_complete_day_count_28 <> prior_day_count_28
+            THEN 'PRIOR_SOURCE_NOT_COMPLETE'
         WHEN prior_day_count_28 <> 28 THEN 'INSUFFICIENT_28_DAY_HISTORY'
         WHEN revenue_lag_1 IS NULL OR revenue_lag_7 IS NULL
             THEN 'DAILY_HISTORY_GAP'
@@ -1319,7 +1540,9 @@ INSERT INTO model_ready.view_contracts (
             'core.transactions',
             'core.stores',
             'data_plane.canonical_lineage',
-            'data_plane.ingestion_runs'
+            'data_plane.ingestion_runs',
+            'data_plane.transaction_authority',
+            'data_plane.quarantined_records'
         ],
         'ACTIVE',
         TRUE,

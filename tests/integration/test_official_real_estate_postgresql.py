@@ -929,15 +929,28 @@ def _create_model_view_prerequisites(database: Any) -> None:
                 quarantined_count BIGINT NOT NULL,
                 reconciled BOOLEAN NOT NULL,
                 partition_complete BOOLEAN NOT NULL,
+                resumed_from TEXT,
+                final_cursor TEXT,
+                started_at TIMESTAMPTZ NOT NULL,
                 finished_at TIMESTAMPTZ
             );
             CREATE TABLE data_plane.canonical_lineage (
                 source_snapshot_id UUID NOT NULL,
+                source_kind TEXT NOT NULL,
+                source_id TEXT NOT NULL,
                 run_id UUID NOT NULL,
                 tenant_id UUID NOT NULL,
                 canonical_table TEXT NOT NULL,
                 canonical_id UUID NOT NULL,
                 projected_at TIMESTAMPTZ NOT NULL
+            );
+            CREATE TABLE data_plane.quarantined_records (
+                source_snapshot_id UUID PRIMARY KEY,
+                run_id UUID NOT NULL,
+                source_kind TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                quarantined_at TIMESTAMPTZ NOT NULL,
+                resolved_at TIMESTAMPTZ
             );
             CREATE TABLE data_plane.transaction_authority (
                 transaction_id UUID PRIMARY KEY,
