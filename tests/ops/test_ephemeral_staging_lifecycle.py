@@ -4091,7 +4091,8 @@ class StagingLiveE2EGateTests(unittest.TestCase):
             self.assertNotIn(forbidden, main_text)
             self.assertNotIn(forbidden, variables_text)
         self.assertNotRegex(variables_text, r'variable\s+"[^"]*(smoke|principal)[^"]*"')
-        # The release-scoped secrets and IAM grants are unchanged.
+        # The release-scoped secrets are unchanged. The only IAM additions are the
+        # release-scoped verify grants from ODP-STAGING-REHEARSAL-NETWORK-IDENTITY-001.
         self.assertEqual(
             re.findall(r'resource "google_secret_manager_secret" "(\w+)"', main_text),
             ["staging_database_url", "staging_cursor_signing_key", "staging_web_session"],
@@ -4106,8 +4107,11 @@ class StagingLiveE2EGateTests(unittest.TestCase):
                 "deployer_sa_user_runtime",
                 "deployer_sa_user_web",
                 "deployer_sa_user_worker",
+                "deployer_id_token_runtime",
                 "staging_web_invokes_api",
                 "staging_worker_invokes_api",
+                "staging_runtime_invokes_api",
+                "staging_runtime_invokes_web",
                 "staging_runtime_publisher",
                 "staging_worker_subscriber",
                 "staging_runtime_cursor_key",

@@ -358,6 +358,14 @@ resource "google_service_account_iam_member" "deployer_sa_user_worker" {
   member             = "serviceAccount:${var.deployer_service_account_email}"
 }
 
+# verify mints the smoke and transport ID tokens by impersonating this release's
+# runtime SA; serviceAccountUser (actAs) does not include getOpenIdToken.
+resource "google_service_account_iam_member" "deployer_id_token_runtime" {
+  service_account_id = google_service_account.staging_runtime.name
+  role               = "roles/iam.serviceAccountOpenIdTokenCreator"
+  member             = "serviceAccount:${var.deployer_service_account_email}"
+}
+
 # Web -> API invoker.
 resource "google_cloud_run_v2_service_iam_member" "staging_web_invokes_api" {
   project  = var.project_id
@@ -374,6 +382,23 @@ resource "google_cloud_run_v2_service_iam_member" "staging_worker_invokes_api" {
   name     = google_cloud_run_v2_service.staging_api.name
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.staging_worker.email}"
+}
+
+# verify operator (the release runtime SA) -> API and Web invoker, service-scoped.
+resource "google_cloud_run_v2_service_iam_member" "staging_runtime_invokes_api" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.staging_api.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.staging_runtime.email}"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "staging_runtime_invokes_web" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.staging_web.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.staging_runtime.email}"
 }
 
 # --- Pub/Sub Messaging ---

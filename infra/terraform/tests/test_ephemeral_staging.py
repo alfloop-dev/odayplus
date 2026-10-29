@@ -207,6 +207,41 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertIn("serviceAccount:${google_service_account.staging_worker.email}", main_tf)
         self.assertIn("google_cloud_run_v2_service_iam_member.staging_worker_invokes_api", main_tf)
 
+    def test_verify_operator_identity_grants_are_release_scoped(self) -> None:
+        main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+
+        def block(kind: str, name: str) -> str:
+            match = re.search(
+                rf'resource "{kind}" "{name}" \{{\n(.*?)\n\}}', main_tf, re.DOTALL
+            )
+            self.assertIsNotNone(match, f"{kind}.{name} is missing")
+            return match.group(1)
+
+        token = block("google_service_account_iam_member", "deployer_id_token_runtime")
+        self.assertIn("service_account_id = google_service_account.staging_runtime.name", token)
+        self.assertIn('role               = "roles/iam.serviceAccountOpenIdTokenCreator"', token)
+        self.assertIn('member             = "serviceAccount:${var.deployer_service_account_email}"', token)
+
+        for name, service in (
+            ("staging_runtime_invokes_api", "staging_api"),
+            ("staging_runtime_invokes_web", "staging_web"),
+        ):
+            invoker = block("google_cloud_run_v2_service_iam_member", name)
+            self.assertIn(f"name     = google_cloud_run_v2_service.{service}.name", invoker)
+            self.assertIn('role     = "roles/run.invoker"', invoker)
+            self.assertIn(
+                'member   = "serviceAccount:${google_service_account.staging_runtime.email}"',
+                invoker,
+            )
+
+        # Neither grant is widened to the project, and no service is public.
+        self.assertNotRegex(
+            main_tf,
+            r'google_project_iam_member"[^}]*(serviceAccountOpenIdTokenCreator|run\.invoker)',
+        )
+        self.assertNotIn("allUsers", main_tf)
+        self.assertNotIn("allAuthenticatedUsers", main_tf)
+
     def test_tenant_isolation_contract(self) -> None:
         vars_tf = (MODULE_DIR / "variables.tf").read_text(encoding="utf-8")
         main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
