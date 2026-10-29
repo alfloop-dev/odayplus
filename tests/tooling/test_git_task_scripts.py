@@ -678,8 +678,15 @@ def compose_source_only_child(repo: Path, tmp_path: Path) -> tuple[Path, dict, s
     """Pi publishes a child branch; the parent branch merges its exact head.
 
     Returns the status root whose canonical records the prepublication check
-    reads, the child record in it, and the parent head.
+    reads, the child record in it, and the parent head. The checkout's origin
+    is the registered repository, example/repo.
     """
+    registered = tmp_path / "example" / "repo.git"
+    subprocess.run(
+        ["git", "clone", "--quiet", "--bare", str(tmp_path / "origin.git"), str(registered)],
+        check=True, capture_output=True,
+    )
+    git(repo, "remote", "set-url", "origin", str(registered))
     frozen = git(repo, "rev-parse", "HEAD").stdout.strip()
     git(repo, "switch", "--quiet", "--create", f"task/{CHILD}")
     (repo / "uv.lock").write_text("patched\n", encoding="utf-8")
@@ -730,8 +737,9 @@ def test_task_finalize_prepublication_admits_only_the_canonical_source_child(rep
 
     The parent's own commit and Pi's published child commit pass; the same
     composition is refused, with its original Task-ID refusal kept, as soon
-    as the record stops naming it a direct child or origin stops publishing
-    the child's head.
+    as the record stops naming it a direct child, the child carries its own
+    unresolved gate, or the registered origin stops publishing the child's
+    head -- whatever some other remote publishes.
     """
     status_root, child, _head = compose_source_only_child(repo, tmp_path)
     parent = {"id": TASK, "owner": "Claude2", "reviewer": "Codex", "status": "in_progress",
@@ -751,7 +759,25 @@ def test_task_finalize_prepublication_admits_only_the_canonical_source_child(rep
     assert missing.returncode == 1
     assert "has no canonical or archived task record" in missing.stderr
 
+    gated = finalize_with_records(repo, status_root, parent, dict(child, requires_human_approval=True))
+    assert gated.returncode == 1
+    assert "still carries an unresolved gate: task carries an unresolved human approval gate" in gated.stderr
+
+    # Another remote carrying the exact child head proves no publication by
+    # the registered repository, which no longer publishes it.
+    stray = tmp_path / "other-org" / "other-repo.git"
+    subprocess.run(
+        ["git", "clone", "--quiet", "--bare", str(tmp_path / "example" / "repo.git"), str(stray)],
+        check=True, capture_output=True,
+    )
     git(repo, "push", "--quiet", "origin", f":task/{CHILD}")
+    git(repo, "remote", "set-url", "origin", str(stray))
+    stray_origin = finalize_with_records(repo, status_root, parent, child)
+    assert stray_origin.returncode == 1
+    assert "is other-org/other-repo, not the registered repository example/repo" in stray_origin.stderr
+    assert "dry-run: git push" not in stray_origin.stdout
+
+    git(repo, "remote", "set-url", "origin", str(tmp_path / "example" / "repo.git"))
     unpublished = finalize_with_records(repo, status_root, parent, child)
     assert unpublished.returncode == 1
     assert f"origin does not publish task/{CHILD} at its review-gate head" in unpublished.stderr

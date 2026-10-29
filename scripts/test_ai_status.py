@@ -3577,7 +3577,9 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
     def setUp(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="test-parent-child-source-"))
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
-        self.origin = root / "origin.git"
+        self.root = root
+        # The registered repository is example/repo; its origin answers to that name.
+        self.origin = root / "example" / "repo.git"
         self.repo = root / "work"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "dev", str(self.origin)], check=True)
         self.repo.mkdir()
@@ -3889,6 +3891,116 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
         resubmitted = self.submit(head=newer)
         self.assertEqual(resubmitted["source_head"], newer)
         self.assertEqual(resubmitted["source_helpers"], [self.expected_binding()])
+
+    def test_a_child_still_under_its_own_gate_is_never_admitted(self) -> None:
+        gates = (
+            ("requires_human_approval", True, r"unresolved human approval gate"),
+            ("human_required_roles", ["product_owner"], r"unresolved human approval gate"),
+            ("human_gate", True, r"unresolved independent human_gate"),
+            ("deployment_gate", "pending", r"unresolved independent deployment_gate"),
+            ("non_dispatchable", True, r"unresolved human gate \(human or non-dispatchable"),
+            ("gate_status", "pending_human_signoff", r"unresolved human gate status"),
+        )
+        # The first OPEN refuses, with the parent's own refusal of the commit kept.
+        for name, value, pattern in gates:
+            with self.subTest(initial=name):
+                self.child[name] = value
+                try:
+                    self.refuse_submission(r"CHILD-001.*still carries an unresolved gate: task carries an " + pattern)
+                finally:
+                    self.child.pop(name)
+
+        submission = json.loads(json.dumps(self.submit()))
+        for name, value, pattern in gates:
+            with self.subTest(drift=name), mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+                self.assertIsNone(self.block_reason("Codex2"))  # warms the cache
+                self.child[name] = value
+                try:
+                    # Warm and cold answers, the approval and a same-head
+                    # replay all ask the child's gate again.
+                    self.assertRegex(str(self.block_reason("Codex2")), pattern)
+                    dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.clear()
+                    self.assertRegex(str(self.block_reason("Codex2")), pattern)
+                    self.assert_refused_without_mutation(
+                        "Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], pattern
+                    )
+                    self.refuse_submission(r"still carries an unresolved gate")
+                finally:
+                    self.child.pop(name)
+                self.assertEqual(self.task["review_submission"], submission)
+        self.assertEqual(self.task["status"], "review")
+        # The gate belongs to the child's own owners; the parent clears nothing.
+        self.assertEqual((self.child["status"], self.child["waiting_for"]), ("blocked", "Codex"))
+        self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review"])
+        self.assertEqual(self.task["status"], "review_approved")
+
+    def test_publication_is_only_proven_by_the_registered_repository(self) -> None:
+        # An unrelated remote carries the child's exact head; the registered
+        # origin no longer publishes it.
+        stray = self.root / "other-org" / "other-repo.git"
+        subprocess.run(["git", "clone", "-q", "--bare", str(self.origin), str(stray)], check=True)
+        self.git("push", "-q", "origin", f":{self.CHILD_BRANCH}")
+        self.git("remote", "set-url", "origin", str(stray))
+        self.refuse_submission(
+            r"origin asked for its publication is other-org/other-repo, not the registered repository example/repo"
+        )
+        self.git("remote", "remove", "origin")
+        self.refuse_submission(r"origin asked for its publication is not configured")
+
+        # Pointing at the registered origin again proves nothing it does not publish.
+        self.git("remote", "add", "origin", str(self.origin))
+        self.refuse_submission(r"origin does not publish task/CHILD-001 at its review-gate head")
+        self.git("push", "-q", "origin", f"{self.child_head}:refs/heads/{self.CHILD_BRANCH}")
+        self.assertEqual(self.submit()["source_helpers"], [self.expected_binding()])
+
+    def test_a_same_head_replay_never_rewrites_the_recorded_bounds(self) -> None:
+        genuine = json.loads(json.dumps(self.submit()["source_helpers"]))
+        merged: dict[str, Any] = {}
+        for mode in ("OPEN", "MERGED"):
+            for name, helpers in (
+                ("author rewritten", [dict(genuine[0], commits=[[self.child_head, "Codex2"]])]),
+                ("commit dropped", [dict(genuine[0], commits=[])]),
+                ("bound dropped", []),
+                ("bound removed", None),
+                ("unknown child added", [*genuine, dict(genuine[0], task_id="CHILD-404")]),
+                ("not a list", {"CHILD-001": genuine[0]}),
+            ):
+                with self.subTest(mode=mode, corruption=name):
+                    submission = self.task["review_submission"]
+                    if helpers is None:
+                        submission.pop("source_helpers")
+                    else:
+                        submission["source_helpers"] = json.loads(json.dumps(helpers))
+                    try:
+                        # While the child branch is still published the replay
+                        # could prove it afresh, yet refuses rather than
+                        # repairing the record; once it is deleted, a bound
+                        # gone from the record cannot be proven at all.
+                        kwargs, pattern = {}, r"not the bounds the delivery scan"
+                        if mode == "MERGED":
+                            kwargs = {"pr": merged}
+                            pattern += r"|origin does not publish task/CHILD-001"
+                        self.refuse_submission(pattern, **kwargs)
+                    finally:
+                        submission["source_helpers"] = json.loads(json.dumps(genuine))
+            if mode == "OPEN":
+                # Merge the unchanged head and delete both branches for the MERGED round.
+                self.git("checkout", "-q", "dev")
+                self.git("merge", "--no-ff", "-q", "-m", "Merge pull request #4242", self.head)
+                merge_commit = self.git("rev-parse", "dev")
+                self.git("update-ref", "refs/remotes/origin/dev", "dev")
+                self.git("checkout", "-q", "--detach", self.head)
+                self.git("branch", "-D", self.BRANCH, self.CHILD_BRANCH)
+                self.git("push", "-q", "origin", f":{self.CHILD_BRANCH}")
+                self.task["status"] = "in_progress"
+                merged = dict(
+                    self.pr(self.head), state="MERGED", mergedAt="2026-10-29T01:00:00Z",
+                    mergeCommit={"oid": merge_commit},
+                    statusCheckRollup=[{"__typename": "CheckRun", "name": "orchestrator", "status": "COMPLETED",
+                                        "conclusion": "SUCCESS"}],
+                )
+        # The unchanged bound still replays after the branch is gone.
+        self.assertEqual(self.submit(pr=merged)["source_helpers"], genuine)
 
     def test_re_review_failover_and_restore_ask_the_same_rule(self) -> None:
         self.submit()

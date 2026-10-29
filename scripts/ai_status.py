@@ -68,16 +68,18 @@ if str(DELIVERY_GOVERNANCE_DIR) not in sys.path:
     sys.path.insert(0, str(DELIVERY_GOVERNANCE_DIR))
 
 import common as orchestrator_common
-from check_task_delivery_identity import inspect_delivery_identity, published_branch_head
+from check_task_delivery_identity import inspect_delivery_identity
 from classify_change_review_scope import classify_paths
 from common import (
     classify_reopen_reason,
 )
 from dispatch_policy import (
     delivery_merge_target_branch,
+    recorded_source_helpers_error,
     source_helper_resolver,
     task_branch_name,
     task_explicit_branch,
+    task_unresolved_human_or_independent_gate_reason,
 )
 from multi_repo_registry import (
     canonical_repository_id_for_root,
@@ -818,31 +820,6 @@ def continuation_approval_validation_error(
         return "approval expires before or at issue time"
     if expires_at.astimezone(UTC) <= current:
         return "approval has expired"
-    return None
-
-
-def task_unresolved_human_or_independent_gate_reason(task: dict[str, Any]) -> str | None:
-    """Return why a task carries an unresolved human or independent gate blocking submission."""
-    if not isinstance(task, dict):
-        return None
-    task_class = str(task.get("task_class") or "").strip().lower()
-    if task_class == "human_gate" or bool(task.get("non_dispatchable")):
-        return "task carries an unresolved human gate (human or non-dispatchable gate)"
-    if task.get("requires_human_approval") is True or task.get("human_required_roles"):
-        return "task carries an unresolved human approval gate"
-    for gate_field in (
-        "credentials_gate",
-        "credential_gate",
-        "deployment_gate",
-        "production_gate",
-        "external_data_gate",
-        "human_gate",
-    ):
-        if task.get(gate_field):
-            return f"task carries an unresolved independent {gate_field}"
-    gate_status = str(task.get("gate_status") or "").strip().casefold()
-    if gate_status.startswith("pending_human"):
-        return f"task carries an unresolved human gate status ({gate_status})"
     return None
 
 
@@ -8074,16 +8051,22 @@ def review_submission_for_task(
 
     # The child sources that range was submitted with are kept with it, by the
     # same rule: a replay of the unchanged head is compared with those bounds
-    # instead of asking for the child's published branch again, and any other
-    # head starts over and has to prove each child's publication afresh.
-    def child_sources(merge_commit: str = "") -> Any:
-        recorded = prior.get("source_helpers") if submitted_range_base(merge_commit) else None
-        return source_helper_resolver(
-            config,
-            task,
-            recorded=recorded,
-            published=lambda child_branch: published_branch_head(repository_root, child_branch),
-        )
+    # instead of asking for the child's published branch again, and has to
+    # find exactly them again -- a resubmission never rewrites a recorded
+    # bound. Any other head starts over and proves each child's publication.
+    def recorded_child_sources(merge_commit: str = "") -> Any:
+        return prior.get("source_helpers", []) if submitted_range_base(merge_commit) else None
+
+    def child_sources(recorded: Any) -> Any:
+        return source_helper_resolver(config, task, recorded=recorded, publication_root=repository_root)
+
+    def refuse_rewritten_child_sources(recorded: Any, identity: Any) -> None:
+        bounds_error = None if recorded is None else recorded_source_helpers_error(recorded, identity)
+        if bounds_error:
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: {bounds_error}; "
+                "the same head is not resubmitted with different child bounds."
+            )
 
     if pr_state == "OPEN":
         try:
@@ -8103,6 +8086,7 @@ def review_submission_for_task(
                 f"Cannot submit {task_id} for review: PR #{pr_number} remote head {head_oid[:8]} "
                 f"does not match origin/{branch} ({remote_sha[:8]})."
             )
+        recorded = recorded_child_sources()
         identity = inspect_delivery_identity(
             repository_root,
             task_id=task_id,
@@ -8110,13 +8094,14 @@ def review_submission_for_task(
             head=remote_sha,
             expected_branch=branch,
             actual_branch=head_branch,
-            resolve_helper=child_sources(),
+            resolve_helper=child_sources(recorded),
         )
         if identity.errors:
             details = "; ".join(identity.errors)
             raise SystemExit(
                 f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
             )
+        refuse_rewritten_child_sources(recorded, identity)
         scope_error = declared_owned_scope_admission_error(task, repository_root, identity)
         if scope_error:
             raise SystemExit(f"Cannot submit {task_id} for review: {scope_error}.")
@@ -8186,6 +8171,7 @@ def review_submission_for_task(
         if not git_command_succeeds(["rev-parse", "--verify", f"{pre_merge_base}^{{commit}}"], cwd=repository_root):
             pre_merge_base = base_branch
 
+        recorded = recorded_child_sources(merge_commit)
         identity = inspect_delivery_identity(
             repository_root,
             task_id=task_id,
@@ -8193,13 +8179,14 @@ def review_submission_for_task(
             head=head_oid,
             expected_branch=branch,
             actual_branch=head_branch,
-            resolve_helper=child_sources(merge_commit),
+            resolve_helper=child_sources(recorded),
         )
         if identity.errors:
             details = "; ".join(identity.errors)
             raise SystemExit(
                 f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
             )
+        refuse_rewritten_child_sources(recorded, identity)
         scope_error = declared_owned_scope_admission_error(task, repository_root, identity)
         if scope_error:
             raise SystemExit(f"Cannot submit {task_id} for review: {scope_error}.")

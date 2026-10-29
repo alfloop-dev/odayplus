@@ -329,8 +329,8 @@ def canonical_helper_resolver(repo: Path, task_id: str) -> HelperResolver:
     """The canonical child-source rule, for a delivery checked before it is published.
 
     The same rule review submission and every reviewer path use, read from
-    the live status root's records; this module only supplies the published
-    branch proof. Nothing is loaded unless a commit actually names another
+    the live status root's records, asking this checkout's origin -- once it is
+    the registered repository -- for the published branch. Nothing is loaded unless a commit actually names another
     task, and if the records cannot be read no child is admitted.
     """
     resolved: list[HelperResolver] = []
@@ -349,11 +349,7 @@ def canonical_helper_resolver(repo: Path, task_id: str) -> HelperResolver:
                 parent = canonical_task_resolver(config).get(task_id)
                 if parent is None:
                     raise ValueError(f"{task_id} has no canonical task record")
-                resolved.append(
-                    source_helper_resolver(
-                        config, parent, published=lambda branch: published_branch_head(repo, branch)
-                    )
-                )
+                resolved.append(source_helper_resolver(config, parent, publication_root=repo))
             except Exception as exc:  # Any unreadable context admits no child.
                 reason = f"the canonical task records cannot be read ({exc})"
                 resolved.append(lambda _child_id: reason)

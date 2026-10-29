@@ -9,6 +9,8 @@ from typing import Any, NamedTuple
 
 from common import load_status, normalize_agent_id
 from multi_repo_registry import (
+    checkout_origin_slug,
+    normalized_repository_slug,
     repository_local_path,
     repository_slug,
     resolve_repository,
@@ -327,6 +329,31 @@ def _inspect_delivery_identity(repo_root: Path, **kwargs: Any) -> Any:
     return _delivery_toolchain().inspect_delivery_identity(repo_root, **kwargs)
 
 
+def task_unresolved_human_or_independent_gate_reason(task: dict[str, Any]) -> str | None:
+    """Return why a task carries an unresolved human or independent gate blocking submission."""
+    if not isinstance(task, dict):
+        return None
+    task_class = str(task.get("task_class") or "").strip().lower()
+    if task_class == "human_gate" or bool(task.get("non_dispatchable")):
+        return "task carries an unresolved human gate (human or non-dispatchable gate)"
+    if task.get("requires_human_approval") is True or task.get("human_required_roles"):
+        return "task carries an unresolved human approval gate"
+    for gate_field in (
+        "credentials_gate",
+        "credential_gate",
+        "deployment_gate",
+        "production_gate",
+        "external_data_gate",
+        "human_gate",
+    ):
+        if task.get(gate_field):
+            return f"task carries an unresolved independent {gate_field}"
+    gate_status = str(task.get("gate_status") or "").strip().casefold()
+    if gate_status.startswith("pending_human"):
+        return f"task carries an unresolved human gate status ({gate_status})"
+    return None
+
+
 def canonical_task_resolver(config: dict[str, Any]) -> TaskResolver:
     """The canonical task records, active first and then the archive."""
     return TaskResolver((load_status(config) or {}).get("tasks") or [])
@@ -337,7 +364,7 @@ def source_helper_resolver(
     parent: dict[str, Any],
     *,
     recorded: Any = None,
-    published: Any = None,
+    publication_root: Path | None = None,
     resolver: TaskResolver | None = None,
 ) -> Any:
     """The one rule for which other task's commits a delivery may contain.
@@ -349,14 +376,20 @@ def source_helper_resolver(
     gate target recorded for that head and its own recorded branch. Nothing a
     caller supplies -- a bare `helper_parent`, prose or a list of commits --
     stands in for any of that, and it recognizes source, not approval: the
-    child's own status, blockers and signoffs are left as they are.
+    child's own status, blockers and signoffs are left as they are. A child
+    still carrying an unresolved human or independent gate is not admitted at
+    all, by the same rule its own submission is held to: its source cannot
+    reach review through a parent while that gate is open.
 
     The child's branch must also have been published at that head. The first
-    scan proves it through `published`, the live remote; afterwards the bound
-    is `recorded` with the submission, and a replay compares the record with
-    it instead, so it neither needs the branch to still exist nor accepts a
-    branch moved to a replacement head. Every answer is derived again from the
-    records; any difference from the recorded bound refuses the child.
+    scan proves it by asking the origin of `publication_root`, and only once
+    that origin is the registered repository, so another remote that happens
+    to carry the commit proves nothing; afterwards the bound is `recorded`
+    with the submission, and a replay compares the record with it instead, so
+    it neither needs the branch to still exist nor accepts a branch moved to a
+    replacement head. Every answer is derived again from the records; any
+    difference from the recorded bound refuses the child, and the commits a
+    bound records are compared with the scan by `recorded_source_helpers_error`.
     """
     toolchain = _delivery_toolchain()
     tasks: list[TaskResolver] = [resolver] if resolver is not None else []
@@ -398,6 +431,9 @@ def source_helper_resolver(
         branch = task_explicit_branch(child)
         if not branch:
             return "its record names no branch of its own"
+        held = task_unresolved_human_or_independent_gate_reason(child)
+        if held:
+            return f"its record still carries an unresolved gate: {held}"
         source = toolchain.HelperSource(
             task_id=child_id, branch=branch, base_sha=base, head_sha=head, owned_paths=tuple(owned)
         )
@@ -409,14 +445,35 @@ def source_helper_resolver(
             }:
                 return "its canonical record no longer matches the bound recorded with this submission"
             return source
-        if published is None:
+        if publication_root is None:
             return "no initial publication of its branch was recorded with this submission"
-        published_head = published(branch)
+        origin = checkout_origin_slug(publication_root)
+        if origin is None or origin != normalized_repository_slug(slug):
+            return (
+                f"the origin asked for its publication is {origin or 'not configured'}, "
+                f"not the registered repository {slug}"
+            )
+        published_head = toolchain.published_branch_head(publication_root, branch)
         if str(published_head or "").strip().lower() != head:
             return f"origin does not publish {branch} at its review-gate head {head[:12]}"
         return source
 
     return resolve
+
+
+def recorded_source_helpers_error(recorded: Any, scan: Any) -> str | None:
+    """Why the child bounds a submission recorded are not exactly what a scan of its range admits.
+
+    The bounds are immutable once recorded: neither a reviewer nor a replay of
+    the same head may read them as anything but the scan's own answer, commits
+    and authors included, and a resubmission does not repair a difference.
+    """
+    if list(scan.helpers) == recorded:
+        return None
+    return (
+        "the recorded child sources are not the bounds the delivery scan of "
+        f"{scan.base_sha[:12]}..{scan.head_sha[:12]} admits"
+    )
 
 
 #: Ranges whose Git authorship has already been established. Commits are
@@ -532,11 +589,9 @@ def immutable_review_source_authors(
         )
         if scan.errors:
             return (), "the submitted range fails delivery identity: " + "; ".join(scan.errors)
-        if list(scan.helpers) != recorded_helpers:
-            return (), (
-                "the recorded child sources are not the bounds the delivery scan of "
-                f"{source_base[:12]}..{source_head[:12]} admits"
-            )
+        bounds_error = recorded_source_helpers_error(recorded_helpers, scan)
+        if bounds_error:
+            return (), bounds_error
         # The authors are only those of the recorded range if the scan read
         # that range: a base or head that resolved to some other commit scanned
         # other commits, and its authors are not an answer to cache.
