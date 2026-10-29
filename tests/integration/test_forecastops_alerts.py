@@ -18,8 +18,9 @@ from modules.forecastops import (
     default_forecast_alert_policy,
     run_forecastops_batch_forecast,
 )
+from shared.audit import AuditEvent
 from shared.governance import InMemoryDecisionPolicyRepository
-from tests.integration._authz import FORECASTOPS_HEADERS
+from tests.integration._authz import AUDIT_HEADERS, FORECASTOPS_HEADERS
 
 PREDICTION_TIME = datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
 TENANT_ID = "tenant-test"
@@ -31,6 +32,13 @@ def _policy_repository() -> InMemoryDecisionPolicyRepository:
 
 def _app():
     return create_app(forecastops_policy_repository=_policy_repository())
+
+
+# The audit read is RBAC-guarded and tenant-scoped: an auditor reads only the
+# events of the tenant its principal is scoped to.
+TENANT_ID = FORECASTOPS_HEADERS["x-tenant-id"]
+AUDIT_READ_HEADERS = {**AUDIT_HEADERS, "x-tenant-id": TENANT_ID}
+OTHER_TENANT_AUDIT_HEADERS = {**AUDIT_HEADERS, "x-tenant-id": "tenant-other"}
 
 
 def _observation(day: int, revenue: float, baseline: float = 100_000.0) -> StoreDayObservation:
@@ -196,7 +204,12 @@ def test_forecastops_api_runs_alert_handoff_loop_and_is_idempotent() -> None:
     handoffs = client.get("/forecastops/intervention-handoffs")
     assert handoffs.json()["count"] == 1
 
-    audit = client.get("/audit/events", params={"correlation_id": "corr-forecast-1"})
+    audit = client.get(
+        "/audit/events",
+        params={"correlation_id": "corr-forecast-1"},
+        headers=AUDIT_READ_HEADERS,
+    )
+    assert audit.status_code == 200, audit.text
     assert any(
         event["event_type"] == "forecastops.forecasted.v1" for event in audit.json()["events"]
     )
@@ -329,7 +342,8 @@ def test_execute_handoff_links_intervention_and_rejects_reexecute() -> None:
 
 
 def test_api_acknowledge_alert_and_execute_handoff_with_audit() -> None:
-    client = TestClient(_app(), headers=FORECASTOPS_HEADERS)
+    app = _app()
+    client = TestClient(app, headers=FORECASTOPS_HEADERS)
     corr = {"x-correlation-id": "corr-forecast-ack-exec"}
     payload = {
         "prediction_origin_time": PREDICTION_TIME.isoformat(),
@@ -404,13 +418,52 @@ def test_api_acknowledge_alert_and_execute_handoff_with_audit() -> None:
         == 404
     )
 
-    # Both lifecycle actions are audited under the correlation id.
-    events = client.get(
-        "/audit/events", params={"correlation_id": "corr-forecast-ack-exec"}
-    ).json()["events"]
+    # Control: an event under the same correlation that names no tenant (as
+    # events written before the writers recorded one did) is not readable by
+    # any tenant's auditor.
+    app.state.audit_log.record(
+        AuditEvent(
+            event_type="forecastops.alert.acknowledged.v1",
+            actor="unowned-writer",
+            action="acknowledge",
+            resource="forecastops/alert/unowned",
+            outcome="acknowledged",
+            correlation_id="corr-forecast-ack-exec",
+        )
+    )
+
+    # Both lifecycle actions are audited under the correlation id, in the
+    # tenant the verified principal acted in.
+    audit = client.get(
+        "/audit/events",
+        params={"correlation_id": "corr-forecast-ack-exec"},
+        headers=AUDIT_READ_HEADERS,
+    )
+    assert audit.status_code == 200, audit.text
+    events = audit.json()["events"]
     event_types = {event["event_type"] for event in events}
     assert "forecastops.alert.acknowledged.v1" in event_types
     assert "forecastops.handoff.executed.v1" in event_types
+    lifecycle = [
+        event
+        for event in events
+        if event["event_type"]
+        in {"forecastops.alert.acknowledged.v1", "forecastops.handoff.executed.v1"}
+    ]
+    assert {event["resource"] for event in lifecycle} == {
+        f"forecastops/alert/{alert_id}",
+        f"forecastops/intervention-handoff/{handoff_id}",
+    }
+    assert {event["metadata"]["tenant_id"] for event in lifecycle} == {TENANT_ID}
+
+    # Another tenant's auditor sees none of them.
+    foreign = client.get(
+        "/audit/events",
+        params={"correlation_id": "corr-forecast-ack-exec"},
+        headers=OTHER_TENANT_AUDIT_HEADERS,
+    )
+    assert foreign.status_code == 200, foreign.text
+    assert foreign.json()["events"] == []
 
 
 def test_forecast_job_fails_closed_with_named_422_when_policy_cannot_be_resolved() -> None:
