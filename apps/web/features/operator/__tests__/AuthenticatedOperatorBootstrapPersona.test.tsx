@@ -23,11 +23,21 @@ vi.mock("../NetworkFindAreasWorkspace", async (importOriginal) => {
 
 // Fully mounted lazy Network reads need the same Next navigation premise as
 // existing workspace renderer tests. This supplies routing, never authority.
-vi.mock("next/navigation", () => ({
-  usePathname: () => window.location.pathname || "/operator",
-  useSearchParams: () => new URLSearchParams(window.location.search),
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
-}));
+vi.mock("next/navigation", async () => {
+  const { useSyncExternalStore } = await import("react");
+  const subscribe = (listener: () => void) => {
+    window.addEventListener("popstate", listener);
+    return () => window.removeEventListener("popstate", listener);
+  };
+  const location = () => useSyncExternalStore(subscribe, () => window.location.href);
+  const move = (method: "pushState" | "replaceState") => vi.fn((href: string) => {
+    window.history[method](null, "", href);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  const router = { push: move("pushState"), replace: move("replaceState"), refresh: vi.fn() };
+  return { usePathname: () => new URL(location()).pathname, useSearchParams: () => new URL(location()).searchParams,
+    useRouter: () => router };
+});
 
 // Unit DOM has no WebGL. Only the leaf map renderer is replaced; Network
 // transport, rows, session checks, roles and every assertion stay real to this
@@ -83,6 +93,7 @@ afterEach(() => {
   }
 });
 type Config = { actor?: string; role?: "expansion-manager" | "ops-lead"; storedRole?: string; session?: unknown;
+  initialHref?: string; initialSearchParams?: Record<string, string | string[] | undefined>;
   canonicalNetwork?: (actor: string) => Response | Promise<Response>;
   canonicalTabs?: readonly string[];
   nativeIntake?: (path: string, init: RequestInit | undefined, actor: string) => Response | Promise<Response>;
@@ -118,17 +129,18 @@ function mount(config: Config = {}) {
       return json(body);
     }
     if (new URL(url, window.location.origin).pathname === "/api/v1/operator/network-listings" && config.canonicalNetwork) return config.canonicalNetwork(actor);
-    if (new URL(url, window.location.origin).pathname === "/api/v1/canonical-intakes" && config.nativeIntake) return config.nativeIntake(url, init, actor);
+    if (config.nativeIntake && (/^\/api\/v1\/canonical-intakes(?:\/|$)/.test(new URL(url, window.location.origin).pathname)
+      || /^\/api\/v1\/intakes\/[^/]+\/match-case$/.test(new URL(url, window.location.origin).pathname))) return config.nativeIntake(url, init, actor);
     if (url === "/api/v1/operator/shell/tasks" && config.tasks) return config.tasks(actor);
     if (config.legacy && ["/api/v1/heatzones", "/api/v1/listings/candidates", "/api/v1/sitescore/reports"].includes(new URL(url, window.location.origin).pathname)) return config.legacy(new URL(url, window.location.origin).pathname, actor);
     return json({ detail: "unrelated read unavailable" }, 403);
   });
   vi.stubGlobal("fetch", fetch);
-  if (config.canonicalNetwork) {
+  if (config.canonicalNetwork || config.initialHref) {
     canonicalHistoryBefore ??= { url: window.location.href, state: window.history.state };
-    window.history.replaceState(null, "", "/operator?ws=network&tab=areas");
+    window.history.replaceState(null, "", config.initialHref ?? "/operator?ws=network&tab=areas");
   }
-  const view = render(<OperatorConsole searchParams={{ ws: config.workspace ?? "today" }} />);
+  const view = render(<OperatorConsole searchParams={config.initialSearchParams ?? { ws: config.workspace ?? "today" }} />);
   return { fetch, view, bootstrapObservations, setAccount: (next: string, nextRole = role) => { actor = next; role = nextRole; }, setSession: (value: unknown, status = 200) => { sessionOverride = value; sessionStatus = status; }, boots: () => boots };
 }
 function bootstrapCalls(fetch: ReturnType<typeof vi.fn>) { return fetch.mock.calls.filter(([url]) => String(url) === "/api/v1/operator/bootstrap"); }
@@ -155,8 +167,13 @@ async function beginCanonicalCommand(boundary: "HTTP" | "JSON" | "ERROR_JSON" | 
   const tabs = ["areas", "radar"];
   const state = mount({ workspace: "network", canonicalTabs: tabs,
     canonicalNetwork: () => json(canonicalNetworkSnapshot("Current native context")),
-    nativeIntake: (_path, init) => {
-      if (init?.method !== "POST") return json({ items: [], next_cursor: null });
+    nativeIntake: (path, init, actor) => {
+      if (init?.method !== "POST") {
+        if (path.endsWith("/match-case")) return json({ detail: "CANONICAL_MATCH_CASE_NOT_FOUND" }, 404);
+        if (path === "/api/v1/canonical-intakes/" + receipt.intake_id) return json({ ...receipt, tenant_id: B,
+          submitter_subject_id: actor, scope: { brand_id: null, region_id: null, assigned_area_id: null, heat_zone_id: null } });
+        return json({ items: [], next_cursor: null });
+      }
       writes.push(init);
       if (writes.length > 1) return json(receipt, 201);
       if (boundary === "JSON" || boundary === "ERROR_JSON") {
@@ -183,6 +200,109 @@ async function beginCanonicalCommand(boundary: "HTTP" | "JSON" | "ERROR_JSON" | 
 }
 
 describe("authenticated bootstrap persona ownership", () => {
+  it("keeps the actual receipt detail in Network during same-Console history restoration without repeating its POST", async () => {
+    const { fetch, receipt, finish, writes } = await beginCanonicalCommand("HTTP");
+    expect(new URL(window.location.href).searchParams.get("intakeKind")).toBe("canonical");
+    const nativeReadStart = fetch.mock.calls.length;
+    const browseHref = window.location.href;
+    await finish();
+    await waitFor(() => expect(window.location.pathname).toBe("/intake/" + receipt.intake_id));
+    const exactHref = window.location.href;
+    expect(new URL(exactHref).searchParams.get("intakeKind")).toBe("canonical");
+    expect(new URL(exactHref).searchParams.get("canonicalCursor")).toBe("");
+    expect(exactHref).not.toContain("source.example");
+    const selected = await screen.findByRole("region", { name: "所選收件與比對案件" });
+    await within(selected).findByText("收件 " + receipt.intake_id + " · 版本 1 · 已送出");
+    act(() => {
+      window.history.replaceState(null, "", browseHref);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await screen.findByRole("button", { name: "從網址建立正式收件" });
+    expect(screen.queryByRole("region", { name: "所選收件與比對案件" })).not.toBeInTheDocument();
+    act(() => {
+      window.history.replaceState(null, "", exactHref);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    const restored = await screen.findByRole("region", { name: "所選收件與比對案件" });
+    await within(restored).findByText("收件 " + receipt.intake_id + " · 版本 1 · 已送出");
+    expect(screen.getByTestId("network-find-areas-workspace")).toBeVisible();
+    expect(fetch.mock.calls.slice(nativeReadStart).filter(([path]) => String(path).includes("/api/v1/operator/network-listings/intake"))).toHaveLength(0);
+    expect(writes).toHaveLength(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("intake-return-button"));
+    await screen.findByRole("dialog", { name: "選取收件與比對案件" });
+    expect(window.location.pathname).toBe("/operator");
+    expect(new URL(window.location.href).searchParams.get("intakeKind")).toBe("canonical");
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(new URL(window.location.href).searchParams.has("intakeKind")).toBe(false));
+    expect(new URL(window.location.href).searchParams.has("selected")).toBe(false);
+    expect(writes).toHaveLength(1);
+  });
+  it("restores the exact canonical deep link through the real Console without collection discovery, legacy fallback or POST", async () => {
+    const target = "00000000-0000-0000-0000-000000000087";
+    const config: Config = { workspace: "network", canonicalTabs: ["radar"],
+      initialHref: "/intake/" + target + "?intakeKind=canonical&unrelated=preserve",
+      initialSearchParams: { ws: "network", tab: "radar", selected: target, dialog: "detail", intakeKind: "canonical" },
+      canonicalNetwork: () => json(canonicalNetworkSnapshot("Current native detail")),
+      nativeIntake: (path) => path.includes("/match-case") ? json({ detail: "CANONICAL_MATCH_CASE_NOT_FOUND" }, 404)
+        : path === "/api/v1/canonical-intakes/" + target ? json({ intake_id: target, tenant_id: B, submitter_subject_id: A,
+          correlation_id: "00000000-0000-0000-0000-000000000088", intake_method: "URL", processing_state: "SUBMITTED",
+          version: 7, submitted_at: "2026-10-29T03:00:00Z", scope: { brand_id: null, region_id: null, assigned_area_id: null, heat_zone_id: null } })
+        : json({ detail: "collection deliberately refused" }, 403) };
+    for (let reload = 0; reload < 2; reload += 1) {
+      const { view, fetch } = mount(config);
+      const selected = await screen.findByRole("region", { name: "所選收件與比對案件" });
+      await within(selected).findByText("收件 " + target + " · 版本 7 · 已送出");
+      expect(screen.getByRole("region", { name: "收件處理詳情" })).toHaveAttribute("data-screen-label", "Intake 收件處理詳情頁");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(fetch.mock.calls.filter(([path]) => String(path).startsWith("/api/v1/canonical-intakes?"))).toHaveLength(0);
+      expect(fetch.mock.calls.filter(([path]) => String(path).includes("/api/v1/operator/network-listings/intake"))).toHaveLength(0);
+      expect(screen.queryByTestId("cold-intake-read-state")).not.toBeInTheDocument();
+      expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+      expect(new URL(window.location.href).searchParams.get("unrelated")).toBe("preserve");
+      view.unmount();
+    }
+  });
+
+  it.each(["canonical", "unknown"])("never routes an explicit %s cold link through the legacy reader", async (intakeKind) => {
+    const target = "00000000-0000-0000-0000-000000000087";
+    const { fetch } = mount({ workspace: "network", initialHref: "/intake/" + target + "?intakeKind=" + intakeKind,
+      initialSearchParams: { ws: "network", tab: "radar", selected: target, dialog: "detail", intakeKind },
+      firstBootstrap: json({ detail: "bootstrap unavailable" }, 403) });
+    await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"));
+    expect(fetch.mock.calls.filter(([path]) => String(path).includes("/api/v1/operator/network-listings/intake"))).toHaveLength(0);
+    expect(screen.queryByTestId("cold-intake-read-state")).not.toBeInTheDocument();
+    expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+  });
+
+  it.each(["canonical", "unknown"])("vetoes legacy cold reads after browser history changes to %s with stale legacy server props", async (intakeKind) => {
+    const oldId = "legacy-cold-record", target = "00000000-0000-0000-0000-000000000087";
+    const { fetch } = mount({ workspace: "network", initialHref: "/intake/" + oldId,
+      initialSearchParams: { ws: "network", tab: "radar", selected: oldId, dialog: "detail" },
+      firstBootstrap: json({ detail: "bootstrap unavailable" }, 403) });
+    await screen.findByTestId("cold-intake-read-state");
+    const before = fetch.mock.calls.length;
+    await act(async () => {
+      window.history.pushState(null, "", "/intake/" + target + "?intakeKind=" + intakeKind);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await screen.findByTestId("operator-data-unavailable");
+    expect(screen.queryByTestId("cold-intake-read-state")).not.toBeInTheDocument();
+    expect(fetch.mock.calls.slice(before).filter(([path]) => String(path).includes("/api/v1/operator/network-listings/intake"))).toHaveLength(0);
+    expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+  });
+
+  it("preserves repeated browser selection values instead of choosing a legacy cold resource", async () => {
+    const { fetch } = mount({ workspace: "network",
+      initialHref: "/operator?ws=network&tab=radar&selected=legacy-A&selected=legacy-B&dialog=detail",
+      initialSearchParams: { ws: "network", tab: "radar", selected: ["legacy-A", "legacy-B"], dialog: "detail" },
+      firstBootstrap: json({ detail: "bootstrap unavailable" }, 403) });
+    const cold = await screen.findByTestId("cold-intake-read-state");
+    await within(cold).findByText("連結未指定唯一的收件紀錄。");
+    expect(fetch.mock.calls.filter(([path]) => String(path).includes("/api/v1/operator/network-listings/intake"))).toHaveLength(0);
+    expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+  });
+
   it.each(["HTTP", "JSON", "uncertain"] as const)("retains the original canonical command across full Network teardown at %s", async (boundary) => {
     const { fetch, writes, receipt, finish } = await beginCanonicalCommand(boundary);
     const originalKey = new Headers(writes[0].headers).get("idempotency-key");

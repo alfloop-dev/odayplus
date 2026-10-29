@@ -12,6 +12,7 @@ import type { IntakeHeatZoneOptions } from "./intake/AddListingFromUrlDialog";
 import { AssistedIntakeSection } from "./intake/AssistedIntakeSection";
 import { CanonicalIntakeCasePicker } from "./intake/CanonicalIntakeCasePicker";
 import type { CanonicalIntakeReadContext } from "./intake/canonicalIntakeReadClient";
+import type { IntakeUrlState } from "./intake/types";
 import { MERGE_DENIED_NOTE, canMergeListing } from "./listingPermissions";
 import { resolveListingAction, type ListingWriteContext } from "./listingActions";
 import { resolveListingNavigation, type ListingNavigation, type ListingNavigationTarget } from "./listingNavigation";
@@ -52,6 +53,7 @@ export function ListingRadarPanel({
   activeRoleId,
   busyListingId,
   canonicalIntakeReadContext,
+  intakeKind,
   intakeDetailOpen = false,
   listings,
   listingsReadFailure = null,
@@ -70,6 +72,7 @@ export function ListingRadarPanel({
   activeRoleId: OperatorRoleId;
   busyListingId?: string | null;
   canonicalIntakeReadContext?: CanonicalIntakeReadContext;
+  intakeKind?: IntakeUrlState["intakeKind"];
   /**
    * True while the canonical intake detail owns the page. Package 10 puts the
    * detail immediately below the global topbar, so the Network compliance strip
@@ -160,14 +163,17 @@ export function ListingRadarPanel({
         binding. The radar below is API-bound in production and may use fixtures
         only in local/POC mode.
       */}
-      <AssistedIntakeSection
+      {intakeKind ? intakeKind === "canonical" && canonicalIntakeReadContext
+        ? <CanonicalIntakeCasePicker context={canonicalIntakeReadContext} />
+        : <p role="alert">{intakeKind === "invalid" ? "收件連結的用途無效，請返回收件匣重新開啟。" : "目前無法驗證正式收件的讀取資格，請確認登入與權限。"}</p>
+        : <AssistedIntakeSection
         activeRoleId={activeRoleId}
         selectedHeatZoneId={selectedHeatZoneId}
         heatZoneOptions={heatZoneOptions}
         targetListings={listings.map(toTargetListingData)}
-      />
+      />}
 
-      {!intakeDetailOpen && canonicalIntakeReadContext ? <CanonicalIntakeCasePicker context={canonicalIntakeReadContext} /> : null}
+      {!intakeDetailOpen && !intakeKind && canonicalIntakeReadContext ? <CanonicalIntakeCasePicker context={canonicalIntakeReadContext} /> : null}
 
       {navigationError ? <p role="alert">{navigationError}</p> : null}
       {listingsReadFailure ? (

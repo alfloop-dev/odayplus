@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent, type ReactNode } from "react";
 import type {
-  AssignmentReceipt, AssistedIntake, AuditReference, CorrectionReceipt, DecisionReceipt,
-  FieldValue, IntakeSubmissionReceipt, JobReceipt, PromotionDecisionReceipt, SlaReceipt, TransitionReceipt,
+  AssignmentReceipt, AssistedIntake, AuditReference, CanonicalIntakeDetail, CorrectionReceipt, DecisionReceipt,
+  FieldValue, IntakeSubmissionReceipt, JobReceipt, MatchCaseSummary, PromotionDecisionReceipt, SlaReceipt, TransitionReceipt,
 } from "@oday-plus/openapi-client";
 import { AssistedEntryForm } from "./AssistedEntryForm";
+import { CANONICAL_INTAKE_STAGE_LABEL } from "./canonicalIntakeReadClient";
 import { AssignmentSlaSummary } from "./AssignmentSlaSummary";
 import { DurableReceiptPanel } from "./DurableReceiptPanel";
 import { EvidencePanel } from "./EvidencePanel";
@@ -23,7 +24,7 @@ import {
 } from "./intakeTypes";
 import styles from "./intake.module.css";
 
-export type IntakeProcessingDetailProps = {
+type AssistedIntakeProcessingDetailProps = {
   activeSection?: string | null;
   onSectionChange?: (section: string) => void;
   record: AssistedIntake;
@@ -52,7 +53,29 @@ export type IntakeProcessingDetailProps = {
   onLookupPromotionDecision?: () => void;
 };
 
+export type IntakeProcessingDetailProps = AssistedIntakeProcessingDetailProps | {
+  /** Same continuous detail composition, without inventing a legacy DTO. */
+  canonical: CanonicalIntakeDetail | null;
+  matchCase: MatchCaseSummary | null;
+  intakeId: string;
+  children: ReactNode;
+  detailHref: string;
+  onClose: () => void;
+  onRefresh: () => void;
+  busy?: boolean;
+  activeSection?: string | null;
+  onSectionChange?: (section: string) => void;
+  testId?: string;
+};
+
 export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
+  const native = "canonical" in props;
+  const resourceId = native ? props.intakeId : props.record.id;
+  const record = native ? null : props.record;
+  const canonical = native ? props.canonical : null;
+  const version = record?.version ?? canonical?.version;
+  const outcome = record?.matchResult?.outcome;
+  const { onClose, onRefresh, detailHref, testId = "intake-detail-dialog", busy = false } = props;
   const page = useRef<HTMLElement>(null);
   useEffect(() => {
     const aliases: Record<string, string> = { property: "lineage", commercial: "lineage" };
@@ -61,20 +84,50 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
     if (!section || !allowed.includes(section)) return;
     const target = page.current?.querySelector<HTMLElement>(`[data-intake-section="${section}"]`);
     target?.scrollIntoView?.({ block: "start", behavior: "instant" });
-  }, [props.activeSection, props.record.id]);
+  }, [props.activeSection, resourceId]);
   const rememberSection = (event: SyntheticEvent<HTMLElement>) => {
     const target = (event.target as Element).closest?.<HTMLElement>("[data-intake-section]");
     if (target && page.current?.contains(target) && target.dataset.intakeSection !== props.activeSection) {
       props.onSectionChange?.(target.dataset.intakeSection!);
     }
   };
+  return (
+    <section aria-label="收件處理詳情" ref={page} onFocusCapture={rememberSection} onClickCapture={rememberSection} className={styles.intakeFullPage} data-screen-label="Intake 收件處理詳情頁" data-testid={testId}>
+      <header className={styles.intakeFullPageHeader} data-testid="intake-detail-header">
+        <button className={styles.secondaryButton} disabled={busy} onClick={onClose} type="button" data-testid="intake-return-button">← 返回收件匣</button>
+        <div>
+          <div className={styles.dialogTitle}>收件處理詳情 Intake Processing Detail</div>
+          <div className={styles.intakeHeaderChips}>
+            <span className={styles.rowId} data-testid="intake-detail-id">{resourceId}</span>
+            {record ? <>
+              <span className={styles.chip} data-testid="intake-detail-stage" data-tone={stageTone(record.stage)}>{stageLabel(record.stage)}</span>
+              {outcome ? <span className={styles.chip} data-testid="intake-detail-match" data-tone={matchTone(outcome)}>{matchLabel(outcome)}</span> : null}
+              <span className={styles.chip} data-tone={policyTone(record.policy)}>{policyLabel(record.policy)}</span>
+            </> : canonical ? <>
+              <span className={styles.chip} data-testid="intake-detail-stage">{CANONICAL_INTAKE_STAGE_LABEL[canonical.processing_state]}</span>
+              {native && props.matchCase ? <span className={styles.chip} data-testid="intake-detail-match">{props.matchCase.outcome}</span> : null}
+            </> : null}
+            <span>{version === undefined ? "版本未取得" : "版本 v" + version}</span>
+          </div>
+          <a className={styles.deepLink} data-testid="intake-detail-deeplink" href={detailHref ?? "/intake/" + resourceId}>
+            {detailHref ?? "/intake/" + resourceId} · 可直接開啟、重新載入與返回
+          </a>
+        </div>
+        {onRefresh ? <button className={styles.secondaryButton} disabled={busy} onClick={onRefresh} type="button" data-testid="intake-refresh-button">重新整理</button> : null}
+      </header>
+      {native ? props.children : <AssistedIntakeSections {...props} />}
+    </section>
+  );
+}
+
+function AssistedIntakeSections(props: AssistedIntakeProcessingDetailProps) {
   const {
     record, targetListing, detailHref, busy = false, canCorrect = true, canDecide = true, canRetry = true, canReplay = true,
     error = null, history = [], jobs = [], sla, fields, auditReferences = [], submissionReceipt,
     assignmentReceipt, decisionReceipt, slaReceipt, correctionReceipts = [],
-    assignmentResourceVersion = null, slaResourceVersion = null, onClose, onAssistedEntrySave,
+    assignmentResourceVersion = null, slaResourceVersion = null, onAssistedEntrySave,
     onDecide, onOpenFix, onRetry, onReplayDlq, onCancel, onOverride, onClaimAssignment, onOpenTransfer,
-    onOpenPause, onResumeSla, onRefresh, testId = "intake-detail-dialog", promotion = null,
+    onOpenPause, onResumeSla, onRefresh, promotion = null,
     scoreJob = null, currentOperator, gateSnapshotSha256, promotionBusy = false, promotionError = null,
     promotionIdempotencyReplayed = false, canRequestPromotion = false, canReviewPromotion = false,
     canReplayScore = false, onRequestPromotion, onReviewPromotion, onReplayScore, onLookupPromotionDecision,
@@ -114,25 +167,7 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
   const submittedAt = rawRecord.submittedAt ?? rawRecord.submitted_at ?? "UNAVAILABLE";
 
   return (
-    <section aria-label="收件處理詳情" ref={page} onFocusCapture={rememberSection} onClickCapture={rememberSection} className={styles.intakeFullPage} data-screen-label="Intake 收件處理詳情頁" data-testid={testId}>
-      <header className={styles.intakeFullPageHeader} data-testid="intake-detail-header">
-        <button className={styles.secondaryButton} onClick={onClose} type="button" data-testid="intake-return-button">← 返回收件匣</button>
-        <div>
-          <div className={styles.dialogTitle}>收件處理詳情 Intake Processing Detail</div>
-          <div className={styles.intakeHeaderChips}>
-            <span className={styles.rowId} data-testid="intake-detail-id">{record.id}</span>
-            <span className={styles.chip} data-testid="intake-detail-stage" data-tone={stageTone(record.stage)}>{stageLabel(record.stage)}</span>
-            {outcome ? <span className={styles.chip} data-testid="intake-detail-match" data-tone={matchTone(outcome)}>{matchLabel(outcome)}</span> : null}
-            <span className={styles.chip} data-tone={policyTone(record.policy)}>{policyLabel(record.policy)}</span>
-            <span>版本 v{record.version}</span>
-          </div>
-          <a className={styles.deepLink} data-testid="intake-detail-deeplink" href={detailHref ?? `/intake/${record.id}`}>
-            {detailHref ?? `/intake/${record.id}`} · 可直接開啟、重新載入與返回
-          </a>
-        </div>
-        {onRefresh ? <button className={styles.secondaryButton} onClick={onRefresh} type="button" data-testid="intake-refresh-button">重新整理</button> : null}
-      </header>
-
+    <>
       <section data-intake-section="submission" className={styles.sectionBox} data-testid="intake-submission-summary">
         <div className={styles.sectionHead}>送件摘要 SUBMISSION SUMMARY</div>
         <div className={styles.metaGrid}>
@@ -255,7 +290,7 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
           )) : <div className={styles.emptyState} data-testid="audit-references-unavailable">AUDIT REFERENCES: UNAVAILABLE</div>}
         </div>
       </section>
-    </section>
+    </>
   );
 }
 

@@ -548,6 +548,7 @@ describe("AssistedIntakeSection production container", () => {
     expect(isIntakeDetailOpen(detailParams)).toBe(true);
     expect(isIntakeDetailOpen({ ...detailParams, dialog: undefined })).toBe(false);
 
+    nav.reset(new URLSearchParams(detailParams).toString(), `/intake/${possibleMatch.id}`);
     render(<OperatorConsole searchParams={detailParams} />);
     expect(screen.getByTestId("operator-console")).toHaveClass("operatorIntakeDetailOpen");
     expect(screen.getByTestId("operator-console")).toHaveAttribute("data-intake-detail-open", "true");

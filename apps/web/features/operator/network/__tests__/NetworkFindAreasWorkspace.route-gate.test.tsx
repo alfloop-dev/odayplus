@@ -30,13 +30,27 @@ const navigation = vi.hoisted(() => ({
   search: "ws=network&tab=radar",
 }));
 
-vi.mock("next/navigation", () => ({
-  usePathname: () => navigation.pathname,
+vi.mock("next/navigation", async () => {
+  const { useSyncExternalStore } = await import("react");
+  const subscribe = (listener: () => void) => {
+    window.addEventListener("popstate", listener);
+    return () => window.removeEventListener("popstate", listener);
+  };
+  const location = () => useSyncExternalStore(subscribe, () => navigation.pathname + "?" + navigation.search);
+  return {
+  usePathname: () => location().split("?")[0],
   useRouter: () => ({
     push: navigation.push,
+    replace: (href: string) => {
+      const url = new URL(href, window.location.origin);
+      navigation.pathname = url.pathname; navigation.search = url.search.slice(1);
+      window.history.replaceState(null, "", href);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    },
   }),
-  useSearchParams: () => new URLSearchParams(navigation.search),
-}));
+  useSearchParams: () => new URLSearchParams(location().split("?").slice(1).join("?")),
+  };
+});
 
 const radarProps = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>>, showNativePicker: false }));
 const reviewPanelControl = vi.hoisted(() => ({ latest: null as unknown }));
@@ -46,7 +60,7 @@ vi.mock("../ListingRadarPanel", () => ({
     radarProps.calls.push(props);
     const context = props.canonicalIntakeReadContext as ComponentProps<typeof CanonicalIntakeCasePicker>["context"] | undefined;
     return <div data-testid="listing-radar-panel">Listing Radar
-      {radarProps.showNativePicker && !props.intakeDetailOpen && context ? <CanonicalIntakeCasePicker context={context} /> : null}
+      {radarProps.showNativePicker && (!props.intakeDetailOpen || props.intakeKind === "canonical") && context ? <CanonicalIntakeCasePicker context={context} /> : null}
     </div>;
   },
 }));
@@ -174,7 +188,12 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
   beforeEach(() => {
     navigation.pathname = "/operator";
     navigation.search = "ws=network&tab=radar";
-    navigation.push.mockReset();
+    navigation.push.mockReset().mockImplementation((href: string) => {
+      const url = new URL(href, window.location.origin);
+      navigation.pathname = url.pathname; navigation.search = url.search.slice(1);
+      window.history.pushState(null, "", href);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
     radarProps.calls.length = 0;
     radarProps.showNativePicker = false;
     reviewPanelControl.latest = null;
@@ -276,7 +295,9 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
         const key = new Headers(writes[0].headers).get("idempotency-key");
         expect(key).toBeTruthy();
         if (change.startsWith("query")) {
-          navigation.search = "ws=network&tab=radar&search=changed-inbox-query";
+          const params = new URLSearchParams(navigation.search);
+          params.set("search", "changed-inbox-query");
+          navigation.search = params.toString();
           window.history.replaceState(null, "", `/operator?${navigation.search}`);
         } else if (change === "role") role = "expansion-staff";
         else sessionStorage.setItem("oday.operator.tenant", "different-observed-tenant");

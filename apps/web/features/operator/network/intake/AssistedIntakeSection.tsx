@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { parseUrlState, serializeUrlState } from "./urlState";
+import { parseUrlState, serializeUrlState, intakePathSelection, buildInboxReturnHref, buildDurableDetailHref, intakeNavigationHash } from "./urlState";
 import { parseInboxUrlState, serializeInboxUrlState, toIntakeInboxQuery, type IntakeInboxFilterState } from "./inboxUrlState";
 import type {
   AssistedIntake,
@@ -112,11 +112,7 @@ export function AssistedIntakeSection({
   }, [activeSubjectId]);
 
   const urlState = useMemo(() => parseUrlState(searchParams), [searchParams]);
-  const durableRouteSelectedId = useMemo(() => {
-    const match = /^\/intake\/([^/]+)$/.exec(pathname);
-    if (!match) return undefined;
-    try { return decodeURIComponent(match[1]); } catch { return null; }
-  }, [pathname]);
+  const durableRouteSelectedId = useMemo(() => intakePathSelection(pathname), [pathname]);
 
   const selectedId = durableRouteSelectedId !== undefined
     ? durableRouteSelectedId
@@ -183,7 +179,7 @@ export function AssistedIntakeSection({
     };
     const newParams = serializeUrlState(nextState, navigationParams.current);
     navigationParams.current = newParams;
-    const hash = window.location.hash.startsWith("#intake/") ? "" : window.location.hash;
+    const hash = intakeNavigationHash(window.location.hash);
     router[historyMode](`${pathname}?${newParams.toString()}${hash}`, { scroll: false });
   }, [selectedId, dialog, pathname, router, durableRouteSelectedId]);
   const updateInboxFilters = useCallback((next: IntakeInboxFilterState) => {
@@ -1057,7 +1053,7 @@ export function AssistedIntakeSection({
             ...urlState,
             selectedId: selected.id,
             dialog: "detail",
-          }, searchParams)}
+          }, searchParams, typeof window === "undefined" ? "" : window.location.hash)}
           onAssistedEntrySave={handleAssistedEntry}
           onClose={closeDialog}
           onDecide={canDecide ? (kind) => {
@@ -1311,28 +1307,4 @@ function unavailableResourceError(code: string, authority: string): IntakeApiErr
  */
 export function validResourceVersion(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? value : null;
-}
-
-export function buildInboxReturnHref(
-  state: IntakeUrlState,
-  existingParams?: URLSearchParams,
-): string {
-  const params = serializeUrlState(state, existingParams);
-  params.set("ws", "network");
-  params.set("tab", "radar");
-  return `/operator?${params.toString()}`;
-}
-
-export function buildDurableDetailHref(
-  intakeId: string,
-  state: IntakeUrlState,
-  existingParams?: URLSearchParams,
-): string {
-  const params = serializeUrlState(
-    { ...state, selectedId: intakeId, dialog: "detail" },
-    existingParams,
-  );
-  params.delete("ws");
-  params.delete("tab");
-  return `/intake/${encodeURIComponent(intakeId)}?${params.toString()}`;
 }

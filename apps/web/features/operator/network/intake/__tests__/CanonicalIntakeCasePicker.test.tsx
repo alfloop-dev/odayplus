@@ -1,10 +1,27 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalIntakeCasePicker as CasePicker, CanonicalIntakeCommandStatus } from "../CanonicalIntakeCasePicker";
 import { CanonicalIntakeCommandProvider } from "../useCanonicalIntakeCommand";
 import type { CanonicalIntakeReadContext } from "../canonicalIntakeReadClient";
 import type { CanonicalIdentityPlanningContext } from "@oday-plus/openapi-client";
+
+vi.mock("next/navigation", async () => {
+  const { useSyncExternalStore } = await import("react");
+  const subscribe = (listener: () => void) => {
+    window.addEventListener("popstate", listener);
+    return () => window.removeEventListener("popstate", listener);
+  };
+  const location = () => useSyncExternalStore(subscribe, () => window.location.href);
+  const move = (method: "pushState" | "replaceState") => (href: string) => {
+    window.history[method](null, "", href);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+  const router = { push: move("pushState"), replace: move("replaceState") };
+  return { usePathname: () => new URL(location()).pathname, useSearchParams: () => new URL(location()).searchParams,
+    useRouter: () => router };
+});
+beforeEach(() => { window.history.replaceState(null, "", "/operator?ws=network&tab=radar"); });
 
 function CanonicalIntakeCasePicker({ context }: { context: CanonicalIntakeReadContext }) {
   return <CanonicalIntakeCommandProvider context={context}>
@@ -32,10 +49,71 @@ function makeContext(handler?: (path: string, init?: RequestInit) => Response | 
   }) };
 }
 const open = () => fireEvent.click(screen.getByRole("button", { name: "選取收件／比對案件" }));
-const select = (n: number) => fireEvent.click(screen.getByRole("button", { name: new RegExp(id(n)) }));
+const select = async (n: number) => {
+  if (screen.queryByTestId("intake-detail-id")?.textContent === id(n)) return;
+  if (!screen.queryByRole("button", { name: new RegExp(id(n)) })) fireEvent.click(screen.getByTestId("intake-return-button"));
+  fireEvent.click(await screen.findByRole("button", { name: new RegExp(id(n)) }));
+};
+const readAgain = () => screen.queryByTestId("intake-refresh-button") ?? screen.getByRole("button", { name: "重新讀取" });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("native Intake and case selection", () => {
+  it("restores exact URL selections across history and refuses late detail JSON from a departed selection", async () => {
+    const firstHref = "/intake/" + id(1) + "?intakeKind=canonical&unrelated=a&unrelated=b#identity";
+    const secondHref = "/intake/" + id(2) + "?intakeKind=canonical&unrelated=a&unrelated=b#identity";
+    window.history.replaceState(null, "", firstHref);
+    const body = deferred<unknown>(), reading = deferred<boolean>();
+    let secondReads = 0;
+    const context = makeContext((path) => {
+      if (path.startsWith("/api/v1/canonical-intakes?")) throw new Error("Exact navigation must not discover a collection");
+      if (path === "/api/v1/canonical-intakes/" + id(2) && ++secondReads === 1) {
+        const response = json({});
+        response.json = () => { reading.resolve(true); return body.promise; };
+        return response;
+      }
+      const n = path.includes(id(2)) ? 2 : 1;
+      return json(path.endsWith("/match-case") ? matchCase(n) : intake(n));
+    });
+    render(<CanonicalIntakeCasePicker context={context} />);
+    await screen.findByText(new RegExp("比對案件 " + id(21)));
+    expect(new URL(screen.getByTestId("intake-detail-deeplink").getAttribute("href")!, window.location.origin).hash).toBe("#identity");
+    act(() => { window.history.pushState(null, "", secondHref); window.dispatchEvent(new PopStateEvent("popstate")); });
+    await reading.promise;
+    act(() => { window.history.replaceState(null, "", firstHref); window.dispatchEvent(new PopStateEvent("popstate")); });
+    await screen.findByText(new RegExp("比對案件 " + id(21)));
+    await act(async () => { body.resolve(intake(2)); });
+    expect(screen.queryByText(new RegExp("比對案件 " + id(22)))).not.toBeInTheDocument();
+    expect(vi.mocked(context.fetchImpl).mock.calls.map(([path]) => String(path))).not.toContain("/api/v1/intakes/" + id(2) + "/match-case");
+    act(() => { window.history.replaceState(null, "", secondHref); window.dispatchEvent(new PopStateEvent("popstate")); });
+    await screen.findByText(new RegExp("比對案件 " + id(22)));
+    expect(new URL(window.location.href).searchParams.getAll("unrelated")).toEqual(["a", "b"]);
+    expect(window.location.hash).toBe("#identity");
+    expect(posts(context)).toHaveLength(0);
+  });
+  it("isolates the earlier receipt when transport and unrelated URL state change together", async () => {
+    const receipt = { intake_id: id(95), intake_method: "URL", processing_state: "SUBMITTED", version: 1,
+      submitted_at: "2026-10-19T08:00:00Z", correlation_id: id(96), transition_id: id(97), audit_event_id: id(98), outbox_event_id: id(99) };
+    const first = entryContext("AWAITING_SOURCE_AUTHORIZATION", () => json(receipt, 201));
+    const view = render(<CanonicalIntakeCasePicker context={first} />); open();
+    fireEvent.click(await screen.findByRole("button", { name: "從網址建立正式收件" }));
+    fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://source.example/private-first-context" } });
+    fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "第一個已驗證帳號的正式收件" } });
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    await screen.findByText(/正式收件 .*已送出/);
+    const secondRead = deferred<Response>();
+    const second = makeContext(() => secondRead.promise, "new-account");
+    act(() => {
+      const url = new URL(window.location.href); url.searchParams.set("unrelated", "changed");
+      window.history.replaceState(null, "", url);
+      view.rerender(<CanonicalIntakeCasePicker context={second} />);
+    });
+    expect(screen.queryByText(/正式收件 .*已送出/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/第一個已驗證帳號/)).not.toBeInTheDocument();
+    await act(async () => { secondRead.resolve(json({ detail: "current account denied" }, 403)); });
+    expect(await screen.findByRole("alert")).toBeVisible();
+    expect(posts(second)).toHaveLength(0);
+  });
   it("shows fresh persisted assignment and SLA before a match case exists without exposing unconnected actions", async () => {
     const parent = { ...intake(1), processing_state: "SUBMITTED", workflow: {
       assignment_id: id(61), assignment_version: 2, assignment_status: "UNASSIGNED", owner_subject_id: null, owner_role: null,
@@ -46,7 +124,7 @@ describe("native Intake and case selection", () => {
     const context = makeContext((path) => path.startsWith("/api/v1/canonical-intakes?") ? json({ items: [parent], next_cursor: null })
       : path.endsWith("/match-case") ? json({ detail: "CANONICAL_MATCH_CASE_NOT_FOUND" }, 404) : json(parent));
     const view = render(<CanonicalIntakeCasePicker context={context} />); open();
-    await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
     const summary = await screen.findByTestId("assignment-sla-summary");
     expect(summary).toHaveTextContent("尚未指派");
     expect(summary).toHaveTextContent("existing-synthetic-queue");
@@ -83,7 +161,7 @@ describe("native Intake and case selection", () => {
       return path.startsWith("/api/v1/canonical-intakes?") ? json({ items: [intake(1)], next_cursor: null }) : json(intake(1));
     });
     render(<CanonicalIntakeCasePicker context={context} />); open();
-    await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
     fireEvent.click(await screen.findByRole("button", { name: "追加人工覆核關聯" }));
     const extra = await screen.findByRole("checkbox", { name: new RegExp(id(42)) });
     expect(extra).not.toBeChecked();
@@ -104,8 +182,8 @@ describe("native Intake and case selection", () => {
     expect(sent[0].headers.get("If-Match")).toBe('W/"3"');
     expect(sent[0].body).toMatchObject({ append_to_case: { match_case_id: original.match_case_id, version: 1 },
       candidates: [{ property_id: id(42), property_version: 3, confidence: "0.3750" }] });
-    fireEvent.click(screen.getByRole("button", { name: "重新讀取" }));
-    await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    fireEvent.click(readAgain());
+    await screen.findByRole("region", { name: "所選收件與比對案件" }); await select(1);
     await screen.findByText("追加人工關聯 · 案件版本 2");
     expect(await screen.findByRole("button", { name: "提出合併／拆分計畫" })).toBeEnabled();
   });
@@ -126,7 +204,7 @@ describe("native Intake and case selection", () => {
       if (path.endsWith("/match-case")) return json({ detail: "CANONICAL_MATCH_CASE_NOT_FOUND" }, 404);
       return path.startsWith("/api/v1/canonical-intakes?") ? json({ items: [parent], next_cursor: null }) : json(parent);
     });
-    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
     fireEvent.click(await screen.findByRole("button", { name: "建立人工覆核案件" }));
     const first = await screen.findByRole("checkbox", { name: new RegExp(id(41)) });
     expect(first).not.toBeChecked();
@@ -158,7 +236,7 @@ describe("native Intake and case selection", () => {
         { field_path: "address", classification: null, effective: null, masked: true, mask_reason_code: "FIELD_MASKED" }] } };
     const context = makeContext((path) => path.startsWith("/api/v1/canonical-intakes?")
       ? json({ items: [intake(1)], next_cursor: null }) : path.endsWith("/match-case") ? json(matchCase(1)) : json(parent));
-    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
     const persisted = await screen.findByRole("region", { name: "已落庫物件" });
     expect(persisted).toHaveTextContent(`物件 ${id(51)} · 版本 14 · ACTIVE`);
     expect(persisted).toHaveTextContent(`目前主體 ${id(42)} · 版本 12`);
@@ -178,14 +256,14 @@ describe("native Intake and case selection", () => {
     expect(screen.queryByRole("region", { name: "所選收件與比對案件" })).not.toBeInTheDocument();
     expect(context.fetchImpl).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: new RegExp(id(1)) })).toHaveAttribute("aria-pressed", "false");
-    select(2);
+    await select(2);
     const detail = await screen.findByRole("region", { name: "所選收件與比對案件" });
     await within(detail).findByText(new RegExp(`比對案件 ${id(22)}`));
     expect(within(detail).getByText(new RegExp(`主體 ${id(42)}`))).toBeVisible();
     expect(vi.mocked(context.fetchImpl).mock.calls.map(([path]) => path)).toEqual([
       "/api/v1/canonical-intakes?page_size=25", `/api/v1/canonical-intakes/${id(2)}`, `/api/v1/intakes/${id(2)}/match-case`,
     ]);
-    select(2);
+    await select(2);
     expect(within(detail).getByText(new RegExp(`比對案件 ${id(22)}`))).toBeVisible();
     expect(context.fetchImpl).toHaveBeenCalledTimes(3);
   });
@@ -206,7 +284,7 @@ describe("native Intake and case selection", () => {
     const normal = makeContext();
     const context = makeContext((path) => path.endsWith("/match-case") ? json({ detail }, 404) : normal.fetchImpl(path));
     render(<CanonicalIntakeCasePicker context={context} />); open();
-    await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
     if (detail === "CANONICAL_MATCH_CASE_NOT_FOUND") expect(await screen.findByText("這筆收件目前沒有比對案件。")).toBeVisible();
     else { expect(await screen.findByRole("alert")).toBeVisible(); expect(screen.queryByText("這筆收件目前沒有比對案件。")).not.toBeInTheDocument(); }
     expect(vi.mocked(context.fetchImpl).mock.calls.every(([, init]) => init?.method === undefined)).toBe(true);
@@ -218,8 +296,8 @@ describe("native Intake and case selection", () => {
     const normal = makeContext();
     const context = makeContext((path) => path === `/api/v1/canonical-intakes/${id(1)}` ? late : normal.fetchImpl(path));
     render(<CanonicalIntakeCasePicker context={context} />); open();
-    await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1); await reading.promise;
-    select(2);
+    await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1); await reading.promise;
+    await select(2);
     const detail = screen.getByRole("region", { name: "所選收件與比對案件" });
     await within(detail).findByText(new RegExp(`比對案件 ${id(22)}`));
     await act(async () => { body.resolve(intake(1)); });
@@ -246,9 +324,10 @@ describe("native Intake and case selection", () => {
     const normal = makeContext(); const context = makeContext((path) => path.startsWith("/api/v1/canonical-intakes?")
       ? json({ items: [intake(path.includes("cursor=") ? 2 : 1)], next_cursor: path.includes("cursor=") ? null : "opaque+/=" }) : normal.fetchImpl(path));
     render(<CanonicalIntakeCasePicker context={context} />); open();
-    await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
     await screen.findByText(new RegExp(`比對案件 ${id(21)}`));
-    fireEvent.click(screen.getByRole("button", { name: "下一頁" }));
+    fireEvent.click(screen.getByTestId("intake-return-button"));
+    fireEvent.click(await screen.findByRole("button", { name: "下一頁" }));
     expect(screen.queryByRole("region", { name: "所選收件與比對案件" })).not.toBeInTheDocument();
     await screen.findByRole("button", { name: new RegExp(id(2)) });
     expect(screen.queryByRole("button", { name: new RegExp(id(1)) })).not.toBeInTheDocument();
@@ -261,7 +340,7 @@ describe("native Intake and case selection", () => {
     const context = makeContext((path) => ++calls === 1 ? normal.fetchImpl(path) : refresh.promise);
     render(<CanonicalIntakeCasePicker context={context} />); open();
     await screen.findByRole("button", { name: new RegExp(id(1)) });
-    fireEvent.click(screen.getByRole("button", { name: "重新讀取" }));
+    fireEvent.click(readAgain());
     expect(screen.queryByRole("button", { name: new RegExp(id(1)) })).not.toBeInTheDocument();
     await act(async () => { refresh.resolve(json({ detail: "denied" }, 403)); });
     expect(await screen.findByRole("alert")).toBeVisible();
@@ -319,7 +398,7 @@ function nativeContext(outcome = "NEW", post?: (init: RequestInit) => Response |
 }
 async function openPlanning(context: CanonicalIntakeReadContext) {
   render(<CanonicalIntakeCasePicker context={context} />); open();
-  await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+  await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
   fireEvent.click(await screen.findByRole("button", { name: "檢視確認資料" }));
   await screen.findByRole("table", { name: "本次確認的補錄欄位" });
 }
@@ -367,7 +446,7 @@ function graphContext(post?: (init: RequestInit) => Response | Promise<Response>
   return { context, planning };
 }
 async function openGraph(context: CanonicalIntakeReadContext, kind: "MERGE" | "SPLIT") {
-  render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+  render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
   fireEvent.click(await screen.findByRole("button", { name: "提出合併／拆分計畫" }));
   fireEvent.change(await screen.findByLabelText("身分計畫類型"), { target: { value: kind } });
 }
@@ -382,7 +461,7 @@ describe("canonical confirmation and independent review in the existing picker",
       () => json({ ...nativeReceipt(), decision_id: id(79), match_case_version: 3 }, 201), undefined, true);
     parent.intake_method = "URL"; selected.status = "EXECUTED";
     planning.properties[0].version = 8; planning.source_identity_edges[0].edge_version = 3;
-    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
     fireEvent.click(await screen.findByRole("button", { name: "繼續確認原收件" }));
     await screen.findByRole("table", { name: "本次確認的補錄欄位" });
     expect(screen.queryByRole("button", { name: "提出合併／拆分計畫" })).not.toBeInTheDocument();
@@ -401,7 +480,7 @@ describe("canonical confirmation and independent review in the existing picker",
     const original = context.fetchImpl;
     context.fetchImpl = vi.fn((input, init) => String(input).includes("/identity-context?")
       ? Promise.resolve(json({ detail: "IDENTITY_GRAPH_CONTINUATION_PROOF_REQUIRED" }, 409)) : original(input, init));
-    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
     fireEvent.click(await screen.findByRole("button", { name: "繼續確認原收件" }));
     await screen.findByRole("alert");
     expect(screen.queryByRole("table", { name: "本次確認的補錄欄位" })).not.toBeInTheDocument();
@@ -411,7 +490,7 @@ describe("canonical confirmation and independent review in the existing picker",
   it("does not offer continuation for an Intake already READY", async () => {
     const { context, selected, parent } = nativeContext("POSSIBLE_MATCH", undefined, undefined, true);
     parent.intake_method = "URL"; parent.processing_state = "READY"; selected.status = "EXECUTED";
-    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
     await screen.findByRole("button", { name: `檢視決策 ${id(71)}` });
     expect(screen.queryByRole("button", { name: "繼續確認原收件" })).not.toBeInTheDocument();
     expect(context.fetchImpl).not.toHaveBeenCalledWith(expect.stringContaining("/identity-context?"), expect.anything());
@@ -424,8 +503,11 @@ describe("canonical confirmation and independent review in the existing picker",
     fireEvent.click(button); fireEvent.click(button);
     expect(posts(context)).toHaveLength(1);
     expect(screen.queryByText(/已收到正式回執/)).not.toBeInTheDocument();
-    fireEvent.keyDown(document, { key: "Escape" }); expect(screen.getByRole("dialog")).toBeVisible();
-    expect(screen.getByRole("button", { name: "重新讀取" })).toBeDisabled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.getByRole("region", { name: "收件處理詳情" })).toBeVisible();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByTestId("intake-return-button")).toBeDisabled();
+    expect(readAgain()).toBeDisabled();
     const [path, init] = posts(context)[0]; const body = JSON.parse(String(init?.body)); const sent = new Headers(init?.headers);
     expect(path).toBe(`/api/v1/match-cases/${id(21)}/identity-decisions`);
     expect(sent.get("if-match")).toBe('W/"1"'); expect(sent.get("idempotency-key")).toMatch(/^canonical-ui:/);
@@ -467,7 +549,7 @@ describe("canonical confirmation and independent review in the existing picker",
       else if (failure === "expired") plan.listing_input.manual_entry_valid_until = "2000-01-01T00:00:00Z";
       else plan.match_case_version++;
     });
-    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
     fireEvent.click(await screen.findByRole("button", { name: "檢視確認資料" }));
     expect(await screen.findByRole("alert")).toBeVisible();
     expect(posts(context)).toHaveLength(0);
@@ -493,8 +575,8 @@ describe("canonical confirmation and independent review in the existing picker",
     fireEvent.click(screen.getByRole("button", { name: "確認為新物件" }));
     await screen.findByRole("button", { name: "重試同一請求" });
     const original = posts(context)[0];
-    fireEvent.click(screen.getByRole("button", { name: "重新讀取" }));
-    await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    fireEvent.click(readAgain());
+    await screen.findByRole("region", { name: "所選收件與比對案件" }); await select(1);
     fireEvent.click(await screen.findByRole("button", { name: "檢視確認資料" }));
     await screen.findByRole("table", { name: "本次確認的補錄欄位" });
     expect(screen.getByLabelText(/決策／覆核原因/)).toBeDisabled();
@@ -595,7 +677,7 @@ describe("canonical confirmation and independent review in the existing picker",
 
   it("lets an independent reviewer reject the recorded proposal without requesting positive parser/source input", async () => {
     const { context } = nativeContext("POSSIBLE_MATCH", () => json(nativeReceipt("REJECTED")), undefined, true);
-    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
     fireEvent.click(await screen.findByRole("button", { name: `檢視決策 ${id(71)}` }));
     fireEvent.change(await screen.findByLabelText("覆核結果"), { target: { value: "REJECT" } });
     fireEvent.change(screen.getByLabelText(/決策／覆核原因/), { target: { value: "拒絕此提案，維持現有物件" } });
@@ -610,7 +692,7 @@ describe("canonical confirmation and independent review in the existing picker",
 
   it("discards a late write receipt after the account-bound context changes", async () => {
     const pending = deferred<Response>(); const { context } = nativeContext("NEW", () => pending.promise);
-    const view = render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    const view = render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
     fireEvent.click(await screen.findByRole("button", { name: "檢視確認資料" })); await screen.findByRole("table");
     acknowledge("CREATE"); fireEvent.click(screen.getByRole("button", { name: "確認為新物件" }));
     view.rerender(<CanonicalIntakeCasePicker context={{ ...context, contextKey: "another-account" }} />);
@@ -621,7 +703,7 @@ describe("canonical confirmation and independent review in the existing picker",
 
   it("shows the actual duplicate input before approval and retains a server-side self-review refusal", async () => {
     const { context } = nativeContext("POSSIBLE_MATCH", () => json({ detail: "SELF_REVIEW_DENIED" }, 403), undefined, true);
-    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
     fireEvent.click(await screen.findByRole("button", { name: `檢視決策 ${id(71)}` }));
     fireEvent.change(await screen.findByLabelText("覆核結果"), { target: { value: "APPROVE" } });
     await screen.findByRole("table", { name: "本次確認的補錄欄位" });
@@ -683,7 +765,7 @@ describe("canonical confirmation and independent review in the existing picker",
     const context = entryContext("AWAITING_ASSISTED_ENTRY", () => json({ intake_id: id(1), status: "REQUESTED", version: 3,
       request_id: id(91), requested_at: "2026-10-19T08:00:00Z", audit_event_id: id(92), outbox_event_id: id(93),
       correlation_id: id(94), correction_ids: [id(61), id(62), id(63)] }, 202));
-    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
     fireEvent.change(await screen.findByTestId("assisted-address"), { target: { value: "正式來源頁顯示的地址" } });
     fireEvent.change(screen.getByTestId("assisted-rent"), { target: { value: "43210" } });
     fireEvent.change(screen.getByTestId("assisted-area"), { target: { value: "42.5" } });
@@ -701,7 +783,7 @@ describe("canonical confirmation and independent review in the existing picker",
 
   it("offers no manual form while waiting for source authorization", async () => {
     const context = entryContext("AWAITING_SOURCE_AUTHORIZATION", () => { throw new Error("No request permitted"); });
-    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
     expect(await screen.findByText(/人工補錄須先由既定流程確認另有明確核准/)).toBeVisible();
     expect(screen.queryByTestId("intake-assisted-entry")).not.toBeInTheDocument(); expect(posts(context)).toHaveLength(0);
   });
@@ -775,7 +857,7 @@ describe("canonical confirmation and independent review in the existing picker",
 
   it("refuses a stale graph-only context without offering a proposal", async () => {
     const { context, planning } = graphContext(); planning.match_case_version++;
-    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
     fireEvent.click(await screen.findByRole("button", { name: "提出合併／拆分計畫" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("版本");
     expect(screen.queryByLabelText("身分計畫類型")).not.toBeInTheDocument(); expect(posts(context)).toHaveLength(0);

@@ -31,8 +31,7 @@ import type { Candidate, Listing, ListingSource, OperatorHeatZone, RebalanceStor
 import { ListingRadarPanel } from "./network/ListingRadarPanel";
 import { bindCanonicalIntakeFetch, type CanonicalIntakeReadContext } from "./network/intake/canonicalIntakeTransport";
 import { CanonicalIntakeCommandStatus } from "./network/intake/CanonicalIntakeCasePicker";
-import { buildDurableDetailHref } from "./network/intake/AssistedIntakeSection";
-import { parseUrlState } from "./network/intake/urlState";
+import { parseUrlState, intakePathSelection, buildDurableDetailHref, clearIntakeSelection, intakeNavigationHash } from "./network/intake/urlState";
 import { navigationIncludesTarget, resolveListingNavigation, type ListingNavigationTarget, type RelatedIntake } from "./network/listingNavigation";
 import { ListingMergeDialog, type ListingMergeForm, type ListingMergeRequest } from "./network/ListingMergeDialog";
 import { ListingArchiveDialog, type ListingArchiveRequest } from "./network/ListingArchiveDialog";
@@ -648,7 +647,7 @@ export function isNetworkIntakeDetailRoute(
   pathname: string | null | undefined,
   searchParams: Pick<URLSearchParams, "get">,
 ): boolean {
-  if (/^\/intake\/[^/]+$/.test(pathname ?? "")) return true;
+  if (intakePathSelection(pathname) !== undefined || searchParams.get("intakeKind") !== null) return true;
   if (!searchParams.get("selected")) return false;
   const dialog = searchParams.get("dialog");
   return (
@@ -1073,7 +1072,7 @@ export function NetworkFindAreasWorkspace({
     navigationIntent.current += 1;
     setBusyListingId(null);
     setNavigationError(null);
-    const params = candidateWorkflowNavigationParams(tabIndex, searchParams, workflowCandidateId, extraParams);
+    const params = candidateWorkflowNavigationParams(tabIndex, searchParams, workflowCandidateId, extraParams, intakeDetailOpen);
     const exactCandidate = params.get(CANDIDATE_SELECTION_PARAM);
     setTabOverride({
       from: urlTab,
@@ -1089,13 +1088,13 @@ export function NetworkFindAreasWorkspace({
     // Candidates → SiteScore → Compare → Review; an exit or zone intent clears it.
     if (exactCandidate) params.set("ws", "network");
     const href = buildNetworkTabHref(
-      exactCandidate ? "/operator" : pathname,
+      exactCandidate || intakeDetailOpen ? "/operator" : pathname,
       tabIndex,
       params,
-      typeof window === "undefined" || exactCandidate && window.location.hash.startsWith("#intake/") ? "" : window.location.hash,
+      typeof window === "undefined" ? "" : exactCandidate || intakeDetailOpen ? intakeNavigationHash(window.location.hash) : window.location.hash,
     );
     router.push(href, { scroll: false });
-  }, [allowedTabIndices, pathname, router, searchParams, urlTab, urlCandidateZoneId, workflowCandidateId]);
+  }, [allowedTabIndices, intakeDetailOpen, pathname, router, searchParams, urlTab, urlCandidateZoneId, workflowCandidateId]);
 
   const snapshotHeatZones = networkSnapshot?.heatZones?.length
     ? networkSnapshot.heatZones
@@ -2209,9 +2208,9 @@ export function NetworkFindAreasWorkspace({
         setScoringNavigationGeneration(generation);
         changeActiveTab(2, { [CANDIDATE_SELECTION_PARAM]: target.id });
       } else {
-        const params = new URLSearchParams(searchParams.toString());
-        for (const key of [CANDIDATE_SELECTION_PARAM, CANDIDATE_ZONE_PARAM, "selected", "dialog", "section", "field", "decision", "receipt", "compare"]) params.delete(key);
-        router.push(buildDurableDetailHref(target.id, parseUrlState(params), params), { scroll: false });
+        const params = clearIntakeSelection(new URLSearchParams(searchParams.toString()));
+        for (const key of [CANDIDATE_SELECTION_PARAM, CANDIDATE_ZONE_PARAM]) params.delete(key);
+        router.push(buildDurableDetailHref(target.id, parseUrlState(params), params, window.location.hash), { scroll: false });
       }
     } catch (error) {
       if (isCurrentIntent() && networkSequence === networkReadSequence.current
@@ -2610,6 +2609,7 @@ export function NetworkFindAreasWorkspace({
       activeRoleId={activeRoleId}
       busyListingId={busyListingId}
       canonicalIntakeReadContext={nativeCommandContext ?? undefined}
+      intakeKind={parseUrlState(searchParams).intakeKind}
       intakeDetailOpen={intakeDetailOpen}
       listings={listingsEffective}
       listingsReadFailure={listingsReadFailure}
@@ -2900,9 +2900,9 @@ export function NetworkFindAreasWorkspace({
         <ListingSearchDialog zoneId={listingSearchRequest.zoneId} zoneLabel={listingSearchRequest.zoneLabel}
           headers={NETWORK_OPERATOR_HEADERS} guard={listingSearchRequest.guard}
           onClose={() => setListingSearchRequest(null)} onOpenIntake={(id) => {
-            const params = new URLSearchParams(searchParams.toString());
+            const params = clearIntakeSelection(new URLSearchParams(searchParams.toString()));
             params.set("heatZoneId", listingSearchRequest.zoneId); params.set("hz", listingSearchRequest.zoneId);
-            router.push(buildDurableDetailHref(id, parseUrlState(params), params), { scroll: false });
+            router.push(buildDurableDetailHref(id, parseUrlState(params), params, window.location.hash), { scroll: false });
           }} /> : null}
       {listingMergeDialog}
       {areaPlanningRequest && activeTab === 0 && allowedTabIndices.includes(0)

@@ -11,13 +11,13 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import dynamic from "next/dynamic";
+import { usePathname, useSearchParams } from "next/navigation";
 import type { Tone } from "./components";
 import type { GovernanceWorkspaceProps } from "./GovernanceWorkspace";
 import { readGovernanceViewState, serializeGovernanceViewState, type GovernanceViewState } from "./governance/governanceUrlState";
 import type { NetworkFindAreasWorkspaceProps } from "./NetworkFindAreasWorkspace";
 import type { ColdIntakeDetailProps } from "./network/intake/ColdIntakeDetail";
 import type { InterventionWorkspaceProps } from "./interventions/InterventionWorkspace";
-import { ISSUE_FIXTURES } from "./issueFixtures";
 import {
   DEFAULT_OPERATOR_ROLE_ID,
   DEFAULT_WORKSPACE_ID,
@@ -50,6 +50,7 @@ import {
 import type { Issue } from "./types";
 import { hasCanonicalScoreSession } from "./operatorSessionValidation";
 import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
+import { clearIntakeSelection, intakePathSelection, intakeNavigationHash } from "./network/intake/intakeNavigation";
 import {
   PASSWORD_CHANGE_PATH,
   classifyAccessDenial,
@@ -72,6 +73,10 @@ const OperatorTaskPopover = dynamic<ComponentProps<typeof import("./OperatorShel
 );
 const OperatorRoleMenu = dynamic<ComponentProps<typeof import("./OperatorShellHeaderPanels").OperatorRoleMenu>>(
   () => import("./OperatorShellHeaderPanels").then((mod) => mod.OperatorRoleMenu),
+  { ssr: false },
+);
+const OperatorSearchResults = dynamic<ComponentProps<typeof import("./OperatorShellHeaderPanels").OperatorSearchResults>>(
+  () => import("./OperatorShellHeaderPanels").then((mod) => mod.OperatorSearchResults),
   { ssr: false },
 );
 const OperatorWorkspaceFallback = dynamic<ComponentProps<typeof import("./OperatorWorkspaceFallback").OperatorWorkspaceFallback>>(
@@ -343,7 +348,18 @@ export function OperatorConsole({
   notificationReportId?: string;
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
-  const intakeDetailOpen = isIntakeDetailOpen(searchParams);
+  const pathname = usePathname();
+  const locationParams = useSearchParams();
+  // The current router location owns same-Console history navigation. Server
+  // props are the initial premise only when no router location is available.
+  const intakeParams = locationParams ? Object.fromEntries(Array.from(locationParams.keys(), (key) => {
+    const values = locationParams.getAll(key);
+    return [key, values.length === 1 ? values[0] : values];
+  })) : searchParams;
+  const intakePathId = intakePathSelection(pathname);
+  const intakeDetailOpen = intakePathId !== undefined || isIntakeDetailOpen(intakeParams);
+  const coldIntakeId = intakePathId !== undefined ? intakePathId
+    : typeof intakeParams.selected === "string" ? intakeParams.selected : null;
   const fixturesAllowed = operatorFixturesAllowed();
   const environment = resolveOperatorEnvironment(
     deploymentEnvironment ?? process.env.NEXT_PUBLIC_ODP_DEPLOY_ENV,
@@ -405,7 +421,7 @@ export function OperatorConsole({
   const [shellReloadToken, setShellReloadToken] = useState(0);
   const [liveNotifications, setLiveNotifications] = useState<any[]>(fixturesAllowed ? notifications : []);
   const [confirmedNotificationCount, setConfirmedNotificationCount] = useState<number | null>(null);
-  const [liveIssues, setLiveIssues] = useState<Issue[]>(fixturesAllowed ? ISSUE_FIXTURES : []);
+  const [liveIssues, setLiveIssues] = useState<Issue[]>([]);
   const [liveNetworkBindings, setLiveNetworkBindings] = useState<NetworkFindAreasBindings | null>(null);
   const [liveApprovals, setLiveApprovals] = useState<any[]>([]);
   const [liveGovernanceDecisions, setLiveGovernanceDecisions] = useState<any[]>([]);
@@ -485,7 +501,7 @@ export function OperatorConsole({
   const liveDecisions = shellEnvelope.decisions;
   const canRenderWorkspace = (shellDataStatus === "ready" || fixturesAllowed && bootstrapAuthMode === "fixture")
     && isWorkspaceAllowed(activeRole, activeWorkspaceId);
-  const canReadColdIntake = intakeDetailOpen && bootstrapAuthMode === "authenticated" && !canRenderWorkspace;
+  const canReadColdIntake = intakeDetailOpen && bootstrapAuthMode === "authenticated" && !canRenderWorkspace && !("intakeKind" in intakeParams);
   const isTodayContent = canRenderWorkspace && activeWorkspaceId === "today";
   const isGovernContent = canRenderWorkspace && activeWorkspaceId === "govern";
   const dataModeBanner = dataModeBannerCopy(shellDataStatus, fixturesAllowed);
@@ -546,14 +562,15 @@ export function OperatorConsole({
   useEffect(() => {
     function restoreLocation() {
       const params = new URLSearchParams(window.location.search);
-      const requested = params.get("ws") ?? DEFAULT_WORKSPACE_ID;
+      const intakeRoute = intakePathSelection(window.location.pathname) !== undefined;
+      const requested = intakeRoute ? "network" : params.get("ws") ?? DEFAULT_WORKSPACE_ID;
       const intendedWorkspace = isWorkspaceId(requested) ? requested : DEFAULT_WORKSPACE_ID;
       const workspace = !fixturesAllowed && shellDataStatus !== "ready"
         ? intendedWorkspace
         : isWorkspaceAllowed(activeRole, intendedWorkspace) ? intendedWorkspace : DEFAULT_WORKSPACE_ID;
       setActiveWorkspaceId(workspace);
       setSelectedEntityId(params.get("entity"));
-      setActiveTabId(params.get("tab") ?? "overview");
+      setActiveTabId(intakeRoute ? "radar" : params.get("tab") ?? "overview");
       setGovernanceView(readGovernanceViewState(params));
       window.sessionStorage.setItem(workspaceStorageKey, workspace);
     }
@@ -741,6 +758,15 @@ export function OperatorConsole({
           bootstrapAccount.current = subject;
           setBootstrapAuthMode("authenticated"); setShellDataStatus("loading"); clearAuthenticatedRows();
         } else {
+          // Local issue examples are not a production shell dependency. Use
+          // only the original anonymous fixture premise, and re-pin it after
+          // the deferred import before exposing those same existing rows.
+          if (fixturesAllowed) {
+            const { ISSUE_FIXTURES } = await import("./issueFixtures");
+            await pinAccount(subject);
+            if (!current()) throw accountChanged;
+            setLiveIssues(ISSUE_FIXTURES);
+          }
           setBootstrapAuthMode("fixture");
         }
         headers = { ...operatorSecurityHeaders(activeRoleId), "X-Correlation-Id": correlationId };
@@ -1033,6 +1059,10 @@ export function OperatorConsole({
   function updateDeepLink(target: ShellTarget, historyMode: "push" | "replace" = "replace") {
     if (typeof window === "undefined") return;
     const nextUrl = new URL(window.location.href);
+    if (intakeDetailOpen || intakePathSelection(nextUrl.pathname) !== undefined || nextUrl.searchParams.has("intakeKind")) {
+      nextUrl.pathname = "/operator"; clearIntakeSelection(nextUrl.searchParams);
+      nextUrl.hash = intakeNavigationHash(nextUrl.hash);
+    }
     nextUrl.searchParams.set("ws", target.workspace);
     nextUrl.searchParams.delete("evidence");
     nextUrl.searchParams.delete("auditCategory");
@@ -1351,33 +1381,7 @@ export function OperatorConsole({
                 </button>
               </div>
               {isSearchOpen && !isCommandPaletteOpen && searchValue.trim() ? (
-                <div className={styles.searchPanel} data-testid="operator-search-results" role="listbox">
-                  <div className={styles.popoverTitle}>Search</div>
-                  {searchMatches.length ? (
-                    searchMatches.map((item, index) => (
-                      <button
-                        aria-selected={index === searchActiveIndex}
-                        className={styles.searchResult}
-                        data-target-entity={item.target.entityId}
-                        data-target-tab={item.target.tab}
-                        data-target-workspace={item.target.workspace}
-                        key={item.id}
-                        onMouseDown={(event) => {
-                          event.preventDefault();
-                          handleTargetSelect(item.target, item.entityId);
-                        }}
-                        role="option"
-                        type="button"
-                      >
-                        <span>{item.entityId}</span>
-                        <strong>{item.label}</strong>
-                        <small>{item.description}</small>
-                      </button>
-                    ))
-                  ) : (
-                    <div className={styles.searchEmpty}>No matching operator work</div>
-                  )}
-                </div>
+                <OperatorSearchResults matches={searchMatches} activeIndex={searchActiveIndex} onSelect={handleTargetSelect} />
               ) : null}
             </div>
 
@@ -1515,7 +1519,7 @@ export function OperatorConsole({
         ].filter(Boolean).join(" ")}
       >
         {canReadColdIntake ? (
-          <ColdIntakeDetail intakeId={typeof searchParams.selected === "string" ? searchParams.selected : ""}
+          <ColdIntakeDetail intakeId={coldIntakeId ?? ""}
             onClose={() => window.location.assign("/operator?ws=network&tab=radar")} />
         ) : !canRenderWorkspace ? (
           <OperatorDataUnavailableGate

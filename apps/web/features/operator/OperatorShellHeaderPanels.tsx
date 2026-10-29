@@ -4,6 +4,7 @@ import { Chip, StatusBadge } from "./components";
 import { ADMIN_PATH } from "./operatorSession";
 import { WORKSPACES, type OperatorRole, type OperatorRoleId } from "./navigation";
 import type { OperatorTask } from "./OperatorConsole";
+import type { OperatorShellEnvelope, ShellTarget } from "./shellEnvelope";
 import styles from "./operator.module.css";
 
 export function OperatorTaskPopover({ shellEnvelope, taskCenterSource, taskCenterLoadState, taskSummary, liveTasks, handleTaskSelect }: {
@@ -114,3 +115,36 @@ export function OperatorRoleMenu({ rolesForShell, activeRole, handleRoleSelect, 
                     </button>
                   </div>
                 </div>); }
+
+export function OperatorSearchResults({ matches, activeIndex, onSelect }: {
+  matches: OperatorShellEnvelope["search"]["items"]; activeIndex: number;
+  onSelect: (target: ShellTarget, label: string) => void;
+}) { return (
+                <div className={styles.searchPanel} data-testid="operator-search-results" role="listbox">
+                  <div className={styles.popoverTitle}>Search</div>
+                  {matches.length ? (
+                    matches.map((item, index) => (
+                      <button
+                        aria-selected={index === activeIndex}
+                        className={styles.searchResult}
+                        data-target-entity={item.target.entityId}
+                        data-target-tab={item.target.tab}
+                        data-target-workspace={item.target.workspace}
+                        key={item.id}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          onSelect(item.target, item.entityId);
+                        }}
+                        role="option"
+                        type="button"
+                      >
+                        <span>{item.entityId}</span>
+                        <strong>{item.label}</strong>
+                        <small>{item.description}</small>
+                      </button>
+                    ))
+                  ) : (
+                    <div className={styles.searchEmpty}>No matching operator work</div>
+                  )}
+                </div>
+); }
