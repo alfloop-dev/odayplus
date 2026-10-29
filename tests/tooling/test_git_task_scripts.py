@@ -867,10 +867,16 @@ def local_ssh_transport(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     """An ``ssh://`` host whose transport runs the requested git command locally.
 
     Git still invokes the real ``git-upload-pack``/``git-receive-pack`` for the
-    exact URL path, so a path is the repository that server would serve.
+    exact URL path, so a path is the repository that server would serve; like
+    sshd, it runs them in the remote account's home, ``tmp_path/remote-home``,
+    which is where a home-relative path resolves.
     """
+    home = tmp_path / "remote-home"
+    home.mkdir()
     shim = tmp_path / "local-ssh-transport"
-    shim.write_text("#!/bin/sh\nfor last; do :; done\nexec sh -c \"$last\"\n", encoding="utf-8")
+    shim.write_text(
+        f"#!/bin/sh\nfor last; do :; done\ncd '{home}' || exit 1\nexec sh -c \"$last\"\n", encoding="utf-8"
+    )
     shim.chmod(0o700)
     monkeypatch.setenv("GIT_SSH", str(shim))
     monkeypatch.setenv("GIT_SSH_VARIANT", "ssh")
@@ -906,8 +912,8 @@ def test_task_finalize_prepublication_keeps_a_custom_ssh_hosts_path_case(
     refused = finalize_with_records(repo, status_root, parent, child)
     assert refused.returncode == 1
     assert (
-        f"is fixture.example{tmp_path}/example/repo, "
-        f"not the registered repository example/repo at fixture.example{tmp_path}/EXAMPLE/repo"
+        f"is ssh:fixture.example:{tmp_path}/example/repo.git, "
+        f"not the registered repository example/repo at ssh:fixture.example:{tmp_path}/EXAMPLE/repo.git"
     ) in refused.stderr
     assert f"Task-ID trailer '{CHILD}' does not match '{TASK}'" in refused.stderr
     assert "dry-run: git push" not in refused.stdout
@@ -921,6 +927,67 @@ def test_task_finalize_prepublication_keeps_a_custom_ssh_hosts_path_case(
         assert admitted.returncode == 0, (origin, admitted.stderr)
         assert "dry-run: git push --set-upstream origin" in admitted.stdout
         assert git(repo, "rev-parse", "HEAD").stdout.strip() == head
+
+
+def test_task_finalize_prepublication_keeps_a_custom_ssh_hosts_suffix_and_root(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A custom SSH host's ``.git`` suffix and rooted path are part of its repository.
+
+    /example/repo and /example/repo.git are two repositories on that host,
+    and so are the rooted /<path> and the same <path> relative to the remote
+    home. In each pair the registered one does not publish the child while
+    the other, the checkout's origin, publishes its exact head. Through the
+    normal loader and the unchanged finalizer the origin proves nothing about
+    the registered repository; the registered one, once it publishes the
+    child, admits the composition in either spelling of its own path.
+    """
+    host = local_ssh_transport(tmp_path, monkeypatch)
+    status_root, child, head = compose_source_only_child(repo, tmp_path)
+    parent = {"id": TASK, "owner": "Claude2", "reviewer": "Codex", "status": "in_progress",
+              "branch": f"task/{TASK}"}
+    ref = f"refs/heads/task/{CHILD}"
+    published = tmp_path / "example" / "repo.git"
+    suffixless = tmp_path / "example" / "repo"
+    subprocess.run(["git", "clone", "--quiet", "--bare", str(tmp_path / "origin.git"), str(suffixless)],
+                   check=True, capture_output=True)
+    relative = str(published).lstrip("/")
+    subprocess.run(["git", "clone", "--quiet", "--bare", str(published), str(tmp_path / "remote-home" / relative)],
+                   check=True, capture_output=True)
+
+    def refused_for(registered: str, origin: str, shown_origin: str, shown_registered: str) -> None:
+        git(repo, "remote", "set-url", "origin", origin)
+        assert git(repo, "ls-remote", "--heads", "origin", ref).stdout.split()[0] == child["review_gate_sha"]
+        assert not git(repo, "ls-remote", "--heads", registered, ref).stdout.strip()
+        register_remote(status_root, registered)
+        refused = finalize_with_records(repo, status_root, parent, child)
+        assert refused.returncode == 1, (registered, origin)
+        assert (
+            f"is ssh:fixture.example:{shown_origin}, "
+            f"not the registered repository example/repo at ssh:fixture.example:{shown_registered}"
+        ) in refused.stderr
+        assert f"Task-ID trailer '{CHILD}' does not match '{TASK}'" in refused.stderr
+        assert "dry-run: git push" not in refused.stdout
+        assert git(repo, "rev-parse", "HEAD").stdout.strip() == head
+
+    # The suffixless repository is registered; repo.git publishes the child.
+    refused_for(host + str(suffixless), host + str(published), str(published), str(suffixless))
+    # The rooted repository is registered and no longer publishes the child;
+    # the same path relative to the remote home does.
+    git(repo, "push", "--quiet", "origin", f":{ref}")
+    refused_for(host + str(published), f"git@fixture.example:{relative}", relative, str(published))
+
+    # Each registered repository, once it publishes the child, admits it in
+    # either SSH spelling of its own path.
+    for registered in (suffixless, published):
+        git(repo, "push", "--quiet", host + str(registered), f"{child['review_gate_sha']}:{ref}")
+        register_remote(status_root, host + str(registered))
+        for origin in (host + str(registered), f"git@fixture.example:{registered}"):
+            git(repo, "remote", "set-url", "origin", origin)
+            admitted = finalize_with_records(repo, status_root, parent, child)
+            assert admitted.returncode == 0, (origin, admitted.stderr)
+            assert "dry-run: git push --set-upstream origin" in admitted.stdout
+            assert git(repo, "rev-parse", "HEAD").stdout.strip() == head
 
 
 def test_task_finalize_refuses_a_branch_whose_own_python_fails_lint(repo: Path, tmp_path: Path):

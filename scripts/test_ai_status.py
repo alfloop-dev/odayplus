@@ -4227,37 +4227,52 @@ class ParentChildSourceHandoffTests(unittest.TestCase):
         upper = self.root / "EXAMPLE" / "repo.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "dev", str(upper)], check=True)
         registered = self.config["coordination"]["repositories"]["pantheon"]
-
-        # First OPEN: the origin that publishes the child is /example/repo, the
-        # registered repository /EXAMPLE/repo, which does not.
-        registered["remote"] = host + str(upper)
-        self.git("remote", "set-url", "origin", host + str(self.origin))
-        self.refuse_submission(
-            r"origin asked for its publication is fixture\.example" + re.escape(str(self.origin.with_suffix("")))
-            + r", not the registered repository example/repo at fixture\.example" + re.escape(str(upper.with_suffix("")))
+        # Other repositories on that host that GitHub's equivalences would have
+        # folded onto the origin: another case, no .git suffix, and the same
+        # path relative to the remote home instead of rooted.
+        others = (
+            ("path case", host + str(upper), f"ssh:fixture.example:{upper}"),
+            ("no .git suffix", host + str(self.origin.with_suffix("")), f"ssh:fixture.example:{self.origin.with_suffix('')}"),
+            ("home-relative path", f"git@fixture.example:{str(self.origin).lstrip('/')}",
+             f"ssh:fixture.example:{str(self.origin).lstrip('/')}"),
         )
 
-        # Bound at the lower-case registered endpoint, a replay refuses the
-        # registry retargeted to the upper-case one -- warm, cold and approval.
+        # First OPEN: the origin that publishes the child is /example/repo.git,
+        # the registered repository another one, which does not.
+        self.git("remote", "set-url", "origin", host + str(self.origin))
+        for name, remote, endpoint in others:
+            with self.subTest(first_open=name):
+                registered["remote"] = remote
+                self.refuse_submission(
+                    r"origin asked for its publication is " + re.escape(f"ssh:fixture.example:{self.origin}")
+                    + r", not the registered repository example/repo at " + re.escape(endpoint) + r"(?![\w./])"
+                )
+
+        # Bound at the registered origin endpoint, a replay refuses the
+        # registry retargeted to any of the others -- warm, cold and approval.
         registered["remote"] = host + str(self.origin)
         submission = json.loads(json.dumps(self.submit()))
-        self.assertEqual(submission["source_helpers"][0]["remote"], f"fixture.example{self.origin.with_suffix('')}")
-        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
-            self.assertIsNone(self.block_reason("Codex2"))  # warms the cache
-            registered["remote"] = host + str(upper)
-            try:
-                pattern = r"CHILD-001' is refused: its canonical record no longer matches the bound recorded"
-                self.assertRegex(str(self.block_reason("Codex2")), pattern)
-                dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.clear()
-                self.assertRegex(str(self.block_reason("Codex2")), pattern)
-                self.assert_refused_without_mutation(
-                    "Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], pattern
-                )
-                self.refuse_submission(r"no longer matches the bound recorded")
-            finally:
-                registered["remote"] = host + str(self.origin)
-            self.assertEqual(self.task["review_submission"], submission)
-            self.assertIsNone(self.block_reason("Codex2"))
+        self.assertEqual(submission["source_helpers"][0]["remote"], f"ssh:fixture.example:{self.origin}")
+        for name, remote, _endpoint in others:
+            with self.subTest(replay=name), mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+                self.assertIsNone(self.block_reason("Codex2"))  # warms the cache
+                registered["remote"] = remote
+                try:
+                    pattern = r"CHILD-001' is refused: its canonical record no longer matches the bound recorded"
+                    self.assertRegex(str(self.block_reason("Codex2")), pattern)
+                    dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.clear()
+                    self.assertRegex(str(self.block_reason("Codex2")), pattern)
+                    self.assert_refused_without_mutation(
+                        "Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], pattern
+                    )
+                    self.refuse_submission(r"no longer matches the bound recorded")
+                finally:
+                    registered["remote"] = host + str(self.origin)
+                self.assertEqual(self.task["review_submission"], submission)
+                self.assertIsNone(self.block_reason("Codex2"))
+        # The registered path's own scp-like spelling is the same endpoint.
+        registered["remote"] = f"git@fixture.example:{self.origin}"
+        self.assertIsNone(self.block_reason("Codex2"))
         self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review"])
         self.assertEqual(self.task["status"], "review_approved")
 

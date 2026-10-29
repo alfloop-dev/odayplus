@@ -452,25 +452,17 @@ def normalized_repository_slug(value: str | None) -> str | None:
 #: does not make a different endpoint.
 _DEFAULT_REMOTE_PORTS = {"ssh": "22", "git+ssh": "22", "https": "443", "http": "80", "git": "9418"}
 _SCP_REMOTE_RE = re.compile(r"^(?:[^@/:]+@)?(?P<host>[^@/:\[\]]+):(?!//)(?P<path>.+)$")
-#: Hosts whose repository paths are case-insensitive. Anywhere else the path
-#: is whatever the server's filesystem makes of it, so ``/EXAMPLE/repo`` and
-#: ``/example/repo`` are two repositories until that server says otherwise.
-_CASE_INSENSITIVE_PATH_HOSTS = frozenset({"github.com"})
+#: Hosts known to serve one repository as ``owner/name`` over every
+#: transport: case-insensitive, with or without ``.git`` or a leading slash.
+#: Anywhere else the path is whatever the server's filesystem makes of it, so
+#: ``/EXAMPLE/repo``, ``/example/repo``, ``/example/repo.git`` and the
+#: home-relative ``example/repo`` are four repositories until that server says
+#: otherwise, and SSH and HTTPS to it are two ways in, not one.
+_OWNER_NAME_HOSTS = frozenset({"github.com"})
 
 
-def normalized_remote_endpoint(url: str | None, *, base: Path | None = None) -> str | None:
-    """The endpoint a Git remote URL reaches: ``host[:port]/owner/name``, or ``file:<path>``.
-
-    The one parser of remote identity. Every accepted spelling of the same
-    network repository -- SSH, scp-like ``git@host:``, HTTPS, a ``.git``
-    suffix, the scheme's own default port -- yields one endpoint, while a
-    different host, port or path prefix never collapses onto it by suffix.
-    Host names are case-insensitive everywhere; paths only on hosts known to
-    treat them so (GitHub), never on an arbitrary SSH or HTTPS server.
-    Credentials and user names are dropped, never echoed; a URL carrying a
-    query or fragment (a signed URL) is not an identity at all. A local
-    repository is its full resolved path, relative paths taken from ``base``.
-    """
+def _remote_endpoint_parts(url: str | None, base: Path | None) -> tuple[str, str] | None:
+    """`normalized_remote_endpoint` split into ``(where, path)``: the endpoint is their concatenation."""
     from urllib.parse import unquote, urlsplit
 
     raw = str(url or "").strip()
@@ -484,7 +476,7 @@ def normalized_remote_endpoint(url: str | None, *, base: Path | None = None) -> 
         if scheme == "file":
             if parts.netloc not in ("", "localhost"):
                 return None
-            return "file:" + str(Path(unquote(parts.path)).resolve())
+            return "file:", str(Path(unquote(parts.path)).resolve())
         if scheme not in _DEFAULT_REMOTE_PORTS:
             return None
         try:
@@ -492,6 +484,9 @@ def normalized_remote_endpoint(url: str | None, *, base: Path | None = None) -> 
         except ValueError:
             return None
         path = unquote(parts.path)
+        if scheme in ("ssh", "git+ssh") and path.startswith("/~"):
+            # Git itself asks the server for ``~user/path`` here, as scp-like ``host:~user/path`` does.
+            path = path[1:]
     else:
         scp = _SCP_REMOTE_RE.match(raw)
         if scp and not Path(raw).is_absolute() and not raw.startswith((".", "~")):
@@ -500,15 +495,44 @@ def normalized_remote_endpoint(url: str | None, *, base: Path | None = None) -> 
             local = Path(os.path.expanduser(raw))
             if not local.is_absolute():
                 local = (base or Path.cwd()) / local
-            return "file:" + str(local.resolve())
-    path = re.sub(r"\.git$", "", path.strip("/")).strip("/")
-    if not host or not path or any(part in ("", ".", "..") for part in path.split("/")):
+            return "file:", str(local.resolve())
+    if not host or ":" in host:
         return None
-    if host in _CASE_INSENSITIVE_PATH_HOSTS:
-        path = path.casefold()
-    if port is not None and str(port) != _DEFAULT_REMOTE_PORTS[scheme]:
-        host = f"{host}:{port}"
-    return f"{host}/{path}"
+    if port is not None and str(port) == _DEFAULT_REMOTE_PORTS[scheme]:
+        port = None
+    rooted = path.startswith("/")
+    path = path.rstrip("/")[1 if rooted else 0:]
+    if not path or any(part in ("", ".", "..") for part in path.split("/")):
+        return None
+    if host in _OWNER_NAME_HOSTS:
+        where = host if port is None else f"{host}:{port}"
+        return f"{where}/", re.sub(r"\.git$", "", path).casefold()
+    if scheme in ("ssh", "git+ssh"):
+        # Git's own scp-like spelling: rooted and home-relative paths stay apart.
+        return ("ssh:" + (host if port is None else f"[{host}:{port}]") + ":"), ("/" if rooted else "") + path
+    return f"{scheme}://{host if port is None else f'{host}:{port}'}", "/" + path
+
+
+def normalized_remote_endpoint(url: str | None, *, base: Path | None = None) -> str | None:
+    """The endpoint a Git remote URL reaches, or None if it names none.
+
+    The one parser of remote identity. On GitHub every accepted spelling of
+    one repository -- SSH, scp-like ``git@host:``, HTTPS, a ``.git`` suffix,
+    path case, the scheme's own default port -- yields ``github.com/owner/name``.
+    Any other server is taken at its word: an SSH endpoint is Git's scp-like
+    ``ssh:host:path`` (``ssh:[host:port]:path`` off port 22), where
+    ``ssh://host/abs`` and ``host:/abs`` are one rooted path but ``host:abs``
+    is relative to the remote home, and path case, a ``.git`` suffix and the
+    transport all stay part of it (``https://host/path`` is another endpoint).
+    A different host, port or path prefix never collapses onto an endpoint by
+    suffix. Host names are case-insensitive everywhere. Credentials and user
+    names are dropped, never echoed; a URL carrying a query or fragment (a
+    signed URL), or an IPv6 literal host, is not an identity at all. A local
+    repository is ``file:`` its full resolved path, relative paths taken from
+    ``base``.
+    """
+    parts = _remote_endpoint_parts(url, base)
+    return "".join(parts) if parts else None
 
 
 def _checkout_origin_url(root: Path) -> str | None:
@@ -539,11 +563,11 @@ def checkout_origin_slug(root: Path) -> str | None:
     components, which is all an ``owner/name`` slug can compare. Anything that
     has to tell two repositories with the same suffix apart compares endpoints.
     """
-    endpoint = checkout_origin_endpoint(root)
-    if endpoint is None:
+    parts = _remote_endpoint_parts(_checkout_origin_url(root), root)
+    if parts is None:
         return None
-    parts = re.sub(r"\.git$", "", endpoint.removeprefix("file:")).strip("/").split("/")
-    return "/".join(parts[-2:]).casefold() if len(parts) >= 2 else None
+    names = re.sub(r"\.git$", "", parts[1]).strip("/").split("/")
+    return "/".join(names[-2:]).casefold() if len(names) >= 2 else None
 
 
 def registered_remote_endpoint(config: dict[str, Any], repo_id: str | None) -> str | None:
