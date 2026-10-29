@@ -174,6 +174,31 @@ def test_comment_lines_are_ignored():
     assert validate_message(message, task_id=TASK) == []
 
 
+@pytest.mark.parametrize(
+    ("extra", "trailer"),
+    [
+        ("LLM-Agent: Codex", "LLM-Agent"),
+        ("Task-ID: ODP-OTHER-002", "Task-ID"),
+        ("Reviewer: Codex", "Reviewer"),
+    ],
+)
+def test_a_second_conflicting_identity_trailer_is_rejected(extra, trailer):
+    """One commit, one author, one task, one reviewer.
+
+    The trailers are parsed last-wins, so an appended `LLM-Agent: Codex` would
+    otherwise silently re-author a Claude2 commit -- and with it decide which
+    account pool its reviewer has to avoid.
+    """
+    message = GOOD_MESSAGE.rstrip("\n") + f"\n{extra}\n"
+    errors = validate_message(message, task_id=TASK)
+    assert any(f"conflicting '{trailer}:'" in e for e in errors), errors
+
+
+def test_restating_the_same_identity_trailer_is_not_a_conflict():
+    message = GOOD_MESSAGE.rstrip("\n") + "\nLLM-Agent: claude2\n"
+    assert validate_message(message, task_id=TASK) == []
+
+
 # --------------------------------------------------------------------------
 # worker_commit.py
 # --------------------------------------------------------------------------
@@ -249,6 +274,18 @@ def test_worker_commit_refuses_bad_message(repo: Path, tmp_path: Path):
     result = worker_commit(repo, "--task-id", TASK, "--message-file", str(msg), "--scope", "owned.txt")
     assert result.returncode == 1
     assert "commit message rejected" in result.stderr
+
+
+def test_worker_commit_refuses_a_message_naming_two_authors(repo: Path, tmp_path: Path):
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
+    msg = write_msg(tmp_path, GOOD_MESSAGE.rstrip("\n") + "\nLLM-Agent: Codex\n")
+
+    result = worker_commit(repo, "--task-id", TASK, "--message-file", str(msg), "--scope", "owned.txt")
+    assert result.returncode == 1
+    assert "conflicting 'LLM-Agent:' trailers" in result.stderr
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == f"task/{TASK}"
+    assert git(repo, "log", "--format=%s", "-1").stdout.strip() != f"{TASK}: add a thing"
 
 
 def test_worker_commit_refuses_overlong_subject(repo: Path, tmp_path: Path):
@@ -470,6 +507,11 @@ def test_task_finalize_refuses_uncommitted_changes(repo: Path, tmp_path: Path):
         (
             f"{TASK}: wrong task metadata\n\nLLM-Agent: Claude\nTask-ID: OTHER\nReviewer: Antigravity\n",
             "Task-ID trailer 'OTHER' does not match 'ODP-TEST-001'",
+        ),
+        (
+            f"{TASK}: two authors\n\nLLM-Agent: Codex\nTask-ID: {TASK}\nReviewer: Antigravity\n"
+            "LLM-Agent: Claude\n",
+            "conflicting 'LLM-Agent:' trailers",
         ),
     ],
 )
