@@ -21,6 +21,7 @@ error.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import PurePosixPath
@@ -31,8 +32,14 @@ FORBIDDEN_SCOPE_ENTRIES = {".", "./", "*", "-A", "-a", "--all", ":/", ""}
 
 
 def normalize(path: str) -> str:
-    """Normalize a repo-relative path for prefix comparison."""
-    cleaned = str(path).strip().replace("\\", "/")
+    """Normalize a repo-relative path for prefix comparison.
+
+    Only the spellings Git itself never emits are folded: a leading ``./`` and
+    a trailing ``/``. Every other character is the real name -- leading,
+    trailing and interior whitespace, CR/tab, and a literal POSIX backslash --
+    so an unowned Git path can never be trimmed or rewritten into an owned one.
+    """
+    cleaned = str(path)
     while cleaned.startswith("./"):
         cleaned = cleaned[2:]
     return cleaned.rstrip("/")
@@ -73,26 +80,39 @@ def is_in_scope(staged_path: str, scope: list[str]) -> bool:
 
 def files_outside_scope(staged: list[str], scope: list[str]) -> list[str]:
     """Return the staged paths that the declared scope does not cover."""
-    return sorted({normalize(p) for p in staged if p.strip() and not is_in_scope(p, scope)})
+    # Only the empty string separating NUL records is dropped: a Git name made
+    # of whitespace is still a real file another lane may own.
+    return sorted({normalize(p) for p in staged if p and not is_in_scope(p, scope)})
+
+
+def _git_name_list(args: list[str], cwd: str | None, env: dict[str, str] | None) -> list[str]:
+    """Run a ``-z`` name listing and decode each name as the filesystem does.
+
+    Read as bytes, never ``text=True``: universal-newline decoding turns a CR
+    inside a name into LF, so the checked name would not be the committed one.
+    """
+    proc = subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True, check=True)
+    return [os.fsdecode(p) for p in proc.stdout.split(b"\0") if p]
 
 
 def staged_files(cwd: str | None = None, index_file: str | None = None) -> list[str]:
     """Read the staged path list from git, honouring a private index file."""
     env = None
     if index_file:
-        import os
-
         env = os.environ.copy()
         env["GIT_INDEX_FILE"] = index_file
-    proc = subprocess.run(
-        ["git", "diff", "--cached", "--name-only", "-z"],
-        cwd=cwd,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return [p for p in proc.stdout.split("\0") if p]
+    return _git_name_list(["diff", "--cached", "--name-only", "-z"], cwd, env)
+
+
+def net_changed_files(base: str, head: str, cwd: str | None = None) -> list[str]:
+    """Paths the commit range ``base``..``head`` changes, as a net tree diff.
+
+    ``base`` must already be the merge-base the caller validated, so a newer
+    integration tree is never compared to an older head. Renames are reported
+    as their deletion and addition, so both the source and the destination
+    are checked against the scope.
+    """
+    return _git_name_list(["diff", "--no-renames", "--name-only", "-z", base, head, "--"], cwd, None)
 
 
 def main(argv: list[str] | None = None) -> int:
