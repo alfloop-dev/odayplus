@@ -1,9 +1,9 @@
 import React, { useSyncExternalStore } from "react";
 import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AssistedIntake, CanonicalIntakeDetail, CanonicalIntakeEvidencePage, CanonicalIntakeHistoryPage, CanonicalIntakeTransition, IntakeInboxPage } from "@oday-plus/openapi-client";
+import type { AssistedIntake, CanonicalIntakeDetail, CanonicalIntakeEvidencePage, CanonicalIntakeHistoryPage, CanonicalIntakeTransition, CanonicalIntakeParserFields, CanonicalIntakeParserRunMetadata, IntakeInboxPage } from "@oday-plus/openapi-client";
 import { OperatorConsole, isIntakeDetailOpen } from "../../../OperatorConsole";
 import "../../../NetworkFindAreasWorkspace";
 import {
@@ -1696,5 +1696,159 @@ describe("existing field-lineage correction reasons follow the same visual mask"
     rerender(<EvidencePanel record={intake({ parsedFields: { contactPhone: { ...field, masked: false } } })} section="lineage" maskedView
       {...(layout === "fields" ? { fields: [{ ...supplied, masked: false }] } : {})} />);
     expect(screen.getByTestId("lineage-row-contactPhone")).not.toHaveTextContent("PRIVATE");
+  });
+});
+
+function nativeFieldParent(twoRuns = false, n = 1): CanonicalIntakeDetail {
+  const parent = nativeEvidence(n);
+  const page = nativeParserEvidencePage(parent);
+  page.previous_cursor = null;
+  const selected = page.items[0]!;
+  if (selected.kind !== "PARSER_RUN") throw new Error("Expected parser metadata fixture");
+  selected.metadata = { ...selected.metadata, parser_run_id: nativeId(800 + n),
+    source_snapshot_id: nativeId(700 + n), parser_release_id: nativeId(900 + n) };
+  if (twoRuns) {
+    const first = page.items[0]!;
+    if (first.kind !== "PARSER_RUN") throw new Error("Expected parser metadata fixture");
+    page.items.push({ ...first, metadata: { ...first.metadata, parser_run_id: nativeId(850 + n),
+      source_snapshot_id: nativeId(750 + n), parser_release_id: nativeId(950 + n) } });
+  }
+  parent.processing_evidence = page;
+  return parent;
+}
+function selectedNativeRun(parent: CanonicalIntakeDetail, index = 0): CanonicalIntakeParserRunMetadata {
+  const item = parent.processing_evidence!.items[index]!;
+  if (item.kind !== "PARSER_RUN") throw new Error("Expected selected actual metadata");
+  return item.metadata;
+}
+function nativeFieldBody(parent: CanonicalIntakeDetail, marker: string, index = 0): CanonicalIntakeParserFields {
+  const run = selectedNativeRun(parent, index);
+  return { intake_id: parent.intake_id, intake_version: parent.version, source_id: run.source_id,
+    parser_run_id: run.parser_run_id, parser_run_version: run.version, status: run.status,
+    parser_job_id: nativeId(910 + index), parser_job_version: 4, job_status: "SUCCEEDED",
+    source_snapshot_id: run.source_snapshot_id, parser_release_id: run.parser_release_id,
+    observed_at: "2026-10-15T08:00:02Z", fields: (["address", "rent", "areaPing"] as const).map((field_path, i) => ({
+      correction_id: nativeId(1000 + i + index * 10), field_path, classification: "INTERNAL", status: "PROPOSED", version: 2,
+      proposed_by: nativeId(11), created_at: "2026-10-15T08:00:00Z", reviewed_by: null, reviewed_at: null,
+      identity_affecting: true, parsed: i === 0 ? marker : i === 1 ? 15000 : 20,
+      normalized: i === 0 ? null : i === 1 ? 15000 : 20, corrected: i === 0 ? marker : i === 1 ? 15000 : 20,
+      confidence: null, correction_reason: "Synthetic recorded proposal reason", masked: false, mask_reason_code: null,
+    })) };
+}
+function nativeFieldView(parent: CanonicalIntakeDetail, context: CanonicalIntakeReadContext, recovery?: React.ReactNode) {
+  return <IntakeProcessingDetail canonical={parent} readContext={context} matchCase={null} intakeId={parent.intake_id}
+    detailHref={`/intake/${parent.intake_id}`} recovery={recovery} onClose={vi.fn()} onRefresh={vi.fn()}>
+    <section data-intake-section="identity">Original identity decisions</section>
+  </IntakeProcessingDetail>;
+}
+
+describe("selected native parser fields in the original full detail", () => {
+  it("refreshes observed correction status without retaining the old private rows while waiting", async () => {
+    const parent = nativeFieldParent(), first = nativeFieldBody(parent, "RECORDED_IMMUTABLE_PROPOSAL");
+    const second = { ...first, observed_at: "2026-10-15T08:00:03Z", fields: first.fields.map((field) => ({
+      ...field, status: "REJECTED" as const, version: 3, reviewed_by: nativeId(13), reviewed_at: "2026-10-15T08:00:02Z",
+    })) };
+    let complete!: (value: Response) => void;
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(nativeJson(first))
+      .mockImplementationOnce(() => new Promise((resolve) => { complete = resolve; }));
+    render(nativeFieldView(parent, nativeContext(fetchImpl)));
+    fireEvent.click(screen.getByRole("button", { name: "檢視此解析紀錄的欄位" }));
+    await waitFor(() => expect(screen.getByTestId("native-parser-fields")).toHaveTextContent("RECORDED_IMMUTABLE_PROPOSAL"));
+    fireEvent.click(screen.getByRole("button", { name: "重新讀取欄位狀態" }));
+    expect(screen.getByTestId("native-parser-fields")).not.toHaveTextContent("RECORDED_IMMUTABLE_PROPOSAL");
+    await waitFor(() => expect(complete).toBeTypeOf("function"));
+    await act(async () => complete(nativeJson(second)));
+    expect(screen.getByTestId("native-parser-fields")).toHaveTextContent("REJECTED");
+    expect(screen.getByTestId("native-parser-fields")).toHaveTextContent("RECORDED_IMMUTABLE_PROPOSAL");
+    expect(fetchImpl.mock.calls[1]![0]).toBe(fetchImpl.mock.calls[0]![0]);
+  });
+
+  it("keeps source/manual/one lineage/identity order and loads fields only after explicit selection", async () => {
+    const parent = nativeFieldParent();
+    parent.resolution = { listing_id: nativeId(51), listing_version: 9, lifecycle_state: "ACTIVE", current_revision_id: nativeId(52),
+      property_id_at_creation: nativeId(41), effective_property_id: nativeId(42), property_version: 3,
+      fields: [{ field_path: "address", classification: "INTERNAL", effective: "ACTUAL_SAVED_VALUE", masked: false }] };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(nativeJson(nativeFieldBody(parent, "RECORDED_PROPOSAL")));
+    render(nativeFieldView(parent, nativeContext(fetchImpl), <section data-intake-section="error">Original assisted entry form</section>));
+    const root = screen.getByTestId("intake-detail-dialog");
+    const sections = [...root.querySelectorAll<HTMLElement>("[data-intake-section]")].map((x) => x.dataset.intakeSection);
+    const sequence = ["source", "error", "lineage", "identity"].map((x) => sections.indexOf(x));
+    expect(sequence.every((value, i) => value >= 0 && (i === 0 || value > sequence[i - 1]!))).toBe(true);
+    expect(root.querySelectorAll('[data-intake-section="lineage"]')).toHaveLength(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "檢視此解析紀錄的欄位" }));
+    await waitFor(() => expect(screen.getByTestId("native-parser-fields")).toHaveTextContent("RECORDED_PROPOSAL"));
+    expect(screen.getByRole("region", { name: "已落庫物件" })).toHaveTextContent("ACTUAL_SAVED_VALUE");
+    expect(screen.getByTestId("native-parser-fields")).not.toHaveTextContent("ACTUAL_SAVED_VALUE");
+    expect(screen.getByTestId("native-lineage-group-location")).toBeInTheDocument();
+    expect(screen.getByTestId("native-lineage-group-commercial")).toBeInTheDocument();
+    expect(screen.getByTestId("native-lineage-group-property")).toBeInTheDocument();
+    for (const table of within(screen.getByTestId("native-parser-fields")).getAllByRole("table")) {
+      expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
+        "欄位", "解析值", "標準值", "人工值／狀態",
+      ]);
+      for (const row of table.querySelectorAll("tbody tr")) expect(row.children).toHaveLength(4);
+    }
+    expect(screen.getAllByText("可信度：未提供")).toHaveLength(3);
+    expect(screen.queryByText(/LOW_CONFIDENCE/)).toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1); expect(fetchImpl.mock.calls[0]![1]?.method).toBeUndefined();
+    const url = new URL(String(fetchImpl.mock.calls[0]![0]), "https://same-origin.invalid");
+    expect(url.pathname).toBe(`/api/v1/canonical-intakes/${parent.intake_id}/parser-runs/${selectedNativeRun(parent).parser_run_id}/fields`);
+  });
+
+  it.each(["unknown", "low", "masked"])("uses actual %s confidence without inventing certainty or exposing masked details", async (kind) => {
+    const parent = nativeFieldParent(), body = nativeFieldBody(parent, "PRIVATE_NATIVE_PROPOSAL");
+    if (kind === "low") body.fields[0]!.confidence = .25;
+    if (kind === "masked") body.fields = body.fields.map((row) => ({ ...row, parsed: null, normalized: null, corrected: null,
+      confidence: null, correction_reason: null, masked: true, mask_reason_code: "FIELD_MASKED" }));
+    render(nativeFieldView(parent, nativeContext(vi.fn<typeof fetch>().mockResolvedValue(nativeJson(body)))));
+    fireEvent.click(screen.getByRole("button", { name: "檢視此解析紀錄的欄位" }));
+    await waitFor(() => expect(screen.getByTestId("native-parser-fields")).toHaveTextContent("讀取於"));
+    expect(screen.queryByText(/LOW_CONFIDENCE/) !== null).toBe(kind === "low");
+    if (kind === "masked") expect(screen.getByTestId("native-parser-fields")).not.toHaveTextContent("PRIVATE_NATIVE_PROPOSAL");
+  });
+
+  it.each(["HTTP", "JSON"])("rejects late first-A %s after selecting A→B→A", async (phase) => {
+    const parent = nativeFieldParent(true); let oldHTTP!: (response: Response) => void; let oldJSON!: (body: unknown) => void;
+    const response = nativeJson({}); response.json = () => new Promise((resolve) => { oldJSON = resolve; });
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockImplementationOnce(() => phase === "HTTP" ? new Promise((resolve) => { oldHTTP = resolve; }) : Promise.resolve(response))
+      .mockResolvedValueOnce(nativeJson(nativeFieldBody(parent, "CURRENT_B", 1)))
+      .mockResolvedValueOnce(nativeJson(nativeFieldBody(parent, "CURRENT_SECOND_A")));
+    render(nativeFieldView(parent, nativeContext(fetchImpl)));
+    const buttons = screen.getAllByRole("button", { name: "檢視此解析紀錄的欄位" });
+    fireEvent.click(buttons[0]!);
+    await waitFor(() => expect(phase === "HTTP" ? oldHTTP : oldJSON).toBeTypeOf("function"));
+    fireEvent.click(buttons[1]!);
+    await waitFor(() => expect(screen.getByTestId("native-parser-fields")).toHaveTextContent("CURRENT_B"));
+    fireEvent.click(buttons[0]!);
+    await waitFor(() => expect(screen.getByTestId("native-parser-fields")).toHaveTextContent("CURRENT_SECOND_A"));
+    await act(async () => { if (phase === "HTTP") oldHTTP(nativeJson(nativeFieldBody(parent, "PRIVATE_ABANDONED_A")));
+      else oldJSON(nativeFieldBody(parent, "PRIVATE_ABANDONED_A")); });
+    expect(screen.getByTestId("native-parser-fields")).toHaveTextContent("CURRENT_SECOND_A");
+    expect(screen.queryByText("PRIVATE_ABANDONED_A")).toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["parent", "reader"])("does not resurrect a selected run after the %s frame changes A→B→A", async (kind) => {
+    const parent = nativeFieldParent(), context = nativeContext(vi.fn<typeof fetch>().mockResolvedValue(nativeJson(nativeFieldBody(parent, "FIRST_PRIVATE_A"))));
+    const { rerender } = render(nativeFieldView(parent, context));
+    fireEvent.click(screen.getByRole("button", { name: "檢視此解析紀錄的欄位" }));
+    await waitFor(() => expect(screen.getByTestId("native-parser-fields")).toHaveTextContent("FIRST_PRIVATE_A"));
+    rerender(nativeFieldView(kind === "parent" ? nativeFieldParent(false, 2) : parent,
+      kind === "reader" ? nativeContext() : context));
+    expect(screen.queryByTestId("native-parser-fields")).toBeNull();
+    rerender(nativeFieldView(parent, context));
+    expect(screen.queryByTestId("native-parser-fields")).toBeNull();
+    expect(context.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses an optional array field path before it reaches the mounted lineage renderer", async () => {
+    const parent = nativeFieldParent(), body = nativeFieldBody(parent, "PRIVATE_INVALID_FIELDS");
+    body.fields.push({ ...body.fields[0]!, correction_id: nativeId(1010), field_path: ["floor"] as unknown as "floor" });
+    render(nativeFieldView(parent, nativeContext(vi.fn<typeof fetch>().mockResolvedValue(nativeJson(body)))));
+    fireEvent.click(screen.getByRole("button", { name: "檢視此解析紀錄的欄位" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByTestId("native-parser-fields")).not.toHaveTextContent("PRIVATE_INVALID_FIELDS");
   });
 });

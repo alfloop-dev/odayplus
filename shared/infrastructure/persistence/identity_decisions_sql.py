@@ -390,23 +390,8 @@ class CanonicalIdentityDecisionRepository:
                 tenant, result["parser_run_id"], before=before, for_update=True)
             if run is None:
                 raise IdentityConflictError("IDENTITY_LISTING_CURRENT_PARSER_RESULT_REQUIRED")
-            normalized = json.loads(run["normalized_payload"]) if isinstance(run["normalized_payload"], str) else run["normalized_payload"]
-            parsed = json.loads(run["parsed_payload"]) if isinstance(run["parsed_payload"], str) else run["parsed_payload"]
-            before()
-            corrections = self.engine.query(
-                "SELECT correction_id,field_path,field_classification,status,version,identity_affecting,proposed_by,"
-                "corrected_value::text AS corrected_json FROM intake.human_corrections "
-                "WHERE tenant_id=? AND intake_id=? AND correction_id=ANY(?::uuid[]) ORDER BY field_path",
-                (tenant, intake["intake_id"], [identity for _, identity in original.lineage.correction_ids]))
-            # The full history reader above proved these exact rows and their
-            # immutable values in this same serializable snapshot. Their live
-            # status/version remain visible; parser success never applies them.
-            fields = [{"correction_id": row["correction_id"], "field_path": row["field_path"],
-                "classification": row["field_classification"], "status": row["status"], "version": row["version"],
-                "proposed_by": row["proposed_by"],
-                "identity_affecting": row["identity_affecting"], "parsed": parsed.get(row["field_path"]),
-                "normalized": normalized.get(row["field_path"]), "corrected": json.loads(row["corrected_json"])}
-                for row in corrections]
+            normalized, fields = NativeParserManualInputReader(self.graph).field_projection(
+                original, run, before=before)
             if require_proposed and any(row["status"] != "PROPOSED" for row in fields):
                 raise IdentityConflictError("IDENTITY_LISTING_INPUT_VERSION_CONFLICT")
             reference = {"parser_job_id": delivery.job_id, "parser_run_id": run["parser_run_id"],

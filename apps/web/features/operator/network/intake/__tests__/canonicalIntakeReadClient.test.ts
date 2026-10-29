@@ -4,6 +4,7 @@ import {
   readCanonicalMatchCaseProperties, submitCanonicalMatchCase,
   readCanonicalIntakeHistory,
   readCanonicalIntakeEvidence,
+  readCanonicalIntakeParserFields,
   readCanonicalURLReceipt, readCanonicalMatchCaseReceipt, readCanonicalIdentityReceipt, readCanonicalAssistedEntryReceipt,
   type CanonicalURLCommand, type CanonicalIdentityCommand, type CanonicalAssistedEntryCommand,
   type CanonicalIntakeReadContext, type CanonicalMatchCaseCommand,
@@ -386,6 +387,81 @@ const evidenceProjection = () => ({ intake_id: id(1), intake_version: 3, through
   observed_at: "2026-10-15T08:00:01Z", items: [evidenceSnapshot(), evidenceParser()], previous_cursor: null, next_cursor: null });
 const evidenceParent = () => ({ ...summary(), source_info: { ...summary().source_info, source_id: "synthetic-source" },
   processing_evidence: evidenceProjection() });
+
+const parserFields = () => ({ intake_id: id(1), intake_version: 3, source_id: "synthetic-source",
+  parser_run_id: id(72), parser_run_version: 3, status: "PARTIAL", parser_job_id: id(74), parser_job_version: 4,
+  job_status: "SUCCEEDED", source_snapshot_id: id(71), parser_release_id: id(73), observed_at: "2026-10-15T08:00:02Z",
+  fields: ["address", "rent", "areaPing"].map((field_path, i) => ({ correction_id: id(800 + i), field_path,
+    classification: "INTERNAL", status: "PROPOSED", version: 2, identity_affecting: true, proposed_by: id(11),
+    created_at: "2026-10-15T08:00:00Z", reviewed_by: null, reviewed_at: null, parsed: "PRIVATE_PARSED",
+    normalized: null, corrected: "PRIVATE_PROPOSAL", confidence: null, correction_reason: "PRIVATE_REASON",
+    masked: false, mask_reason_code: null })) });
+
+describe("selected native parser field history read", () => {
+  it.each(["optional_field_path", "field_status", "job_status"])("rejects array substitution in %s before rendering fields", async (target) => {
+    const body = parserFields();
+    if (target === "optional_field_path") {
+      body.fields.push({ ...body.fields[0]!, correction_id: id(804), field_path: ["floor"] as unknown as string });
+    } else if (target === "field_status") {
+      body.fields[0]!.status = ["PROPOSED"] as unknown as string;
+    } else {
+      body.job_status = ["SUCCEEDED"] as unknown as string;
+    }
+    const { value, signal } = context(json(body));
+    await expect(readCanonicalIntakeParserFields(value, evidenceParent(), evidenceParser().metadata, signal))
+      .rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
+  });
+  it("binds the explicit run and original parent versions with one readonly GET", async () => {
+    const body = parserFields(), { value, signal, fetchImpl } = context(json(body));
+    await expect(readCanonicalIntakeParserFields(value, evidenceParent(), evidenceParser().metadata, signal)).resolves.toEqual(body);
+    const url = new URL(String(fetchImpl.mock.calls[0]![0]), "https://same-origin.invalid");
+    expect(url.pathname).toBe(`/api/v1/canonical-intakes/${id(1)}/parser-runs/${id(72)}/fields`);
+    expect(Object.fromEntries(url.searchParams)).toEqual({ intake_version: "3", parser_run_version: "3" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1); expect(fetchImpl.mock.calls[0]![1]?.method).toBeUndefined();
+  });
+  it.each([
+    { classification: null }, { classification: "FUTURE_CLASS" }, { masked: true }, { confidence: true },
+    { confidence: -0.01 }, { confidence: 1.01 }, { parsed: false }, { corrected: {} }, { effective: "PRIVATE_SAVED_VALUE" },
+    { correction_id: "synthetic-legacy-label" }, { version: 0 }, { version: 1.5 }, { status: "APPROVED" },
+    { field_path: "contactPhone" }, { reviewed_by: "synthetic-user" }, { created_at: "yesterday" },
+  ])("rejects unmasked, unclassified or malformed private field data: %j", async (change) => {
+    const body = parserFields(); body.fields[0] = { ...body.fields[0]!, ...change } as typeof body.fields[number];
+    const { value, signal, fetchImpl } = context(json(body));
+    await expect(readCanonicalIntakeParserFields(value, evidenceParent(), evidenceParser().metadata, signal))
+      .rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+  it("allows unknown classification only as a fully masked observation", async () => {
+    const body = parserFields();
+    const masked = { ...body, fields: body.fields.map((field) => ({ ...field, classification: null,
+      parsed: null, normalized: null, corrected: null, confidence: null, correction_reason: null,
+      masked: true, mask_reason_code: "FIELD_MASKED" })) };
+    const { value, signal } = context(json(masked));
+    await expect(readCanonicalIntakeParserFields(value, evidenceParent(), evidenceParser().metadata, signal)).resolves.toEqual(masked);
+  });
+  it.each([
+    { intake_id: id(2) }, { intake_version: 4 }, { parser_run_id: id(99) }, { parser_run_version: 4 },
+    { source_snapshot_id: id(99) }, { parser_release_id: id(99) }, { source_id: "foreign-source" },
+    { status: "SUCCEEDED" }, { job_status: "INVENTED" }, { parser_job_version: 0 },
+    { observed_at: "2026-10-15T07:00:00Z" }, { fields: [] }, { manual_entry_valid_until: "2099-01-01T00:00:00Z" },
+  ])("refuses a different reference or a positive grant on the history shape: %j", async (change) => {
+    const { value, signal } = context(json({ ...parserFields(), ...change }));
+    await expect(readCanonicalIntakeParserFields(value, evidenceParent(), evidenceParser().metadata, signal))
+      .rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
+  });
+  it.each(["id", "path"])("refuses duplicate correction %s references", async (kind) => {
+    const body = parserFields();
+    body.fields[1] = { ...body.fields[1]!, ...(kind === "id"
+      ? { correction_id: body.fields[0]!.correction_id } : { field_path: body.fields[0]!.field_path }) };
+    const { value, signal } = context(json(body));
+    await expect(readCanonicalIntakeParserFields(value, evidenceParent(), evidenceParser().metadata, signal))
+      .rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
+  });
+  it.each([401, 403, 409, 503])("retains the current server refusal %s", async (status) => {
+    const { value, signal } = context(json({ detail: "refused" }, status));
+    await expect(readCanonicalIntakeParserFields(value, evidenceParent(), evidenceParser().metadata, signal)).rejects.toMatchObject({ status });
+  });
+});
 
 describe("native saved snapshot and parser lifecycle read transport", () => {
   it("accepts the actual typed records and preserves generation precision and unknown execution timestamps", async () => {

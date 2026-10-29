@@ -543,3 +543,32 @@ def test_authorized_unmasked_correction_reason_is_retained(layout):
     projected = mask_intake(principal, original)
     actual = projected["fields"][0] if layout == "fields" else projected["parsedFields"]["contactPhone"]
     assert actual["correction_reason"] == actual["correctionReason"] == "Authorized reason"
+
+
+@pytest.mark.parametrize("classification,clearance,upstream_masked,denied", [
+    (None, DataClassification.HIGHLY_RESTRICTED, False, True),
+    ("FUTURE_CLASS", DataClassification.HIGHLY_RESTRICTED, False, True),
+    ("INTERNAL", DataClassification.PUBLIC, False, True),
+    ("INTERNAL", DataClassification.HIGHLY_RESTRICTED, True, True),
+    ("INTERNAL", DataClassification.HIGHLY_RESTRICTED, False, False),
+])
+def test_native_parser_confidence_and_reason_follow_original_field_mask(
+        classification, clearance, upstream_masked, denied):
+    from copy import deepcopy
+
+    from modules.listing.application.intake_authorization import mask_intake
+    from shared.auth import Principal, Scope
+
+    principal = Principal(subject_id="synthetic-history-reader", scope=Scope(tenant_id="tenant-a", clearance=clearance))
+    field = {"field_path": "address", "classification": classification, "parsed": "PRIVATE_PARSER_VALUE",
+        "normalized": "PRIVATE_NORMALIZED", "corrected": "PRIVATE_PROPOSAL", "confidence": .875,
+        "correction_reason": "PRIVATE_PROPOSAL_REASON", "masked": upstream_masked}
+    original = {"fields": [field]}
+    before = deepcopy(original)
+    actual = mask_intake(principal, original)["fields"][0]
+    if denied:
+        assert actual["masked"] is True and actual["mask_reason_code"] == "FIELD_MASKED"
+        assert all(actual[key] is None for key in ("parsed", "normalized", "corrected", "confidence", "correction_reason"))
+    else:
+        assert all(actual[key] == field[key] for key in field)
+    assert original == before

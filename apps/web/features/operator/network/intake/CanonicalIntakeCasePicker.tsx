@@ -120,10 +120,6 @@ function SelectionDialog({ context, selectedId, cursor, onClose, onSelect, onPag
   const selectedContent = (selectedId ? <section data-intake-section="identity" aria-label="所選收件與比對案件" className={styles.sectionBox}>
           {detail.status === "loading" ? <p role="status">正在讀取所選收件與案件…</p> : detail.status === "error" ? <ReadFailure error={detail.error} /> : (
             <>
-              {detail.value.intake.intake_method === "URL" && detail.value.intake.processing_state === "AWAITING_ASSISTED_ENTRY"
-                ? <CanonicalAssistedEntry key={`${detail.value.intake.intake_id}:${detail.value.intake.version}`}
-                  context={context} intake={detail.value.intake} /> : null}
-              {detail.value.intake.processing_state === "AWAITING_SOURCE_AUTHORIZATION" ? <p>此收件等待來源授權；人工補錄須先由既定流程確認另有明確核准。</p> : null}
               {detail.value.matchCase === null ? (["MATCHING", "NEEDS_REVIEW"].includes(detail.value.intake.processing_state)
                 ? <CanonicalMatchCaseCreation key={`${detail.value.intake.intake_id}:${detail.value.intake.version}`}
                   context={context} intake={detail.value.intake} Failure={ReadFailure} />
@@ -153,6 +149,14 @@ function SelectionDialog({ context, selectedId, cursor, onClose, onSelect, onPag
     canonical={detail.status === "ready" ? detail.value.intake : null}
     matchCase={detail.status === "ready" ? detail.value.matchCase : null} detailHref={detailHref}
     activeSection={activeSection} onSectionChange={onSectionChange} busy={commandBusy}
+    recovery={detail.status === "ready" && ["AWAITING_ASSISTED_ENTRY", "AWAITING_SOURCE_AUTHORIZATION"].includes(detail.value.intake.processing_state)
+      ? <section data-intake-section="error" aria-label="人工補錄與來源恢復" className={styles.sectionBox}>
+        {detail.value.intake.intake_method === "URL" && detail.value.intake.processing_state === "AWAITING_ASSISTED_ENTRY"
+          ? <CanonicalAssistedEntry key={`${detail.value.intake.intake_id}:${detail.value.intake.version}`}
+            context={context} intake={detail.value.intake} /> : null}
+        {detail.value.intake.processing_state === "AWAITING_SOURCE_AUTHORIZATION"
+          ? <p>此收件等待來源授權；人工補錄須先由既定流程確認另有明確核准。</p> : null}
+      </section> : null}
     onClose={() => onPage(cursor ?? null)} onRefresh={() => setReload((n) => n + 1)} testId="canonical-intake-case-picker">
     {createdReceipt}{selectedContent}{submission}
   </IntakeProcessingDetail>;

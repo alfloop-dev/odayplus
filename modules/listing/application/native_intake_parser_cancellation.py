@@ -86,17 +86,17 @@ def _facts(history, job, run, physical, *, terminal, before):
                 "admission", "delivery_generation", "attempt_token_sha256", "attempt_intents"} | extra
                 or payload["attempt_intents"] != [] or run["started_at"] is not None):
             _reject()
-        history._parent_input(job["tenant_id"], payload["admission"]["binding"], before)
+        original = history._parent_input(job["tenant_id"], payload["admission"]["binding"], before)
         # No acceptance and no operations exist: do not invent an accepted
         # attempt just to call the accepted-attempt journal verifier.
-        return ClosedParserJournalFacts((), (), canonical_sha256([]), 0, 0), None
+        return ClosedParserJournalFacts((), (), canonical_sha256([]), 0, 0), None, original
     if (type(job["attempt"]) is not int or not 1 <= job["attempt"] < job["max_attempts"]
             or set(payload) != active_payload_fields(job["attempt"]) | {"retry_receipt"} | extra):
         _reject()
     prepared = prepared_parser_retry_facts(history, job, run, physical, before=before)
     if not terminal:
         require_prepared_parser_retry_state(history, job, run, physical, prepared, before=before)
-    return prepared.combined, prepared
+    return prepared.combined, prepared, prepared.original_input
 
 
 def _derived_cause(job, payload, physical, at, business_lease=None):
@@ -195,7 +195,7 @@ class NativeParserUnacceptedCancellation:
                 facts, prepared = recovery.combined, None
                 expected_version = recovery.acceptance["run_version_after"]
             else:
-                facts, prepared = _facts(history, job, run, physical, terminal=False, before=before)
+                facts, prepared, _ = _facts(history, job, run, physical, terminal=False, before=before)
                 expected_version = 1 if prepared is None else prepared.receipt["run_version_after"]
             if (run["version"] != expected_version or run["completed_at"] is not None or run["parsed_payload"] is not None
                     or run["normalized_payload"] is not None or _object(run["field_confidence"]) != {}
@@ -289,7 +289,7 @@ class NativeParserUnacceptedCancellation:
             return receipt
 
 
-def read_cancelled_unaccepted_parser(history, job, run, physical, tenant, generation, *, before):
+def read_cancelled_unaccepted_parser(history, job, run, physical, tenant, generation, *, before, with_parent_input=False):
     """Authenticate the entire closure after settings and credentials retire."""
     try:
         payload = _object(job["payload"])
@@ -336,8 +336,9 @@ def read_cancelled_unaccepted_parser(history, job, run, physical, tenant, genera
                 receipt["business_lease_expires_at"], terminal=True, before=before)
             require_terminal_recovery(receipt, proof)
             facts, prepared = proof.combined, None
+            original = proof.original_input
         else:
-            facts, prepared = _facts(history, job, run, physical, terminal=True, before=before)
+            facts, prepared, original = _facts(history, job, run, physical, terminal=True, before=before)
         if not accepted and prepared is None:
             if (receipt["prior_status"] != "QUEUED" or receipt["business_version_before"] != 1 or receipt["run_version_before"] != 1
                     or receipt["acceptance_audit_event_id"] is not None or receipt["retry_audit_event_id"] is not None):
@@ -385,7 +386,8 @@ def read_cancelled_unaccepted_parser(history, job, run, physical, tenant, genera
                 "intake_id": run["intake_id"], "parser_release_id": run["parser_release_id"], "status": "CANCELLED",
                 "quality_summary": facts.quality_summary()})
         before.check_in_memory()
-        return NativeParserNegativeClosure(run["parser_run_id"], canonical_sha256(receipt))
+        closure = NativeParserNegativeClosure(run["parser_run_id"], canonical_sha256(receipt))
+        return (closure, original, run) if with_parent_input else closure
     except NativeParserConflict:
         raise
     except (ValueError, KeyError, TypeError, AttributeError, OverflowError):

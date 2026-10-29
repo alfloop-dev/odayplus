@@ -10,7 +10,10 @@ import re
 from datetime import timedelta
 
 from modules.external_data.application.native_manual_json_parser import ManualParserLineage
-from modules.external_data.application.native_parser_artifacts import VerifiedNativeParserArtifact
+from modules.external_data.application.native_parser_artifacts import (
+    NativeParserArtifactUnavailable,
+    VerifiedNativeParserArtifact,
+)
 from modules.external_data.application.native_parser_output import (
     validate_native_manual_parser_output,
 )
@@ -38,7 +41,11 @@ from modules.listing.application.native_intake_parser_journal import (
     closed_parser_attempt_journal,
     combine_closed_parser_journals,
 )
-from modules.listing.application.native_intake_parser_policy import JOB_TYPE, NativeParserConflict
+from modules.listing.application.native_intake_parser_policy import (
+    JOB_TYPE,
+    NativeParserConflict,
+    NativeParserUnavailable,
+)
 from modules.listing.application.native_intake_parser_prerequisites import (
     NativeParserCommandBudget,
     NativeParserSQLClock,
@@ -237,10 +244,25 @@ class NativeParserTerminalHistory:
         later invocation. Negative/open closures retain their existing read
         API and cannot supply a positive matching input through this method.
         """
+        result, original, run = self.read_with_parent_input(delivery, tenant, generation, before=before)
+        if (type(result) is not dict or result.get("job_status") != "SUCCEEDED"
+                or result.get("parser_status") not in {"SUCCEEDED", "PARTIAL"}
+                or run["status"] != result["parser_status"]):
+            _reject()
+        before.check_in_memory()
+        return result, original
+
+    def read_with_parent_input(self, delivery, tenant, generation, *, before):
+        """Return this invocation's full history, original input and actual run.
+
+        Unfinished and negative outcomes retain their original closure proof.
+        No current execution grant is derived, and no later read reuses these
+        facts. The positive wrapper above still refuses every such outcome.
+        """
         self.jobs._root(tenant, before)
         proven = self._read_proof(delivery, tenant, generation, before=before, with_parent_input=True)
-        if (type(proven) is not tuple or len(proven) != 2
-                or type(proven[0]) is not dict or type(proven[1]) is not NativeParserManualInput):
+        if (type(proven) is not tuple or len(proven) != 3
+                or type(proven[1]) is not NativeParserManualInput or type(proven[2]) is not dict):
             _reject()
         before.check_in_memory()
         return proven
@@ -263,13 +285,15 @@ class NativeParserTerminalHistory:
                     read_prepared_parser_retry,
                 )
 
-                return read_prepared_parser_retry(self, job, run, physical, before=before)
+                return read_prepared_parser_retry(self, job, run, physical, before=before,
+                    with_parent_input=with_parent_input)
             if job["status"] == "CANCELLED":
                 from modules.listing.application.native_intake_parser_cancellation import (
                     read_cancelled_unaccepted_parser,
                 )
 
-                return read_cancelled_unaccepted_parser(self, job, run, physical, tenant, generation, before=before)
+                return read_cancelled_unaccepted_parser(self, job, run, physical, tenant, generation, before=before,
+                    with_parent_input=with_parent_input)
             if job["status"] in {"QUEUED", "RUNNING"}:
                 # Report only a genuine unfinished command. Expired
                 # leases are history, not a present ownership claim.
@@ -300,6 +324,10 @@ class NativeParserTerminalHistory:
                         or physical.status not in {JobStatus.QUEUED, JobStatus.RUNNING}):
                     _reject()
                 before.check_in_memory()
+                if with_parent_input:
+                    if job["status"] != "RUNNING" or job["attempt"] <= 1:
+                        original = self._parent_input(tenant, payload["admission"]["binding"], before)
+                    return None, original, run
                 return None
             if job["status"] == "FAILED":
                 if "permanent_failure_receipt" in payload:
@@ -307,12 +335,14 @@ class NativeParserTerminalHistory:
                         read_permanent_terminal,
                     )
 
-                    return read_permanent_terminal(self, job, run, physical, tenant, generation, before=before)
+                    return read_permanent_terminal(self, job, run, physical, tenant, generation, before=before,
+                        with_parent_input=with_parent_input)
                 from modules.listing.application.native_intake_parser_negative import (
                     read_unavailable_terminal,
                 )
 
-                return read_unavailable_terminal(self, job, run, physical, tenant, generation, before=before)
+                return read_unavailable_terminal(self, job, run, physical, tenant, generation, before=before,
+                    with_parent_input=with_parent_input)
             acceptance = self.jobs.acceptance(job, run, before=before)
             result = _object(job["result"])
             binding = payload["admission"]["binding"]
@@ -409,11 +439,13 @@ class NativeParserTerminalHistory:
                 payload={"intake_id": run["intake_id"], "from_state": "PARSING", "to_state": target,
                     "transition_id": result["transition_id"], "version": result["version"], "occurred_at": at.isoformat()})
             before.check_in_memory()
-            return (result, original) if with_parent_input else result
+            return (result, original, run) if with_parent_input else result
         except NativeParserConflict as error:
             if str(error) == "NATIVE_PARSER_ROOT_DEADLINE_EXPIRED":
                 raise
             _reject()
+        except NativeParserArtifactUnavailable:
+            raise NativeParserUnavailable("NATIVE_PARSER_HISTORY_ARTIFACT_UNAVAILABLE") from None
         except (ValueError, KeyError, TypeError, AttributeError, OverflowError):
             _reject()
 

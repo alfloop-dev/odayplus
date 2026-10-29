@@ -1,7 +1,7 @@
 import type {
   CanonicalIdentityPlanningContext, CanonicalIdentityReceipt, CanonicalIdentitySummary,
   CanonicalIntakeAssistedEntryRequestReceipt, CanonicalIntakeDetail, CanonicalIntakePage, CanonicalIntakeReceipt, CanonicalIntakeSummary, CanonicalIntakeWorkflow,
-  CanonicalIntakeHistoryPage, CanonicalIntakeSourceInfo, CanonicalIntakeEvidencePage,
+  CanonicalIntakeHistoryPage, CanonicalIntakeSourceInfo, CanonicalIntakeEvidencePage, CanonicalIntakeParserFields, CanonicalIntakeParserRunMetadata,
   CanonicalMatchCasePropertyPage, CreateMatchCaseRequest, MatchCaseReceipt,
   DuplicateProposal, IdentityReviewRequest, ListingConfirmation, MatchCaseSummary, MergeProposal, NativeAssistedEntryCommand, SplitProposal, SubmitCanonicalIntakeRequest,
   NativeReceiptCommitted_CanonicalIntakeReceipt_, NativeReceiptNotObserved,
@@ -27,6 +27,7 @@ const nullableUuid = (v: unknown) => v === null || uuid(v);
 const nullableVersion = (v: unknown) => v === null || version(v);
 const text = (v: unknown, maximum = 200): v is string => typeof v === "string" && v.trim().length > 0 && v.length <= maximum;
 const timestamp = (v: unknown): v is string => typeof v === "string" && /(?:Z|[+-]\d{2}:\d{2})$/.test(v) && Number.isFinite(Date.parse(v));
+const FIELD_CLASSIFICATIONS = ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED", "HIGHLY_RESTRICTED"];
 
 function intake(v: unknown): v is CanonicalIntakeSummary {
   return object(v) && uuid(v.intake_id) && uuid(v.tenant_id) && uuid(v.submitter_subject_id)
@@ -53,7 +54,7 @@ function persistedFields(v: unknown): boolean {
         || typeof field.effective === "number" && Number.isFinite(field.effective))
       && typeof field.masked === "boolean"
       && (field.masked ? field.effective === null && field.mask_reason_code === "FIELD_MASKED"
-        : ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED", "HIGHLY_RESTRICTED"].includes(String(field.classification))
+        : FIELD_CLASSIFICATIONS.includes(String(field.classification))
           && (field.mask_reason_code === undefined || field.mask_reason_code === null)))
     && new Set(v.map((field) => field.field_path)).size === v.length;
 }
@@ -291,6 +292,55 @@ export async function readCanonicalIntakeEvidence(context: CanonicalIntakeReadCo
   if (!evidencePage(v, parent, parent.source_info?.source_id ?? null, through) || v.next_cursor === cursor || v.previous_cursor === cursor)
     throw new CanonicalIntakeReadError(200, "CANONICAL_RESPONSE_INVALID", "");
   return v;
+}
+
+export async function readCanonicalIntakeParserFields(context: CanonicalIntakeReadContext, parent: CanonicalIntakeDetail,
+  selected: CanonicalIntakeParserRunMetadata, signal: AbortSignal): Promise<CanonicalIntakeParserFields> {
+  if (!uuid(parent.intake_id) || !version(parent.version) || selected.intake_id !== parent.intake_id
+    || !uuid(selected.parser_run_id) || !version(selected.version) || !uuid(selected.source_snapshot_id)
+    || !uuid(selected.parser_release_id) || !text(selected.source_id, 1024)
+    || selected.source_id !== parent.source_info?.source_id || !timestamp(selected.created_at))
+    throw new CanonicalIntakeReadError(422, "CANONICAL_COMMAND_INVALID", "");
+  const query = new URLSearchParams({ intake_version: String(parent.version), parser_run_version: String(selected.version) });
+  const v = await read(context, `/api/v1/canonical-intakes/${encodeURIComponent(parent.intake_id)}/parser-runs/${encodeURIComponent(selected.parser_run_id)}/fields?${query}`, signal);
+  const scalar = (x: unknown) => x === null || typeof x === "string" && x.length <= 1_048_576
+    || typeof x === "number" && Number.isFinite(x);
+  const fieldKeys = ["correction_id", "field_path", "classification", "status", "version", "identity_affecting",
+    "proposed_by", "created_at", "reviewed_by", "reviewed_at", "parsed", "normalized", "corrected", "confidence",
+    "correction_reason", "masked", "mask_reason_code"];
+  const fields = object(v) ? v.fields : null;
+  const validFields = Array.isArray(fields) && fields.length >= 3 && fields.length <= 7 && fields.every((field) =>
+    object(field) && Object.keys(field).every((key) => fieldKeys.includes(key))
+    && uuid(field.correction_id) && typeof field.field_path === "string"
+    && ["address", "rent", "areaPing", "providerListingId", "floor", "listingType", "listingStatus"].includes(field.field_path)
+    && (field.classification === null || text(field.classification))
+    && typeof field.status === "string" && ["PROPOSED", "APPLIED", "REJECTED", "SUPERSEDED", "REVERSED"].includes(field.status)
+    && version(field.version) && typeof field.identity_affecting === "boolean" && uuid(field.proposed_by)
+    && timestamp(field.created_at) && nullableUuid(field.reviewed_by)
+    && (field.reviewed_at === null || timestamp(field.reviewed_at))
+    && scalar(field.parsed) && scalar(field.normalized) && scalar(field.corrected)
+    && (field.confidence === null || typeof field.confidence === "number" && Number.isFinite(field.confidence)
+      && field.confidence >= 0 && field.confidence <= 1)
+    && (field.correction_reason === null || text(field.correction_reason, 16_384)) && typeof field.masked === "boolean"
+    && (field.masked ? [field.parsed, field.normalized, field.corrected, field.confidence, field.correction_reason].every((x) => x === null)
+      && field.mask_reason_code === "FIELD_MASKED"
+      : FIELD_CLASSIFICATIONS.includes(String(field.classification))
+        && (field.mask_reason_code === null || field.mask_reason_code === undefined)))
+    && new Set(fields.map((field) => field.correction_id)).size === fields.length
+    && new Set(fields.map((field) => field.field_path)).size === fields.length
+    && ["address", "rent", "areaPing"].every((path) => fields.some((field) => field.field_path === path));
+  if (!object(v) || !Object.keys(v).every((key) => ["intake_id", "intake_version", "source_id", "parser_run_id",
+    "parser_run_version", "status", "parser_job_id", "parser_job_version", "job_status", "source_snapshot_id",
+    "parser_release_id", "observed_at", "fields"].includes(key))
+    || v.intake_id !== parent.intake_id || v.intake_version !== parent.version
+    || v.parser_run_id !== selected.parser_run_id || v.parser_run_version !== selected.version
+    || v.source_snapshot_id !== selected.source_snapshot_id || v.parser_release_id !== selected.parser_release_id
+    || v.source_id !== selected.source_id || v.status !== selected.status
+    || !uuid(v.parser_job_id) || !version(v.parser_job_version)
+    || typeof v.job_status !== "string" || !["QUEUED", "RUNNING", "RETRYING", "SUCCEEDED", "FAILED", "CANCELLED"].includes(v.job_status)
+    || !timestamp(v.observed_at) || Date.parse(v.observed_at) < Date.parse(selected.created_at) || !validFields)
+    throw new CanonicalIntakeReadError(200, "CANONICAL_RESPONSE_INVALID", "");
+  return v as CanonicalIntakeParserFields;
 }
 
 const rows = (v: unknown, maximum: number, valid: (row: Record<string, unknown>) => boolean): v is Record<string, unknown>[] =>

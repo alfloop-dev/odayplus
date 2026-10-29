@@ -629,6 +629,8 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
             if field_info_copy.get("masked") is True or field_class is None or clearance < field_class:
                 for value_key in ("parsed", "normalized", "corrected", "effective"):
                     field_info_copy[value_key] = None
+                if "confidence" in field_info_copy:
+                    field_info_copy["confidence"] = None
                 for reason_key in ("correction_reason", "correctionReason"):
                     if reason_key in field_info_copy:
                         field_info_copy[reason_key] = None

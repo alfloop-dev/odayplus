@@ -462,6 +462,46 @@ class CanonicalIntakeDetail(CanonicalIntakeSummary):
     processing_evidence: CanonicalIntakeEvidencePage | None = None
 
 
+class CanonicalParserField(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    correction_id: UUID
+    field_path: Literal["address", "rent", "areaPing", "providerListingId", "floor", "listingType", "listingStatus"]
+    classification: str | None
+    status: Literal["PROPOSED", "APPLIED", "REJECTED", "SUPERSEDED", "REVERSED"]
+    version: int = Field(ge=1, strict=True)
+    identity_affecting: bool
+    proposed_by: UUID
+    created_at: AwareDatetime
+    reviewed_by: UUID | None
+    reviewed_at: AwareDatetime | None
+    parsed: str | int | float | None
+    normalized: str | int | float | None
+    corrected: str | int | float | None
+    confidence: float | None = Field(ge=0, le=1)
+    correction_reason: str | None
+    masked: bool
+    mask_reason_code: Literal["FIELD_MASKED"] | None = None
+
+
+class CanonicalIntakeParserFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    intake_id: UUID
+    intake_version: int = Field(ge=1, strict=True)
+    source_id: str = Field(min_length=1, max_length=256)
+    parser_run_id: UUID
+    parser_run_version: int = Field(ge=1, strict=True)
+    status: Literal["QUEUED", "RUNNING", "SUCCEEDED", "PARTIAL", "FAILED", "CANCELLED"]
+    parser_job_id: UUID
+    parser_job_version: int = Field(ge=1, strict=True)
+    job_status: Literal["QUEUED", "RUNNING", "RETRYING", "SUCCEEDED", "FAILED", "CANCELLED"]
+    source_snapshot_id: UUID
+    parser_release_id: UUID
+    observed_at: AwareDatetime
+    fields: list[CanonicalParserField] = Field(min_length=3, max_length=7)
+
+
 class _IntakeEvidenceCursor(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: Literal[1]
@@ -507,7 +547,7 @@ def _encode_cursor(value: BaseModel) -> str:
 def _evidence_errors():
     try:
         yield
-    except (NativeParserConflict, NativeParserUnavailable):
+    except (NativeParserConflict, NativeParserUnavailable, JobFenceRejectedError):
         raise HTTPException(503, "CANONICAL_INTAKE_EVIDENCE_UNAVAILABLE") from None
     except Exception as error:
         if getattr(error, "sqlstate", None) in {"57014", "55P03"}:
@@ -841,6 +881,31 @@ def create_canonical_intakes_router(store) -> APIRouter:
                 value = history_page(principal, repo, row, intake_version, cursor, page_size)
                 response.headers["Cache-Control"] = "no-store"
                 response.headers["ETag"] = f'W/"{intake_version}"'
+                return value
+
+    @router.get("/canonical-intakes/{intake_id}/parser-runs/{parser_run_id}/fields",
+                operation_id="getCanonicalIntakeParserFields", response_model=CanonicalIntakeParserFields,
+                responses=errors, description="Read the selected run's proven fields and observed correction status; no execution grant.")
+    def parser_fields(intake_id: UUID, parser_run_id: UUID, request: Request, response: Response,
+        intake_version: Annotated[int, Query(ge=1)], parser_run_version: Annotated[int, Query(ge=1)],
+    ):
+        with _http_errors(), _evidence_errors():
+            principal, repo = context(request)
+            flags = read_flag_owner(request, repo)
+            with repo.graph.transaction(principal.tenant_id):
+                before = NativeParserCommandBudget(NativeParserSQLClock(repo.engine))
+                before()
+                row = repo.get(principal.tenant_id, str(intake_id))
+                authorize(request, principal, repo, row, flag_owner=flags)
+                value = repo.parser_fields(row, str(parser_run_id), intake_version=intake_version,
+                    run_version=parser_run_version, before=before)
+                value["fields"] = mask_intake(principal, {"fields": value["fields"]})["fields"]
+                # The shared mask also clears an effective cell. Historical
+                # parser/proposal fields never represent a saved Listing value.
+                for field in value["fields"]:
+                    field.pop("effective", None)
+                before.check_in_memory()
+                response.headers["Cache-Control"] = "no-store"
                 return value
 
     @router.get("/canonical-intakes/submissions/receipt", operation_id="getCanonicalIntakeSubmissionReceipt",

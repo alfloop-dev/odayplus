@@ -31,6 +31,7 @@ class NativeParserAcceptedRecoveryFacts:
     prior: object
     combined: object
     ownership_mode: str
+    original_input: object
 
 
 def accepted_parser_recovery_facts(history, job, run, physical, at, business_lease, *, terminal, before):
@@ -71,7 +72,7 @@ def accepted_parser_recovery_facts(history, job, run, physical, at, business_lea
             raise
         reject()
     before.check_in_memory()
-    return NativeParserAcceptedRecoveryFacts(acceptance, prior, combined, mode)
+    return NativeParserAcceptedRecoveryFacts(acceptance, prior, combined, mode, original)
 
 
 def require_terminal_recovery(receipt, proof):

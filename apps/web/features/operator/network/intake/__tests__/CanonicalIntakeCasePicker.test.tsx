@@ -786,6 +786,20 @@ describe("canonical confirmation and independent review in the existing picker",
     expect(screen.getByText(/此回執不代表解析或比對已完成/)).toBeVisible();
   });
 
+  it("mounts the real manual entry before the single lineage region and original identity owner", async () => {
+    const context = entryContext("AWAITING_ASSISTED_ENTRY", () => { throw new Error("No command was submitted"); });
+    render(<CanonicalIntakeCasePicker context={context} />); open();
+    await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);
+    await screen.findByTestId("assisted-address");
+    const root = screen.getByTestId("canonical-intake-case-picker");
+    const sections = [...root.querySelectorAll<HTMLElement>("[data-intake-section]")].map((node) => node.dataset.intakeSection);
+    const positions = ["source", "error", "lineage", "identity"].map((key) => sections.indexOf(key));
+    expect(positions.every((position, i) => position >= 0 && (i === 0 || position > positions[i - 1]!))).toBe(true);
+    expect(root.querySelectorAll('[data-intake-section="lineage"]')).toHaveLength(1);
+    expect(context.fetchImpl).toHaveBeenCalledTimes(3); // List plus the original two selected-detail GETs.
+    expect(posts(context)).toHaveLength(0);
+  });
+
   it("offers no manual form while waiting for source authorization", async () => {
     const context = entryContext("AWAITING_SOURCE_AUTHORIZATION", () => { throw new Error("No request permitted"); });
     render(<CanonicalIntakeCasePicker context={context} />); open(); await screen.findByRole("button", { name: new RegExp(id(1)) }); await select(1);

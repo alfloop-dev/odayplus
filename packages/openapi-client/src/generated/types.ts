@@ -617,6 +617,23 @@ export type CanonicalIntakePage = {
   next_cursor: string | null;
 };
 
+/** CanonicalIntakeParserFields */
+export type CanonicalIntakeParserFields = {
+  fields: CanonicalParserField[];
+  intake_id: string;
+  intake_version: number;
+  job_status: "QUEUED" | "RUNNING" | "RETRYING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+  observed_at: string;
+  parser_job_id: string;
+  parser_job_version: number;
+  parser_release_id: string;
+  parser_run_id: string;
+  parser_run_version: number;
+  source_id: string;
+  source_snapshot_id: string;
+  status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIAL" | "FAILED" | "CANCELLED";
+};
+
 /** CanonicalIntakeParserRunMetadata */
 export type CanonicalIntakeParserRunMetadata = {
   completed_at: string | null;
@@ -814,6 +831,27 @@ export type CanonicalMatchCasePropertyPage = {
   intake_version: number;
   items: CanonicalMatchCasePropertyOption[];
   next_cursor: string | null;
+};
+
+/** CanonicalParserField */
+export type CanonicalParserField = {
+  classification: string | null;
+  confidence: number | null;
+  corrected: string | number | null;
+  correction_id: string;
+  correction_reason: string | null;
+  created_at: string;
+  field_path: "address" | "rent" | "areaPing" | "providerListingId" | "floor" | "listingType" | "listingStatus";
+  identity_affecting: boolean;
+  mask_reason_code?: "FIELD_MASKED" | null;
+  masked: boolean;
+  normalized: string | number | null;
+  parsed: string | number | null;
+  proposed_by: string;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+  status: "PROPOSED" | "APPLIED" | "REJECTED" | "SUPERSEDED" | "REVERSED";
+  version: number;
 };
 
 /** CanonicalPersistedListingField */
@@ -3258,6 +3296,7 @@ export const API_PATHS = {
   "/api/v1/canonical-intakes/{intake_id}/assisted-entry-completions/receipt": ["GET"],
   "/api/v1/canonical-intakes/{intake_id}/assisted-entry-completions/{request_id}/cancel": ["POST"],
   "/api/v1/canonical-intakes/{intake_id}/cancel": ["POST"],
+  "/api/v1/canonical-intakes/{intake_id}/parser-runs/{parser_run_id}/fields": ["GET"],
   "/api/v1/canonical-intakes/{intake_id}/processing-evidence": ["GET"],
   "/api/v1/canonical-intakes/{intake_id}/processing-history": ["GET"],
   "/api/v1/canonical-intakes/{intake_id}/source-policy-rechecks": ["POST"],

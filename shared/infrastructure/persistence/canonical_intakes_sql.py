@@ -10,7 +10,7 @@ from modules.listing.application.intake_workflow_bootstrap import (
     initialize_intake_workflow,
     schedule_from_record,
 )
-from modules.listing.domain.identity_graph import IdentityConflictError
+from modules.listing.domain.identity_graph import IdentityConflictError, IdentityNotFoundError
 from modules.listing.domain.intake_states import (
     Actor,
     IntakeAggregate,
@@ -109,6 +109,70 @@ class CanonicalIntakeRepository:
             records.sort(key=lambda item: (_time(item["recorded_at"]), 0 if item["kind"] == "SNAPSHOT" else 1,
                 item["metadata"]["source_snapshot_id" if item["kind"] == "SNAPSHOT" else "parser_run_id"]), reverse=backward)
             return records[:limit]
+
+    def parser_fields(self, intake, run_id, *, intake_version, run_version, before):
+        """Read the selected actual run through its original complete proof.
+
+        The caller first authorizes current HTTP view access and retains this
+        same tenant SQL root. Recorded history never authorizes an action or
+        supplies a saved Listing value.
+        """
+        from modules.listing.application.native_intake_parser_history import (
+            NativeParserTerminalHistory,
+        )
+        from modules.listing.application.native_intake_parser_input import (
+            NativeParserManualInputReader,
+        )
+        from modules.listing.application.native_intake_parser_job_proof import (
+            parser_delivery_identity,
+        )
+        from modules.listing.application.native_intake_parser_policy import (
+            JOB_TYPE,
+            NativeParserConflict,
+        )
+        from modules.listing.application.native_intake_parser_runs import (
+            CanonicalNativeParserRunRepository,
+        )
+
+        tenant, intake_id = intake["tenant_id"], intake["intake_id"]
+        if intake["version"] != intake_version:
+            raise IdentityConflictError("CANONICAL_INTAKE_VERSION_CONFLICT")
+        metadata = CanonicalNativeParserRunRepository(self.engine).metadata_for_intake(
+            tenant, intake_id, run_id, before=before)
+        if metadata is None:
+            raise IdentityNotFoundError("Canonical parser run not found")
+        if metadata["source_id"] != intake["source_id"]:
+            raise NativeParserConflict("NATIVE_PARSER_FIELD_LINEAGE_UNAVAILABLE")
+        if metadata["version"] != run_version:
+            raise IdentityConflictError("CANONICAL_PARSER_RUN_VERSION_CONFLICT")
+        before()
+        jobs = self.engine.query("SELECT job_id,status,version FROM workflow.jobs WHERE tenant_id=? "
+            "AND job_type=? AND aggregate_type='parser_run' AND aggregate_id=? LIMIT 2", (tenant, JOB_TYPE, run_id))
+        if len(jobs) != 1:
+            raise NativeParserConflict("NATIVE_PARSER_FIELD_LINEAGE_UNAVAILABLE")
+        before()
+        delivery = self.graph.queue.get(jobs[0]["job_id"])
+        if delivery is None:
+            raise NativeParserConflict("NATIVE_PARSER_FIELD_LINEAGE_UNAVAILABLE")
+        actual_tenant, generation = parser_delivery_identity(delivery)
+        if actual_tenant != tenant:
+            raise NativeParserConflict("NATIVE_PARSER_FIELD_LINEAGE_UNAVAILABLE")
+        _, original, run = NativeParserTerminalHistory(self.graph).read_with_parent_input(
+            delivery, tenant, generation, before=before)
+        if (run["parser_run_id"] != run_id or run["version"] != run_version
+                or run["intake_id"] != intake_id or run["source_snapshot_id"] != metadata["source_snapshot_id"]
+                or original.lineage.source_id != intake["source_id"]):
+            raise NativeParserConflict("NATIVE_PARSER_FIELD_LINEAGE_UNAVAILABLE")
+        _, fields = NativeParserManualInputReader(self.graph).field_projection(
+            original, run, before=before, include_observations=True)
+        before()
+        observed = self.engine.query_one("SELECT clock_timestamp() AS now")["now"]
+        before.check_in_memory()
+        return {"intake_id": intake_id, "intake_version": intake_version, "source_id": intake["source_id"],
+            "parser_run_id": run_id, "parser_run_version": run_version, "status": run["status"],
+            "parser_job_id": jobs[0]["job_id"], "parser_job_version": jobs[0]["version"],
+            "job_status": jobs[0]["status"], "source_snapshot_id": run["source_snapshot_id"],
+            "parser_release_id": run["parser_release_id"], "observed_at": observed, "fields": fields}
 
     def workflow(self, tenant: str, intake_id: str) -> dict | None:
         """Read recorded workflow facts after the caller authorizes its Intake.

@@ -159,6 +159,7 @@ class NativeParserPreparedRetryFacts:
     acceptance: dict
     prior: object
     combined: object
+    original_input: object
 
 
 def prepared_parser_retry_facts(history, job, run, physical, *, before):
@@ -177,7 +178,7 @@ def prepared_parser_retry_facts(history, job, run, physical, *, before):
     combined = combine_closed_parser_journals((*prior.journals, current), payload["attempt_intents"], before=before)
     require_closed_slots(history.engine, combined, before)
     before.check_in_memory()
-    return NativeParserPreparedRetryFacts(receipt, acceptance, prior, combined)
+    return NativeParserPreparedRetryFacts(receipt, acceptance, prior, combined, original)
 
 
 def require_prepared_parser_retry_state(history, job, run, physical, facts, *, before):
@@ -219,7 +220,8 @@ def require_prepared_parser_retry_state(history, job, run, physical, facts, *, b
     return NativeParserPreparedRetry(run["parser_run_id"], canonical_sha256(receipt), canonical_json(receipt))
 
 
-def read_prepared_parser_retry(history, job, run, physical, *, before):
+def read_prepared_parser_retry(history, job, run, physical, *, before, with_parent_input=False):
     """Prove a queued/claimed prepared retry without restoring positive grants."""
     facts = prepared_parser_retry_facts(history, job, run, physical, before=before)
-    return require_prepared_parser_retry_state(history, job, run, physical, facts, before=before)
+    prepared = require_prepared_parser_retry_state(history, job, run, physical, facts, before=before)
+    return (prepared, facts.original_input, run) if with_parent_input else prepared

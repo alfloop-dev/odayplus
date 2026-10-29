@@ -151,3 +151,43 @@ class NativeParserManualInputReader:
         source, classified = self.source.current_manual_source(intake, before=before)
         getattr(before, "check_in_memory", before)()
         return principal, source, classified
+
+    def field_projection(self, original: NativeParserManualInput, run, *, before, include_observations=False):
+        """Project this invocation's proven immutable proposals and live status.
+
+        Callers first run the complete parser/manual history in this same SQL
+        snapshot. This projection does not prove history or grant current
+        action authority, and never supplies an effective Listing value.
+        """
+        if (type(original) is not NativeParserManualInput or type(run) is not dict
+                or run["tenant_id"] != original.lineage.tenant_id
+                or run["intake_id"] != original.lineage.intake_id
+                or run["source_snapshot_id"] != original.snapshot()["source_snapshot_id"]):
+            _reject()
+        from modules.listing.application.native_intake_parser_prerequisites import (
+            assert_native_parser_root,
+        )
+
+        assert_native_parser_root(self.engine, original.lineage.tenant_id, before,
+            rejection_code="NATIVE_PARSER_MANUAL_INPUT_REJECTED")
+        parsed = {} if run["parsed_payload"] is None else _object(run["parsed_payload"])
+        normalized = {} if run["normalized_payload"] is None else _object(run["normalized_payload"])
+        confidence = _object(run["field_confidence"])
+        before()
+        corrections = self.engine.query(
+            "SELECT correction_id,field_path,field_classification,status,version,identity_affecting,proposed_by,"
+            "corrected_value::text AS corrected_json,reason,created_at,reviewed_by,reviewed_at "
+            "FROM intake.human_corrections WHERE tenant_id=? AND intake_id=? AND correction_id=ANY(?::uuid[]) "
+            "ORDER BY field_path", (original.lineage.tenant_id, original.lineage.intake_id,
+                [identity for _, identity in original.lineage.correction_ids]))
+        fields = [{"correction_id": row["correction_id"], "field_path": row["field_path"],
+            "classification": row["field_classification"], "status": row["status"], "version": row["version"],
+            "proposed_by": row["proposed_by"], "identity_affecting": row["identity_affecting"],
+            "parsed": parsed.get(row["field_path"]), "normalized": normalized.get(row["field_path"]),
+            "corrected": json.loads(row["corrected_json"]),
+            **({"correction_reason": row["reason"], "created_at": row["created_at"],
+                "reviewed_by": row["reviewed_by"], "reviewed_at": row["reviewed_at"],
+                "confidence": confidence.get(row["field_path"]), "masked": False} if include_observations else {})}
+            for row in corrections]
+        before.check_in_memory()
+        return normalized, fields

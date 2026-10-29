@@ -113,6 +113,237 @@ def _human_new_case(completed):
         contradictory_signals=[], reason="Explicit synthetic human proposal, awaiting confirmation", outcome="NEW")
 
 
+@pytest.fixture
+def parser_fields_api(case_api, monkeypatch):
+    from apps.api.app.routes import canonical_intakes
+
+    client, caller, _ = case_api
+    monkeypatch.setattr(canonical_intakes, "principal_from_headers", lambda _: caller["principal"])
+    return client, caller
+
+
+def _parser_fields_get(api, result, **overrides):
+    return api[0].get(f"/api/v1/canonical-intakes/{result['intake_id']}/parser-runs/{result['parser_run_id']}/fields",
+        params={"intake_version": result["version"], "parser_run_version": result["run_version"], **overrides})
+
+
+@pytest.mark.parametrize("parser_evidence_fields,status", [(None, "SUCCEEDED"), ("partial", "PARTIAL")],
+    indirect=["parser_evidence_fields"])
+@pytest.mark.parametrize("clearance,masked", [("PUBLIC", True), ("INTERNAL", False)])
+def test_parser_fields_HTTP_returns_actual_history_with_current_classification_mask(
+        completed_parser, parser_fields_api, clearance, masked, status):
+    from shared.auth import DataClassification
+
+    case, _, observed, result = completed_parser
+    client, caller = parser_fields_api
+    caller["principal"] = replace(caller["principal"], scope=replace(caller["principal"].scope,
+        clearance=DataClassification[clearance]))
+    before = persisted(case)
+    response = _parser_fields_get(parser_fields_api, result)
+    assert response.status_code == 200, response.text
+    value = response.json()
+    assert value["status"] == status and value["job_status"] == "SUCCEEDED"
+    assert value["parser_job_id"] == result["job_id"] and value["source_snapshot_id"] == result["source_snapshot_id"]
+    assert value["intake_version"] == result["version"] and value["parser_run_version"] == result["run_version"]
+    assert response.headers["cache-control"] == "no-store"
+    facts = observed.output.facts.payloads()
+    for field in value["fields"]:
+        assert field["masked"] is masked and field["classification"] == "INTERNAL"
+        assert field["confidence"] is None  # The actual fixed provider supplies none.
+        assert "effective" not in field and field["status"] == "PROPOSED"
+        if masked:
+            assert all(field[key] is None for key in ("parsed", "normalized", "corrected", "correction_reason"))
+            assert field["mask_reason_code"] == "FIELD_MASKED"
+        else:
+            assert field["parsed"] == facts["parsed_payload"].get(field["field_path"])
+            assert field["normalized"] == facts["normalized_payload"].get(field["field_path"])
+            assert field["correction_reason"].startswith("Native assisted-entry proposal v1\n")
+    assert persisted(case) == before
+
+
+def test_parser_fields_HTTP_survives_retired_execution_grants_for_a_current_viewer(
+        completed_parser, parser_fields_api, monkeypatch):
+    case, _, _, result = completed_parser
+    owner, ids, database, _, release, *_ = case
+    parser_fields_api[1]["principal"] = replace(parser_fields_api[1]["principal"], subject_id=ids["reviewer"])
+    retire_all_positive_settings(monkeypatch)
+    owner.artifact_registry = None
+    with database.connect() as connection:
+        connection.execute("UPDATE identity.accounts SET status='disabled' WHERE account_id=%s", (ids["actor"],))
+        connection.execute("UPDATE intake.source_registry SET kill_switch=true WHERE source_id LIKE 'native-parser-%%'")
+        connection.execute("UPDATE intake.parser_releases SET validation_status='DEPRECATED',deprecated_at=clock_timestamp(),"
+            "version=version+1 WHERE parser_release_id=%s", (release,))
+        connection.execute("UPDATE intake.human_corrections SET status='REJECTED',version=version+1,reviewed_by=%s,"
+            "reviewed_at=clock_timestamp() WHERE intake_id=%s", (ids["reviewer"], result["intake_id"]))
+    before = persisted(case)
+    response = _parser_fields_get(parser_fields_api, result)
+    assert response.status_code == 200, response.text
+    assert all(row["status"] == "REJECTED" and row["reviewed_by"] == ids["reviewer"] for row in response.json()["fields"])
+    assert persisted(case) == before
+
+
+@pytest.mark.parametrize("fault,expected", [("intake_version", 409), ("parser_run_version", 409), ("output", 503), ("classification", 503)])
+def test_parser_fields_HTTP_refuses_stale_or_unproven_values(completed_parser, parser_fields_api, fault, expected):
+    case, _, _, result = completed_parser
+    owner, _, database, *_ = case
+    params = {fault: result["version"] + 50} if fault in {"intake_version", "parser_run_version"} else {}
+    if not params:
+        with database.connect() as connection:
+            if fault == "output":
+                connection.execute("UPDATE intake.parser_runs SET normalized_payload=normalized_payload || '{\"rent\":1}'::jsonb "
+                    "WHERE parser_run_id=%s", (result["parser_run_id"],))
+            else:
+                connection.execute("UPDATE intake.human_corrections SET field_classification='PUBLIC' WHERE intake_id=%s",
+                    (result["intake_id"],))
+    before = persisted(case)
+    response = _parser_fields_get(parser_fields_api, result, **params)
+    assert response.status_code == expected, response.text
+    assert "fields" not in response.json() and "corrected" not in response.text
+    assert persisted(case) == before
+
+
+@pytest.mark.parametrize("damage", ["manual_request_envelope", "installed_schema_unavailable"])
+def test_parser_fields_HTTP_normalizes_known_historical_proof_failures(
+        completed_parser, parser_fields_api, monkeypatch, damage):
+    from fastapi.testclient import TestClient
+
+    from modules.external_data.application import native_parser_output
+    from modules.external_data.application.native_parser_artifacts import (
+        NativeParserArtifactUnavailable,
+    )
+
+    case, delivery, _, result = completed_parser
+    owner, ids, database, *_ = case
+    if damage == "manual_request_envelope":
+        with database.connect() as connection:
+            request_id = connection.execute("SELECT p.payload->>'request_id' FROM workflow.jobs j "
+                "JOIN workflow.jobs p ON p.tenant_id=j.tenant_id "
+                "AND p.job_id=(j.payload->'admission'->'binding'->'original_input'->>'parent_job_id')::uuid "
+                "WHERE j.tenant_id=%s AND j.job_id=%s", (ids["tenant"], delivery.job_id)).fetchone()[0]
+            assert connection.execute("UPDATE workflow.outbox_events SET payload=jsonb_set(payload,"
+                "'{producer}','\"synthetic-invalid-original-producer\"'::jsonb) WHERE tenant_id=%s AND event_id=%s",
+                (ids["tenant"], request_id)).rowcount == 1
+    else:
+        def unavailable(*args, **kwargs):
+            raise NativeParserArtifactUnavailable("SYNTHETIC_INSTALLED_SCHEMA_UNAVAILABLE")
+
+        monkeypatch.setattr(native_parser_output, "_read_regular", unavailable)
+    before = persisted(case)
+    # Observe the real HTTP 500 boundary, rather than letting TestClient raise
+    # an unhandled application exception into this test process.
+    with TestClient(parser_fields_api[0].app, raise_server_exceptions=False) as client:
+        response = _parser_fields_get((client, parser_fields_api[1]), result)
+    assert response.status_code == 503, response.text
+    assert response.json() == {"detail": "CANONICAL_INTAKE_EVIDENCE_UNAVAILABLE"}
+    assert persisted(case) == before
+
+
+@pytest.mark.parametrize("fault,expected", [("anonymous", 401), ("admin", 403), ("tenant", 404), ("scope", 403),
+    ("flag_disabled", 403), ("flag_owner", 503), ("unknown_run", 404)])
+def test_parser_fields_HTTP_checks_current_view_before_private_history(
+        completed_parser, parser_fields_api, monkeypatch, fault, expected):
+    from shared.auth import Role
+
+    case, _, _, result = completed_parser
+    client, caller = parser_fields_api
+    principal = caller["principal"]
+    if fault == "anonymous":
+        caller["principal"] = replace(principal, authenticated=False)
+    elif fault == "admin":
+        caller["principal"] = replace(principal, roles=frozenset({Role.PLATFORM_ADMIN}))
+    elif fault == "tenant":
+        caller["principal"] = replace(principal, scope=replace(principal.scope, tenant_id=str(uuid4())))
+    elif fault == "scope":
+        caller["principal"] = replace(principal, scope=replace(principal.scope, brand_ids=frozenset({str(uuid4())})))
+    elif fault == "flag_disabled":
+        from shared.infrastructure.persistence.audit_log import DurableAuditLog
+
+        case[0].queue._flags.execute("disable", "assisted_intake_v1_read", actor="synthetic-admin",
+            correlation_id="synthetic-stop-parser-fields", audit_log=DurableAuditLog(case[0].engine))
+    elif fault == "unknown_run":
+        result = {**result, "parser_run_id": str(uuid4())}
+    else:
+        monkeypatch.setattr(client.app.state.persistence_bundle, "feature_flag_registry", None)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Private parser history was read before current view authorization")
+
+    monkeypatch.setattr(NativeParserTerminalHistory, "read_with_parent_input", forbidden)
+    before = persisted(case)
+    response = _parser_fields_get(parser_fields_api, result)
+    assert response.status_code == expected, response.text
+    assert "fields" not in response.json()
+    assert persisted(case) == before
+
+
+def _parser_fields_reference(api, intake_id, run_id):
+    response = api[0].get(f"/api/v1/canonical-intakes/{intake_id}",
+        params={"include_source": "true", "include_evidence": "true"})
+    assert response.status_code == 200, response.text
+    parent = response.json()
+    run = next(item["metadata"] for item in parent["processing_evidence"]["items"]
+        if item["kind"] == "PARSER_RUN" and item["metadata"]["parser_run_id"] == run_id)
+    return {"intake_id": intake_id, "version": parent["version"], "parser_run_id": run_id, "run_version": run["version"]}
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_parser_fields_HTTP_reads_real_initial_queue_and_cancellation(
+        parser_admission_case, parser_fields_api, monkeypatch, cancel):
+    from tests.integration.test_native_intake_parser_unavailable_postgresql import withdraw
+
+    case = parser_admission_case
+    receipt, delivery = claimed(case)
+    if cancel:
+        withdraw(case, "key", monkeypatch)
+        case[0].cancel_unaccepted(delivery)
+    reference = _parser_fields_reference(parser_fields_api, case[3]["intake_id"], receipt["parser_run_id"])
+    before = persisted(case)
+    response = _parser_fields_get(parser_fields_api, reference)
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == ("CANCELLED" if cancel else "QUEUED")
+    assert all(row["parsed"] is row["normalized"] is row["confidence"] is None for row in response.json()["fields"])
+    assert all(row["corrected"] is not None for row in response.json()["fields"])
+    with case[0].graph.transaction(case[1]["tenant"]):
+        with pytest.raises(NativeParserConflict, match="^NATIVE_PARSER_TERMINAL_PROOF_REJECTED$"):
+            NativeParserTerminalHistory(case[0].graph).read_positive_with_parent_input(
+                delivery, case[1]["tenant"], 1, before=NativeParserCommandBudget(case[0].clock))
+    assert persisted(case) == before
+
+
+@pytest.mark.parametrize("phase", ["RUNNING", "RETRYING", "UNAVAILABLE", "PERMANENT"])
+def test_parser_fields_HTTP_reads_actual_accepted_attempts_without_positive_grants(
+        parser_io_case, parser_fields_api, monkeypatch, phase):
+    from tests.integration.test_native_intake_parser_permanent_postgresql import observe_error
+    from tests.integration.test_native_intake_parser_retry_postgresql import transient
+    from tests.integration.test_native_intake_parser_unavailable_postgresql import withdraw
+
+    case, io, leases, delivery = parser_io_case
+    if phase == "RETRYING":
+        transient(io, monkeypatch)
+        case[0].prepare_retry(delivery, leases=leases)
+    elif phase == "UNAVAILABLE":
+        withdraw(case, "key", monkeypatch)
+        case[0].settle_unavailable(delivery, business_fence=leases.business_fence, leases=leases)
+    elif phase == "PERMANENT":
+        observe_error(io, monkeypatch)
+        case[0].settle_permanent(delivery, leases=leases)
+    with case[0].graph.transaction(case[1]["tenant"]):
+        run_id = case[0].engine.query_one("SELECT aggregate_id FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
+            (case[1]["tenant"], delivery.job_id))["aggregate_id"]
+    reference = _parser_fields_reference(parser_fields_api, case[3]["intake_id"], run_id)
+    before = persisted(case)
+    response = _parser_fields_get(parser_fields_api, reference)
+    assert response.status_code == 200, response.text
+    assert response.json()["job_status"] == ("FAILED" if phase in {"UNAVAILABLE", "PERMANENT"} else phase)
+    assert all(row["parsed"] is row["normalized"] is row["confidence"] is None for row in response.json()["fields"])
+    assert all(row["corrected"] is not None for row in response.json()["fields"])
+    with case[0].graph.transaction(case[1]["tenant"]):
+        with pytest.raises(NativeParserConflict, match="^NATIVE_PARSER_TERMINAL_PROOF_REJECTED$"):
+            NativeParserTerminalHistory(case[0].graph).read_positive_with_parent_input(
+                delivery, case[1]["tenant"], 1, before=NativeParserCommandBudget(case[0].clock))
+    assert persisted(case) == before
+
+
 def test_listing_context_reuses_actual_terminal_proof_without_reviewing_fields(completed_parser, case_api):
     case, _, _, result = completed_parser
     owner, ids, database, _, _, _, _ = case

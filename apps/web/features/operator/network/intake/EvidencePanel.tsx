@@ -1,8 +1,8 @@
 "use client";
 
-import type { AssistedIntake, AuditReference, CanonicalIntakeDetail, CanonicalIntakeEvidencePage, FieldValue } from "@oday-plus/openapi-client";
+import type { AssistedIntake, AuditReference, CanonicalIntakeDetail, CanonicalIntakeEvidencePage, CanonicalIntakeParserRunMetadata, FieldValue } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
-import { policyLabel, policyTone } from "./intakeTypes";
+import { INTAKE_LINEAGE_GROUPS, hasLowLineageConfidence, intakeLineageGroup, policyLabel, policyTone } from "./intakeTypes";
 import { readCanonicalIntakeEvidence, type CanonicalIntakeReadContext } from "./canonicalIntakeReadClient";
 import { CanonicalIntakeFailure } from "./CanonicalIdentityDecisionPanel";
 import { useCanonicalIntakeReadPage, type CanonicalIntakePageLoader } from "./useCanonicalIntakeReadPage";
@@ -16,7 +16,8 @@ type AssistedEvidencePanelProps = {
   testId?: string;
   section?: "source" | "lineage";
 };
-type NativeEvidencePanelProps = { canonical: CanonicalIntakeDetail; context: CanonicalIntakeReadContext };
+type NativeEvidencePanelProps = { canonical: CanonicalIntakeDetail; context: CanonicalIntakeReadContext;
+  onSelectParserRun?: (run: CanonicalIntakeParserRunMetadata) => void; selectedParserRunId?: string; busy?: boolean };
 export type EvidencePanelProps = AssistedEvidencePanelProps | NativeEvidencePanelProps;
 
 export function EvidencePanel(props: EvidencePanelProps) {
@@ -26,7 +27,7 @@ export function EvidencePanel(props: EvidencePanelProps) {
 const loadEvidencePage: CanonicalIntakePageLoader<CanonicalIntakeEvidencePage> = (context, parent, cursor, signal, initial) =>
   readCanonicalIntakeEvidence(context, parent, cursor, initial.through_at, signal);
 
-function NativeEvidencePanel({ canonical, context }: NativeEvidencePanelProps) {
+function NativeEvidencePanel({ canonical, context, onSelectParserRun, selectedParserRunId, busy: commandBusy }: NativeEvidencePanelProps) {
   const { page, busy, error, selectCursor } = useCanonicalIntakeReadPage(context, canonical,
     canonical.processing_evidence ?? null, loadEvidencePage);
   const source = canonical.source_info;
@@ -70,6 +71,9 @@ function NativeEvidencePanel({ canonical, context }: NativeEvidencePanelProps) {
             <div className={styles.metaGrid}>{rows.map(([label, value]) => <div key={String(label)}>
               <span className={styles.metaCaption}>{label}</span><div className={styles.metaValue}>{available(value)}</div>
             </div>)}</div>
+            {item.kind === "PARSER_RUN" && onSelectParserRun ? <button className={styles.secondaryButton}
+              type="button" disabled={commandBusy} aria-pressed={selectedParserRunId === item.metadata.parser_run_id}
+              onClick={() => onSelectParserRun(item.metadata)}>檢視此解析紀錄的欄位</button> : null}
           </article>;
         }) : <p>目前沒有已保存的快照或解析紀錄。</p>}
         <div className={styles.timelineActions}>
@@ -150,7 +154,7 @@ function AssistedEvidencePanel({
     );
   }
 
-  const groups = ["identity", "location", "commercial", "property", "provenance"] as const;
+  const groups = INTAKE_LINEAGE_GROUPS;
   return (
     <section className={styles.sectionBox} data-testid={`${testId}-lineage`}>
       <div className={styles.sectionHead}>解析、正規化與修正值 PARSED DATA LINEAGE</div>
@@ -221,11 +225,11 @@ function buildLineageRows(record: AssistedIntake, fields?: FieldValue[]): Lineag
       normalized: field.normalized,
       corrected: (field as FieldValue & { corrected?: unknown }).corrected,
       correctionReason: (field as FieldValue & { correction_reason?: string | null }).correction_reason ?? null,
-      lowConfidence: field.confidence !== undefined && field.confidence !== null && field.confidence < 0.5,
+      lowConfidence: hasLowLineageConfidence(field.confidence),
       missing: !hasValue(field.parsed) && !hasValue(field.normalized),
       masked: field.masked === true,
       classification: field.classification ?? UNAVAILABLE,
-      group: groupFor(field.field_path, false),
+      group: intakeLineageGroup(field.field_path, false),
     }));
   }
   return Object.values(record.parsedFields ?? {}).map((field) => ({
@@ -239,17 +243,8 @@ function buildLineageRows(record: AssistedIntake, fields?: FieldValue[]): Lineag
     missing: !hasValue(field.sourceValue) && !hasValue(field.normalizedValue) && !hasValue(field.correctedValue),
     masked: field.masked === true,
     classification: (field as typeof field & { classification?: string }).classification ?? UNAVAILABLE,
-    group: groupFor(field.key, field.identity),
+    group: intakeLineageGroup(field.key, field.identity),
   }));
-}
-
-function groupFor(key: string, identity: boolean): LineageRow["group"] {
-  const normalized = key.toLowerCase();
-  if (identity) return "identity";
-  if (normalized.includes("address") || normalized.includes("district") || normalized.includes("city")) return "location";
-  if (normalized.includes("rent") || normalized.includes("price") || normalized.includes("deposit")) return "commercial";
-  if (normalized.includes("area") || normalized.includes("floor") || normalized.includes("type")) return "property";
-  return "provenance";
 }
 
 function hasValue(value: unknown): boolean {

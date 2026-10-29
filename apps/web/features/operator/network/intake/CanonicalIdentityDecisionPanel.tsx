@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import type { CandidateDispositionRequest, CanonicalIdentityPlanningContext, CanonicalIdentityReceipt, CanonicalIdentitySummary, CanonicalIntakeSummary, ListingPlan, MatchCaseSummary, MergePlan, SplitPlan } from "@oday-plus/openapi-client";
+import type { CandidateDispositionRequest, CanonicalIdentityPlanningContext, CanonicalIdentityReceipt, CanonicalIdentitySummary, CanonicalIntakeSummary, CanonicalListingInputField, CanonicalParserField, ListingPlan, MatchCaseSummary, MergePlan, SplitPlan } from "@oday-plus/openapi-client";
 import {
   CanonicalIntakeReadError, readCanonicalIdentityContext, readCanonicalIdentityDecision, readCanonicalIdentityReceipt, submitCanonicalIdentity,
   type CanonicalIdentityCommand, type CanonicalIntakeReadContext, type CanonicalListingProposal,
@@ -9,6 +9,7 @@ import {
 import styles from "./intake.module.css";
 import { useCanonicalIntakeCommand } from "./useCanonicalIntakeCommand";
 import { CanonicalMatchCaseCreation } from "./CanonicalMatchCaseCreation";
+import { INTAKE_LINEAGE_GROUPS, hasLowLineageConfidence, intakeLineageGroup } from "./intakeTypes";
 
 type Load<T> = { status: "loading" } | { status: "ready"; value: T } | { status: "error"; error: unknown };
 type Kind = CanonicalListingProposal["decision_type"];
@@ -217,7 +218,7 @@ function PlanningForm({ context, selected }: {
   return <>
     <p>收件版本 {observed.intake_version} · 案件版本 {observed.match_case_version}</p>
     <p>補錄核准有效至 {new Date(input.manual_entry_valid_until).toLocaleString("zh-TW")}</p>
-    <InputFields input={input} />
+    <CanonicalInputFields fields={input.fields} />
     {!eligible ? <p role="alert">欄位被遮罩、已變更或補錄核准已過期，無法確認；請重新讀取案件。</p> : null}
     <label className={styles.fieldLabel}>確認方式<select className={styles.select} disabled={locked} value={kind}
       onChange={(event) => { setKind(event.target.value as Kind | ""); setListingId(""); }}>
@@ -288,7 +289,7 @@ function RecordedDecision({ context, selected, decisionId }: {
       {action === "APPROVE" && decision.decision_type === "DUPLICATE" ? <>
         {sourceRead?.status === "loading" ? <p role="status">正在讀取覆核所需的補錄內容…</p>
           : sourceRead?.status === "error" ? <CanonicalIntakeFailure error={sourceRead.error} />
-            : input ? <InputFields input={input} /> : null}
+            : input ? <CanonicalInputFields fields={input.fields} /> : null}
         {sourceRead?.status === "ready" && !currentInput ? <p role="alert">補錄內容被遮罩、已變更或已過期，無法核准；仍可選擇拒絕提案。</p> : null}
       </> : null}
       <CommandForm context={context} prepare={prepare} onLock={() => setLocked(true)} selectionKey={action}
@@ -299,13 +300,42 @@ function RecordedDecision({ context, selected, decisionId }: {
   </>;
 }
 
-function InputFields({ input }: { input: ListingInput }) {
-  return <table className={styles.compareGrid} aria-label="本次確認的補錄欄位"><thead><tr><th>欄位</th><th>解析值</th><th>標準值</th><th>人工值</th><th>版本／狀態</th></tr></thead>
-    <tbody>{input.fields.map((field) => <tr key={field.correction_id}>
-      <th scope="row">{field.field_path} · {field.classification}</th>
-      {[field.parsed, field.normalized, field.corrected].map((value, index) => <td className={styles.summaryValue} key={index}>{field.masked ? "無權檢視" : value === null ? "未提供" : String(value)}</td>)}
-      <td>{field.version} · {field.status}</td>
-    </tr>)}</tbody></table>;
+export function CanonicalInputFields({ fields, observations = false, label = "本次確認的補錄欄位" }: {
+  fields: ReadonlyArray<CanonicalListingInputField | CanonicalParserField>; observations?: boolean; label?: string;
+}) {
+  const groups = observations ? INTAKE_LINEAGE_GROUPS : [null];
+  return <>{groups.map((group) => {
+    const members = group === null ? fields : fields.filter((field) =>
+      intakeLineageGroup(field.field_path, field.field_path === "providerListingId") === group);
+    if (!members.length) return null;
+    return <div key={group ?? "input"} data-testid={group ? `native-lineage-group-${group}` : undefined}>
+      {group ? <h4 className={styles.lineageGroupTitle}>{group.toUpperCase()}</h4> : null}
+      <table className={observations ? styles.lineageGrid : styles.compareGrid} aria-label={group ? `${label} ${group}` : label}>
+        <thead><tr>{["欄位", "解析值", "標準值", observations ? "人工值／狀態" : "人工值", ...(!observations ? ["版本／狀態"] : [])].map((heading) =>
+          <th className={observations ? styles.fieldsHeadCell : undefined} scope="col" key={heading}>{heading}</th>)}</tr></thead>
+        <tbody>{members.map((field) => {
+          const status = <>{field.version} · {field.status}
+            {observations && "created_at" in field ? <div className={styles.summaryValue}>
+              <p>提案者 {field.proposed_by} · {field.created_at}</p>
+              <p>覆核紀錄 {field.reviewed_by ?? "未提供"} · {field.reviewed_at ?? "未提供"}</p>
+            </div> : null}
+          </>;
+          return <tr key={field.correction_id}>
+          <th className={observations ? styles.fieldCell : undefined} data-label="欄位" scope="row">{field.field_path} · {field.classification ?? "分類未提供"}</th>
+          {[field.parsed, field.normalized, field.corrected].map((value, index) =>
+            <td className={observations ? styles.fieldCell : styles.summaryValue} data-label={["解析值", "標準值", observations ? "人工值／狀態" : "人工值"][index]} key={index}>
+              <div className={styles.summaryValue}>{field.masked ? "無權檢視" : value === null ? "未提供" : String(value)}</div>
+              {observations && index === 1 && "confidence" in field ? <p>可信度：{field.masked ? "無權檢視" : field.confidence === null ? "未提供" : field.confidence}
+                {!field.masked && hasLowLineageConfidence(field.confidence) ? <span className={styles.lowChip}>⚠ [LOW_CONFIDENCE]</span> : null}
+              </p> : null}
+              {observations && index === 2 && "correction_reason" in field ? <p>修正原因：{field.masked ? "無權檢視" : field.correction_reason ?? "未提供"}</p> : null}
+              {observations && index === 2 ? <div>{status}</div> : null}
+            </td>)}
+          {!observations ? <td data-label="版本／狀態">{status}</td> : null}
+        </tr>; })}</tbody>
+      </table>
+    </div>;
+  })}</>;
 }
 
 function ObservedPlan({ plan }: { plan: CanonicalIdentitySummary["plan"] }) {

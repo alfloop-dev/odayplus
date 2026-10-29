@@ -264,7 +264,7 @@ class NativeParserPermanentSettlement:
             return None
 
 
-def read_permanent_terminal(history, job, run, physical, tenant, generation, *, before):
+def read_permanent_terminal(history, job, run, physical, tenant, generation, *, before, with_parent_input=False):
     """Historical proof only; retired capabilities never become fresh grants."""
     try:
         payload = _object(job["payload"])
@@ -362,7 +362,8 @@ def read_permanent_terminal(history, job, run, physical, tenant, generation, *, 
             payload={"job_id": job["job_id"], "job_type": JOB_TYPE, "checkpoint": "PARSING", "attempt": job["attempt"], "error_code": policy["code"],
                 "dead_lettered_at": at.isoformat(), "last_error_details": {"error_class": receipt["error_class"]}})
         before.check_in_memory()
-        return NativeParserNegativeClosure(run["parser_run_id"], canonical_sha256(receipt))
+        closure = NativeParserNegativeClosure(run["parser_run_id"], canonical_sha256(receipt))
+        return (closure, original, run) if with_parent_input else closure
     except NativeParserConflict:
         raise
     except (ValueError, KeyError, TypeError, AttributeError, OverflowError, JobFenceRejectedError):

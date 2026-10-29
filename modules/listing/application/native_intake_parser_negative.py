@@ -315,7 +315,7 @@ class NativeParserUnavailableSettlement:
             return None
 
 
-def read_unavailable_terminal(history, job, run, physical, tenant, generation, *, before):
+def read_unavailable_terminal(history, job, run, physical, tenant, generation, *, before, with_parent_input=False):
     """Authenticate the whole negative closure without current capability."""
     try:
         payload = _object(job["payload"])
@@ -409,7 +409,8 @@ def read_unavailable_terminal(history, job, run, physical, tenant, generation, *
                 "checkpoint": "PARSING", "attempt": job["attempt"], "error_code": _CODE,
                 "dead_lettered_at": at.isoformat(), "last_error_details": {"error_class": receipt["error_class"]}})
         before.check_in_memory()
-        return NativeParserNegativeClosure(run["parser_run_id"], canonical_sha256(receipt))
+        closure = NativeParserNegativeClosure(run["parser_run_id"], canonical_sha256(receipt))
+        return (closure, original, run) if with_parent_input else closure
     except NativeParserConflict:
         raise
     except (ValueError, KeyError, TypeError, AttributeError, OverflowError):

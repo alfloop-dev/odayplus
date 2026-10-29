@@ -3406,6 +3406,112 @@
         "title": "CanonicalIntakePage",
         "type": "object"
       },
+      "CanonicalIntakeParserFields": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/CanonicalParserField"
+            },
+            "maxItems": 7,
+            "minItems": 3,
+            "title": "Fields",
+            "type": "array"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_version": {
+            "minimum": 1.0,
+            "title": "Intake Version",
+            "type": "integer"
+          },
+          "job_status": {
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "RETRYING",
+              "SUCCEEDED",
+              "FAILED",
+              "CANCELLED"
+            ],
+            "title": "Job Status",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "parser_job_id": {
+            "format": "uuid",
+            "title": "Parser Job Id",
+            "type": "string"
+          },
+          "parser_job_version": {
+            "minimum": 1.0,
+            "title": "Parser Job Version",
+            "type": "integer"
+          },
+          "parser_release_id": {
+            "format": "uuid",
+            "title": "Parser Release Id",
+            "type": "string"
+          },
+          "parser_run_id": {
+            "format": "uuid",
+            "title": "Parser Run Id",
+            "type": "string"
+          },
+          "parser_run_version": {
+            "minimum": 1.0,
+            "title": "Parser Run Version",
+            "type": "integer"
+          },
+          "source_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_snapshot_id": {
+            "format": "uuid",
+            "title": "Source Snapshot Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "SUCCEEDED",
+              "PARTIAL",
+              "FAILED",
+              "CANCELLED"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "intake_id",
+          "intake_version",
+          "source_id",
+          "parser_run_id",
+          "parser_run_version",
+          "status",
+          "parser_job_id",
+          "parser_job_version",
+          "job_status",
+          "source_snapshot_id",
+          "parser_release_id",
+          "observed_at",
+          "fields"
+        ],
+        "title": "CanonicalIntakeParserFields",
+        "type": "object"
+      },
       "CanonicalIntakeParserRunMetadata": {
         "additionalProperties": false,
         "properties": {
@@ -4597,6 +4703,205 @@
           "next_cursor"
         ],
         "title": "CanonicalMatchCasePropertyPage",
+        "type": "object"
+      },
+      "CanonicalParserField": {
+        "additionalProperties": false,
+        "properties": {
+          "classification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classification"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "corrected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrected"
+          },
+          "correction_id": {
+            "format": "uuid",
+            "title": "Correction Id",
+            "type": "string"
+          },
+          "correction_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Reason"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "field_path": {
+            "enum": [
+              "address",
+              "rent",
+              "areaPing",
+              "providerListingId",
+              "floor",
+              "listingType",
+              "listingStatus"
+            ],
+            "title": "Field Path",
+            "type": "string"
+          },
+          "identity_affecting": {
+            "title": "Identity Affecting",
+            "type": "boolean"
+          },
+          "mask_reason_code": {
+            "anyOf": [
+              {
+                "const": "FIELD_MASKED",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mask Reason Code"
+          },
+          "masked": {
+            "title": "Masked",
+            "type": "boolean"
+          },
+          "normalized": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Normalized"
+          },
+          "parsed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parsed"
+          },
+          "proposed_by": {
+            "format": "uuid",
+            "title": "Proposed By",
+            "type": "string"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          },
+          "reviewed_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed By"
+          },
+          "status": {
+            "enum": [
+              "PROPOSED",
+              "APPLIED",
+              "REJECTED",
+              "SUPERSEDED",
+              "REVERSED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "correction_id",
+          "field_path",
+          "classification",
+          "status",
+          "version",
+          "identity_affecting",
+          "proposed_by",
+          "created_at",
+          "reviewed_by",
+          "reviewed_at",
+          "parsed",
+          "normalized",
+          "corrected",
+          "confidence",
+          "correction_reason",
+          "masked"
+        ],
+        "title": "CanonicalParserField",
         "type": "object"
       },
       "CanonicalPersistedListingField": {
@@ -23532,6 +23837,89 @@
           }
         },
         "summary": "Cancel Authorization Wait",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-intakes/{intake_id}/parser-runs/{parser_run_id}/fields": {
+      "get": {
+        "description": "Read the selected run's proven fields and observed correction status; no execution grant.",
+        "operationId": "getCanonicalIntakeParserFields",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "parser_run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Parser Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "intake_version",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Intake Version",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "parser_run_version",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Parser Run Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIntakeParserFields"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Parser Fields",
         "tags": [
           "assisted-listing-intake",
           "assisted-listing-intake"
