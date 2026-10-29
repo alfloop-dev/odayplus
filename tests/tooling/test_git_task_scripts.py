@@ -19,7 +19,12 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GIT_DIR = REPO_ROOT / "delivery_toolchain" / "git"
 
-from delivery_toolchain.git.check_commit_scope import files_outside_scope, validate_scope
+from delivery_toolchain.git.check_commit_scope import (
+    files_outside_scope,
+    net_changed_files,
+    staged_files,
+    validate_scope,
+)
 from delivery_toolchain.git.check_commit_trailers import validate_message
 
 TASK = "ODP-TEST-001"
@@ -105,13 +110,110 @@ def test_scope_reports_every_leak():
     assert leaks == ["apps/api/x.py", "other.txt"]
 
 
-@pytest.mark.parametrize("entry", [".", "*", "-A", "", "/etc/passwd"])
+@pytest.mark.parametrize("entry", [".", "*", "-A", "", "/etc/passwd", "./", "./.", "-name", "./-A", "//etc"])
 def test_validate_scope_rejects_whole_worktree_spellings(entry):
     assert validate_scope([entry])
 
 
+@pytest.mark.parametrize("entry", [" ", "\t", " -name", " .", " lead.txt", "trail ", " /etc", "./owned.txt"])
+def test_validate_scope_accepts_literal_names_that_only_look_forbidden_once_trimmed(entry):
+    # A declared Git name is validated as written, never trimmed into "" or a flag.
+    assert validate_scope([entry]) == []
+
+
+def test_whitespace_and_flag_looking_scope_entries_own_only_their_literal_name():
+    scope = [" ", " -name"]
+    assert files_outside_scope([" ", " -name"], scope) == []
+    assert files_outside_scope(["  ", "\t", "-name", "name", " -name "], scope) == [
+        "\t", "  ", " -name ", "-name", "name",
+    ]
+
+
 def test_validate_scope_rejects_empty_scope():
     assert validate_scope([])
+
+
+@pytest.mark.parametrize(
+    "unowned",
+    [" ", "\t", " owned.txt", "owned.txt ", "owned.txt\r", "docs\\a.md", "docs\\", "owned[1].txt"],
+)
+def test_scope_keeps_real_path_characters(unowned):
+    # A Git name is never trimmed, filtered or rewritten into an owned one.
+    assert files_outside_scope([unowned], ["owned.txt", "docs", "owned1.txt"]) == [unowned]
+
+
+def test_scope_matches_literal_bracket_backslash_and_whitespace_entries():
+    scope = ["a[1].txt", "back\\slash", " lead", "trail "]
+    staged = ["a[1].txt", "back\\slash/x", " lead", "trail "]
+    assert files_outside_scope(staged, scope) == []
+    assert files_outside_scope(["a1.txt", "back/slash/x", "lead", "trail"], scope) == [
+        "a1.txt", "back/slash/x", "lead", "trail",
+    ]
+
+
+ADVERSARIAL_NAMES = [
+    " lead.txt",
+    "trail.txt ",
+    "in ter.txt",
+    "cr\rname.txt",
+    "tab\tname.txt",
+    "back\\slash.txt",
+    "a[1].txt",
+    os.fsdecode(b"raw\xffbyte.txt"),
+]
+
+
+def test_staged_files_reads_real_names_from_the_private_index(repo: Path, tmp_path: Path):
+    for name in [*ADVERSARIAL_NAMES, "a1.txt"]:
+        (repo / name).write_text("x\n", encoding="utf-8")
+    index_file = tmp_path / "private-index"
+    env = {"GIT_INDEX_FILE": str(index_file)}
+    assert run(["git", "read-tree", "HEAD"], repo, env).returncode == 0
+    assert run(["git", "--literal-pathspecs", "add", "--", *ADVERSARIAL_NAMES], repo, env).returncode == 0
+    git(repo, "add", "--", "a1.txt")  # unrelated staging in the primary index
+
+    assert sorted(staged_files(str(repo), str(index_file))) == sorted(ADVERSARIAL_NAMES)
+    assert staged_files(str(repo)) == ["a1.txt"]
+
+
+def git_names(cwd: Path, *args: str) -> list[str]:
+    """A ``-z`` listing read as bytes, so a CR inside a name survives."""
+    out = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, check=True).stdout
+    return [os.fsdecode(p) for p in out.split(b"\0") if p]
+
+
+def _commit_all(repo: Path, message: str) -> str:
+    git(repo, "add", "-A")
+    git(repo, "commit", "--quiet", "-m", message)
+    return git(repo, "rev-parse", "HEAD").stdout.strip()
+
+
+@pytest.mark.parametrize("source,destination", [("owned/x.txt", "other/x.txt"), ("other/x.txt", "owned/x.txt")])
+def test_net_changed_files_reports_both_sides_of_a_rename(repo: Path, source: str, destination: str):
+    (repo / source).parent.mkdir(parents=True, exist_ok=True)
+    (repo / source).write_text("same content\n", encoding="utf-8")
+    base = _commit_all(repo, "add")
+    (repo / destination).parent.mkdir(parents=True, exist_ok=True)
+    git(repo, "mv", source, destination)
+    head = _commit_all(repo, "rename")
+
+    changed = net_changed_files(base, head, cwd=str(repo))
+    assert sorted(changed) == sorted([source, destination])
+    assert files_outside_scope(changed, ["owned"]) == ["other/x.txt"]
+
+
+def test_net_changed_files_keeps_whitespace_cr_and_deletions(repo: Path):
+    (repo / "keep.txt").write_text("k\n", encoding="utf-8")
+    base = _commit_all(repo, "base")
+    for name in ADVERSARIAL_NAMES:
+        (repo / name).write_text("x\n", encoding="utf-8")
+    (repo / " ").write_text("blank name\n", encoding="utf-8")
+    (repo / "keep.txt").unlink()
+    head = _commit_all(repo, "change")
+
+    changed = net_changed_files(base, head, cwd=str(repo))
+    assert sorted(changed) == sorted([*ADVERSARIAL_NAMES, " ", "keep.txt"])
+    assert files_outside_scope(changed, [*ADVERSARIAL_NAMES, "keep.txt"]) == [" "]
 
 
 # --------------------------------------------------------------------------
@@ -310,6 +412,28 @@ def test_worker_commit_uses_the_requested_index_file(repo: Path, tmp_path: Path)
     )
     assert result.returncode == 0, result.stderr
     assert index_file.exists()
+
+
+def test_worker_commit_stages_and_resets_only_the_literal_scope_names(repo: Path, tmp_path: Path):
+    """``a[1].txt`` and ``back\\slash`` are names, not globs matching siblings."""
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    owned = ["a[1].txt", "back\\slash.txt", " lead.txt", "cr\rname.txt"]
+    siblings = ["a1.txt", "backslash.txt", "lead.txt", "crname.txt"]
+    for name in [*owned, *siblings]:
+        (repo / name).write_text("x\n", encoding="utf-8")
+    git(repo, "add", "--", "a1.txt")  # another lane's staging in the primary index
+    msg = write_msg(tmp_path, GOOD_MESSAGE.rstrip("\n") + "\nCross-Dir: yes\n")
+    index_file = tmp_path / "private-index"
+
+    result = worker_commit(
+        repo, "--task-id", TASK, "--message-file", str(msg),
+        "--scope", *owned, "--index-file", str(index_file),
+    )
+    assert result.returncode == 0, result.stderr
+
+    assert sorted(git_names(repo, "show", "-z", "--name-only", "--format=", "HEAD")) == sorted(owned)
+    assert staged_files(str(repo)) == ["a1.txt"]
+    assert sorted(git_names(repo, "ls-files", "-z", "--others")) == sorted(siblings[1:])
 
 
 def test_worker_commit_dry_run_makes_no_commit(repo: Path, tmp_path: Path):

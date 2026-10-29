@@ -7872,6 +7872,50 @@ def review_submission_source_evidence(identity: Any) -> dict[str, Any]:
     }
 
 
+def declared_owned_scope_admission_error(task: dict[str, Any], repository_root: Path, identity: Any) -> str | None:
+    """Refuse a submitted range whose net change leaves the task's declared scope.
+
+    The trusted scope is the task's own canonical ``owned_paths`` -- never the
+    PR body, a worker ``--scope`` or caller-chosen metadata -- and the range is
+    the one ``identity`` already validated. Its net paths are the tree diff
+    from that base's merge-base with the exact head, so neither a base advance
+    nor a merged-in base counts as task work, while a corrective commit that
+    restores the scope admits a range still holding the offending ancestor.
+
+    Only an already-declared nonempty list is enforced. A legacy task with a
+    missing, empty or non-list ``owned_paths`` keeps its preexisting admission:
+    no policy or owner fallback is invented for it here.
+    """
+    from check_commit_scope import files_outside_scope, net_changed_files, validate_scope
+
+    declared = task.get("owned_paths")
+    if not isinstance(declared, list) or not declared:
+        return None
+    if not all(isinstance(entry, str) for entry in declared):
+        return "declared owned_paths must be a list of literal repo-relative path strings"
+    problems = validate_scope(declared)
+    if problems:
+        return "declared owned_paths is not a usable literal scope: " + "; ".join(problems)
+    base_sha = str(getattr(identity, "base_sha", "") or "").strip()
+    head_sha = str(getattr(identity, "head_sha", "") or "").strip()
+    if not base_sha or not head_sha:
+        return "the validated range has no immutable base and head to check owned_paths against"
+    merge_base = run_git_command(["merge-base", base_sha, head_sha], cwd=repository_root, required=False)
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", merge_base):
+        return f"the merge-base of {base_sha[:12]} and {head_sha[:12]} cannot be resolved"
+    try:
+        changed = net_changed_files(merge_base, head_sha, cwd=str(repository_root))
+    except (subprocess.CalledProcessError, OSError) as exc:
+        return f"net changed paths of {merge_base[:12]}..{head_sha[:12]} cannot be read ({exc})"
+    leaks = files_outside_scope(changed, declared)
+    if leaks:
+        return (
+            f"{len(leaks)} net changed path(s) of {merge_base[:12]}..{head_sha[:12]} fall outside the "
+            "declared owned_paths: " + ", ".join(repr(path) for path in leaks)
+        )
+    return None
+
+
 def review_source_independence_block_reason(
     task: dict[str, Any],
     reviewer: str | None,
@@ -8052,6 +8096,9 @@ def review_submission_for_task(
             raise SystemExit(
                 f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
             )
+        scope_error = declared_owned_scope_admission_error(task, repository_root, identity)
+        if scope_error:
+            raise SystemExit(f"Cannot submit {task_id} for review: {scope_error}.")
         return {
             "pr_number": int(pr_number),
             "pr_url": pr_url,
@@ -8131,6 +8178,9 @@ def review_submission_for_task(
             raise SystemExit(
                 f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
             )
+        scope_error = declared_owned_scope_admission_error(task, repository_root, identity)
+        if scope_error:
+            raise SystemExit(f"Cannot submit {task_id} for review: {scope_error}.")
         return {
             "pr_number": int(pr_number),
             "pr_url": pr_url,

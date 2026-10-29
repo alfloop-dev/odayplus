@@ -49,7 +49,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from check_commit_scope import files_outside_scope, normalize, validate_scope  # noqa: E402
+from check_commit_scope import (  # noqa: E402
+    files_outside_scope,
+    normalize,
+    staged_files,
+    validate_scope,
+)
 from check_commit_trailers import validate_message  # noqa: E402
 
 PROTECTED_BRANCHES = {"dev", "main", "master"}
@@ -140,7 +145,7 @@ def commit(
     tracked_missing = []
     for path in missing:
         # A missing path is fine when it is a tracked file this commit deletes.
-        known = _git(["ls-files", "--error-unmatch", "--", path], cwd=root, check=False)
+        known = _git(["--literal-pathspecs", "ls-files", "--error-unmatch", "--", path], cwd=root, check=False)
         if known.returncode != 0:
             tracked_missing.append(path)
     if tracked_missing:
@@ -152,11 +157,12 @@ def commit(
     index_file = index_file or default_index_path(task_id)
     env = seed_private_index(root, index_file)
 
+    # Every pathspec is literal: a scope entry such as ``a[1].txt`` or ``a\b``
+    # names exactly that path, never a glob that stages or resets a sibling.
     for path in scope:
-        _git(["add", "--", normalize(path)], cwd=root, env=env)
+        _git(["--literal-pathspecs", "add", "--", normalize(path)], cwd=root, env=env)
 
-    staged_proc = _git(["diff", "--cached", "--name-only", "-z"], cwd=root, env=env)
-    staged = [p for p in staged_proc.stdout.split("\0") if p]
+    staged = staged_files(str(root), index_file)
 
     if not staged:
         raise CommitRefused(
@@ -188,7 +194,11 @@ def commit(
     # would report them as staged changes. Reset only the paths this task owns;
     # a bare `git reset` here would clobber a concurrent worker's staging, which
     # is the very failure this script exists to prevent.
-    _git(["reset", "--quiet", "HEAD", "--", *[normalize(p) for p in scope]], cwd=root, check=False)
+    _git(
+        ["--literal-pathspecs", "reset", "--quiet", "HEAD", "--", *[normalize(p) for p in scope]],
+        cwd=root,
+        check=False,
+    )
 
     print(f"worker_commit: {sha[:12]} on {branch} ({len(staged)} file(s))")
     for path in staged:

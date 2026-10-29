@@ -3272,6 +3272,264 @@ class SourceAuthorReviewIndependenceTests(unittest.TestCase):
         self.assertEqual(self.task["review_submission"], recovered)
 
 
+class DeclaredOwnedScopeAdmissionTests(unittest.TestCase):
+    """Real synthetic Git: a declared `owned_paths` list bounds the net PR change.
+
+    Codex writes and Claude owns and finalizes, so the source-author rule runs
+    for real on every submission. The trusted scope is the task's own
+    `owned_paths`; the checked paths are the net tree diff from the validated
+    base's merge-base to the exact head.
+    """
+
+    TASK_ID = SourceAuthorReviewIndependenceTests.TASK_ID
+    BRANCH = SourceAuthorReviewIndependenceTests.BRANCH
+    DECLARED = ["app/one.txt", "app/two.txt", "lib"]
+
+    git = SourceAuthorReviewIndependenceTests.git
+    pr = SourceAuthorReviewIndependenceTests.pr
+    repo_patches = SourceAuthorReviewIndependenceTests.repo_patches
+    run_as = SourceAuthorReviewIndependenceTests.run_as
+    assert_refused_without_mutation = SourceAuthorReviewIndependenceTests.assert_refused_without_mutation
+
+    def change(
+        self,
+        subject: str,
+        agent: str = "Codex",
+        *,
+        write: tuple[str, ...] = (),
+        delete: tuple[str, ...] = (),
+        move: tuple[tuple[str, str], ...] = (),
+        restore: tuple[str, ...] = (),
+    ) -> str:
+        for name in write:
+            (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / name).write_text(f"{subject}\n", encoding="utf-8")
+            self.git("--literal-pathspecs", "add", "--", name)
+        for name in delete:
+            self.git("--literal-pathspecs", "rm", "-q", "--", name)
+        for source, destination in move:
+            (self.repo / destination).parent.mkdir(parents=True, exist_ok=True)
+            self.git("--literal-pathspecs", "mv", "--", source, destination)
+        for name in restore:
+            self.git("--literal-pathspecs", "checkout", self.fork, "--", name)
+        self.git(
+            "commit", "-q", "-m",
+            f"{self.TASK_ID}: {subject}\n\nLLM-Agent: {agent}\nTask-ID: {self.TASK_ID}\nReviewer: Codex2\n",
+        )
+        return self.git("rev-parse", "HEAD")
+
+    def advance_dev(self, *names: str) -> str:
+        self.git("checkout", "-q", "dev")
+        for name in names:
+            (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / name).write_text("dev work\n", encoding="utf-8")
+            self.git("add", "--", name)
+        self.git("commit", "-q", "-m", "OTHER-001: unrelated dev work")
+        self.git("update-ref", "refs/remotes/origin/dev", "dev")
+        self.git("checkout", "-q", self.BRANCH)
+        return self.git("rev-parse", "dev")
+
+    def setUp(self) -> None:
+        self.repo = Path(tempfile.mkdtemp(prefix="test-owned-scope-"))
+        self.addCleanup(shutil.rmtree, self.repo, ignore_errors=True)
+        self.git("init", "-q", "-b", "dev")
+        self.git("config", "user.email", "worker@pantheon.local")
+        self.git("config", "user.name", "Worker")
+        for name in ("app/one.txt", "app/two.txt", "lib/core.txt", "privacy/consent.txt", "a[1].txt"):
+            (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / name).write_text("base\n", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "bootstrap")
+        self.fork = self.git("rev-parse", "HEAD")
+        self.git("update-ref", "refs/remotes/origin/dev", "dev")
+        self.git("checkout", "-q", "-b", self.BRANCH)
+        self.state: dict[str, Any] = {
+            "tasks": [
+                {
+                    "id": self.TASK_ID,
+                    "title": "Declared scope, source-authored by Codex, finalized by Claude",
+                    "owner": "Claude",
+                    "reviewer": "Codex2",
+                    "status": "in_progress",
+                    "branch": self.BRANCH,
+                    "owned_paths": list(self.DECLARED),
+                    "depends_on": [],
+                    "artifacts": [],
+                    "acceptance": [],
+                    "next": "Finalize",
+                    "last_update": "2026-10-28T00:00:00Z",
+                }
+            ],
+            "handoffs": [],
+            "blockers": [],
+            "agents": [],
+            "workload": {},
+            "workload_summary": {},
+        }
+        self.task = self.state["tasks"][0]
+        self.initial_state = json.loads(json.dumps(self.state))
+
+    def fresh(self, **task_fields: Any) -> None:
+        """Restart the task branch at the fork point with a pristine board."""
+        self.git("checkout", "-q", "-B", self.BRANCH, self.fork)
+        self.state = json.loads(json.dumps(self.initial_state))
+        self.task = self.state["tasks"][0]
+        for key, value in task_fields.items():
+            if value is None:
+                self.task.pop(key, None)
+            else:
+                self.task[key] = value
+
+    def submit(self, head: str, **kwargs: Any) -> None:
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.run_as(
+                "Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready"], head=head, **kwargs
+            )
+
+    def assert_submission_refused(self, head: str, pattern: str, **kwargs: Any) -> None:
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.assert_refused_without_mutation(
+                "Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready"], pattern,
+                head=head, **kwargs,
+            )
+
+    def test_privacy_like_net_six_is_refused_and_a_corrective_commit_restoring_net_three_admits(self) -> None:
+        offending = self.change(
+            "widen into privacy",
+            write=("app/one.txt", "app/two.txt", "lib/core.txt", "privacy/consent.txt",
+                   "privacy/export.txt", "config/keys.txt"),
+        )
+        self.assert_submission_refused(
+            offending,
+            r"3 net changed path\(s\) .* outside the declared owned_paths: "
+            r"'config/keys.txt', 'privacy/consent.txt', 'privacy/export.txt'",
+        )
+
+        corrected = self.change(
+            "restore the declared scope", "Claude",
+            delete=("privacy/export.txt", "config/keys.txt"), restore=("privacy/consent.txt",),
+        )
+        self.assertIn(offending, self.git("rev-list", f"{self.fork}..{corrected}").split())
+        self.submit(corrected)
+        submission = self.task["review_submission"]
+        self.assertEqual(self.task["status"], "review")
+        self.assertEqual((submission["remote_sha"], submission["source_head"]), (corrected, corrected))
+        self.assertEqual(submission["source_authors"], ["Codex", "Claude"])
+
+        # The real source-author rule still judges the reviewer of that head.
+        self.task["reviewer"] = "Codex"
+        self.assert_refused_without_mutation(
+            "Codex", ai_status.command_approve, [self.TASK_ID, "LGTM"],
+            r"reviewer Codex is itself a source author", head=corrected,
+        )
+        self.task["reviewer"] = "Codex2"
+        self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review"], head=corrected)
+        self.assertEqual((self.task["status"], self.task["approved_head"]), ("review_approved", corrected))
+
+    def test_unrelated_base_advance_and_a_normal_base_merge_are_not_task_work(self) -> None:
+        head = self.change("owned work", write=("app/one.txt", "lib/new.txt"))
+        self.advance_dev("privacy/consent.txt", "other/dev.txt")
+        # dev moved on without the branch: the merge-base is still the fork.
+        self.submit(head)
+        self.assertEqual(self.task["status"], "review")
+
+        self.fresh()
+        self.change("owned work", write=("app/one.txt",))
+        self.advance_dev("privacy/policy.txt")
+        self.git(
+            "merge", "--no-ff", "-q", "-m",
+            f"Merge dev into {self.BRANCH}\n\nLLM-Agent: Claude\nTask-ID: {self.TASK_ID}\nReviewer: Codex2\n",
+            "dev",
+        )
+        merged_head = self.git("rev-parse", "HEAD")
+        self.submit(merged_head)
+        self.assertEqual(self.task["status"], "review")
+        self.assertEqual(self.task["review_submission"]["source_base"], self.git("rev-parse", "dev"))
+
+    def test_net_paths_are_checked_literally_on_both_sides_of_every_change(self) -> None:
+        bracket_scope = [*self.DECLARED, "a[1].txt"]
+        cases: list[tuple[str, dict[str, Any], dict[str, Any], str | None]] = [
+            ("rename out of scope", {"move": (("app/one.txt", "elsewhere/one.txt"),)}, {}, r"'elsewhere/one.txt'"),
+            ("rename into scope", {"move": (("privacy/consent.txt", "lib/consent.txt"),)}, {},
+             r"'privacy/consent.txt'"),
+            ("unowned deletion", {"delete": ("privacy/consent.txt",)}, {}, r"'privacy/consent.txt'"),
+            ("owned deletion", {"delete": ("app/one.txt", "lib/core.txt")}, {}, None),
+            ("trailing whitespace twin", {"write": ("app/one.txt ",)}, {}, r"'app/one.txt '"),
+            ("leading whitespace twin", {"write": (" lib/x.txt",)}, {}, r"' lib/x.txt'"),
+            ("whitespace-only name", {"write": ("app/one.txt", " ")}, {}, r"1 net changed path\(s\).*: ' '"),
+            ("CR inside a name", {"write": ("lib\r/x.txt",)}, {}, r"'lib\\r/x.txt'"),
+            ("literal backslash", {"write": ("lib\\x.txt",)}, {}, r"'lib\\\\x.txt'"),
+            ("bracket glob sibling", {"write": ("a1.txt",)}, {"owned_paths": bracket_scope}, r"'a1.txt'"),
+            ("literal bracket name", {"write": ("a[1].txt",)}, {"owned_paths": bracket_scope}, None),
+            ("directory slash boundary", {"write": ("lib-extra/x.txt", "libx")}, {},
+             r"2 net changed path\(s\).*: 'lib-extra/x.txt', 'libx'"),
+            ("inside the directory", {"write": ("lib/deep/x.txt",)}, {}, None),
+            ("malformed declared scope", {"write": ("lib/x.txt",)}, {"owned_paths": ["lib", 7]},
+             r"declared owned_paths must be a list of literal"),
+            ("whole-tree declared scope", {"write": ("lib/x.txt",)}, {"owned_paths": ["."]},
+             r"declared owned_paths is not a usable literal scope"),
+            ("flag declared scope", {"write": ("lib/x.txt",)}, {"owned_paths": [*self.DECLARED, "-name"]},
+             r"declared owned_paths is not a usable literal scope: scope entry '-name' looks like a git flag"),
+            ("owned whitespace-only name", {"write": (" ",)}, {"owned_paths": [*self.DECLARED, " "]}, None),
+            ("owned flag-looking name once trimmed", {"write": (" -name",)},
+             {"owned_paths": [*self.DECLARED, " -name"]}, None),
+            ("unowned whitespace twin of an owned name", {"write": ("  ",)},
+             {"owned_paths": [*self.DECLARED, " "]}, r"1 net changed path\(s\).*: '  '"),
+            ("unowned flag twin of an owned name", {"write": ("-name",)},
+             {"owned_paths": [*self.DECLARED, " -name"]}, r"1 net changed path\(s\).*: '-name'"),
+        ]
+        for name, ops, task_fields, refusal in cases:
+            with self.subTest(name):
+                self.fresh(**task_fields)
+                head = self.change(name, **ops)
+                if refusal:
+                    self.assert_submission_refused(head, refusal)
+                else:
+                    self.submit(head)
+                    self.assertEqual(self.task["status"], "review")
+
+    def test_legacy_missing_empty_or_non_list_scope_keeps_its_prior_admission(self) -> None:
+        # Not a new policy: this task only guards already-declared nonempty
+        # lists, so legacy tasks still admit an unbounded net change.
+        for legacy in (None, [], "lib", {"paths": ["lib"]}):
+            with self.subTest(repr(legacy)):
+                self.fresh(owned_paths=legacy)
+                head = self.change("legacy", write=("privacy/consent.txt", "anything/else.txt"))
+                self.submit(head)
+                self.assertEqual(self.task["status"], "review")
+
+    def merged_pr(self, head: str) -> dict[str, Any]:
+        self.git("checkout", "-q", "dev")
+        self.git("merge", "--no-ff", "-q", "-m", "Merge pull request #4242", head)
+        merge_commit = self.git("rev-parse", "dev")
+        self.git("update-ref", "refs/remotes/origin/dev", "dev")
+        self.git("checkout", "-q", "--detach", head)
+        self.git("branch", "-D", self.BRANCH)
+        return dict(
+            self.pr(head),
+            state="MERGED",
+            mergedAt="2026-10-28T00:00:00Z",
+            mergeCommit={"oid": merge_commit},
+            statusCheckRollup=[
+                {"__typename": "CheckRun", "name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ],
+        )
+
+    def test_owner_merged_recovery_is_bound_to_the_same_declared_scope(self) -> None:
+        self.advance_dev("other/before.txt")
+        head = self.change("leak", write=("lib/x.txt", "privacy/consent.txt"))
+        self.assert_submission_refused(head, r"outside the declared owned_paths: 'privacy/consent.txt'",
+                                       pr=self.merged_pr(head))
+
+        self.git("checkout", "-q", "-B", "dev", self.fork)
+        self.git("update-ref", "refs/remotes/origin/dev", "dev")
+        self.fresh()
+        head = self.change("owned", write=("lib/x.txt",))
+        self.submit(head, pr=self.merged_pr(head))
+        self.assertEqual(self.task["status"], "review")
+        self.assertEqual(self.task["review_submission"]["merge_commit"], self.git("rev-parse", "dev"))
+
+
 class ToolingCloseoutTests(unittest.TestCase):
     """Real Git, identity, scope and archival checks; only GitHub is synthetic."""
 
