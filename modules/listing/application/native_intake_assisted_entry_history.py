@@ -69,9 +69,7 @@ class NativeAssistedEntryHistory:
         is cached across invocations or used as a current authority grant.
         """
         before()
-        statement = ("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=? FOR SHARE"
-            if lock_job is True else "SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?")
-        job = self.engine.query_one(statement, (tenant, delivery.job_id))
+        job = self.graph.native_history_job(tenant, delivery.job_id, for_share=lock_job)
         if job is None or job["status"] != "SUCCEEDED":
             return None
         payload, result = _object(job["payload"]), _object(job["result"])

@@ -102,6 +102,134 @@ def test_complete_history_refuses_oversized_recorded_cells_before_materializatio
     assert acquired == [True]
 
 
+@pytest.mark.parametrize("job_kind", ["parser", "parent"])
+@pytest.mark.parametrize("column", ["payload", "result", "last_error"])
+def test_complete_history_bounds_both_actual_business_jobs_before_driver_acquisition(
+        completed_parser, monkeypatch, job_kind, column):
+    case, delivery, _, result = completed_parser
+    owner, ids = case[:2]
+    with owner.graph.transaction(ids["tenant"]):
+        job = owner.graph._one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
+            (ids["tenant"], result["job_id"]))
+        target = (job["job_id"] if job_kind == "parser" else
+            job["payload"]["admission"]["binding"]["original_input"]["parent_job_id"])
+        # Real committed evidence is damaged only after the producer finishes.
+        # UTF-8 CJK bytes exceed the new 4 MiB native job acquisition cap.
+        owner.engine.execute(f"UPDATE workflow.jobs SET {column}=jsonb_build_object('oversized', "
+            "repeat('店',?)) WHERE tenant_id=? AND job_id=?", (4 * 1024 * 1024 // 3 + 1, ids["tenant"], target))
+    query_one, acquired = owner.engine.query_one, []
+
+    def observe_actual_driver_result(statement, parameters=()):
+        row = query_one(statement, parameters)
+        if "workflow.jobs" in statement and tuple(parameters)[-2:] == (ids["tenant"], target):
+            acquired.append(row is not None and all(row.get(key) is None
+                for key in ("payload", "result", "last_error")))
+        return row
+
+    monkeypatch.setattr(owner.engine, "query_one", observe_actual_driver_result)
+    with owner.graph.transaction(ids["tenant"]):
+        with pytest.raises(NativeParserConflict, match="^NATIVE_PARSER_TERMINAL_PROOF_REJECTED$"):
+            NativeParserTerminalHistory(owner.graph).read(delivery, ids["tenant"], 1,
+                before=NativeParserCommandBudget(owner.clock))
+    assert acquired == [True]
+
+
+@pytest.mark.parametrize("extra_bytes", [-1, 0, 1])
+def test_native_history_job_acquisition_uses_inclusive_real_UTF8_row_boundary(completed_parser, extra_bytes):
+    from shared.infrastructure.persistence.identity_graph_sql import NATIVE_HISTORY_JOB_MAX_BYTES
+
+    case, delivery, _, _ = completed_parser
+    owner, ids = case[:2]
+    with owner.graph.transaction(ids["tenant"]):
+        owner.engine.execute("UPDATE workflow.jobs SET last_error=jsonb_build_object('padding','') "
+            "WHERE tenant_id=? AND job_id=?", (ids["tenant"], delivery.job_id))
+        original_bytes = owner.engine.query_one("SELECT octet_length(row_to_json(j)::text) AS bytes "
+            "FROM workflow.jobs j WHERE tenant_id=? AND job_id=?", (ids["tenant"], delivery.job_id))["bytes"]
+        owner.engine.execute("UPDATE workflow.jobs SET last_error=jsonb_build_object('padding',repeat('x',?)) "
+            "WHERE tenant_id=? AND job_id=?",
+            (NATIVE_HISTORY_JOB_MAX_BYTES - original_bytes + extra_bytes, ids["tenant"], delivery.job_id))
+        actual_bytes = owner.engine.query_one("SELECT octet_length(row_to_json(j)::text) AS bytes "
+            "FROM workflow.jobs j WHERE tenant_id=? AND job_id=?", (ids["tenant"], delivery.job_id))["bytes"]
+        assert actual_bytes == NATIVE_HISTORY_JOB_MAX_BYTES + extra_bytes
+        # The generic reader keeps its original contract, including large
+        # unrelated rows. Only the two explicit native history calls opt in.
+        original = owner.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
+            (ids["tenant"], delivery.job_id))
+        if extra_bytes > 0:
+            with pytest.raises(JobFenceRejectedError, match="^NATIVE_HISTORY_JOB_ACQUISITION_LIMIT$"):
+                owner.graph.native_history_job(ids["tenant"], delivery.job_id)
+        else:
+            actual = owner.graph.native_history_job(ids["tenant"], delivery.job_id)
+            assert actual == original
+            # Manual parent retains the raw engine values; parser retains
+            # graph._one's existing decoding. They share acquisition only.
+            required = owner.graph.native_history_job(ids["tenant"], delivery.job_id, required=True)
+            assert required == owner.graph._one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
+                (ids["tenant"], delivery.job_id))
+            assert isinstance(required["payload"], dict) and isinstance(required["result"], dict)
+            assert actual["lease_expires_at"] is None
+            assert not any(key.startswith("_native_") for key in actual)
+
+
+@pytest.mark.parametrize("oversized", [False, True])
+def test_native_history_job_retains_share_lock_even_when_guard_rejects_row(completed_parser, oversized):
+    from psycopg.errors import LockNotAvailable
+
+    case, delivery, _, _ = completed_parser
+    owner, ids, database = case[:3]
+    if oversized:
+        with owner.graph.transaction(ids["tenant"]):
+            owner.engine.execute("UPDATE workflow.jobs SET last_error=jsonb_build_object('oversized',repeat('x',?)) "
+                "WHERE tenant_id=? AND job_id=?", (4 * 1024 * 1024, ids["tenant"], delivery.job_id))
+    with owner.graph.transaction(ids["tenant"]):
+        if oversized:
+            with pytest.raises(JobFenceRejectedError, match="^NATIVE_HISTORY_JOB_ACQUISITION_LIMIT$"):
+                owner.graph.native_history_job(ids["tenant"], delivery.job_id, for_share=True)
+        else:
+            assert owner.graph.native_history_job(ids["tenant"], delivery.job_id, for_share=True)["job_id"] == delivery.job_id
+        with pytest.raises(LockNotAvailable):
+            with database.connect() as connection:
+                connection.execute("SELECT job_id FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s FOR UPDATE NOWAIT",
+                    (ids["tenant"], delivery.job_id))
+    with database.connect() as connection:
+        assert connection.execute("SELECT job_id FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s FOR UPDATE NOWAIT",
+            (ids["tenant"], delivery.job_id)).fetchone() is not None
+
+
+def test_native_history_job_preserves_optional_and_required_missing_behaviour(completed_parser):
+    from modules.listing.domain.identity_graph import IdentityNotFoundError
+
+    case = completed_parser[0]
+    owner, ids = case[:2]
+    missing = str(uuid4())
+    with owner.graph.transaction(ids["tenant"]):
+        assert owner.graph.native_history_job(ids["tenant"], missing) is None
+        with pytest.raises(IdentityNotFoundError, match="^CANONICAL_IDENTITY_RESOURCE_NOT_FOUND$"):
+            owner.graph.native_history_job(ids["tenant"], missing, required=True)
+
+
+@pytest.mark.parametrize("column", ["payload", "result"])
+def test_full_history_rejects_extra_JSON_decode_layer_in_original_manual_parent(completed_parser, column):
+    case, delivery, _, result = completed_parser
+    owner, ids = case[:2]
+    with owner.graph.transaction(ids["tenant"]):
+        job = owner.graph._one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
+            (ids["tenant"], result["job_id"]))
+        parent_id = job["payload"]["admission"]["binding"]["original_input"]["parent_job_id"]
+        parent = owner.graph._one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
+            (ids["tenant"], parent_id))
+        # A JSONB string containing a JSON-encoded string of the original
+        # object. The manual reader's original single _object decode rejects
+        # this; adding graph._one normalization would unwrap and accept it.
+        nested = canonical_json(canonical_json(canonical_json(parent[column])))
+        owner.engine.execute(f"UPDATE workflow.jobs SET {column}=?::jsonb WHERE tenant_id=? AND job_id=?",
+            (nested, ids["tenant"], parent_id))
+    with owner.graph.transaction(ids["tenant"]):
+        with pytest.raises(NativeParserConflict, match="^NATIVE_PARSER_TERMINAL_PROOF_REJECTED$"):
+            NativeParserTerminalHistory(owner.graph).read(delivery, ids["tenant"], 1,
+                before=NativeParserCommandBudget(owner.clock))
+
+
 def _human_new_case(completed):
     from shared.infrastructure.persistence.identity_cases_sql import CanonicalMatchCaseRepository
 
@@ -125,6 +253,23 @@ def parser_fields_api(case_api, monkeypatch):
 def _parser_fields_get(api, result, **overrides):
     return api[0].get(f"/api/v1/canonical-intakes/{result['intake_id']}/parser-runs/{result['parser_run_id']}/fields",
         params={"intake_version": result["version"], "parser_run_version": result["run_version"], **overrides})
+
+
+@pytest.mark.parametrize("job_kind", ["parser", "parent"])
+def test_parser_fields_HTTP_maps_oversized_actual_history_job_to_opaque_503(
+        completed_parser, parser_fields_api, job_kind):
+    case, delivery, _, result = completed_parser
+    owner, ids = case[:2]
+    with owner.graph.transaction(ids["tenant"]):
+        job = owner.graph._one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
+            (ids["tenant"], delivery.job_id))
+        target = (delivery.job_id if job_kind == "parser" else
+            job["payload"]["admission"]["binding"]["original_input"]["parent_job_id"])
+        owner.engine.execute("UPDATE workflow.jobs SET payload=payload || jsonb_build_object('oversized',repeat('店',?)) "
+            "WHERE tenant_id=? AND job_id=?", (4 * 1024 * 1024 // 3 + 1, ids["tenant"], target))
+    response = _parser_fields_get(parser_fields_api, result)
+    assert response.status_code == 503
+    assert response.json() == {"detail": "CANONICAL_INTAKE_EVIDENCE_UNAVAILABLE"}
 
 
 @pytest.mark.parametrize("parser_evidence_fields,status", [(None, "SUCCEEDED"), ("partial", "PARTIAL")],

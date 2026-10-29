@@ -101,13 +101,16 @@ def test_complete_legacy_and_native_history_match_with_two_fewer_physical_reads(
             traces.append(calls)
     assert results[0] is not None and results[0] == results[1] == results[2]
     assert results[0][2] == job
-    job_sql = "SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?"
     job_params = ids["tenant"], job["job_id"]
-    for calls in traces[:2]:
-        assert [(s, p) for s, p in calls if s in {job_sql, job_sql + " FOR SHARE"}
-            and p == job_params] == [(job_sql, job_params)]
-    assert [(s, p) for s, p in traces[2] if s in {job_sql, job_sql + " FOR SHARE"}
-        and p == job_params] == [(job_sql + " FOR SHARE", job_params)]
+    for calls, shared in zip(traces, (False, False, True), strict=True):
+        job_reads = [s for s, p in calls if "FROM workflow.jobs" in s and p == job_params]
+        assert len(job_reads) == 1
+        # The same full proof now opts into the original graph owner's fixed
+        # bounded acquisition; neither a second read nor a missing lock passes.
+        assert job_reads[0].startswith("SELECT (bounded.job_row).*,bounded._native_job_within_bound ")
+        assert "WITH selected AS MATERIALIZED" in job_reads[0]
+        assert "octet_length(row_to_json(j)::text)" in job_reads[0]
+        assert (" FOR SHARE" in job_reads[0]) is shared
     # Independent actual queue SQL and exact genuine manual job parameters.
     get_sql = "SELECT * FROM durable_jobs WHERE job_id = ?"
     assert sum(s == get_sql and p == (job["job_id"],) for s, p in traces[0]) == 2

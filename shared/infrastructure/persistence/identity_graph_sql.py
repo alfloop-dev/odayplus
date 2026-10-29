@@ -22,6 +22,21 @@ from modules.listing.domain.identity_graph import (
 from shared.domain.events import DomainEvent, validate_event
 from shared.jobs.queue import JobFenceRejectedError, JobRecord, JobStatus
 
+# An acquisition resource ceiling for the two native full-history job reads,
+# not a workflow schema limit, grant, proof, or whole-root/driver-RSS budget.
+# Measure PostgreSQL's UTF-8 row JSON text, including required job metadata.
+NATIVE_HISTORY_JOB_MAX_BYTES = 4 * 1024 * 1024
+_NATIVE_HISTORY_JOB_READS = tuple(
+    "SELECT (bounded.job_row).*,bounded._native_job_within_bound FROM ("
+    "WITH selected AS MATERIALIZED (SELECT j AS job_row,"
+    "octet_length(row_to_json(j)::text) AS proof_bytes FROM workflow.jobs j "
+    "WHERE tenant_id=? AND job_id=?" + lock + ") "
+    "SELECT CASE WHEN proof_bytes<=" + str(NATIVE_HISTORY_JOB_MAX_BYTES) +
+    " THEN job_row END AS job_row,proof_bytes<=" + str(NATIVE_HISTORY_JOB_MAX_BYTES) +
+    " AS _native_job_within_bound FROM selected) bounded"
+    for lock in ("", " FOR SHARE")
+)
+
 
 def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
@@ -81,6 +96,30 @@ class CanonicalIdentityGraphRepository:
         for name in ("before_graph", "after_graph", "payload", "result"):
             if isinstance(row.get(name), str):
                 row[name] = json.loads(row[name])
+        return row
+
+    def native_history_job(self, tenant: str, job_id: str, *, required: bool = False,
+                           for_share: bool = False) -> dict | None:
+        """Acquire one native history job before decoding its JSON evidence.
+
+        The caller retains its original tenant SERIALIZABLE root and budget;
+        this read neither opens nor renews them. The required parser reader
+        keeps graph._one normalization; the optional manual reader keeps raw
+        engine values and its original single JSON decode. Combining these
+        decode boundaries could accept an extra JSONB-string wrapper. Both
+        owners still perform their original complete proofs.
+        A real oversized row returns only SQL NULL cells and a false private
+        guard, then raises the existing opaque-evidence error family. It must
+        never appear absent or become an empty job. The named-table composite
+        retains column types, and FOR SHARE still locks the original job even
+        when its evidence is too large. Generic graph/queue reads are unchanged.
+        """
+        if type(required) is not bool or type(for_share) is not bool:
+            raise ValueError("NATIVE_HISTORY_JOB_READ_MODE_REQUIRED")
+        reader = self._one if required else self.engine.query_one
+        row = reader(_NATIVE_HISTORY_JOB_READS[int(for_share)], (tenant, job_id))
+        if row is not None and row.pop("_native_job_within_bound", None) is not True:
+            raise JobFenceRejectedError("NATIVE_HISTORY_JOB_ACQUISITION_LIMIT") from None
         return row
 
     def _case(self, tenant: str, case_id: str, *, for_update: bool = True) -> tuple[dict, dict]:

@@ -270,8 +270,7 @@ class NativeParserTerminalHistory:
     def _read_proof(self, delivery, tenant, generation, *, before, with_parent_input=False):
         try:
             before()
-            job = self.graph._one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
-                (tenant, delivery.job_id))
+            job = self.graph.native_history_job(tenant, delivery.job_id, required=True)
             payload = _object(job["payload"])
             run = self.runs.get(tenant, job["aggregate_id"], before=before)
             self.jobs.admission(job, run, before=before)
