@@ -245,6 +245,15 @@ class MultiRepoRegistryTests(unittest.TestCase):
             )
             self.assertIsNone(registered(config, "nameless"))
             self.assertIsNone(registered(config, "unregistered"))
+            # An explicit remote that names no endpoint never borrows the
+            # entry's slug, local_path or anything a checkout says.
+            for remote in ("", "  ", "https://github.com/example/repo.git?token=x", "ftp://host/a/b", 7):
+                with self.subTest(remote=remote):
+                    config["coordination"]["repositories"]["fixture"]["remote"] = remote
+                    self.assertIsNone(registered(config, "fixture"))
+            config["coordination"]["repositories"]["fixture"]["remote"] = "git@github.com:example/repo.git"
+            self.assertEqual(registered(config, "fixture"), "github.com/example/repo")
+            config["coordination"]["repositories"]["fixture"]["remote"] = "fixtures/example/repo.git"
 
             # Same suffix, different repository: the slug projection agrees,
             # the endpoint does not.

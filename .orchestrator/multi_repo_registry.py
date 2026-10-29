@@ -544,13 +544,18 @@ def registered_remote_endpoint(config: dict[str, Any], repo_id: str | None) -> s
     An entry's explicit ``remote`` URL is that endpoint -- relative local
     paths anchored like ``local_path`` -- and otherwise its ``repo`` slug is
     the GitHub repository of that name, the repository its pull requests are
-    looked up in. Never derived from whatever a checkout's origin says.
+    looked up in. Never derived from whatever a checkout's origin says, and
+    an explicit ``remote`` that names no endpoint -- blank, or a URL that is
+    no identity -- is an entry with no endpoint, not one that falls back to
+    its slug.
     """
     if not repo_id or repo_id not in repositories(config):
         return None
     repo = resolve_repository(config, repo_id)
-    remote = str(repo.get("remote") or "").strip()
-    if remote:
+    if repo.get("remote") is not None:
+        remote = repo["remote"]
+        if not isinstance(remote, str):
+            return None
         return normalized_remote_endpoint(remote, base=repository_path_anchor(config))
     slug = str(repo.get("repo") or "").strip()
     return normalized_remote_endpoint(f"https://github.com/{slug}") if slug else None

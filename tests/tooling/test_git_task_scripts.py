@@ -742,8 +742,6 @@ def test_task_finalize_prepublication_admits_only_the_canonical_source_child(rep
     unresolved gate; and with a valid record, as long as the checkout's origin
     is not the registered repository's own endpoint -- here GitHub's
     example/repo -- whatever a local repository of that owner/name publishes.
-    (Admitting it through a local endpoint needs that endpoint registered,
-    which the orchestrator config schema does not accept yet.)
     """
     status_root, child, _head = compose_source_only_child(repo, tmp_path)
     parent = {"id": TASK, "owner": "Claude2", "reviewer": "Codex", "status": "in_progress",
@@ -787,6 +785,82 @@ def test_task_finalize_prepublication_admits_only_the_canonical_source_child(rep
     assert no_origin.returncode == 1
     assert f"is not configured, {registered}" in no_origin.stderr
     assert "dry-run: git push" not in no_origin.stdout
+
+
+def register_remote(status_root: Path, remote: object) -> None:
+    """Give the registered repository an explicit remote in the live config file."""
+    path = status_root / ".orchestrator" / "config.json"
+    config = json.loads(path.read_text(encoding="utf-8"))
+    config["coordination"]["repositories"]["pantheon"]["remote"] = remote
+    path.write_text(json.dumps(config), encoding="utf-8")
+
+
+def test_task_finalize_prepublication_admits_a_child_published_at_the_registered_remote(
+    repo: Path, tmp_path: Path
+):
+    """A registered explicit remote reaches the thin caller through the normal loader.
+
+    Nothing is mocked: task_finalize.sh loads the status root's config file
+    through its schema, and the child's exact head published at the
+    registered bare repository admits the composition -- spelled absolute or
+    relative to the status root alike. A remote that is blank, no identity,
+    or another repository's -- even one publishing the same head -- admits
+    nothing, and never falls back to the slug or the checkout's origin.
+    """
+    status_root, child, head = compose_source_only_child(repo, tmp_path)
+    parent = {"id": TASK, "owner": "Claude2", "reviewer": "Codex", "status": "in_progress",
+              "branch": f"task/{TASK}"}
+    published = tmp_path / "example" / "repo.git"
+
+    for remote in (str(published), "../example/repo.git", f"file://{published}"):
+        register_remote(status_root, remote)
+        admitted = finalize_with_records(repo, status_root, parent, child)
+        assert admitted.returncode == 0, (remote, admitted.stderr)
+        assert "Task-ID trailer" not in admitted.stderr
+        assert "dry-run: git push --set-upstream origin" in admitted.stdout
+        assert git(repo, "rev-parse", "HEAD").stdout.strip() == head
+
+    # Its own gate still refuses it through the same rule.
+    register_remote(status_root, str(published))
+    gated = finalize_with_records(repo, status_root, parent, dict(child, requires_human_approval=True))
+    assert gated.returncode == 1
+    assert "still carries an unresolved gate" in gated.stderr
+    assert "dry-run: git push" not in gated.stdout
+
+    # The schema refuses a blank remote; the loader's refusal admits no child.
+    for blank in ("", "  "):
+        register_remote(status_root, blank)
+        refused = finalize_with_records(repo, status_root, parent, child)
+        assert refused.returncode == 1
+        assert "the canonical task records cannot be read" in refused.stderr
+        assert "coordination.repositories.pantheon.remote" in refused.stderr
+        assert f"Task-ID trailer '{CHILD}' does not match '{TASK}'" in refused.stderr
+        assert "dry-run: git push" not in refused.stdout
+
+    # A well-formed string that is no endpoint leaves the entry without one.
+    register_remote(status_root, "https://github.com/example/repo.git?token=x")
+    signed = finalize_with_records(repo, status_root, parent, child)
+    assert signed.returncode == 1
+    assert "has no registered slug and endpoint" in signed.stderr
+    assert "dry-run: git push" not in signed.stdout
+
+    # Another repository registered: the checkout's origin publishing the same
+    # head is not it, whatever the registered one publishes.
+    foreign = tmp_path / "other-org" / "repo.git"
+    subprocess.run(["git", "clone", "--quiet", "--bare", str(published), str(foreign)],
+                   check=True, capture_output=True)
+    register_remote(status_root, str(foreign))
+    elsewhere = finalize_with_records(repo, status_root, parent, child)
+    assert elsewhere.returncode == 1
+    assert f"is file:{published.resolve()}, not the registered repository example/repo at file:{foreign.resolve()}" in (
+        elsewhere.stderr
+    )
+    assert "dry-run: git push" not in elsewhere.stdout
+    # Pointing the origin at it admits again; the registered remote is the authority.
+    git(repo, "remote", "set-url", "origin", str(foreign))
+    moved = finalize_with_records(repo, status_root, parent, child)
+    assert moved.returncode == 0, moved.stderr
+    assert "dry-run: git push --set-upstream origin" in moved.stdout
 
 
 def test_task_finalize_refuses_a_branch_whose_own_python_fails_lint(repo: Path, tmp_path: Path):
