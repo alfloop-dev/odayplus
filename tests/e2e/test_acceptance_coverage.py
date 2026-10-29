@@ -128,8 +128,10 @@ def _commit(path: Path, relative: str, content: str, message: str) -> None:
 
 
 def _clone_packet_repo(path: Path) -> None:
+    # Local clones share immutable Git objects; each test still owns its refs,
+    # index and mutable packet files without copying the full object database.
     subprocess.run(
-        ["git", "clone", "-q", "--no-hardlinks", str(ROOT), str(path)],
+        ["git", "clone", "-q", str(ROOT), str(path)],
         check=True,
     )
 
