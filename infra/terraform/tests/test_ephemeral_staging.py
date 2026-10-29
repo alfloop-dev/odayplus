@@ -242,6 +242,23 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertNotIn("allUsers", main_tf)
         self.assertNotIn("allAuthenticatedUsers", main_tf)
 
+    def test_staging_api_is_reachable_by_the_runner_but_iam_only(self) -> None:
+        main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+        match = re.search(
+            r'resource "google_cloud_run_v2_service" "staging_api" \{\n(.*?)\n  template \{',
+            main_tf,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match, "google_cloud_run_v2_service.staging_api is missing")
+        header = match.group(1)
+
+        # The GitHub-hosted verify runner reads the API directly (§12.5 item 3).
+        self.assertRegex(header, r'(?m)^  ingress\s*=\s*"INGRESS_TRAFFIC_ALL"$')
+        self.assertNotIn("INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER", header)
+        # Reachability never means public: no service grants anonymous invoke.
+        self.assertNotIn("allUsers", main_tf)
+        self.assertNotIn("allAuthenticatedUsers", main_tf)
+
     def test_tenant_isolation_contract(self) -> None:
         vars_tf = (MODULE_DIR / "variables.tf").read_text(encoding="utf-8")
         main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")

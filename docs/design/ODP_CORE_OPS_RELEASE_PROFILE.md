@@ -380,7 +380,7 @@ Task: ODP-STAGING-REHEARSAL-NETWORK-IDENTITY-001 · Owner: Claude2 · Reviewer: 
     - Google 要求不要混用兩組 VIP，所以 googleapis 也一起用 private，與 dev connector 的 restricted 不同。
     - 既有 firewall `allow_restricted_google_apis` 已放行 199.36.153.8/30 tcp:443，firewall 不變。
     - 殘餘風險：private VIP 不提供 VPC-SC 的資料外洩限制。repo 內沒有任何 VPC-SC perimeter（`access_context_manager`）定義。live 專案是否有 perimeter，本 task 沒有讀回。
-- **第 3 項（未改，待負責人決定）**：本 task 原定把 staging API 的 ingress 由 `INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER` 改為 `INGRESS_TRAFFIC_ALL`，存取仍只靠 IAM、不加 `allUsers`，目的是對齊 production 由 `deploy_cloud_run_waji.sh` 建立的 API 形態。這一行修改在 auto worker 中被判定為降低安全性而擋下，目前沒有包含在本次變更中。在負責人核准並套用之前，第 3 項仍然成立，GitHub-hosted runner 的 verify 讀不到 staging API。
+- **第 3 項（已改，負責人 2026-10-29 核准）**：staging API 的 ingress 由 `INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER` 改為 `INGRESS_TRAFFIC_ALL`。存取仍只靠 IAM，模組沒有 `allUsers`／`allAuthenticatedUsers`。理由：verify 在 GitHub-hosted runner 上直接讀 staging API，internal-LB-only 的 ingress 一定連不到；production 首次 release 由 `deploy_cloud_run_waji.sh` 的 `gcloud run deploy` 建立 API，預設 ingress 就是 all 加上 `--no-allow-unauthenticated`，staging 與它一致才有演練意義。auto worker 曾以「降低安全性」擋下這一行；負責人（蔡尚志）選擇「改成 all，仍需 IAM」之後，由 Claude 補上這一行與 `test_staging_api_is_reachable_by_the_runner_but_iam_only`。殘餘風險：run.app 端點可從網際網路連到，但沒有 IAM 身分的請求一律 403；staging 只在演練期間存在，TTL 到期即 destroy。
   - 後續事項，不在本 task 修改：root `infra/terraform/cloud_run.tf` 仍宣告 internal LB ingress。若日後 apply root stack，runner 端的 smoke／live E2E 也會讀不到 API。
 
 ### 12.6 測試

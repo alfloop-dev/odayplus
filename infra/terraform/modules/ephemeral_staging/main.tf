@@ -547,7 +547,11 @@ resource "google_cloud_run_v2_service" "staging_api" {
   project  = var.project_id
   name     = "${local.name_prefix}-api"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  # verify runs on a GitHub-hosted runner and reads this API directly, so an
+  # internal-LB-only ingress is unreachable. Access stays IAM-only (no public
+  # invoker), matching the production API that deploy_cloud_run_waji.sh creates.
+  # Owner decision 2026-10-29 (蔡尚志), design §12.5.1 item 3.
+  ingress = "INGRESS_TRAFFIC_ALL"
 
   template {
     service_account       = google_service_account.staging_runtime.email
