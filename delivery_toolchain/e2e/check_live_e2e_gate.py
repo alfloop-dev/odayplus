@@ -1768,6 +1768,16 @@ def _session_subject_is_account(session: HttpResponse, account_id: str | None) -
     )
 
 
+def _principal_is_account(principal: HttpResponse, account_id: str | None) -> bool:
+    """/api/v1/auth/principal names the same server-verified account UUID."""
+    return (
+        not principal.failed
+        and principal.status == 200
+        and account_id is not None
+        and principal.payload.get("account_id") == account_id
+    )
+
+
 def _check_dev_admin_session(
     *,
     web: HttpClient | None,
@@ -1791,7 +1801,7 @@ def _check_dev_admin_session(
     1. anonymous session/API reads are refused;
     2. a wrong password is refused without issuing a session;
     3. password sign-in (or initial secret sign-in + first-password rotation if fresh);
-    4. the session resolves to that account;
+    4. the session and /api/v1/auth/principal resolve to that account's UUID;
     5. GET /api/v1/operator/users is served from the identity schema, lists the
        active pure admin or explicitly read-enabled admin; the latter must bind
        to /auth/principal and an audited finite canonical read-role grant;
@@ -2037,10 +2047,14 @@ def _check_dev_admin_session(
         )
         return
 
-    # 4. Read the session; it is bound below, once the identity user list has
-    #    named the account UUID the signed-in username resolves to.
+    # 4. Read the session and the API's verified principal for the same cookie;
+    #    both are bound below, once the identity user list has named the
+    #    account UUID the signed-in username resolves to.
     current = web.request(
         "GET", "/auth/session", authenticated=False, headers=session_headers(cookies)
+    )
+    principal = web.request(
+        "GET", "/api/v1/auth/principal", authenticated=False, headers=session_headers(cookies)
     )
     operations.append("session_read")
 
@@ -2058,14 +2072,19 @@ def _check_dev_admin_session(
     ]
     own_record = own[0] if len(own) == 1 else {}
     session_account = _session_account_id(own_record)
+    subject_matches = _session_subject_is_account(current, session_account)
+    principal_matches = _principal_is_account(principal, session_account)
+    # Every account mode (bootstrap, read-enabled, invited) binds the cookie to
+    # one account UUID that the session, the identity list and the API agree on.
+    session_bound = subject_matches and principal_matches
     _check(
         checks,
-        _session_subject_is_account(current, session_account),
+        session_bound,
         "session:session_resolves_account",
         (
-            f"status={current.status} subjectMatches="
-            f"{_session_subject_is_account(current, session_account)} "
-            f"accountResolved={session_account is not None}"
+            f"status={current.status} subjectMatches={subject_matches} "
+            f"accountResolved={session_account is not None} "
+            f"principalStatus={principal.status} principalAccountMatches={principal_matches}"
             if not current.failed
             else current.error
         ),
@@ -2115,18 +2134,12 @@ def _check_dev_admin_session(
         if not matched:
             return
     if read_admin:
-        principal = web.request(
-            "GET", "/api/v1/auth/principal", authenticated=False, headers=session_headers(cookies)
-        )
         snapshot = _identity_snapshot(own_record)
         bound = (
-            not principal.failed and principal.status == 200 and snapshot is not None
-            and _canonical_uuid(snapshot["subject_id"]) is not None
-            and principal.payload.get("account_id") == snapshot["subject_id"]
+            session_bound and snapshot is not None
             and principal.payload.get("tenant_id") == snapshot["scope"]["tenant_id"]
             and _read_admin_roles(principal.payload.get("roles"))
             and sorted(principal.payload["roles"]) == snapshot["roles"]
-            and _session_subject_is_account(current, session_account)
         )
         _check(checks, bound, "admin:read_principal_bound",
                f"status={principal.status} accountTenantRolesBound={bound}", "auth")
@@ -2188,15 +2201,10 @@ def _check_dev_admin_session(
             return
         # Even a pure invited administrator must bind the cookie's subject to
         # the API's server-verified account, tenant and exact finite role set.
-        principal = web.request(
-            "GET", "/api/v1/auth/principal", authenticated=False, headers=session_headers(cookies)
-        )
         bound = (
-            not principal.failed and principal.status == 200
-            and principal.payload.get("account_id") == own_record["subject_id"]
+            session_bound
             and principal.payload.get("tenant_id") == own_record["scope"]["tenant_id"]
             and principal.payload.get("roles") == ["platform_admin"]
-            and _session_subject_is_account(current, session_account)
         )
         _check(checks, bound, "admin:invitation_principal_bound",
                f"status={principal.status} accountTenantRolesBound={bound}", "auth")

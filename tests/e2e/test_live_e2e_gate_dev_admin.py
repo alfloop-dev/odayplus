@@ -182,6 +182,9 @@ def web_routes(**overrides: Any) -> dict[str, Any]:
         "anon GET /api/v1/operator/bootstrap": denied,
         # apps/web/src/app/auth/session/route.ts returns the account UUID.
         "GET /auth/session [session]": base.response(200, {"subject": ADMIN_ACCOUNT_ID, "expiresAt": 1}),
+        "GET /api/v1/auth/principal [session]": base.response(200, {
+            "account_id": ADMIN_ACCOUNT_ID, "tenant_id": ADMIN_TENANT_ID, "roles": ["platform_admin"],
+        }),
         "GET /api/v1/operator/users [session]": base.response(200, admin_users()),
         "POST /api/v1/operator/users [session]": save_user_route,
         "GET /api/v1/operator/users/audit-trail [session]": base.response(200, admin_audit_trail()),
@@ -1726,6 +1729,54 @@ def test_invited_admin_session_must_name_the_principal_account_uuid(payload: dic
     found = blockers(report)
     assert found["session:session_resolves_account"] == "session"
     assert found["admin:invitation_principal_bound"] == "auth"
+
+
+WRONG_PRINCIPALS = [
+    pytest.param(base.response(200, {"account_id": OTHER_ACCOUNT_ID, "tenant_id": ADMIN_TENANT_ID,
+                                     "roles": ["platform_admin"]}), id="other-account-uuid"),
+    pytest.param(base.response(200, {"account_id": USERNAME, "tenant_id": ADMIN_TENANT_ID,
+                                     "roles": ["platform_admin"]}), id="username"),
+    pytest.param(base.response(200, {"tenant_id": ADMIN_TENANT_ID, "roles": ["platform_admin"]}),
+                 id="missing-account"),
+    pytest.param(base.response(401, {"detail": "Authentication required"}), id="unauthenticated"),
+    pytest.param(DB_DOWN, id="unavailable"),
+    pytest.param(base.response(0, error="connection reset"), id="transport-failure"),
+]
+
+
+@pytest.mark.parametrize("principal", WRONG_PRINCIPALS)
+def test_bootstrap_admin_session_must_match_the_principal_account_uuid(principal: Any) -> None:
+    routes = web_routes(**{"GET /api/v1/auth/principal [session]": principal})
+    _, report, web = run_dev_admin(web=AdminWeb(routes))
+    assert report["ok"] is False
+    assert report["dev_admin"]["account_mode"] == "pure-admin"
+    assert blockers(report) == {"session:session_resolves_account": "session"}
+    assert web.calls.count("GET /api/v1/auth/principal [session]") == 1
+
+
+@pytest.mark.parametrize("principal", WRONG_PRINCIPALS)
+def test_read_admin_session_must_match_the_principal_account_uuid(principal: Any) -> None:
+    routes = read_admin_routes(["platform_admin", "auditor"])
+    routes["GET /api/v1/auth/principal [session]"] = principal
+    _, report, web = run_dev_admin(web=AdminWeb(routes))
+    found = blockers(report)
+    assert found["session:session_resolves_account"] == "session"
+    assert found["admin:read_principal_bound"] == "auth"
+    assert web.calls.count("GET /api/v1/auth/principal [session]") == 1
+
+
+@pytest.mark.parametrize("principal", WRONG_PRINCIPALS)
+def test_invited_admin_session_must_match_the_principal_account_uuid(principal: Any) -> None:
+    user, events, _ = invited_admin_inputs()
+    _, report, web = run_dev_admin(web=AdminWeb(web_routes(**{
+        "GET /api/v1/operator/users [session]": base.response(200, {"users": [user], "count": 1}),
+        "GET /api/v1/operator/users/audit-trail [session]": base.response(200, {"events": events}),
+        "GET /api/v1/auth/principal [session]": principal,
+    })))
+    found = blockers(report)
+    assert found["session:session_resolves_account"] == "session"
+    assert found["admin:invitation_principal_bound"] == "auth"
+    assert web.calls.count("GET /api/v1/auth/principal [session]") == 1
 
 
 def test_html_form_session_must_name_the_account_uuid() -> None:
