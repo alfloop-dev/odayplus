@@ -1751,6 +1751,23 @@ def _payload_mentions(response: HttpResponse, code: str) -> bool:
     return code in json.dumps(response.payload, sort_keys=True)
 
 
+def _session_account_id(record: Mapping[str, Any]) -> str | None:
+    """The authoritative account UUID a Web session for ``record`` must carry."""
+    subject_id = record.get("subject_id")
+    return subject_id if _canonical_uuid(subject_id) == subject_id else None
+
+
+def _session_subject_is_account(session: HttpResponse, account_id: str | None) -> bool:
+    """/auth/session names the server-side account UUID, never the username
+    (apps/web/src/app/auth/session/route.ts); an unresolved account never binds."""
+    return (
+        not session.failed
+        and session.status == 200
+        and account_id is not None
+        and session.payload.get("subject") == account_id
+    )
+
+
 def _check_dev_admin_session(
     *,
     web: HttpClient | None,
@@ -2020,23 +2037,10 @@ def _check_dev_admin_session(
         )
         return
 
-    # 4. The session resolves to the signed-in account.
+    # 4. Read the session; it is bound below, once the identity user list has
+    #    named the account UUID the signed-in username resolves to.
     current = web.request(
         "GET", "/auth/session", authenticated=False, headers=session_headers(cookies)
-    )
-    _check(
-        checks,
-        (not current.failed)
-        and current.status == 200
-        and current.payload.get("subject") == username,
-        "session:session_resolves_account",
-        (
-            f"status={current.status} subjectMatches="
-            f"{current.payload.get('subject') == username}"
-            if not current.failed
-            else current.error
-        ),
-        "session",
     )
     operations.append("session_read")
 
@@ -2053,6 +2057,20 @@ def _check_dev_admin_session(
         or _as_dict(u.get("attributes")).get("username") == username
     ]
     own_record = own[0] if len(own) == 1 else {}
+    session_account = _session_account_id(own_record)
+    _check(
+        checks,
+        _session_subject_is_account(current, session_account),
+        "session:session_resolves_account",
+        (
+            f"status={current.status} subjectMatches="
+            f"{_session_subject_is_account(current, session_account)} "
+            f"accountResolved={session_account is not None}"
+            if not current.failed
+            else current.error
+        ),
+        "session",
+    )
     read_admin = (
         _read_admin_roles(own_record.get("roles"))
         and own_record.get("status") == "active"
@@ -2108,8 +2126,7 @@ def _check_dev_admin_session(
             and principal.payload.get("tenant_id") == snapshot["scope"]["tenant_id"]
             and _read_admin_roles(principal.payload.get("roles"))
             and sorted(principal.payload["roles"]) == snapshot["roles"]
-            and not current.failed and current.status == 200
-            and current.payload.get("subject") == snapshot["username"]
+            and _session_subject_is_account(current, session_account)
         )
         _check(checks, bound, "admin:read_principal_bound",
                f"status={principal.status} accountTenantRolesBound={bound}", "auth")
@@ -2179,7 +2196,7 @@ def _check_dev_admin_session(
             and principal.payload.get("account_id") == own_record["subject_id"]
             and principal.payload.get("tenant_id") == own_record["scope"]["tenant_id"]
             and principal.payload.get("roles") == ["platform_admin"]
-            and not current.failed and current.status == 200 and current.payload.get("subject") == username
+            and _session_subject_is_account(current, session_account)
         )
         _check(checks, bound, "admin:invitation_principal_bound",
                f"status={principal.status} accountTenantRolesBound={bound}", "auth")
@@ -2483,11 +2500,11 @@ def _check_dev_admin_session(
         form_session = web.request(
             "GET", "/auth/session", authenticated=False, headers=session_headers(form_cookies)
         )
+        form_bound = _session_subject_is_account(form_session, session_account)
         _check(
-            checks, (not form_session.failed) and form_session.status == 200
-            and form_session.payload.get("subject") == username,
+            checks, form_bound,
             "session:html_form_session_resolves_account",
-            f"status={form_session.status} subjectMatches={form_session.payload.get('subject') == username}",
+            f"status={form_session.status} subjectMatches={form_bound}",
             "session",
         )
         form_page = web.request(
