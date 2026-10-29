@@ -365,6 +365,24 @@ Task: ODP-CORE-OPS-STAGING-LIVE-GATE-001 · Owner: Claude2 · Reviewer: Codex2
 
 這些條件不成立時，gate 會如實失敗（例如 `auth:operator_bootstrap` 401 的 dependency 是 `auth`），stage 失敗並進入 hold，不會被當成通過。
 
+#### 12.5.1 IaC 修正（ODP-STAGING-REHEARSAL-NETWORK-IDENTITY-001）
+
+Task: ODP-STAGING-REHEARSAL-NETWORK-IDENTITY-001 · Owner: Claude2 · Reviewer: Codex2。只改 Terraform 原始碼，沒有 apply、部署、觸發 workflow，也沒有改 live IAM、secret 或 GitHub 變數。
+
+- **第 1 項（已改）**：`modules/ephemeral_staging` 在 `deployer_sa_user_*` 旁新增 `deployer_id_token_runtime`，授予 deployer 對這個 release 的 runtime SA `roles/iam.serviceAccountOpenIdTokenCreator`。授權範圍是 SA 本身，不是專案層級。
+- **第 2 項（已改）**：在 `staging_web_invokes_api` 旁新增 `staging_runtime_invokes_api`、`staging_runtime_invokes_web`，授予 runtime SA 對 staging API 與 staging Web 的 `roles/run.invoker`。兩者都是 service 層級，模組仍沒有 `allUsers`／`allAuthenticatedUsers`。三筆授權都跟 release 一起建立、一起 destroy。§12.2 的「沒有新 IAM binding」只描述 F4 task 當時的狀態；`tests/ops/test_ephemeral_staging_lifecycle.py` 的 IAM 清單已改成包含這三筆。
+- **第 4 項（已改）**：`modules/runtime_foundation/network.tf` 為該模組的 runtime VPC 建立兩個私有 zone，`<name_prefix>-runtime-googleapis`（`googleapis.com.`）與 `<name_prefix>-runtime-run`（`run.app.`）。結構沿用 `dev_connector_egress`：一筆 VIP A 記錄，加上一筆 wildcard CNAME 指向它。zone 只綁 `google_compute_network.runtime`，名稱依環境區分，不會與 default 網路的 `oday-dev-connector-*` 撞名。root 的 `required_apis` 加入 `dns.googleapis.com`。
+  - **VIP 選擇：兩個 zone 都用 `private.googleapis.com`（199.36.153.8/30），不用 restricted。** 依 Google 官方文件（Configure Private Google Access 的 domain 表、VPC-SC restricted VIP services 清單）：
+    - restricted VIP 只服務支援 VPC Service Controls 的 API，其餘一律阻擋。
+    - API 驗 service token 用的 JWKS 主機 `www.googleapis.com` 不在 restricted 清單上。`modules/opsboard/auth/jwks.py` 以 `follow_redirects=False` 直接 GET 這個主機。
+    - `*.run.app` 只列在 private VIP 下。
+    - Secret Manager、Cloud Storage、Pub/Sub、Cloud SQL Admin、IAM Credentials 在 restricted 清單上，也都被 private 的 `*.googleapis.com` 涵蓋。
+    - Google 要求不要混用兩組 VIP，所以 googleapis 也一起用 private，與 dev connector 的 restricted 不同。
+    - 既有 firewall `allow_restricted_google_apis` 已放行 199.36.153.8/30 tcp:443，firewall 不變。
+    - 殘餘風險：private VIP 不提供 VPC-SC 的資料外洩限制。repo 內沒有任何 VPC-SC perimeter（`access_context_manager`）定義。live 專案是否有 perimeter，本 task 沒有讀回。
+- **第 3 項（已改，負責人 2026-10-29 核准）**：staging API 的 ingress 由 `INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER` 改為 `INGRESS_TRAFFIC_ALL`。存取仍只靠 IAM，模組沒有 `allUsers`／`allAuthenticatedUsers`。理由：verify 在 GitHub-hosted runner 上直接讀 staging API，internal-LB-only 的 ingress 一定連不到；production 首次 release 由 `deploy_cloud_run_waji.sh` 的 `gcloud run deploy` 建立 API，預設 ingress 就是 all 加上 `--no-allow-unauthenticated`，staging 與它一致才有演練意義。auto worker 曾以「降低安全性」擋下這一行；負責人（蔡尚志）選擇「改成 all，仍需 IAM」之後，由 Claude 補上這一行與 `test_staging_api_is_reachable_by_the_runner_but_iam_only`。殘餘風險：run.app 端點可從網際網路連到，但沒有 IAM 身分的請求一律 403；staging 只在演練期間存在，TTL 到期即 destroy。
+  - 後續事項，不在本 task 修改：root `infra/terraform/cloud_run.tf` 仍宣告 internal LB ingress。若日後 apply root stack，runner 端的 smoke／live E2E 也會讀不到 API。
+
 ### 12.6 測試
 
 `tests/ops/test_ephemeral_staging_lifecycle.py::StagingLiveE2EGateTests`：

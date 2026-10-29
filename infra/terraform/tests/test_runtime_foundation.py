@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ipaddress
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -37,6 +39,69 @@ class RuntimeFoundationModuleContractTests(unittest.TestCase):
         self.assertIn('resource "google_compute_firewall" "allow_private_egress"', net_tf)
         self.assertIn('resource "google_compute_firewall" "allow_restricted_google_apis"', net_tf)
         self.assertIn("private_ip_google_access = true", net_tf)
+
+    def test_private_google_dns_is_bound_to_the_runtime_network(self) -> None:
+        net_tf = (MODULE_DIR / "network.tf").read_text(encoding="utf-8")
+
+        def block(kind: str, name: str) -> str:
+            match = re.search(rf'resource "{kind}" "{name}" \{{\n(.*?)\n\}}', net_tf, re.DOTALL)
+            self.assertIsNotNone(match, f"{kind}.{name} is missing")
+            return match.group(1)
+
+        zones = dict(
+            re.findall(
+                r'(\w+)\s*=\s*"([a-z.]+\.)"',
+                re.search(r"private_google_dns_zones = \{(.*?)\}", net_tf, re.DOTALL).group(1),
+            )
+        )
+        self.assertEqual(zones, {"googleapis": "googleapis.com.", "run": "run.app."})
+
+        zone = block("google_dns_managed_zone", "private_google")
+        self.assertIn("for_each    = local.private_google_dns_zones", zone)
+        self.assertIn('visibility  = "private"', zone)
+        # Bound to this module's runtime VPC only, never the default network.
+        self.assertEqual(
+            re.findall(r"network_url\s*=\s*(\S+)", zone),
+            ["google_compute_network.runtime.id"],
+        )
+        self.assertNotIn("default", zone)
+        # Per-environment name, distinct from the default-network oday-dev-connector-* zones.
+        self.assertIn('name        = "${local.name_prefix}-runtime-${each.key}"', zone)
+        self.assertNotIn("dev-connector", zone)
+
+        vip = block("google_dns_record_set", "private_google_vip")
+        self.assertIn('name    = each.key == "googleapis" ? "private.googleapis.com." : each.value', vip)
+        self.assertIn('type    = "A"', vip)
+        self.assertIn("rrdatas = local.private_google_api_ips", vip)
+        wildcard = block("google_dns_record_set", "private_google_wildcard")
+        self.assertIn('name         = "*.${each.value}"', wildcard)
+        self.assertIn('type         = "CNAME"', wildcard)
+        self.assertIn("rrdatas      = [google_dns_record_set.private_google_vip[each.key].name]", wildcard)
+
+        # Every VIP address is admitted by the existing Google APIs firewall
+        # allow, and only one VIP (private) is used, as Google requires.
+        ips = re.findall(
+            r'"([\d.]+)"',
+            re.search(r"private_google_api_ips = \[(.*?)\]", net_tf, re.DOTALL).group(1),
+        )
+        self.assertEqual(ips, ["199.36.153.8", "199.36.153.9", "199.36.153.10", "199.36.153.11"])
+        firewall = block("google_compute_firewall", "allow_restricted_google_apis")
+        self.assertIn('direction = "EGRESS"', firewall)
+        self.assertIn('ports    = ["443"]', firewall)
+        allowed = [
+            ipaddress.ip_network(cidr)
+            for cidr in re.findall(r'"(\d+\.\d+\.\d+\.\d+/\d+)"', firewall)
+        ]
+        for ip in ips:
+            self.assertTrue(any(ipaddress.ip_address(ip) in net for net in allowed), ip)
+        self.assertTrue(
+            all(ipaddress.ip_address(ip) in ipaddress.ip_network("199.36.153.8/30") for ip in ips)
+        )
+
+    def test_root_enables_cloud_dns_for_the_foundation_zones(self) -> None:
+        root_main = (MODULE_DIR.parents[1] / "main.tf").read_text(encoding="utf-8")
+        apis = re.search(r"required_apis = toset\(\[(.*?)\]\)", root_main, re.DOTALL).group(1)
+        self.assertIn('"dns.googleapis.com"', apis)
 
     def test_kms_resources_declared(self) -> None:
         kms_tf = (MODULE_DIR / "kms.tf").read_text(encoding="utf-8")

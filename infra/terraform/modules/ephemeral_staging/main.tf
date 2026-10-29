@@ -358,6 +358,14 @@ resource "google_service_account_iam_member" "deployer_sa_user_worker" {
   member             = "serviceAccount:${var.deployer_service_account_email}"
 }
 
+# verify mints the smoke and transport ID tokens by impersonating this release's
+# runtime SA; serviceAccountUser (actAs) does not include getOpenIdToken.
+resource "google_service_account_iam_member" "deployer_id_token_runtime" {
+  service_account_id = google_service_account.staging_runtime.name
+  role               = "roles/iam.serviceAccountOpenIdTokenCreator"
+  member             = "serviceAccount:${var.deployer_service_account_email}"
+}
+
 # Web -> API invoker.
 resource "google_cloud_run_v2_service_iam_member" "staging_web_invokes_api" {
   project  = var.project_id
@@ -374,6 +382,23 @@ resource "google_cloud_run_v2_service_iam_member" "staging_worker_invokes_api" {
   name     = google_cloud_run_v2_service.staging_api.name
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.staging_worker.email}"
+}
+
+# verify operator (the release runtime SA) -> API and Web invoker, service-scoped.
+resource "google_cloud_run_v2_service_iam_member" "staging_runtime_invokes_api" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.staging_api.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.staging_runtime.email}"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "staging_runtime_invokes_web" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.staging_web.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.staging_runtime.email}"
 }
 
 # --- Pub/Sub Messaging ---
@@ -522,7 +547,11 @@ resource "google_cloud_run_v2_service" "staging_api" {
   project  = var.project_id
   name     = "${local.name_prefix}-api"
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  # verify runs on a GitHub-hosted runner and reads this API directly, so an
+  # internal-LB-only ingress is unreachable. Access stays IAM-only (no public
+  # invoker), matching the production API that deploy_cloud_run_waji.sh creates.
+  # Owner decision 2026-10-29 (蔡尚志), design §12.5.1 item 3.
+  ingress = "INGRESS_TRAFFIC_ALL"
 
   template {
     service_account       = google_service_account.staging_runtime.email
