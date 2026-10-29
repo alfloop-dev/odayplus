@@ -308,7 +308,8 @@ class BusinessWeb:
                 )
             return Resp(401, {"ok": False, "error": "invalid_credentials"})
         if bare == "/auth/session":
-            return Resp(200, {"subject": actor}) if actor else Resp(401, {})
+            # The real route returns the server-side account UUID, not the username.
+            return Resp(200, {"subject": account_id(actor)}) if actor else Resp(401, {})
         if not actor:
             return Resp(401, {"error": {"code": "unauthenticated"}})
         if method in MUTATING and not headers.get("idempotency-key"):
@@ -1256,6 +1257,30 @@ def test_wrong_password_blocks_on_business_credential() -> None:
     }
     assert "wrong-password-value" not in json.dumps(receipt)
     _zero_writes(receipt, web, "franchise")
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        pytest.param(ACTORS["operations"]["primary"], id="username"),
+        pytest.param(account_id("ops.analyst"), id="other-account-uuid"),
+        pytest.param("", id="empty"),
+    ],
+)
+def test_session_that_does_not_name_the_actor_account_uuid_blocks(subject: str) -> None:
+    web = BusinessWeb()
+    request = web.request
+
+    def served(method: str, path: str, **kwargs: Any) -> Resp:
+        response = request(method, path, **kwargs)
+        return Resp(200, {"subject": subject}) if path == "/auth/session" else response
+
+    web.request = served  # type: ignore[method-assign]
+    receipt, web, _ = run(web, selection=["operations"])
+    assert blockers(receipt, "operations") == {
+        "session:primary_resolves_account": "business-credential"
+    }
+    _zero_writes(receipt, web, "operations")
 
 
 def test_missing_model_provenance_blocks_expansion_on_model() -> None:

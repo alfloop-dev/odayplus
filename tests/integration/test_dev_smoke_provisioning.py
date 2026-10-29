@@ -1022,9 +1022,8 @@ def web_lifecycle(
                     s.sessions.revoke_session(UUID(principal.attributes["sid"]), "logout")
                     return HttpResponse(200, {"ok": True})
                 if path == "/auth/session":
-                    row = s.engine.query_one("SELECT username FROM identity.accounts WHERE account_id = ?",
-                                             (principal.subject_id,))
-                    return HttpResponse(200, {"subject": row["username"]})
+                    # Like apps/web/src/app/auth/session/route.ts: the account UUID.
+                    return HttpResponse(200, {"subject": principal.subject_id})
                 return HttpResponse(200, {"account_id": principal.subject_id,
                                          "tenant_id": principal.tenant_id,
                                          "roles": sorted(r.value for r in principal.roles)})
@@ -1177,6 +1176,35 @@ def test_web_executor_pre_reservation_failure_never_issues(web_lifecycle: Any, f
     assert journal.inspect() is None
     assert ("POST", PATH) not in web.calls and ("POST", "/auth/invitations") not in web.calls
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1,)]
+
+
+@pytest.mark.parametrize(("session_read", "stage"), [(0, None), (1, "recovery-required")])
+def test_web_executor_session_must_name_the_account_uuid_not_the_username(
+    web_lifecycle: Any, monkeypatch: Any, session_read: int, stage: str | None,
+) -> None:
+    from delivery_toolchain.e2e.check_live_e2e_gate import HttpResponse
+    from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused
+    s, web, executor, journal, plan, args = web_lifecycle
+    original_request = web.request
+    reads: list[str] = []
+
+    def request(method: str, path: str, **kwargs: Any) -> Any:
+        response = original_request(method, path, **kwargs)
+        if path == "/auth/session" and response.status == 200:
+            reads.append(response.payload["subject"])
+            if len(reads) - 1 == session_read:
+                return HttpResponse(200, {"subject": ("ajoe734", plan["username"])[session_read]})
+        return response
+
+    monkeypatch.setattr(web, "request", request)
+    with pytest.raises(ProvisioningRefused):
+        executor.execute(plan, **args)
+    assert reads[0] == s.admin
+    if stage is None:
+        assert journal.inspect() is None
+        assert ("POST", "/auth/invitations") not in web.calls
+    else:
+        assert journal.inspect().stage == stage
 
 
 @pytest.mark.parametrize("field", ["release_sha", "web_release_sha", "manifest_digest", "web_manifest_digest",
