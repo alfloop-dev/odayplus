@@ -76,6 +76,20 @@ capability or silently declaring completion. These tenant phases run once per
 tick, before source-bound parser/matching/exact phases. Existing partition
 progress and conflicts are retained in the same receipt.
 
+The original `CanonicalNativeParserRunRepository.get` bounds each of its four
+JSONB output cells to the fixed provider's existing 1,048,576-byte document
+limit, measured as PostgreSQL `::text` UTF-8 bytes before returning the cell.
+An oversized existing run raises the original typed conflict; it is never
+reported as absent or as an empty-output run. The same tenant-scoped SELECT
+retains the requested `FOR UPDATE` lock, original JSONB types and null values.
+Identity planning uses this owner for its locked run read as well. The bound
+covers those four SQL result cells, rather than Python memory usage or every
+job/audit/parent row loaded by the complete history proof. Each caller retains
+its original history proof, current-action source/account authority, field
+masking and confirmation/execution checks. Historical proof grants no current
+action authority and does not require reactivating retired settings.
+Lifecycle-only metadata projections still omit all payloads.
+
 The existing canonical case picker now exposes native CREATE/REVISE and human
 DUPLICATE proposals. It displays the actual parser fields and the same observed
 resource plan submitted to the existing confirmation API. The case read also

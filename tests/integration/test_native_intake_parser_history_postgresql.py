@@ -73,6 +73,35 @@ def completed_parser(parser_io_case):
     return case, delivery, observed, result
 
 
+@pytest.mark.parametrize("column", ["parsed_payload", "validation_errors"])
+def test_complete_history_refuses_oversized_recorded_cells_before_materialization(
+        completed_parser, monkeypatch, column):
+    from modules.external_data.application.native_manual_json_parser import MAX_DOCUMENT_BYTES
+
+    case, delivery, _, result = completed_parser
+    owner, ids = case[:2]
+    # This is the actually completed run, not a synthetic terminal label. Its
+    # fixed history owner must refuse the altered cell before decoding output.
+    with owner.graph.transaction(ids["tenant"]):
+        owner.engine.execute(f"UPDATE intake.parser_runs SET {column}=jsonb_build_object('oversized', "
+            "repeat('店',?)) WHERE tenant_id=? AND parser_run_id=?",
+            (MAX_DOCUMENT_BYTES // 3 + 1, ids["tenant"], result["parser_run_id"]))
+    query_one, acquired = owner.engine.query_one, []
+
+    def observe_actual_driver_result(statement, parameters=()):
+        row = query_one(statement, parameters)
+        if row is not None and row.get("parser_run_id") == result["parser_run_id"] and column in row:
+            acquired.append(row[column] is None)
+        return row
+
+    monkeypatch.setattr(owner.engine, "query_one", observe_actual_driver_result)
+    with owner.graph.transaction(ids["tenant"]):
+        before = NativeParserCommandBudget(owner.clock)
+        with pytest.raises(NativeParserConflict, match="^NATIVE_PARSER_TERMINAL_PROOF_REJECTED$"):
+            NativeParserTerminalHistory(owner.graph).read(delivery, ids["tenant"], 1, before=before)
+    assert acquired == [True]
+
+
 def _human_new_case(completed):
     from shared.infrastructure.persistence.identity_cases_sql import CanonicalMatchCaseRepository
 

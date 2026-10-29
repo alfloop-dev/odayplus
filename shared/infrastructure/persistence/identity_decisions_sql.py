@@ -337,6 +337,9 @@ class CanonicalIdentityDecisionRepository:
             NativeParserCommandBudget,
             NativeParserSQLClock,
         )
+        from modules.listing.application.native_intake_parser_runs import (
+            CanonicalNativeParserRunRepository,
+        )
         from modules.listing.application.native_intake_requester_authority import (
             NativeIntakeRequesterAuthorityUnavailable,
         )
@@ -383,9 +386,10 @@ class CanonicalIdentityDecisionRepository:
                     or datetime.fromisoformat(review_transition["occurred_at"]) < datetime.fromisoformat(result["settled_at"])):
                 raise IdentityConflictError("IDENTITY_LISTING_REVIEW_TRANSITION_REQUIRED")
             _, _, classified = NativeParserManualInputReader(self.graph).current_authority(intake, original, before=before)
-            before()
-            run = self.graph._one("SELECT * FROM intake.parser_runs WHERE tenant_id=? AND parser_run_id=? FOR UPDATE",
-                (tenant, result["parser_run_id"]))
+            run = CanonicalNativeParserRunRepository(self.engine).get(
+                tenant, result["parser_run_id"], before=before, for_update=True)
+            if run is None:
+                raise IdentityConflictError("IDENTITY_LISTING_CURRENT_PARSER_RESULT_REQUIRED")
             normalized = json.loads(run["normalized_payload"]) if isinstance(run["normalized_payload"], str) else run["normalized_payload"]
             parsed = json.loads(run["parsed_payload"]) if isinstance(run["parsed_payload"], str) else run["parsed_payload"]
             before()

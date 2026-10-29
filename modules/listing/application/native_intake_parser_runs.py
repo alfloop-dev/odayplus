@@ -9,16 +9,30 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from modules.external_data.application.native_manual_json_parser import MAX_DOCUMENT_BYTES
 from modules.external_data.application.native_parser_output import NativeParserOutput
 from modules.listing.application.native_intake_assisted_entry_request_proof import _time
 from modules.listing.application.native_intake_job_runtime import native_intake_uuid
 from modules.listing.application.native_intake_parser_policy import NativeParserConflict
 from modules.listing.application.native_intake_parser_prerequisites import assert_native_parser_root
 
-_READS = (
-    "SELECT * FROM intake.parser_runs WHERE tenant_id=? AND parser_run_id=?",
-    "SELECT * FROM intake.parser_runs WHERE tenant_id=? AND parser_run_id=? FOR UPDATE",
+# Bound acquisition before JSONB leaves PostgreSQL. The provider's original
+# document limit applies to each of these four wire-text cells, not Python RSS
+# or a grant that the recorded output is valid. Preserve SQL NULL / JSON null
+# and the original JSONB type; the complete history proof still validates facts.
+_OUTPUT_COLUMNS = ("parsed_payload", "normalized_payload", "field_confidence", "validation_errors")
+_OUTPUT_SELECT = ",".join(
+    f"CASE WHEN COALESCE(octet_length({name}::text),0)<={MAX_DOCUMENT_BYTES} THEN {name} END AS {name}"
+    for name in _OUTPUT_COLUMNS)
+_OUTPUT_WITHIN_BOUND = " AND ".join(
+    f"COALESCE(octet_length({name}::text),0)<={MAX_DOCUMENT_BYTES}" for name in _OUTPUT_COLUMNS)
+_READ = (
+    "SELECT parser_run_id,tenant_id,intake_id,source_snapshot_id,parser_release_id,status,"
+    "started_at,completed_at,correlation_id,version,created_at," + _OUTPUT_SELECT + ",(" +
+    _OUTPUT_WITHIN_BOUND + ") AS _native_output_within_bound "
+    "FROM intake.parser_runs WHERE tenant_id=? AND parser_run_id=?"
 )
+_READS = (_READ, _READ + " FOR UPDATE")
 _METADATA = (
     "SELECT r.parser_run_id,r.intake_id,r.source_snapshot_id,r.parser_release_id,r.status,"
     "r.started_at,r.completed_at,r.correlation_id,r.version,r.created_at,"
@@ -95,6 +109,10 @@ class CanonicalNativeParserRunRepository:
         before()
         row = self.engine.query_one(_READS[int(for_update)], (tenant, run_id))
         before.check_in_memory()
+        # None means genuinely absent. An oversized existing run must neither
+        # become absent at admission nor masquerade as an empty-output run.
+        if row is not None and row.pop("_native_output_within_bound") is not True:
+            _reject()
         return row
 
     @staticmethod

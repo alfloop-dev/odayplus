@@ -221,6 +221,53 @@ def test_foreign_transaction_tenant_cannot_read_an_existing_run(parser_storage_c
             store.get(str(uuid4()), row["parser_run_id"], before=before)
 
 
+@pytest.mark.parametrize("column", ["parsed_payload", "normalized_payload", "field_confidence", "validation_errors"])
+@pytest.mark.parametrize("for_update", [False, True])
+@pytest.mark.parametrize("character", ["x", "店"])
+def test_oversized_run_output_is_rejected_before_driver_materializes_values(
+        parser_storage_case, monkeypatch, record_property, column, for_update, character):
+    owner, tenant, _, _, _, run_id, _ = parser_storage_case
+    store = CanonicalNativeParserRunRepository(owner.engine)
+    with owner.graph.transaction(tenant):
+        before = NativeParserCommandBudget(NativeParserSQLClock(owner.engine))
+        original = queued(parser_storage_case, before)
+    # Only this fixture's existing row is corrupted. The repetitive value also
+    # compresses well in TOAST: its storage size cannot stand in for wire bytes.
+    value = json.dumps({"oversized": character * (provider.MAX_DOCUMENT_BYTES // len(character.encode()) + 1)},
+        ensure_ascii=False)
+    with owner.graph.transaction(tenant):
+        owner.engine.execute(f"UPDATE intake.parser_runs SET {column}=?::jsonb WHERE tenant_id=? AND parser_run_id=?",
+            (value, tenant, run_id))
+    query_one, observations = owner.engine.query_one, []
+
+    def observe_actual_driver_result(statement, parameters=()):
+        row = query_one(statement, parameters)
+        if row is not None and row.get("parser_run_id") == run_id:
+            observations.append({name: None if row[name] is None else len(row[name].encode()) for name in (
+                "parsed_payload", "normalized_payload", "field_confidence", "validation_errors")})
+        return row
+
+    monkeypatch.setattr(owner.engine, "query_one", observe_actual_driver_result)
+    with pytest.raises(NativeParserConflict, match="^NATIVE_PARSER_RUN_CAS_REJECTED$"):
+        with owner.graph.transaction(tenant):
+            before = NativeParserCommandBudget(NativeParserSQLClock(owner.engine))
+            deadlines = before.deadline, before._monotonic_deadline
+            try:
+                store.get(tenant, run_id, before=before, for_update=for_update)
+            finally:
+                assert (before.deadline, before._monotonic_deadline) == deadlines
+    record_property("driver_output_cell_bytes", json.dumps(observations))
+    assert len(observations) == 1 and observations[0][column] is None
+    # Rejection must leave the existing row present and must not erase output,
+    # advance state/version, create a replacement, or apply human proposals.
+    with owner.graph.transaction(tenant):
+        actual = query_one(f"SELECT status,version,octet_length({column}::text) AS bytes "
+            "FROM intake.parser_runs WHERE tenant_id=? AND parser_run_id=?", (tenant, run_id))
+        assert actual["bytes"] > provider.MAX_DOCUMENT_BYTES
+        assert (actual["status"], actual["version"]) == (original["status"], original["version"])
+        assert query_one("SELECT count(*) AS n FROM intake.parser_runs WHERE tenant_id=?", (tenant,))["n"] == 1
+
+
 @pytest.mark.parametrize("method", ["admission", "acceptance", "get", "metadata", "metadata_page"])
 @pytest.mark.parametrize("root_change", ["read_committed", "foreign_tenant"])
 def test_parser_owners_require_current_serializable_tenant_root(parser_storage_case, method, root_change):
