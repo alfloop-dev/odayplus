@@ -234,7 +234,14 @@ def test_real_backfill_revision_reaches_original_native_matcher_and_executor(mat
         result = migration.backfill([], [legacy], [], tenant_id=ids["tenant"], source_id=source,
             sources=[(source, source_before["display_name"], source_before["retrieval_mode"], source_before["allowed_hosts"])],
             parser_release=release)
-        assert result["counts"]["listings_processed"] == 1 and result["counts"]["findings"] == 0
+        assert result["counts"]["listings_processed"] == 1
+        original_legacy_key = listing_id
+        proof = connection.execute("SELECT expected FROM workflow.reconciliation_findings "
+            "WHERE tenant_id=%s AND migration_id=%s AND severity='INFO'",
+            (ids["tenant"], migration.migration_ref)).fetchone()[0]
+        listing_id = next(entry["target_id"] for entry in proof["mapping_manifest"]["entries"]
+            if entry["namespace"] == "listing" and entry["source_key"] == original_legacy_key)
+        assert listing_id != original_legacy_key and result["counts"]["findings"] == 0
         assert connection.execute("SELECT row_to_json(s) FROM intake.source_registry s WHERE source_id=%s", (source,)).fetchone()[0] == source_before
         assert connection.execute("SELECT source_listing_id FROM expansion.listings WHERE listing_id=%s", (listing_id,)).fetchone()[0] == values.get("providerListingId")
         edges = connection.execute("SELECT source_entity_id,match_strategy FROM identity.source_identity_edges WHERE listing_id=%s", (listing_id,)).fetchall()

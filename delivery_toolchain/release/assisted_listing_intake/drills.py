@@ -175,6 +175,51 @@ def _legacy_fixture(tenant_id: str, count: int) -> dict[str, Any]:
 # Migration reconciliation drill
 # ---------------------------------------------------------------------------
 
+def prove_migration_copy_cleanup(source_path: Path, copy_path: Path, *,
+                                 migration_ref: str, tenant_id: str) -> dict[str, Any]:
+    """The original migration drill's offline-copy proof, also used by its CLI.
+
+    The source is opened read-only; SQLite backup includes committed WAL data.
+    Never overwrite an old proof or clean the original. This proves isolated
+    staging cleanup only, not live release rollback, writer fencing or restore.
+    """
+    from product_ops.migrations.assisted_listing_intake.migrate import IntakeMigrator
+
+    source_path, copy_path = source_path.resolve(strict=True), copy_path.resolve()
+    if source_path == copy_path or copy_path.exists():
+        raise ValueError("MIGRATION_NEW_DISTINCT_COPY_REQUIRED")
+    tenant_id = str(uuid.UUID(tenant_id))
+    source = sqlite3.connect(source_path.as_uri() + "?mode=ro", uri=True)
+    try:
+        before_hash = hashlib.sha256(source.serialize()).hexdigest()
+        original_count = source.execute("SELECT count(*) FROM intakes WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
+        # Exclusive creation preserves prior evidence even if a copy failed.
+        with copy_path.open("xb"):
+            pass
+        copy = sqlite3.connect(copy_path)
+        try:
+            source.backup(copy)
+            before = copy.execute("SELECT count(*) FROM intakes WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
+            other_before = copy.execute("SELECT count(*) FROM intakes WHERE tenant_id<>?", (tenant_id,)).fetchone()[0]
+            deleted = IntakeMigrator(copy, migration_ref=migration_ref).rollback_migration(
+                tenant_id=tenant_id, isolated_copy=True)
+            after = copy.execute("SELECT count(*) FROM intakes WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
+            other_after = copy.execute("SELECT count(*) FROM intakes WHERE tenant_id<>?", (tenant_id,)).fetchone()[0]
+        finally:
+            copy.close()
+        after_hash = hashlib.sha256(source.serialize()).hexdigest()
+        original_after = source.execute("SELECT count(*) FROM intakes WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
+        if before_hash != after_hash or original_count != original_after or other_before != other_after:
+            raise ValueError("MIGRATION_COPY_PROOF_SOURCE_OR_OTHER_TENANT_CHANGED")
+        return {"environment": "isolated-staging-copy", "scoped_to_tenant": tenant_id,
+            "copy_path": str(copy_path), "rows_before": before, "rows_deleted": deleted, "rows_after": after,
+            "other_tenant_rows_untouched": other_after, "staging_record_untouched": original_after,
+            "source_snapshot_sha256_before": before_hash, "source_snapshot_sha256_after": after_hash,
+            "source_unchanged": True, "live_rollback_qualified": False}
+    finally:
+        source.close()
+
+
 def run_migration_reconciliation(workdir: Path, *, rows_per_tenant: int = 8) -> dict[str, Any]:
     """Staging backfill → shadow verification → scoped rollback proof.
 
@@ -226,7 +271,7 @@ def run_migration_reconciliation(workdir: Path, *, rows_per_tenant: int = 8) -> 
                     "intake_sha256": verify.get("intake_sha256"),
                     "listing_sha256": verify.get("listing_sha256"),
                     "candidate_sha256": verify.get("candidate_sha256"),
-                    "passed": bool(verify.get("passed", verify.get("verified", False))),
+                    "passed": bool(verify["shadow_comparison_success"]),
                     "blocking_findings": verify.get("blocking_findings", verify.get("findings", 0)),
                 },
             }
@@ -248,34 +293,11 @@ def run_migration_reconciliation(workdir: Path, *, rows_per_tenant: int = 8) -> 
 
     # Scoped rollback proof, on an isolated copy (per runbook §5.2 rollback
     # never destroys the staging evidence used by the restore drill).
-    rollback_db = workdir / "migration-rollback-proof.sqlite3"
-    shutil.copyfile(staging_db, rollback_db)
-    conn = sqlite3.connect(rollback_db)
-    try:
-        migrator = IntakeMigrator(conn, migration_ref="ODP-INTAKE-RELEASE-001-DRILL")
-        before = conn.execute(
-            "SELECT COUNT(*) FROM intakes WHERE tenant_id = ?", (STAGING_TENANT_B,)
-        ).fetchone()[0]
-        deleted = migrator.rollback_migration(
-            migration_ref="ODP-INTAKE-RELEASE-001-DRILL", tenant_id=STAGING_TENANT_B
-        )
-        after = conn.execute(
-            "SELECT COUNT(*) FROM intakes WHERE tenant_id = ?", (STAGING_TENANT_B,)
-        ).fetchone()[0]
-        untouched = conn.execute(
-            "SELECT COUNT(*) FROM intakes WHERE tenant_id = ?", (STAGING_TENANT_A,)
-        ).fetchone()[0]
-        conn.commit()
-    finally:
-        conn.close()
-
-    original_intact = sqlite3.connect(staging_db)
-    try:
-        staging_untouched = original_intact.execute(
-            "SELECT COUNT(*) FROM intakes WHERE tenant_id = ?", (STAGING_TENANT_B,)
-        ).fetchone()[0]
-    finally:
-        original_intact.close()
+    rollback_proof = prove_migration_copy_cleanup(staging_db, workdir / "migration-rollback-proof.sqlite3",
+        migration_ref="ODP-INTAKE-RELEASE-001-DRILL", tenant_id=STAGING_TENANT_B)
+    before, deleted, after = (rollback_proof[key] for key in ("rows_before", "rows_deleted", "rows_after"))
+    untouched = rollback_proof["other_tenant_rows_untouched"]
+    staging_untouched = rollback_proof["staging_record_untouched"]
 
     blocking = sum(
         1
@@ -285,6 +307,7 @@ def run_migration_reconciliation(workdir: Path, *, rows_per_tenant: int = 8) -> 
     )
     passed = (
         all(t["verification"]["intake_count"] == rows_per_tenant for t in tenants.values())
+        and all(t["verification"]["passed"] for t in tenants.values())
         and blocking == 0
         and overlap == 0
         and deleted > 0
@@ -304,14 +327,7 @@ def run_migration_reconciliation(workdir: Path, *, rows_per_tenant: int = 8) -> 
             "distinct_tenants": distinct_tenants,
             "cross_tenant_id_overlap": overlap,
         },
-        "rollback_proof": {
-            "scoped_to_tenant": STAGING_TENANT_B,
-            "rows_before": before,
-            "rows_deleted": deleted,
-            "rows_after": after,
-            "other_tenant_rows_untouched": untouched,
-            "staging_record_untouched": staging_untouched,
-        },
+        "rollback_proof": rollback_proof,
         "blocking_findings": blocking,
         "passed": passed,
     }

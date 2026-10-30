@@ -857,3 +857,44 @@ def test_cutover_gate_blocks_while_pending(config, tmp_path: Path) -> None:
     )
     assert result["passed"] is False
     assert "restore" in result["failed_drills"]
+
+
+def test_original_migration_cleanup_cli_uses_new_copy_and_preserves_wal_source(tmp_path):
+    import subprocess
+    import sys
+
+    from product_ops.migrations.assisted_listing_intake.migrate import IntakeMigrator
+
+    result = drills.run_migration_reconciliation(tmp_path / "original-drill", rows_per_tenant=1)
+    source = Path(result["staging_db"])
+    copy = tmp_path / "cli-rollback-proof.sqlite3"
+    with closing(sqlite3.connect(source)) as writer:
+        assert writer.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        IntakeMigrator(writer, migration_ref="ODP-INTAKE-RELEASE-001-DRILL")._create_finding(
+            drills.STAGING_TENANT_B, "snapshot", "synthetic-committed-WAL-evidence", [], "MISSING_EVIDENCE", "WARNING",
+            {"original": "source WAL proof"}, {"original": "retain"})
+        writer.commit()
+        before = hashlib.sha256(writer.serialize()).hexdigest()
+        command = [sys.executable, "-m", "product_ops.migrations.assisted_listing_intake.migrate", "--action", "rollback",
+            "--sqlite-path", str(source), "--rollback-copy-path", str(copy), "--tenant-id", drills.STAGING_TENANT_B,
+            "--migration-ref", "ODP-INTAKE-RELEASE-001-DRILL"]
+        executed = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        assert executed.returncode == 0, executed.stdout + executed.stderr
+        proof = json.loads(executed.stdout)
+        assert proof["rows_before"] == proof["staging_record_untouched"] == proof["other_tenant_rows_untouched"] == 1
+        assert proof["rows_after"] == 0 and proof["rows_deleted"] > 0
+        assert proof["source_unchanged"] is True and proof["live_rollback_qualified"] is False
+        assert proof["source_snapshot_sha256_before"] == proof["source_snapshot_sha256_after"] == before
+        with closing(sqlite3.connect(copy)) as saved:
+            assert saved.execute("SELECT count(*) FROM reconciliation_findings WHERE source_id='synthetic-committed-WAL-evidence'").fetchone()[0] == 1
+            disposition = json.loads(saved.execute("SELECT actual FROM reconciliation_findings WHERE severity='INFO' AND tenant_id=?",
+                (drills.STAGING_TENANT_B,)).fetchone()[0])
+            assert disposition["rollback_disposition"] == "ROLLED_BACK"
+        copy_hash = hashlib.sha256(copy.read_bytes()).hexdigest()
+        retry = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        assert retry.returncode == 1 and json.loads(retry.stdout)["reason"] == "isolated_copy_proof_failed"
+        assert hashlib.sha256(copy.read_bytes()).hexdigest() == copy_hash
+        command[command.index("--rollback-copy-path") + 1] = str(source)
+        same_path = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        assert same_path.returncode == 1
+        assert hashlib.sha256(writer.serialize()).hexdigest() == before

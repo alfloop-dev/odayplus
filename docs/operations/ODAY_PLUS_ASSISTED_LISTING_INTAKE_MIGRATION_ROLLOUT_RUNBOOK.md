@@ -411,6 +411,26 @@ Production migration must add:
 - source replay manifest including snapshot/checksum/parser release;
 - UAT and canary evidence packet.
 
+The existing staging migrator records `legacy-tenant-keys-v2` mappings in the
+partition's existing INFO reconciliation receipt. Every legacy producer key,
+including a UUID-shaped string, is scoped by the actual tenant UUID and resource
+kind; a native SQL reference is validated against its real owner instead of
+being remapped. Target identity is independent of the batch reference and source
+selector. Resume requires an existing controlled binding, not just a matching
+primary key. An unversioned or incompatible tenant proof blocks a new batch too;
+changing `migration_ref` is not a compatibility migration. Raw legacy keys and
+original source history remain recorded in the same versioned manifest.
+
+The migrator's cleanup method is for an explicitly isolated, unadopted staging
+copy only. The existing release migration drill and migration CLI share the same
+read-only SQLite source/backup proof; the CLI cannot clean a PostgreSQL target or
+the original SQLite file. Copy cleanup retains mapping, reconciliation and audit
+history and refuses changed or held targets. A copy containing the runtime schema
+or same-tenant native job/decision/idempotency history is unsupported by this
+migration-only cleanup owner; it must use the original restore controller. This local exercise does not prove
+live worker cancellation, publisher fencing, writer authority or section 5.2
+rollback. Those remain responsibilities of the original release/runtime owners.
+
 ### 3.1 Reconciliation finding schema
 
 ```json

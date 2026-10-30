@@ -62,6 +62,17 @@ def synthetic_history(intake_id, raw=None):
     }
 
 
+def mapped_id(conn, namespace, source_key, *, tenant="00000000-0000-0000-0000-000000000001",
+              migration_ref="ODP-INTAKE-MIGRATION-001"):
+    """Read the actual controlled receipt, never reimplement its ID rule."""
+    rows = conn.execute("SELECT expected FROM workflow.reconciliation_findings "
+        "WHERE tenant_id=%s AND migration_id=%s AND severity='INFO'", (tenant, migration_ref)).fetchall()
+    targets = {entry["target_id"] for (proof,) in rows for entry in proof["mapping_manifest"]["entries"]
+               if entry["namespace"] == namespace and entry["source_key"] == source_key}
+    assert len(targets) == 1, (namespace, source_key)
+    return targets.pop()
+
+
 @pytest.fixture(name="conn")
 def migration_connection(intake_blank_db):
     """Close the caller-owned connection before its database is dropped."""
@@ -430,10 +441,10 @@ def test_b4_snapshot_provenance_and_policy_preservation(conn) -> None:
 
     cur = conn.cursor()
     cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
-    cur.execute("SELECT source_policy_state FROM intake.intakes WHERE intake_id = %s", (ensure_uuid("IN-PROV"),))
+    cur.execute("SELECT source_policy_state FROM intake.intakes WHERE intake_id = %s", (mapped_id(conn, "intake", "IN-PROV"),))
     assert cur.fetchone()[0] == "AUTH_REQUIRED"
 
-    cur.execute("SELECT raw_object_uri, content_sha256 FROM intake.source_snapshots WHERE intake_id = %s", (ensure_uuid("IN-PROV"),))
+    cur.execute("SELECT raw_object_uri, content_sha256 FROM intake.source_snapshots WHERE intake_id = %s", (mapped_id(conn, "intake", "IN-PROV"),))
     row = cur.fetchone()
     assert row[0] == "gs://verified-bucket/snapshots/raw-100"
     assert row[1] == hashlib.sha256(json.dumps({"html": "custom snapshot text"}, sort_keys=True).encode()).hexdigest()
@@ -515,7 +526,7 @@ def test_major_b_probe_complete_table_scoped_rollback(conn) -> None:
     assert conn.execute("SELECT count(*) FROM expansion.candidate_sites").fetchone()[0] == 1
 
     # Perform scoped rollback
-    migrator.rollback_migration(tenant_id=tenant_id)
+    migrator.rollback_migration(isolated_copy=True, tenant_id=tenant_id)
 
     cur = conn.cursor()
     cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
@@ -536,7 +547,6 @@ def test_major_b_probe_complete_table_scoped_rollback(conn) -> None:
         "expansion.promotion_decisions",
         "expansion.candidate_sites",
         "workflow.outbox_events",
-        "workflow.reconciliation_findings",
     ]
 
     for tbl in state_tables:
@@ -544,6 +554,9 @@ def test_major_b_probe_complete_table_scoped_rollback(conn) -> None:
         count = cur.fetchone()[0]
         assert count == 0, f"Leftover records found in {tbl}: {count}"
 
+    expected, actual = conn.execute("SELECT expected,actual FROM workflow.reconciliation_findings WHERE severity='INFO'").fetchone()
+    assert expected["mapping_manifest"]["entries"] and actual["rollback_disposition"] == "ROLLED_BACK"
+    assert actual["rolled_back_at"]
     # Audit events are append-only/WORM and preserved per contract
     cur.execute("SELECT COUNT(*) FROM audit.audit_events WHERE tenant_id = %s", (tenant_id,))
     assert cur.fetchone()[0] >= 1
@@ -691,7 +704,7 @@ def test_blocker3_rollback_preserves_unrelated_tenant_data(conn) -> None:
     conn.commit()
 
     # 3. Roll back migration
-    deleted_count = migrator.rollback_migration(tenant_id=tenant_id)
+    deleted_count = migrator.rollback_migration(isolated_copy=True, tenant_id=tenant_id)
     assert deleted_count >= 1
 
     # 4. Verify unrelated intake and audit event survived
@@ -848,8 +861,11 @@ def test_cli_subprocess_against_pg_fixture(intake_blank_db, tmp_path) -> None:
         capture_output=True,
         text=True,
     )
-    assert proc_rb.returncode == 0, f"CLI rollback failed stderr: {proc_rb.stderr}"
-    assert "Scoped migration rollback executed" in proc_rb.stdout
+    assert proc_rb.returncode == 2
+    assert "live rollback uses the governed release owner" in proc_rb.stderr
+    with intake_blank_db.connect() as original:
+        assert original.execute("SELECT count(*) FROM intake.intakes").fetchone()[0] == 1
+        assert original.execute("SELECT actual FROM workflow.reconciliation_findings WHERE severity='INFO'").fetchone()[0].get("rollback_disposition") is None
 
 
 def test_cli_fail_closed_without_database_target() -> None:
@@ -866,6 +882,8 @@ def test_cli_fail_closed_without_database_target() -> None:
             "product_ops.migrations.assisted_listing_intake.migrate",
             "--action",
             "backfill",
+            "--tenant-id",
+            "00000000-0000-0000-0000-000000000001",
         ],
         capture_output=True,
         text=True,
@@ -913,7 +931,7 @@ def test_blocker2_rollback_scoped_to_migration_ref(conn) -> None:
     )
 
     # Roll back only MIG-REF-B
-    migrator_b.rollback_migration(migration_ref="MIG-REF-B", tenant_id=tenant_id)
+    migrator_b.rollback_migration(isolated_copy=True, migration_ref="MIG-REF-B", tenant_id=tenant_id)
 
     cur = conn.cursor()
     cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
@@ -921,7 +939,7 @@ def test_blocker2_rollback_scoped_to_migration_ref(conn) -> None:
     surviving_intakes = [str(r[0]) for r in cur.fetchall()]
 
     assert len(surviving_intakes) == 1
-    assert surviving_intakes[0] == ensure_uuid("IN-A-1")
+    assert surviving_intakes[0] == mapped_id(conn, "intake", "IN-A-1", migration_ref="MIG-REF-A")
 
 
 def test_blocker3_rollback_preserves_live_outbox_and_orphan_properties(conn) -> None:
@@ -952,9 +970,10 @@ def test_blocker3_rollback_preserves_live_outbox_and_orphan_properties(conn) -> 
             outbox_event_id, tenant_id, event_id, event_type, event_version,
             aggregate_type, aggregate_id, aggregate_version, partition_key,
             payload, correlation_id, occurred_at, retention_until
-        ) VALUES (%s, %s, %s, 'CandidateSitePromoted', 1, 'CandidateSite', %s, 1, %s, '{}', %s, NOW(), NOW())
+        ) VALUES (%s, %s, %s, 'CandidateSitePromoted', 1, 'CandidateSite', %s, 1, %s, %s, %s, NOW(), NOW())
         """,
-        (ob_live_id, tenant_id, ensure_uuid("evt-live"), ensure_uuid("CS-LIVE"), tenant_id, ensure_uuid("corr-live")),
+        (ob_live_id, tenant_id, ensure_uuid("evt-live"), ensure_uuid("CS-LIVE"), tenant_id,
+         json.dumps({"candidate_site_id": ensure_uuid("CS-LIVE"), "status": "CANDIDATE"}), ensure_uuid("corr-live")),
     )
     conn.commit()
 
@@ -985,7 +1004,7 @@ def test_blocker3_rollback_preserves_live_outbox_and_orphan_properties(conn) -> 
     assert conn.execute("SELECT count(*) FROM expansion.candidate_sites").fetchone()[0] == 1
 
     # Roll back migration
-    migrator.rollback_migration(tenant_id=tenant_id)
+    migrator.rollback_migration(isolated_copy=True, tenant_id=tenant_id)
 
     # Assert live property and outbox event survived
     cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
@@ -1276,7 +1295,7 @@ def test_legacy_bridge_field_and_evidence_parity(conn):
     tenant = migration_input()["tenantId"]
     snapshots = []
     for bridge in (False, True):
-        migrator = IntakeMigrator(conn)
+        migrator = IntakeMigrator(conn, migration_ref=f"synthetic-parity-{bridge}")
         result = migrator.backfill([migration_input(bridge)], [], [], tenant_id=tenant, parser_release=parser_provenance())
         assert result["counts"]["intakes_processed"] == 1
         assert result["counts"]["findings"] == 0
@@ -1313,12 +1332,12 @@ def test_legacy_bridge_field_and_evidence_parity(conn):
         assert cur.fetchone() == ("PENDING_REVIEW",)
         cur.execute("SELECT count(*) FROM identity.match_decisions")
         assert cur.fetchone()[0] == 0
-        fresh = IntakeMigrator(conn).verify_shadow_comparison(tenant)
+        fresh = IntakeMigrator(conn, migration_ref=migrator.migration_ref).verify_shadow_comparison(tenant)
         assert fresh["blocking_findings"] == 0
         assert fresh["shadow_comparison_success"] is True
         assert fresh["proof_scope"] == "counts_and_ids_only_not_field_or_evidence_parity"
         snapshots.append((intake_row, snapshot_row, parser_row, history))
-        migrator.rollback_migration(tenant_id=tenant)
+        migrator.rollback_migration(isolated_copy=True, tenant_id=tenant)
     assert snapshots[0] == snapshots[1]
 
 
@@ -1675,12 +1694,11 @@ def seed_inventory_models(database, engine):
     """Real legacy/bridge storage and native SQL, with mirrored logical IDs."""
     legacy = migration_input()
     bridge = migration_input(True)
-    # Mirror a legacy non-UUID through the migrator's original UUID mapping.
-    bridge["intake_id"] = bridge["operator_presentation"]["id"] = ensure_uuid(legacy["id"])
     save_inventory_document(engine, legacy)
-    save_inventory_document(engine, bridge, bridge=True)
     with database.connect() as connection:
         IntakeMigrator(connection).backfill([legacy], [], [], tenant_id=INVENTORY_TENANT, parser_release=parser_provenance())
+        bridge["intake_id"] = bridge["operator_presentation"]["id"] = mapped_id(connection, "intake", legacy["id"])
+        save_inventory_document(engine, bridge, bridge=True)
         # Native-only, different source and month (not a mirrored receipt).
         row = {**legacy, "id": "native-other", "sourceId": "SRC-BROKER", "submittedAt": "2026-08-01T01:00:00Z"}
         IntakeMigrator(connection).backfill([row], [], [], tenant_id=INVENTORY_TENANT)
@@ -1690,6 +1708,9 @@ def seed_inventory_models(database, engine):
     foreign = {**legacy, "id": "foreign-document", "tenantId": INVENTORY_OTHER}
     save_inventory_document(engine, foreign, tenant=INVENTORY_OTHER)
     foreign_bridge = migration_input(True)
+    with database.connect() as connection:
+        foreign_bridge["intake_id"] = foreign_bridge["operator_presentation"]["id"] = mapped_id(
+            connection, "intake", "foreign-native", tenant=INVENTORY_OTHER)
     foreign_bridge["scope"]["tenant_id"] = foreign_bridge["operator_presentation"]["tenantId"] = INVENTORY_OTHER
     save_inventory_document(engine, foreign_bridge, bridge=True, tenant=INVENTORY_OTHER)
 
@@ -1756,15 +1777,15 @@ def test_inventory_offset_month_shared_with_backfill_and_verify(
     legacy = migration_input()
     legacy["submittedAt"] = submitted_at
     bridge = migration_input(True)
-    bridge["intake_id"] = bridge["operator_presentation"]["id"] = ensure_uuid(legacy["id"])
     bridge["submitted_at"] = bridge["operator_presentation"]["submittedAt"] = submitted_at
     save_inventory_document(engine, legacy)
-    save_inventory_document(engine, bridge, bridge=True)
     with database.connect() as connection:
         connection.execute(f'ALTER ROLE "{role}" SET timezone = \'{session_timezone}\'')
         IntakeMigrator(connection).backfill(
             [legacy], [], [], tenant_id=INVENTORY_TENANT, parser_release=parser_provenance(),
         )
+        bridge["intake_id"] = bridge["operator_presentation"]["id"] = mapped_id(connection, "intake", legacy["id"])
+        save_inventory_document(engine, bridge, bridge=True)
     result = run_inventory_cli(database, role)
     assert result["coverage"]["scope_history_conflicting_logical_ids"] == 0
     assert result["logical_ids"]["selected_union"] == 1
@@ -1779,12 +1800,16 @@ def test_inventory_offset_month_shared_with_backfill_and_verify(
     with database.connect() as connection:
         connection.execute(f"SET TIME ZONE '{session_timezone}'")
         assert IntakeMigrator(connection).verify_shadow_comparison(INVENTORY_TENANT)["blocking_findings"] == 0
-        IntakeMigrator(connection).rollback_migration(tenant_id=INVENTORY_TENANT)
-        written = IntakeMigrator(connection).backfill(
-            [legacy], [], [], tenant_id=INVENTORY_TENANT, source_id="SRC-591", month=utc_month,
+        before_cleanup = connection.execute("SELECT row_to_json(i) FROM intake.intakes i").fetchall()
+        with pytest.raises(ValueError, match="MIGRATION_UNSUPPORTED_RUNTIME_COPY"):
+            IntakeMigrator(connection).rollback_migration(isolated_copy=True, tenant_id=INVENTORY_TENANT)
+        assert connection.execute("SELECT row_to_json(i) FROM intake.intakes i").fetchall() == before_cleanup
+        next_batch = IntakeMigrator(connection)
+        written = next_batch.backfill(
+            [legacy], [], [], tenant_id=INVENTORY_TENANT, source_id="SRC-591", month=utc_month, resume=True,
             parser_release=parser_provenance(),
         )
-        assert written["counts"]["intakes_processed"] == 1
+        assert written["counts"]["intakes_processed"] == 0 and written["counts"]["skipped_due_to_resume"] == 1
         assert written["counts"]["findings"] == 0
         # Native datetime projection changes, but the instant and source text do not.
         connection.execute("SET TIME ZONE 'America/Los_Angeles'")
@@ -1792,7 +1817,7 @@ def test_inventory_offset_month_shared_with_backfill_and_verify(
         assert native_time == datetime.fromisoformat(submitted_at)
         history = connection.execute("SELECT reason_text FROM intake.intake_stage_transitions").fetchone()[0]
         assert json.loads(history)["source_history"]["submittedAt"] == submitted_at
-        fresh = IntakeMigrator(connection).verify_shadow_comparison(INVENTORY_TENANT)
+        fresh = next_batch.verify_shadow_comparison(INVENTORY_TENANT)
         assert fresh["blocking_findings"] == 0
         assert fresh["shadow_comparison_success"] is True
         assert fresh["proof_scope"] == "counts_and_ids_only_not_field_or_evidence_parity"
@@ -1849,6 +1874,7 @@ def test_inventory_bridge_corruption_is_visible(inventory_db, fault):
     from shared.infrastructure.persistence.postgresql import PostgresDocumentStore
 
     row = migration_input(True)
+    row["intake_id"] = row["operator_presentation"]["id"] = "3787e72f-545d-4474-b9c1-c25b80416b9c"
     key = row["intake_id"]
     wrapped = DurableAssistedIntakeStore._wrap(INVENTORY_TENANT, key, row)
     if fault == "scope_missing":
@@ -1884,6 +1910,8 @@ def test_inventory_limits_unattributed_and_cross_model_history(inventory_db):
     assert limited["models"]["native_rows"]["counts"] is None
     assert limited["models"]["native_rows"]["findings"] == {"row_limit_exceeded": 1}
     row = migration_input(True)
+    with database.connect() as connection:
+        row["intake_id"] = row["operator_presentation"]["id"] = mapped_id(connection, "intake", migration_input()["id"])
     row["source_id"] = row["operator_presentation"]["sourceId"] = "SRC-BROKER"
     save_inventory_document(engine, row, bridge=True)
     conflict = run_inventory_cli(database, role, expected_exit=1)
@@ -2119,8 +2147,8 @@ def test_backfill_listing_resume_proof_uses_actual_owner_source(conn):
     assert cur.fetchall() == [("SRC-BROKER",)]
     cur.execute("SELECT source_kind FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
     assert cur.fetchall() == [("legacy_listing",)]
-    cur.execute("SELECT expected FROM workflow.reconciliation_findings WHERE severity='INFO' AND source_id=%s",
-                (f"PROOF-{tenant}:SRC-591:ALL",))
+    cur.execute("SELECT expected FROM workflow.reconciliation_findings WHERE severity='INFO' AND expected->'selectors'->>'source_id'=%s",
+                ("SRC-591",))
     assert cur.fetchone()[0]["listing_ids"] == []
 
 
@@ -2145,11 +2173,11 @@ def test_backfill_candidate_resume_proof_uses_saved_listing_owner(conn):
     assert second["counts"]["skipped_due_to_resume"] == 0
     cur = conn.cursor()
     cur.execute("SELECT source_listing_id FROM expansion.candidate_sites")
-    assert str(cur.fetchone()[0]) == ensure_uuid("L-RESUME-B")
+    assert str(cur.fetchone()[0]) == mapped_id(conn, "listing", "L-RESUME-B")
     cur.execute("SELECT source_kind FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
     assert cur.fetchall() == [("legacy_candidate",)]
-    cur.execute("SELECT expected FROM workflow.reconciliation_findings WHERE severity='INFO' AND source_id=%s",
-                (f"PROOF-{tenant}:SRC-591:ALL",))
+    cur.execute("SELECT expected FROM workflow.reconciliation_findings WHERE severity='INFO' AND expected->'selectors'->>'source_id'=%s",
+                ("SRC-591",))
     assert cur.fetchone()[0]["candidate_ids"] == []
 
 
@@ -2477,3 +2505,354 @@ def test_resume_record_counts_do_not_mislabel_repeated_valid_records_as_quaranti
     assert conn.execute("SELECT count(*) FROM expansion.listing_revisions").fetchone()[0] == 1
     assert conn.execute("SELECT count(*) FROM expansion.candidate_sites").fetchone()[0] == 1
     assert conn.execute("SELECT count(*) FROM workflow.reconciliation_findings WHERE severity='BLOCKING'").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("collision", ["PROPERTY_ADDRESS", "LEGACY_RECORD_KEY"])
+def test_migration_target_mapping_is_tenant_owned_not_global_legacy_value(conn, collision):
+    from uuid import uuid4
+
+    tenants = ("00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002")
+    for index, tenant in enumerate(tenants):
+        legacy_id = str(uuid4()) if collision == "PROPERTY_ADDRESS" else "synthetic-same-legacy-listing-key"
+        address = "Synthetic cross-tenant same address" if collision == "PROPERTY_ADDRESS" else f"Synthetic tenant address {index}"
+        listing = {"id": legacy_id, "tenantId": tenant, "sourceId": "SRC-591", "sourceListingId": "synthetic-same-provider-key",
+            "address": address, "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active"}
+        result = IntakeMigrator(conn).backfill([], [listing], [], tenant_id=tenant, parser_release=parser_provenance())
+        assert result["counts"]["listings_processed"] == 1 and result["counts"]["findings"] == 0
+    rows = conn.execute("SELECT tenant_id,listing_id,property_id FROM expansion.listings ORDER BY tenant_id").fetchall()
+    assert len(rows) == 2 and {str(row[0]) for row in rows} == set(tenants)
+    assert len({row[1] for row in rows}) == len({row[2] for row in rows}) == 2
+    assert conn.execute("SELECT count(*) FROM expansion.listings l JOIN identity.properties p ON p.property_id=l.property_id WHERE l.tenant_id<>p.tenant_id").fetchone()[0] == 0
+
+
+def test_migration_distinct_batches_never_overwrite_prior_partition_receipt(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    first = migration_input()
+    second = {**migration_input(), "id": "IN-DIFFERENT-MIGRATION-BATCH"}
+    a = IntakeMigrator(conn, migration_ref="synthetic-original-batch-A")
+    b = IntakeMigrator(conn, migration_ref="synthetic-independent-batch-B")
+    assert a.backfill([first], [], [], tenant_id=tenant, parser_release=parser_provenance())["counts"]["intakes_processed"] == 1
+    original = conn.execute("SELECT row_to_json(f) FROM workflow.reconciliation_findings f WHERE migration_id=%s AND severity='INFO'",
+        (a.migration_ref,)).fetchone()[0]
+    assert b.backfill([second], [], [], tenant_id=tenant, parser_release=parser_provenance())["counts"]["intakes_processed"] == 1
+    assert conn.execute("SELECT row_to_json(f) FROM workflow.reconciliation_findings f WHERE finding_id=%s", (original["finding_id"],)).fetchone()[0] == original
+    receipts = conn.execute("SELECT finding_id,migration_id FROM workflow.reconciliation_findings WHERE severity='INFO'").fetchall()
+    assert len(receipts) == 2 and {row[1] for row in receipts} == {a.migration_ref, b.migration_ref}
+    assert len({row[0] for row in receipts}) == 2
+
+
+def test_migration_listing_only_rollback_uses_owned_mapping_and_retains_lineage(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    migrator = IntakeMigrator(conn, migration_ref="synthetic-listing-only-owned-rollback")
+    listing = {"id": "L-LISTING-ONLY-OWNED-ROLLBACK", "sourceId": "SRC-591", "sourceListingId": "synthetic-owned-rollback",
+        "address": "Synthetic listing-only rollback address", "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active"}
+    first = migrator.backfill([], [listing], [], tenant_id=tenant, parser_release=parser_provenance())
+    assert first["counts"]["intakes_processed"] == 0 and first["counts"]["listings_processed"] == 1
+    assert conn.execute("SELECT count(*) FROM expansion.listings").fetchone()[0] == 1
+    migrator.rollback_migration(isolated_copy=True, tenant_id=tenant)
+    for table in ("expansion.listings", "expansion.listing_revisions", "expansion.listing_observations",
+                  "identity.source_identity_edges", "identity.properties"):
+        assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+    receipts = conn.execute("SELECT expected,actual FROM workflow.reconciliation_findings WHERE migration_id=%s AND severity='INFO'",
+        (migrator.migration_ref,)).fetchall()
+    assert len(receipts) == 1, "Rollback must retain the original mapping and its rollback disposition"
+    manifest = receipts[0][0]["mapping_manifest"]
+    assert manifest["transformation_version"] == first["mapping_manifest"]["transformation_version"]
+    assert manifest["sha256"] == first["mapping_manifest"]["sha256"]
+    assert {entry["namespace"] for entry in manifest["entries"]} == {"listing", "property", "revision", "observation", "edge"}
+    assert all(entry["created"] and len(entry["created_row_sha256"]) == 64 for entry in manifest["entries"])
+    assert receipts[0][1]["rollback_disposition"] == "ROLLED_BACK" and receipts[0][1]["rolled_back_at"]
+
+
+def test_migration_equal_addresses_do_not_automatically_merge_distinct_legacy_owners(conn):
+    from uuid import uuid4
+
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listings = [{"id": str(uuid4()), "sourceId": "SRC-591", "sourceListingId": f"synthetic-independent-owner-{index}",
+        "address": "Synthetic ambiguous same-address building", "rentPerMonth": 30000.0 + index, "areaPing": 18.0,
+        "listing_status": "active"} for index in range(2)]
+    result = IntakeMigrator(conn).backfill([], listings, [], tenant_id=tenant, parser_release=parser_provenance())
+    assert result["counts"]["listings_processed"] == 2
+    assert conn.execute("SELECT count(DISTINCT property_id) FROM expansion.listings").fetchone()[0] == 2
+    assert conn.execute("SELECT count(*) FROM workflow.reconciliation_findings WHERE severity='BLOCKING' AND finding_type='AMBIGUOUS_IDENTITY'").fetchone()[0] >= 1
+
+
+def test_migration_reused_targets_remain_owned_by_original_batch_until_reference_retired(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-REUSED-MAPPING", "sourceId": "SRC-591", "sourceListingId": "synthetic-reused-map",
+        "address": "Synthetic reused owned target address", "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active"}
+    original = IntakeMigrator(conn, migration_ref="synthetic-original-owner")
+    reuse = IntakeMigrator(conn, migration_ref="synthetic-reusing-batch")
+    assert original.backfill([], [listing], [], tenant_id=tenant, parser_release=parser_provenance())["counts"]["listings_processed"] == 1
+    before = conn.execute("SELECT row_to_json(l) FROM expansion.listings l").fetchall()
+    assert reuse.backfill([], [listing], [], tenant_id=tenant, resume=True, parser_release=parser_provenance())["counts"]["listings_processed"] == 1
+    proof = conn.execute("SELECT expected FROM workflow.reconciliation_findings WHERE migration_id=%s AND severity='INFO'",
+        (reuse.migration_ref,)).fetchone()[0]
+    assert len(proof["mapping_manifest"]["entries"]) == 1 and proof["mapping_manifest"]["entries"][0]["created"] is False
+    with pytest.raises(ValueError, match="MIGRATION_MAPPING_TARGET_REUSED_BY_OTHER_BATCH"):
+        original.rollback_migration(isolated_copy=True, tenant_id=tenant)
+    assert conn.execute("SELECT row_to_json(l) FROM expansion.listings l").fetchall() == before
+    assert reuse.rollback_migration(isolated_copy=True, tenant_id=tenant) == 0
+    assert conn.execute("SELECT row_to_json(l) FROM expansion.listings l").fetchall() == before
+    assert original.rollback_migration(isolated_copy=True, tenant_id=tenant) > 0
+    assert conn.execute("SELECT count(*) FROM expansion.listings").fetchone()[0] == 0
+    assert len(conn.execute("SELECT finding_id FROM workflow.reconciliation_findings WHERE severity='INFO'").fetchall()) == 2
+
+
+@pytest.mark.parametrize("fault", ["changed", "legal_hold"])
+def test_migration_owned_rollback_cannot_delete_changed_or_actually_held_target(conn, fault):
+    from uuid import uuid4
+
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-PROTECTED-ROLLBACK", "sourceId": "SRC-591", "sourceListingId": "synthetic-protected-rollback",
+        "address": "Synthetic protected rollback address", "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active"}
+    migrator = IntakeMigrator(conn)
+    assert migrator.backfill([], [listing], [], tenant_id=tenant, parser_release=parser_provenance())["counts"]["listings_processed"] == 1
+    target = conn.execute("SELECT listing_id FROM expansion.listings").fetchone()[0]
+    if fault == "changed":
+        conn.execute("UPDATE expansion.listings SET version=version+1")
+    else:
+        conn.execute("INSERT INTO audit.legal_holds (legal_hold_id,tenant_id,subject_type,subject_id,reason,placed_by,approved_by) "
+            "VALUES (%s,%s,'listing',%s,'Synthetic active custody test',%s,%s)", (str(uuid4()), tenant, target, str(uuid4()), str(uuid4())))
+    conn.commit()
+    tables = ("identity.properties", "expansion.listings", "expansion.listing_revisions", "expansion.listing_observations",
+        "identity.source_identity_edges", "workflow.reconciliation_findings", "audit.legal_holds")
+    before = {table: conn.execute(f"SELECT row_to_json(t) FROM {table} t ORDER BY row_to_json(t)::text").fetchall() for table in tables}
+    with pytest.raises(ValueError, match="MIGRATION_ROLLBACK_TARGET_CHANGED_OR_MISSING|MIGRATION_ROLLBACK_LEGAL_HOLD"):
+        migrator.rollback_migration(isolated_copy=True, tenant_id=tenant)
+    assert {table: conn.execute(f"SELECT row_to_json(t) FROM {table} t ORDER BY row_to_json(t)::text").fetchall() for table in tables} == before
+
+
+@pytest.mark.parametrize("fault", ["unversioned", "version", "retarget", "partition"])
+def test_migration_manifest_must_match_real_batch_partition_and_controlled_transform(conn, fault):
+    from modules.listing.application.native_intake_retrieval_policy import canonical_sha256
+
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-MAPPING-PROVENANCE", "sourceId": "SRC-591", "sourceListingId": "synthetic-map-provenance",
+        "address": "Synthetic mapping provenance address", "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active"}
+    migrator = IntakeMigrator(conn)
+    migrator.backfill([], [listing], [], tenant_id=tenant, parser_release=parser_provenance())
+    finding, proof = conn.execute("SELECT finding_id,expected FROM workflow.reconciliation_findings WHERE severity='INFO'").fetchone()
+    if fault == "unversioned":
+        proof.pop("mapping_manifest")
+    elif fault == "partition":
+        proof["selectors"]["source_id"] = "different-source-selector"
+    else:
+        manifest = proof["mapping_manifest"]
+        if fault == "version":
+            manifest["transformation_version"] = "unreviewed-other-transform"
+        else:
+            next(entry for entry in manifest["entries"] if entry["namespace"] == "listing")["target_id"] = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"
+        manifest["sha256"] = canonical_sha256({key: value for key, value in manifest.items() if key != "sha256"})
+    conn.execute("UPDATE workflow.reconciliation_findings SET expected=%s::jsonb WHERE finding_id=%s", (json.dumps(proof), finding))
+    conn.commit()
+    before = conn.execute("SELECT row_to_json(l) FROM expansion.listings l").fetchall()
+    with pytest.raises(ValueError, match="MIGRATION_MAPPING"):
+        IntakeMigrator(conn).backfill([], [listing], [], tenant_id=tenant, resume=True, parser_release=parser_provenance())
+    assert conn.execute("SELECT row_to_json(l) FROM expansion.listings l").fetchall() == before
+    with pytest.raises(ValueError, match="MIGRATION_MAPPING"):
+        migrator.rollback_migration(isolated_copy=True, tenant_id=tenant)
+    assert conn.execute("SELECT row_to_json(l) FROM expansion.listings l").fetchall() == before
+
+
+def test_migration_typed_source_all_selector_is_distinct_from_unselected_partition(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    migrator = IntakeMigrator(conn)
+    migrator.backfill([], [], [], tenant_id=tenant)
+    original = conn.execute("SELECT row_to_json(f) FROM workflow.reconciliation_findings f WHERE severity='INFO'").fetchone()[0]
+    migrator.backfill([], [], [], tenant_id=tenant, source_id="ALL")
+    assert conn.execute("SELECT row_to_json(f) FROM workflow.reconciliation_findings f WHERE finding_id=%s", (original["finding_id"],)).fetchone()[0] == original
+    proofs = conn.execute("SELECT expected FROM workflow.reconciliation_findings WHERE severity='INFO'").fetchall()
+    assert len(proofs) == 2 and {row[0]["selectors"]["source_id"] for row in proofs} == {None, "ALL"}
+
+
+def test_migration_same_uuid_legacy_keys_remain_tenant_and_kind_owned(conn):
+    legacy_key = "ec0ee043-d3e0-4427-8157-64a17fb81b87"
+    tenants = ("00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002")
+    mapped = []
+    for index, tenant in enumerate(tenants):
+        intake = {**migration_input(), "id": legacy_key, "tenantId": tenant, "stage": "READY",
+            "matchResult": {"outcome": "NEW", "targetListingId": legacy_key}}
+        listing = {"id": legacy_key, "tenantId": tenant, "sourceId": "SRC-591", "sourceListingId": "synthetic-same-uuid",
+            "address": f"Synthetic UUID tenant {index}", "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active"}
+        candidate = {"id": legacy_key, "tenantId": tenant, "listingId": legacy_key}
+        result = IntakeMigrator(conn).backfill([intake], [listing], [candidate], tenant_id=tenant, parser_release=parser_provenance())
+        assert result["counts"]["intakes_processed"] == result["counts"]["listings_processed"] == result["counts"]["candidates_processed"] == 1
+        proof = conn.execute("SELECT expected FROM workflow.reconciliation_findings WHERE tenant_id=%s AND severity='INFO'", (tenant,)).fetchone()[0]
+        entries = proof["mapping_manifest"]["entries"]
+        targets = {entry["target_id"] for entry in entries}
+        assert legacy_key not in targets and len(targets) == len(entries)
+        assert all(entry["preserve_uuid"] is False and entry["created"] is True for entry in entries)
+        assert {entry["source_key"] for entry in entries if entry["namespace"] in {"intake", "listing", "candidate"}} == {legacy_key}
+        mapped.append(targets)
+    assert mapped[0].isdisjoint(mapped[1])
+    assert conn.execute("SELECT count(*) FROM expansion.candidate_sites c JOIN expansion.listings l ON l.listing_id=c.source_listing_id WHERE l.tenant_id<>c.tenant_id").fetchone()[0] == 0
+
+
+def test_migration_existing_target_without_recorded_binding_is_not_claimed(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-UNPROVEN-EXISTING", "sourceId": "SRC-591", "sourceListingId": "synthetic-unproven",
+        "address": "Synthetic unproven existing target", "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active"}
+    IntakeMigrator(conn).backfill([], [listing], [], tenant_id=tenant, parser_release=parser_provenance())
+    conn.execute("DELETE FROM workflow.reconciliation_findings WHERE severity='INFO'")  # Deliberate missing provenance fault.
+    conn.commit()
+    before = conn.execute("SELECT row_to_json(l) FROM expansion.listings l").fetchall()
+    with pytest.raises(ValueError, match="MIGRATION_MAPPING_EXISTING_TARGET_UNPROVEN"):
+        IntakeMigrator(conn).backfill([], [listing], [], tenant_id=tenant, resume=True, parser_release=parser_provenance())
+    assert conn.execute("SELECT row_to_json(l) FROM expansion.listings l").fetchall() == before
+    assert conn.execute("SELECT count(*) FROM workflow.reconciliation_findings WHERE severity='INFO'").fetchone()[0] == 0
+
+
+def test_migration_same_batch_partition_overlap_resumes_against_public_manifest(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    rows = [migration_input(), {**migration_input(), "id": "IN-OVERLAP-AUG", "submittedAt": "2026-08-01T00:00:00Z",
+        "capturedAt": "2026-08-01T00:01:00Z", "observedAt": "2026-08-01T00:01:00Z"}]
+    for month, resume in (("2026-07", False), ("2026-08", False), ("2026-07", True)):
+        result = IntakeMigrator(conn).backfill(rows, [], [], tenant_id=tenant, month=month, resume=resume,
+            parser_release=parser_provenance())
+        assert result["counts"]["intakes_processed"] == (0 if resume else 1)
+        assert result["counts"]["skipped_due_to_resume"] == (1 if resume else 0)
+    assert conn.execute("SELECT count(*) FROM intake.intakes").fetchone()[0] == 2
+    proofs = conn.execute("SELECT expected FROM workflow.reconciliation_findings WHERE severity='INFO'").fetchall()
+    assert len(proofs) == 2
+    assert all(not any(key.startswith("_") for key in entry) for (proof,) in proofs for entry in proof["mapping_manifest"]["entries"])
+
+
+@pytest.mark.parametrize("column", ["expected", "actual"])
+def test_migration_jsonb_string_wrapped_proof_is_not_a_typed_manifest(conn, column):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    intake = migration_input()
+    migration = IntakeMigrator(conn)
+    migration.backfill([intake], [], [], tenant_id=tenant, parser_release=parser_provenance())
+    proof = conn.execute(f"SELECT {column} FROM workflow.reconciliation_findings WHERE severity='INFO'").fetchone()[0]
+    conn.execute(f"UPDATE workflow.reconciliation_findings SET {column}=%s::jsonb WHERE severity='INFO'", (json.dumps(json.dumps(proof)),))
+    conn.commit()
+    before = conn.execute("SELECT row_to_json(i) FROM intake.intakes i").fetchall()
+    with pytest.raises(ValueError, match="MIGRATION_MAPPING_TYPED_OBJECT_REQUIRED"):
+        IntakeMigrator(conn).backfill([intake], [], [], tenant_id=tenant, resume=True, parser_release=parser_provenance())
+    with pytest.raises(ValueError, match="MIGRATION_MAPPING_TYPED_OBJECT_REQUIRED"):
+        migration.rollback_migration(isolated_copy=True, tenant_id=tenant)
+    assert conn.execute("SELECT row_to_json(i) FROM intake.intakes i").fetchall() == before
+
+
+def test_migration_rollback_requires_copy_and_retains_resolved_finding_and_timezone_independence(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    migration = IntakeMigrator(conn)
+    migration.backfill([migration_input()], [], [], tenant_id=tenant, parser_release=parser_provenance())
+    migration._create_finding(tenant, "snapshot", "synthetic-human-disposition", [], "MISSING_EVIDENCE", "WARNING",
+        {"synthetic": "reviewed history"}, {"synthetic": "retained"})
+    conn.execute("UPDATE workflow.reconciliation_findings SET status='RESOLVED',resolution_reason='Synthetic existing human disposition' WHERE severity<>'INFO'")
+    conn.commit()
+    findings = conn.execute("SELECT row_to_json(f) FROM workflow.reconciliation_findings f WHERE severity<>'INFO'").fetchall()
+    assert len(findings) == 1 and findings[0][0]["resolution_reason"] == "Synthetic existing human disposition"
+    with pytest.raises(ValueError, match="MIGRATION_ISOLATED_COPY_REQUIRED"):
+        migration.rollback_migration(tenant_id=tenant)
+    assert conn.execute("SELECT count(*) FROM intake.intakes").fetchone()[0] == 1
+    conn.execute("SET TIME ZONE 'Asia/Taipei'")
+    assert migration.rollback_migration(isolated_copy=True, tenant_id=tenant) > 0
+    conn.execute("SET TIME ZONE 'UTC'")  # Compare JSON rendering in the original session zone.
+    assert conn.execute("SELECT row_to_json(f) FROM workflow.reconciliation_findings f WHERE severity<>'INFO'").fetchall() == findings
+    assert conn.execute("SELECT actual FROM workflow.reconciliation_findings WHERE severity='INFO'").fetchone()[0]["rollback_disposition"] == "ROLLED_BACK"
+    assert migration.rollback_migration(isolated_copy=True, tenant_id=tenant) == 0
+    from psycopg.pq import TransactionStatus
+
+    assert conn.info.transaction_status == TransactionStatus.IDLE
+
+
+def test_migration_dropped_missing_match_candidate_hint_is_not_an_accepted_mapping(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    intake = {**migration_input(), "matchResult": {"outcome": "POSSIBLE_MATCH", "candidates": [
+        {"listing_id": "synthetic-missing-listing", "confidence": 0.5, "evidence": {"original": "unresolved hint"}}]}}
+    result = IntakeMigrator(conn).backfill([intake], [], [], tenant_id=tenant, parser_release=parser_provenance())
+    assert result["counts"]["intakes_processed"] == 1
+    assert conn.execute("SELECT listing_id,evidence FROM identity.match_candidates").fetchall() == [(None, {"original": "unresolved hint"})]
+    proof = conn.execute("SELECT expected FROM workflow.reconciliation_findings WHERE severity='INFO'").fetchone()[0]
+    assert all(entry["namespace"] != "listing" for entry in proof["mapping_manifest"]["entries"])
+    assert conn.execute("SELECT status FROM identity.match_cases").fetchone()[0] == "PENDING_REVIEW"
+
+
+def test_migration_new_batch_cannot_bypass_unversioned_tenant_history(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    first = IntakeMigrator(conn, migration_ref="synthetic-unversioned-existing-history")
+    first.backfill([migration_input()], [], [], tenant_id=tenant, parser_release=parser_provenance())
+    conn.execute("UPDATE workflow.reconciliation_findings SET expected=expected-'mapping_manifest' WHERE severity='INFO'")
+    conn.commit()
+    before = conn.execute("SELECT row_to_json(i) FROM intake.intakes i").fetchall()
+    new_input = {**migration_input(), "id": "IN-NEW-BATCH-AFTER-UNVERSIONED"}
+    with pytest.raises(ValueError, match="MIGRATION_MAPPING_MANIFEST_REQUIRED"):
+        IntakeMigrator(conn, migration_ref="synthetic-different-batch-cannot-bypass").backfill(
+            [new_input], [], [], tenant_id=tenant, parser_release=parser_provenance())
+    assert conn.execute("SELECT row_to_json(i) FROM intake.intakes i").fetchall() == before
+    assert conn.execute("SELECT count(*) FROM workflow.reconciliation_findings WHERE severity='INFO'").fetchone()[0] == 1
+
+
+def test_inventory_non_uuid_bridge_is_unknown_instead_of_a_second_legacy_mapping(inventory_db):
+    database, engine, role = inventory_db
+    save_inventory_document(engine, migration_input(True), bridge=True)
+    result = run_inventory_cli(database, role, expected_exit=1)
+    assert result["models"]["bridge_documents"]["counts"] == {"observed": 1, "selected": 0, "excluded": 0, "unknown": 1}
+    assert result["models"]["bridge_documents"]["findings"] == {"MISSING_EVIDENCE:id": 1}
+    assert result["logical_ids"]["selected_union"] is None
+
+
+@pytest.mark.parametrize("same_tenant", [True, False])
+def test_migration_copy_refuses_native_job_history_without_treating_terminal_as_unadopted(conn, same_tenant):
+    from uuid import uuid4
+
+    tenant = "00000000-0000-0000-0000-000000000001"
+    other = "00000000-0000-0000-0000-000000000002"
+    migration = IntakeMigrator(conn)
+    migration.backfill([migration_input()], [], [], tenant_id=tenant, parser_release=parser_provenance())
+    job_tenant = tenant if same_tenant else other
+    if not same_tenant:
+        migration.backfill([{**migration_input(), "tenantId": other}], [], [], tenant_id=other, parser_release=parser_provenance())
+    target = mapped_id(conn, "intake", migration_input()["id"], tenant=job_tenant)
+    conn.execute("INSERT INTO workflow.jobs (job_id,tenant_id,job_type,aggregate_type,aggregate_id,status,checkpoint,max_attempts,timeout_at,payload,correlation_id) "
+        "VALUES (%s,%s,'native-intake-start','intake',%s,'SUCCEEDED','completed',3,now()+interval '1 day',%s::jsonb,%s)",
+        (str(uuid4()), job_tenant, target, json.dumps({"intake_id": target, "tenant_id": job_tenant}), str(uuid4())))
+    conn.commit()
+    before = conn.execute("SELECT row_to_json(j) FROM workflow.jobs j").fetchall()
+    if same_tenant:
+        proof = conn.execute("SELECT row_to_json(f) FROM workflow.reconciliation_findings f WHERE tenant_id=%s", (tenant,)).fetchall()
+        with pytest.raises(ValueError, match="MIGRATION_UNSUPPORTED_NATIVE_HISTORY_IN_COPY"):
+            migration.rollback_migration(isolated_copy=True, tenant_id=tenant)
+        assert conn.execute("SELECT row_to_json(f) FROM workflow.reconciliation_findings f WHERE tenant_id=%s", (tenant,)).fetchall() == proof
+        assert conn.execute("SELECT count(*) FROM intake.intakes WHERE tenant_id=%s", (tenant,)).fetchone()[0] == 1
+    else:
+        assert migration.rollback_migration(isolated_copy=True, tenant_id=tenant) > 0
+        assert conn.execute("SELECT count(*) FROM intake.intakes WHERE tenant_id=%s", (tenant,)).fetchone()[0] == 0
+        assert str(conn.execute("SELECT intake_id FROM intake.intakes WHERE tenant_id=%s", (other,)).fetchone()[0]) == target
+    assert conn.execute("SELECT row_to_json(j) FROM workflow.jobs j").fetchall() == before
+
+
+@pytest.mark.parametrize("fault", ["missing_id", "mismatched_id", "native_wrapper", "related_valid_event"])
+def test_migration_copy_unowned_legacy_event_must_have_original_shape_and_binding(conn, fault):
+    from uuid import uuid4
+
+    tenant = "00000000-0000-0000-0000-000000000001"
+    intake = {**migration_input(), "stage": "READY", "matchResult": {"outcome": "NEW", "targetListingId": "L-COPY-EVENT"}}
+    listing = {"id": "L-COPY-EVENT", "sourceId": "SRC-591", "sourceListingId": "synthetic-copy-event",
+        "address": "Synthetic copy event address", "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active"}
+    migration = IntakeMigrator(conn)
+    migration.backfill([intake], [listing], [{"id": "C-COPY-EVENT", "listingId": listing["id"]}],
+        tenant_id=tenant, parser_release=parser_provenance())
+    own = mapped_id(conn, "candidate", "C-COPY-EVENT")
+    aggregate = own if fault == "related_valid_event" else str(uuid4())
+    payload = {"candidate_site_id": aggregate, "status": "CANDIDATE"}
+    if fault == "missing_id":
+        payload.pop("candidate_site_id")
+    elif fault == "mismatched_id":
+        payload["candidate_site_id"] = str(uuid4())
+    elif fault == "native_wrapper":
+        payload = {"event_type": "CandidateSitePromoted", "payload": payload}
+    conn.execute("INSERT INTO workflow.outbox_events (outbox_event_id,tenant_id,event_id,event_type,event_version,"
+        "aggregate_type,aggregate_id,aggregate_version,partition_key,payload,correlation_id,occurred_at,retention_until) "
+        "VALUES (%s,%s,%s,'CandidateSitePromoted',1,'CandidateSite',%s,2,%s,%s::jsonb,%s,now(),now())",
+        (str(uuid4()), tenant, str(uuid4()), aggregate, tenant, json.dumps(payload), str(uuid4())))
+    conn.commit()
+    tables = ("expansion.listings", "expansion.candidate_sites", "workflow.outbox_events", "workflow.reconciliation_findings")
+    before = {table: conn.execute(f"SELECT row_to_json(t) FROM {table} t ORDER BY row_to_json(t)::text").fetchall() for table in tables}
+    error = "MIGRATION_COPY_TARGET_HAS_UNOWNED_EVENT" if fault == "related_valid_event" else "MIGRATION_UNSUPPORTED_NATIVE_HISTORY_IN_COPY"
+    with pytest.raises(ValueError, match=error):
+        migration.rollback_migration(isolated_copy=True, tenant_id=tenant)
+    assert {table: conn.execute(f"SELECT row_to_json(t) FROM {table} t ORDER BY row_to_json(t)::text").fetchall() for table in tables} == before

@@ -13,7 +13,8 @@ import logging
 import re
 import uuid
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -21,6 +22,7 @@ from pydantic import ValidationError
 
 from modules.external_data.application.assisted_intake import content_fingerprint
 from modules.listing.application.native_intake_assisted_entry_input import NativeAssistedEntryFields
+from modules.listing.application.native_intake_retrieval_policy import canonical_sha256
 from modules.listing.application.native_intake_url_identity import normalize_native_intake_url
 from shared.infrastructure.persistence import assisted_listing_intake as intake_schema
 
@@ -34,6 +36,7 @@ FINDING_TYPE_MAP = {
     "COUNT_MISMATCH": "COUNT_MISMATCH",
     "CHECKSUM_MISMATCH": "CHECKSUM_MISMATCH",
     "SHADOW_COMPARISON_PROOF": "SHADOW_COMPARISON_PROOF",
+    "AMBIGUOUS_IDENTITY": "AMBIGUOUS_IDENTITY",
     "MISSING_PARSER_PROVENANCE": "MISSING_EVIDENCE",
     "MISSING_SNAPSHOT_PROVENANCE": "MISSING_EVIDENCE",
     "MISSING_TIMESTAMP_PARTITION": "INVALID_SCOPE",
@@ -58,17 +61,79 @@ SOURCE_KIND_MAP = {
 }
 
 
-def ensure_uuid(val: Any, default: str | None = None) -> str | None:
+MAPPING_VERSION = "legacy-tenant-keys-v2"
+# Original producer namespaces and existing target primary keys. This is the
+# mapping schema, not a source/actor registry or permission grant.
+MAPPING_TARGETS = {
+    "intake": ("operator.assisted_intakes", "intake.intakes", "intake_id"),
+    "snapshot": ("operator.assisted_intakes", "intake.source_snapshots", "source_snapshot_id"),
+    "parser_run": ("operator.assisted_intakes", "intake.parser_runs", "parser_run_id"),
+    "transition": ("operator.assisted_intakes", "intake.intake_stage_transitions", "transition_id"),
+    "correction": ("operator.assisted_intakes", "intake.human_corrections", "correction_id"),
+    "match_case": ("operator.assisted_intakes", "identity.match_cases", "match_case_id"),
+    "match_candidate": ("operator.assisted_intakes", "identity.match_candidates", "match_candidate_id"),
+    "listing": ("listing.listings", "expansion.listings", "listing_id"),
+    "property": ("listing.listings", "identity.properties", "property_id"),
+    "revision": ("listing.listings", "expansion.listing_revisions", "listing_revision_id"),
+    "observation": ("listing.listings", "expansion.listing_observations", "listing_observation_id"),
+    "edge": ("listing.listings", "identity.source_identity_edges", "edge_id"),
+    "redirect": ("listing.listings", "identity.property_redirects", "redirect_id"),
+    "candidate": ("listing.candidates", "expansion.candidate_sites", "candidate_site_id"),
+    "promotion": ("listing.candidates", "expansion.promotion_decisions", "promotion_decision_id"),
+    "outbox": ("listing.candidates", "workflow.outbox_events", "outbox_event_id"),
+    "audit": ("listing.candidates", "audit.audit_events", "audit_event_id"),
+}
+
+
+def ensure_uuid(val: Any, default: str | None = None, *, tenant_id: str | None = None,
+                namespace: str | None = None, preserve_uuid: bool = True) -> str | None:
     """Ensure a string or object is returned as a valid UUID string."""
     if not val:
         return default
+    if (tenant_id is None) != (namespace is None):
+        raise ValueError("MIGRATION_MAPPING_CONTEXT_REQUIRED")
+    if tenant_id is not None and (not isinstance(val, str) or not val.strip() or not namespace):
+        raise ValueError("MIGRATION_RECORDED_KEY_REQUIRED")
+    tenant = uuid.UUID(tenant_id) if tenant_id is not None else None
     try:
-        return str(uuid.UUID(str(val)))
+        if preserve_uuid:
+            return str(uuid.UUID(str(val)))
+        raise ValueError
     except ValueError:
+        if tenant_id is not None:
+            return str(uuid.uuid5(tenant, json.dumps([MAPPING_VERSION, namespace, val],
+                ensure_ascii=False, separators=(",", ":"))))
         try:
             return str(uuid.uuid5(uuid.NAMESPACE_DNS, str(val)))
         except Exception:
             return default
+
+
+def _mapping_row_sha256(row: dict[str, Any]) -> str:
+    """One typed row representation for capture and rollback observations.
+
+    Connection TimeZone is not a persisted row change. Original JSON/text
+    evidence remains exact; only real driver date/UUID/numeric types encode.
+    """
+    def value(item):
+        if isinstance(item, datetime):
+            if item.tzinfo is None:
+                raise ValueError("MIGRATION_ROW_TIMEZONE_REQUIRED")
+            return {"$timestamp": item.astimezone(UTC).isoformat()}
+        if isinstance(item, date):
+            return {"$date": item.isoformat()}
+        if isinstance(item, uuid.UUID):
+            return str(item)
+        if isinstance(item, Decimal):
+            return {"$decimal": str(item.normalize())}
+        if isinstance(item, (bytes, memoryview)):
+            return {"$bytes_sha256": hashlib.sha256(bytes(item)).hexdigest(), "length": len(item)}
+        if isinstance(item, dict):
+            return {key: value(data) for key, data in item.items()}
+        if isinstance(item, (list, tuple)):
+            return [value(data) for data in item]
+        return item
+    return canonical_sha256(value(row))
 
 
 def get_val(obj: Any, key: str, default: Any = None) -> Any:
@@ -267,6 +332,9 @@ class IntakeMigrator:
         self.migration_ref = migration_ref
         self._expected_counts: dict[str, dict[str, int]] = {}
         self._expected_checksums: dict[str, dict[str, str]] = {}
+        self._mapping_tenant: str | None = None
+        self._mapping_entries: dict[tuple[str, str], dict[str, Any]] = {}
+        self._mapping_accepted: set[tuple[str, str]] = set()
         if not self._is_sqlite() and hasattr(self.db_conn, "autocommit"):
             try:
                 self.db_conn.autocommit = False
@@ -295,32 +363,211 @@ class IntakeMigrator:
             cur.execute(sql, params)
             return cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
 
-    def _execute(self, sql: str, params: tuple = (), tenant_id: str | None = None) -> list[dict[str, Any]]:
+    def _execute(self, sql: str, params: tuple = (), tenant_id: str | None = None,
+                 created_mapping: tuple[str, str] | None = None) -> list[dict[str, Any]]:
         is_sqlite = self._is_sqlite()
         if is_sqlite:
-            for s in ("intake.", "identity.", "expansion.", "workflow.", "audit."):
-                sql = sql.replace(s, "")
+            for schema in ("intake.", "identity.", "expansion.", "workflow.", "audit."):
+                sql = sql.replace(schema, "")
             sql = sql.replace("%s", "?")
-            if hasattr(self.db_conn, "query"):
-                with self.db_conn.lock:
-                    res = self.db_conn.query(sql, params)
-                    return [dict(row) for row in res]
-            else:
-                cur = self.db_conn.cursor()
-                cur.execute(sql, params)
-                if cur.description:
-                    columns = [col[0] for col in cur.description]
-                    return [dict(zip(columns, row, strict=False)) for row in cur.fetchall()]
-                return []
+        if is_sqlite and hasattr(self.db_conn, "query"):
+            with self.db_conn.lock:
+                rows = [dict(row) for row in self.db_conn.query(sql, params)]
         else:
             cur = self.db_conn.cursor()
-            if tenant_id:
+            if tenant_id and not is_sqlite:
                 cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
             cur.execute(sql, params)
             if cur.description:
                 columns = [col[0] for col in cur.description]
-                return [dict(zip(columns, row, strict=False)) for row in cur.fetchall()]
-            return []
+                rows = [dict(zip(columns, row, strict=False)) for row in cur.fetchall()]
+            else:
+                rows = []
+        if created_mapping is not None:
+            entry = self._mapping_entries[created_mapping]
+            if entry.get("_existed"):
+                raise ValueError("MIGRATION_MAPPING_CREATE_OWNERSHIP_CONFLICT")
+            entry["created"] = True
+            self._mapping_accepted.add(created_mapping)
+        return rows
+
+    def _mapping_proofs(self, tenant_id: str, migration_ref: str, *, lock: bool = False) -> list[dict[str, Any]]:
+        suffix = " FOR UPDATE" if lock and not self._is_sqlite() else ""
+        rows = self._execute(
+            "SELECT finding_id,source_id,expected,actual FROM workflow.reconciliation_findings "
+            "WHERE tenant_id=%s AND migration_id=%s AND severity='INFO' AND source_id LIKE 'PROOF-%%' "
+            "ORDER BY finding_id" + suffix,
+            (tenant_id, migration_ref), tenant_id=tenant_id,
+        )
+        for row in rows:
+            for name in ("expected", "actual"):
+                if self._is_sqlite() and isinstance(row[name], str):
+                    row[name] = json.loads(row[name])
+                if not isinstance(row[name], dict):
+                    raise ValueError("MIGRATION_MAPPING_TYPED_OBJECT_REQUIRED")
+            selectors = row["expected"].get("selectors")
+            if (not isinstance(selectors, dict) or set(selectors) != {"tenant_id", "source_id", "month"}
+                    or selectors["tenant_id"] != tenant_id
+                    or (selectors["source_id"] is not None and (
+                        not isinstance(selectors["source_id"], str) or not selectors["source_id"].strip()))
+                    or (selectors["month"] is not None and (
+                        not isinstance(selectors["month"], str)
+                        or not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", selectors["month"])))):
+                raise ValueError("MIGRATION_MAPPING_PARTITION_REQUIRED")
+            partition = canonical_sha256({"migration_id": migration_ref, **selectors})
+            if (row["expected"].get("partition_key") != partition or row["source_id"] != "PROOF-" + partition
+                    or str(row["finding_id"]) != ensure_uuid(f"PROOF-{migration_ref}-{partition}")):
+                raise ValueError("MIGRATION_MAPPING_PARTITION_CONFLICT")
+            manifest = row["expected"].get("mapping_manifest")
+            if not isinstance(manifest, dict):
+                raise ValueError("MIGRATION_MAPPING_MANIFEST_REQUIRED")
+            payload = {key: value for key, value in manifest.items() if key != "sha256"}
+            if (type(manifest.get("schema_version")) is not int or manifest["schema_version"] != 1
+                    or manifest.get("transformation_version") != MAPPING_VERSION
+                    or manifest.get("tenant_id") != tenant_id or manifest.get("migration_id") != migration_ref
+                    or manifest.get("sha256") != canonical_sha256(payload)
+                    or not isinstance(manifest.get("entries"), list)):
+                raise ValueError("MIGRATION_MAPPING_MANIFEST_CONFLICT")
+            for entry in manifest["entries"]:
+                if not isinstance(entry, dict):
+                    raise ValueError("MIGRATION_MAPPING_ENTRY_INVALID")
+                kind = entry.get("namespace")
+                if kind not in MAPPING_TARGETS or not isinstance(entry.get("source_key"), str) or not entry["source_key"].strip():
+                    raise ValueError("MIGRATION_MAPPING_ENTRY_INVALID")
+                source_table, target_table, column = MAPPING_TARGETS[kind]
+                if (entry.get("source_table") != source_table or entry.get("target_table") != target_table
+                        or entry.get("target_column") != column or type(entry.get("created")) is not bool
+                        or type(entry.get("preserve_uuid")) is not bool
+                        or entry["preserve_uuid"]
+                        or not isinstance(entry.get("created_row_sha256"), str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", entry["created_row_sha256"])):
+                    raise ValueError("MIGRATION_MAPPING_ENTRY_INVALID")
+                if str(uuid.UUID(entry["target_id"])) != entry["target_id"]:
+                    raise ValueError("MIGRATION_MAPPING_TARGET_INVALID")
+                if entry["target_id"] != ensure_uuid(entry["source_key"], tenant_id=tenant_id,
+                        namespace=kind, preserve_uuid=entry["preserve_uuid"]):
+                    raise ValueError("MIGRATION_MAPPING_TRANSFORMATION_CONFLICT")
+        return rows
+
+    def _begin_mapping(self, tenant_id: str) -> None:
+        self._mapping_tenant, self._mapping_entries = tenant_id, {}
+        self._mapping_accepted = set()
+        # A new reference cannot bypass an older mapping epoch and silently
+        # create parallel canonical targets. Unknown tenant history needs an
+        # explicit compatibility reconciliation, never inferred re-keying.
+        references = self._execute("SELECT DISTINCT migration_id FROM workflow.reconciliation_findings "
+            "WHERE tenant_id=%s AND severity='INFO' AND source_id LIKE 'PROOF-%%'",
+            (tenant_id,), tenant_id=tenant_id)
+        for reference in references:
+            if reference["migration_id"] != self.migration_ref:
+                self._mapping_proofs(tenant_id, reference["migration_id"])
+        for proof in self._mapping_proofs(tenant_id, self.migration_ref, lock=True):
+            if proof["actual"].get("rollback_disposition") == "ROLLED_BACK":
+                raise ValueError("MIGRATION_ROLLED_BACK_BATCH_REQUIRES_NEW_REFERENCE")
+            for entry in proof["expected"]["mapping_manifest"]["entries"]:
+                key = (entry["namespace"], entry["source_key"])
+                previous = self._mapping_entries.get(key)
+                if previous and {k: v for k, v in previous.items() if not k.startswith("_")} != entry:
+                    raise ValueError("MIGRATION_MAPPING_ENTRY_CONFLICT")
+                self._mapping_entries[key] = dict(entry, _checked=False, _proven=True)
+                self._mapping_accepted.add(key)
+
+    def _known_mapping_binding(self, namespace: str, source_key: str, target_id: str,
+                               row: dict[str, Any]) -> dict[str, Any]:
+        references = self._execute("SELECT DISTINCT migration_id FROM workflow.reconciliation_findings "
+            "WHERE tenant_id=%s AND severity='INFO' AND source_id LIKE 'PROOF-%%' ORDER BY migration_id",
+            (self._mapping_tenant,), tenant_id=self._mapping_tenant)
+        for reference in references:
+            try:
+                proofs = self._mapping_proofs(self._mapping_tenant, reference["migration_id"])
+            except ValueError:
+                continue  # Unknown history is not evidence for this binding.
+            for proof in proofs:
+                for entry in proof["expected"]["mapping_manifest"]["entries"]:
+                    if (entry["namespace"] == namespace and entry["source_key"] == source_key
+                            and entry["target_id"] == target_id and entry["created"]):
+                        if entry.get("target_source_id") != row.get("source_id"):
+                            raise ValueError("MIGRATION_MAPPING_SOURCE_OWNER_CHANGED")
+                        if (proof["actual"].get("rollback_disposition") == "ROLLED_BACK"
+                                and _mapping_row_sha256(row) != entry["created_row_sha256"]):
+                            raise ValueError("MIGRATION_MAPPING_RETIRED_TARGET_CHANGED")
+                        return {"creator_migration_id": reference["migration_id"],
+                            "creator_finding_id": str(proof["finding_id"]),
+                            "creator_entry_sha256": canonical_sha256(entry)}
+        raise ValueError("MIGRATION_MAPPING_EXISTING_TARGET_UNPROVEN")
+
+    def _map_key(self, namespace: str, source_key: Any) -> str | None:
+        """Map a legacy producer key; native DB references bypass this method.
+
+        A UUID-shaped legacy key still belongs to its tenant/producer namespace.
+        Reuse requires the original controlled binding, not a matching PK.
+        """
+        if source_key is None or source_key == "":
+            return None
+        if self._mapping_tenant is None or namespace not in MAPPING_TARGETS or not isinstance(source_key, str):
+            raise ValueError("MIGRATION_MAPPING_CONTEXT_REQUIRED")
+        key = (namespace, source_key)
+        source_table, target_table, column = MAPPING_TARGETS[namespace]
+        previous = self._mapping_entries.get(key)
+        if previous and previous.get("_checked"):
+            return previous["target_id"]
+        target_id = (previous["target_id"] if previous else ensure_uuid(source_key,
+            tenant_id=self._mapping_tenant, namespace=namespace, preserve_uuid=False))
+        suffix = "" if self._is_sqlite() else " FOR SHARE"
+        rows = self._execute(f"SELECT * FROM {target_table} WHERE {column}=%s AND tenant_id=%s" + suffix,
+            (target_id, self._mapping_tenant), tenant_id=self._mapping_tenant)
+        if previous:
+            if not rows:
+                raise ValueError("MIGRATION_MAPPING_TARGET_MISSING")
+            if previous.get("target_source_id") != rows[0].get("source_id"):
+                raise ValueError("MIGRATION_MAPPING_SOURCE_OWNER_CHANGED")
+            if not previous["created"]:
+                self._known_mapping_binding(namespace, source_key, target_id, rows[0])
+            previous["_checked"] = True
+            return target_id
+        binding = self._known_mapping_binding(namespace, source_key, target_id, rows[0]) if rows else {}
+        self._mapping_entries[key] = {
+            "namespace": namespace, "source_table": source_table, "source_key": source_key,
+            "target_table": target_table, "target_column": column, "target_id": target_id,
+            "preserve_uuid": False, "created": False,
+            "created_row_sha256": _mapping_row_sha256(rows[0]) if rows else None,
+            "target_source_id": rows[0].get("source_id") if rows else None,
+            **binding, "_checked": True, "_existed": bool(rows), "_proven": bool(binding),
+        }
+        return target_id
+
+    def _accept_mapping(self, namespace: str, source_key: Any) -> None:
+        if source_key is None or source_key == "":
+            return
+        key = (namespace, source_key)
+        self._mapping_accepted.add(key)
+
+    def _mapping_manifest(self) -> dict[str, Any]:
+        entries = []
+        # Retain earlier created/reused ownership in this original batch, even
+        # when a later resume supplies only part of the historical input.
+        for key, entry in sorted(self._mapping_entries.items()):
+            if key not in self._mapping_accepted:
+                continue
+            if not entry["created"] and not entry.get("_proven"):
+                raise ValueError("MIGRATION_MAPPING_BINDING_UNPROVEN")
+            table, column = entry["target_table"], entry["target_column"]
+            rows = self._execute(f"SELECT * FROM {table} WHERE {column}=%s AND tenant_id=%s",
+                (entry["target_id"], self._mapping_tenant), tenant_id=self._mapping_tenant)
+            if not rows:
+                if entry["created_row_sha256"] is not None:
+                    raise ValueError("MIGRATION_MAPPING_TARGET_MISSING")
+                continue  # A planned key rejected before target creation is not a mapping.
+            actual = _mapping_row_sha256(rows[0])
+            if entry["created_row_sha256"] is None:
+                entry["created_row_sha256"] = actual
+                entry["target_source_id"] = rows[0].get("source_id")
+            elif not entry["created"] and actual != entry["created_row_sha256"]:
+                raise ValueError("MIGRATION_MAPPING_REUSED_TARGET_CHANGED")
+            entries.append({name: value for name, value in entry.items() if not name.startswith("_")})
+        payload = {"schema_version": 1, "transformation_version": MAPPING_VERSION,
+            "tenant_id": self._mapping_tenant, "migration_id": self.migration_ref, "entries": entries}
+        return {**payload, "sha256": canonical_sha256(payload)}
 
     def _native_revision_errors(self, tenant_id: str, listing_id: str) -> list[dict[str, str]]:
         """Check the real mapped target before resume or candidate reconciliation.
@@ -465,205 +712,130 @@ class IntakeMigrator:
         else:
             intake_schema.apply_downgrade(self.db_conn.cursor().execute)
 
-    def rollback_migration(self, migration_ref: str | None = None, tenant_id: str | None = None) -> int:
-        """Perform full scoped data rollback for a migration_ref without dropping tables or destroying unrelated tenant data."""
-        target_ref = migration_ref or self.migration_ref
-        deleted_count = 0
-        tenant_uuid = ensure_uuid(tenant_id) if tenant_id else None
+    def rollback_migration(self, migration_ref: str | None = None, tenant_id: str | None = None,
+                           *, isolated_copy: bool = False) -> int:
+        """Remove only unchanged target copies owned by this recorded batch.
 
-        # 1. Scoped deletion of candidate_sites and property_redirects via promotion_decisions
-        if tenant_uuid:
-            cand_rows = self._execute(
-                "SELECT candidate_site_id FROM expansion.candidate_sites WHERE tenant_id = %s AND promotion_decision_id IN (SELECT promotion_decision_id FROM expansion.promotion_decisions WHERE migration_ref = %s AND tenant_id = %s)",
-                (tenant_uuid, target_ref, tenant_uuid),
-                tenant_id=tenant_uuid,
+        Mapping and reconciliation history, reused/native rows and audit remain.
+        A missing manifest or any changed/held/referenced target stops the same
+        transaction; rollback never reconstructs ownership from a live Intake.
+        """
+        # The original release drill proves copy isolation before this low-level
+        # cleanup call. This is not the runbook §5.2 live rollback controller.
+        if isolated_copy is not True:
+            raise ValueError("MIGRATION_ISOLATED_COPY_REQUIRED")
+        if not tenant_id:
+            raise ValueError("MIGRATION_EXPLICIT_TENANT_REQUIRED")
+        tenant = str(uuid.UUID(tenant_id))
+        reference = migration_ref or self.migration_ref
+        deleted = 0
+        try:
+            proofs = [p for p in self._mapping_proofs(tenant, reference, lock=True)
+                      if p["actual"].get("rollback_disposition") != "ROLLED_BACK"]
+            if not proofs:
+                self.db_conn.commit()
+                return 0
+            owned = {}
+            for proof in proofs:
+                for entry in proof["expected"]["mapping_manifest"]["entries"]:
+                    if not entry["created"] or entry["namespace"] == "audit":
+                        continue
+                    key = (entry["target_table"], entry["target_column"], entry["target_id"])
+                    if key in owned and owned[key]["created_row_sha256"] != entry["created_row_sha256"]:
+                        raise ValueError("MIGRATION_MAPPING_OWNERSHIP_CONFLICT")
+                    owned[key] = entry
+            if owned:
+                # This owner cleans the original migration-only surrogate.
+                # Runtime backups belong to the original restore controller;
+                # do not recreate its replay/event/identity-plan parser here.
+                runtime = (self._execute("SELECT 1 FROM sqlite_master WHERE type='table' AND "
+                    "name IN ('durable_documents','durable_jobs','durable_outbox_events') LIMIT 1")
+                    if self._is_sqlite() else self._execute("SELECT 1 FROM pg_namespace WHERE nspname='odp_runtime'"))
+                if runtime:
+                    raise ValueError("MIGRATION_UNSUPPORTED_RUNTIME_COPY")
+                for table in ("workflow.jobs", "identity.match_decisions", "workflow.idempotency_records"):
+                    if self._execute(f"SELECT 1 FROM {table} WHERE tenant_id=%s LIMIT 1", (tenant,), tenant_id=tenant):
+                        raise ValueError("MIGRATION_UNSUPPORTED_NATIVE_HISTORY_IN_COPY")
+                owned_events = {entry["target_id"] for entry in owned.values() if entry["namespace"] == "outbox"}
+                owned_candidates = {entry["target_id"] for entry in owned.values() if entry["namespace"] == "candidate"}
+                for event in self._execute("SELECT outbox_event_id,event_type,aggregate_type,aggregate_id,payload "
+                        "FROM workflow.outbox_events WHERE tenant_id=%s", (tenant,), tenant_id=tenant):
+                    if str(event["outbox_event_id"]) in owned_events:
+                        continue
+                    if event["event_type"] != "CandidateSitePromoted" or event["aggregate_type"] != "CandidateSite":
+                        raise ValueError("MIGRATION_UNSUPPORTED_NATIVE_HISTORY_IN_COPY")
+                    payload = event["payload"]
+                    if self._is_sqlite() and isinstance(payload, str):
+                        payload = json.loads(payload)
+                    if (not isinstance(payload, dict) or set(payload) != {"candidate_site_id", "status"}
+                            or payload["candidate_site_id"] != str(event["aggregate_id"])
+                            or not isinstance(payload["status"], str) or not payload["status"].strip()):
+                        raise ValueError("MIGRATION_UNSUPPORTED_NATIVE_HISTORY_IN_COPY")
+                    if (str(event["aggregate_id"]) in owned_candidates
+                            or payload.get("candidate_site_id") in owned_candidates):
+                        raise ValueError("MIGRATION_COPY_TARGET_HAS_UNOWNED_EVENT")
+            suffix = "" if self._is_sqlite() else " FOR UPDATE"
+            for (table, column, target), entry in sorted(owned.items()):
+                rows = self._execute(f"SELECT * FROM {table} WHERE {column}=%s AND tenant_id=%s" + suffix,
+                    (target, tenant), tenant_id=tenant)
+                if (len(rows) != 1 or _mapping_row_sha256(rows[0])
+                        != entry["created_row_sha256"]):
+                    raise ValueError("MIGRATION_ROLLBACK_TARGET_CHANGED_OR_MISSING")
+                if rows[0].get("legal_hold") or self._execute(
+                    "SELECT legal_hold_id FROM audit.legal_holds WHERE tenant_id=%s AND subject_id=%s "
+                    "AND subject_type IN (%s,%s) AND released_at IS NULL LIMIT 1",
+                    (tenant, target, entry["namespace"], column.removesuffix("_id")), tenant_id=tenant,
+                ):
+                    raise ValueError("MIGRATION_ROLLBACK_LEGAL_HOLD")
+            # A different active batch may have reused these same real targets.
+            # Read its actual versioned receipt; never erase another batch's copy.
+            other_refs = self._execute(
+                "SELECT DISTINCT migration_id FROM workflow.reconciliation_findings WHERE tenant_id=%s "
+                "AND migration_id<>%s AND severity='INFO' AND source_id LIKE 'PROOF-%%'",
+                (tenant, reference), tenant_id=tenant,
             )
-            rolled_back_candidate_ids = [r["candidate_site_id"] for r in cand_rows if r.get("candidate_site_id")]
-
-            deleted_count += self._execute_count(
-                "DELETE FROM expansion.candidate_sites WHERE tenant_id = %s AND promotion_decision_id IN (SELECT promotion_decision_id FROM expansion.promotion_decisions WHERE migration_ref = %s AND tenant_id = %s)",
-                (tenant_uuid, target_ref, tenant_uuid),
-                tenant_id=tenant_uuid,
-            )
-            deleted_count += self._execute_count(
-                "DELETE FROM identity.property_redirects WHERE tenant_id = %s AND decision_id IN (SELECT promotion_decision_id FROM expansion.promotion_decisions WHERE migration_ref = %s AND tenant_id = %s)",
-                (tenant_uuid, target_ref, tenant_uuid),
-                tenant_id=tenant_uuid,
-            )
-            deleted_count += self._execute_count(
-                "DELETE FROM expansion.promotion_decisions WHERE migration_ref = %s AND tenant_id = %s",
-                (target_ref, tenant_uuid),
-                tenant_id=tenant_uuid,
-            )
-        else:
-            cand_rows = self._execute(
-                "SELECT candidate_site_id FROM expansion.candidate_sites WHERE promotion_decision_id IN (SELECT promotion_decision_id FROM expansion.promotion_decisions WHERE migration_ref = %s)",
-                (target_ref,),
-            )
-            rolled_back_candidate_ids = [r["candidate_site_id"] for r in cand_rows if r.get("candidate_site_id")]
-
-            deleted_count += self._execute_count(
-                "DELETE FROM expansion.candidate_sites WHERE promotion_decision_id IN (SELECT promotion_decision_id FROM expansion.promotion_decisions WHERE migration_ref = %s)",
-                (target_ref,),
-            )
-            deleted_count += self._execute_count(
-                "DELETE FROM identity.property_redirects WHERE decision_id IN (SELECT promotion_decision_id FROM expansion.promotion_decisions WHERE migration_ref = %s)",
-                (target_ref,),
-            )
-            deleted_count += self._execute_count(
-                "DELETE FROM expansion.promotion_decisions WHERE migration_ref = %s",
-                (target_ref,),
-            )
-
-        # 2. Scope intake/identity/expansion deletions strictly to migration-created intakes and listings
-        if tenant_uuid:
-            mig_intakes = self._execute(
-                "SELECT DISTINCT intake_id FROM intake.intake_stage_transitions WHERE tenant_id = %s AND service_principal = 'migration_worker' AND permission = 'intake:backfill' AND reason_code = %s",
-                (tenant_uuid, target_ref),
-                tenant_id=tenant_uuid,
-            )
-        else:
-            mig_intakes = self._execute(
-                "SELECT DISTINCT intake_id FROM intake.intake_stage_transitions WHERE service_principal = 'migration_worker' AND permission = 'intake:backfill' AND reason_code = %s",
-                (target_ref,),
-            )
-        mig_intake_ids = [r["intake_id"] for r in mig_intakes if r.get("intake_id")]
-
-        if mig_intake_ids:
-            deleted_property_ids: set[str] = set()
-            for i_id in mig_intake_ids:
-                # Match decisions / candidates / cases
-                deleted_count += self._execute_count(
-                    "DELETE FROM identity.match_decisions WHERE match_case_id IN (SELECT match_case_id FROM identity.match_cases WHERE intake_id = %s)",
-                    (i_id,),
-                    tenant_id=tenant_uuid,
-                )
-                deleted_count += self._execute_count(
-                    "DELETE FROM identity.match_candidates WHERE match_case_id IN (SELECT match_case_id FROM identity.match_cases WHERE intake_id = %s)",
-                    (i_id,),
-                    tenant_id=tenant_uuid,
-                )
-                deleted_count += self._execute_count(
-                    "DELETE FROM identity.match_cases WHERE intake_id = %s",
-                    (i_id,),
-                    tenant_id=tenant_uuid,
-                )
-
-                # Listings and identity edges associated with migration intakes
-                res_listing_rows = self._execute(
-                    "SELECT resolved_listing_id FROM intake.intakes WHERE intake_id = %s AND resolved_listing_id IS NOT NULL",
-                    (i_id,),
-                    tenant_id=tenant_uuid,
-                )
-                for l_row in res_listing_rows:
-                    l_id = l_row["resolved_listing_id"]
-                    # Get property_id for this listing to safely prune orphan property if unreferenced
-                    prop_rows = self._execute(
-                        "SELECT property_id FROM expansion.listings WHERE listing_id = %s",
-                        (l_id,),
-                        tenant_id=tenant_uuid,
-                    )
-                    for pr in prop_rows:
-                        if pr.get("property_id"):
-                            deleted_property_ids.add(pr["property_id"])
-
-                    deleted_count += self._execute_count(
-                        "DELETE FROM identity.source_identity_edges WHERE listing_id = %s",
-                        (l_id,),
-                        tenant_id=tenant_uuid,
-                    )
-                    deleted_count += self._execute_count(
-                        "DELETE FROM expansion.listing_observations WHERE listing_id = %s",
-                        (l_id,),
-                        tenant_id=tenant_uuid,
-                    )
-                    deleted_count += self._execute_count(
-                        "DELETE FROM expansion.listing_revisions WHERE listing_id = %s",
-                        (l_id,),
-                        tenant_id=tenant_uuid,
-                    )
-                    self._execute(
-                        "UPDATE intake.intakes SET resolved_listing_id = NULL WHERE intake_id = %s",
-                        (i_id,),
-                        tenant_id=tenant_uuid,
-                    )
-                    deleted_count += self._execute_count(
-                        "DELETE FROM expansion.listings WHERE listing_id = %s",
-                        (l_id,),
-                        tenant_id=tenant_uuid,
-                    )
-
-                deleted_count += self._execute_count(
-                    "DELETE FROM intake.human_corrections WHERE intake_id = %s",
-                    (i_id,),
-                    tenant_id=tenant_uuid,
-                )
-                deleted_count += self._execute_count(
-                    "DELETE FROM intake.parser_runs WHERE intake_id = %s",
-                    (i_id,),
-                    tenant_id=tenant_uuid,
-                )
-                deleted_count += self._execute_count(
-                    "DELETE FROM intake.source_snapshots WHERE intake_id = %s",
-                    (i_id,),
-                    tenant_id=tenant_uuid,
-                )
-                deleted_count += self._execute_count(
-                    "DELETE FROM intake.intake_stage_transitions WHERE intake_id = %s",
-                    (i_id,),
-                    tenant_id=tenant_uuid,
-                )
-                deleted_count += self._execute_count(
-                    "DELETE FROM intake.intakes WHERE intake_id = %s",
-                    (i_id,),
-                    tenant_id=tenant_uuid,
-                )
-
-            # Safely prune only properties created for rolled back listings if no remaining references exist
-            for prop_id in deleted_property_ids:
-                if tenant_uuid:
-                    deleted_count += self._execute_count(
-                        "DELETE FROM identity.properties WHERE property_id = %s AND property_id NOT IN (SELECT property_id FROM expansion.listings) AND property_id NOT IN (SELECT property_id FROM expansion.candidate_sites) AND property_id NOT IN (SELECT from_property_id FROM identity.property_redirects) AND property_id NOT IN (SELECT to_property_id FROM identity.property_redirects)",
-                        (prop_id,),
-                        tenant_id=tenant_uuid,
-                    )
-                else:
-                    deleted_count += self._execute_count(
-                        "DELETE FROM identity.properties WHERE property_id = %s AND property_id NOT IN (SELECT property_id FROM expansion.listings) AND property_id NOT IN (SELECT property_id FROM expansion.candidate_sites) AND property_id NOT IN (SELECT from_property_id FROM identity.property_redirects) AND property_id NOT IN (SELECT to_property_id FROM identity.property_redirects)",
-                        (prop_id,),
-                    )
-
-        # 3. Outbox event deletion scoped strictly to rolled-back candidate sites
-        if rolled_back_candidate_ids:
-            for c_id in rolled_back_candidate_ids:
-                if tenant_uuid:
-                    deleted_count += self._execute_count(
-                        "DELETE FROM workflow.outbox_events WHERE tenant_id = %s AND aggregate_type = 'CandidateSite' AND aggregate_id = %s",
-                        (tenant_uuid, c_id),
-                        tenant_id=tenant_uuid,
-                    )
-                else:
-                    deleted_count += self._execute_count(
-                        "DELETE FROM workflow.outbox_events WHERE aggregate_type = 'CandidateSite' AND aggregate_id = %s",
-                        (c_id,),
-                    )
-
-        # 4. Reconciliation findings deletion scoped to target_ref
-        if tenant_uuid:
-            deleted_count += self._execute_count(
-                "DELETE FROM workflow.reconciliation_findings WHERE migration_id = %s AND tenant_id = %s",
-                (target_ref, tenant_uuid),
-                tenant_id=tenant_uuid,
-            )
-        else:
-            deleted_count += self._execute_count(
-                "DELETE FROM workflow.reconciliation_findings WHERE migration_id = %s",
-                (target_ref,),
-            )
-
-        if hasattr(self.db_conn, "commit"):
+            for other in other_refs:
+                for proof in self._mapping_proofs(tenant, other["migration_id"]):
+                    if proof["actual"].get("rollback_disposition") == "ROLLED_BACK":
+                        continue
+                    for entry in proof["expected"]["mapping_manifest"]["entries"]:
+                        if (entry["target_table"], entry["target_column"], entry["target_id"]) in owned:
+                            raise ValueError("MIGRATION_MAPPING_TARGET_REUSED_BY_OTHER_BATCH")
+            # Break only pointers in our own unchanged copies, then follow the
+            # original FK order. External references still fail atomically.
+            for (table, _column, target), _entry in owned.items():
+                if table == "intake.intakes":
+                    self._execute("UPDATE intake.intakes SET resolved_listing_id=NULL WHERE intake_id=%s AND tenant_id=%s",
+                        (target, tenant), tenant_id=tenant)
+                elif table == "expansion.listings":
+                    self._execute("UPDATE expansion.listings SET current_revision_id=NULL,current_observation_id=NULL "
+                        "WHERE listing_id=%s AND tenant_id=%s", (target, tenant), tenant_id=tenant)
+                elif table == "expansion.promotion_decisions":
+                    self._execute("UPDATE expansion.promotion_decisions SET candidate_site_id=NULL "
+                        "WHERE promotion_decision_id=%s AND tenant_id=%s", (target, tenant), tenant_id=tenant)
+            order = ("workflow.outbox_events", "expansion.candidate_sites", "identity.property_redirects",
+                "expansion.promotion_decisions", "identity.match_candidates", "identity.match_cases",
+                "intake.human_corrections", "identity.source_identity_edges", "expansion.listing_observations",
+                "expansion.listing_revisions", "expansion.listings", "intake.parser_runs",
+                "intake.source_snapshots", "intake.intake_stage_transitions", "intake.intakes", "identity.properties")
+            for table in order:
+                for (owned_table, column, target), _entry in sorted(owned.items()):
+                    if owned_table == table:
+                        deleted += self._execute_count(f"DELETE FROM {table} WHERE {column}=%s AND tenant_id=%s",
+                            (target, tenant), tenant_id=tenant)
+            at = datetime.now(UTC).isoformat()
+            for proof in proofs:
+                actual = {**proof["actual"], "rollback_disposition": "ROLLED_BACK", "rolled_back_at": at}
+                self._execute("UPDATE workflow.reconciliation_findings SET actual=%s,version=version+1 "
+                    "WHERE finding_id=%s AND tenant_id=%s AND migration_id=%s",
+                    (json.dumps(actual), proof["finding_id"], tenant, reference), tenant_id=tenant)
             self.db_conn.commit()
-        return deleted_count
+            self._expected_counts.pop(tenant, None)
+            self._expected_checksums.pop(tenant, None)
+            return deleted
+        except Exception:
+            self.db_conn.rollback()
+            raise
 
     def register_sources_and_parsers(
         self,
@@ -707,7 +879,7 @@ class IntakeMigrator:
                     tenant_id=ensure_uuid(tenant_id),
                     source_kind="schema",
                     source_id="parser_release",
-                    target_ids=[ensure_uuid("parser-missing")],
+                    target_ids=[],
                     finding_type="MISSING_EVIDENCE",
                     severity="WARNING",
                     expected={"parser_release": "dict with artifact_uri and artifact_sha256"},
@@ -813,6 +985,7 @@ class IntakeMigrator:
             target_tenant = input_tenants.pop()
         legacy_intakes = []
         try:
+            self._begin_mapping(target_tenant)
             registered_parser = self.register_sources_and_parsers(
                 sources=sources, parser_release=parser_release, tenant_id=target_tenant,
             )
@@ -886,18 +1059,19 @@ class IntakeMigrator:
                             (address, "address_id"), (address, "id"),
                         ) if get_val(item, name))
                     listing_refs = [value for value in listing_refs if value]
-                    if not record_id or not listing_refs:
+                    if not isinstance(record_id, str) or not record_id.strip() or not listing_refs:
                         errors["id"] = "MISSING_EVIDENCE"
-                    if not listing_refs:
+                    if not listing_refs or any(not isinstance(ref, str) or not ref.strip() for ref in listing_refs):
                         errors["listingId"] = "MISSING_EVIDENCE"
-                    elif len({ensure_uuid(value) for value in listing_refs}) > 1:
+                    elif len({ensure_uuid(value, tenant_id=target_tenant, namespace="listing", preserve_uuid=False) for value in listing_refs}) > 1:
                         errors["listingId"] = "STATE_MAPPING_CONFLICT"
                     listing_id = listing_refs[0] if listing_refs else None
                     if is_listing:
                         if resource_source is None:
                             errors.setdefault("sourceId", "MISSING_EVIDENCE")
                     else:
-                        owner = listing_owners.get(ensure_uuid(listing_id))
+                        owner = (listing_owners.get(self._map_key("listing", listing_id))
+                                 if "listingId" not in errors else None)
                         owner_source = owner[1] if owner is not None else None
                         if owner is not None:
                             address_refs.extend(get_val(owner[0], name) for name in ("address_id", "addressId") if get_val(owner[0], name))
@@ -913,7 +1087,7 @@ class IntakeMigrator:
                     if listing_id and "listingId" not in errors and "INVALID_SCOPE" not in errors.values():
                         saved_owner = self._execute(
                             "SELECT source_id FROM expansion.listings WHERE listing_id = %s AND tenant_id = %s",
-                            (ensure_uuid(listing_id), target_tenant), tenant_id=target_tenant,
+                            (self._map_key("listing", listing_id), target_tenant), tenant_id=target_tenant,
                         )
                         if saved_owner:
                             saved_source = saved_owner[0]["source_id"]
@@ -921,23 +1095,24 @@ class IntakeMigrator:
                                 errors["sourceId"] = "STATE_MAPPING_CONFLICT"
                             elif not is_listing and resource_source is None:
                                 resource_source = saved_source
-                    if len({ensure_uuid(value) for value in address_refs}) > 1:
+                    if (any(not isinstance(value, str) or not value.strip() for value in address_refs)
+                            or len(set(address_refs)) > 1):
                         errors["addressId"] = "STATE_MAPPING_CONFLICT"
                     if is_listing and resource_source is not None and not any(
                         key in errors for key in ("id", "listingId", "sourceId", "tenantId")
                     ):
-                        previous = listing_owners.get(ensure_uuid(listing_id))
+                        previous = listing_owners.get(self._map_key("listing", listing_id))
                         if previous is not None:
                             if previous[1] != resource_source:
                                 raise ValueError("Conflicting legacy Listing source ownership")
                             previous_address_refs = [get_val(previous[0], name) for name in ("address_id", "addressId")
                                                      if get_val(previous[0], name)]
-                            if len({ensure_uuid(value) for value in (*previous_address_refs, *address_refs)}) > 1:
+                            if len(set((*previous_address_refs, *address_refs))) > 1:
                                 raise ValueError("Conflicting legacy Listing address ownership")
                         # Preserve the first recorded owner instead of selecting
                         # the last duplicate. Unrelated domain errors can still be
                         # excluded together with this proven source's Candidate.
-                        listing_owners.setdefault(ensure_uuid(listing_id), (record, resource_source))
+                        listing_owners.setdefault(self._map_key("listing", listing_id), (record, resource_source))
                     excluded_source = _source_partition_excluded(source_id, resource_source, errors)
                     if excluded_source:
                         resource_excluded[kind] += 1
@@ -966,7 +1141,7 @@ class IntakeMigrator:
             for draft, lst_id, _ in scoped_candidates:
                 addr = get_val(draft, "address")
                 if lst_id and addr:
-                    listing_to_address[ensure_uuid(lst_id)] = addr
+                    listing_to_address[self._map_key("listing", lst_id)] = addr
 
             for intake in legacy_intakes:
                 if str(uuid.UUID(intake["tenantId"])) != target_tenant:
@@ -977,8 +1152,8 @@ class IntakeMigrator:
                 match_res = intake.get("matchResult") or {}
                 lst_id = match_res.get("targetListingId") or intake.get("resolved_listing_id") or intake.get("resolvedListingId")
                 if lst_id:
-                    lst_uuid = ensure_uuid(lst_id)
-                    intake_uuid = ensure_uuid(intake.get("id"))
+                    lst_uuid = self._map_key("listing", lst_id)
+                    intake_uuid = self._map_key("intake", intake.get("id"))
                     if intake_uuid:
                         intake_resolved_listings[intake_uuid] = lst_uuid
                     if i_month:
@@ -1024,7 +1199,7 @@ class IntakeMigrator:
                             tenant_id=i_tenant,
                             source_kind="snapshot",
                             source_id=l_id,
-                            target_ids=[ensure_uuid(l_id)],
+                            target_ids=[],
                             finding_type="INVALID_SCOPE",
                             severity="WARNING",
                             expected={"month_partition": month},
@@ -1033,11 +1208,22 @@ class IntakeMigrator:
                         intake_quarantined += 1
                         continue
 
-                intake_uuid = ensure_uuid(l_id)
+                intake_uuid = self._map_key("intake", l_id)
 
                 if resume:
                     check_exists = "SELECT intake_id FROM intake.intakes WHERE intake_id = %s AND tenant_id = %s"
-                    if self._execute(check_exists, (intake_uuid, i_tenant), tenant_id=i_tenant):
+                    existing_intake = self._execute(check_exists.replace("SELECT intake_id", "SELECT intake_id,source_id"),
+                        (intake_uuid, i_tenant), tenant_id=i_tenant)
+                    if existing_intake and existing_intake[0]["source_id"] != i_source:
+                        findings_count += 1
+                        quarantined_count += 1
+                        intake_quarantined += 1
+                        self._create_finding(tenant_id=i_tenant, source_kind="legacy_intake", source_id=l_id,
+                            target_ids=[intake_uuid], finding_type="STATE_MAPPING_CONFLICT", severity="BLOCKING",
+                            expected={"source_id": existing_intake[0]["source_id"]}, actual={"source_id": i_source})
+                        continue
+                    if existing_intake:
+                        self._accept_mapping("intake", l_id)
                         skipped_count += 1
                         if intake_uuid not in processed_intake_uuids:
                             processed_intake_uuids.append(intake_uuid)
@@ -1089,12 +1275,13 @@ class IntakeMigrator:
                         source_policy,
                         stage,
                         None,
-                        ensure_uuid(legacy_intake.get("correlationId") or f"corr-{l_id}"),
+                        ensure_uuid(legacy_intake.get("correlationId") or f"corr-{l_id}", tenant_id=i_tenant, namespace="correlation"),
                         1,
                         sub_time,
                         migration_time,
                     ),
                     tenant_id=i_tenant,
+                    created_mapping=("intake", l_id),
                 )
                 self._execute(
                     "UPDATE intake.intakes SET brand_id = %s, region_id = %s, assigned_area_id = %s WHERE intake_id = %s AND tenant_id = %s",
@@ -1102,7 +1289,7 @@ class IntakeMigrator:
                     tenant_id=i_tenant,
                 )
 
-                corr_id = ensure_uuid(legacy_intake.get("correlationId") or f"corr-{l_id}")
+                corr_id = ensure_uuid(legacy_intake.get("correlationId") or f"corr-{l_id}", tenant_id=i_tenant, namespace="correlation")
                 insert_trans_sql = """
                     INSERT INTO intake.intake_stage_transitions (
                         transition_id, tenant_id, intake_id, sequence_no, from_state,
@@ -1113,7 +1300,7 @@ class IntakeMigrator:
                 self._execute(
                     insert_trans_sql,
                     (
-                        ensure_uuid(f"TRANS-{l_id}"),
+                        self._map_key("transition", l_id),
                         i_tenant,
                         intake_uuid,
                         1,
@@ -1132,9 +1319,10 @@ class IntakeMigrator:
                         migration_time,
                     ),
                     tenant_id=i_tenant,
+                    created_mapping=("transition", l_id),
                 )
 
-                snap_id = ensure_uuid(legacy_intake.get("snapshotId") or f"SNAP-{l_id}")
+                snap_id = self._map_key("snapshot", legacy_intake.get("snapshotId") or l_id)
                 raw_uri = legacy_intake.get("rawObjectUri") or legacy_intake.get("raw_object_uri")
                 snap_sha = legacy_intake.get("rawSnapshotSha256")
 
@@ -1206,6 +1394,7 @@ class IntakeMigrator:
                             legacy_intake.get("residencyMode") or "TW_ONLY",
                         ),
                         tenant_id=i_tenant,
+                        created_mapping=("snapshot", legacy_intake.get("snapshotId") or l_id),
                     )
 
                     if legacy_intake.get("parsedFields"):
@@ -1226,7 +1415,7 @@ class IntakeMigrator:
                                     correlation_id, version
                                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """
-                            parser_run_id = ensure_uuid(f"PRUN-{l_id}")
+                            parser_run_id = self._map_key("parser_run", l_id)
                             self._execute(
                                 insert_parser_run_sql,
                                 (
@@ -1242,6 +1431,7 @@ class IntakeMigrator:
                                     1,
                                 ),
                                 tenant_id=i_tenant,
+                                created_mapping=("parser_run", l_id),
                             )
                         else:
                             findings_count += 1
@@ -1258,8 +1448,8 @@ class IntakeMigrator:
 
                 if "humanCorrections" in legacy_intake or "corrections" in legacy_intake:
                     corrections = legacy_intake.get("humanCorrections") or legacy_intake.get("corrections") or []
-                    for corr in corrections:
-                        corr_id = ensure_uuid(get_val(corr, "correction_id") or f"CORR-{uuid.uuid4()}")
+                    for corr_index, corr in enumerate(corrections):
+                        corr_id = self._map_key("correction", get_val(corr, "correction_id") or f"{l_id}:{corr_index}")
                         insert_corr_sql = """
                             INSERT INTO intake.human_corrections (
                                 correction_id, tenant_id, intake_id, listing_id, field_path,
@@ -1273,7 +1463,7 @@ class IntakeMigrator:
                                 corr_id,
                                 i_tenant,
                                 intake_uuid,
-                                ensure_uuid(get_val(corr, "listing_id")),
+                                self._map_key("listing", get_val(corr, "listing_id")),
                                 get_val(corr, "field_path") or "parsedFields.rent",
                                 get_val(corr, "field_classification") or "PUBLIC",
                                 json.dumps(get_val(corr, "parsed_value")),
@@ -1285,12 +1475,14 @@ class IntakeMigrator:
                                 get_val(corr, "status") or "APPLIED",
                             ),
                             tenant_id=i_tenant,
+                            created_mapping=("correction", get_val(corr, "correction_id") or f"{l_id}:{corr_index}"),
                         )
+                        self._accept_mapping("listing", get_val(corr, "listing_id"))
 
                 match_res = legacy_intake.get("matchResult")
                 if match_res:
                     outcome = match_res.get("outcome") or "NEW"
-                    match_case_id = ensure_uuid(f"MC-{l_id}")
+                    match_case_id = self._map_key("match_case", l_id)
                     insert_match_case_sql = """
                         INSERT INTO identity.match_cases (
                             match_case_id, tenant_id, intake_id, outcome, status,
@@ -1310,10 +1502,11 @@ class IntakeMigrator:
                             1,
                         ),
                         tenant_id=i_tenant,
+                        created_mapping=("match_case", l_id),
                     )
 
                     for idx, cand_match in enumerate(match_res.get("candidates") or match_res.get("match_candidates") or [], start=1):
-                        cand_match_id = ensure_uuid(f"MCAND-{l_id}-{idx}")
+                        cand_match_id = self._map_key("match_candidate", f"{l_id}:{idx}")
                         cand_prop_id = ensure_uuid(get_val(cand_match, "property_id"))
                         if cand_prop_id:
                             check_p = self._execute(
@@ -1324,7 +1517,7 @@ class IntakeMigrator:
                             if not check_p:
                                 cand_prop_id = None
 
-                        cand_lst_id = ensure_uuid(get_val(cand_match, "listing_id"))
+                        cand_lst_id = self._map_key("listing", get_val(cand_match, "listing_id"))
                         if cand_lst_id:
                             check_l = self._execute(
                                 "SELECT listing_id FROM expansion.listings WHERE listing_id = %s AND tenant_id = %s",
@@ -1353,7 +1546,10 @@ class IntakeMigrator:
                                 json.dumps(get_val(cand_match, "evidence") or {}),
                             ),
                             tenant_id=i_tenant,
+                            created_mapping=("match_candidate", f"{l_id}:{idx}"),
                         )
+                        if cand_lst_id is not None:
+                            self._accept_mapping("listing", get_val(cand_match, "listing_id"))
 
                     # A match result is evidence, not an independently reviewed decision.
                     # Do not invent an approver or an APPROVED match_decision.
@@ -1363,7 +1559,7 @@ class IntakeMigrator:
 
             # 2. Backfill Listings
             for legacy_lst, l_id, i_source in scoped_listings:
-                listing_uuid = ensure_uuid(l_id)
+                listing_uuid = self._map_key("listing", l_id)
                 i_tenant = target_tenant
 
                 lst_month = listing_to_month.get(listing_uuid)
@@ -1423,6 +1619,7 @@ class IntakeMigrator:
                             )
                             continue
                         skipped_count += 1
+                        self._accept_mapping("listing", l_id)
                         if listing_uuid not in processed_listing_uuids:
                             processed_listing_uuids.append(listing_uuid)
                         resource_mapped_records["legacy_listing"] += 1
@@ -1563,7 +1760,10 @@ class IntakeMigrator:
                 lng_val = float(lng) if lng is not None else None
 
                 prop_addr_str = normalized_vals["address"]
-                prop_uuid = ensure_uuid(f"PROP-{prop_addr_str}")
+                # An address agreement is a matching signal, not authority to
+                # merge two historical owners. Keep their original bindings
+                # distinct until the existing identity review resolves them.
+                prop_uuid = self._map_key("property", l_id)
                 addr_fingerprint = hashlib.sha256(prop_addr_str.encode()).hexdigest()
 
                 check_prop = "SELECT property_id FROM identity.properties WHERE property_id = %s AND tenant_id = %s"
@@ -1587,10 +1787,11 @@ class IntakeMigrator:
                             1,
                         ),
                         tenant_id=i_tenant,
+                        created_mapping=("property", l_id),
                     )
 
-                rev_uuid = ensure_uuid(f"REV-{l_id}")
-                obs_uuid = ensure_uuid(f"OBS-{l_id}")
+                rev_uuid = self._map_key("revision", l_id)
+                obs_uuid = self._map_key("observation", l_id)
 
                 insert_listing_sql = """
                     INSERT INTO expansion.listings (
@@ -1612,6 +1813,7 @@ class IntakeMigrator:
                         1,
                     ),
                     tenant_id=i_tenant,
+                    created_mapping=("listing", l_id),
                 )
 
                 for in_uuid, resolved_l_uuid in intake_resolved_listings.items():
@@ -1645,6 +1847,7 @@ class IntakeMigrator:
                         datetime.now(UTC).isoformat(),
                     ),
                     tenant_id=i_tenant,
+                    created_mapping=("revision", l_id),
                 )
 
                 obs_time = get_val(legacy_lst, "observed_at") or get_val(legacy_lst, "observedAt") or get_val(legacy_lst, "submittedAt") or datetime.now(UTC).isoformat()
@@ -1676,6 +1879,7 @@ class IntakeMigrator:
                         obs_evidence,
                     ),
                     tenant_id=i_tenant,
+                    created_mapping=("observation", l_id),
                 )
 
                 # Update current_revision_id and current_observation_id on expansion.listings
@@ -1684,12 +1888,27 @@ class IntakeMigrator:
                     (rev_uuid, obs_uuid, listing_uuid, i_tenant),
                     tenant_id=i_tenant,
                 )
+                same_address = self._execute(
+                    "SELECT DISTINCT l.listing_id,l.property_id FROM expansion.listings l "
+                    "JOIN identity.properties p ON p.property_id=l.property_id AND p.tenant_id=l.tenant_id "
+                    "WHERE l.tenant_id=%s AND p.address_fingerprint=%s AND l.property_id<>%s",
+                    (i_tenant, addr_fingerprint, prop_uuid), tenant_id=i_tenant,
+                )
+                if same_address:
+                    findings_count += 1
+                    self._create_finding(
+                        tenant_id=i_tenant, source_kind="identity", source_id=l_id,
+                        target_ids=[listing_uuid, prop_uuid, *sorted({str(r["property_id"]) for r in same_address})],
+                        finding_type="AMBIGUOUS_IDENTITY", severity="BLOCKING",
+                        expected={"physical_owner": "existing identity review before sharing or merging"},
+                        actual={"address_fingerprint": addr_fingerprint, "distinct_historical_owners": True},
+                    )
 
                 # URL-only history has no observed provider identity edge.
                 # The existing graph resolves its real Listing.property_id;
                 # an internal legacy ID must not masquerade as a source key.
                 if source_listing_id is not None:
-                    edge_uuid = ensure_uuid(f"EDGE-{l_id}")
+                    edge_uuid = self._map_key("edge", l_id)
                     insert_edge_sql = """
                         INSERT INTO identity.source_identity_edges (
                             edge_id, tenant_id, source_id, source_entity_id,
@@ -1705,6 +1924,7 @@ class IntakeMigrator:
                             datetime.now(UTC).isoformat(),
                         ),
                         tenant_id=i_tenant,
+                        created_mapping=("edge", l_id),
                     )
 
                 if get_val(legacy_lst, "redirected_to_property_id"):
@@ -1728,8 +1948,8 @@ class IntakeMigrator:
                             actual={"redirect_property_exists": False},
                         )
                     else:
-                        dec_id = ensure_uuid(f"DEC-REDIR-{l_id}")
-                        redir_id = ensure_uuid(f"REDIR-{l_id}")
+                        dec_id = ensure_uuid(f"DEC-REDIR-{l_id}", tenant_id=i_tenant, namespace="redirect-decision")
+                        redir_id = self._map_key("redirect", l_id)
 
                         insert_redir_sql = """
                             INSERT INTO identity.property_redirects (
@@ -1746,6 +1966,7 @@ class IntakeMigrator:
                                 dec_id,
                             ),
                             tenant_id=i_tenant,
+                            created_mapping=("redirect", l_id),
                         )
 
                 processed_listing_uuids.append(listing_uuid)
@@ -1757,8 +1978,8 @@ class IntakeMigrator:
                 c_id = get_val(candidate_site, "candidate_site_id") or get_val(legacy_cand, "id")
                 status = get_val(legacy_cand, "status") or "CANDIDATE"
 
-                candidate_uuid = ensure_uuid(c_id)
-                listing_uuid = ensure_uuid(lst_id)
+                candidate_uuid = self._map_key("candidate", c_id)
+                listing_uuid = self._map_key("listing", lst_id)
                 i_tenant = target_tenant
 
                 # Real month partition comes from legacy evidence only
@@ -1863,6 +2084,8 @@ class IntakeMigrator:
                         continue
                     if existing:
                         skipped_count += 1
+                        self._accept_mapping("candidate", c_id)
+                        self._accept_mapping("listing", lst_id)
                         if candidate_uuid not in processed_candidate_uuids:
                             processed_candidate_uuids.append(candidate_uuid)
                         resource_mapped_records["legacy_candidate"] += 1
@@ -1895,7 +2118,7 @@ class IntakeMigrator:
                     status = "REJECTED"
                     quarantined_count += 1
 
-                decision_uuid = ensure_uuid(f"PD-{c_id}")
+                decision_uuid = self._map_key("promotion", c_id)
 
                 url_sha = prop_row[0]["canonical_url_sha256"]
 
@@ -1954,6 +2177,7 @@ class IntakeMigrator:
                         self.migration_ref,
                     ),
                     tenant_id=i_tenant,
+                    created_mapping=("promotion", c_id),
                 )
 
                 insert_cand_sql = """
@@ -1974,9 +2198,11 @@ class IntakeMigrator:
                         "NEW" if status in ("CANDIDATE", "new") else "REJECTED",
                     ),
                     tenant_id=i_tenant,
+                    created_mapping=("candidate", c_id),
                 )
+                self._accept_mapping("listing", lst_id)
 
-                event_id = ensure_uuid(f"EVT-{c_id}")
+                event_id = ensure_uuid(f"EVT-{c_id}", tenant_id=i_tenant, namespace="event")
                 insert_outbox_sql = """
                     INSERT INTO workflow.outbox_events (
                         outbox_event_id, tenant_id, event_id, event_type, event_version,
@@ -1987,7 +2213,7 @@ class IntakeMigrator:
                 self._execute(
                     insert_outbox_sql,
                     (
-                        ensure_uuid(f"OUTBOX-{c_id}"),
+                        self._map_key("outbox", c_id),
                         i_tenant,
                         event_id,
                         "CandidateSitePromoted",
@@ -1995,14 +2221,15 @@ class IntakeMigrator:
                         candidate_uuid,
                         i_tenant,
                         json.dumps({"candidate_site_id": candidate_uuid, "status": status}),
-                        ensure_uuid(f"corr-{c_id}"),
+                        ensure_uuid(f"corr-{c_id}", tenant_id=i_tenant, namespace="correlation"),
                         datetime.now(UTC).isoformat(),
                         datetime.now(UTC).isoformat(),
                     ),
                     tenant_id=i_tenant,
+                    created_mapping=("outbox", c_id),
                 )
 
-                audit_evt_id = ensure_uuid(f"AUDIT-{c_id}")
+                audit_evt_id = self._map_key("audit", c_id)
                 audit_sha = hashlib.sha256(f"{audit_evt_id}:{candidate_uuid}".encode()).hexdigest()
                 seq_row = self._execute("SELECT COALESCE(MAX(sequence_no), 0) as max_seq FROM audit.audit_events WHERE tenant_id = %s", (i_tenant,), tenant_id=i_tenant)
                 audit_seq = (seq_row[0]["max_seq"] if seq_row else 0) + 1
@@ -2027,25 +2254,30 @@ class IntakeMigrator:
                         candidate_uuid,
                         decision_uuid,
                         "SUCCEEDED",
-                        ensure_uuid(f"corr-{c_id}"),
+                        ensure_uuid(f"corr-{c_id}", tenant_id=i_tenant, namespace="correlation"),
                         audit_sha,
                         datetime.now(UTC).isoformat(),
                         datetime.now(UTC).isoformat(),
                     ),
                     tenant_id=i_tenant,
+                    created_mapping=("audit", c_id),
                 )
 
                 processed_candidate_uuids.append(candidate_uuid)
                 resource_mapped_records["legacy_candidate"] += 1
 
             t_key = target_tenant
-            p_key = f"{t_key}:{source_id or 'ALL'}:{month or 'ALL'}"
+            selectors = {"tenant_id": t_key, "source_id": source_id, "month": month}
+            p_key = canonical_sha256({"migration_id": self.migration_ref, **selectors})
+            mapping_manifest = self._mapping_manifest()
             proof_expected = {
                 "tenant_id": t_key,
                 "source_id": source_id or "ALL",
                 "month": month or "ALL",
                 "month_basis": "UTC",
                 "partition_key": p_key,
+                "selectors": selectors,
+                "mapping_manifest": mapping_manifest,
                 "proof_scope": "counts_and_ids_only_not_field_or_evidence_parity",
                 "intakes_received": len(normalized_inputs),
                 "intakes_quarantined": intake_quarantined,
@@ -2081,17 +2313,18 @@ class IntakeMigrator:
             }
 
             if not dry_run:
-                proof_finding_id = ensure_uuid(f"PROOF-{p_key}")
+                proof_finding_id = ensure_uuid(f"PROOF-{self.migration_ref}-{p_key}")
                 check_pf = self._execute(
-                    "SELECT finding_id FROM workflow.reconciliation_findings WHERE (finding_id = %s OR (tenant_id = %s AND migration_id = %s AND severity = 'INFO' AND source_id = %s)) AND tenant_id = %s",
-                    (proof_finding_id, t_key, self.migration_ref, f"PROOF-{p_key}", t_key),
+                    "SELECT finding_id FROM workflow.reconciliation_findings WHERE finding_id=%s "
+                    "AND tenant_id=%s AND migration_id=%s AND severity='INFO' AND source_id=%s",
+                    (proof_finding_id, t_key, self.migration_ref, f"PROOF-{p_key}"),
                     tenant_id=t_key,
                 )
                 if check_pf:
                     if not (resume and len(processed_intake_uuids) == 0 and len(processed_listing_uuids) == 0 and len(processed_candidate_uuids) == 0):
                         self._execute(
-                            "UPDATE workflow.reconciliation_findings SET expected = %s, actual = %s WHERE finding_id = %s AND tenant_id = %s",
-                            (json.dumps(proof_expected), json.dumps(proof_expected), check_pf[0]["finding_id"], t_key),
+                            "UPDATE workflow.reconciliation_findings SET expected = %s, actual = %s WHERE finding_id = %s AND tenant_id = %s AND migration_id=%s",
+                            (json.dumps(proof_expected), json.dumps(proof_expected), check_pf[0]["finding_id"], t_key, self.migration_ref),
                             tenant_id=t_key,
                         )
                 else:
@@ -2124,6 +2357,9 @@ class IntakeMigrator:
 
         return {
             "migration_id": self.migration_ref,
+            "mapping_manifest": {"transformation_version": MAPPING_VERSION,
+                "sha256": mapping_manifest["sha256"], "entry_count": len(mapping_manifest["entries"]),
+                "proof_finding_id": ensure_uuid(f"PROOF-{self.migration_ref}-{p_key}") if not dry_run else None},
             "dry_run": dry_run,
             "status": "success" if not dry_run else "dry_run",
             "counts": {
@@ -2208,7 +2444,7 @@ class IntakeMigrator:
         expected_candidate_count: int | None = None,
     ) -> dict[str, Any]:
         """Perform shadow comparison against persisted proof. Returns verification results."""
-        t_tenant = ensure_uuid(tenant_id)
+        t_tenant = str(uuid.UUID(tenant_id))
         self._execute("SELECT 1", tenant_id=t_tenant)
 
         intake_rows = self._execute("SELECT intake_id, source_id, submitted_at FROM intake.intakes WHERE tenant_id = %s", (t_tenant,), tenant_id=t_tenant)
@@ -2227,13 +2463,11 @@ class IntakeMigrator:
         actual_listing_sha = calculate_checksum(actual_listing_ids)
         actual_candidate_sha = calculate_checksum(actual_candidate_ids)
 
-        proof_rows = self._execute(
-            "SELECT finding_id, expected FROM workflow.reconciliation_findings WHERE severity = 'INFO' AND tenant_id = %s AND migration_id = %s AND (source_id LIKE 'PROOF-%%' OR source_id = %s) ORDER BY finding_id DESC",
-            (t_tenant, self.migration_ref, self.migration_ref),
-            tenant_id=t_tenant,
-        )
+        proof_rows = self._mapping_proofs(t_tenant, self.migration_ref)
         partition_proofs: dict[str, dict[str, Any]] = {}
         for r in proof_rows:
+            if r["actual"].get("rollback_disposition") == "ROLLED_BACK":
+                continue
             raw_exp = r["expected"]
             exp_dict = json.loads(raw_exp) if isinstance(raw_exp, str) else raw_exp
             pkey = exp_dict.get("partition_key") or r["finding_id"]
@@ -2322,14 +2556,14 @@ class IntakeMigrator:
                 blocking_findings += 1
         elif partition_proofs:
             for pkey, exp_dict in partition_proofs.items():
-                p_src = exp_dict.get("source_id")
-                p_month = exp_dict.get("month")
+                p_src = exp_dict["selectors"]["source_id"]
+                p_month = exp_dict["selectors"]["month"]
 
                 p_intake_ids = [
                     r["intake_id"]
                     for r in intake_rows
-                    if (p_src is None or p_src == "ALL" or r.get("source_id") == p_src)
-                    and (p_month is None or p_month == "ALL" or _partition_month(r.get("submitted_at")) == p_month)
+                    if (p_src is None or r.get("source_id") == p_src)
+                    and (p_month is None or _partition_month(r.get("submitted_at")) == p_month)
                 ]
                 p_intake_sha = calculate_checksum(p_intake_ids)
                 exp_p_intake_c = exp_dict.get("intakes")
@@ -2376,7 +2610,7 @@ class IntakeMigrator:
                     p_listing_ids = [
                         str(r["listing_id"])
                         for r in listing_rows
-                        if (p_src is None or p_src == "ALL" or r.get("source_id") == p_src)
+                        if (p_src is None or r.get("source_id") == p_src)
                     ]
                 p_listing_sha = calculate_checksum(sorted(p_listing_ids))
                 exp_p_listing_c = exp_dict.get("listings")
@@ -2605,7 +2839,9 @@ def inventory_intakes(engine: Any, tenant_id: str, *, source_id: str | None = No
                 or binding["isolation"] != "repeatable read"):
             raise ValueError("Unverified inventory context")
         binding.update({"source_selector_sha256": hashlib.sha256(source_id.encode()).hexdigest() if source_id else None,
-                        "month": month, "month_basis": "UTC", "row_limit_per_model": limit})
+                        "month": month, "month_basis": "UTC", "row_limit_per_model": limit,
+                        "logical_key_basis": "legacy_prospective_v2_bridge_and_native_declared_UUID_not_cutover_proof",
+                        "mapping_transformation_version": MAPPING_VERSION})
         unattributed_bridge_keys = None
         for model in ("legacy_documents", "bridge_documents", "native_rows"):
             engine.execute("SAVEPOINT inventory_model")
@@ -2672,8 +2908,14 @@ def inventory_intakes(engine: Any, tenant_id: str, *, source_id: str | None = No
                             storage_id = stored["doc_id"] if model == "legacy_documents" else wrapped["_state_key"]
                             if row.get("id") != storage_id:
                                 errors["id"] = "STATE_MAPPING_CONFLICT"
+                        if not errors and model == "bridge_documents":
+                            try:
+                                uuid.UUID(row["id"])
+                            except (ValueError, TypeError, AttributeError):
+                                errors["id"] = "MISSING_EVIDENCE"
                         if not errors:
-                            logical_id = ensure_uuid(row["id"])
+                            logical_id = (str(uuid.UUID(row["id"])) if model in {"bridge_documents", "native_rows"} else
+                                ensure_uuid(row["id"], tenant_id=tenant_id, namespace="intake", preserve_uuid=False))
                             recorded_month = _partition_month(row["submittedAt"])
                             model_facts.append((logical_id, (row["sourceId"], recorded_month)))
                             if ((source_id is not None and row["sourceId"] != source_id)
@@ -2763,7 +3005,7 @@ def main() -> None:
     """CLI entrypoint for executable staging backfill, verification, and rollback."""
     parser = argparse.ArgumentParser(description="Assisted Listing Intake Migration CLI (ODP-INTAKE-MIGRATION-001)")
     parser.add_argument("--action", choices=["inventory", "backfill", "verify", "rollback", "schema-upgrade", "schema-rollback"], default="backfill")
-    parser.add_argument("--tenant-id", type=str, default=None, help="Target tenant UUID (required for inventory)")
+    parser.add_argument("--tenant-id", type=str, default=None, help="Target tenant UUID (required for all data actions)")
     parser.add_argument("--inventory-limit", type=int, default=10000, help="Inventory row bound per model (1..10000)")
     parser.add_argument("--source-id", type=str, default=None, help="Source system ID filter")
     parser.add_argument("--month", type=str, default=None, help="YYYY-MM UTC instant-month partition filter (all actions)")
@@ -2773,6 +3015,8 @@ def main() -> None:
     parser.add_argument("--input-file", type=str, default=None, help="JSON file containing legacy inputs")
     parser.add_argument("--db-dsn", "--dsn", "--db-uri", dest="db_dsn", type=str, default=None, help="Database connection DSN or URL")
     parser.add_argument("--sqlite-path", type=str, default=None, help="Path to SQLite database file")
+
+    parser.add_argument("--rollback-copy-path", type=str, help="New isolated SQLite proof copy; source remains intact")
 
     args = parser.parse_args()
 
@@ -2804,9 +3048,33 @@ def main() -> None:
         print(json.dumps(result, indent=2))
         sys.exit(0 if result["status"] == "complete" else 1)
 
-    # Keep the historical default for every original action, never inventory.
-    if args.tenant_id is None:
-        args.tenant_id = "00000000-0000-0000-0000-000000000001"
+    if args.action in {"backfill", "verify", "rollback"}:
+        try:
+            args.tenant_id = str(uuid.UUID(args.tenant_id))
+        except (TypeError, ValueError, AttributeError):
+            parser.error("An explicit valid tenant UUID is required")
+    if args.action == "rollback":
+        # Branch before opening a writable target or applying schema. The only
+        # cleanup CLI is the original offline-copy release proof, never §5.2.
+        if (args.db_dsn or not args.sqlite_path or not args.rollback_copy_path
+                or args.input_file or args.dry_run or args.resume):
+            parser.error("Rollback requires a SQLite source and a new --rollback-copy-path; live rollback uses the governed release owner")
+        from pathlib import Path
+
+        from delivery_toolchain.release.assisted_listing_intake.drills import (
+            prove_migration_copy_cleanup,
+        )
+
+        try:
+            result = prove_migration_copy_cleanup(Path(args.sqlite_path), Path(args.rollback_copy_path),
+                migration_ref=args.migration_ref, tenant_id=args.tenant_id)
+        except Exception:
+            print('{"action":"rollback","status":"error","reason":"isolated_copy_proof_failed"}')
+            sys.exit(1)
+        print(json.dumps(result, indent=2))
+        return
+    if args.rollback_copy_path:
+        parser.error("--rollback-copy-path is only valid for isolated rollback proof")
     if not dsn and not args.sqlite_path:
         print("Error: No database connection target provided. Specify --db-dsn/--dsn, --sqlite-path, or set ODAY_DATABASE_URL.", file=sys.stderr)
         sys.exit(1)
@@ -2831,10 +3099,6 @@ def main() -> None:
     elif args.action == "schema-rollback":
         migrator.rollback_schema()
         print("Schema downgrade applied successfully.")
-        return
-    elif args.action == "rollback":
-        deleted = migrator.rollback_migration(migration_ref=args.migration_ref, tenant_id=args.tenant_id)
-        print(f"Scoped migration rollback executed. Deleted records count: {deleted}")
         return
 
     legacy_intakes = []
