@@ -8,7 +8,7 @@ import {
 } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { CanonicalIdentityReceipt, MatchCaseReceipt } from "@oday-plus/openapi-client";
+import type { CanonicalIdentityReceipt, CanonicalIntakeAssistedEntryRequestReceipt, CanonicalIntakeReceipt, MatchCaseReceipt } from "@oday-plus/openapi-client";
 
 import { createPgNavigationControl, openPgRadar, openPgScenario, PG_WEB, type PgScenario } from "./_intakeScorePg";
 
@@ -85,6 +85,11 @@ async function selectNativeIntake(page: Page, intakeId: string, refresh = false)
     expect((await response.json()).intake_id).toBe(intakeId);
     return;
   }
+  await openNativeIntakeList(page);
+  await page.getByRole("button", { name: new RegExp(intakeId) }).click();
+}
+
+async function openNativeIntakeList(page: Page) {
   const listing = () => page.waitForResponse((candidate) => candidate.request().method() === "GET"
     && new URL(candidate.url()).pathname === "/api/v1/canonical-intakes");
   const pending = listing();
@@ -99,16 +104,15 @@ async function selectNativeIntake(page: Page, intakeId: string, refresh = false)
     response = await reloaded;
   }
   expect(response.status(), await response.text()).toBe(200);
-  await page.getByRole("button", { name: new RegExp(intakeId) }).click();
 }
 
 // One fault control for the original native command callers. Only the browser
 // response is lost: the ordinary BFF/API transaction must first really commit.
 async function recoverNativeCommandResponse<R extends { audit_event_id: string; correlation_id: string }>(page: Page,
   scope: { actor_id: string; tenant_id: string; intake_id: string }, commandPath: string,
-  expectedStatus: 200 | 201, submit: () => Promise<unknown>,
+  expectedStatus: 200 | 201 | 202, submit: () => Promise<unknown>,
   options: { storageFailure?: boolean; waitForReadyOnConflict?: boolean;
-    beforeReload?: (receipt: R, key: string) => Promise<void> } = {}) {
+    beforeReload?: (receipt: R, key: string) => Promise<void>; receiptPath?: string } = {}) {
   let recordCommitted!: (result: { receipt: R; capturedKey: string }) => void;
   const committed = new Promise<{ receipt: R; capturedKey: string }>((resolve) => { recordCommitted = resolve; });
   const seenKeys: string[] = [];
@@ -176,7 +180,7 @@ async function recoverNativeCommandResponse<R extends { audit_event_id: string; 
       .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")))).toEqual(referenceBefore);
   }
   await options.beforeReload?.(receipt, capturedKey);
-  const exactPath = commandPath + "/receipt";
+  const exactPath = options.receiptPath ?? commandPath + "/receipt";
   const restored = page.waitForResponse((response) => response.request().method() === "GET"
     && new URL(response.url()).pathname === exactPath);
   await page.reload();
@@ -236,6 +240,7 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
       context_property_ids: string[];
       append_property_id: string | null; append_receipt_probe: boolean;
       independent_reviewer: { username: string; password: string; actor_id: string } | null;
+      url_manual: { original_url: string; fields: { address: string; rent: number; areaPing: number } } | null;
     };
     const spoof = { "x-subject-id": input.actor_id, "x-tenant-id": input.tenant_id, "x-roles": "site_reviewer,expansion_user" };
     expect((await request.get(`${input.api_url}/api/v1/canonical-intakes`, { headers: spoof })).status()).toBe(401);
@@ -251,7 +256,54 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
       expect(ownRegion.status(), await ownRegion.text()).toBe(200);
       expect((await ownRegion.json()).scope.region_id).toBe(input.manager_region_id);
     }
-    await selectNativeIntake(page, input.intake_id);
+    const submissionRecoveries: Array<Awaited<ReturnType<typeof recoverNativeCommandResponse<CanonicalIntakeReceipt | CanonicalIntakeAssistedEntryRequestReceipt>>> & {
+      variant: "url-submit" | "manual-entry"; intake_id: string; original_http_status: 201 | 202;
+    }> = [];
+    if (input.url_manual) {
+      await openNativeIntakeList(page);
+      await page.getByRole("button", { name: "從網址建立正式收件", exact: true }).click();
+      await page.getByLabel("物件頁網址", { exact: true }).fill(input.url_manual.original_url);
+      await page.getByRole("combobox", { name: /^正式收件範圍/ })
+        .selectOption({ label: "不指定範圍（依目前帳號權限核對）" });
+      await page.getByLabel("送件原因", { exact: true }).fill("明確送入既有已核准人工補錄來源，核對真實新收件與回執。");
+      const submitted = await recoverNativeCommandResponse<CanonicalIntakeReceipt>(page, input,
+        "/api/v1/canonical-intakes", 201, () => page.getByTestId("intake-submit-button").click(),
+        { receiptPath: "/api/v1/canonical-intakes/submissions/receipt" });
+      expect(submitted.receipt.processing_state).toBe("SUBMITTED");
+      const newIntakeId = submitted.receipt.intake_id;
+      submissionRecoveries.push({ ...submitted, variant: "url-submit", intake_id: newIntakeId, original_http_status: 201 });
+      expect(await page.evaluate(() => JSON.stringify(Object.entries(sessionStorage)
+        .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:"))))).not.toContain(input.url_manual.original_url);
+      await page.screenshot({ path: test.info().outputPath("native-url-restored-exact-receipt.png"), fullPage: true });
+      await expect.poll(async () => {
+        const actual = await page.request.get(`/api/v1/canonical-intakes/${newIntakeId}`);
+        expect(actual.status(), await actual.text()).toBe(200);
+        return (await actual.json()).processing_state;
+      }, { timeout: 60_000 }).toBe("AWAITING_ASSISTED_ENTRY");
+      await page.getByRole("button", { name: new RegExp(newIntakeId) }).click();
+      await page.getByTestId("assisted-address").fill(input.url_manual.fields.address);
+      await page.getByTestId("assisted-rent").fill(String(input.url_manual.fields.rent));
+      await page.getByTestId("assisted-area").fill(String(input.url_manual.fields.areaPing));
+      await page.getByLabel("補錄原因", { exact: true }).fill("人工核對隔離測試來源資料，保留原提案欄位與風險聲明。");
+      await page.getByTestId("assisted-risk-ack").check();
+      const manual = await recoverNativeCommandResponse<CanonicalIntakeAssistedEntryRequestReceipt>(page,
+        { ...input, intake_id: newIntakeId }, `/api/v1/canonical-intakes/${newIntakeId}/assisted-entry-completions`, 202,
+        () => page.getByTestId("assisted-save").click());
+      expect(manual.receipt.status).toBe("REQUESTED");
+      expect(manual.receipt.intake_id).toBe(newIntakeId);
+      submissionRecoveries.push({ ...manual, variant: "manual-entry", intake_id: newIntakeId, original_http_status: 202 });
+      expect(await page.evaluate(() => JSON.stringify(Object.entries(sessionStorage)
+        .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:"))))).not.toContain(input.url_manual.fields.address);
+      await page.screenshot({ path: test.info().outputPath("native-manual-restored-exact-receipt.png"), fullPage: true });
+      await expect.poll(async () => {
+        const actual = await page.request.get(`/api/v1/canonical-intakes/${newIntakeId}`);
+        expect(actual.status(), await actual.text()).toBe(200);
+        return (await actual.json()).processing_state;
+      }, { timeout: 60_000 }).toBe("PARSING");
+      await page.getByRole("button", { name: "收起原操作回執", exact: true }).click();
+      await page.getByRole("button", { name: /返回收件匣/ }).click();
+      await page.getByRole("button", { name: new RegExp(input.intake_id) }).click();
+    } else await selectNativeIntake(page, input.intake_id);
     const otherRecoveries: Array<Awaited<ReturnType<typeof recoverNativeCommandResponse<MatchCaseReceipt | CanonicalIdentityReceipt>>> & {
       operation: "createCanonicalMatchCase" | "reviewCanonicalIdentity"; resource_id: string; original_http_status: 200 | 201;
       variant: "case-create" | "case-append" | "identity-review";
@@ -431,11 +483,18 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
       expect(recovery.sentKeys()).toEqual(expectedKeys);
       expect(recovery.postCount()).toBe(1);
     }
+    for (const recovery of submissionRecoveries) {
+      expect(recovery.sentKeys()).toEqual([recovery.key]);
+      expect(recovery.postCount()).toBe(1);
+    }
     writeFileSync(join(dirname(inputPath!), "native-receipt-reload.json"), JSON.stringify({
       actor_id: input.actor_id, tenant_id: input.tenant_id, match_case_id: caseId,
       ...confirmed, key: capturedKey, receipt, postCount: postCount(),
       post_keys_seen: confirmed.sentKeys(), storage_recovery_POSTs: postCount() - 1,
       other_command_recoveries: otherRecoveries.map(({ postCount: count, sentKeys, ...proof }) => ({
+        ...proof, postCount: count(), post_keys_seen: sentKeys(),
+      })),
+      submission_command_recoveries: submissionRecoveries.map(({ postCount: count, sentKeys, ...proof }) => ({
         ...proof, postCount: count(), post_keys_seen: sentKeys(),
       })),
     }), { mode: 0o600 });

@@ -76,7 +76,7 @@ def prepare_database(database_url):
 
 
 def run_native_identity_browser(database, ids, parsed, match_case, private_dir, monkeypatch, *, worm_sink_uri,
-        manager_region_id=None, independent_reviewer=None, append_receipt_probe=True):
+        manager_region_id=None, independent_reviewer=None, append_receipt_probe=True, url_manual_capture=None):
     """Bridge existing native SQL fixtures to the existing browser composition.
 
     The parser/matcher and human accounts are actual owned preconditions. Login,
@@ -104,6 +104,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
     from apps.worker.oday_worker.main import ODayWorker
     from modules.opsboard.auth.jwt import SigningKey, encode_compact_jwt
     from shared.infrastructure.persistence.factory import build_persistence
+    from shared.jobs.queue import JobStatus
 
     root = Path(__file__).resolve().parents[2]
     assert re.fullmatch(r"oday_native_parser_p_[0-9a-f]{16}", database.dbname), database.dbname
@@ -115,6 +116,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         "match_case_id": match_case["match_case_id"] if match_case else None, "manager_region_id": manager_region_id,
         "outside_intake_id": ids["intake"], "context_property_ids": [ids["target"], ids["split_target"]],
         "append_property_id": append_property, "append_receipt_probe": append_receipt_probe,
+        "url_manual": None,
         "independent_reviewer": {"actor_id": independent_reviewer, "username": "synthetic-manager-" + independent_reviewer,
             "password": password} if independent_reviewer else None}
     hash_script = "const a=require('argon2');a.hash(process.env.OWNED_BROWSER_PASSWORD,{type:a.argon2id,memoryCost:65536,timeCost:3,parallelism:1}).then(h=>process.stdout.write(h))"
@@ -122,6 +124,12 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         env={**os.environ, "OWNED_BROWSER_PASSWORD": password}, text=True)
     now = datetime.now(UTC)
     with database.connect() as connection:
+        if url_manual_capture is not None:
+            original_url, source_id = connection.execute("SELECT original_url,source_id FROM intake.intakes "
+                "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], parsed["intake_id"])).fetchone()
+            assert source_id.startswith("native-parser-") and source_id.endswith(".manual")
+            credentials["url_manual"] = {"original_url": original_url.rsplit("/", 1)[0] + "/BrowserFreshListing-" + uuid4().hex,
+                "fields": {"address": "Explicit synthetic browser manual address 29", "rent": 43210, "areaPing": 42.5}}
         actual_region = connection.execute("SELECT region_id FROM intake.intakes WHERE tenant_id=%s AND intake_id=%s",
             (ids["tenant"], parsed["intake_id"])).fetchone()[0]
         assert (str(actual_region) if actual_region is not None else None) == manager_region_id
@@ -210,6 +218,18 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
     worker_thread = None
     metadata_server = None
     metadata_thread = None
+    url_admissions = []
+
+    if url_manual_capture is not None:
+        from shared.infrastructure.persistence.factory import PersistenceBundle
+
+        original_manual_factory = PersistenceBundle.canonical_intake_assisted_entry
+
+        def manual_factory(bundle, **kwargs):
+            kwargs.setdefault("snapshot_transport_factory", url_manual_capture.factory)
+            return original_manual_factory(bundle, **kwargs)
+
+        monkeypatch.setattr(PersistenceBundle, "canonical_intake_assisted_entry", manual_factory)
 
     def launch(command, environment, label, cwd=root):
         stream = (private_dir / (label + ".log")).open("w")
@@ -234,8 +254,50 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
 
     def work():
         worker = ODayWorker(worker_bundle, worker_id="owned-native-browser-worker")
+        # Drive only this new browser Intake's real committed events through
+        # the existing four admission owners. Do not run the source-wide
+        # parser/matcher scheduler against the original CASE_CONTEXT Intake.
+        admissions = [worker_bundle.canonical_intake_start, worker_bundle.canonical_intake_identity,
+            worker_bundle.canonical_intake_source_policy, worker_bundle.canonical_intake_assisted_entry]
+
+        def admit_browser_event():
+            if credentials["url_manual"] is None or len(url_admissions) == len(admissions):
+                return
+            with database.connect() as connection:
+                row = connection.execute("SELECT intake_id FROM intake.intakes WHERE tenant_id=%s AND original_url=%s",
+                    (ids["tenant"], credentials["url_manual"]["original_url"])).fetchall()
+                if not row:
+                    return
+                assert len(row) == 1
+                intake_id = str(row[0][0])
+                if not url_admissions:
+                    events = connection.execute("SELECT event_id FROM workflow.outbox_events WHERE tenant_id=%s "
+                        "AND aggregate_type='intake' AND aggregate_id=%s AND event_type='intake.submitted'",
+                        (ids["tenant"], intake_id)).fetchall()
+                else:
+                    previous = url_admissions[-1]
+                    if worker_bundle.job_queue.get(previous["job_id"]).status != JobStatus.SUCCEEDED:
+                        return
+                    result = connection.execute("SELECT result FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s",
+                        (ids["tenant"], previous["job_id"])).fetchone()[0]
+                    assert result["intake_id"] == intake_id
+                    if len(url_admissions) < 3:
+                        events = [(result["outbox_event_id"],)]
+                    else:
+                        assert result["processing_state"] == "AWAITING_ASSISTED_ENTRY"
+                        events = connection.execute("SELECT event_id FROM workflow.outbox_events WHERE tenant_id=%s "
+                            "AND aggregate_type='intake_assisted_entry' AND event_type='intake.assisted_entry_requested' "
+                            "AND payload->'payload'->>'intake_id'=%s", (ids["tenant"], intake_id)).fetchall()
+                        if not events:
+                            return
+                assert len(events) == 1
+            receipt = admissions[len(url_admissions)]().admit_event(ids["tenant"], str(events[0][0]))
+            assert receipt["intake_id"] == intake_id
+            url_admissions.append(receipt)
+
         while not stop.is_set():
             try:
+                admit_browser_event()
                 if not worker.run_once():
                     stop.wait(0.1)
             except Exception as error:
@@ -298,6 +360,42 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         expected_variants = {"case-create", "case-append", "identity-review"} if independent_reviewer else set()
         assert {entry["variant"] for entry in recovered} == expected_variants
         assert len(recovered) == len(expected_variants)
+        submissions = reload["submission_command_recoveries"]
+        assert [entry["variant"] for entry in submissions] == (["url-submit", "manual-entry"] if credentials["url_manual"] else [])
+        for entry in submissions:
+            assert (entry["actor_id"], entry["tenant_id"]) == (ids["reviewer"], ids["tenant"])
+            assert entry["post_keys_seen"] == [entry["key"]] and entry["postCount"] == 1
+            assert entry["whole_page_reload"] and entry["recovered_by_exact_GET"] and not entry["same_provider_receipt_before_reload"]
+        if submissions:
+            from apps.api.app.routes.canonical_intakes import (
+                CanonicalIntakeAssistedEntryRequestReceipt,
+            )
+            from modules.listing.application.native_intake_assisted_entry_request import (
+                NativeAssistedEntryRequestOwner,
+            )
+            from modules.listing.application.native_intake_pending_commands import (
+                NativeIntakeCommandBudget,
+            )
+            from modules.listing.application.native_intake_requester_authority import (
+                _current_native_requester_profile,
+            )
+
+            submitted, manual = submissions
+            assert submitted["receipt"]["intake_id"] == submitted["intake_id"] == manual["intake_id"] == manual["receipt"]["intake_id"]
+            saved = worker_bundle.assisted_intake_store.read_command_replay(
+                ids["tenant"], ids["reviewer"], "submitCanonicalIntake", submitted["key"])
+            assert saved is not None and saved[1] == submitted["receipt"] and saved[2] == 201
+            owner = NativeAssistedEntryRequestOwner(worker_bundle.canonical_identity_graph())
+            with owner.graph.transaction(ids["tenant"]):
+                before = NativeIntakeCommandBudget(owner.source.source)
+                row = owner.graph._one("SELECT * FROM intake.intakes WHERE tenant_id=? AND intake_id=?",
+                    (ids["tenant"], manual["intake_id"]))
+                principal = _current_native_requester_profile(owner.engine, ids["reviewer"], row, before=before)
+                readback = owner.read_receipt(principal, manual["intake_id"], manual["key"], before=before)
+                assert readback is not None and set(readback) == set(manual["receipt"])
+                assert CanonicalIntakeAssistedEntryRequestReceipt.model_validate(readback).model_dump(mode="json") == manual["receipt"]
+            assert len(url_admissions) == 4 and len({entry["job_id"] for entry in url_admissions}) == 4
+            assert all(worker_bundle.job_queue.get(entry["job_id"]).status == JobStatus.SUCCEEDED for entry in url_admissions)
         for entry in recovered:
             is_review = entry["variant"] == "identity-review"
             actor = independent_reviewer if is_review else ids["reviewer"]
@@ -314,6 +412,37 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                 ids["tenant"], actor, operation, entry["key"], resource)
             assert saved is not None and saved[1] == entry["receipt"] and saved[2] == (200 if is_review else 201)
         with database.connect() as connection:
+            if submissions:
+                new_intake = submitted["intake_id"]
+                assert connection.execute("SELECT count(*) FROM intake.intakes WHERE tenant_id=%s AND original_url=%s",
+                    (ids["tenant"], credentials["url_manual"]["original_url"])).fetchone()[0] == 1
+                assert connection.execute("SELECT processing_state FROM intake.intakes WHERE tenant_id=%s AND intake_id=%s",
+                    (ids["tenant"], new_intake)).fetchone()[0] == "PARSING"
+                jobs = connection.execute("SELECT job_id,status FROM workflow.jobs WHERE tenant_id=%s "
+                    "AND aggregate_id IN (%s,%s) AND job_type IN "
+                    "('native-intake-start','native-intake-identity','native-intake-source-policy','native-intake-assisted-entry')",
+                    (ids["tenant"], new_intake, manual["receipt"]["request_id"])).fetchall()
+                assert {str(row[0]) for row in jobs} == {entry["job_id"] for entry in url_admissions}
+                assert all(row[1] == "SUCCEEDED" for row in jobs)
+                assert connection.execute("SELECT count(*) FROM workflow.outbox_events WHERE tenant_id=%s "
+                    "AND aggregate_type='intake' AND aggregate_id=%s AND event_type='intake.submitted'",
+                    (ids["tenant"], new_intake)).fetchone()[0] == 1
+                assert connection.execute("SELECT count(*) FROM workflow.outbox_events WHERE tenant_id=%s "
+                    "AND aggregate_type='intake_assisted_entry' AND event_type='intake.assisted_entry_requested' "
+                    "AND payload->'payload'->>'intake_id'=%s", (ids["tenant"], new_intake)).fetchone()[0] == 1
+                for entry, action in [(submitted, "intake.create"), (manual, "intake.assisted_entry_requested.v1")]:
+                    audits = connection.execute("SELECT audit_event_id FROM audit.audit_events WHERE tenant_id=%s "
+                        "AND resource_type='intake' AND resource_id=%s AND actor_subject_id=%s AND action=%s",
+                        (ids["tenant"], new_intake, ids["reviewer"], action)).fetchall()
+                    assert [str(row[0]) for row in audits] == [entry["receipt"]["audit_event_id"]]
+                snapshots = connection.execute("SELECT source_snapshot_id,capture_method FROM intake.source_snapshots "
+                    "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], new_intake)).fetchall()
+                assert len(snapshots) == 1 and snapshots[0][1] == "MANUAL_ENTRY"
+                proposals = connection.execute("SELECT correction_id,field_path,corrected_value,status,source_snapshot_id,proposed_by "
+                    "FROM intake.human_corrections WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], new_intake)).fetchall()
+                assert sorted(str(row[0]) for row in proposals) == sorted(manual["receipt"]["correction_ids"])
+                assert {row[1]: row[2] for row in proposals} == credentials["url_manual"]["fields"]
+                assert all(row[3] == "PROPOSED" and row[4] == snapshots[0][0] and str(row[5]) == ids["reviewer"] for row in proposals)
             for entry in recovered:
                 assert connection.execute("SELECT count(*) FROM audit.audit_events "
                     "WHERE tenant_id=%s AND audit_event_id=%s",
@@ -382,6 +511,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             "resolved_listing_id": str(result[1]), "worker_errors": worker_errors, "manager_region_id": manager_region_id,
             "independent_reviewer_id": independent_reviewer, "real_reviewer_sessions": reviewer_sessions,
             "manual_context_appended": bool(append_property),
+            "new_url_manual_admissions": url_admissions,
             "private_artifacts": str(private_dir)}
     except BaseException:
         for label in ("api", "web", "browser"):
