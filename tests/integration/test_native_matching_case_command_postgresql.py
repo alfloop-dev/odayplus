@@ -450,9 +450,10 @@ def test_native_browser_password_session_and_registered_worker_read_real_persist
     import os
 
     if path := os.environ.get("ODP_NATIVE_BROWSER_EVIDENCE_PATH"):
-        destination = Path(path)
-        assert not destination.exists()
-        destination.write_text(json.dumps({**evidence, "CODE_approval": False, "release_qualified": False}, indent=2) + "\n")
+        profile = "CASE_CONTEXT" if create_case else "REGION" if manager_region_id else "UNSCOPED"
+        destination = Path(path.replace("{profile}", profile))
+        with os.fdopen(os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as output:
+            output.write(json.dumps({**evidence, "CODE_approval": False, "release_qualified": False}, indent=2) + "\n")
 
 
 @pytest.mark.parametrize(("matching_case", "parser_admission_case", "confirmation_change"), [

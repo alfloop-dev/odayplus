@@ -13,7 +13,7 @@ from uuid import UUID
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from apps.api.oday_api.security.dependencies import principal_from_headers
+from apps.api.oday_api.security.dependencies import check_captured_principal, principal_from_headers
 from modules.listing.application.intake_authorization import (
     authorize_intake_action,
     mask_intake,
@@ -79,18 +79,7 @@ def _check_canonical_principal(request: Request, principal) -> None:
         tenant = UUID(principal.tenant_id)
     except (ValueError, TypeError, AttributeError):
         raise HTTPException(403, "CANONICAL_ACTOR_AND_TENANT_REQUIRED") from None
-    for header, current, kind in [("if-actor-match", actor, "ACTOR"), ("if-tenant-match", tenant, "TENANT")]:
-        expected = request.headers.getlist(header)
-        if not expected:
-            continue
-        try:
-            if len(expected) != 1:
-                raise ValueError
-            captured = UUID(expected[0])
-        except (ValueError, TypeError, AttributeError):
-            raise HTTPException(422, f"CANONICAL_{kind}_PRECONDITION_INVALID") from None
-        if captured != current:
-            raise HTTPException(409, f"CANONICAL_{kind}_CONTEXT_CHANGED")
+    check_captured_principal(request, actor=actor, tenant=tenant, parse=UUID, error_prefix="CANONICAL")
 
 
 class MatchEvidenceCandidate(BaseModel):

@@ -278,6 +278,39 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
     expect(referenceBefore).toHaveLength(1);
     expect(referenceBefore[0][1]).toContain(capturedKey);
     expect(referenceBefore[0][1]).not.toContain("已核對原始解析欄位");
+    // Fault injection in the real Chromium accessor, not a browser-permission
+    // setting or a substitute store. The original closed reference must survive.
+    const storageContext = await page.evaluateHandle(() => ({ storage: window.sessionStorage,
+      descriptor: Object.getOwnPropertyDescriptor(window, "sessionStorage") }));
+    const storageErrors: string[] = [];
+    const recordStorageError = (error: Error) => storageErrors.push(error.name);
+    page.on("pageerror", recordStorageError);
+    try {
+      await page.evaluate(() => { Object.defineProperty(window, "sessionStorage", { configurable: true,
+        get() { throw new DOMException("Synthetic accessor denial", "SecurityError"); } }); });
+      await page.getByTestId("operator-command-trigger").click();
+      await expect(page.getByRole("heading", { name: "瀏覽器無法保存或核對操作狀態" })).toBeVisible();
+      await expect(page.getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "storage");
+      await page.getByRole("button", { name: "重新載入", exact: true }).click();
+      expect(postCount).toBe(1);
+      expect(await page.evaluate(({ storage }) => Object.entries(storage)
+        .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")), storageContext)).toEqual(referenceBefore);
+      expect(storageErrors).toEqual([]);
+      await page.screenshot({ path: test.info().outputPath("native-storage-unavailable.png"), fullPage: true });
+    } finally {
+      await page.evaluate(({ descriptor }) => {
+        if (descriptor) Object.defineProperty(window, "sessionStorage", descriptor);
+        else Reflect.deleteProperty(window, "sessionStorage");
+      }, storageContext);
+      await storageContext.dispose(); page.off("pageerror", recordStorageError);
+    }
+    const freshBootstrap = page.waitForResponse((response) => response.request().method() === "GET"
+      && new URL(response.url()).pathname === "/api/v1/operator/bootstrap");
+    await page.getByRole("button", { name: "重新載入", exact: true }).click();
+    expect((await freshBootstrap).status()).toBe(200);
+    expect(postCount).toBe(1);
+    expect(await page.evaluate(() => Object.entries(sessionStorage)
+      .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")))).toEqual(referenceBefore);
     const exactPath = commandPath + "/receipt";
     const restored = page.waitForResponse((response) => response.request().method() === "GET"
       && new URL(response.url()).pathname === exactPath);
@@ -320,6 +353,8 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
       actor_id: input.actor_id, tenant_id: input.tenant_id, match_case_id: caseId,
       key: capturedKey, receipt, postCount, whole_page_reload: true, recovered_by_exact_GET: true,
       initial_receipt_status: initialReceiptStatus, manual_read_retry: initialReceiptStatus === 409,
+      storage_accessor_denial_gated: true, storage_reference_preserved: true,
+      storage_denial_uncaught_errors: storageErrors.length, storage_recovery_POSTs: postCount - 1,
     }), { mode: 0o600 });
     await expect.poll(async () => {
       const fresh = await page.request.get(`/api/v1/canonical-intakes/${input.intake_id}`);

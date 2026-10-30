@@ -135,6 +135,7 @@ async function submitStoreOpsWorkflow(
   event: StoreOpsWorkflowSubmitEvent,
   roleId: OperatorRoleId,
   idempotencyKey: string,
+  securityHeaders: Record<string, string>,
 ) {
   const { type, payload } = event;
   const endpoint = type === "cameraPurpose" ? "camera-purpose" : workflowActionEndpoints[type];
@@ -150,7 +151,7 @@ async function submitStoreOpsWorkflow(
         "Content-Type": "application/json",
         "Idempotency-Key": idempotencyKey,
         "X-Correlation-ID": correlationId,
-        ...operatorSecurityHeaders(roleId),
+        ...securityHeaders,
       },
       body: JSON.stringify({ ...payload, actorRoleId: roleId, actorName: roleLabels[roleId] }),
     });
@@ -204,6 +205,11 @@ export function StoreOpsWorkflowDialogs({
   callbacks,
   issue,
   onClose,
+  onStorageFailure,
+  browserStorageBlocked,
+  commandScope,
+  commandPrincipal,
+  createAuthenticatedReadGuard,
 }: StoreOpsWorkflowDialogsProps) {
   if (!activeDialog) {
     return null;
@@ -237,16 +243,22 @@ export function StoreOpsWorkflowDialogs({
   }
 
   const effectiveIssue = issue ?? fallbackIssue;
-  return <WorkflowPanel key={`${activeDialog}-${effectiveIssue.storeId}-${effectiveIssue.id}`} activeDialog={activeDialog} callbacks={callbacks} issue={effectiveIssue} onClose={onClose} />;
+  return <WorkflowPanel key={`${activeDialog}-${effectiveIssue.storeId}-${effectiveIssue.id}`} activeDialog={activeDialog} callbacks={callbacks} issue={effectiveIssue} onClose={onClose}
+    onStorageFailure={onStorageFailure} browserStorageBlocked={browserStorageBlocked} commandScope={commandScope}
+    commandPrincipal={commandPrincipal} createAuthenticatedReadGuard={createAuthenticatedReadGuard} />;
 }
 
-function WorkflowPanel({ activeDialog, callbacks, issue, onClose }: WorkflowFormProps & { activeDialog: StoreOpsWorkflowDialogType }) {
+function WorkflowPanel({ activeDialog, callbacks, issue, onClose, onStorageFailure, browserStorageBlocked, commandScope, commandPrincipal, createAuthenticatedReadGuard }: WorkflowFormProps & { activeDialog: StoreOpsWorkflowDialogType }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busyRef = useRef(false);
   const ownerEpochRef = useRef(0);
   useEffect(() => { ownerEpochRef.current += 1; return () => { ownerEpochRef.current += 1; }; }, [issue.id, issue.storeId]);
-  const intentRef = useRef<{ signature: string; key: string } | null>(null);
+  const intentRef = useRef<{ signature: string; key: string; scope?: string } | null>(null);
+  const ownerScope = useRef(commandScope).current;
+  const ownerPrincipal = useRef(commandPrincipal).current;
+  const currentScope = useRef(commandScope); currentScope.current = commandScope;
+  const contextBlocked = useRef(browserStorageBlocked); contextBlocked.current = browserStorageBlocked;
   const statusRef = useRef<HTMLParagraphElement | null>(null);
   const close = () => { if (!busyRef.current) onClose(); };
   const panelRef = useModalDialogBehavior({ dismissible: !pending, onClose: close });
@@ -259,21 +271,40 @@ function WorkflowPanel({ activeDialog, callbacks, issue, onClose }: WorkflowForm
   useEffect(() => { if (pending || error) statusRef.current?.focus(); }, [pending, error]);
 
   async function submit(event: StoreOpsWorkflowSubmitEvent) {
-    if (busyRef.current) return;
+    if (busyRef.current || contextBlocked.current) return;
     const reviewEpoch = ownerEpochRef.current;
     const stillOwnedReview = () => ownerEpochRef.current === reviewEpoch;
+    const currentSession = createAuthenticatedReadGuard?.(() => stillOwnedReview()
+      && !contextBlocked.current && ownerScope === commandScope && currentScope.current === commandScope);
     busyRef.current = true;
     setPending(true);
     setError(null);
-    const storedRole = window.sessionStorage.getItem("oday.operator.role");
-    const roleId = OPERATOR_ROLE_IDS.includes(storedRole as OperatorRoleId) ? storedRole as OperatorRoleId : "opsLead";
-    const signature = JSON.stringify({ event, roleId });
-    if (intentRef.current?.signature !== signature) {
-      intentRef.current = { signature, key: `idem-store-ops-${crypto.randomUUID()}` };
-    }
     let result;
     try {
-      result = await submitStoreOpsWorkflow(event, roleId, intentRef.current.key);
+      if (ownerScope !== commandScope)
+        throw new Error("登入範圍已變更。請返回原登入身分核對先前請求；輸入與原請求識別仍保留。");
+      const readContext = () => {
+        const storedRole = window.sessionStorage.getItem("oday.operator.role");
+        const roleId = OPERATOR_ROLE_IDS.includes(storedRole as OperatorRoleId) ? storedRole as OperatorRoleId : "opsLead";
+        return { roleId, headers: operatorSecurityHeaders(roleId) };
+      };
+      let context: ReturnType<typeof readContext>;
+      try { context = readContext(); }
+      catch {
+        onStorageFailure?.(() => { readContext(); });
+        throw new Error("瀏覽器無法核對操作狀態。輸入已保留，請先恢復此網站的儲存存取。");
+      }
+      if (intentRef.current && intentRef.current.scope !== commandScope)
+        throw new Error("登入範圍已變更。請返回原登入身分核對先前請求；輸入與原請求識別仍保留。");
+      const signature = JSON.stringify({ event, roleId: context.roleId });
+      if (intentRef.current?.signature !== signature)
+        intentRef.current = { signature, key: `idem-store-ops-${crypto.randomUUID()}`, scope: commandScope };
+      if (currentSession && !await currentSession()) throw new Error("登入範圍尚未重新核對。輸入與原請求識別仍保留。");
+      if (!stillOwnedReview() || contextBlocked.current || currentScope.current !== commandScope)
+        throw new Error("登入範圍已變更。輸入與原請求識別仍保留。");
+      result = await submitStoreOpsWorkflow(event, context.roleId, intentRef.current.key, { ...context.headers,
+        ...(ownerPrincipal ? { "If-Actor-Match": ownerPrincipal.subject, "If-Tenant-Match": ownerPrincipal.tenantId } : {}) });
+      if (currentSession && !await currentSession()) throw new Error("登入範圍尚未重新核對。輸入與原請求識別仍保留，尚未確認送出結果。");
     } catch (failure) {
       if (!stillOwnedReview()) return;
       setError(failure instanceof Error ? failure.message : "送出失敗，請重試。");
@@ -282,6 +313,10 @@ function WorkflowPanel({ activeDialog, callbacks, issue, onClose }: WorkflowForm
       return;
     }
     if (!stillOwnedReview()) return;
+    if (contextBlocked.current || currentScope.current !== commandScope) {
+      setError("操作狀態尚未重新核對。輸入與原請求識別已保留，未確認送出結果。");
+      busyRef.current = false; setPending(false); return;
+    }
     // Only acknowledged writes notify consumers or dismiss the form.
     try {
       notifyWorkflowCallbacks(callbacks, event);
@@ -294,6 +329,7 @@ function WorkflowPanel({ activeDialog, callbacks, issue, onClose }: WorkflowForm
     }
   }
 
+  const scopeChanged = ownerScope !== commandScope;
   return (
     <div className={styles.overlay} data-screen-label={dialogScreenLabels[activeDialog]}>
       <div ref={panelRef} aria-labelledby={`store-ops-workflow-${activeDialog}-title`}
@@ -301,13 +337,14 @@ function WorkflowPanel({ activeDialog, callbacks, issue, onClose }: WorkflowForm
         <header className={styles.header} role="presentation">
           <div className={styles.headerTitle}>
             <h2 id={`store-ops-workflow-${activeDialog}-title`}>{meta.title}</h2>
-            <span className={styles.issueId}>{issue.id}</span>
+            {!scopeChanged ? <span className={styles.issueId}>{issue.id}</span> : null}
           </div>
           <button aria-label="關閉對話框" className={styles.closeButton} disabled={pending} onClick={close} type="button">×</button>
         </header>
         {pending || error ? <p ref={statusRef} className={`${styles.submissionStatus} ${error ? styles.error : styles.notice}`}
           role={error ? "alert" : "status"} tabIndex={0}>{error ?? "正在送出，請稍候…"}</p> : null}
-        <fieldset className={styles.submissionFields} disabled={pending}>
+        {browserStorageBlocked || scopeChanged ? <p role="status">請先恢復並核對原登入範圍，再接續先前處理。輸入與原請求識別仍保留。</p> : null}
+        <fieldset className={styles.submissionFields} disabled={pending || browserStorageBlocked || scopeChanged} hidden={scopeChanged}>
           <div className={styles.body}>
             <WorkflowSubmissionContext.Provider value={(event) => { void submit(event); }}>
               <DialogContent activeDialog={activeDialog} issue={issue} onClose={close} />
@@ -363,6 +400,11 @@ type WorkflowFormProps = {
   callbacks?: StoreOpsWorkflowCallbacks;
   issue: StoreOpsWorkflowIssue;
   onClose: () => void;
+  onStorageFailure?: StoreOpsWorkflowDialogsProps["onStorageFailure"];
+  browserStorageBlocked?: boolean;
+  commandScope?: string;
+  commandPrincipal?: StoreOpsWorkflowDialogsProps["commandPrincipal"];
+  createAuthenticatedReadGuard?: StoreOpsWorkflowDialogsProps["createAuthenticatedReadGuard"];
 };
 
 function manualRoleOptions(value: string): Array<{ label: string; value: string }> {

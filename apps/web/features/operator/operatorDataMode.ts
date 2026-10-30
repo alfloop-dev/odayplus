@@ -173,6 +173,7 @@ export function inspectOperatorShellPayload(payload: unknown): ShellInspection {
  * exception text stays technical detail; it is never the headline.
  */
 export type OperatorLoadFailureKind =
+  | "storage"
   | "timeout"
   | "network"
   | "server"
@@ -305,6 +306,14 @@ export function unreadCountLabel(kind: OperatorLoadFailureKind | undefined): str
 
 function failureMessage(kind: OperatorLoadFailureKind): UnavailableDataMessage {
   switch (kind) {
+    case "storage":
+      return {
+        badge: "操作狀態無法核對",
+        code: "OPERATOR_BROWSER_STORAGE_UNAVAILABLE",
+        title: "瀏覽器無法保存或核對操作狀態",
+        detail: "目前無法使用此網站的瀏覽器儲存，尚未確認的請求仍需核對。",
+        next: "請確認瀏覽器允許此網站儲存資料，再按「重新載入」。若持續發生，請通知維運人員。",
+      };
     case "timeout":
       return {
         badge: "回應逾時",

@@ -94,6 +94,7 @@ afterEach(() => {
   }
 });
 type Config = { actor?: string; role?: "expansion-manager" | "ops-lead"; storedRole?: string; session?: unknown;
+  sessionRead?: (actor: string) => Response | Promise<Response>;
   initialHref?: string; initialSearchParams?: Record<string, string | string[] | undefined>;
   canonicalNetwork?: (actor: string) => Response | Promise<Response>;
   canonicalTabs?: readonly string[];
@@ -110,7 +111,8 @@ function mount(config: Config = {}) {
   if (config.storedRole) window.sessionStorage.setItem("oday.operator.role", config.storedRole);
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url === "/auth/session") return json(sessionOverride ?? { subject: actor, expiresAt: Math.floor(Date.now() / 1000) + 3600 }, sessionStatus);
+    if (url === "/auth/session") return config.sessionRead ? config.sessionRead(actor)
+      : json(sessionOverride ?? { subject: actor, expiresAt: Math.floor(Date.now() / 1000) + 3600 }, sessionStatus);
     if (url === "/api/v1/operator/bootstrap") {
       boots += 1;
       bootstrapObservations.push({ subject: actor, roleHint: new Headers(init?.headers).get("X-Operator-Role"), serverRole: role });
@@ -212,6 +214,102 @@ async function beginCanonicalCommand(boundary: "HTTP" | "JSON" | "ERROR_JSON" | 
 }
 
 describe("authenticated bootstrap persona ownership", () => {
+  it("rehydrates the newer URL intent after an already-ready Console loses actual storage access", async () => {
+    const state = mount({ canonicalNetwork: () => json(canonicalNetworkSnapshot("Recovered newer URL")) });
+    await screen.findByText("Account A current row");
+    const denied = vi.spyOn(window.sessionStorage, "getItem").mockImplementation(() => {
+      throw new DOMException("Denied", "SecurityError");
+    });
+    try {
+      state.view.rerender(<OperatorConsole searchParams={{ ws: "network", tab: "areas" }} />);
+      await screen.findByText("瀏覽器無法保存或核對操作狀態");
+      denied.mockRestore();
+      fireEvent.click(screen.getByRole("button", { name: "重新載入" }));
+      await screen.findByTestId("network-find-areas-workspace");
+      expect(screen.getByRole("button", { name: /^Network/ })).toHaveAttribute("aria-current", "page");
+      expect(state.fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+    } finally { denied.mockRestore(); }
+  });
+
+  it.each(["HTTP", "JSON"] as const)("does not send the captured native command when actual storage is denied during session %s", async (boundary) => {
+    const response = deferred<Response>(), body = deferred<unknown>(), started = deferred<boolean>();
+    let deferSession = false;
+    const session = { subject: A, expiresAt: Math.floor(Date.now() / 1000) + 3600 };
+    const state = mount({ workspace: "network", canonicalTabs: ["areas", "radar"],
+      canonicalNetwork: () => json(canonicalNetworkSnapshot("Storage wait boundary")),
+      sessionRead: () => {
+        if (!deferSession) return json(session);
+        deferSession = false;
+        if (boundary === "HTTP") { started.resolve(true); return response.promise; }
+        const pending = json({}); pending.json = () => { started.resolve(true); return body.promise; };
+        return pending;
+      }, nativeIntake: () => json({ items: [], next_cursor: null }) });
+    fireEvent.click(await screen.findByTestId("network-tab-1"));
+    fireEvent.click(await screen.findByRole("button", { name: "選取收件／比對案件" }));
+    fireEvent.click(await screen.findByRole("button", { name: "從網址建立正式收件" }));
+    fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://source.example/storage-boundary" } });
+    fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "核對等待期間的真實儲存拒絕" } });
+    deferSession = true;
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    await started.promise;
+    const references = () => Object.entries(window.sessionStorage).filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:"));
+    const saved = references(); expect(saved).toHaveLength(1);
+    const denied = vi.spyOn(window.sessionStorage, "getItem").mockImplementation(() => {
+      throw new DOMException("Denied", "SecurityError");
+    });
+    try {
+      await act(async () => { if (boundary === "HTTP") response.resolve(json(session)); else body.resolve(session); });
+      await screen.findByText("瀏覽器無法保存或核對操作狀態");
+      expect(state.fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+      denied.mockRestore();
+      expect(references()).toEqual(saved);
+      fireEvent.click(screen.getByRole("button", { name: "重新載入" }));
+      await screen.findByTestId("network-find-areas-workspace");
+      expect(references()).toEqual(saved);
+      expect(state.fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+    } finally { denied.mockRestore(); }
+  });
+
+  it.each(["method", "getter"] as const)("keeps the original Console closed until actual storage %s access and fresh authentication recover", async (failure) => {
+    const storage = window.sessionStorage;
+    const key = "oday.canonicalIntake.receipt.v1:" + JSON.stringify([A, TENANT, "expansion-manager"]);
+    const saved = JSON.stringify({ kind: "url", key: "synthetic-storage-unknown-reference-001" });
+    storage.setItem(key, saved);
+    const descriptor = Object.getOwnPropertyDescriptor(window, "sessionStorage");
+    const denied = failure === "method" ? vi.spyOn(storage, "getItem").mockImplementation(() => {
+      throw new DOMException("Denied", "SecurityError");
+    }) : null;
+    if (failure === "getter") Object.defineProperty(window, "sessionStorage", { configurable: true,
+      get: () => { throw new DOMException("Denied", "SecurityError"); } });
+    const restore = () => {
+      denied?.mockRestore();
+      if (failure === "getter") {
+        if (descriptor) Object.defineProperty(window, "sessionStorage", descriptor);
+        else Reflect.deleteProperty(window, "sessionStorage");
+      }
+    };
+    try {
+      let state: ReturnType<typeof mount> | undefined;
+      expect(() => { state = mount({ workspace: "network", canonicalNetwork: () => json(canonicalNetworkSnapshot("Recovered actual scope")),
+        nativeIntake: () => json({ observation: "NOT_OBSERVED", observed_at: "2026-10-30T00:00:00Z" }) }); }).not.toThrow();
+      expect(await screen.findByTestId("operator-data-unavailable")).toBeVisible();
+      expect(screen.queryByTestId("network-find-areas-workspace")).not.toBeInTheDocument();
+      expect(state!.fetch).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "重新載入" }));
+      expect(screen.getByTestId("operator-data-unavailable")).toBeVisible();
+      expect(state!.fetch).not.toHaveBeenCalled();
+      restore();
+      expect(storage.getItem(key)).toBe(saved);
+      fireEvent.click(screen.getByRole("button", { name: "重新載入" }));
+      await screen.findByTestId("network-find-areas-workspace");
+      expect(bootstrapCalls(state!.fetch).length).toBeGreaterThan(0);
+      expect(state!.fetch.mock.calls.some(([path]) => String(path) === "/auth/session")).toBe(true);
+      expect(state!.fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+      expect(storage.getItem(key)).toBe(saved);
+    } finally { restore(); }
+  });
+
   it("restores only the original exact receipt after destroying and rebuilding the authenticated Console", async () => {
     const first = await beginCanonicalCommand("uncertain");
     await first.finish();

@@ -176,6 +176,48 @@ def _transition(case, **body):
     )
 
 
+@pytest.mark.parametrize("changed", ["ACTOR", "TENANT"])
+def test_captured_principal_refuses_before_scoped_command_or_receipt_write(case, changed):
+    """Real SQL boundary; header principals are fixtures, not browser authentication."""
+    before = deepcopy(case["repo"].get_state())
+    client = _client(case["bundle"])
+    headers = {**case["headers"], "If-Actor-Match": case["subject"], "If-Tenant-Match": case["tenant"]}
+    if changed == "ACTOR":
+        headers["x-subject-id"] = str(uuid4())
+    else:
+        headers["If-Tenant-Match"] = str(uuid4())
+    response = client.post(f"{BASE}/issues/{case['issue']}/triage", json={"severity": "critical"}, headers=headers)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == f"STORE_OPS_{changed}_CONTEXT_CHANGED"
+    assert case["repo"].get_state() == before
+    # Returning to the captured principal can commit the original key exactly once.
+    headers.update({"x-subject-id": case["subject"], "If-Tenant-Match": case["tenant"]})
+    accepted = client.post(f"{BASE}/issues/{case['issue']}/triage", json={"severity": "critical"}, headers=headers)
+    assert accepted.status_code == 200, accepted.text
+    replay = client.post(f"{BASE}/issues/{case['issue']}/triage", json={"severity": "critical"}, headers=headers)
+    assert replay.status_code == 200 and replay.json()["idempotentReplay"] is True
+    assert replay.json()["auditEvent"]["id"] == accepted.json()["auditEvent"]["id"]
+
+
+@pytest.mark.parametrize("header", ["If-Actor-Match", "If-Tenant-Match"])
+def test_duplicate_captured_scope_headers_refuse_before_business_state(case, header):
+    before = deepcopy(case["repo"].get_state())
+    current = case["subject"] if header == "If-Actor-Match" else case["tenant"]
+    response = _client(case["bundle"]).post(f"{BASE}/issues/{case['issue']}/triage",
+        json={"severity": "critical"}, headers=[*case["headers"].items(), (header, current), (header, current)])
+    assert response.status_code == 422, response.text
+    assert case["repo"].get_state() == before
+
+
+def test_opaque_verified_store_ops_subject_retains_exact_precondition_and_namespace(case):
+    headers = {**case["headers"], "x-subject-id": "synthetic-scoped-operator",
+        "If-Actor-Match": "synthetic-scoped-operator", "If-Tenant-Match": case["tenant"]}
+    response = _client(case["bundle"]).post(f"{BASE}/issues/{case['issue']}/triage",
+        json={"severity": "critical"}, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["auditEvent"]["actorName"] == "synthetic-scoped-operator"
+
+
 def test_public_unbound_factory_refuses_legacy_global_while_bound_owner_remains_valid(case):
     documents = case["legacy_documents"]
     before = documents.get("opsboard.store_ops.state", "default")

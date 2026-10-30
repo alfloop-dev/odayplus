@@ -12,7 +12,7 @@ vi.mock("react", async (original) => {
     // before its React state update commits. Other hooks use their normal
     // lifecycle.
     react.useLayoutEffect(() => {
-      if (delayedPreference.enabled && deps?.length === 6 && deps[1] === "today"
+      if (delayedPreference.enabled && deps?.length === 7 && deps[1] === "today"
         && deps[2] === delayedPreference.mode && deps[4] === true && deps[5] === delayedPreference.status) {
         delayedPreference.pending = effect;
         return;
@@ -73,5 +73,5 @@ it.each(["fixture", "authenticated"] as const)("retains the latest Network inten
   expect(new URL(window.location.href).searchParams.get("ws")).toBe("network");
   expect(sessionStorage.getItem("oday.operator.workspace")).toBe("network");
   expect(screen.getByRole("button", { name: /Network/ })).toHaveAttribute("aria-current", "page");
-  expect(screen.getByTestId("network-find-areas-workspace")).toBeInTheDocument();
+  expect(await screen.findByTestId("network-find-areas-workspace")).toBeInTheDocument();
 });

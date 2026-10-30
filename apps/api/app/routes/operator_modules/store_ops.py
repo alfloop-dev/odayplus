@@ -25,6 +25,11 @@ from modules.opsboard.domain.r4_dtos import AttachmentUploadRequest
 from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
 
+_STORE_OPS_PRINCIPAL_PRECONDITIONS = {"parameters": [{
+    "name": name, "in": "header", "required": False, "schema": {"type": "string"},
+    "description": f"Expected {subject} of the captured view. Live mode rejects duplicates or invalid values with 422 and a different verified principal with 409, before storage. This never selects or authorizes a principal.",
+} for name, subject in [("If-Actor-Match", "account"), ("If-Tenant-Match", "tenant")]]}
+
 
 class StoreOpsTransitionPayload(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -75,6 +80,7 @@ def create_operator_store_ops_router(
         OPERATOR_CONSOLE_RESOURCE,
         OPERATOR_TENANT_ID,
         build_engine,
+        check_captured_principal,
         require_operator_permission,
     )
     from shared.auth import Action
@@ -116,6 +122,7 @@ def create_operator_store_ops_router(
                 raise HTTPException(
                     status_code=403, detail="verified Store Ops principal scope is required"
                 )
+            check_captured_principal(request, actor=subject_id, tenant=tenant_id, error_prefix="STORE_OPS")
             document_store = getattr(repository, "_store", None)
             engine = getattr(document_store, "engine", None)
             if (
@@ -502,6 +509,7 @@ def create_operator_store_ops_router(
     @router.post(
         "/issues/{issue_id}/{action_type}",
         dependencies=[Depends(write_guard)],
+        openapi_extra=_STORE_OPS_PRINCIPAL_PRECONDITIONS,
     )
     def transition_issue(
         issue_id: str,
@@ -545,6 +553,7 @@ def create_operator_store_ops_router(
     @router.post(
         "/issues/{issue_id}/camera-purpose",
         dependencies=[Depends(write_guard)],
+        openapi_extra=_STORE_OPS_PRINCIPAL_PRECONDITIONS,
     )
     def record_camera_purpose(
         issue_id: str,

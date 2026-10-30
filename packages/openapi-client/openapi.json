@@ -57533,6 +57533,24 @@
               ],
               "title": "Idempotency-Key"
             }
+          },
+          {
+            "description": "Expected account of the captured view. Live mode rejects duplicates or invalid values with 422 and a different verified principal with 409, before storage. This never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. Live mode rejects duplicates or invalid values with 422 and a different verified principal with 409, before storage. This never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -57775,6 +57793,24 @@
                 }
               ],
               "title": "Idempotency-Key"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. Live mode rejects duplicates or invalid values with 422 and a different verified principal with 409, before storage. This never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. Live mode rejects duplicates or invalid values with 422 and a different verified principal with 409, before storage. This never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],

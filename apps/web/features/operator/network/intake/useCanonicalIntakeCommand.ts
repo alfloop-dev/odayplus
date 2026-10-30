@@ -2,7 +2,7 @@
 
 import { createContext, createElement, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { bindCanonicalIntakeFetch, CanonicalIntakeReadError, type CanonicalIntakeReadContext } from "./canonicalIntakeTransport";
-import { operatorSubjectId } from "../../operatorSecurityHeaders";
+import { readOperatorBrowserHints } from "../../operatorSecurityHeaders";
 import { parseCanonicalCommandReceiptReference, readCanonicalCommandReceipt,
   type CanonicalCommandReceiptReference, type CanonicalCommandReceipt } from "./canonicalIntakeReadClient";
 
@@ -195,8 +195,8 @@ export function CanonicalIntakeCommandProvider({ context, createAuthenticatedRea
   let scopeHintsUnavailable = false;
   if (context && createAuthenticatedReadGuard) {
     try {
-      contextKey = JSON.stringify([context.contextKey, operatorSubjectId(),
-        typeof window === "undefined" ? null : window.sessionStorage.getItem("oday.operator.tenant")]);
+      const hints = readOperatorBrowserHints();
+      contextKey = JSON.stringify([context.contextKey, hints.subject, hints.tenant]);
     } catch {
       scopeHintsUnavailable = true;
       contextKey = JSON.stringify([context.contextKey, "browser scope hints unavailable"]);

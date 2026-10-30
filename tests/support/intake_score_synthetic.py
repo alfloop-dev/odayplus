@@ -288,6 +288,8 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         reload = json.loads((private_dir / "native-receipt-reload.json").read_text())
         assert (reload["actor_id"], reload["tenant_id"]) == (ids["reviewer"], ids["tenant"])
         assert reload["postCount"] == 1 and reload["whole_page_reload"] and reload["recovered_by_exact_GET"]
+        assert reload["storage_accessor_denial_gated"] and reload["storage_reference_preserved"]
+        assert reload["storage_denial_uncaught_errors"] == 0 and reload["storage_recovery_POSTs"] == 0
         original = worker_bundle.assisted_intake_store.read_command_replay(ids["tenant"], ids["reviewer"],
             "proposeCanonicalIdentity", reload["key"], reload["match_case_id"])
         assert original is not None and original[1] == reload["receipt"] and original[2] == 201

@@ -13,7 +13,7 @@ import {
 } from "./fixtures";
 import type { ApiBinding } from "../../src/lib/api/binding.ts";
 import { DEFAULT_OPERATOR_ROLE_ID, type OperatorRoleId } from "./navigation";
-import { operatorSecurityHeaders, operatorSubjectId } from "./operatorSecurityHeaders";
+import { operatorSecurityHeaders, readOperatorBrowserHints, type OperatorStorageFailureHandler } from "./operatorSecurityHeaders";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   isSeedDataSource,
@@ -192,6 +192,7 @@ export type NetworkFindAreasWorkspaceProps = {
   createAuthenticatedReadGuard?: (current: () => boolean) => NetworkReadSessionGuard;
   /** Same Console-owned command binding used by its single command provider. */
   canonicalIntakeReadContext?: CanonicalIntakeReadContext | null;
+  onStorageFailure?: OperatorStorageFailureHandler;
   trackedHeatZoneIds?: string[];
   /**
    * Active operator console role. Binds the Network Review read/decide security
@@ -665,6 +666,7 @@ export function NetworkFindAreasWorkspace({
   allowedTabIds,
   createAuthenticatedReadGuard,
   canonicalIntakeReadContext,
+  onStorageFailure,
   callbacks,
   candidates: candidatesInput,
   heatZones: heatZonesInput,
@@ -691,10 +693,15 @@ export function NetworkFindAreasWorkspace({
   const canReadRebalance = allowedTabIndices.includes(6);
   // This observed browser context invalidates cached links. Clicks also re-read
   // the guarded endpoints because the API exposes no client scope/session epoch.
-  const navigationContextKey = JSON.stringify([
-    activeRoleId, operatorSubjectId(activeRoleId), allowedTabIndices,
-    typeof window === "undefined" ? "" : window.sessionStorage.getItem("oday.operator.tenant"),
-  ]);
+  const readBrowserHints = useCallback(() => {
+    try { return readOperatorBrowserHints(); }
+    catch { onStorageFailure?.(() => { readOperatorBrowserHints(); }); return null; }
+  }, [onStorageFailure]);
+  const browserHints = readBrowserHints();
+  const navigationContextKey = browserHints ? JSON.stringify([
+    activeRoleId, browserHints.subject, allowedTabIndices,
+    typeof window === "undefined" ? "" : browserHints.tenant,
+  ]) : JSON.stringify([activeRoleId, "browser storage unavailable", allowedTabIndices]);
   const navigationContext = useRef({ key: navigationContextKey, generation: 0 });
   if (navigationContext.current.key !== navigationContextKey) {
     navigationContext.current = { key: navigationContextKey, generation: navigationContext.current.generation + 1 };
@@ -720,12 +727,12 @@ export function NetworkFindAreasWorkspace({
   const snapshotReadGuard = useCallback((bindLocation = true): NetworkReadSessionGuard => {
     const context = navigationContext.current;
     const locationVersion = navigationLocation.current.version;
-    const current = () => navigationLocation.current.mounted
+    const current = () => readBrowserHints() !== null && navigationLocation.current.mounted
       && context === navigationContext.current
       && (!bindLocation || locationVersion === navigationLocation.current.version);
     const authenticated = readGuardFactory.current?.(current);
     return async () => current() && (!authenticated || await authenticated()) && current();
-  }, []);
+  }, [readBrowserHints]);
 
   // Polling belongs to this mounted page. Captured commands use the separate
   // Console lease supplied below, so leaving Network cannot cancel a POST.
@@ -736,7 +743,10 @@ export function NetworkFindAreasWorkspace({
   const [rebalanceNavigationGeneration, setRebalanceNavigationGeneration] = useState<number | null>(null);
   const [reviewsNavigationGeneration, setReviewsNavigationGeneration] = useState<number | null>(null);
   const [navigationError, setNavigationError] = useState<string | null>(null);
-  const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId, navigationContextKey]);
+  // No read may leave while the hint read is unavailable. Retain only the
+  // non-authoritative persona hint for the closed/error presentation.
+  const NETWORK_OPERATOR_HEADERS = useMemo(() => browserHints ? operatorSecurityHeaders(activeRoleId)
+    : { "X-Operator-Role": activeRoleId }, [activeRoleId, navigationContextKey]);
   const nativeCommandContext = !fixturesAllowed && canReadListings ? canonicalIntakeReadContext ?? null : null;
   const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
   const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : EMPTY_HEAT_ZONES);
@@ -1474,8 +1484,10 @@ export function NetworkFindAreasWorkspace({
     const sameForm = attempt?.context && attempt.reviewId === reviewId && (!attempt.body || form === null || form !== null
       && JSON.stringify(boundReviewDecisionBody(attempt.context, action, form)) === attempt.payload);
     if (!sameForm) {
+      const hints = readBrowserHints();
+      if (!hints) return false;
       attempt = { reviewId, generation: navigationContext.current.generation, contextKey: navigationContext.current.key,
-        locationVersion: navigationLocation.current.version, observedTenant: window.sessionStorage.getItem("oday.operator.tenant"),
+        locationVersion: navigationLocation.current.version, observedTenant: hints.tenant,
         actor: attempt?.reviewId === reviewId ? attempt.actor : null,
         tenant: attempt?.reviewId === reviewId ? attempt.tenant : null, context: null, body: null, payload: null,
         frames: { network: networkReadSequence.current, scoring: capturedScoringSequence, reviews: reviewsReadSequence.current }, requestToken: null,
@@ -1491,10 +1503,13 @@ export function NetworkFindAreasWorkspace({
     const invalidateOwnedScope = () => {
       invalidateReviewScope(session);
     };
-    const current = () => reviewDecisionAttempt.current === session && navigationLocation.current.mounted
+    const current = () => {
+      const hints = readBrowserHints();
+      return hints !== null && reviewDecisionAttempt.current === session && navigationLocation.current.mounted
       && session.generation === navigationContext.current.generation && session.contextKey === navigationContext.current.key
       && session.locationVersion === navigationLocation.current.version
-      && session.observedTenant === window.sessionStorage.getItem("oday.operator.tenant");
+      && session.observedTenant === hints.tenant;
+    };
     const subject = async () => {
       const identity = await readReviewDecisionIdentity(current);
       if (!identity || !current() || session.actor !== null && session.actor !== identity.actorSubjectId
@@ -2263,7 +2278,7 @@ export function NetworkFindAreasWorkspace({
   function archiveListing(listingId: string) { openListingWrite(listingId, "archive"); }
 
   async function readListingWriteSubject(): Promise<string | null> {
-    if (fixturesAllowed) return operatorSubjectId(activeRoleId) || null;
+    if (fixturesAllowed) return readBrowserHints()?.subject || null;
     try {
       const response = await fetchImpl("/auth/session", { cache: "no-store", headers: { accept: "application/json" } });
       if (!response.ok) return null;
@@ -2276,11 +2291,14 @@ export function NetworkFindAreasWorkspace({
     const session = listingWriteSession.current;
     const request = kind === "merge" ? mergeRequest : archiveRequest;
     if (!session || !request || session.action.kind !== kind || listingWriteInFlight.current) return;
-    const current = () => listingWriteSession.current === session && navigationLocation.current.mounted
+    const current = () => {
+      const hints = readBrowserHints();
+      return hints !== null && listingWriteSession.current === session && navigationLocation.current.mounted
       && session.contextKey === navigationContext.current.key && session.generation === navigationContext.current.generation
       && session.locationVersion === navigationLocation.current.version
-      && session.contextKey === JSON.stringify([activeRoleId, operatorSubjectId(activeRoleId), allowedTabIndices,
-        typeof window === "undefined" ? "" : window.sessionStorage.getItem("oday.operator.tenant")]);
+      && session.contextKey === JSON.stringify([activeRoleId, hints.subject, allowedTabIndices,
+        typeof window === "undefined" ? "" : hints.tenant]);
+    };
     if (!current()) return;
     const setError = kind === "merge" ? setMergeError : setArchiveError;
     const setBusy = kind === "merge" ? setMergeBusy : setArchiveBusy;
@@ -2362,10 +2380,11 @@ export function NetworkFindAreasWorkspace({
   function submitMergeListing(form: ListingMergeForm) { void submitListingWrite("merge", form); }
 
   function submissionIsCurrent(session: NonNullable<typeof submissionSession.current>) {
-    return submissionSession.current === session && navigationLocation.current.mounted
+    const hints = readBrowserHints();
+    return hints !== null && submissionSession.current === session && navigationLocation.current.mounted
       && session.generation === navigationContext.current.generation && session.contextKey === navigationContext.current.key
       && session.locationVersion === navigationLocation.current.version
-      && session.observedTenant === window.sessionStorage.getItem("oday.operator.tenant");
+      && session.observedTenant === hints.tenant;
   }
 
   async function submissionSubject(session: NonNullable<typeof submissionSession.current>) {
@@ -2395,9 +2414,11 @@ export function NetworkFindAreasWorkspace({
     const frozen = offer.decisionId ? reviewsSnapshot?.reviews.find((row) => row.id === offer.decisionId) : reports[0];
     const decision = offer.decisionId ? reviewsSnapshot?.decisions?.find((row) => row.decision_id === offer.decisionId) : null;
     if (scored.length !== 1 || reports.length !== 1 || !readId(scored[0].listingId)) return;
+    const hints = readBrowserHints();
+    if (!hints) return;
     submissionInFlight.current = true;
     const session = { generation: navigationContext.current.generation, contextKey: navigationContext.current.key,
-      locationVersion: navigationLocation.current.version, observedTenant: window.sessionStorage.getItem("oday.operator.tenant"),
+      locationVersion: navigationLocation.current.version, observedTenant: hints.tenant,
       offer, actor: null as string | null, context: null as ReviewSubmissionContext | null,
       attempt: null as { body: ReviewSubmissionBody; payload: string; key: string; correlation: string } | null };
     submissionSession.current = session;
@@ -2512,7 +2533,7 @@ export function NetworkFindAreasWorkspace({
     && networkSnapshot !== null && scoringSnapshot !== null;
   const nativeWorkflow = useFixtureWorkflow ? undefined : projectCandidateNativeWorkflow({
     currentGeneration: navigationContext.current.generation,
-    tenantId: typeof window === "undefined" ? null : window.sessionStorage.getItem("oday.operator.tenant"),
+    tenantId: browserHints?.tenant ?? null,
     network: { snapshot: networkSnapshot, status: networkLoadState, generation: networkNavigationGeneration },
     scoring: { snapshot: scoringSnapshot, status: scoringWorkflowProvenance === "canonical" ? scoringLoadState : "error", generation: scoringNavigationGeneration },
     reviews: { snapshot: reviewsSnapshot, status: reviewsLoadState, generation: reviewsNavigationGeneration },
@@ -2663,6 +2684,8 @@ export function NetworkFindAreasWorkspace({
    * durable /intake/<id> route bypasses the shell bootstrap gate: the detail
    * owns its own authoritative API binding (ADD-006 §3.1).
    */
+  if (!browserHints) return <OperatorDataUnavailableGate status="error" failure={{ kind: "storage" }} />;
+
   if (intakeDetailOpen) {
     return (
       <>
