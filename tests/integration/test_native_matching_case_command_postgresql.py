@@ -407,14 +407,15 @@ def _assert_denied_business_unchanged(before, after):
 
 
 @pytest.mark.parametrize("matching_case", ["NEW"], indirect=True)
-@pytest.mark.parametrize("parser_admission_case,manager_region_id,create_case", [
-    pytest.param(None, None, False, id="UNSCOPED"),
+@pytest.mark.parametrize("parser_admission_case,manager_region_id,create_case,append_receipt_probe", [
+    pytest.param(None, None, False, True, id="UNSCOPED"),
     pytest.param({"scope": {"region_id": "0ff12f83-5eb6-4e63-a91c-6466906f8ce0"}},
-        "0ff12f83-5eb6-4e63-a91c-6466906f8ce0", False, id="REGION"),
-    pytest.param(None, None, True, id="CASE_CONTEXT"),
+        "0ff12f83-5eb6-4e63-a91c-6466906f8ce0", False, True, id="REGION"),
+    pytest.param(None, None, True, True, id="CASE_CONTEXT"),
+    pytest.param(None, None, True, False, id="CASE_CONTEXT_APPEND_DIRECT"),
 ], indirect=["parser_admission_case"])
 def test_native_browser_password_session_and_registered_worker_read_real_persisted_result(
-        matching_case, canonical_graph, case_api, monkeypatch, tmp_path, manager_region_id, create_case):
+        matching_case, canonical_graph, case_api, monkeypatch, tmp_path, manager_region_id, create_case, append_receipt_probe):
     from modules.listing.application.identity_delivery import (
         IDENTITY_POLICY_ENV,
         IDENTITY_SIGNING_KEY_ENV,
@@ -442,7 +443,7 @@ def test_native_browser_password_session_and_registered_worker_read_real_persist
         "max_attempts": 3, "deadline_seconds": 120, "backoff_seconds": [1, 2]}))
     evidence = run_native_identity_browser(database, ids, parsed, proposed, tmp_path / "native-browser", monkeypatch,
         worm_sink_uri=canonical_graph[0].audit_sink.delivery.sink.sink_id, manager_region_id=manager_region_id,
-        independent_reviewer=independent_reviewer)
+        independent_reviewer=independent_reviewer, append_receipt_probe=append_receipt_probe)
     assert evidence["browser_returncode"] == 0 and evidence["active_real_sessions"] > 0
     assert evidence["service_identity_transport"] == "isolated-loopback-metadata-emulator"
     assert evidence["metadata_requests"]["accepted"] > 0 and evidence["metadata_requests"]["rejected"] == 2
@@ -450,7 +451,8 @@ def test_native_browser_password_session_and_registered_worker_read_real_persist
     import os
 
     if path := os.environ.get("ODP_NATIVE_BROWSER_EVIDENCE_PATH"):
-        profile = "CASE_CONTEXT" if create_case else "REGION" if manager_region_id else "UNSCOPED"
+        profile = ("CASE_CONTEXT_APPEND_DIRECT" if create_case and not append_receipt_probe else
+            "CASE_CONTEXT" if create_case else "REGION" if manager_region_id else "UNSCOPED")
         destination = Path(path.replace("{profile}", profile))
         with os.fdopen(os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as output:
             output.write(json.dumps({**evidence, "CODE_approval": False, "release_qualified": False}, indent=2) + "\n")

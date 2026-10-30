@@ -76,7 +76,7 @@ def prepare_database(database_url):
 
 
 def run_native_identity_browser(database, ids, parsed, match_case, private_dir, monkeypatch, *, worm_sink_uri,
-        manager_region_id=None, independent_reviewer=None):
+        manager_region_id=None, independent_reviewer=None, append_receipt_probe=True):
     """Bridge existing native SQL fixtures to the existing browser composition.
 
     The parser/matcher and human accounts are actual owned preconditions. Login,
@@ -114,7 +114,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         "actor_id": ids["reviewer"], "tenant_id": ids["tenant"], "intake_id": parsed["intake_id"],
         "match_case_id": match_case["match_case_id"] if match_case else None, "manager_region_id": manager_region_id,
         "outside_intake_id": ids["intake"], "context_property_ids": [ids["target"], ids["split_target"]],
-        "append_property_id": append_property,
+        "append_property_id": append_property, "append_receipt_probe": append_receipt_probe,
         "independent_reviewer": {"actor_id": independent_reviewer, "username": "synthetic-manager-" + independent_reviewer,
             "password": password} if independent_reviewer else None}
     hash_script = "const a=require('argon2');a.hash(process.env.OWNED_BROWSER_PASSWORD,{type:a.argon2id,memoryCost:65536,timeCost:3,parallelism:1}).then(h=>process.stdout.write(h))"
@@ -288,12 +288,55 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         reload = json.loads((private_dir / "native-receipt-reload.json").read_text())
         assert (reload["actor_id"], reload["tenant_id"]) == (ids["reviewer"], ids["tenant"])
         assert reload["postCount"] == 1 and reload["whole_page_reload"] and reload["recovered_by_exact_GET"]
+        assert reload["post_keys_seen"] == [reload["key"]]
         assert reload["storage_accessor_denial_gated"] and reload["storage_reference_preserved"]
         assert reload["storage_denial_uncaught_errors"] == 0 and reload["storage_recovery_POSTs"] == 0
         original = worker_bundle.assisted_intake_store.read_command_replay(ids["tenant"], ids["reviewer"],
             "proposeCanonicalIdentity", reload["key"], reload["match_case_id"])
         assert original is not None and original[1] == reload["receipt"] and original[2] == 201
+        recovered = reload["other_command_recoveries"]
+        expected_variants = {"case-create", "case-append", "identity-review"} if independent_reviewer else set()
+        assert {entry["variant"] for entry in recovered} == expected_variants
+        assert len(recovered) == len(expected_variants)
+        for entry in recovered:
+            is_review = entry["variant"] == "identity-review"
+            actor = independent_reviewer if is_review else ids["reviewer"]
+            operation = "reviewCanonicalIdentity" if is_review else "createCanonicalMatchCase"
+            resource = entry["receipt"]["decision_id"] if is_review else parsed["intake_id"]
+            assert (entry["actor_id"], entry["tenant_id"], entry["operation"], entry["resource_id"]) == (
+                actor, ids["tenant"], operation, resource)
+            assert entry["postCount"] == 1 and entry["whole_page_reload"] and entry["recovered_by_exact_GET"]
+            assert entry["same_provider_receipt_before_reload"] is (entry["variant"] == "case-append" and append_receipt_probe)
+            expected_keys = ([entry["key"], next(row["key"] for row in recovered if row["variant"] == "case-append")]
+                if entry["variant"] == "case-create" else [entry["key"]])
+            assert entry["post_keys_seen"] == expected_keys
+            saved = worker_bundle.assisted_intake_store.read_command_replay(
+                ids["tenant"], actor, operation, entry["key"], resource)
+            assert saved is not None and saved[1] == entry["receipt"] and saved[2] == (200 if is_review else 201)
         with database.connect() as connection:
+            for entry in recovered:
+                assert connection.execute("SELECT count(*) FROM audit.audit_events "
+                    "WHERE tenant_id=%s AND audit_event_id=%s",
+                    (ids["tenant"], entry["receipt"]["audit_event_id"])).fetchone()[0] == 1
+                if entry["variant"] == "identity-review":
+                    assert entry["receipt"]["review_audit_event_id"] is not None
+                    assert connection.execute("SELECT count(*) FROM audit.audit_events "
+                        "WHERE tenant_id=%s AND audit_event_id=%s",
+                        (ids["tenant"], entry["receipt"]["review_audit_event_id"])).fetchone()[0] == 1
+                    jobs = connection.execute("SELECT job_id FROM workflow.jobs WHERE tenant_id=%s "
+                        "AND job_type='identity-execution' AND aggregate_type='identity_decision' AND aggregate_id=%s",
+                        (ids["tenant"], entry["receipt"]["decision_id"])).fetchall()
+                    assert [str(row[0]) for row in jobs] == [entry["receipt"]["job_id"]]
+                    reviews = connection.execute("SELECT audit_event_id FROM audit.audit_events WHERE tenant_id=%s "
+                        "AND resource_type='identity_decision' AND resource_id=%s AND actor_subject_id=%s "
+                        "AND service_principal IS NULL AND action='identity.decision_approved.v1' AND result='SUCCEEDED'",
+                        (ids["tenant"], entry["receipt"]["decision_id"], independent_reviewer)).fetchall()
+                    assert [str(row[0]) for row in reviews] == [entry["receipt"]["review_audit_event_id"]]
+                else:
+                    for candidate_id in entry["receipt"]["candidate_ids"]:
+                        assert connection.execute("SELECT count(*) FROM identity.match_candidates "
+                            "WHERE tenant_id=%s AND match_case_id=%s AND match_candidate_id=%s",
+                            (ids["tenant"], entry["receipt"]["match_case_id"], candidate_id)).fetchone()[0] == 1
             assert connection.execute("SELECT count(*) FROM identity.match_decisions "
                 "WHERE tenant_id=%s AND match_decision_id=%s AND proposer_subject_id=%s",
                 (ids["tenant"], reload["receipt"]["decision_id"], ids["reviewer"])).fetchone()[0] == 1

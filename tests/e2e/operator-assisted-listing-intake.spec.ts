@@ -8,6 +8,7 @@ import {
 } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { CanonicalIdentityReceipt, MatchCaseReceipt } from "@oday-plus/openapi-client";
 
 import { createPgNavigationControl, openPgRadar, openPgScenario, PG_WEB, type PgScenario } from "./_intakeScorePg";
 
@@ -101,6 +102,126 @@ async function selectNativeIntake(page: Page, intakeId: string, refresh = false)
   await page.getByRole("button", { name: new RegExp(intakeId) }).click();
 }
 
+// One fault control for the original native command callers. Only the browser
+// response is lost: the ordinary BFF/API transaction must first really commit.
+async function recoverNativeCommandResponse<R extends { audit_event_id: string; correlation_id: string }>(page: Page,
+  scope: { actor_id: string; tenant_id: string; intake_id: string }, commandPath: string,
+  expectedStatus: 200 | 201, submit: () => Promise<unknown>,
+  options: { storageFailure?: boolean; waitForReadyOnConflict?: boolean;
+    beforeReload?: (receipt: R, key: string) => Promise<void> } = {}) {
+  let recordCommitted!: (result: { receipt: R; capturedKey: string }) => void;
+  const committed = new Promise<{ receipt: R; capturedKey: string }>((resolve) => { recordCommitted = resolve; });
+  const seenKeys: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === commandPath)
+      seenKeys.push(request.headers()["idempotency-key"]);
+  });
+  await page.route("**" + commandPath, async (route) => {
+    expect(route.request().method()).toBe("POST");
+    const headers = route.request().headers();
+    const capturedKey = headers["idempotency-key"];
+    expect(capturedKey).toBeTruthy();
+    expect(headers["if-actor-match"]).toBe(scope.actor_id);
+    expect(headers["if-tenant-match"]).toBe(scope.tenant_id);
+    const upstream = await route.fetch();
+    expect(upstream.status(), await upstream.text()).toBe(expectedStatus);
+    const receipt = await upstream.json() as R;
+    await route.abort("failed");
+    recordCommitted({ receipt, capturedKey });
+  }, { times: 1 });
+  await submit();
+  await expect(page.getByRole("region", { name: "先前收件操作", exact: true }).getByRole("status"))
+    .toContainText("原操作結果尚未確認");
+  const { receipt, capturedKey } = await committed;
+  const postCount = () => seenKeys.filter((key) => key === capturedKey).length;
+  const referenceBefore = await page.evaluate(() => Object.entries(sessionStorage)
+    .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")));
+  expect(referenceBefore).toHaveLength(1);
+  expect(referenceBefore[0][1]).toContain(capturedKey);
+  expect(referenceBefore[0][1]).not.toContain("已核對原始解析欄位");
+  // References are a closed contract, never a saved command body or reason.
+  expect(JSON.parse(referenceBefore[0][1])).not.toHaveProperty("body");
+  expect(JSON.parse(referenceBefore[0][1])).not.toHaveProperty("reason");
+  const storageErrors: string[] = [];
+  if (options.storageFailure) {
+    const storageContext = await page.evaluateHandle(() => ({ storage: window.sessionStorage,
+      descriptor: Object.getOwnPropertyDescriptor(window, "sessionStorage") }));
+    const recordStorageError = (error: Error) => storageErrors.push(error.name);
+    page.on("pageerror", recordStorageError);
+    try {
+      await page.evaluate(() => { Object.defineProperty(window, "sessionStorage", { configurable: true,
+        get() { throw new DOMException("Synthetic accessor denial", "SecurityError"); } }); });
+      await page.getByTestId("operator-command-trigger").click();
+      await expect(page.getByRole("heading", { name: "瀏覽器無法保存或核對操作狀態" })).toBeVisible();
+      await expect(page.getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "storage");
+      await page.getByRole("button", { name: "重新載入", exact: true }).click();
+      expect(postCount()).toBe(1);
+      expect(await page.evaluate(({ storage }) => Object.entries(storage)
+        .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")), storageContext)).toEqual(referenceBefore);
+      expect(storageErrors).toEqual([]);
+      await page.screenshot({ path: test.info().outputPath("native-storage-unavailable.png"), fullPage: true });
+    } finally {
+      await page.evaluate(({ descriptor }) => {
+        if (descriptor) Object.defineProperty(window, "sessionStorage", descriptor);
+        else Reflect.deleteProperty(window, "sessionStorage");
+      }, storageContext);
+      await storageContext.dispose(); page.off("pageerror", recordStorageError);
+    }
+    const freshBootstrap = page.waitForResponse((response) => response.request().method() === "GET"
+      && new URL(response.url()).pathname === "/api/v1/operator/bootstrap");
+    await page.getByRole("button", { name: "重新載入", exact: true }).click();
+    expect((await freshBootstrap).status()).toBe(200);
+    expect(postCount()).toBe(1);
+    expect(await page.evaluate(() => Object.entries(sessionStorage)
+      .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")))).toEqual(referenceBefore);
+  }
+  await options.beforeReload?.(receipt, capturedKey);
+  const exactPath = commandPath + "/receipt";
+  const restored = page.waitForResponse((response) => response.request().method() === "GET"
+    && new URL(response.url()).pathname === exactPath);
+  await page.reload();
+  let observedReceipt = await restored;
+  const initialReceiptStatus = observedReceipt.status();
+  if (initialReceiptStatus === 409 && options.waitForReadyOnConflict) {
+    expect(await observedReceipt.json()).toEqual({ detail: "CANONICAL_MATCH_CASE_CONCURRENT_CHANGE" });
+    await expect(page.getByRole("button", { name: "查詢原操作回執", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "重試原操作", exact: true })).toHaveCount(0);
+    expect(postCount()).toBe(1);
+    expect(await page.evaluate(() => Object.entries(sessionStorage)
+      .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")))).toEqual(referenceBefore);
+    expect(observedReceipt.request().headers()["idempotency-key"]).toBe(capturedKey);
+    await expect.poll(async () => {
+      const fresh = await page.request.get(`/api/v1/canonical-intakes/${scope.intake_id}`);
+      expect(fresh.status()).toBe(200);
+      return (await fresh.json()).processing_state;
+    }, { timeout: 60_000 }).toBe("READY");
+    const retried = page.waitForResponse((response) => response.request().method() === "GET"
+      && new URL(response.url()).pathname === exactPath);
+    await page.getByRole("button", { name: "查詢原操作回執", exact: true }).click();
+    observedReceipt = await retried;
+  }
+  expect(observedReceipt.status(), await observedReceipt.text()).toBe(200);
+  expect(await observedReceipt.json()).toMatchObject({ observation: "RECEIPT_COMMITTED",
+    original_http_status: expectedStatus, receipt });
+  const lookupHeaders = observedReceipt.request().headers();
+  expect(lookupHeaders["idempotency-key"]).toBe(capturedKey);
+  expect(lookupHeaders["if-actor-match"]).toBe(scope.actor_id);
+  expect(lookupHeaders["if-tenant-match"]).toBe(scope.tenant_id);
+  expect(observedReceipt.request().postData()).toBeNull();
+  const status = page.getByRole("region", { name: "先前收件操作", exact: true }).getByRole("status");
+  await expect(status).toContainText("原操作已收到回執");
+  await expect(status).toContainText(receipt.audit_event_id);
+  await expect(status).toContainText(receipt.correlation_id);
+  await expect(page.getByRole("button", { name: "重試原操作", exact: true })).toHaveCount(0);
+  expect(seenKeys).toEqual([capturedKey]);
+  return { actor_id: scope.actor_id, tenant_id: scope.tenant_id, command_path: commandPath,
+    key: capturedKey, receipt, postCount, sentKeys: () => [...seenKeys], whole_page_reload: true, recovered_by_exact_GET: true,
+    initial_receipt_status: initialReceiptStatus, manual_read_retry: initialReceiptStatus === 409,
+    storage_accessor_denial_gated: Boolean(options.storageFailure), storage_reference_preserved: true,
+    storage_denial_uncaught_errors: storageErrors.length,
+    same_provider_receipt_before_reload: Boolean(options.beforeReload) };
+}
+
 // The existing Python SQL fixture owns this production-auth browser profile.
 // The ordinary 130-case product packet has no native scenario or credentials.
 if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
@@ -113,7 +234,7 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
       username: string; password: string; actor_id: string; tenant_id: string; intake_id: string;
       match_case_id: string | null; api_url: string; manager_region_id: string | null; outside_intake_id: string;
       context_property_ids: string[];
-      append_property_id: string | null;
+      append_property_id: string | null; append_receipt_probe: boolean;
       independent_reviewer: { username: string; password: string; actor_id: string } | null;
     };
     const spoof = { "x-subject-id": input.actor_id, "x-tenant-id": input.tenant_id, "x-roles": "site_reviewer,expansion_user" };
@@ -131,6 +252,10 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
       expect((await ownRegion.json()).scope.region_id).toBe(input.manager_region_id);
     }
     await selectNativeIntake(page, input.intake_id);
+    const otherRecoveries: Array<Awaited<ReturnType<typeof recoverNativeCommandResponse<MatchCaseReceipt | CanonicalIdentityReceipt>>> & {
+      operation: "createCanonicalMatchCase" | "reviewCanonicalIdentity"; resource_id: string; original_http_status: 200 | 201;
+      variant: "case-create" | "case-append" | "identity-review";
+    }> = [];
     let caseId = input.match_case_id;
     if (caseId === null) {
       expect(input.independent_reviewer).toBeTruthy();
@@ -145,14 +270,14 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
       await page.getByLabel("人工關聯依據", { exact: true }).fill("已核對隔離資料庫內兩個正式主體及其實際版本，提交人工關聯依據。");
       await page.getByLabel("建立案件原因", { exact: true }).fill("兩個正式主體需要獨立人員覆核合併計畫。");
       await page.getByRole("checkbox", { name: "我已核對所選正式主體、版本與人工關聯依據" }).check();
-      const created = page.waitForResponse((candidate) => candidate.request().method() === "POST"
-        && new URL(candidate.url()).pathname === `/api/v1/intakes/${input.intake_id}/match-case`);
-      await page.getByRole("button", { name: "建立人工覆核案件", exact: true }).click();
-      const caseResponse = await created;
-      expect(caseResponse.status(), await caseResponse.text()).toBe(201);
-      caseId = (await caseResponse.json()).match_case_id;
+      const created = await recoverNativeCommandResponse<MatchCaseReceipt>(page, input,
+        `/api/v1/intakes/${input.intake_id}/match-case`, 201,
+        () => page.getByRole("button", { name: "建立人工覆核案件", exact: true }).click());
+      otherRecoveries.push({ ...created, operation: "createCanonicalMatchCase", resource_id: input.intake_id,
+        original_http_status: 201, variant: "case-create" });
+      caseId = created.receipt.match_case_id;
       expect(caseId).toMatch(/^[0-9a-f-]{36}$/);
-      await expect(page.getByText(new RegExp(`人工覆核案件 ${caseId}`))).toBeVisible();
+      await expect(page.getByRole("region", { name: "先前收件操作", exact: true })).toContainText(`比對案件 ${caseId}`);
       await selectNativeIntake(page, input.intake_id, true);
       const originalCaseResponse = await page.request.get(`/api/v1/intakes/${input.intake_id}/match-case`);
       expect(originalCaseResponse.status(), await originalCaseResponse.text()).toBe(200);
@@ -172,17 +297,29 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
       await page.setViewportSize({ width: 390, height: 900 });
       await page.screenshot({ path: test.info().outputPath("native-manual-context-390.png"), fullPage: true });
       await page.setViewportSize(viewport);
-      const appended = page.waitForResponse((candidate) => candidate.request().method() === "POST"
-        && new URL(candidate.url()).pathname === `/api/v1/intakes/${input.intake_id}/match-case`);
-      await page.getByRole("button", { name: "提交人工關聯", exact: true }).click();
-      const appendResponse = await appended;
-      expect(appendResponse.status(), await appendResponse.text()).toBe(201);
-      const appendReceipt = await appendResponse.json();
+      const appended = await recoverNativeCommandResponse<MatchCaseReceipt>(page, input,
+        `/api/v1/intakes/${input.intake_id}/match-case`, 201,
+        () => page.getByRole("button", { name: "提交人工關聯", exact: true }).click(),
+        { beforeReload: input.append_receipt_probe ? async (receipt, key) => {
+          // Preserve the original success-path stale-view guard: the visible
+          // read-only probe first confirms the real committed append receipt.
+          const observed = page.waitForResponse((response) => response.request().method() === "GET"
+            && new URL(response.url()).pathname === `/api/v1/intakes/${input.intake_id}/match-case/receipt`);
+          await page.getByRole("button", { name: "查詢原操作回執", exact: true }).click();
+          const response = await observed;
+          expect(response.status(), await response.text()).toBe(200);
+          expect(response.request().headers()["idempotency-key"]).toBe(key);
+          expect(await response.json()).toMatchObject({ observation: "RECEIPT_COMMITTED", original_http_status: 201, receipt });
+          await expect(page.getByText(new RegExp(`已追加人工關聯至案件 ${caseId}`))).toBeVisible();
+          await expect(page.getByRole("button", { name: "提出合併／拆分計畫", exact: true })).toHaveCount(0);
+        } : undefined });
+      otherRecoveries.push({ ...appended, operation: "createCanonicalMatchCase", resource_id: input.intake_id,
+        original_http_status: 201, variant: "case-append" });
+      const appendReceipt = appended.receipt;
       expect(appendReceipt.match_case_id).toBe(caseId);
       expect(appendReceipt.version).toBe(originalCase.version + 1);
       expect(appendReceipt.intake_version).toBe(originalCase.intake_version);
-      await expect(page.getByText(new RegExp(`已追加人工關聯至案件 ${caseId}`))).toBeVisible();
-      await expect(page.getByRole("button", { name: "提出合併／拆分計畫", exact: true })).toHaveCount(0);
+      await expect(page.getByText(/原操作已收到回執/)).toBeVisible();
       const updatedCaseResponse = await page.request.get(`/api/v1/intakes/${input.intake_id}/match-case`);
       expect(updatedCaseResponse.status(), await updatedCaseResponse.text()).toBe(200);
       const updatedCase = await updatedCaseResponse.json();
@@ -220,11 +357,12 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
         await reviewerPage.getByLabel("覆核結果").selectOption("APPROVE");
         await reviewerPage.getByLabel(/決策／覆核原因/).fill("由獨立登入的人員核對已記錄的合併計畫、實際主體與版本，核准交既有執行器處理。");
         await reviewerPage.getByRole("checkbox", { name: /我已閱讀上述影響/ }).check();
-        const reviewed = reviewerPage.waitForResponse((candidate) => candidate.request().method() === "POST"
-          && new URL(candidate.url()).pathname === `/api/v1/canonical-identity-decisions/${proposal.decision_id}/actions/review`);
-        await reviewerPage.getByRole("button", { name: "確認核准", exact: true }).click();
-        const reviewResponse = await reviewed;
-        expect(reviewResponse.status(), await reviewResponse.text()).toBe(200);
+        const reviewed = await recoverNativeCommandResponse<CanonicalIdentityReceipt>(reviewerPage,
+          { ...input, actor_id: input.independent_reviewer!.actor_id },
+          `/api/v1/canonical-identity-decisions/${proposal.decision_id}/actions/review`, 200,
+          () => reviewerPage.getByRole("button", { name: "確認核准", exact: true }).click());
+        otherRecoveries.push({ ...reviewed, operation: "reviewCanonicalIdentity", resource_id: proposal.decision_id,
+          original_http_status: 200, variant: "identity-review" });
         await expect.poll(async () => {
           const actual = await reviewerPage.request.get(`/api/v1/canonical-identity-decisions/${proposal.decision_id}`);
           expect(actual.status(), await actual.text()).toBe(200);
@@ -248,114 +386,12 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
     await page.getByLabel(/決策／覆核原因/).fill("已核對原始解析欄位與實際案件，確認這筆隔離測試收件為新物件。");
     await page.getByRole("checkbox", { name: /我已閱讀上述影響/ }).check();
     const commandPath = `/api/v1/match-cases/${caseId}/identity-decisions`;
-    let recordCommitted!: (result: { receipt: Record<string, unknown>; capturedKey: string }) => void;
-    const committed = new Promise<{ receipt: Record<string, unknown>; capturedKey: string }>((resolve) => { recordCommitted = resolve; });
-    let postCount = 0;
-    page.on("request", (request) => {
-      if (request.method() === "POST" && new URL(request.url()).pathname === commandPath) postCount += 1;
-    });
-    await page.route("**" + commandPath, async (route) => {
-      expect(route.request().method()).toBe("POST");
-      const headers = route.request().headers();
-      const capturedKey = headers["idempotency-key"];
-      expect(capturedKey).toBeTruthy();
-      expect(headers["if-actor-match"]).toBe(input.actor_id);
-      expect(headers["if-tenant-match"]).toBe(input.tenant_id);
-      // The real BFF/API/SQL command completes before its browser response is
-      // lost. No receipt or terminal business row is inserted by this control.
-      const upstream = await route.fetch();
-      expect(upstream.status(), await upstream.text()).toBe(201);
-      const receipt = await upstream.json();
-      await route.abort("failed");
-      recordCommitted({ receipt, capturedKey });
-    }, { times: 1 });
-    await page.getByRole("button", { name: "確認為新物件", exact: true }).click();
-    await expect(page.getByText(/結果尚未確認；重試會沿用同一請求/)).toBeVisible();
-    const { receipt, capturedKey } = await committed;
+    const confirmed = await recoverNativeCommandResponse<CanonicalIdentityReceipt>(page, input, commandPath, 201,
+      () => page.getByRole("button", { name: "確認為新物件", exact: true }).click(),
+      { storageFailure: true, waitForReadyOnConflict: true });
+    const { receipt, key: capturedKey, postCount } = confirmed;
     expect(receipt.job_status).toBe("QUEUED");
-    const referenceBefore = await page.evaluate(() => Object.entries(sessionStorage)
-      .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")));
-    expect(referenceBefore).toHaveLength(1);
-    expect(referenceBefore[0][1]).toContain(capturedKey);
-    expect(referenceBefore[0][1]).not.toContain("已核對原始解析欄位");
-    // Fault injection in the real Chromium accessor, not a browser-permission
-    // setting or a substitute store. The original closed reference must survive.
-    const storageContext = await page.evaluateHandle(() => ({ storage: window.sessionStorage,
-      descriptor: Object.getOwnPropertyDescriptor(window, "sessionStorage") }));
-    const storageErrors: string[] = [];
-    const recordStorageError = (error: Error) => storageErrors.push(error.name);
-    page.on("pageerror", recordStorageError);
-    try {
-      await page.evaluate(() => { Object.defineProperty(window, "sessionStorage", { configurable: true,
-        get() { throw new DOMException("Synthetic accessor denial", "SecurityError"); } }); });
-      await page.getByTestId("operator-command-trigger").click();
-      await expect(page.getByRole("heading", { name: "瀏覽器無法保存或核對操作狀態" })).toBeVisible();
-      await expect(page.getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "storage");
-      await page.getByRole("button", { name: "重新載入", exact: true }).click();
-      expect(postCount).toBe(1);
-      expect(await page.evaluate(({ storage }) => Object.entries(storage)
-        .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")), storageContext)).toEqual(referenceBefore);
-      expect(storageErrors).toEqual([]);
-      await page.screenshot({ path: test.info().outputPath("native-storage-unavailable.png"), fullPage: true });
-    } finally {
-      await page.evaluate(({ descriptor }) => {
-        if (descriptor) Object.defineProperty(window, "sessionStorage", descriptor);
-        else Reflect.deleteProperty(window, "sessionStorage");
-      }, storageContext);
-      await storageContext.dispose(); page.off("pageerror", recordStorageError);
-    }
-    const freshBootstrap = page.waitForResponse((response) => response.request().method() === "GET"
-      && new URL(response.url()).pathname === "/api/v1/operator/bootstrap");
-    await page.getByRole("button", { name: "重新載入", exact: true }).click();
-    expect((await freshBootstrap).status()).toBe(200);
-    expect(postCount).toBe(1);
-    expect(await page.evaluate(() => Object.entries(sessionStorage)
-      .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")))).toEqual(referenceBefore);
-    const exactPath = commandPath + "/receipt";
-    const restored = page.waitForResponse((response) => response.request().method() === "GET"
-      && new URL(response.url()).pathname === exactPath);
-    await page.reload();
-    let observedReceipt = await restored;
-    const initialReceiptStatus = observedReceipt.status();
-    if (initialReceiptStatus === 409) {
-      expect(await observedReceipt.json()).toEqual({ detail: "CANONICAL_MATCH_CASE_CONCURRENT_CHANGE" });
-      await expect(page.getByRole("button", { name: "查詢原操作回執", exact: true })).toBeEnabled();
-      await expect(page.getByRole("button", { name: "重試原操作", exact: true })).toHaveCount(0);
-      expect(postCount).toBe(1);
-      expect(await page.evaluate(() => Object.entries(sessionStorage)
-        .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")))).toEqual(referenceBefore);
-      expect(observedReceipt.request().headers()["idempotency-key"]).toBe(capturedKey);
-      // A concurrent worker update is not a missing receipt. Wait for the
-      // actual worker, then use the existing visible read-only retry once.
-      await expect.poll(async () => {
-        const fresh = await page.request.get(`/api/v1/canonical-intakes/${input.intake_id}`);
-        expect(fresh.status()).toBe(200);
-        return (await fresh.json()).processing_state;
-      }, { timeout: 60_000 }).toBe("READY");
-      const retried = page.waitForResponse((response) => response.request().method() === "GET"
-        && new URL(response.url()).pathname === exactPath);
-      await page.getByRole("button", { name: "查詢原操作回執", exact: true }).click();
-      observedReceipt = await retried;
-    }
-    expect(observedReceipt.status(), await observedReceipt.text()).toBe(200);
-    expect(await observedReceipt.json()).toMatchObject({ observation: "RECEIPT_COMMITTED",
-      original_http_status: 201, receipt });
-    const lookupHeaders = observedReceipt.request().headers();
-    expect(lookupHeaders["idempotency-key"]).toBe(capturedKey);
-    expect(lookupHeaders["if-actor-match"]).toBe(input.actor_id);
-    expect(lookupHeaders["if-tenant-match"]).toBe(input.tenant_id);
-    expect(observedReceipt.request().postData()).toBeNull();
-    await expect(page.getByText(/原操作已收到回執/)).toBeVisible();
-    await expect(page.getByRole("button", { name: "重試原操作", exact: true })).toHaveCount(0);
-    expect(postCount).toBe(1);
     await page.screenshot({ path: test.info().outputPath("native-restored-exact-receipt.png"), fullPage: true });
-    writeFileSync(join(dirname(inputPath!), "native-receipt-reload.json"), JSON.stringify({
-      actor_id: input.actor_id, tenant_id: input.tenant_id, match_case_id: caseId,
-      key: capturedKey, receipt, postCount, whole_page_reload: true, recovered_by_exact_GET: true,
-      initial_receipt_status: initialReceiptStatus, manual_read_retry: initialReceiptStatus === 409,
-      storage_accessor_denial_gated: true, storage_reference_preserved: true,
-      storage_denial_uncaught_errors: storageErrors.length, storage_recovery_POSTs: postCount - 1,
-    }), { mode: 0o600 });
     await expect.poll(async () => {
       const fresh = await page.request.get(`/api/v1/canonical-intakes/${input.intake_id}`);
       expect(fresh.status()).toBe(200);
@@ -386,6 +422,23 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
       await expect(savedFields).toBeVisible();
       await page.screenshot({ path: test.info().outputPath(`native-persisted-result-${width}.png`), fullPage: true });
     }
+    // Sample through the final real READY/detail/viewport rendering, so a late
+    // remount cannot send another command after the evidence was captured.
+    expect(confirmed.sentKeys()).toEqual([capturedKey]);
+    for (const recovery of otherRecoveries) {
+      const expectedKeys = recovery.variant === "case-create"
+        ? [recovery.key, otherRecoveries.find((entry) => entry.variant === "case-append")!.key] : [recovery.key];
+      expect(recovery.sentKeys()).toEqual(expectedKeys);
+      expect(recovery.postCount()).toBe(1);
+    }
+    writeFileSync(join(dirname(inputPath!), "native-receipt-reload.json"), JSON.stringify({
+      actor_id: input.actor_id, tenant_id: input.tenant_id, match_case_id: caseId,
+      ...confirmed, key: capturedKey, receipt, postCount: postCount(),
+      post_keys_seen: confirmed.sentKeys(), storage_recovery_POSTs: postCount() - 1,
+      other_command_recoveries: otherRecoveries.map(({ postCount: count, sentKeys, ...proof }) => ({
+        ...proof, postCount: count(), post_keys_seen: sentKeys(),
+      })),
+    }), { mode: 0o600 });
   });
 }
 
