@@ -18,7 +18,12 @@ from runtime_state import ACTIVE_WORKER_STATUSES
 # Compatibility aliases remain exports while Supervisor callers migrate to the
 # shared policy module. The runtime's scope injector resolves these names.
 from worktree_cleanliness import (
+    ProtectedPathPolicyError,
     WorktreeInspection,
+    context_path_protection_error,
+    inspect_protected_git_metadata,
+    normalize_protected_paths,
+    task_protected_paths,
     blocking_dirt_entries as _blocking_dirt_entries,
     describe_dirt_entries as _describe_dirt_entries,
     inspect_porcelain as _inspect_porcelain,
@@ -448,7 +453,14 @@ def _existing_worktree_for_branch(
     return None
 
 @_entrypoint
-def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_sha: str) -> tuple[bool, str | None]:
+def _create_worker_worktree(
+    repo_root: Path,
+    path: Path,
+    branch: str,
+    base_sha: str,
+    *,
+    protected_paths: Iterable[str] = (),
+) -> tuple[bool, str | None]:
     """Create a registered task worktree from an immutable base commit.
 
     This is the only creation primitive.  In particular, it must not fall back
@@ -466,15 +478,33 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_sha: 
         elif any(path.iterdir()) and (path / ".git").exists():
             return False, f"Worker worktree path already exists and is not empty: {path}"
 
+    # Metadata first: the worktree is registered without a checkout, its
+    # actual HEAD/ref is proven to be the exact commit validated here, and
+    # only then are files materialized from that commit.
     remote_ref = f"refs/remotes/origin/{branch}"
     if _git_ref_exists(repo_root, f"refs/heads/{branch}"):
-        command = ["git", "worktree", "add", str(path), branch]
+        expected_sha = _git_commit_oid(repo_root, f"refs/heads/{branch}")
+        command = ["git", "worktree", "add", "--no-checkout", str(path), branch]
     elif _git_ref_exists(repo_root, remote_ref):
-        command = ["git", "worktree", "add", "-b", branch, str(path), f"origin/{branch}"]
+        expected_sha = _git_commit_oid(repo_root, remote_ref)
+        command = ["git", "worktree", "add", "--no-checkout", "-b", branch, str(path), f"origin/{branch}"]
     else:
-        if not _git_commit_oid(repo_root, base_sha):
+        expected_sha = _git_commit_oid(repo_root, base_sha)
+        if not expected_sha:
             return False, f"Worker base SHA is unavailable in repository: {base_sha}"
-        command = ["git", "worktree", "add", "-b", branch, str(path), base_sha]
+        command = ["git", "worktree", "add", "--no-checkout", "-b", branch, str(path), expected_sha]
+    if not expected_sha:
+        return False, f"Worker branch {branch} has no resolvable commit"
+    try:
+        protected = normalize_protected_paths(list(protected_paths or ()))
+    except ProtectedPathPolicyError as error:
+        return False, f"Refusing worker worktree {path}: {error}"
+    if protected:
+        # The registry repository's own hooks/filters and the target tree are
+        # judged before Git writes a single file for this task.
+        verdict = inspect_protected_git_metadata(repo_root, expected_sha, protected)
+        if not verdict.ok:
+            return False, f"Refusing worker worktree {path}: protected_metadata_refused: {verdict.reason}: {verdict.detail}"
 
     proc = subprocess.run(
         command,
@@ -486,6 +516,40 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_sha: 
     if proc.returncode != 0:
         details = (proc.stderr or proc.stdout or "").strip()
         return False, f"Failed to create worker worktree {path} for {branch}: {details}"
+
+    def _abandon(reason: str) -> tuple[bool, str]:
+        # Nothing has been materialized and no work can exist yet.
+        subprocess.run(
+            ["git", "worktree", "remove", "--force", str(path)],
+            cwd=repo_root,
+            capture_output=True,
+            check=False,
+        )
+        return False, f"Refusing worker worktree {path} for {branch}: {reason}"
+
+    ref_rc, attached = _git_output(path, "symbolic-ref", "--quiet", "HEAD")
+    if ref_rc != 0 or attached != f"refs/heads/{branch}":
+        return _abandon(f"created HEAD is not attached to {branch}")
+    created_sha = _git_commit_oid(path, "HEAD")
+    if created_sha != expected_sha:
+        return _abandon(f"created HEAD {created_sha} is not the validated {expected_sha}")
+    if protected:
+        verdict = inspect_protected_git_metadata(path, created_sha, protected, worktree_path=path)
+        if not verdict.ok:
+            return _abandon(f"protected_metadata_refused: {verdict.reason}: {verdict.detail}")
+    materialize = subprocess.run(
+        ["git", "read-tree", "--reset", "-u", created_sha],
+        cwd=path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if materialize.returncode != 0:
+        details = (materialize.stderr or materialize.stdout or "").strip()
+        return _abandon(f"materialization failed: {details}")
+    ref_rc, attached = _git_output(path, "symbolic-ref", "--quiet", "HEAD")
+    if ref_rc != 0 or attached != f"refs/heads/{branch}" or _git_commit_oid(path, "HEAD") != created_sha:
+        return False, f"Worker worktree {path} HEAD drifted from {created_sha} during materialization"
     return True, None
 
 def _classify_worktree_dirt(
@@ -815,11 +879,31 @@ def _prune_worktree_lease_blocks(bucket: dict[str, Any]) -> None:
         if last_at < cutoff:
             bucket.pop(key, None)
 
+def _recorded_protected_paths(*records: object) -> tuple[str, ...]:
+    """Union of protection named by a task record and/or request metadata.
+
+    Used only to keep protected bodies out of fingerprints; union is the
+    restrictive reading.  A malformed value raises so callers fail closed.
+    """
+    paths: set[str] = set()
+    for record in records:
+        if isinstance(record, dict):
+            paths.update(normalize_protected_paths(record.get("protected_paths")))
+    return tuple(sorted(paths))
+
+
+def _worker_recorded_protected_paths(worker: dict[str, Any], task: dict[str, Any] | None) -> tuple[str, ...]:
+    request = worker.get("request_snapshot")
+    metadata = request.get("metadata") if isinstance(request, dict) else None
+    return _recorded_protected_paths(task, metadata)
+
+
 @_entrypoint
 def compute_worktree_state_identity(
     worktree_path: Path | str,
     *,
     materialized_paths: Iterable[object] | None = None,
+    protected_paths: Iterable[str] = (),
 ) -> str:
     """Compute an auditable, secret-free identity of the worktree state."""
     try:
@@ -831,7 +915,10 @@ def compute_worktree_state_identity(
     head_sha = _git_commit_oid(path, "HEAD") or "none"
     if _git_operation_in_progress(path):
         return f"unresolved_git_operation:{head_sha}"
-    inspection = inspect_worktree(path, materialized_paths=materialized_paths)
+    try:
+        inspection = inspect_worktree(path, materialized_paths=materialized_paths, protected_paths=protected_paths)
+    except ProtectedPathPolicyError:
+        return f"protected_policy_invalid:{head_sha}"
     if inspection.kind == "clean":
         return f"clean:{head_sha}"
     if inspection.kind == "orchestrator_seed_only":
@@ -1040,6 +1127,7 @@ def is_worktree_lease_block_repaired(entry: dict[str, Any]) -> bool:
     identity = compute_worktree_state_identity(
         raw_path,
         materialized_paths=entry.get("materialized_paths"),
+        protected_paths=entry.get("protected_paths") or (),
     )
     return identity.startswith("clean:") or identity.startswith("orchestrator_seed_only:")
 
@@ -1055,6 +1143,7 @@ def _record_worktree_lease_block(
     worktree_path: Path | str | None = None,
     materialized_paths: Any = None,
     worktree_state_identity: str | None = None,
+    protected_paths: Iterable[str] = (),
 ) -> int:
     """Count consecutive lease blocks and escalate once they stop being noise.
 
@@ -1077,13 +1166,17 @@ def _record_worktree_lease_block(
     entry["count"] = int(entry.get("count") or 0) + 1
     entry["last_at"] = utc_now()
     entry["message"] = message
+    if protected_paths:
+        entry["protected_paths"] = list(protected_paths)
 
     if worktree_path is not None:
         try:
             wp = Path(worktree_path).resolve()
             entry["worktree_path"] = str(wp)
             if worktree_state_identity is None:
-                worktree_state_identity = compute_worktree_state_identity(wp, materialized_paths=materialized_paths)
+                worktree_state_identity = compute_worktree_state_identity(
+                    wp, materialized_paths=materialized_paths, protected_paths=protected_paths
+                )
             entry["worktree_state_identity"] = worktree_state_identity
         except (OSError, RuntimeError, ValueError):
             entry["worktree_path"] = str(worktree_path)
@@ -1166,6 +1259,7 @@ def _refresh_reused_worker_worktree(
     network_timeout_seconds: float | None = None,
     materialized_paths=None,
     required_head: str | None = None,
+    protected_paths: Iterable[str] = (),
 ) -> tuple[bool, str]:
     """Lease a clean reused worktree against one immutable cycle base.
 
@@ -1200,6 +1294,29 @@ def _refresh_reused_worker_worktree(
     if _git_operation_in_progress(worktree_path):
         return False, "unresolved_git_operation"
 
+    try:
+        protected = normalize_protected_paths(list(protected_paths or ()))
+    except ProtectedPathPolicyError as error:
+        return False, f"protected_metadata_refused: {error}"
+
+    def _metadata_refusal(commit: str, *, current: bool = False) -> str | None:
+        if not protected:
+            return None
+        verdict = inspect_protected_git_metadata(
+            worktree_path,
+            commit,
+            protected,
+            worktree_path=worktree_path if current else None,
+            check_index=current,
+        )
+        return None if verdict.ok else f"protected_metadata_refused: {verdict.reason}: {verdict.detail}"
+
+    # Status, hashing and every later checkout/merge happen only after the
+    # current checkout's immutable metadata has been proven safe.
+    refusal = _metadata_refusal("HEAD", current=True)
+    if refusal:
+        return False, refusal
+
     status_proc = subprocess.run(
         ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=worktree_path,
@@ -1220,6 +1337,16 @@ def _refresh_reused_worker_worktree(
     local_head = _git_commit_oid(worktree_path, "HEAD")
     if not local_head:
         return False, "unverifiable_refs: missing local HEAD"
+    precheck_ref = _git_output(worktree_path, "symbolic-ref", "--quiet", "HEAD")
+
+    def _drift_or_refusal(target: str) -> str | None:
+        """Re-prove HEAD and the target immediately before Git mutates files."""
+        if (
+            _git_output(worktree_path, "symbolic-ref", "--quiet", "HEAD") != precheck_ref
+            or _git_commit_oid(worktree_path, "HEAD") != local_head
+        ):
+            return "head_drift_after_precheck"
+        return _metadata_refusal(target)
 
     if required_head:
         required_head = str(required_head).strip()
@@ -1232,6 +1359,9 @@ def _refresh_reused_worker_worktree(
             )
             if review_contains_rc == 0:
                 # local_head is an ancestor of expected_head: fast-forward task branch if attached, or checkout.
+                refusal = _drift_or_refusal(expected_head)
+                if refusal:
+                    return False, refusal
                 branch_rc, current_branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
                 if branch_rc == 0 and current_branch == expected_branch:
                     merge_proc = subprocess.run(
@@ -1274,6 +1404,9 @@ def _refresh_reused_worker_worktree(
                     )
                     if preserved_rc != 0 or not preserved_refs.strip():
                         return False, f"review_head_mismatch: unpreserved detached work at {local_head}"
+                refusal = _drift_or_refusal(expected_head)
+                if refusal:
+                    return False, refusal
                 checkout_proc = subprocess.run(
                     ["git", "checkout", expected_head],
                     cwd=worktree_path,
@@ -1314,8 +1447,26 @@ def _refresh_reused_worker_worktree(
             )
             if is_anc_rc != 0:
                 return False, f"wrong_branch: expected {expected_branch} ({expected_head}), found detached HEAD at {local_head} with unmerged commits"
+        refusal = _drift_or_refusal(expected_head)
+        if refusal:
+            return False, refusal
+        # Materialize the exact validated commit, never whatever the branch
+        # name resolves to a moment later, then attach only if the branch
+        # still names that same commit.
+        local_ref = f"refs/heads/{expected_branch}"
+        if not _git_commit_oid(worktree_path, local_ref):
+            create_proc = subprocess.run(
+                ["git", "branch", expected_branch, expected_head],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if create_proc.returncode != 0:
+                details = (create_proc.stderr or create_proc.stdout or "").strip().splitlines()
+                return False, f"wrong_branch: unable to create {expected_branch}: {details[0] if details else 'unknown'}"
         checkout_proc = subprocess.run(
-            ["git", "checkout", expected_branch],
+            ["git", "checkout", "--detach", expected_head],
             cwd=worktree_path,
             capture_output=True,
             text=True,
@@ -1324,10 +1475,24 @@ def _refresh_reused_worker_worktree(
         if checkout_proc.returncode != 0:
             details = (checkout_proc.stderr or checkout_proc.stdout or "").strip().splitlines()
             return False, f"wrong_branch: unable to checkout {expected_branch}: {details[0] if details else 'unknown'}"
+        if _git_commit_oid(worktree_path, local_ref) != expected_head:
+            return False, f"wrong_branch: {expected_branch} moved from validated {expected_head} during reattach"
+        attach_proc = subprocess.run(
+            ["git", "symbolic-ref", "HEAD", local_ref],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if attach_proc.returncode != 0:
+            return False, f"wrong_branch: unable to attach {expected_branch}"
         branch_rc, current_branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
         if branch_rc != 0 or current_branch != expected_branch:
             return False, f"wrong_branch: expected {expected_branch}, found {current_branch or 'detached HEAD'}"
         local_head = _git_commit_oid(worktree_path, "HEAD")
+        if local_head != expected_head:
+            return False, f"wrong_branch: {expected_branch} is not at validated {expected_head}"
+        precheck_ref = _git_output(worktree_path, "symbolic-ref", "--quiet", "HEAD")
 
     # Production passes the SHA resolved once at the beginning of this cycle.
     # Symbolic refs remain accepted only for direct diagnostic/test callers.
@@ -1341,6 +1506,9 @@ def _refresh_reused_worker_worktree(
     if base_contains_rc not in {0, 1}:
         return False, "unverifiable_refs: cannot compare local HEAD with immutable base"
     if base_contains_rc == 0:
+        refusal = _drift_or_refusal(base_head)
+        if refusal:
+            return False, refusal
         merge_proc = subprocess.run(
             ["git", "merge", "--ff-only", base_head],
             cwd=worktree_path,
@@ -1351,6 +1519,8 @@ def _refresh_reused_worker_worktree(
         if merge_proc.returncode != 0:
             details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()
             return False, f"fast_forward_failed: {details[0] if details else 'unknown'}"
+        if _git_commit_oid(worktree_path, "HEAD") != base_head:
+            return False, "fast_forward_incomplete"
         return True, f"ff_to_{base_head[:12]}"
 
     task_contains_rc, _ = _git_output(
@@ -1459,9 +1629,14 @@ def seal_worker_handoff(
     if _git_operation_in_progress(workspace_path):
         return WorkerHandoffSeal(False, "git_operation_in_progress", "Git operation remains in progress", None, None)
 
+    try:
+        protected_paths = _worker_recorded_protected_paths(worker, task)
+    except ProtectedPathPolicyError as error:
+        return WorkerHandoffSeal(False, "protected_policy_invalid", str(error), None, None)
     inspection: WorktreeInspection = inspect_worktree(
         workspace_path,
         materialized_paths=_worker_materialized_context_paths(state, worker),
+        protected_paths=protected_paths,
     )
     if not inspection.handoff_clean:
         return WorkerHandoffSeal(
@@ -1593,8 +1768,16 @@ def sealed_owner_continuation_allowed(
         return False, "recorded_path_invalid"
     if recorded_path != worktree_path.resolve() or str(record.get("workspace_branch") or "") != branch:
         return False, "workspace_changed"
-    inspection = inspect_worktree(worktree_path, materialized_paths=materialized_paths)
+    try:
+        protected_paths = _recorded_protected_paths(task, request.metadata)
+    except ProtectedPathPolicyError:
+        return False, "protected_policy_invalid"
+    inspection = inspect_worktree(
+        worktree_path, materialized_paths=materialized_paths, protected_paths=protected_paths
+    )
     if record.get("reason") == "interrupted_merge":
+        if protected_paths:
+            return False, "protected_merge_continuation_unsupported"
         if inspection.kind == "status_failed":
             return False, "merge_state_changed"
         snapshot = _interrupted_merge_snapshot(worktree_path)
@@ -1890,6 +2073,38 @@ def materialize_worker_context_files(
     status_root = config_path(config, "status_file").parents[0].resolve()
     materialized: list[str] = []
     manifest_entries: list[dict[str, Any]] = []
+    try:
+        protected_paths = normalize_protected_paths(request.metadata.get("protected_paths"))
+    except ProtectedPathPolicyError as error:
+        raise ValueError(f"Fail-closed on workspace materialization for task {request.task_id}: {error}") from error
+
+    def _protection_refusal(rel_path: str) -> None:
+        """Judge source and destination metadata before any hash, listing or copy."""
+        if not protected_paths:
+            return
+        for root in (status_root, workspace_path):
+            error = context_path_protection_error(root, rel_path, protected_paths)
+            if error:
+                raise ValueError(f"Fail-closed on workspace materialization for task {request.task_id}: {error}")
+            base = root / rel_path
+            try:
+                is_tree = base.is_dir() and not base.is_symlink()
+            except OSError as os_error:
+                raise ValueError(
+                    f"Fail-closed on workspace materialization for task {request.task_id}: "
+                    f"context metadata for {rel_path!r} is unreadable ({os_error})"
+                ) from os_error
+            if is_tree:
+                # A context directory is not protected (checked above), so
+                # listing its entry names is safe; each child is judged by
+                # metadata before the directory is hashed or copied.
+                for child in base.rglob("*"):
+                    child_rel = (Path(rel_path) / child.relative_to(base)).as_posix()
+                    error = context_path_protection_error(root, child_rel, protected_paths)
+                    if error:
+                        raise ValueError(
+                            f"Fail-closed on workspace materialization for task {request.task_id}: {error}"
+                        )
 
     status_data = load_status(config)
     tasks = status_data.get("tasks", []) or []
@@ -1907,6 +2122,7 @@ def materialize_worker_context_files(
         rel_value = str(rel_context_path or "").strip().replace("\\", "/")
         if not rel_value or Path(rel_value).is_absolute():
             continue
+        _protection_refusal(rel_value)
         valid_dest, destination, dest_err = validate_destination_context_path(rel_value, workspace_path)
         if not valid_dest:
             if is_mutating_or_p0:
@@ -2228,6 +2444,20 @@ def prepare_worker_workspace(
     task_metadata = request.metadata.get("task")
     canonical_record = canonical_task_record(config, workspace_task_id)
     task_record = canonical_record or (task_metadata if isinstance(task_metadata, dict) else None)
+    # Only the canonical record carries protection authority.  A dispatch
+    # snapshot may echo it but can neither supply nor relax it.
+    try:
+        protected_paths = task_protected_paths(canonical_record)
+        echoed_protection = (
+            task_protected_paths(task_metadata) if isinstance(task_metadata, dict) else ()
+        ) + normalize_protected_paths(request.metadata.get("protected_paths"))
+    except ProtectedPathPolicyError as error:
+        return False, f"Cannot lease isolated worker worktree for {workspace_task_id}: {error}"
+    if set(echoed_protection) - set(protected_paths):
+        return False, (
+            f"Cannot lease isolated worker worktree for {workspace_task_id}: the request carries "
+            "protected_paths the canonical task record does not; refusing to prepare from a snapshot."
+        )
     binding = worker_task_repository_binding(config, task_record)
     repo_root = binding.root
     repo_root_source = binding.source if binding.resolved else (binding.error or binding.source)
@@ -2343,6 +2573,7 @@ def prepare_worker_workspace(
             network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
             materialized_paths=materialized_paths,
             required_head=required_review_head,
+            protected_paths=protected_paths,
         )
         handoff_record = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(workspace_task_id)
         sealed_interrupted_merge = isinstance(handoff_record, dict) and handoff_record.get("reason") == "interrupted_merge"
@@ -2487,6 +2718,7 @@ def prepare_worker_workspace(
                 message=message,
                 worktree_path=worktree_path,
                 materialized_paths=materialized_paths,
+                protected_paths=protected_paths,
             )
             return False, message
         _clear_worktree_lease_block(state, str(request.task_id or workspace_task_id))
@@ -2573,10 +2805,19 @@ def prepare_worker_workspace(
                     message=message,
                     worktree_path=worktree_path,
                     materialized_paths=materialized_paths,
+                    protected_paths=protected_paths,
                 )
                 return False, message
             creation_sha = resolved_review_head
-        created, error = _create_worker_worktree(repo_root, worktree_path, branch, creation_sha)
+        # Unprotected tasks keep the original call shape; protection is
+        # passed only when the canonical record carries it.
+        created, error = _create_worker_worktree(
+            repo_root,
+            worktree_path,
+            branch,
+            creation_sha,
+            **({"protected_paths": protected_paths} if protected_paths else {}),
+        )
         if not created:
             message = error or f"Failed to create worker worktree for {workspace_task_id}."
             write_activity_log(
@@ -2605,6 +2846,7 @@ def prepare_worker_workspace(
                 network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
                 materialized_paths=materialized_paths,
                 required_head=required_review_head,
+                protected_paths=protected_paths,
             )
             if not refresh_ok:
                 message = (
@@ -2619,6 +2861,7 @@ def prepare_worker_workspace(
                     message=message,
                     worktree_path=worktree_path,
                     materialized_paths=materialized_paths,
+                    protected_paths=protected_paths,
                 )
                 return False, message
             if refresh_status.startswith("review_head_pinned_at_"):
@@ -2675,6 +2918,8 @@ def prepare_worker_workspace(
             "base_relation": base_relation,
         }
     )
+    if protected_paths:
+        request.metadata["protected_paths"] = list(protected_paths)
     materialized_context_files = materialize_worker_context_files(config, request, worktree_path)
     leases = state.setdefault("worker_worktrees", {}).setdefault("leases", {})
     leases[workspace_task_id] = {
@@ -2695,6 +2940,8 @@ def prepare_worker_workspace(
         "materialized_source_manifest": request.metadata.get("materialized_source_manifest", []),
         "source_manifest": request.metadata.get("source_manifest", []),
     }
+    if protected_paths:
+        leases[workspace_task_id]["protected_paths"] = list(protected_paths)
     write_activity_log(
         config,
         {
@@ -3486,8 +3733,16 @@ def preserve_dead_worker_worktree(
         if handoff_seal.reason == "git_operation_in_progress":
             merge_snapshot = _interrupted_merge_snapshot(Path(workspace_path))
             if merge_snapshot is not None:
-                inspection = inspect_worktree(Path(workspace_path), materialized_paths=_worker_materialized_context_paths(state, worker))
-                merge_fingerprint = _interrupted_merge_fingerprint(merge_snapshot, Path(workspace_path), inspection)
+                # The merge fingerprint hashes dirty and conflicted bytes, so a
+                # protected task never records a merge continuation.
+                try:
+                    merge_protected = _worker_recorded_protected_paths(worker, record)
+                except ProtectedPathPolicyError:
+                    merge_protected = None
+                merge_fingerprint = None
+                if merge_protected == ():
+                    inspection = inspect_worktree(Path(workspace_path), materialized_paths=_worker_materialized_context_paths(state, worker))
+                    merge_fingerprint = _interrupted_merge_fingerprint(merge_snapshot, Path(workspace_path), inspection)
                 # None means the exact working-file state could not be read
                 # (git status failed, or a nested repository is unreadable).
                 # Keep the plain refusal: a seal that cannot be verified later

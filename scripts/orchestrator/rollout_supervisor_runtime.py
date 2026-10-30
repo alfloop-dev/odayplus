@@ -11,14 +11,25 @@ back and the previous service is restarted.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import signal
 import stat
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+ORCHESTRATOR_DIR = Path(__file__).resolve().parents[2] / ".orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+
+import worktree_cleanliness  # noqa: E402
+
+BWRAP_PROFILE_ARTIFACT = ".orchestrator/profiles/bwrap"
+INSTALLED_BWRAP_PROFILE = Path("/etc/apparmor.d/bwrap")
 
 
 def run(args: list[str], *, cwd: Path, check: bool = True) -> str:
@@ -85,6 +96,65 @@ def status_launcher(runtime_link: Path) -> bytes:
         'export PANTHEON_STATUS_ROOT="${PANTHEON_STATUS_ROOT:-$status_root}"\n'
         f'exec python3 {shlex.quote(str(runtime_writer))} "$@"\n'
     ).encode()
+
+
+def recorded_protected_paths(status_root: Path) -> tuple[str, ...]:
+    """Every protection the canonical board records (restrictive union)."""
+    status_file = status_root / "ai-status.json"
+    if not status_file.exists():
+        return ()
+    try:
+        status = json.loads(status_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"canonical status is unreadable; protected-path preflight cannot run: {exc}") from exc
+    paths: set[str] = set()
+    for task in status.get("tasks", []) or []:
+        try:
+            paths.update(worktree_cleanliness.task_protected_paths(task))
+        except worktree_cleanliness.ProtectedPathPolicyError as exc:
+            task_id = task.get("id") if isinstance(task, dict) else None
+            raise SystemExit(f"task {task_id} has unusable protected_paths: {exc}") from exc
+    return tuple(sorted(paths))
+
+
+def protected_preflight(source: Path, target_sha: str, protected: tuple[str, ...], installed_profile: Path) -> None:
+    """Judge the target from Git metadata before a single file is checked out.
+
+    The reviewed Bubblewrap profile in the target tree is compared with the
+    operator-installed one; this never installs or edits host policy.
+    """
+    if not protected:
+        return
+    verdict = worktree_cleanliness.inspect_protected_git_metadata(source, target_sha, protected)
+    if not verdict.ok:
+        raise SystemExit(f"refusing rollout: protected_metadata_refused: {verdict.reason}: {verdict.detail}")
+    artifact = subprocess.run(
+        ["git", "cat-file", "blob", f"{target_sha}:{BWRAP_PROFILE_ARTIFACT}"],
+        cwd=source,
+        capture_output=True,
+        check=False,
+    )
+    if artifact.returncode != 0:
+        raise SystemExit(f"refusing rollout: target has no reviewed {BWRAP_PROFILE_ARTIFACT} for protected tasks")
+    try:
+        installed = installed_profile.read_bytes()
+    except OSError as exc:
+        raise SystemExit(
+            f"refusing rollout: protected tasks need the reviewed sandbox profile installed at {installed_profile} ({exc})"
+        ) from exc
+    if installed != artifact.stdout:
+        raise SystemExit(
+            f"refusing rollout: installed {installed_profile} differs from reviewed {BWRAP_PROFILE_ARTIFACT}; "
+            "the operator must install the reviewed profile first"
+        )
+
+
+def add_runtime_worktree(source: Path, target: Path, branch: str, target_sha: str) -> None:
+    """Register the runtime without a checkout, prove HEAD, then materialize it."""
+    git(source, "worktree", "add", "--no-checkout", "-b", branch, str(target), target_sha)
+    if git(target, "symbolic-ref", "--quiet", "HEAD") != f"refs/heads/{branch}" or git(target, "rev-parse", "HEAD") != target_sha:
+        raise RuntimeError(f"runtime worktree HEAD is not {branch} at {target_sha}")
+    git(target, "read-tree", "--reset", "-u", target_sha)
 
 
 def restore_link(link: Path, previous: Path | None) -> None:
@@ -174,6 +244,12 @@ def main(argv: list[str] | None = None) -> int:
         help="cron/watchdog installation: canonical supervisor.pid to replace",
     )
     parser.add_argument("--tracking-ref", default="origin/dev")
+    parser.add_argument(
+        "--installed-bwrap-profile",
+        type=Path,
+        default=INSTALLED_BWRAP_PROFILE,
+        help="operator-installed AppArmor profile compared with the reviewed artifact (read only)",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
 
@@ -220,6 +296,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"target={target} sha={target_sha} branch={branch}")
     print(f"previous={previous if previous else 'none'}")
     print(f"status_launcher={launcher} writer={link / 'scripts' / 'ai_status.py'}")
+    protected = recorded_protected_paths(status_root)
+    protected_preflight(source, target_sha, protected, args.installed_bwrap_profile)
+    if protected:
+        print(f"protected_paths={','.join(protected)} sandbox_profile=matches")
     if args.dry_run:
         return 0
 
@@ -228,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"existing target is not the expected clean runtime: {target}")
     else:
         try:
-            git(source, "worktree", "add", "-b", branch, str(target), target_sha)
+            add_runtime_worktree(source, target, branch, target_sha)
         except RuntimeError as exc:
             raise SystemExit(f"could not prepare clean runtime worktree: {exc}") from exc
 

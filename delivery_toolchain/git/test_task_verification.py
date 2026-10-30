@@ -77,6 +77,50 @@ class TaskVerificationGateTests(unittest.TestCase):
             produced_by="test",
         )
 
+    # --- protected tasks -----------------------------------------------------
+
+    def test_protected_selection_is_receipted_not_executed_and_cannot_finalize(self) -> None:
+        marker = Path(self.tmpdir.name) / "ran.txt"
+        command = f"{sys.executable} -c 'open(\"{marker}\", \"w\").close()' guarded/zone/test_case.py"
+        self._write_status([command], protected_paths=["guarded/zone"])
+
+        run = self._cli("run")
+        self.assertEqual(run.returncode, 1)
+        self.assertIn("not_executed", run.stdout)
+        self.assertIn("guarded/zone", run.stderr)
+        self.assertFalse(marker.exists())
+        receipts = ve.load_receipts(self.store, task_id=TASK_ID)
+        self.assertEqual([receipt["outcome"] for receipt in receipts], [ve.OUTCOME_NOT_EXECUTED])
+        self.assertEqual(receipts[0]["head_sha"], self.head)
+        self.assertIsNone(receipts[0]["exit_code"])
+
+        check = self._cli("check")
+        self.assertEqual(check.returncode, 1)
+
+    def test_malformed_protection_fails_closed_without_running(self) -> None:
+        marker = Path(self.tmpdir.name) / "ran.txt"
+        command = f"{sys.executable} -c 'open(\"{marker}\", \"w\").close()'"
+        self._write_status([command], protected_paths="guarded/zone")
+        self.assertEqual(self._cli("run").returncode, 1)
+        self.assertFalse(marker.exists())
+        self.assertEqual(self._cli("check").returncode, 1)
+
+    def test_protected_task_with_safe_selection_runs_and_finalizes_at_exact_head(self) -> None:
+        marker = Path(self.tmpdir.name) / "ran.txt"
+        command = f"{sys.executable} -c 'open(\"{marker}\", \"w\").close()' unrelated/test_ok.py"
+        self._write_status([command], protected_paths=["guarded/zone"])
+
+        self.assertEqual(self._cli("run").returncode, 0)
+        self.assertTrue(marker.exists())
+        receipts = ve.load_receipts(self.store, task_id=TASK_ID)
+        self.assertEqual([receipt["outcome"] for receipt in receipts], [ve.OUTCOME_PASSED])
+        self.assertEqual(self._cli("check").returncode, 0)
+
+        (self.repo / "README.md").write_text("moved\n", encoding="utf-8")
+        self._git("add", "README.md")
+        self._git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "move")
+        self.assertEqual(self._cli("check").returncode, 1)
+
     # --- check ---------------------------------------------------------------
 
     def test_no_declared_verification_passes(self) -> None:
