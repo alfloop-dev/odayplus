@@ -2102,6 +2102,190 @@ def test_review_queue_reads_a_full_sha_base_as_that_commit_on_a_cold_cache(tmp_p
             )
 
 
+def test_review_queue_excludes_a_source_only_childs_pool_and_rereads_its_record(tmp_path: Path) -> None:
+    """A parent composing Pi's child is reviewed by no one who shares a source pool.
+
+    Codex writes the parent commit, Pi the child's frozen commit, Claude
+    merges the child in and submits. The recorded child bound is judged
+    against the canonical record on every queue ask, cold or warm: Pi, Codex
+    and Claude are refused, independent Codex2 is dispatched, and once the
+    record stops naming the child -- or the bound is dropped -- no one is.
+    """
+    cfg = _register_ci_failure_actors(_base_test_config())
+    cfg["agents"]["pi"] = {"id": "pi", "display_name": "Pi", "provider": "codex", "account_pool": "pi_chatgpt"}
+    repo = tmp_path / "source-git"
+    task_id, child_id = "TASK-SOURCE-REV-PARENT", "TASK-SOURCE-REV-CHILD"
+    repo.mkdir(parents=True)
+    _git(repo, "init", "-q", "-b", "dev")
+    _git(repo, "config", "user.email", "worker@pantheon.local")
+    _git(repo, "config", "user.name", "Worker")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "bootstrap")
+    frozen = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/remotes/origin/dev", "dev")
+    _git(repo, "checkout", "-q", "-b", f"task/{child_id}")
+    (repo / "uv.lock").write_text("patched\n", encoding="utf-8")
+    _git(repo, "add", "uv.lock")
+    _git(repo, "commit", "-q", "-m", f"{child_id}: lock\n\nLLM-Agent: Pi\nTask-ID: {child_id}\nReviewer: Codex\n")
+    child_head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", f"task/{task_id}", frozen)
+    _git(
+        repo, "commit", "-q", "--allow-empty", "-m",
+        f"{task_id}: parent\n\nLLM-Agent: Codex\nTask-ID: {task_id}\nReviewer: Codex2\n",
+    )
+    _git(
+        repo, "merge", "--no-ff", "-q", "-m",
+        f"{task_id}: compose\n\nLLM-Agent: Claude\nTask-ID: {task_id}\nReviewer: Codex2\n", child_head,
+    )
+    head = _git(repo, "rev-parse", "HEAD")
+    cfg["coordination"] = {"repositories": {"pantheon": {"local_path": str(repo), "repo": "example/repo"}}}
+    cfg["branch_workflow"] = {"dev_branch": "dev"}
+    child = {
+        "id": child_id,
+        "owner": "Pi",
+        "reviewer": "Codex",
+        "status": "blocked",
+        "branch": f"task/{child_id}",
+        "helper_parent": task_id,
+        "frozen_evidence_base_sha": frozen,
+        "review_gate_sha": child_head,
+        "review_gate_target": {"repo_slug": "example/repo", "sha": child_head, "context": "task-review-gate"},
+        "owned_paths": ["uv.lock"],
+    }
+    bound = {
+        "task_id": child_id,
+        "repository": "pantheon",
+        "repo_slug": "example/repo",
+        "remote": "github.com/example/repo",
+        "branch": f"task/{child_id}",
+        "source_base": frozen,
+        "source_head": child_head,
+        "owned_paths": ["uv.lock"],
+        "commits": [[child_head, "Pi"]],
+    }
+    task = {
+        "id": task_id,
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex2",
+        "review_submission": {
+            "pr_number": 104,
+            "branch": f"task/{task_id}",
+            "base_branch": "dev",
+            "remote_sha": head,
+            "source_head": head,
+            "source_base": frozen,
+            # Exactly as the scan writes them: each non-merge commit's actor, oldest first.
+            "source_authors": [
+                "Pi" if sha == child_head else "Codex"
+                for sha in _git(repo, "rev-list", "--reverse", "--no-merges", f"{frozen}..{head}").split()
+            ],
+            "source_helpers": [bound],
+            "submitted_by": "Claude",
+        },
+        "depends_on": [],
+    }
+    records = {"tasks": [task, child], "blockers": [], "_status_write_revision": "revision-1"}
+
+    def eligible(record: dict, agent: str) -> bool:
+        with (
+            mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=head),
+            mock.patch.object(
+                supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")
+            ),
+        ):
+            return dispatch_engine.is_task_review_dispatch_eligible(cfg, dict(record, reviewer=agent), agent)
+
+    with (
+        mock.patch.object(dispatch_policy, "immutable_review_source_authors", _READ_SOURCE_AUTHORS_FROM_GIT),
+        mock.patch.object(dispatch_policy, "load_status", side_effect=lambda _config: records),
+    ):
+        assert sorted(task["review_submission"]["source_authors"]) == ["Codex", "Pi"]
+        for cold in (True, False):
+            if cold:
+                dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.clear()
+            assert {agent: eligible(task, agent) for agent in ("Pi", "Codex", "Claude", "Codex2")} == {
+                "Pi": False, "Codex": False, "Claude": False, "Codex2": True,
+            }
+        child["helper_parent"] = "TASK-SOURCE-REV-OTHER"
+        assert "not a direct child" in str(dispatch_policy.review_source_block_reason(cfg, task, "Codex2"))
+        assert eligible(task, "Codex2") is False
+        child["helper_parent"] = task_id
+        dropped = dict(task, review_submission=dict(task["review_submission"], source_helpers=[]))
+        assert "no initial publication of its branch was recorded" in str(
+            dispatch_policy.review_source_block_reason(cfg, dropped, "Codex2")
+        )
+        assert eligible(dropped, "Codex2") is False
+        assert eligible(task, "Codex2") is True
+
+
+@pytest.mark.parametrize(("message", "reason"), [
+    # Original fail-closed recovery forms: no structured depends_on, another
+    # script, a path naming a deliverable, an unknown requirement.
+    ("waiting for dependencies; provider handoff pending", "names a prerequisite no satisfied depends_on releases"),
+    ("仍欠業主准許；provider handoff pending", "names a requirement no released prerequisite or routing"),
+    ("Freigabe ausstehend; provider handoff pending", "names a requirement no released prerequisite or routing"),
+    ("waiting for payload.csv; provider handoff pending", "names a requirement no released prerequisite or routing"),
+    ("Need Codex/Root independent review and parent integration", "names a requirement no released"),
+    ("Human approval pending; provider retry still blocked", "names a human, external or operator gate"),
+])
+@pytest.mark.parametrize("location", ["blocker", "blocked_reason"])
+def test_hard_gate_classifies_blocker_prose_fail_closed_like_recovery(message, reason, location) -> None:
+    """The shared rule holds what blocked-task recovery holds -- the classification, not its routing.
+
+    One rule reads a durable blocker and a task's ``blocked_reason``: only a
+    prerequisite a satisfied ``depends_on`` releases, or known routing
+    vocabulary, is accounted for. Recovery, delegating to it, refuses the same
+    records; nothing is consumed or rewritten.
+    """
+    task = {"id": "GATE-001", "owner": "Codex", "reviewer": "Claude", "status": "blocked", "waiting_for": "Codex",
+            "next": "provider handoff stale notification", "depends_on": []}
+    board = {"_status_write_revision": "revision-1", "tasks": [task], "blockers": []}
+    if location == "blocker":
+        board["blockers"].append({"task_id": "GATE-001", "owner": "Codex", "waiting_for": "Codex",
+                                  "status": "open", "message": message})
+        prefixes = ("an open canonical blocker of the task ",)
+    else:
+        task["blocked_reason"] = message
+        # Gate words and prerequisite prose are found in the task's whole prose first.
+        prefixes = ("task prose ", "task blocked_reason ")
+    before = json.loads(json.dumps(board))
+    held = str(dispatch_policy.canonical_hard_gate_reason(task, board))
+    assert held.startswith(tuple(prefix + reason for prefix in prefixes)), held
+    assert supervisor.blocked_task_auto_recovery_eligible(_base_test_config(), task, status_snapshot=board) is False
+    assert board == before
+
+
+def test_hard_gate_releases_what_recovery_releases_and_leaves_routing_to_recovery() -> None:
+    """A satisfied prerequisite or routing vocabulary is no gate; only recovery asks for a routing failure."""
+    config = _base_test_config()
+    task = {"id": "GATE-001", "owner": "Codex", "reviewer": "Claude", "status": "blocked", "waiting_for": "Codex",
+            "next": "provider handoff stale notification", "depends_on": ["UPSTREAM-001"]}
+    upstream = {"id": "UPSTREAM-001", "status": "done", "depends_on": []}
+    blocker = {"task_id": "GATE-001", "owner": "Codex", "waiting_for": "Codex", "status": "open",
+               "kind": "dependency", "message": "waiting for dependencies: UPSTREAM-001"}
+    board = {"_status_write_revision": "revision-1", "tasks": [task, upstream], "blockers": [blocker]}
+    assert dispatch_policy.canonical_hard_gate_reason(task, board) is None
+    assert supervisor.blocked_task_auto_recovery_eligible(config, task, status_snapshot=board) is True
+    # Unsatisfied, the same blocker is held by the prerequisite itself.
+    upstream["status"] = "in_progress"
+    assert "its prerequisite UPSTREAM-001 is in_progress" in str(dispatch_policy.canonical_hard_gate_reason(task, board))
+    # With no structured depends_on the prose has no release authority.
+    upstream["status"] = "done"
+    task["depends_on"] = []
+    assert "names a prerequisite no satisfied depends_on releases" in str(
+        dispatch_policy.canonical_hard_gate_reason(task, board)
+    )
+    # Known vocabulary naming no routing failure is no gate -- and recovers nothing.
+    blocker.update(kind="", message="retry pending")
+    task["next"] = "retry pending"
+    assert dispatch_policy.canonical_hard_gate_reason(task, board) is None
+    assert supervisor.blocked_task_auto_recovery_eligible(config, task, status_snapshot=board) is False
+    blocker["message"] = task["next"] = "Codex provider handoff stale"
+    assert dispatch_policy.canonical_hard_gate_reason(task, board) is None
+    assert supervisor.blocked_task_auto_recovery_eligible(config, task, status_snapshot=board) is True
+
+
 def test_review_queue_refuses_an_interior_commit_as_the_base_of_a_merged_range(tmp_path: Path) -> None:
     """After the merge, ancestry cannot tell the base from a commit of the range.
 

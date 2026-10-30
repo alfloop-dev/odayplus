@@ -195,6 +195,141 @@ class MultiRepoRegistryTests(unittest.TestCase):
             self.assertEqual(
                 multi_repo_registry.checkout_origin_slug(checkout), "alfloop-dev/odayplus"
             )
+            # The owner/name projection of a custom server's endpoint, rooted or not.
+            for url in ("git@git.example.com:alfloop-dev/odayplus.git", "ssh://git@git.example.com/srv/alfloop-dev/odayplus",
+                        "https://git.example.com:8443/alfloop-dev/odayplus.git/"):
+                with self.subTest(url):
+                    subprocess.run(["git", "remote", "set-url", "origin", url], cwd=checkout, check=True)
+                    self.assertEqual(multi_repo_registry.checkout_origin_slug(checkout), "alfloop-dev/odayplus")
+
+
+    def test_remote_endpoints_equate_spellings_but_never_a_shared_suffix(self) -> None:
+        endpoint = multi_repo_registry.normalized_remote_endpoint
+        same = (
+            "https://github.com/alfloop-dev/odayplus.git",
+            "git@github.com:alfloop-dev/odayplus.git",
+            "ssh://git@github.com/alfloop-dev/odayplus",
+            "ssh://git@github.com:22/alfloop-dev/odayplus.git",
+            "https://github.com:443/Alfloop-Dev/odayplus/",
+        )
+        self.assertEqual({endpoint(url) for url in same}, {"github.com/alfloop-dev/odayplus"})
+        # Credentials are dropped, never echoed into the identity.
+        self.assertEqual(endpoint("https://user:secret@github.com/alfloop-dev/odayplus"),
+                         "github.com/alfloop-dev/odayplus")
+        different = (
+            "https://ghe.example.com/alfloop-dev/odayplus.git",
+            "git@github.example.com:alfloop-dev/odayplus.git",
+            "https://github.com:8443/alfloop-dev/odayplus",
+            "https://github.com/mirror/alfloop-dev/odayplus",
+            "/srv/git/alfloop-dev/odayplus.git",
+        )
+        for url in different:
+            with self.subTest(url):
+                self.assertNotEqual(endpoint(url), "github.com/alfloop-dev/odayplus")
+        # Only GitHub's paths are case-insensitive; a custom server's path is
+        # whatever its filesystem says, so a case difference is another repository.
+        self.assertEqual(endpoint("ssh://git@Git.Example.com/srv/EXAMPLE/repo.git"),
+                         "ssh:git@git.example.com:/srv/EXAMPLE/repo.git")
+        self.assertEqual(endpoint("git@git.example.com:/srv/EXAMPLE/repo.git"),
+                         "ssh:git@git.example.com:/srv/EXAMPLE/repo.git")
+        for upper, lower in (
+            ("ssh://git@git.example.com/srv/EXAMPLE/repo.git", "ssh://git@git.example.com/srv/example/repo.git"),
+            ("git@git.example.com:EXAMPLE/repo.git", "git@git.example.com:example/repo.git"),
+            ("https://git.example.com/EXAMPLE/repo", "https://git.example.com/example/repo"),
+        ):
+            with self.subTest(upper):
+                self.assertNotEqual(endpoint(upper), endpoint(lower))
+        # Nor are a custom server's .git suffix, rooted-versus-home-relative
+        # path or transport GitHub's equivalences: each is another repository.
+        for one, other in (
+            ("ssh://git@git.example.com/example/repo", "ssh://git@git.example.com/example/repo.git"),
+            ("git@git.example.com:/example/repo", "git@git.example.com:/example/repo.git"),
+            ("https://git.example.com/example/repo", "https://git.example.com/example/repo.git"),
+            ("ssh://git@git.example.com/srv/example/repo.git", "git@git.example.com:srv/example/repo.git"),
+            ("git@git.example.com:/srv/example/repo.git", "git@git.example.com:srv/example/repo.git"),
+            ("ssh://git@git.example.com/srv/example/repo.git", "https://git.example.com/srv/example/repo.git"),
+            ("https://git.example.com/srv/example/repo.git", "http://git.example.com/srv/example/repo.git"),
+            ("ssh://git@git.example.com/srv/example/repo.git", "ssh://git@git.example.com:2222/srv/example/repo.git"),
+            # Two accounts on one custom server are two homes, or two services
+            # behind one sshd -- and no account leaves it to the local SSH config.
+            ("alice@git.example.com:example/repo.git", "bob@git.example.com:example/repo.git"),
+            ("ssh://alice@git.example.com/~/example/repo.git", "ssh://bob@git.example.com/~/example/repo.git"),
+            ("ssh://alice@git.example.com/srv/example/repo.git", "bob@git.example.com:/srv/example/repo.git"),
+            ("git@git.example.com:example/repo.git", "git.example.com:example/repo.git"),
+            ("ssh://git@git.example.com/srv/example/repo.git", "git+ssh://git.example.com/srv/example/repo.git"),
+        ):
+            with self.subTest(one=one, other=other):
+                self.assertIsNotNone(endpoint(one))
+                self.assertIsNotNone(endpoint(other))
+                self.assertNotEqual(endpoint(one), endpoint(other))
+        # What the same account on the same server is asked for is still one
+        # endpoint: its absolute path in either SSH spelling, a home-relative
+        # one in either, a trailing slash, host case or the default port; a
+        # password never reaches the identity.
+        for spellings, expected in (
+            (("ssh://git@git.example.com/srv/example/repo.git", "git@git.example.com:/srv/example/repo.git",
+              "ssh://git@Git.Example.com:22/srv/example/repo.git/", "git+ssh://git@git.example.com/srv/example/repo.git",
+              "ssh://git:secret@git.example.com/srv/example/repo.git"),
+             "ssh:git@git.example.com:/srv/example/repo.git"),
+            (("git@git.example.com:example/repo.git", "git@Git.Example.com:example/repo.git/"),
+             "ssh:git@git.example.com:example/repo.git"),
+            (("ssh://git@git.example.com/~/example/repo.git", "git@git.example.com:~/example/repo.git"),
+             "ssh:git@git.example.com:~/example/repo.git"),
+            (("git.example.com:example/repo.git", "git.example.com:example/repo.git/"),
+             "ssh:git.example.com:example/repo.git"),
+            (("ssh://git@git.example.com:2222/srv/repo.git",), "ssh:git@[git.example.com:2222]:/srv/repo.git"),
+            (("https://git.example.com:443/srv/repo.git/",), "https://git.example.com/srv/repo.git"),
+        ):
+            with self.subTest(expected):
+                self.assertEqual({endpoint(url) for url in spellings}, {expected})
+        # A host that happens to be named like a scheme never reaches a local path.
+        self.assertNotEqual(endpoint("ssh://file/srv/repo.git"), endpoint("/srv/repo.git"))
+        # A signed URL or an unknown scheme is no identity at all.
+        for url in ("https://github.com/alfloop-dev/odayplus?token=x", "ftp://github.com/a/b", "",
+                    "ssh://git@[::1]/srv/repo.git", "ssh://git@git.example.com/", "ssh://git@git.example.com/a//b"):
+            with self.subTest(url):
+                self.assertIsNone(endpoint(url))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            self.assertEqual(endpoint("repo.git", base=base), f"file:{(base / 'repo.git').resolve()}")
+            self.assertEqual(endpoint(f"file://{base}/repo.git"), f"file:{(base / 'repo.git').resolve()}")
+
+    def test_the_registered_endpoint_is_the_registry_not_a_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            anchor = Path(tmpdir)
+            config = _config_anchored_at(anchor)
+            config["coordination"] = {"repositories": {
+                "pantheon": {"repo": "alfloop-dev/odayplus", "local_path": "."},
+                "fixture": {"repo": "example/repo", "remote": "fixtures/example/repo.git", "local_path": "work"},
+                "nameless": {"local_path": "nameless"},
+            }}
+            registered = multi_repo_registry.registered_remote_endpoint
+            self.assertEqual(registered(config, "pantheon"), "github.com/alfloop-dev/odayplus")
+            self.assertEqual(
+                registered(config, "fixture"), f"file:{(anchor / 'fixtures/example/repo.git').resolve()}"
+            )
+            self.assertIsNone(registered(config, "nameless"))
+            self.assertIsNone(registered(config, "unregistered"))
+            # An explicit remote that names no endpoint never borrows the
+            # entry's slug, local_path or anything a checkout says.
+            for remote in ("", "  ", "https://github.com/example/repo.git?token=x", "ftp://host/a/b", 7):
+                with self.subTest(remote=remote):
+                    config["coordination"]["repositories"]["fixture"]["remote"] = remote
+                    self.assertIsNone(registered(config, "fixture"))
+            config["coordination"]["repositories"]["fixture"]["remote"] = "git@github.com:example/repo.git"
+            self.assertEqual(registered(config, "fixture"), "github.com/example/repo")
+            config["coordination"]["repositories"]["fixture"]["remote"] = "fixtures/example/repo.git"
+
+            # Same suffix, different repository: the slug projection agrees,
+            # the endpoint does not.
+            checkout = _init_repo(anchor / "work", str(anchor / "unregistered/example/repo.git"))
+            self.assertEqual(multi_repo_registry.checkout_origin_slug(checkout), "example/repo")
+            self.assertNotEqual(multi_repo_registry.checkout_origin_endpoint(checkout), registered(config, "fixture"))
+            subprocess.run(["git", "remote", "set-url", "origin", "../fixtures/example/repo.git"],
+                           cwd=checkout, check=True)
+            self.assertEqual(multi_repo_registry.checkout_origin_endpoint(checkout), registered(config, "fixture"))
+            subprocess.run(["git", "remote", "remove", "origin"], cwd=checkout, check=True)
+            self.assertIsNone(multi_repo_registry.checkout_origin_endpoint(checkout))
 
 
 class TaskRepositoryDeclarationTests(unittest.TestCase):

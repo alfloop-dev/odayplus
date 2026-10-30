@@ -160,6 +160,36 @@ class ConfigContractTests(unittest.TestCase):
             with self.assertRaisesRegex(common.ConfigError, "typo"):
                 common.load_config(invalid)
 
+    def test_repository_remote_endpoint_is_an_optional_nonblank_string(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def entry(**fields: object) -> Path:
+                return self._write(
+                    root,
+                    "runtime.json",
+                    {"coordination": {"repositories": {"pantheon": {"repo": "example/repo", **fields}}}},
+                )
+
+            # The GitHub slug alone stays a complete entry.
+            loaded = common.load_config(entry(local_path="."))
+            self.assertNotIn("remote", loaded["coordination"]["repositories"]["pantheon"])
+            for remote in (
+                "https://github.com/example/repo.git",
+                "git@ghe.example.com:example/repo.git",
+                "/srv/git/example/repo.git",
+            ):
+                with self.subTest(remote=remote):
+                    loaded = common.load_config(entry(remote=remote))
+                    self.assertEqual(loaded["coordination"]["repositories"]["pantheon"]["remote"], remote)
+            for remote in ("", "   ", " https://github.com/example/repo.git", None, ["origin"]):
+                with self.subTest(remote=remote), self.assertRaisesRegex(
+                    common.ConfigError, "coordination.repositories.pantheon.remote"
+                ):
+                    common.load_config(entry(remote=remote))
+            with self.assertRaisesRegex(common.ConfigError, "'remote_url' was unexpected"):
+                common.load_config(entry(remote_url="https://github.com/example/repo.git"))
+
     def test_explicit_overlay_is_deep_merged_by_the_canonical_loader(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
