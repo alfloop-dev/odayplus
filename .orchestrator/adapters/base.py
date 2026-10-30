@@ -96,16 +96,6 @@ class BaseAdapter:
     ) -> DeliveryResult:
         """Return one canonical unavailable result or delegate to the inbox."""
 
-        if allow_inbox_fallback:
-            # An inbox item is picked up outside any sandbox, so a protected
-            # task never degrades to it.
-            try:
-                protected = protected_execution_paths(
-                    self.config, request.task_id, request.metadata.get("protected_paths")
-                )
-            except ProtectedExecutionUnavailable:
-                protected = ("unconfirmed",)
-            allow_inbox_fallback = not protected
         if not allow_inbox_fallback:
             reason = capability.notes or f"{mode} auto-delivery is unavailable."
             return DeliveryResult(
@@ -130,7 +120,8 @@ class BaseAdapter:
         result.mode = "file_inbox"
         result.notes = f"{result.notes}. {capability.notes}"
         if not capability.supported:
-            result.error = capability.notes
+            # Keep the inbox's own refusal (a protected task) when it has one.
+            result.error = result.error or capability.notes
         return result
 
     def spawn_cli_delivery(

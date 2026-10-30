@@ -314,6 +314,63 @@ class ProtectedExecutionEnforcementTests(unittest.TestCase):
         self.assertRegex(result.stdout, r"CapEff:\s+0+\n")
         self.assertEqual(git(self.task, "log", "-1", "--format=%s"), "safe")
 
+    def test_missing_alias_paths_and_later_host_additions_stay_denied(self) -> None:
+        """Nothing is created in another checkout, yet nothing added later shows through."""
+        import shutil
+
+        shutil.rmtree(self.repo / "guarded" / "zone")
+        late_root = self.root / "late-worktree"
+        argv = wc.protected_execution_argv(
+            [
+                "sh",
+                "-c",
+                "while [ ! -e trigger ]; do sleep 0.05; done; "
+                f"cat '{self.repo}/guarded/zone/late.txt'; echo rc1=$?; "
+                f"cat '{late_root}/guarded/zone/canary.txt'; echo rc2=$?; "
+                f"mkdir '{self.repo}/guarded/zone'; echo rc3=$?; "
+                "cat tracked.txt",
+            ],
+            cwd=self.task,
+            protected_paths=GUARD,
+        )
+        self.assertFalse((self.repo / "guarded" / "zone").exists())
+        process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.addCleanup(lambda: process.poll() is None and process.kill())
+        try:
+            (self.repo / "guarded" / "zone").mkdir()
+            (self.repo / "guarded" / "zone" / "late.txt").write_text("synthetic late\n", encoding="utf-8")
+            git(self.repo, "worktree", "add", "--quiet", "-b", "task/GUARD-LATE", str(late_root))
+            (late_root / "guarded" / "zone").mkdir(parents=True)
+            (late_root / "guarded" / "zone" / "canary.txt").write_text("synthetic canary\n", encoding="utf-8")
+        finally:
+            (self.task / "trigger").touch()
+        output, _ = process.communicate(timeout=60)
+        self.assertNotIn("synthetic", output)
+        for marker in ("rc1=0", "rc2=0", "rc3=0"):
+            self.assertNotIn(marker, output)
+        self.assertIn("base", output)
+
+    def test_process_filesystem_aliases_are_denied(self) -> None:
+        holder = subprocess.Popen(["sleep", "30"], cwd=self.task / "guarded" / "zone")
+        self.addCleanup(holder.kill)
+        for alias in (f"/proc/{holder.pid}/cwd/canary.txt", f"/proc/{holder.pid}/root{self.task}/guarded/zone/canary.txt"):
+            with self.subTest(alias=alias):
+                result = self._run(f"cat '{alias}'")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("synthetic canary", result.stdout)
+        result = self._run("cd guarded/zone && cat /proc/self/cwd/canary.txt")
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_a_shared_alias_root_without_any_ancestor_refuses_but_a_foreign_one_is_hidden(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.repo / "guarded")
+        with self.assertRaises(wc.ProtectedExecutionUnavailable):
+            wc.protected_execution_argv(["true"], cwd=self.task, protected_paths=GUARD, alias_roots=[self.repo])
+        plan = wc.plan_protected_execution(self.task, GUARD)
+        self.assertIn(("hide", self.repo.resolve()), plan.operations)
+        self.assertFalse((self.repo / "guarded").exists())
+
     def test_missing_or_fake_sandbox_refuses_before_launch(self) -> None:
         fake = self.root / "fake-bwrap"
         fake.write_text('#!/bin/sh\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n', encoding="utf-8")

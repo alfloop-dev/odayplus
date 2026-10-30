@@ -366,18 +366,45 @@ def protected_selection_conflict(token: str, protected_paths: Iterable[str], *, 
 
 @dataclass(frozen=True)
 class ProtectedExecutionPlan:
+    """Mount operations for one protected launch, outermost first.
+
+    ``("mask", path, "dir"|"file")`` replaces a protected entry with an empty
+    read-only view.  ``("shadow", dir, children)`` freezes a directory: a
+    private read-only tmpfs with each entry that existed at launch bound back
+    (``children`` = ``(name, "rw"|"symlink", link_target)``), so entries
+    the host adds later -- a protected file that was missing, a new sibling
+    checkout -- never appear inside the sandbox, and nothing is created on the
+    host to make that so.  ``("hide", root)`` covers another owner's checkout
+    entirely.
+    """
+
     protected_paths: tuple[str, ...]
     cwd: Path
-    masks: tuple[tuple[str, Path], ...]
+    operations: tuple[tuple, ...]
     bwrap: str = BWRAP_BINARY
 
-    def wrap(self, command: list[str], *, extra_masks: Iterable[tuple[str, Path]] = ()) -> list[str]:
+    @property
+    def mount_targets(self) -> tuple[Path, ...]:
+        return tuple(operation[1] for operation in self.operations)
+
+    def wrap(self, command: list[str], *, extra_masks: Iterable[Path] = ()) -> list[str]:
         argv = [self.bwrap, "--die-with-parent", "--dev-bind", "/", "/"]
-        for kind, target in [*self.masks, *extra_masks]:
-            if kind == "file":
-                argv.extend(["--ro-bind", "/dev/null", str(target)])
+        operations = [*self.operations, *(("mask", Path(target), "dir") for target in extra_masks)]
+        for operation in operations:
+            kind, target = operation[0], str(operation[1])
+            if kind == "mask" and operation[2] == "file":
+                argv.extend(["--ro-bind", "/dev/null", target])
+            elif kind in {"mask", "hide"}:
+                argv.extend(["--tmpfs", target, "--remount-ro", target])
             else:
-                argv.extend(["--tmpfs", str(target), "--remount-ro", str(target)])
+                argv.extend(["--tmpfs", target])
+                for name, mode, link_target in operation[2]:
+                    child = f"{target}/{name}"
+                    if mode == "symlink":
+                        argv.extend(["--symlink", link_target, child])
+                    else:
+                        argv.extend(["--bind" if mode == "rw" else "--ro-bind", child, child])
+                argv.extend(["--remount-ro", target])
         argv.extend(["--chdir", str(self.cwd), "--", *command])
         return argv
 
@@ -393,6 +420,29 @@ def _registered_worktrees(cwd: Path) -> list[Path]:
     return roots
 
 
+def _shadow_operation(directory: Path) -> tuple:
+    """Freeze which entries ``directory`` has; existing entries keep their access."""
+    children: list[tuple[str, str, str | None]] = []
+    try:
+        entries = sorted(os.scandir(directory), key=lambda entry: entry.name)
+    except OSError as error:
+        raise ProtectedExecutionUnavailable(f"{directory} cannot be listed: {error}") from None
+    for entry in entries:
+        child = Path(entry.path)
+        if entry.is_symlink():
+            children.append((entry.name, "symlink", os.readlink(child)))
+        else:
+            children.append((entry.name, "rw", None))
+    return ("shadow", directory, tuple(children))
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+_UNSHADOWABLE = frozenset({Path("/"), Path("/tmp"), Path("/var/tmp"), Path("/home"), Path.home()})
+
+
 def plan_protected_execution(
     cwd: Path | str,
     protected_paths: Iterable[str],
@@ -400,25 +450,40 @@ def plan_protected_execution(
     alias_roots: Iterable[Path | str] = (),
     bwrap: str = BWRAP_BINARY,
 ) -> ProtectedExecutionPlan:
-    """Mask each protected path in every checkout of the same repository.
+    """Deny each protected path in every checkout of the repository.
 
-    Aliases are every registered worktree (the fleet root, the runtime and
-    other task checkouts included) plus explicitly named roots.  A symlinked
-    ancestor anywhere refuses: masking its target would be guesswork.
+    Every registered worktree (fleet root, runtime and other task checkouts)
+    and every named alias root is covered.  A protected entry that exists is
+    masked; one that is missing is denied by freezing its nearest existing
+    ancestor, so a later host addition stays invisible.  The workspace's
+    parent -- where sibling task checkouts appear -- is frozen the same way
+    when it is a dedicated directory.  Only the task's own workspace is ever
+    written to (an empty mount point for its own missing protected path).
+    A symlinked ancestor anywhere refuses: masking a target would be guesswork.
     """
     protected = normalize_protected_paths(list(protected_paths or ()))
     if not protected:
         raise ProtectedExecutionUnavailable("no protected paths to enforce")
     workspace = Path(cwd).resolve()
+    aliases: list[Path] = []
+    for item in alias_roots:
+        try:
+            aliases.append(Path(item).resolve())
+        except (OSError, RuntimeError):
+            raise ProtectedExecutionUnavailable(f"alias root {item} cannot be resolved") from None
     roots: list[Path] = [workspace]
-    for root in [*_registered_worktrees(workspace), *(Path(item) for item in alias_roots)]:
+    for root in [*_registered_worktrees(workspace), *aliases]:
         try:
             resolved = Path(root).resolve()
         except (OSError, RuntimeError):
-            raise ProtectedExecutionUnavailable(f"alias root {root} cannot be resolved") from None
+            raise ProtectedExecutionUnavailable(f"registered root {root} cannot be resolved") from None
         if resolved not in roots and resolved.is_dir():
             roots.append(resolved)
-    masks: list[tuple[str, Path]] = []
+
+    operations: list[tuple] = []
+    base = workspace.parent
+    if base not in _UNSHADOWABLE and not any(_is_within(alias, base) for alias in aliases):
+        operations.append(_shadow_operation(base))
     for root in roots:
         violation = _worktree_metadata_violation(root, protected)
         if violation:
@@ -428,21 +493,40 @@ def plan_protected_execution(
             try:
                 metadata = target.lstat()
             except FileNotFoundError:
-                if root != workspace:
-                    continue
-                # Deny-only also covers creation: an empty read-only mount
-                # keeps the worker from writing new protected content.
-                target.mkdir(parents=True, exist_ok=True)
-                metadata = target.lstat()
+                metadata = None
             except OSError as error:
                 raise ProtectedExecutionUnavailable(f"{target}: {error}") from None
-            if stat.S_ISDIR(metadata.st_mode):
-                masks.append(("dir", target))
+            if metadata is None and root == workspace:
+                # Our own checkout: an empty read-only mount point also keeps
+                # the worker from creating new protected content.
+                target.mkdir(parents=True, exist_ok=True)
+                metadata = target.lstat()
+            if metadata is None:
+                ancestor = target.parent
+                while ancestor != root and not ancestor.exists():
+                    ancestor = ancestor.parent
+                if ancestor != root:
+                    operations.append(_shadow_operation(ancestor))
+                elif root in aliases or _is_within(workspace, root):
+                    raise ProtectedExecutionUnavailable(
+                        f"{root} lacks every ancestor of protected {path}; it cannot be denied without "
+                        "modifying that shared checkout"
+                    )
+                else:
+                    operations.append(("hide", root))
+            elif stat.S_ISDIR(metadata.st_mode):
+                operations.append(("mask", target, "dir"))
             elif stat.S_ISREG(metadata.st_mode):
-                masks.append(("file", target))
+                operations.append(("mask", target, "file"))
             else:
                 raise ProtectedExecutionUnavailable(f"{target} is neither a directory nor a regular file")
-    return ProtectedExecutionPlan(protected_paths=protected, cwd=workspace, masks=tuple(masks), bwrap=bwrap)
+    # Parents before children, so an inner mask lands on top of an outer
+    # freeze rather than underneath it.
+    unique: dict[Path, tuple] = {}
+    for operation in operations:
+        unique.setdefault(operation[1], operation)
+    ordered = sorted(unique.values(), key=lambda operation: len(operation[1].parts))
+    return ProtectedExecutionPlan(protected_paths=protected, cwd=workspace, operations=tuple(ordered), bwrap=bwrap)
 
 
 _PROBE_SOURCE = r"""
@@ -504,12 +588,12 @@ def probe_protected_execution(plan: ProtectedExecutionPlan, *, timeout: float = 
             "gid": os.getgid(),
             "canary_dir": str(canary_dir),
             "canary_file": str(canary_file),
-            "targets": [str(target) for _kind, target in plan.masks],
+            "targets": [str(target) for target in plan.mount_targets],
             "token": PROTECTED_EXECUTION_PROBE_TOKEN,
         }
         argv = plan.wrap(
             [sys.executable, "-I", "-c", _PROBE_SOURCE, json.dumps(spec)],
-            extra_masks=[("dir", canary_dir)],
+            extra_masks=[canary_dir],
         )
         try:
             proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)

@@ -814,7 +814,8 @@ class ProtectedNativeLaunchTests(unittest.TestCase):
         import signal
         import time
 
-        pid_file = self.root / "child.pid"
+        # The workspace is the only writable checkout inside the sandbox.
+        pid_file = self.repo / "child.pid"
         log_path = self.root / "logs" / "worker.log"
         process, _ = common.spawn_background_process(
             [

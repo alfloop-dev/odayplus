@@ -18,6 +18,7 @@ import provider_permissions
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest
 from adapters.claude_cli import ClaudeCLIAdapter
 from adapters.codex import CodexAdapter
+from adapters.file_inbox import FileInboxAdapter
 from common import delivery_runtime_env
 
 
@@ -242,7 +243,8 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         workspace.mkdir()
         subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
         status_root = root / "status-root"
-        status_root.mkdir()
+        # The fleet root has the protected path's parent, as a real checkout does.
+        (status_root / "guarded").mkdir(parents=True)
         task = {"id": "GUARD-ADAPT-1"}
         if canonical is not None:
             task["protected_paths"] = canonical
@@ -310,44 +312,90 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertIsNone(result.pid)
         self.assertIn("not installed", result.error or "")
 
-    def test_protected_task_never_degrades_to_the_shared_inbox_fallback(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            status_file = Path(tmpdir) / "ai-status.json"
-            status_file.write_text(
-                json.dumps({"tasks": [{"id": "GUARD-INBOX-1", "protected_paths": ["guarded/zone"]}]}),
-                encoding="utf-8",
+    def _inbox_case(self, root: Path, canonical, prepared):
+        workspace = root / "worktree"
+        workspace.mkdir()
+        task = {"id": "GUARD-INBOX-1"}
+        if canonical is not None:
+            task["protected_paths"] = canonical
+        status_file = root / "ai-status.json"
+        status_file.write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+        config = {
+            "paths": {"status_file": str(status_file)},
+            "providers": {"claude": {"allow_inbox_fallback": True, "runtime": {"cli": "claude"}}},
+        }
+        metadata = {"workspace_path": str(workspace)}
+        if prepared is not None:
+            metadata["protected_paths"] = prepared
+        request = DeliveryRequest(
+            agent_id="claude",
+            provider="claude",
+            delivery_mode="claude_cli",
+            message="wake",
+            task_id="GUARD-INBOX-1",
+            metadata=metadata,
+        )
+        return config, request, workspace / ".llm-inbox" / "claude.md"
+
+    def _inbox_routes(self, config, request):
+        capability = DeliveryCapability(
+            adapter="antigravity",
+            supported=False,
+            requires_manual_confirmation=False,
+            can_auto_deliver=False,
+            can_auto_approve_edits=False,
+            delivery_mode="antigravity",
+            verified="no",
+            notes="CLI unavailable",
+        )
+
+        def claude_fallback():
+            with (
+                mock.patch("adapters.claude_cli.configured_provider_binary", return_value=None),
+                mock.patch("adapters.claude_cli.claude_auth_ready", return_value=False),
+            ):
+                return ClaudeCLIAdapter(config=config, provider_capabilities={}).deliver(request)
+
+        def shared_unavailable():
+            return BaseAdapter(config=config, provider_capabilities={}).unavailable_or_inbox(
+                request, capability, mode="antigravity", target="Agy", allow_inbox_fallback=True
             )
-            config = {"paths": {"status_file": str(status_file)}}
-            capability = DeliveryCapability(
-                adapter="antigravity",
-                supported=False,
-                requires_manual_confirmation=False,
-                can_auto_deliver=False,
-                can_auto_approve_edits=False,
-                delivery_mode="antigravity",
-                verified="no",
-                notes="CLI unavailable",
-            )
-            adapter = BaseAdapter(config=config, provider_capabilities={})
-            for metadata in ({"protected_paths": ["guarded/zone"]}, {}):
-                request = DeliveryRequest(
-                    agent_id="agy",
-                    provider="antigravity",
-                    delivery_mode="antigravity",
-                    message="wake",
-                    task_id="GUARD-INBOX-1",
-                    metadata=metadata,
-                )
+
+        def direct_inbox():
+            return FileInboxAdapter(config=config, provider_capabilities={}).deliver(request)
+
+        return {"claude": claude_fallback, "shared": shared_unavailable, "direct": direct_inbox}
+
+    def test_every_inbox_route_still_delivers_for_unprotected_tasks(self) -> None:
+        for route in ("claude", "shared", "direct"):
+            with self.subTest(route=route), tempfile.TemporaryDirectory() as tmpdir:
+                config, request, inbox = self._inbox_case(Path(tmpdir), None, None)
+                result = self._inbox_routes(config, request)[route]()
+                self.assertTrue(result.ok, result.error)
+                self.assertEqual(result.mode, "file_inbox")
+                self.assertTrue(inbox.is_file())
+
+    def test_protected_malformed_or_drifted_tasks_never_reach_an_inbox_file(self) -> None:
+        cases = {
+            "protected": (["guarded/zone"], ["guarded/zone"]),
+            "malformed": ("guarded/zone", None),
+            "drift_loss": (["guarded/zone"], None),
+            "drift_snapshot_only": (None, ["guarded/zone"]),
+        }
+        for label, (canonical, prepared) in cases.items():
+            for route in ("claude", "shared", "direct"):
                 with (
-                    self.subTest(metadata=metadata),
-                    mock.patch("adapters.file_inbox.FileInboxAdapter.deliver") as inbox,
+                    self.subTest(case=label, route=route),
+                    tempfile.TemporaryDirectory() as tmpdir,
+                    mock.patch("adapters.file_inbox.subprocess.Popen") as popen,
                 ):
-                    result = adapter.unavailable_or_inbox(
-                        request, capability, mode="antigravity", target="Agy", allow_inbox_fallback=True
-                    )
+                    config, request, inbox = self._inbox_case(Path(tmpdir), canonical, prepared)
+                    result = self._inbox_routes(config, request)[route]()
                     self.assertFalse(result.ok)
-                    self.assertEqual(result.mode, "antigravity")
-                    inbox.assert_not_called()
+                    self.assertIn("Inbox delivery refused", result.error or "")
+                    self.assertFalse(inbox.exists())
+                    self.assertFalse(inbox.parent.exists())
+                    popen.assert_not_called()
 
     def test_claude_can_disable_inbox_fallback(self) -> None:
         config = {
