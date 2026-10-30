@@ -2809,8 +2809,14 @@ def prepare_worker_workspace(
                 )
                 return False, message
             creation_sha = resolved_review_head
+        # Unprotected tasks keep the original call shape; protection is
+        # passed only when the canonical record carries it.
         created, error = _create_worker_worktree(
-            repo_root, worktree_path, branch, creation_sha, protected_paths=protected_paths
+            repo_root,
+            worktree_path,
+            branch,
+            creation_sha,
+            **({"protected_paths": protected_paths} if protected_paths else {}),
         )
         if not created:
             message = error or f"Failed to create worker worktree for {workspace_task_id}."

@@ -17,6 +17,7 @@ if str(THIS_DIR) not in sys.path:
 import supervisor
 import status_transition
 from runtime_state import migrate_state
+import worktree_cleanliness as wc
 from worktree_cleanliness import inspect_porcelain, inspect_worktree
 
 
@@ -102,6 +103,231 @@ class WorktreeCleanlinessPolicyTests(unittest.TestCase):
 
         self.assertEqual(symlink.kind, "owner_dirty")
         self.assertEqual(hardlink.kind, "owner_dirty")
+
+
+GUARD = ["guarded/zone"]
+
+
+def init_repo(repo: Path) -> str:
+    git(repo, "init", "--quiet", "-b", "dev")
+    git(repo, "config", "user.email", "test@example.invalid")
+    git(repo, "config", "user.name", "Test")
+    (repo / "tracked.txt").write_text("base\n", encoding="utf-8")
+    git(repo, "add", "tracked.txt")
+    git(repo, "commit", "--quiet", "-m", "base")
+    return git(repo, "rev-parse", "HEAD")
+
+
+def synthetic_commit(repo: Path, parent: str, root_entry: str) -> str:
+    """Add one synthetic tree entry without materializing anything."""
+    listing = git(repo, "ls-tree", parent)
+    tree = subprocess.run(
+        ["git", "mktree"], cwd=repo, input=f"{listing}\n{root_entry}\n", text=True, capture_output=True, check=True
+    ).stdout.strip()
+    return git(repo, "commit-tree", tree, "-p", parent, "-m", "synthetic")
+
+
+class ProtectedPathPolicyTests(unittest.TestCase):
+    def test_literal_list_is_normalized_and_prose_or_patterns_are_rejected(self) -> None:
+        self.assertEqual(wc.normalize_protected_paths(["guarded/zone/", "a/b", "a/b"]), ("a/b", "guarded/zone"))
+        self.assertEqual(wc.normalize_protected_paths(None), ())
+        for bad in ("guarded/zone", ["/abs"], ["a/../b"], ["a/*"], ["./a"], [""], [3], ["a/.git"], {"a": 1}):
+            with self.subTest(bad=bad), self.assertRaises(wc.ProtectedPathPolicyError):
+                wc.normalize_protected_paths(bad)
+
+    def test_reduction_is_detected_but_widening_is_not(self) -> None:
+        self.assertEqual(wc.protected_paths_reduction(["guarded/zone"], []), ("guarded/zone",))
+        self.assertEqual(wc.protected_paths_reduction(["guarded/zone"], ["guarded/zone/inner"]), ("guarded/zone",))
+        self.assertEqual(wc.protected_paths_reduction(["guarded/zone"], ["guarded"]), ())
+
+    def test_direct_descendant_ancestor_and_root_selections_conflict(self) -> None:
+        for path in ("guarded/zone", "guarded/zone/x.py", "guarded", ".", "", "./guarded/zone", "other/../guarded"):
+            with self.subTest(path=path):
+                self.assertEqual(wc.protected_path_conflict(path, GUARD), "guarded/zone")
+        for path in ("guarded/zone2", "guarded/other", "tests/unit"):
+            with self.subTest(path=path):
+                self.assertIsNone(wc.protected_path_conflict(path, GUARD))
+
+
+class ProtectedMetadataTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name) / "repo"
+        self.repo.mkdir()
+        self.base = init_repo(self.repo)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_absent_and_plain_tree_entries_are_safe(self) -> None:
+        blob = subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"], cwd=self.repo, input="synthetic", text=True,
+            capture_output=True, check=True,
+        ).stdout.strip()
+        zone = subprocess.run(
+            ["git", "mktree"], cwd=self.repo, input=f"100644 blob {blob}\tfixture.txt\n", text=True,
+            capture_output=True, check=True,
+        ).stdout.strip()
+        guarded = subprocess.run(
+            ["git", "mktree"], cwd=self.repo, input=f"040000 tree {zone}\tzone\n", text=True,
+            capture_output=True, check=True,
+        ).stdout.strip()
+        commit = synthetic_commit(self.repo, self.base, f"040000 tree {guarded}\tguarded")
+        self.assertTrue(wc.inspect_protected_git_metadata(self.repo, self.base, GUARD).ok)
+        verdict = wc.inspect_protected_git_metadata(self.repo, commit, GUARD)
+        self.assertTrue(verdict.ok, verdict)
+        self.assertFalse((self.repo / "guarded").exists())
+
+    def test_symlink_ancestor_gitlink_and_bad_commit_fail_closed(self) -> None:
+        blob = subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"], cwd=self.repo, input="elsewhere", text=True,
+            capture_output=True, check=True,
+        ).stdout.strip()
+        symlink = synthetic_commit(self.repo, self.base, f"120000 blob {blob}\tguarded")
+        inner = subprocess.run(
+            ["git", "mktree"], cwd=self.repo, input=f"160000 commit {self.base}\tzone\n", text=True,
+            capture_output=True, check=True,
+        ).stdout.strip()
+        gitlink = synthetic_commit(self.repo, self.base, f"040000 tree {inner}\tguarded")
+        self.assertEqual(wc.inspect_protected_git_metadata(self.repo, symlink, GUARD).reason, "ancestor_escape")
+        self.assertEqual(wc.inspect_protected_git_metadata(self.repo, gitlink, GUARD).reason, "protected_entry_escape")
+        self.assertEqual(wc.inspect_protected_git_metadata(self.repo, "f" * 40, GUARD).reason, "unverifiable_commit")
+
+    def test_index_and_worktree_symlink_aliases_fail_closed(self) -> None:
+        outside = Path(self.tmp.name) / "outside"
+        outside.mkdir()
+        (self.repo / "guarded").symlink_to(outside, target_is_directory=True)
+        verdict = wc.inspect_protected_git_metadata(self.repo, "HEAD", GUARD, worktree_path=self.repo)
+        self.assertEqual(verdict.reason, "worktree_escape")
+        git(self.repo, "add", "guarded")
+        verdict = wc.inspect_protected_git_metadata(self.repo, "HEAD", GUARD, check_index=True)
+        self.assertEqual(verdict.reason, "index_escape")
+
+    def test_content_filters_and_supervisor_side_hooks_fail_closed(self) -> None:
+        git(self.repo, "config", "filter.synthetic.smudge", "cat")
+        self.assertEqual(wc.inspect_protected_git_metadata(self.repo, "HEAD", GUARD).reason, "unsafe_git_execution")
+        git(self.repo, "config", "--unset", "filter.synthetic.smudge")
+        hooks = Path(self.tmp.name) / "hooks"
+        hooks.mkdir()
+        (hooks / "commit-msg").write_text("#!/bin/sh\n", encoding="utf-8")
+        (hooks / "commit-msg").chmod(0o755)
+        git(self.repo, "config", "core.hooksPath", str(hooks))
+        self.assertTrue(wc.inspect_protected_git_metadata(self.repo, "HEAD", GUARD).ok)
+        (hooks / "post-merge").write_text("#!/bin/sh\n", encoding="utf-8")
+        (hooks / "post-merge").chmod(0o755)
+        verdict = wc.inspect_protected_git_metadata(self.repo, "HEAD", GUARD)
+        self.assertEqual(verdict.reason, "unsafe_git_execution")
+        self.assertIn("post-merge", verdict.detail)
+
+    def test_unreadable_metadata_fails_closed(self) -> None:
+        with mock.patch.object(wc, "_git_metadata", return_value=None):
+            self.assertFalse(wc.inspect_protected_git_metadata(self.repo, "HEAD", GUARD).ok)
+
+    def test_context_paths_refuse_overlap_and_symlink_aliases_before_reading(self) -> None:
+        root = Path(self.tmp.name) / "status"
+        (root / "guarded" / "zone").mkdir(parents=True)
+        (root / "docs").mkdir()
+        (root / "docs" / "alias").symlink_to(root / "guarded" / "zone", target_is_directory=True)
+        self.assertIn("overlaps", wc.context_path_protection_error(root, "guarded", GUARD))
+        self.assertIn("overlaps", wc.context_path_protection_error(root, "guarded/zone/brief.md", GUARD))
+        self.assertIn("symlink alias", wc.context_path_protection_error(root, "docs/alias/brief.md", GUARD))
+        self.assertIsNone(wc.context_path_protection_error(root, "docs/readme.md", GUARD))
+        self.assertFalse(wc.is_safe_context_destination(root, "guarded/zone/seed.md", GUARD))
+
+    def test_dirty_protected_entry_is_fingerprinted_without_opening_its_body(self) -> None:
+        (self.repo / "guarded" / "zone").mkdir(parents=True)
+        (self.repo / "guarded" / "zone" / "synthetic.txt").write_text("synthetic\n", encoding="utf-8")
+        (self.repo / "owner.txt").write_text("owner\n", encoding="utf-8")
+        opened: list[str] = []
+        real_open = Path.open
+
+        def recording_open(path, *args, **kwargs):
+            opened.append(str(path))
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "open", recording_open):
+            inspection = inspect_worktree(self.repo, protected_paths=GUARD)
+
+        self.assertEqual(inspection.kind, "owner_dirty")
+        self.assertTrue(any(name.endswith("owner.txt") for name in opened))
+        self.assertFalse(any("guarded" in name for name in opened))
+
+
+class ProtectedExecutionEnforcementTests(unittest.TestCase):
+    """Real Bubblewrap probes against synthetic fixtures outside tests/sources."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.repo = self.root / "fleet-root"
+        self.repo.mkdir()
+        init_repo(self.repo)
+        self.task = self.root / "task-worktree"
+        git(self.repo, "worktree", "add", "--quiet", "-b", "task/GUARD-001", str(self.task))
+        for checkout in (self.repo, self.task):
+            (checkout / "guarded" / "zone").mkdir(parents=True)
+            (checkout / "guarded" / "zone" / "canary.txt").write_text("synthetic canary\n", encoding="utf-8")
+        (self.root / "alias").symlink_to(self.task / "guarded", target_is_directory=True)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _run(self, script: str) -> subprocess.CompletedProcess[str]:
+        argv = wc.protected_execution_argv(["sh", "-c", script], cwd=self.task, protected_paths=GUARD)
+        return subprocess.run(argv, capture_output=True, text=True, timeout=60, check=False)
+
+    def test_denied_through_relative_absolute_alias_fleet_root_and_proc_paths(self) -> None:
+        sleeper = subprocess.Popen(["sleep", "30"])
+        self.addCleanup(sleeper.kill)
+        targets = [
+            "guarded/zone/canary.txt",
+            str(self.task / "guarded" / "zone" / "canary.txt"),
+            str(self.root / "alias" / "zone" / "canary.txt"),
+            str(self.repo / "guarded" / "zone" / "canary.txt"),
+            f"/proc/{sleeper.pid}/root{self.task}/guarded/zone/canary.txt",
+        ]
+        for target in targets:
+            with self.subTest(target=target):
+                result = self._run(f"cat '{target}'")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("synthetic canary", result.stdout)
+        result = self._run(f"sh -c 'cat {targets[0]}'")
+        self.assertNotEqual(result.returncode, 0)
+        for target in ("guarded/zone/new.txt", str(self.repo / "guarded" / "zone" / "new.txt")):
+            with self.subTest(write=target):
+                self.assertNotEqual(self._run(f"echo x > '{target}'").returncode, 0)
+        self.assertFalse((self.task / "guarded" / "zone" / "new.txt").exists())
+        self.assertFalse((self.repo / "guarded" / "zone" / "new.txt").exists())
+
+    def test_normal_read_write_commit_and_subprocess_still_work(self) -> None:
+        identity = f"{os.getuid()}:{os.getgid()}"
+        result = self._run(
+            "set -e; cat tracked.txt; echo safe > safe.txt; python3 -c 'print(open(\"safe.txt\").read().strip())'; "
+            "git add safe.txt; git -c user.email=t@example.invalid -c user.name=T commit -q -m safe; "
+            "echo \"$(id -u):$(id -g)\"; grep -E '^(NoNewPrivs|CapEff)' /proc/self/status"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("base", result.stdout)
+        self.assertIn("safe", result.stdout)
+        self.assertIn(identity, result.stdout)
+        self.assertRegex(result.stdout, r"NoNewPrivs:\s+1")
+        self.assertRegex(result.stdout, r"CapEff:\s+0+\n")
+        self.assertEqual(git(self.task, "log", "-1", "--format=%s"), "safe")
+
+    def test_missing_or_fake_sandbox_refuses_before_launch(self) -> None:
+        fake = self.root / "fake-bwrap"
+        fake.write_text('#!/bin/sh\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n', encoding="utf-8")
+        fake.chmod(0o755)
+        for binary in (str(self.root / "missing-bwrap"), str(fake)):
+            with self.subTest(binary=binary), self.assertRaises(wc.ProtectedExecutionUnavailable):
+                wc.protected_execution_argv(["true"], cwd=self.task, protected_paths=GUARD, bwrap=binary)
+
+    def test_symlinked_protected_ancestor_in_any_checkout_refuses(self) -> None:
+        other = self.root / "other-worktree"
+        git(self.repo, "worktree", "add", "--quiet", "-b", "task/GUARD-002", str(other))
+        (other / "guarded").symlink_to(self.root, target_is_directory=True)
+        with self.assertRaises(wc.ProtectedExecutionUnavailable):
+            wc.protected_execution_argv(["true"], cwd=self.task, protected_paths=GUARD)
 
 
 class OwnerContinuationTests(unittest.TestCase):

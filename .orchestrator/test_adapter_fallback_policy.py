@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,7 +15,7 @@ if str(THIS_DIR) not in sys.path:
 
 import common
 import provider_permissions
-from adapters.base import DeliveryRequest
+from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest
 from adapters.claude_cli import ClaudeCLIAdapter
 from adapters.codex import CodexAdapter
 from common import delivery_runtime_env
@@ -235,6 +236,118 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(status_root))
         self.assertEqual(env["ORCH_STATUS_ROOT"], str(status_root))
         self.assertEqual(env["ORCH_WORKSPACE_PATH"], str(workspace))
+
+    def _protected_codex(self, root: Path, *, canonical: list[str] | None, prepared: list[str] | None):
+        workspace = root / "worktree"
+        workspace.mkdir()
+        subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
+        status_root = root / "status-root"
+        status_root.mkdir()
+        task = {"id": "GUARD-ADAPT-1"}
+        if canonical is not None:
+            task["protected_paths"] = canonical
+        (status_root / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+        config = {
+            "paths": {"status_file": str(status_root / "ai-status.json")},
+            "agents": {"codex": {"id": "codex", "display_name": "Codex", "provider": "codex", "adapter": "codex"}},
+            "providers": {"codex": {"codex": {"cli": "codex"}}},
+        }
+        metadata = {"workspace_path": str(workspace), "status_root": str(status_root)}
+        if prepared is not None:
+            metadata["protected_paths"] = prepared
+        request = DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake",
+            task_id="GUARD-ADAPT-1",
+            metadata=metadata,
+        )
+        return CodexAdapter(config=config, provider_capabilities={}), request, workspace, status_root
+
+    def test_protected_launch_passes_canonical_policy_to_the_shared_spawn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter, request, workspace, status_root = self._protected_codex(
+                Path(tmpdir), canonical=["guarded/zone"], prepared=["guarded/zone"]
+            )
+            fake_process = mock.Mock(pid=4321)
+            with (
+                mock.patch("adapters.codex.command_exists", return_value="codex"),
+                mock.patch("adapters.base.spawn_background_process", return_value=(fake_process, None)) as spawn,
+            ):
+                result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(spawn.call_args.kwargs["protected_paths"], ("guarded/zone",))
+        self.assertEqual(spawn.call_args.kwargs["protected_alias_roots"], (status_root,))
+        self.assertEqual(result.metadata["protected_execution"], "bwrap")
+
+    def test_policy_drift_or_missing_sandbox_refuses_without_a_pid(self) -> None:
+        for canonical, prepared in ((["guarded/zone"], None), (None, ["guarded/zone"]), (["guarded"], ["guarded/zone"])):
+            with self.subTest(canonical=canonical, prepared=prepared), tempfile.TemporaryDirectory() as tmpdir:
+                adapter, request, _workspace, _status = self._protected_codex(
+                    Path(tmpdir), canonical=canonical, prepared=prepared
+                )
+                with (
+                    mock.patch("adapters.codex.command_exists", return_value="codex"),
+                    mock.patch("adapters.base.spawn_background_process") as spawn,
+                ):
+                    result = adapter.deliver(request)
+                self.assertFalse(result.ok)
+                self.assertIsNone(result.pid)
+                self.assertIn("Protected execution refused", result.error or "")
+                spawn.assert_not_called()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter, request, _workspace, _status = self._protected_codex(
+                Path(tmpdir), canonical=["guarded/zone"], prepared=["guarded/zone"]
+            )
+            with (
+                mock.patch("adapters.codex.command_exists", return_value="codex"),
+                mock.patch.object(common.worktree_cleanliness, "BWRAP_BINARY", str(Path(tmpdir) / "absent-bwrap")),
+            ):
+                result = adapter.deliver(request)
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.pid)
+        self.assertIn("not installed", result.error or "")
+
+    def test_protected_task_never_degrades_to_the_shared_inbox_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_file = Path(tmpdir) / "ai-status.json"
+            status_file.write_text(
+                json.dumps({"tasks": [{"id": "GUARD-INBOX-1", "protected_paths": ["guarded/zone"]}]}),
+                encoding="utf-8",
+            )
+            config = {"paths": {"status_file": str(status_file)}}
+            capability = DeliveryCapability(
+                adapter="antigravity",
+                supported=False,
+                requires_manual_confirmation=False,
+                can_auto_deliver=False,
+                can_auto_approve_edits=False,
+                delivery_mode="antigravity",
+                verified="no",
+                notes="CLI unavailable",
+            )
+            adapter = BaseAdapter(config=config, provider_capabilities={})
+            for metadata in ({"protected_paths": ["guarded/zone"]}, {}):
+                request = DeliveryRequest(
+                    agent_id="agy",
+                    provider="antigravity",
+                    delivery_mode="antigravity",
+                    message="wake",
+                    task_id="GUARD-INBOX-1",
+                    metadata=metadata,
+                )
+                with (
+                    self.subTest(metadata=metadata),
+                    mock.patch("adapters.file_inbox.FileInboxAdapter.deliver") as inbox,
+                ):
+                    result = adapter.unavailable_or_inbox(
+                        request, capability, mode="antigravity", target="Agy", allow_inbox_fallback=True
+                    )
+                    self.assertFalse(result.ok)
+                    self.assertEqual(result.mode, "antigravity")
+                    inbox.assert_not_called()
 
     def test_claude_can_disable_inbox_fallback(self) -> None:
         config = {

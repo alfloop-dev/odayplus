@@ -2746,6 +2746,32 @@ class SourceAuthorReviewIndependenceTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"TASK_METADATA_JSON": json.dumps(metadata)}, clear=False):
             self.run_as(actor, ai_status.command_assign, [self.TASK_ID, "Claude", "Codex2"])
 
+    def test_assignment_records_literal_protected_paths_and_never_narrows_them(self) -> None:
+        self.assign_as("Claude", {"protected_paths": ["guarded/zone/", "guarded/zone"]})
+        self.assertEqual(self.task["protected_paths"], ["guarded/zone"])
+        # An unrelated reassignment keeps the recorded protection.
+        self.assign_as("Claude", {"priority": "P1"})
+        self.assertEqual(self.task["protected_paths"], ["guarded/zone"])
+        # Widening is allowed: it only denies more.
+        self.assign_as("Claude", {"protected_paths": ["guarded"]})
+        self.assertEqual(self.task["protected_paths"], ["guarded"])
+        for metadata, pattern in (
+            ({"protected_paths": []}, r"may not be removed or narrowed"),
+            ({"protected_paths": None}, r"may not be removed or narrowed"),
+            ({"protected_paths": ["guarded/zone"]}, r"may not be removed or narrowed"),
+            ({"protected_paths": ["other"]}, r"may not be removed or narrowed"),
+            ({"protected_paths": "guarded"}, r"list of literal repo-relative paths"),
+            ({"protected_paths": ["guarded", "/abs"]}, r"not a literal repo-relative path"),
+            ({"protected_paths": ["guarded", "a/*"]}, r"not a literal repo-relative path"),
+        ):
+            with (
+                self.subTest(metadata=metadata),
+                mock.patch.dict(os.environ, {"TASK_METADATA_JSON": json.dumps(metadata)}, clear=False),
+            ):
+                self.assert_refused_without_mutation(
+                    "Claude", ai_status.command_assign, [self.TASK_ID, "Claude", "Codex2"], pattern
+                )
+
     def test_assignment_metadata_cannot_name_the_signer_of_an_old_approval(self) -> None:
         """Codex2 never signed; `assign` must not be able to say it did.
 

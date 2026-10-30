@@ -350,7 +350,12 @@ def protected_selection_conflict(token: str, protected_paths: Iterable[str], *, 
             if f"/{path}/" in padded:
                 return f"absolute path {value!r} names protected {path!r}"
         return None
-    if "/" not in value and not value.endswith(".py") and value not in {".", ".."}:
+    if "/" not in value and value not in {".", ".."}:
+        # A bare word is a path only if it names a protected entry or one of
+        # its ancestors; ordinary arguments (``-q``, ``bootstrap``) are not.
+        for path in protected:
+            if path == value or path.startswith(f"{value}/"):
+                return f"path {value!r} selects protected {path!r}"
         return None
     conflict = protected_path_conflict(value, protected)
     return f"path {value!r} selects protected {conflict!r}" if conflict else None
