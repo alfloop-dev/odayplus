@@ -139,6 +139,17 @@ jobs:
           uv run python delivery_toolchain/governance/check_orchestrator_config.py
           uv run python delivery_toolchain/governance/check_config_wiring.py
 
+      # A task with protected_paths launches its native worker only under
+      # Bubblewrap. Install the standard package and the reviewed
+      # program-specific profile so the real enforcement tests measure the
+      # boundary on this runner rather than a stand-in.
+      - name: Install sandbox dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap
+          sudo install -m 0644 .orchestrator/profiles/bwrap /etc/apparmor.d/bwrap
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap
+
       # tests/tooling covers the delivery scripts themselves and infra covers
       # ephemeral staging Terraform/harness tests. They must run here: the `product`
       # job is skipped for development_tooling scope, so a tooling/infra-only change

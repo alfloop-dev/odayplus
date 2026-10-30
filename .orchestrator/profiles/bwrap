@@ -1,0 +1,7 @@
+# Program-specific Ubuntu user-namespace permission for the root-owned bwrap binary.
+# No global sysctl change. Filesystem protection is enforced by the reviewed worker launcher.
+abi <abi/4.0>,
+include <tunables/global>
+profile odayplus-bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+}

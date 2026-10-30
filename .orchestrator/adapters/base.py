@@ -7,12 +7,15 @@ from typing import Any
 
 from common import (
     delivery_runtime_env,
+    delivery_status_root,
     delivery_workspace_root,
     new_runtime_id,
+    protected_execution_paths,
     runtime_log_path,
     spawn_background_process,
     worker_runtime_paths,
 )
+from worktree_cleanliness import ProtectedExecutionUnavailable
 
 
 @dataclass
@@ -93,6 +96,16 @@ class BaseAdapter:
     ) -> DeliveryResult:
         """Return one canonical unavailable result or delegate to the inbox."""
 
+        if allow_inbox_fallback:
+            # An inbox item is picked up outside any sandbox, so a protected
+            # task never degrades to it.
+            try:
+                protected = protected_execution_paths(
+                    self.config, request.task_id, request.metadata.get("protected_paths")
+                )
+            except ProtectedExecutionUnavailable:
+                protected = ("unconfirmed",)
+            allow_inbox_fallback = not protected
         if not allow_inbox_fallback:
             reason = capability.notes or f"{mode} auto-delivery is unavailable."
             return DeliveryResult(
@@ -169,19 +182,42 @@ class BaseAdapter:
         if request.reason:
             env["ORCH_REASON"] = request.reason
 
-        process, _ = spawn_background_process(
-            command,
-            cwd=root,
-            log_path=log_path,
-            env=env,
-            run_id=run_id,
-            heartbeat_path=runtime_paths["heartbeat_path"],
-            status_path=runtime_paths["status_path"],
-        )
+        try:
+            protected = protected_execution_paths(
+                self.config, request.task_id, request.metadata.get("protected_paths")
+            )
+            process, _ = spawn_background_process(
+                command,
+                cwd=root,
+                log_path=log_path,
+                env=env,
+                run_id=run_id,
+                heartbeat_path=runtime_paths["heartbeat_path"],
+                status_path=runtime_paths["status_path"],
+                protected_paths=protected,
+                protected_alias_roots=(delivery_status_root(self.config, request.metadata),) if protected else (),
+            )
+        except ProtectedExecutionUnavailable as error:
+            reason = f"Protected execution refused for {request.task_id}: {error}"
+            return DeliveryResult(
+                ok=False,
+                adapter=self.name,
+                mode=mode,
+                target=display_name,
+                auto_delivered=False,
+                manual_confirmation_required=False,
+                notes=reason,
+                command=command,
+                error=reason,
+                metadata={"protected_execution": "refused"},
+            )
         result_metadata = {
             "heartbeat_path": str(runtime_paths["heartbeat_path"]),
             "runner_status_path": str(runtime_paths["status_path"]),
         }
+        if protected:
+            result_metadata["protected_paths"] = list(protected)
+            result_metadata["protected_execution"] = "bwrap"
         result_metadata.update(metadata or {})
         return DeliveryResult(
             ok=True,

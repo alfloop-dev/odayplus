@@ -45,6 +45,8 @@ OUTCOME_FAILED = "failed"
 OUTCOME_INTERRUPTED = "interrupted"
 OUTCOME_NO_TESTS = "no_tests_collected"
 OUTCOME_REJECTED = "rejected"
+#: A command that was refused before any subprocess started (protected scope).
+OUTCOME_NOT_EXECUTED = "not_executed"
 
 #: Only this outcome may be read as "the declared verification passed".
 PASSING_OUTCOMES = frozenset({OUTCOME_PASSED})
@@ -559,6 +561,7 @@ def build_receipt(
     audit: CommandAudit | None = None,
     timed_out: bool = False,
     output_tail: str | None = None,
+    not_executed_reason: str | None = None,
 ) -> dict[str, Any]:
     """Bind a run to the head SHA, command, exit code, duration and selection.
 
@@ -585,7 +588,10 @@ def build_receipt(
     sel["fingerprint"] = sel.get("fingerprint") or selection_fingerprint(sel)
 
     runner = command_audit.runner or detect_runner(cmd)
-    if command_audit.ok:
+    if not_executed_reason:
+        outcome = OUTCOME_NOT_EXECUTED
+        exit_code = None
+    elif command_audit.ok:
         outcome = classify_outcome(exit_code, runner=runner, timed_out=timed_out)
     else:
         outcome = OUTCOME_REJECTED
@@ -617,6 +623,8 @@ def build_receipt(
     }
     if output_tail:
         receipt["output_tail"] = output_tail
+    if not_executed_reason:
+        receipt["not_executed_reason"] = not_executed_reason
     receipt["receipt_id"] = receipt_id(receipt)
     return receipt
 
@@ -680,7 +688,9 @@ def validate_receipt(receipt: dict[str, Any] | None) -> list[str]:
             problems.append("command_audit records a different command than the receipt")
 
     outcome = str(receipt.get("outcome") or "")
-    if outcome not in {OUTCOME_PASSED, OUTCOME_FAILED, OUTCOME_INTERRUPTED, OUTCOME_NO_TESTS, OUTCOME_REJECTED}:
+    if outcome not in {
+        OUTCOME_PASSED, OUTCOME_FAILED, OUTCOME_INTERRUPTED, OUTCOME_NO_TESTS, OUTCOME_REJECTED, OUTCOME_NOT_EXECUTED
+    }:
         problems.append(f"unknown outcome: {outcome!r}")
 
     if receipt.get("passed") and not outcome_is_pass(outcome):
@@ -1160,6 +1170,49 @@ def evaluate_finalize_gate(
 # --- execution --------------------------------------------------------------
 
 
+def _protected_tokens(tokens: list[str]) -> list[str]:
+    expanded: list[str] = []
+    for token in tokens:
+        bare = _strip_quotes(token)
+        if any(char.isspace() for char in bare):
+            # An inline script (``bash -c '...'``) is judged word by word.
+            expanded.extend(_protected_tokens(shlex.split(bare)))
+        else:
+            expanded.append(bare)
+    return expanded
+
+
+def protected_selection_refusal(command: str, protected_paths: Any, *, cwd: str | None = None) -> str | None:
+    """Why ``command`` may not run for a task with ``protected_paths``.
+
+    Direct, ancestor, absolute-alias and pattern selections refuse, as does a
+    whole-suite test run (it would collect the protected tree) and anything
+    that cannot be parsed well enough to tell.
+    """
+    import worktree_cleanliness
+
+    try:
+        protected = worktree_cleanliness.normalize_protected_paths(protected_paths)
+    except worktree_cleanliness.ProtectedPathPolicyError as error:
+        return str(error)
+    if not protected:
+        return None
+    try:
+        tokens = _protected_tokens(
+            [tok for tok in strip_redirections(_tokenize(str(command or ""))) if tok not in _CONTROL_OPERATORS]
+        )
+    except ValueError:
+        return "command cannot be parsed to prove it avoids protected paths"
+    for token in tokens:
+        conflict = worktree_cleanliness.protected_selection_conflict(token, protected, cwd=cwd)
+        if conflict:
+            return conflict
+    runner = detect_runner(command) or ""
+    if runner.startswith("py") and extract_selection(command).get("scope") == _SCOPE_SUITE:
+        return f"whole-suite {runner} run would collect protected paths {list(protected)}"
+    return None
+
+
 def run_verification_command(
     command: str,
     *,
@@ -1167,14 +1220,30 @@ def run_verification_command(
     env: dict[str, str] | None = None,
     timeout: float | None = None,
     output_tail_chars: int = 2000,
+    protected_paths: Any = None,
 ) -> dict[str, Any]:
     """Run a verification command and report its real exit code.
 
     Audited-out commands are never executed: running them would produce a
-    number that does not mean what the receipt would claim it means.
+    number that does not mean what the receipt would claim it means.  For a
+    protected task a selection that reaches protected paths is refused the
+    same way, before any subprocess exists.
     """
     audit = audit_command(command)
     started_at = _utc_now()
+    refusal = protected_selection_refusal(command, protected_paths, cwd=cwd) if audit.ok else None
+    if refusal:
+        return {
+            "audit": audit,
+            "executed": False,
+            "not_executed_reason": refusal,
+            "exit_code": None,
+            "duration_seconds": 0.0,
+            "started_at": started_at,
+            "finished_at": _utc_now(),
+            "timed_out": False,
+            "output_tail": "",
+        }
     if not audit.ok:
         return {
             "audit": audit,
@@ -1273,6 +1342,7 @@ def verify_and_build_receipt(
     agent: str | None = None,
     run_id: str | None = None,
     produced_by: str | None = None,
+    protected_paths: Any = None,
 ) -> tuple[BaselineDecision, dict[str, Any] | None]:
     """Audit, dedupe, run, and receipt a single verification command."""
     selection = extract_selection(command)
@@ -1287,7 +1357,9 @@ def verify_and_build_receipt(
     if not decision.allowed:
         return decision, None
 
-    result = run_verification_command(command, cwd=cwd, env=env, timeout=timeout)
+    result = run_verification_command(
+        command, cwd=cwd, env=env, timeout=timeout, protected_paths=protected_paths
+    )
     receipt = build_receipt(
         task_id=task_id,
         head_sha=head_sha,
@@ -1306,6 +1378,7 @@ def verify_and_build_receipt(
         audit=result["audit"],
         timed_out=result["timed_out"],
         output_tail=result.get("output_tail"),
+        not_executed_reason=result.get("not_executed_reason"),
     )
     return decision, receipt
 
