@@ -36,7 +36,7 @@ import json
 import math
 import uuid
 from collections.abc import Callable
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import wraps
@@ -127,9 +127,13 @@ class AssistedIntakeRepository(Protocol):
 
     def get_listing_metadata(self, listing_id: str) -> dict[str, Any]: ...
 
+    def listing_metadata_guard(self, listing_id: str) -> AbstractContextManager[None]: ...
+
     def save_listing_metadata(self, listing_id: str, metadata: dict[str, Any]) -> None: ...
 
     def get_candidate_metadata(self, candidate_id: str) -> dict[str, Any]: ...
+
+    def candidate_metadata_guard(self, candidate_id: str) -> AbstractContextManager[None]: ...
 
     def save_candidate_metadata(self, candidate_id: str, metadata: dict[str, Any]) -> None: ...
 
@@ -181,11 +185,19 @@ class InMemoryAssistedIntakeRepository:
     def get_listing_metadata(self, listing_id: str) -> dict[str, Any]:
         return copy.deepcopy(self.listing_metadata.get(listing_id) or {})
 
+    def listing_metadata_guard(self, listing_id: str) -> AbstractContextManager[None]:
+        return nullcontext()  # Explicitly process-local, as for candidate metadata.
+
     def save_listing_metadata(self, listing_id: str, metadata: dict[str, Any]) -> None:
         self.listing_metadata[listing_id] = copy.deepcopy(metadata)
 
     def get_candidate_metadata(self, candidate_id: str) -> dict[str, Any]:
         return copy.deepcopy(self.candidate_metadata.get(candidate_id) or {})
+
+    def candidate_metadata_guard(self, candidate_id: str) -> AbstractContextManager[None]:
+        # Process-local fixture backend; the durable repository owns the real
+        # SQL transaction/advisory guard. No production lock is inferred here.
+        return nullcontext()
 
     def save_candidate_metadata(self, candidate_id: str, metadata: dict[str, Any]) -> None:
         self.candidate_metadata[candidate_id] = copy.deepcopy(metadata)
@@ -640,7 +652,7 @@ class NetworkListingService:
                 for lst_dict in self._state["listings"]:
                     # Persist the explicit fixture verdict and provenance with
                     # the row, so the next request reads the same evidence.
-                    self._sync_listing_to_repo(lst_dict["id"])
+                    self._sync_listing_to_repo(lst_dict["id"], initialize_scope=True)
 
     def _load_candidates(self) -> None:
         if self._listing_repository is not None:
@@ -667,14 +679,29 @@ class NetworkListingService:
     def _get_listing_metadata(self, listing_id: str) -> dict[str, Any]:
         return self._intakes.get_listing_metadata(listing_id)
 
-    def _save_listing_metadata(self, listing_id: str, metadata: dict[str, Any]) -> None:
-        self._intakes.save_listing_metadata(listing_id, metadata)
+    def _save_listing_metadata(self, listing_id: str, metadata: dict[str, Any], *,
+                               initialize_scope: bool = False) -> None:
+        with self._intakes.listing_metadata_guard(listing_id):
+            current = self._get_listing_metadata(listing_id)
+            # Only the original creation callers supply initial context. A
+            # missing key in an existing sidecar is not a new-resource proof:
+            # the full-save owner may have deliberately removed that scope.
+            projected = {key: value for key, value in metadata.items()
+                         if key not in {"tenantId", "heatZoneId"}
+                         or (initialize_scope and key not in current)}
+            self._intakes.save_listing_metadata(listing_id, {**current, **projected})
 
     def _get_candidate_metadata(self, candidate_id: str) -> dict[str, Any]:
         return self._intakes.get_candidate_metadata(candidate_id)
 
     def _save_candidate_metadata(self, candidate_id: str, metadata: dict[str, Any]) -> None:
-        self._intakes.save_candidate_metadata(candidate_id, metadata)
+        # The sole caller owns seven presentation fields. Scope/custody and
+        # other producer facts are not in its live projection. Read the latest
+        # sidecar under the original metadata owner's fence, then preserve the
+        # original full-save/review-CAS hook and its explicit None semantics.
+        with self._intakes.candidate_metadata_guard(candidate_id):
+            current = self._get_candidate_metadata(candidate_id)
+            self._intakes.save_candidate_metadata(candidate_id, {**current, **metadata})
 
     def _listing_to_dict(self, lst: Any) -> dict[str, Any]:
         res = {
@@ -1032,17 +1059,13 @@ class NetworkListingService:
             )})
         return draft
 
-    def _sync_listing_to_repo(self, listing_id: str) -> None:
+    def _sync_listing_to_repo(self, listing_id: str, *, initialize_scope: bool = False) -> None:
         if self._listing_repository is not None:
             listing = self._listing(listing_id)
             lst_obj, addr_obj, key_obj = self._dict_to_listing(listing)
             self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)
 
             meta = {
-                # These facts belong to their durable producer (scope, hold,
-                # revision and custody). A presentation write may update its
-                # own fields but cannot erase facts it does not project.
-                **self._get_listing_metadata(listing_id),
                 "tenantId": listing.get("tenantId"),
                 "status": listing["status"],
                 # Listing.frontage_m retains its legacy numeric absent value;
@@ -1091,7 +1114,7 @@ class NetworkListingService:
                     listing, "featureSnapshotTime", "feature_snapshot_time"
                 ),
             }
-            self._save_listing_metadata(listing_id, meta)
+            self._save_listing_metadata(listing_id, meta, initialize_scope=initialize_scope)
 
     def _sync_candidate_to_repo(self, candidate_id: str) -> None:
         if self._listing_repository is not None:
@@ -1179,7 +1202,7 @@ class NetworkListingService:
         if self._listing_repository is not None and self._seed_fixtures:
             self._listing_repository.clear()
             for lst_dict in self._state["listings"]:
-                self._sync_listing_to_repo(lst_dict["id"])
+                self._sync_listing_to_repo(lst_dict["id"], initialize_scope=True)
 
         return self.snapshot()
 
@@ -2431,7 +2454,7 @@ class NetworkListingService:
                 "sourceUrl": intake["originalUrl"],
             }
             self._state["listings"].append(new_listing)
-            self._sync_listing_to_repo(new_id)
+            self._sync_listing_to_repo(new_id, initialize_scope=True)
             intake["stage"] = "READY"
             if not intake.get("matchResult"):
                 intake["matchResult"] = {
