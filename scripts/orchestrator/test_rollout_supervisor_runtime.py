@@ -146,6 +146,11 @@ class ProtectedRolloutPreflightTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
+        # Keep host git config (e.g. a CI runner's global LFS filter) out of the fixtures.
+        (self.root / "gitconfig").touch()
+        env = mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(self.root / "gitconfig"), "GIT_CONFIG_NOSYSTEM": "1"})
+        env.start()
+        self.addCleanup(env.stop)
         self.source = self.root / "source"
         self.source.mkdir()
         self._git("init", "-q", "-b", "dev")

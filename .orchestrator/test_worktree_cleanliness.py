@@ -152,6 +152,13 @@ class ProtectedPathPolicyTests(unittest.TestCase):
 class ProtectedMetadataTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
+        # Host git config (e.g. a CI runner's global `git lfs install`) must
+        # not leak into the synthetic fixtures; the rule itself still reads it.
+        self.global_config = Path(self.tmp.name) / "gitconfig"
+        self.global_config.touch()
+        env = mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(self.global_config), "GIT_CONFIG_NOSYSTEM": "1"})
+        env.start()
+        self.addCleanup(env.stop)
         self.repo = Path(self.tmp.name) / "repo"
         self.repo.mkdir()
         self.base = init_repo(self.repo)
@@ -207,6 +214,13 @@ class ProtectedMetadataTests(unittest.TestCase):
         git(self.repo, "config", "filter.synthetic.smudge", "cat")
         self.assertEqual(wc.inspect_protected_git_metadata(self.repo, "HEAD", GUARD).reason, "unsafe_git_execution")
         git(self.repo, "config", "--unset", "filter.synthetic.smudge")
+        self.assertTrue(wc.inspect_protected_git_metadata(self.repo, "HEAD", GUARD).ok)
+        # An inherited host-level driver is just as able to read protected bodies.
+        self.global_config.write_text('[filter "lfs"]\n\tclean = git-lfs clean -- %f\n', encoding="utf-8")
+        verdict = wc.inspect_protected_git_metadata(self.repo, "HEAD", GUARD)
+        self.assertEqual(verdict.reason, "unsafe_git_execution")
+        self.assertIn("filter.lfs.clean", verdict.detail)
+        self.global_config.write_text("", encoding="utf-8")
         hooks = Path(self.tmp.name) / "hooks"
         hooks.mkdir()
         (hooks / "commit-msg").write_text("#!/bin/sh\n", encoding="utf-8")

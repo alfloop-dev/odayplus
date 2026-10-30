@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -184,6 +185,11 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
+        # Keep host git config (e.g. a CI runner's global LFS filter) out of the fixtures.
+        (self.root / "gitconfig").touch()
+        env = mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(self.root / "gitconfig"), "GIT_CONFIG_NOSYSTEM": "1"})
+        env.start()
+        self.addCleanup(env.stop)
         self.repo = self.root / "repo"
         self._git(self.root, "init", "-b", "dev", str(self.repo))
         self._git(self.repo, "config", "user.name", "Test")
