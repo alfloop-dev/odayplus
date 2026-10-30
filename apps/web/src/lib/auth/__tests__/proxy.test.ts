@@ -480,6 +480,15 @@ async function productionSessionCookie(): Promise<string> {
 }
 
 describe("actual actor caller constraint forwarding", () => {
+  it("forwards a tenant precondition without granting browser tenant or bearer authority", () => {
+    const result = buildUpstreamHeaders({ requestHeaders: new Headers({
+      "If-Tenant-Match": "00000000-0000-0000-0000-000000000010",
+      "X-Tenant-Id": "forged-other-tenant", "Authorization": "Bearer forged", "X-Roles": "admin",
+    }), accessToken: "server-owned-token", allowLegacyIdentity: false });
+    expect(result.get("if-tenant-match")).toBe("00000000-0000-0000-0000-000000000010");
+    expect(result.get("x-tenant-id")).toBeNull(); expect(result.get("x-roles")).toBeNull();
+    expect(result.get("authorization")).toBe("Bearer server-owned-token");
+  });
   it("forwards If-Actor-Match while stripping browser bearer and identity grants", () => {
     const result = buildUpstreamHeaders({
       requestHeaders: new Headers({

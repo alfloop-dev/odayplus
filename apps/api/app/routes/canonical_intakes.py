@@ -14,8 +14,10 @@ from fastapi.routing import APIRoute
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from apps.api.app.routes.canonical_match_cases import (
+    _CANONICAL_PRINCIPAL_PRECONDITIONS,
     NativeReceiptCommitted,
     NativeReceiptNotObserved,
+    _check_canonical_principal,
     _http_errors,
     _receipt_observation,
 )
@@ -562,11 +564,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
         principal = principal_from_headers(request.headers)
         if not principal.authenticated:
             raise HTTPException(401, "principal not authenticated")
-        try:
-            UUID(principal.subject_id)
-            UUID(principal.tenant_id)
-        except (ValueError, TypeError, AttributeError):
-            raise HTTPException(403, "CANONICAL_ACTOR_AND_TENANT_REQUIRED") from None
+        _check_canonical_principal(request, principal)
         bundle = getattr(request.app.state, "persistence_bundle", None)
         if (bundle is None or getattr(getattr(bundle, "engine", None), "dialect", None) != "postgresql"
                 or getattr(bundle, "assisted_intake_store", None) is not store
@@ -726,7 +724,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
 
 
     @router.get("/canonical-intakes", operation_id="listCanonicalIntakes",
-                response_model=CanonicalIntakePage, responses=errors)
+                response_model=CanonicalIntakePage, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def page(request: Request, processing_state: IntakeStage | None = None,
              page_size: Annotated[int, Query(ge=1, le=100)] = 25,
              cursor: Annotated[str | None, Query(max_length=2048)] = None):
@@ -765,7 +763,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
                                   for row in selected], "next_cursor": next_cursor}
 
     @router.get("/canonical-intakes/{intake_id}", operation_id="getCanonicalIntake",
-                response_model=CanonicalIntakeDetail, responses=errors)
+                response_model=CanonicalIntakeDetail, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def get(intake_id: UUID, request: Request, response: Response,
             include_source: bool = False, include_history: bool = False, include_evidence: bool = False):
         with _http_errors(), _evidence_errors():
@@ -846,7 +844,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
 
     @router.get("/canonical-intakes/{intake_id}/processing-evidence", operation_id="getCanonicalIntakeProcessingEvidence",
                 response_model=CanonicalIntakeEvidencePage, responses=errors,
-                description="Read saved snapshot and parser lifecycle metadata. No object content or verification grant.")
+                description="Read saved snapshot and parser lifecycle metadata. No object content or verification grant.", openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def processing_evidence(intake_id: UUID, request: Request, response: Response,
         intake_version: Annotated[int, Query(ge=1)],
         cursor: Annotated[str | None, Query(max_length=2048)] = None,
@@ -865,7 +863,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
                 return page
 
     @router.get("/canonical-intakes/{intake_id}/processing-history", operation_id="getCanonicalIntakeProcessingHistory",
-                response_model=CanonicalIntakeHistoryPage, responses=errors)
+                response_model=CanonicalIntakeHistoryPage, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def processing_history(intake_id: UUID, request: Request, response: Response,
         intake_version: Annotated[int, Query(ge=1)],
         cursor: Annotated[str | None, Query(max_length=2048)] = None,
@@ -885,7 +883,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
 
     @router.get("/canonical-intakes/{intake_id}/parser-runs/{parser_run_id}/fields",
                 operation_id="getCanonicalIntakeParserFields", response_model=CanonicalIntakeParserFields,
-                responses=errors, description="Read the selected run's proven fields and observed correction status; no execution grant.")
+                responses=errors, description="Read the selected run's proven fields and observed correction status; no execution grant.", openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def parser_fields(intake_id: UUID, parser_run_id: UUID, request: Request, response: Response,
         intake_version: Annotated[int, Query(ge=1)], parser_run_version: Annotated[int, Query(ge=1)],
     ):
@@ -909,7 +907,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
                 return value
 
     @router.get("/canonical-intakes/submissions/receipt", operation_id="getCanonicalIntakeSubmissionReceipt",
-                response_model=NativeReceiptCommitted[CanonicalIntakeReceipt] | NativeReceiptNotObserved, responses=errors)
+                response_model=NativeReceiptCommitted[CanonicalIntakeReceipt] | NativeReceiptNotObserved, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def submission_receipt(request: Request, response: Response,
         key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
     ):
@@ -932,7 +930,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
                 return observed
 
     @router.post("/canonical-intakes", operation_id="submitCanonicalIntake", status_code=201,
-                 response_model=CanonicalIntakeReceipt, responses=errors)
+                 response_model=CanonicalIntakeReceipt, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def submit(body: SubmitCanonicalIntakeRequest, request: Request, response: Response,
         key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
     ):
@@ -968,7 +966,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
 
     @router.post("/canonical-intakes/{intake_id}/cancel", operation_id="cancelCanonicalIntakeAuthorizationWait",
                  response_model=CanonicalIntakeCancellationReceipt, responses=errors,
-                 description="Cancel a settled AUTH_REQUIRED authorization wait with current authority. Other stages are rejected.")
+                 description="Cancel a settled AUTH_REQUIRED authorization wait with current authority. Other stages are rejected.", openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def cancel_authorization_wait(intake_id: UUID, body: CancelCanonicalIntakeAuthorizationWaitRequest,
         request: Request, response: Response,
         key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
@@ -1003,7 +1001,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
 
     @router.post("/canonical-intakes/{intake_id}/source-policy-rechecks", operation_id="requestCanonicalIntakeSourcePolicyRecheck",
                  response_model=CanonicalIntakeSourcePolicyRecheckReceipt, status_code=202, responses=errors,
-                 description="Request a governed current-authority recheck from a native authorization or assisted-entry wait.")
+                 description="Request a governed current-authority recheck from a native authorization or assisted-entry wait.", openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def request_source_policy_recheck(intake_id: UUID, body: RequestCanonicalIntakeSourcePolicyRecheck,
         request: Request, response: Response,
         key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
@@ -1040,7 +1038,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
     @router.post("/canonical-intakes/{intake_id}/assisted-entry-completions",
                  operation_id="requestCanonicalIntakeAssistedEntryCompletion", status_code=202,
                  response_model=CanonicalIntakeAssistedEntryRequestReceipt, responses=errors,
-                 description="Record initial human proposals for a proven current manual-source wait.")
+                 description="Record initial human proposals for a proven current manual-source wait.", openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def request_assisted_entry_completion(intake_id: UUID, body: NativeAssistedEntryCommand,
         request: Request, response: Response,
         key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
@@ -1057,7 +1055,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
     @router.get("/canonical-intakes/{intake_id}/assisted-entry-completions/receipt",
                 operation_id="getCanonicalIntakeAssistedEntryRequestReceipt",
                 response_model=NativeReceiptCommitted[CanonicalIntakeAssistedEntryRequestReceipt] | NativeReceiptNotObserved,
-                responses=errors)
+                responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def assisted_entry_receipt(intake_id: UUID, request: Request, response: Response,
         key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
     ):
@@ -1089,7 +1087,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
 
     @router.post("/canonical-intakes/{intake_id}/assisted-entry-completions/{request_id}/cancel",
                  operation_id="withdrawCanonicalIntakeAssistedEntryRequest",
-                 response_model=CanonicalIntakeCommandWithdrawalReceipt, responses=errors)
+                 response_model=CanonicalIntakeCommandWithdrawalReceipt, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def withdraw_assisted_entry_request(intake_id: UUID, request_id: UUID,
         body: CancelCanonicalIntakeAuthorizationWaitRequest, request: Request, response: Response,
         key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
@@ -1099,7 +1097,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
 
     @router.post("/canonical-intakes/{intake_id}/source-policy-rechecks/{request_id}/cancel",
                  operation_id="withdrawCanonicalIntakeSourcePolicyRecheckRequest",
-                 response_model=CanonicalIntakeCommandWithdrawalReceipt, responses=errors)
+                 response_model=CanonicalIntakeCommandWithdrawalReceipt, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def withdraw_source_policy_recheck_request(intake_id: UUID, request_id: UUID,
         body: CancelCanonicalIntakeAuthorizationWaitRequest, request: Request, response: Response,
         key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],

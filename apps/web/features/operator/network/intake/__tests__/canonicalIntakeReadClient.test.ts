@@ -6,6 +6,7 @@ import {
   readCanonicalIntakeEvidence,
   readCanonicalIntakeParserFields,
   readCanonicalURLReceipt, readCanonicalMatchCaseReceipt, readCanonicalIdentityReceipt, readCanonicalAssistedEntryReceipt,
+  canonicalMatchCaseReceiptReference,
   type CanonicalURLCommand, type CanonicalIdentityCommand, type CanonicalAssistedEntryCommand,
   type CanonicalIntakeReadContext, type CanonicalMatchCaseCommand,
 } from "../canonicalIntakeReadClient";
@@ -301,7 +302,7 @@ function exactReceiptOperation(kind: "url" | "case" | "proposal" | "review" | "m
     const receipt = { ...common, match_case_id: id(20), intake_id: id(1), status: "PENDING_REVIEW", version: 1,
       intake_version: 4, candidate_ids: [id(21)] };
     return { key, receipt, status: 201, path: `/api/v1/intakes/${id(1)}/match-case/receipt`,
-      lookup: (value: CanonicalIntakeReadContext, signal: AbortSignal) => readCanonicalMatchCaseReceipt(value, packet, signal) };
+      lookup: (value: CanonicalIntakeReadContext, signal: AbortSignal) => readCanonicalMatchCaseReceipt(value, canonicalMatchCaseReceiptReference(packet), signal) };
   }
   if (kind === "manual") {
     const packet: CanonicalAssistedEntryCommand = { key, intakeId: id(1), expectedVersion: 3,

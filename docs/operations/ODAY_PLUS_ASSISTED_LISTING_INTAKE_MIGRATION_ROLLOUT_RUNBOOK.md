@@ -164,6 +164,33 @@ receipt never claims parsing/matching is complete. Authorization wait exposes
 no manual form; a separately approved manual-source path must first be
 classified by the existing owner. URL, entry and identity commands share
 `useCanonicalIntakeCommand`; the old decision-local retry lifecycle was removed.
+
+That same Console command owner retains only a closed, nonsecret exact-receipt
+reference in tab-local session storage, keyed by the freshly verified account,
+server bootstrap tenant and active persona. It captures that reference before
+the POST leaves; a failed storage write sends nothing. Raw URLs, reasons,
+fields, credentials and the original packet remain outside this browser record.
+A new Provider may restore the reference through the original five exact
+receipt GETs and their existing response validators. It has no POST sender.
+NOT_OBSERVED, current denial and unavailable responses retain uncertainty and
+cannot authorize a new key or erase the old reference. Later same-Provider
+lease changes do not resurrect a prior command; an existing reference in that
+verified namespace blocks replacement until a fresh owner can recheck it.
+
+The original client and BFF carry optional If-Actor-Match / If-Tenant-Match
+preconditions. The three original canonical API contexts share one comparison
+against the authenticated principal, before storage. These headers can refuse
+a changed account or tenant; they cannot select either, replace authentication
+or bypass role, resource, source, version or audit checks. The original receipt
+namespace remains authenticated tenant/account/operation/resource/key.
+Do not add a second receipt registry, retry owner or recovery endpoint.
+
+This receipt reference does not persist partial/raw drafts, a server-acknowledged
+intent or an original packet that never reached the server. Those requirements,
+the unresolved draft-retention decision and the whole Console storage-error
+gate remain open. Local password/BFF/PostgreSQL browser controls use explicit
+synthetic accounts and a loopback metadata emulator; they prove no Cloud IAM,
+production source admission, human acceptance or release approval.
 The transport uses the same account-bound client and existing endpoints.
 
 The same picker now exposes human MERGE/SPLIT proposals for a pending canonical

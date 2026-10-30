@@ -475,7 +475,20 @@ def test_exact_receipt_read_keeps_original_http_result_and_creates_no_native_wor
             assert created.status_code == 200, created.text
             original, status, key, receipt_path = created.json(), 200, headers["Idempotency-Key"], path + "/receipt"
     before = _state(canonical_graph)
-    response = client.get(receipt_path, headers={"Idempotency-Key": key})
+    tenant = caller["principal"].tenant_id
+    actor = caller["principal"].subject_id
+    for expected, denied_status in [(str(uuid4()), 409), ("malformed-tenant", 422)]:
+        denied = client.get(receipt_path, headers={"Idempotency-Key": key, "If-Tenant-Match": expected})
+        assert denied.status_code == denied_status and "receipt" not in denied.json(), denied.text
+        assert _state(canonical_graph) == before
+    for expected, denied_status in [(str(uuid4()), 409), ("malformed-actor", 422)]:
+        denied = client.get(receipt_path, headers={"Idempotency-Key": key, "If-Actor-Match": expected})
+        assert denied.status_code == denied_status and "receipt" not in denied.json(), denied.text
+        assert _state(canonical_graph) == before
+    for header, value in [("If-Actor-Match", actor), ("If-Tenant-Match", tenant)]:
+        duplicate = client.get(receipt_path, headers=[("Idempotency-Key", key), (header, value), (header, value)])
+        assert duplicate.status_code == 422 and _state(canonical_graph) == before
+    response = client.get(receipt_path, headers={"Idempotency-Key": key, "If-Tenant-Match": tenant, "If-Actor-Match": actor})
     assert response.status_code == 200, response.text
     assert response.json()["observation"] == "RECEIPT_COMMITTED"
     assert response.json()["original_http_status"] == status and response.json()["receipt"] == original

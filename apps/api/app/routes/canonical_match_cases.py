@@ -64,6 +64,35 @@ def _receipt_observation(model, receipt, status, *, expected_status):
         original_http_status=status, receipt=typed)
 
 
+_CANONICAL_PRINCIPAL_PRECONDITIONS = {"parameters": [{
+    "name": name, "in": "header", "required": False,
+    "schema": {"type": "string", "format": "uuid"},
+    "description": f"Expected {subject} of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+} for name, subject in [("If-Actor-Match", "account"), ("If-Tenant-Match", "tenant")]]}
+
+
+def _check_canonical_principal(request: Request, principal) -> None:
+    # Authentication and each family's denial audit remain with their original
+    # context. This shared check never changes the authenticated principal.
+    try:
+        actor = UUID(principal.subject_id)
+        tenant = UUID(principal.tenant_id)
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(403, "CANONICAL_ACTOR_AND_TENANT_REQUIRED") from None
+    for header, current, kind in [("if-actor-match", actor, "ACTOR"), ("if-tenant-match", tenant, "TENANT")]:
+        expected = request.headers.getlist(header)
+        if not expected:
+            continue
+        try:
+            if len(expected) != 1:
+                raise ValueError
+            captured = UUID(expected[0])
+        except (ValueError, TypeError, AttributeError):
+            raise HTTPException(422, f"CANONICAL_{kind}_PRECONDITION_INVALID") from None
+        if captured != current:
+            raise HTTPException(409, f"CANONICAL_{kind}_CONTEXT_CHANGED")
+
+
 class MatchEvidenceCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -180,11 +209,7 @@ def create_canonical_match_case_router(store: Any) -> APIRouter:
         principal = principal_from_headers(request.headers)
         if not principal.authenticated:
             raise HTTPException(401, "principal not authenticated")
-        try:
-            UUID(principal.subject_id)
-            UUID(principal.tenant_id)
-        except (ValueError, TypeError, AttributeError):
-            raise HTTPException(403, "CANONICAL_ACTOR_AND_TENANT_REQUIRED") from None
+        _check_canonical_principal(request, principal)
         bundle = getattr(request.app.state, "persistence_bundle", None)
         if (bundle is None or getattr(bundle, "engine", None) is None
                 or getattr(bundle.engine, "dialect", None) != "postgresql"
@@ -233,7 +258,7 @@ def create_canonical_match_case_router(store: Any) -> APIRouter:
     )}
 
     @router.get("/intakes/{intake_id}/match-case/property-options", operation_id="listCanonicalMatchCaseProperties",
-                response_model=CanonicalMatchCasePropertyPage, responses=errors)
+                response_model=CanonicalMatchCasePropertyPage, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def property_options(intake_id: UUID, request: Request, response: Response,
             cursor: UUID | None = None, page_size: int = Query(default=20, ge=1, le=25)) -> dict:
         with _http_errors():
@@ -259,7 +284,7 @@ def create_canonical_match_case_router(store: Any) -> APIRouter:
                     "next_cursor": items[-1]["property_id"] if len(rows) > page_size else None}
 
     @router.get("/intakes/{intake_id}/match-case", operation_id="getCanonicalMatchCase",
-                response_model=MatchCaseSummary, responses=errors)
+                response_model=MatchCaseSummary, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def select(intake_id: UUID, request: Request, response: Response) -> dict:
         with _http_errors():
             principal, repo = context(request)
@@ -282,7 +307,7 @@ def create_canonical_match_case_router(store: Any) -> APIRouter:
                                    for row in selected["candidates"]]}
 
     @router.post("/intakes/{intake_id}/match-case", operation_id="createCanonicalMatchCase",
-                 response_model=MatchCaseReceipt, status_code=201, responses=errors)
+                 response_model=MatchCaseReceipt, status_code=201, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def create(intake_id: UUID, body: CreateMatchCaseRequest, request: Request, response: Response,
         key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
         if_match: Annotated[str, Header(alias="If-Match", pattern=r'^W/"[1-9][0-9]*"$')],
@@ -337,7 +362,7 @@ def create_canonical_match_case_router(store: Any) -> APIRouter:
             return result
 
     @router.get("/intakes/{intake_id}/match-case/receipt", operation_id="getCanonicalMatchCaseReceipt",
-                response_model=NativeReceiptCommitted[MatchCaseReceipt] | NativeReceiptNotObserved, responses=errors)
+                response_model=NativeReceiptCommitted[MatchCaseReceipt] | NativeReceiptNotObserved, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def receipt(intake_id: UUID, request: Request, response: Response,
         key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
     ):

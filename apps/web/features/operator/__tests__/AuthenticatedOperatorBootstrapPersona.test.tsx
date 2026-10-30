@@ -50,12 +50,13 @@ vi.mock("../network/HeatZoneMap", () => ({ HeatZoneMap: () => null }));
 // fixtures, not a signed or actual browser acceptance claim.
 const A = "00000000-0000-0000-0000-000000000102";
 const B = "00000000-0000-0000-0000-000000000101";
+const TENANT = "00000000-0000-0000-0000-000000000103";
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; }
 function envelope(role: "expansion-manager" | "ops-lead", name: string, decision = false) {
   const label = role === "expansion-manager" ? "展店經理" : "營運主管";
   const workspaces = role === "expansion-manager" ? ["today", "network"] : ["today", "store"];
-  return { meta: { source: "operator-shell-production", dataMode: "live", role: { id: role, label, subtitle: "Unit transport", allowedWorkspaces: workspaces, heroName: name }, counts: { approvals: 0, critical: 0, notifications: 0, search: 0, taskCenter: 1 } },
+  return { meta: { source: "operator-shell-production", dataMode: "live", tenantId: TENANT, role: { id: role, label, subtitle: "Unit transport", allowedWorkspaces: workspaces, heroName: name }, counts: { approvals: 0, critical: 0, notifications: 0, search: 0, taskCenter: 1 } },
     navigation: { roles: [{ id: "ops-lead", label: "營運主管", subtitle: "Catalog, not a grant", allowedWorkspaces: ["today", "store"] },
       { id: "expansion-manager", label: "展店經理", subtitle: "Catalog, not a grant", allowedWorkspaces: ["today", "network"] }],
       workspaces: [{ id: "today", label: "Today", shortLabel: "Today", description: "Current scope", allowed: true }], allowedWorkspaces: workspaces, allowedTabs: { network: role === "expansion-manager" ? ["areas", "radar", "candidates", "score", "compare", "review"] : [] } },
@@ -211,6 +212,31 @@ async function beginCanonicalCommand(boundary: "HTTP" | "JSON" | "ERROR_JSON" | 
 }
 
 describe("authenticated bootstrap persona ownership", () => {
+  it("restores only the original exact receipt after destroying and rebuilding the authenticated Console", async () => {
+    const first = await beginCanonicalCommand("uncertain");
+    await first.finish();
+    await screen.findByText(/結果尚未確認；重試會沿用同一請求/);
+    const key = new Headers(first.writes[0].headers).get("idempotency-key");
+    expect(new Headers(first.writes[0].headers).get("if-actor-match")).toBe(A);
+    expect(new Headers(first.writes[0].headers).get("if-tenant-match")).toBe(TENANT);
+    first.view.unmount();
+    const restored = mount({ workspace: "network", canonicalTabs: first.tabs,
+      canonicalNetwork: () => json(canonicalNetworkSnapshot("Current restored context")),
+      nativeIntake: (path, init) => {
+        expect(path).toBe("/api/v1/canonical-intakes/submissions/receipt");
+        expect(init?.method).toBeUndefined(); expect(init?.body).toBeUndefined();
+        const headers = new Headers(init?.headers);
+        expect(headers.get("idempotency-key")).toBe(key);
+        expect(headers.get("if-actor-match")).toBe(A); expect(headers.get("if-tenant-match")).toBe(TENANT);
+        return json({ observation: "RECEIPT_COMMITTED", observed_at: "2026-10-29T07:00:00Z",
+          original_http_status: 201, receipt: first.receipt });
+      } });
+    await screen.findByText(/原操作已收到回執/);
+    expect(restored.fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+    expect(restored.fetch.mock.calls.filter(([path]) => String(path).endsWith("submissions/receipt"))).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "重試原操作" })).not.toBeInTheDocument();
+  });
+
   it("reads the exact original receipt through the real Console after an uncertain command and full workspace teardown", async () => {
     let original: unknown;
     const state = await beginCanonicalCommand("uncertain", () => json({ observation: "RECEIPT_COMMITTED",
@@ -450,6 +476,18 @@ describe("authenticated bootstrap persona ownership", () => {
     expect(screen.queryByText(state.receipt.intake_id)).not.toBeInTheDocument();
     expect(state.writes).toHaveLength(1);
     expect(state.writes[0].signal?.aborted).toBe(true);
+    if (change === "tenant" || change === "ABA") {
+      const originalKey = new Headers(state.writes[0].headers).get("idempotency-key");
+      const reference = () => Object.entries(window.sessionStorage).filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:"));
+      expect(reference()).toHaveLength(1);
+      expect(reference()[0][1]).toContain(originalKey!);
+      fireEvent.click(await screen.findByTestId("network-tab-1"));
+      fireEvent.click(await screen.findByRole("button", { name: "選取收件／比對案件" }));
+      fireEvent.click(await screen.findByRole("button", { name: "從網址建立正式收件" }));
+      expect(screen.queryByTestId("intake-url-input")).not.toBeInTheDocument();
+      expect(state.writes).toHaveLength(1);
+      expect(reference()[0][1]).toContain(originalKey!);
+    }
   });
 
   it("checks the current account before retrying the original uncertain command", async () => {

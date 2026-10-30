@@ -19,8 +19,10 @@ from fastapi import APIRouter, Header, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 from apps.api.app.routes.canonical_match_cases import (
+    _CANONICAL_PRINCIPAL_PRECONDITIONS,
     NativeReceiptCommitted,
     NativeReceiptNotObserved,
+    _check_canonical_principal,
     _http_errors,
     _receipt_observation,
 )
@@ -395,11 +397,7 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
         request.state.canonical_identity_principal = principal
         if not principal.authenticated:
             raise HTTPException(401, "AUTHENTICATION_REQUIRED")
-        try:
-            UUID(principal.subject_id)
-            UUID(principal.tenant_id)
-        except (ValueError, TypeError, AttributeError):
-            raise HTTPException(403, "CANONICAL_ACTOR_AND_TENANT_REQUIRED") from None
+        _check_canonical_principal(request, principal)
         bundle = getattr(request.app.state, "persistence_bundle", None)
         if (bundle is None or getattr(bundle, "engine", None) is None
                 or getattr(bundle.engine, "dialect", None) != "postgresql"
@@ -475,7 +473,7 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
         return receipt
 
     @router.get("/match-cases/{match_case_id}/identity-context", operation_id="getCanonicalIdentityPlanningContext",
-                response_model=CanonicalIdentityPlanningContext, response_model_exclude_unset=True, responses=errors)
+                response_model=CanonicalIdentityPlanningContext, response_model_exclude_unset=True, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def planning_context(match_case_id: UUID, request: Request, response: Response,
                          include_listing_input: bool = False) -> dict:
         with _identity_errors(request):
@@ -514,7 +512,7 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
                     **({"listing_input": listing_input} if listing_input is not None else {})}
 
     @router.post("/match-cases/{match_case_id}/identity-decisions", operation_id="proposeCanonicalIdentity",
-                 response_model=CanonicalIdentityReceipt, status_code=201, responses=errors)
+                 response_model=CanonicalIdentityReceipt, status_code=201, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def propose(match_case_id: UUID, body: IdentityProposalRequest, request: Request, response: Response,
                 key: KeyHeader, if_match: VersionHeader) -> dict:
         with _identity_errors(request):
@@ -547,7 +545,7 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
                 "proposeCanonicalIdentity", body, permission, make)
 
     @router.post("/canonical-identity-decisions/{decision_id}/actions/review", operation_id="reviewCanonicalIdentity",
-                 response_model=CanonicalIdentityReceipt, responses=errors)
+                 response_model=CanonicalIdentityReceipt, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def review(decision_id: UUID, body: IdentityReviewRequest, request: Request, response: Response,
                key: KeyHeader, if_match: VersionHeader) -> dict:
         from modules.listing.application.identity_delivery import IdentityJobAdmission
@@ -616,18 +614,18 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
 
     @router.get("/match-cases/{match_case_id}/identity-decisions/receipt",
                 operation_id="getCanonicalIdentityProposalReceipt",
-                response_model=NativeReceiptCommitted[CanonicalIdentityReceipt] | NativeReceiptNotObserved, responses=errors)
+                response_model=NativeReceiptCommitted[CanonicalIdentityReceipt] | NativeReceiptNotObserved, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def proposal_receipt(match_case_id: UUID, request: Request, response: Response, key: KeyHeader):
         return observe_identity_receipt(request, response, key, str(match_case_id), "proposeCanonicalIdentity", 201)
 
     @router.get("/canonical-identity-decisions/{decision_id}/actions/review/receipt",
                 operation_id="getCanonicalIdentityReviewReceipt",
-                response_model=NativeReceiptCommitted[CanonicalIdentityReceipt] | NativeReceiptNotObserved, responses=errors)
+                response_model=NativeReceiptCommitted[CanonicalIdentityReceipt] | NativeReceiptNotObserved, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def review_receipt(decision_id: UUID, request: Request, response: Response, key: KeyHeader):
         return observe_identity_receipt(request, response, key, str(decision_id), "reviewCanonicalIdentity", 200)
 
     @router.get("/canonical-identity-decisions/{decision_id}", operation_id="getCanonicalIdentityDecision",
-                response_model=CanonicalIdentitySummary, responses=errors)
+                response_model=CanonicalIdentitySummary, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def read(decision_id: UUID, request: Request, response: Response) -> dict:
         with _identity_errors(request):
             principal, repo = context(request)
@@ -647,7 +645,7 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
                     "job_status": job["status"] if job else None, "job_version": job["version"] if job else None}
 
     @router.get("/canonical-identity-decisions/{decision_id}/job", operation_id="getCanonicalIdentityJob",
-                response_model=CanonicalIdentityJobSummary, responses=errors)
+                response_model=CanonicalIdentityJobSummary, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def read_job(decision_id: UUID, request: Request, response: Response) -> dict:
         from modules.listing.application.identity_job_controls import IdentityJobControls
 
@@ -661,7 +659,7 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
                 return controls.summary(selected)
 
     @router.post("/canonical-identity-decisions/{decision_id}/actions/cancel-job",
-                 operation_id="cancelCanonicalIdentityJob", response_model=CanonicalIdentityJobReceipt, responses=errors)
+                 operation_id="cancelCanonicalIdentityJob", response_model=CanonicalIdentityJobReceipt, responses=errors, openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS)
     def cancel_job(decision_id: UUID, body: IdentityJobCancelRequest, request: Request, response: Response,
                    key: KeyHeader, if_match: VersionHeader) -> dict:
         from modules.listing.application.identity_job_controls import IdentityJobControls

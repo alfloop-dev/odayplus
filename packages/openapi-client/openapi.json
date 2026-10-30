@@ -22888,6 +22888,26 @@
               "title": "Decision Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -22959,6 +22979,26 @@
             "schema": {
               "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
               "type": "string"
             }
           }
@@ -23044,6 +23084,26 @@
               "title": "If-Match",
               "type": "string"
             }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -23117,6 +23177,26 @@
               "title": "Idempotency-Key",
               "type": "string"
             }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -23174,6 +23254,26 @@
             "schema": {
               "format": "uuid",
               "title": "Decision Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
               "type": "string"
             }
           }
@@ -23262,6 +23362,26 @@
               ],
               "title": "Cursor"
             }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -23312,6 +23432,26 @@
               "minLength": 16,
               "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
               "type": "string"
             }
           }
@@ -23376,6 +23516,26 @@
               "minLength": 16,
               "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
               "type": "string"
             }
           }
@@ -23468,6 +23628,26 @@
               "title": "Include Evidence",
               "type": "boolean"
             }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -23543,6 +23723,26 @@
               "title": "If-Match",
               "type": "string"
             }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -23615,6 +23815,26 @@
               "minLength": 16,
               "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
               "type": "string"
             }
           }
@@ -23709,6 +23929,26 @@
               "title": "If-Match",
               "type": "string"
             }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -23792,6 +24032,26 @@
             "schema": {
               "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
               "type": "string"
             }
           }
@@ -23887,6 +24147,26 @@
               "title": "Parser Run Version",
               "type": "integer"
             }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -23979,6 +24259,26 @@
               "title": "Page Size",
               "type": "integer"
             }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -24070,6 +24370,26 @@
               "title": "Page Size",
               "type": "integer"
             }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -24143,6 +24463,26 @@
             "schema": {
               "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
               "type": "string"
             }
           }
@@ -24237,6 +24577,26 @@
             "schema": {
               "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
               "type": "string"
             }
           }
@@ -30636,6 +30996,26 @@
               "title": "Intake Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -30703,6 +31083,26 @@
             "schema": {
               "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
               "type": "string"
             }
           }
@@ -30793,6 +31193,26 @@
               "title": "Page Size",
               "type": "integer"
             }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -30852,6 +31272,26 @@
               "minLength": 16,
               "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
               "type": "string"
             }
           }
@@ -39868,6 +40308,26 @@
               "title": "Include Listing Input",
               "type": "boolean"
             }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -39939,6 +40399,26 @@
             "schema": {
               "pattern": "^W/\"[1-9][0-9]*\"$",
               "title": "If-Match",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
               "type": "string"
             }
           }
@@ -40036,6 +40516,26 @@
               "minLength": 16,
               "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
               "type": "string"
             }
           }

@@ -285,7 +285,18 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         assert not worker_errors, worker_errors
         assert browser.returncode == 0, browser_log[-12000:]
         assert metadata_counts["accepted"] > 0 and metadata_counts["rejected"] == 2
+        reload = json.loads((private_dir / "native-receipt-reload.json").read_text())
+        assert (reload["actor_id"], reload["tenant_id"]) == (ids["reviewer"], ids["tenant"])
+        assert reload["postCount"] == 1 and reload["whole_page_reload"] and reload["recovered_by_exact_GET"]
+        original = worker_bundle.assisted_intake_store.read_command_replay(ids["tenant"], ids["reviewer"],
+            "proposeCanonicalIdentity", reload["key"], reload["match_case_id"])
+        assert original is not None and original[1] == reload["receipt"] and original[2] == 201
         with database.connect() as connection:
+            assert connection.execute("SELECT count(*) FROM identity.match_decisions "
+                "WHERE tenant_id=%s AND match_decision_id=%s AND proposer_subject_id=%s",
+                (ids["tenant"], reload["receipt"]["decision_id"], ids["reviewer"])).fetchone()[0] == 1
+            assert connection.execute("SELECT count(*) FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s",
+                (ids["tenant"], reload["receipt"]["job_id"])).fetchone()[0] == 1
             sessions = connection.execute("SELECT count(*) FROM identity.sessions WHERE account_id=%s AND revoked_at IS NULL",
                 (ids["reviewer"],)).fetchone()[0]
             result = connection.execute("SELECT processing_state,resolved_listing_id FROM intake.intakes WHERE intake_id=%s",
@@ -322,6 +333,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             "service_identity_transport": "isolated-loopback-metadata-emulator", "cloud_run_iam_verified": False,
             "metadata_requests": dict(metadata_counts),
             "browser_returncode": browser.returncode, "active_real_sessions": sessions,
+            "committed_response_lost_whole_reload": reload,
             "resolved_listing_id": str(result[1]), "worker_errors": worker_errors, "manager_region_id": manager_region_id,
             "independent_reviewer_id": independent_reviewer, "real_reviewer_sessions": reviewer_sessions,
             "manual_context_appended": bool(append_property),

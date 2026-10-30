@@ -100,6 +100,7 @@ export type ShellCounts = {
 export type OperatorShellEnvelope = {
   meta: {
     generatedAt?: string;
+    tenantId?: string;
     correlationId?: string | null;
     role: ShellRole;
     counts: ShellCounts;
@@ -417,6 +418,8 @@ export function normalizeShellEnvelope(
       correlationId: isObject(payload.meta) && typeof payload.meta.correlationId === "string" ? payload.meta.correlationId : null,
       counts: normalizedCounts,
       generatedAt: isObject(payload.meta) && typeof payload.meta.generatedAt === "string" ? payload.meta.generatedAt : undefined,
+      tenantId: isObject(payload.meta) && typeof payload.meta.tenantId === "string"
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.meta.tenantId) ? payload.meta.tenantId : undefined,
       role,
       source: isObject(payload.meta) && typeof payload.meta.source === "string" ? payload.meta.source : undefined,
     },

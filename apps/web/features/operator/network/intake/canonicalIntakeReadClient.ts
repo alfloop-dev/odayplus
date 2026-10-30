@@ -192,6 +192,10 @@ async function read(context: CanonicalIntakeReadContext, path: string, signal: A
   const correlationId = crypto.randomUUID();
   headers.set("accept", "application/json");
   headers.set("X-Correlation-Id", correlationId);
+  if (context.receiptOwner) {
+    headers.set("If-Actor-Match", context.receiptOwner.subject);
+    headers.set("If-Tenant-Match", context.receiptOwner.tenantId);
+  }
   const reference = command ?? receiptReference;
   if (reference) {
     if (command && receiptReference || reference.expectedVersion !== undefined && !version(reference.expectedVersion)
@@ -365,6 +369,15 @@ export async function readCanonicalMatchCaseProperties(context: CanonicalIntakeR
 
 export type CanonicalMatchCaseCommand = { intakeId: string; expectedVersion: number; key: string;
   body: CreateMatchCaseRequest & { outcome: "POSSIBLE_MATCH" } };
+export type CanonicalMatchCaseReceiptReference = Pick<CanonicalMatchCaseCommand, "intakeId" | "expectedVersion" | "key"> & {
+  candidateCount: number; appendToCase?: { match_case_id: string; version: number };
+};
+export function canonicalMatchCaseReceiptReference(command: CanonicalMatchCaseCommand): CanonicalMatchCaseReceiptReference & { kind: "case" } {
+  const append = command.body.append_to_case;
+  return { kind: "case", intakeId: command.intakeId, expectedVersion: command.expectedVersion, key: command.key,
+    candidateCount: command.body.candidates.length,
+    ...(append ? { appendToCase: { match_case_id: append.match_case_id, version: append.version } } : {}) };
+}
 export async function submitCanonicalMatchCase(context: CanonicalIntakeReadContext, command: CanonicalMatchCaseCommand,
   signal: AbortSignal): Promise<MatchCaseReceipt> {
   if (!uuid(command.intakeId)) throw new CanonicalIntakeReadError(422, "CANONICAL_INTAKE_ID_INVALID", "");
@@ -372,15 +385,15 @@ export async function submitCanonicalMatchCase(context: CanonicalIntakeReadConte
   if (append && (!uuid(append.match_case_id) || !version(append.version)))
     throw new CanonicalIntakeReadError(422, "CANONICAL_COMMAND_INVALID", "");
   const v = await read(context, `/api/v1/intakes/${encodeURIComponent(command.intakeId)}/match-case`, signal, command);
-  return matchCaseReceipt(v, command);
+  return matchCaseReceipt(v, canonicalMatchCaseReceiptReference(command));
 }
 
-function matchCaseReceipt(v: unknown, command: CanonicalMatchCaseCommand): MatchCaseReceipt {
-  const append = command.body.append_to_case;
+function matchCaseReceipt(v: unknown, command: CanonicalMatchCaseReceiptReference): MatchCaseReceipt {
+  const append = command.appendToCase;
   if (!object(v) || v.intake_id !== command.intakeId || !uuid(v.match_case_id) || v.status !== "PENDING_REVIEW" || !version(v.version)
     || !version(v.intake_version) || v.intake_version < command.expectedVersion || v.intake_version > command.expectedVersion + 1
     || !uuid(v.audit_event_id) || !uuid(v.correlation_id) || !Array.isArray(v.candidate_ids)
-    || v.candidate_ids.length !== command.body.candidates.length || !v.candidate_ids.every(uuid)
+    || v.candidate_ids.length !== command.candidateCount || !v.candidate_ids.every(uuid)
     || new Set(v.candidate_ids).size !== v.candidate_ids.length)
     throw new CanonicalIntakeReadError(200, "CANONICAL_RESPONSE_INVALID", "");
   if (append && (v.match_case_id !== append.match_case_id || v.version !== append.version + 1 || v.intake_version !== command.expectedVersion))
@@ -388,7 +401,7 @@ function matchCaseReceipt(v: unknown, command: CanonicalMatchCaseCommand): Match
   return v as MatchCaseReceipt;
 }
 
-export async function readCanonicalMatchCaseReceipt(context: CanonicalIntakeReadContext, command: CanonicalMatchCaseCommand,
+export async function readCanonicalMatchCaseReceipt(context: CanonicalIntakeReadContext, command: CanonicalMatchCaseReceiptReference,
   signal: AbortSignal): Promise<CanonicalReceiptObservation<MatchCaseReceipt>> {
   if (!uuid(command.intakeId)) throw new CanonicalIntakeReadError(422, "CANONICAL_INTAKE_ID_INVALID", "");
   return readReceipt(context, `/api/v1/intakes/${encodeURIComponent(command.intakeId)}/match-case/receipt`, signal,
@@ -476,12 +489,14 @@ export type CanonicalListingProposal = ListingConfirmation | DuplicateProposal;
 export type CanonicalGraphProposal = MergeProposal | SplitProposal;
 export type CanonicalIdentityCommand = { path: string; key: string; expectedVersion: number;
   body: CanonicalListingProposal | CanonicalGraphProposal | IdentityReviewRequest; matchCaseId: string; decisionId?: string };
+export type CanonicalIdentityReceiptReference = Pick<CanonicalIdentityCommand, "key" | "expectedVersion" | "matchCaseId" | "decisionId">;
 
-function identityCommandPath(command: CanonicalIdentityCommand): string {
+function identityCommandPath(command: CanonicalIdentityReceiptReference & { path?: string }, receiptOnly = false): string {
   const path = command.decisionId === undefined
     ? `/api/v1/match-cases/${encodeURIComponent(command.matchCaseId)}/identity-decisions`
     : `/api/v1/canonical-identity-decisions/${encodeURIComponent(command.decisionId)}/actions/review`;
-  if (!uuid(command.matchCaseId) || command.decisionId !== undefined && !uuid(command.decisionId) || command.path !== path)
+  if (!uuid(command.matchCaseId) || command.decisionId !== undefined && !uuid(command.decisionId)
+    || (!receiptOnly || command.path !== undefined) && command.path !== path)
     throw new CanonicalIntakeReadError(422, "CANONICAL_COMMAND_INVALID", "");
   return path;
 }
@@ -494,7 +509,7 @@ export async function submitCanonicalIdentity(context: CanonicalIntakeReadContex
   return identityReceipt(v, command);
 }
 
-function identityReceipt(v: unknown, command: CanonicalIdentityCommand): CanonicalIdentityReceipt {
+function identityReceipt(v: unknown, command: CanonicalIdentityReceiptReference): CanonicalIdentityReceipt {
   if (!object(v) || !uuid(v.decision_id) || command.decisionId !== undefined && v.decision_id !== command.decisionId
     || v.match_case_id !== command.matchCaseId || !version(v.match_case_version) || !version(v.version)
     || !["PENDING_REVIEW", "APPROVED", "REJECTED", "EXECUTING", "EXECUTED", "FAILED"].includes(String(v.status))
@@ -504,9 +519,9 @@ function identityReceipt(v: unknown, command: CanonicalIdentityCommand): Canonic
   return v as CanonicalIdentityReceipt;
 }
 
-export async function readCanonicalIdentityReceipt(context: CanonicalIntakeReadContext, command: CanonicalIdentityCommand,
+export async function readCanonicalIdentityReceipt(context: CanonicalIntakeReadContext, command: CanonicalIdentityReceiptReference,
   signal: AbortSignal): Promise<CanonicalReceiptObservation<CanonicalIdentityReceipt>> {
-  return readReceipt(context, identityCommandPath(command) + "/receipt", signal, command,
+  return readReceipt(context, identityCommandPath(command, true) + "/receipt", signal, command,
     command.decisionId === undefined ? 201 : 200, (value) => identityReceipt(value, command));
 }
 
@@ -525,7 +540,7 @@ function urlReceipt(v: unknown): CanonicalIntakeReceipt {
   return v as CanonicalIntakeReceipt;
 }
 
-export async function readCanonicalURLReceipt(context: CanonicalIntakeReadContext, command: CanonicalURLCommand,
+export async function readCanonicalURLReceipt(context: CanonicalIntakeReadContext, command: Pick<CanonicalURLCommand, "key">,
   signal: AbortSignal): Promise<CanonicalReceiptObservation<CanonicalIntakeReceipt>> {
   return readReceipt(context, "/api/v1/canonical-intakes/submissions/receipt", signal, command, 201, urlReceipt);
 }
@@ -538,7 +553,7 @@ export async function submitCanonicalAssistedEntry(context: CanonicalIntakeReadC
   return assistedEntryReceipt(v, command);
 }
 
-function assistedEntryReceipt(v: unknown, command: CanonicalAssistedEntryCommand): CanonicalIntakeAssistedEntryRequestReceipt {
+function assistedEntryReceipt(v: unknown, command: Pick<CanonicalAssistedEntryCommand, "intakeId">): CanonicalIntakeAssistedEntryRequestReceipt {
   if (!object(v) || v.intake_id !== command.intakeId || v.status !== "REQUESTED" || !version(v.version)
     || ![v.request_id, v.correlation_id, v.audit_event_id, v.outbox_event_id].every(uuid)
     || !timestamp(v.requested_at)
@@ -548,9 +563,47 @@ function assistedEntryReceipt(v: unknown, command: CanonicalAssistedEntryCommand
   return v as CanonicalIntakeAssistedEntryRequestReceipt;
 }
 
-export async function readCanonicalAssistedEntryReceipt(context: CanonicalIntakeReadContext, command: CanonicalAssistedEntryCommand,
+export async function readCanonicalAssistedEntryReceipt(context: CanonicalIntakeReadContext, command: Pick<CanonicalAssistedEntryCommand, "key" | "intakeId" | "expectedVersion">,
   signal: AbortSignal): Promise<CanonicalReceiptObservation<CanonicalIntakeAssistedEntryRequestReceipt>> {
   if (!uuid(command.intakeId)) throw new CanonicalIntakeReadError(422, "CANONICAL_INTAKE_ID_INVALID", "");
   return readReceipt(context, `/api/v1/canonical-intakes/${encodeURIComponent(command.intakeId)}/assisted-entry-completions/receipt`,
     signal, command, 202, (value) => assistedEntryReceipt(value, command));
+}
+
+// References contain no command input, credentials, headers or authority.
+// Both captured and restored lookups use the original typed receipt readers.
+export type CanonicalCommandReceiptReference = { kind: "url"; key: string }
+  | ({ kind: "case" } & CanonicalMatchCaseReceiptReference)
+  | ({ kind: "identity" } & CanonicalIdentityReceiptReference)
+  | ({ kind: "manual" } & Pick<CanonicalAssistedEntryCommand, "key" | "intakeId" | "expectedVersion">);
+export type CanonicalCommandReceipt = CanonicalIntakeReceipt | MatchCaseReceipt
+  | CanonicalIdentityReceipt | CanonicalIntakeAssistedEntryRequestReceipt;
+
+export function parseCanonicalCommandReceiptReference(value: unknown): CanonicalCommandReceiptReference | null {
+  if (!object(value) || typeof value.key !== "string" || !/^[A-Za-z0-9._:-]{16,128}$/.test(value.key)) return null;
+  const only = (keys: string[]) => Object.keys(value).every((key) => ["kind", "key", ...keys].includes(key));
+  if (value.kind === "url" && only([])) return value as CanonicalCommandReceiptReference;
+  if (!version(value.expectedVersion)) return null;
+  if (value.kind === "identity" && only(["expectedVersion", "matchCaseId", "decisionId"])
+    && uuid(value.matchCaseId) && (value.decisionId === undefined || uuid(value.decisionId))) return value as CanonicalCommandReceiptReference;
+  if (!uuid(value.intakeId)) return null;
+  if (value.kind === "manual" && only(["intakeId", "expectedVersion"])) return value as CanonicalCommandReceiptReference;
+  if (value.kind === "case" && only(["intakeId", "expectedVersion", "candidateCount", "appendToCase"])
+    && typeof value.candidateCount === "number" && Number.isSafeInteger(value.candidateCount)
+    && value.candidateCount >= 1 && value.candidateCount <= 100
+    && (value.appendToCase === undefined || object(value.appendToCase) && uuid(value.appendToCase.match_case_id)
+      && version(value.appendToCase.version) && Object.keys(value.appendToCase).every((key) => ["match_case_id", "version"].includes(key))))
+    return value as CanonicalCommandReceiptReference;
+  return null;
+}
+
+export async function readCanonicalCommandReceipt(context: CanonicalIntakeReadContext, reference: CanonicalCommandReceiptReference,
+  signal: AbortSignal): Promise<CanonicalReceiptObservation<CanonicalCommandReceipt>> {
+  if (!parseCanonicalCommandReceiptReference(reference)) throw new CanonicalIntakeReadError(422, "CANONICAL_COMMAND_INVALID", "");
+  switch (reference.kind) {
+    case "url": return readCanonicalURLReceipt(context, reference, signal);
+    case "case": return readCanonicalMatchCaseReceipt(context, reference, signal);
+    case "identity": return readCanonicalIdentityReceipt(context, reference, signal);
+    case "manual": return readCanonicalAssistedEntryReceipt(context, reference, signal);
+  }
 }

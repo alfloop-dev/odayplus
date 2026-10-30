@@ -6,7 +6,8 @@ import {
   type Page,
   type TestInfo,
 } from "@playwright/test";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import { createPgNavigationControl, openPgRadar, openPgScenario, PG_WEB, type PgScenario } from "./_intakeScorePg";
 
@@ -21,7 +22,8 @@ import {
  * Every canonical flow uses the mounted Operator Console and the real FastAPI
  * service. Canonical promotion cases use isolated PostgreSQL, explicit
  * synthetic admission/model inputs, and the actual worker. Source revocation
- * exercises the real admission failure gate. No Playwright route is stubbed.
+ * exercises the real admission failure gate. The native reload control drops
+ * one actual committed response; it never fabricates a server result.
  */
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
@@ -71,10 +73,21 @@ async function loginNativeSession(page: Page, account: { username: string; passw
 }
 
 async function selectNativeIntake(page: Page, intakeId: string, refresh = false) {
+  if (refresh) {
+    // The selected durable detail owns its original refresh control. It does
+    // not reopen or refresh the inbox after a whole-page reload.
+    const fresh = page.waitForResponse((candidate) => candidate.request().method() === "GET"
+      && new URL(candidate.url()).pathname === `/api/v1/canonical-intakes/${intakeId}`);
+    await page.getByTestId("intake-refresh-button").click();
+    const response = await fresh;
+    expect(response.status(), await response.text()).toBe(200);
+    expect((await response.json()).intake_id).toBe(intakeId);
+    return;
+  }
   const listing = () => page.waitForResponse((candidate) => candidate.request().method() === "GET"
     && new URL(candidate.url()).pathname === "/api/v1/canonical-intakes");
   const pending = listing();
-  await page.getByRole("button", { name: refresh ? "重新讀取" : "選取收件／比對案件", exact: true }).click();
+  await page.getByRole("button", { name: "選取收件／比對案件", exact: true }).click();
   let response = await pending;
   if (response.status() === 409) {
     // Exercise the existing visible refresh after a real snapshot conflict;
@@ -234,15 +247,80 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
     await page.getByLabel("確認方式").selectOption("CREATE");
     await page.getByLabel(/決策／覆核原因/).fill("已核對原始解析欄位與實際案件，確認這筆隔離測試收件為新物件。");
     await page.getByRole("checkbox", { name: /我已閱讀上述影響/ }).check();
-    const submitted = page.waitForResponse((response) => response.request().method() === "POST"
-      && new URL(response.url()).pathname === `/api/v1/match-cases/${caseId}/identity-decisions`);
+    const commandPath = `/api/v1/match-cases/${caseId}/identity-decisions`;
+    let recordCommitted!: (result: { receipt: Record<string, unknown>; capturedKey: string }) => void;
+    const committed = new Promise<{ receipt: Record<string, unknown>; capturedKey: string }>((resolve) => { recordCommitted = resolve; });
+    let postCount = 0;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === commandPath) postCount += 1;
+    });
+    await page.route("**" + commandPath, async (route) => {
+      expect(route.request().method()).toBe("POST");
+      const headers = route.request().headers();
+      const capturedKey = headers["idempotency-key"];
+      expect(capturedKey).toBeTruthy();
+      expect(headers["if-actor-match"]).toBe(input.actor_id);
+      expect(headers["if-tenant-match"]).toBe(input.tenant_id);
+      // The real BFF/API/SQL command completes before its browser response is
+      // lost. No receipt or terminal business row is inserted by this control.
+      const upstream = await route.fetch();
+      expect(upstream.status(), await upstream.text()).toBe(201);
+      const receipt = await upstream.json();
+      await route.abort("failed");
+      recordCommitted({ receipt, capturedKey });
+    }, { times: 1 });
     await page.getByRole("button", { name: "確認為新物件", exact: true }).click();
-    const response = await submitted;
-    expect(response.status(), await response.text()).toBe(201);
-    const receipt = await response.json();
+    await expect(page.getByText(/結果尚未確認；重試會沿用同一請求/)).toBeVisible();
+    const { receipt, capturedKey } = await committed;
     expect(receipt.job_status).toBe("QUEUED");
-    await expect(page.getByText(/已收到正式回執/)).toBeVisible();
-    await expect(page.getByRole("region", { name: "已落庫物件" })).toHaveCount(0);
+    const referenceBefore = await page.evaluate(() => Object.entries(sessionStorage)
+      .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")));
+    expect(referenceBefore).toHaveLength(1);
+    expect(referenceBefore[0][1]).toContain(capturedKey);
+    expect(referenceBefore[0][1]).not.toContain("已核對原始解析欄位");
+    const exactPath = commandPath + "/receipt";
+    const restored = page.waitForResponse((response) => response.request().method() === "GET"
+      && new URL(response.url()).pathname === exactPath);
+    await page.reload();
+    let observedReceipt = await restored;
+    const initialReceiptStatus = observedReceipt.status();
+    if (initialReceiptStatus === 409) {
+      expect(await observedReceipt.json()).toEqual({ detail: "CANONICAL_MATCH_CASE_CONCURRENT_CHANGE" });
+      await expect(page.getByRole("button", { name: "查詢原操作回執", exact: true })).toBeEnabled();
+      await expect(page.getByRole("button", { name: "重試原操作", exact: true })).toHaveCount(0);
+      expect(postCount).toBe(1);
+      expect(await page.evaluate(() => Object.entries(sessionStorage)
+        .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")))).toEqual(referenceBefore);
+      expect(observedReceipt.request().headers()["idempotency-key"]).toBe(capturedKey);
+      // A concurrent worker update is not a missing receipt. Wait for the
+      // actual worker, then use the existing visible read-only retry once.
+      await expect.poll(async () => {
+        const fresh = await page.request.get(`/api/v1/canonical-intakes/${input.intake_id}`);
+        expect(fresh.status()).toBe(200);
+        return (await fresh.json()).processing_state;
+      }, { timeout: 60_000 }).toBe("READY");
+      const retried = page.waitForResponse((response) => response.request().method() === "GET"
+        && new URL(response.url()).pathname === exactPath);
+      await page.getByRole("button", { name: "查詢原操作回執", exact: true }).click();
+      observedReceipt = await retried;
+    }
+    expect(observedReceipt.status(), await observedReceipt.text()).toBe(200);
+    expect(await observedReceipt.json()).toMatchObject({ observation: "RECEIPT_COMMITTED",
+      original_http_status: 201, receipt });
+    const lookupHeaders = observedReceipt.request().headers();
+    expect(lookupHeaders["idempotency-key"]).toBe(capturedKey);
+    expect(lookupHeaders["if-actor-match"]).toBe(input.actor_id);
+    expect(lookupHeaders["if-tenant-match"]).toBe(input.tenant_id);
+    expect(observedReceipt.request().postData()).toBeNull();
+    await expect(page.getByText(/原操作已收到回執/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "重試原操作", exact: true })).toHaveCount(0);
+    expect(postCount).toBe(1);
+    await page.screenshot({ path: test.info().outputPath("native-restored-exact-receipt.png"), fullPage: true });
+    writeFileSync(join(dirname(inputPath!), "native-receipt-reload.json"), JSON.stringify({
+      actor_id: input.actor_id, tenant_id: input.tenant_id, match_case_id: caseId,
+      key: capturedKey, receipt, postCount, whole_page_reload: true, recovered_by_exact_GET: true,
+      initial_receipt_status: initialReceiptStatus, manual_read_retry: initialReceiptStatus === 409,
+    }), { mode: 0o600 });
     await expect.poll(async () => {
       const fresh = await page.request.get(`/api/v1/canonical-intakes/${input.intake_id}`);
       expect(fresh.status()).toBe(200);

@@ -4,6 +4,9 @@ export type CanonicalIntakeReadContext = {
   fetchImpl: typeof fetch;
   contextKey: string;
   headers: HeadersInit;
+  // Namespace for non-authoritative receipt references. Console supplies the
+  // freshly verified account and bootstrap tenant; every GET reauthorizes.
+  receiptOwner?: { subject: string; tenantId: string; roleId: string };
 };
 
 /** Bind HTTP and deferred bodies to the caller's existing authenticated lease.

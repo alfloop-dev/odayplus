@@ -450,11 +450,33 @@ def test_exact_receipt_read_restores_original_submission_without_repeating_comma
     body = command(intake_method=method)
     if method == "URL":
         body["original_url"] = "https://synthetic.example/receipt-private?source=synthetic"
-    headers = {"Idempotency-Key": "synthetic-exact-submission-receipt-001"}
+    tenant = caller["principal"].tenant_id
+    actor = caller["principal"].subject_id
+    headers = {"Idempotency-Key": "synthetic-exact-submission-receipt-001", "If-Tenant-Match": tenant, "If-Actor-Match": actor}
     created = client.post("/api/v1/canonical-intakes", json=body, headers=headers)
     assert created.status_code == 201, created.text
     original = created.json()
     before = snapshot(canonical_graph)
+    for expected, status in [(str(uuid4()), 409), ("malformed-tenant", 422)]:
+        denied = client.get("/api/v1/canonical-intakes/submissions/receipt", headers={**headers, "If-Tenant-Match": expected})
+        assert denied.status_code == status and "receipt" not in denied.json(), denied.text
+        assert snapshot(canonical_graph) == before
+    for expected, status in [(str(uuid4()), 409), ("malformed-actor", 422)]:
+        denied = client.get("/api/v1/canonical-intakes/submissions/receipt", headers={**headers, "If-Actor-Match": expected})
+        assert denied.status_code == status and "receipt" not in denied.json(), denied.text
+        assert snapshot(canonical_graph) == before
+    for header, value in [("If-Actor-Match", actor), ("If-Tenant-Match", tenant)]:
+        duplicate = client.get("/api/v1/canonical-intakes/submissions/receipt",
+            headers=[("Idempotency-Key", headers["Idempotency-Key"]), (header, value), (header, value)])
+        assert duplicate.status_code == 422 and snapshot(canonical_graph) == before
+    principal = caller["principal"]
+    caller["principal"] = replace(principal, scope=replace(principal.scope, tenant_id=str(uuid4())))
+    changed = client.get("/api/v1/canonical-intakes/submissions/receipt", headers=headers)
+    assert changed.status_code == 409 and changed.json() == {"detail": "CANONICAL_TENANT_CONTEXT_CHANGED"}
+    caller["principal"] = principal
+    rejected = client.post("/api/v1/canonical-intakes", json=body,
+        headers={**headers, "Idempotency-Key": headers["Idempotency-Key"] + ":foreign", "If-Tenant-Match": str(uuid4())})
+    assert rejected.status_code == 409 and snapshot(canonical_graph) == before
     response = client.get("/api/v1/canonical-intakes/submissions/receipt", headers=headers)
     assert response.status_code == 200, response.text
     observed = response.json()
@@ -466,9 +488,40 @@ def test_exact_receipt_read_restores_original_submission_without_repeating_comma
     assert snapshot(canonical_graph) == before
     # A manager's current read grant does not make a different actor's key his.
     caller["principal"] = replace(caller["principal"], subject_id=str(uuid4()), roles=frozenset({Role.SITE_REVIEWER}))
-    absent = client.get("/api/v1/canonical-intakes/submissions/receipt", headers=headers)
+    absent = client.get("/api/v1/canonical-intakes/submissions/receipt", headers={"Idempotency-Key": headers["Idempotency-Key"]})
     assert absent.status_code == 200, absent.text
     assert absent.json()["observation"] == "NOT_OBSERVED" and "receipt" not in absent.json()
+    assert snapshot(canonical_graph) == before
+
+
+def test_exact_receipt_refuses_actor_aba_even_when_both_actors_submitted_the_same_key(canonical_graph, native_api):
+    _, ids, _, _ = canonical_graph
+    client, caller, _ = native_api
+    actor_a = caller["principal"]
+    actor_b = replace(actor_a, subject_id=ids["reviewer"])
+    key = "synthetic-actor-aba-exact-receipt-001"
+    headers = {"Idempotency-Key": key, "If-Tenant-Match": actor_a.tenant_id}
+    receipts = []
+    # Use the original fixture's synthetic authenticated-principal seam, with
+    # two actual HTTP commands and durable receipts, never inserted terminal rows.
+    for principal in (actor_a, actor_b):
+        caller["principal"] = principal
+        response = client.post("/api/v1/canonical-intakes", json=command(), headers=headers)
+        assert response.status_code == 201, response.text
+        receipts.append(response.json())
+    assert receipts[0]["intake_id"] != receipts[1]["intake_id"]
+    before = snapshot(canonical_graph)
+    denied = client.get("/api/v1/canonical-intakes/submissions/receipt",
+        headers={**headers, "If-Actor-Match": actor_a.subject_id})
+    assert denied.status_code == 409 and denied.json() == {"detail": "CANONICAL_ACTOR_CONTEXT_CHANGED"}
+    caller["principal"] = actor_a
+    restored = client.get("/api/v1/canonical-intakes/submissions/receipt",
+        headers={**headers, "If-Actor-Match": actor_a.subject_id})
+    assert restored.status_code == 200 and restored.json()["receipt"] == receipts[0]
+    caller["principal"] = actor_b
+    other = client.get("/api/v1/canonical-intakes/submissions/receipt",
+        headers={**headers, "If-Actor-Match": actor_b.subject_id})
+    assert other.status_code == 200 and other.json()["receipt"] == receipts[1]
     assert snapshot(canonical_graph) == before
 
 

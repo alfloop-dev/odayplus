@@ -650,9 +650,12 @@ export function OperatorConsole({
     && bootstrapAccount.current !== null && bootstrapPersona.current?.roleId === activeRoleId
     && shellEnvelope.navigation.allowedWorkspaces.includes("network")
     && shellEnvelope.navigation.allowedTabs?.network?.some((tab) => tab === "areas" || tab === "radar")
-    ? JSON.stringify([bootstrapSequence.current, bootstrapPersona.current, shellEnvelope.navigation.allowedTabs.network]) : null;
+    ? JSON.stringify([bootstrapSequence.current, bootstrapPersona.current, shellEnvelope.meta.tenantId, shellEnvelope.navigation.allowedTabs.network]) : null;
   const canonicalIntakeReadContext = useMemo(() => canonicalCommandScope === null ? null : {
     contextKey: canonicalCommandScope, headers: operatorSecurityHeaders(activeRoleId), fetchImpl: fetch,
+    ...(bootstrapAccount.current && shellEnvelope.meta.tenantId ? { receiptOwner: {
+      subject: bootstrapAccount.current, tenantId: shellEnvelope.meta.tenantId, roleId: activeRoleId,
+    } } : {}),
   }, [activeRoleId, canonicalCommandScope]);
 
   useEffect(() => {

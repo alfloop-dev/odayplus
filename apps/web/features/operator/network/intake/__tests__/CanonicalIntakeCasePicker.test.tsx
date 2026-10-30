@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import { StrictMode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalIntakeCasePicker as CasePicker, CanonicalIntakeCommandStatus } from "../CanonicalIntakeCasePicker";
@@ -61,6 +62,164 @@ const select = async (n: number) => {
 };
 const readAgain = () => screen.queryByTestId("intake-refresh-button") ?? screen.getByRole("button", { name: "重新讀取" });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+const receiptOwner = { subject: id(11), tenantId: id(10), roleId: "expansion-manager" };
+const reloadReceipt = () => ({ intake_id: id(95), intake_method: "URL", processing_state: "SUBMITTED", version: 1,
+  submitted_at: "2026-10-19T08:00:00Z", correlation_id: id(96), transition_id: id(97), audit_event_id: id(98), outbox_event_id: id(99) });
+async function captureURLForProviderReplacement() {
+  window.sessionStorage.clear();
+  let originalKey = "";
+  const context = entryContext("AWAITING_SOURCE_AUTHORIZATION", (init) => {
+    originalKey = new Headers(init.headers).get("idempotency-key")!;
+    throw new TypeError("lost URL response");
+  });
+  context.receiptOwner = receiptOwner;
+  const view = render(<CanonicalIntakeCasePicker context={context} />); open();
+  fireEvent.click(await screen.findByRole("button", { name: "從網址建立正式收件" }));
+  fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://source.example/confidential-original-input" } });
+  fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
+  fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "confidential original reason" } });
+  fireEvent.click(screen.getByTestId("intake-submit-button"));
+  await screen.findByRole("button", { name: "重試同一請求" });
+  expect(posts(context)).toHaveLength(1);
+  view.unmount();
+  return { originalKey, context };
+}
+
+function contextForRestoredReference(owner = receiptOwner, lookup = () => json({ observation: "RECEIPT_COMMITTED",
+  observed_at: "2026-10-29T07:00:00Z", original_http_status: 201, receipt: reloadReceipt() })) {
+  const context = entryContext("AWAITING_SOURCE_AUTHORIZATION", () => { throw new Error("Reference restoration must not POST"); });
+  const original = context.fetchImpl;
+  context.receiptOwner = { ...owner };
+  context.fetchImpl = vi.fn((input, init) => String(input) === "/api/v1/canonical-intakes/submissions/receipt"
+    ? Promise.resolve(lookup()) : original(input, init));
+  return context;
+}
+
+describe("sole native owner reference after complete provider replacement", () => {
+  afterEach(() => window.sessionStorage.clear());
+
+  it("restores the exact URL receipt after the old provider and sender are destroyed", async () => {
+    const { originalKey } = await captureURLForProviderReplacement();
+    const restored = contextForRestoredReference();
+    render(<CanonicalIntakeCasePicker context={restored} />);
+    expect(await screen.findByText(/原操作已收到回執/)).toHaveTextContent(id(98));
+    const calls = vi.mocked(restored.fetchImpl).mock.calls.filter(([path]) => String(path).endsWith("submissions/receipt"));
+    expect(calls).toHaveLength(1);
+    const init = calls[0][1];
+    expect(new Headers(init?.headers).get("idempotency-key")).toBe(originalKey);
+    expect(new Headers(init?.headers).get("if-tenant-match")).toBe(receiptOwner.tenantId);
+    expect(new Headers(init?.headers).get("if-actor-match")).toBe(receiptOwner.subject);
+    expect(init?.body).toBeUndefined(); expect(init?.method).toBeUndefined();
+    expect(new Headers(init?.headers).has("if-match")).toBe(false);
+    expect(posts(restored)).toHaveLength(0);
+    const saved = JSON.stringify(Object.entries(window.sessionStorage));
+    expect(saved).toContain(originalKey);
+    for (const forbidden of ["confidential-original-input", "confidential original reason", "body", "Authorization", "X-Operator-Role"])
+      expect(saved).not.toContain(forbidden);
+    fireEvent.click(screen.getByRole("button", { name: "收起原操作回執" }));
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it("restores the original reference across StrictMode effect replay without a sender", async () => {
+    const { originalKey } = await captureURLForProviderReplacement();
+    const restored = contextForRestoredReference();
+    render(<StrictMode><CanonicalIntakeCasePicker context={restored} /></StrictMode>);
+    expect(await screen.findByText(/原操作已收到回執/)).toHaveTextContent(id(98));
+    const reads = vi.mocked(restored.fetchImpl).mock.calls.filter(([path]) => String(path).endsWith("submissions/receipt"));
+    expect(reads.length).toBeGreaterThan(0);
+    for (const [, init] of reads) {
+      expect(new Headers(init?.headers).get("idempotency-key")).toBe(originalKey);
+      expect(init?.body).toBeUndefined(); expect(init?.method).toBeUndefined();
+    }
+    expect(posts(restored)).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: "重試原操作" })).not.toBeInTheDocument();
+  });
+
+  it("keeps input editable and sends nothing when reference storage fails before POST", async () => {
+    const context = entryContext("AWAITING_SOURCE_AUTHORIZATION", () => json(reloadReceipt(), 201));
+    context.receiptOwner = receiptOwner;
+    render(<CanonicalIntakeCasePicker context={context} />); open();
+    fireEvent.click(await screen.findByRole("button", { name: "從網址建立正式收件" }));
+    fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://source.example/unsent-input" } });
+    fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "original unsent reason" } });
+    const unavailable = vi.spyOn(window.sessionStorage, "setItem").mockImplementation(() => { throw new DOMException("Quota", "QuotaExceededError"); });
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    await screen.findByRole("alert");
+    expect(unavailable).toHaveBeenCalledOnce();
+    expect(posts(context)).toHaveLength(0);
+    expect(screen.getByTestId("intake-url-input")).toHaveValue("https://source.example/unsent-input");
+    expect(screen.getByLabelText("送件原因")).toHaveValue("original unsent reason");
+    unavailable.mockRestore();
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    await screen.findByText(/正式收件 .*已送出/);
+    expect(posts(context)).toHaveLength(1);
+  });
+
+  it("keeps the guarded provider mounted and retains its reference when storage reads are denied", async () => {
+    const { originalKey } = await captureURLForProviderReplacement();
+    const context = contextForRestoredReference();
+    const storage = window.sessionStorage;
+    const unavailable = vi.spyOn(storage, "getItem").mockImplementation(() => { throw new DOMException("Denied", "SecurityError"); });
+    expect(() => render(<CanonicalIntakeCommandProvider context={context} createAuthenticatedReadGuard={() => async () => true}>
+      {(binding) => binding ? <><CasePicker context={binding} /><CanonicalIntakeCommandStatus /></> : null}
+    </CanonicalIntakeCommandProvider>)).not.toThrow();
+    expect(screen.getByRole("region", { name: "先前收件操作" })).toBeVisible();
+    expect(vi.mocked(context.fetchImpl)).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "重試原操作" })).not.toBeInTheDocument();
+    unavailable.mockRestore();
+    expect(JSON.stringify(Object.entries(storage))).toContain(originalKey);
+  });
+
+  it.each([403, 409, 503, "absent", "malformed"] as const)("retains a reference-only %s outcome without exposing POST retry", async (outcome) => {
+    const { originalKey } = await captureURLForProviderReplacement();
+    const restored = contextForRestoredReference(receiptOwner, () => outcome === "absent"
+      ? json({ observation: "NOT_OBSERVED", observed_at: "2026-10-29T07:00:00Z" }) : outcome === "malformed"
+        ? json({ observation: "RECEIPT_COMMITTED", observed_at: "2026-10-29T07:00:00Z", original_http_status: 201, receipt: {} })
+        : json({ detail: "current authority or service unavailable" }, outcome));
+    render(<CanonicalIntakeCasePicker context={restored} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "查詢原操作回執" })).toBeEnabled());
+    expect(screen.queryByRole("button", { name: "重試原操作" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "收起原操作回執" })).not.toBeInTheDocument();
+    expect(JSON.stringify(Object.entries(window.sessionStorage))).toContain(originalKey);
+    expect(posts(restored)).toHaveLength(0);
+  });
+
+  it("rechecks the same reference with the original GET control after a concurrent-change refusal", async () => {
+    const { originalKey } = await captureURLForProviderReplacement();
+    let reads = 0;
+    const restored = contextForRestoredReference(receiptOwner, () => ++reads === 1
+      ? json({ detail: "CANONICAL_MATCH_CASE_CONCURRENT_CHANGE" }, 409)
+      : json({ observation: "RECEIPT_COMMITTED", observed_at: "2026-10-29T07:00:00Z",
+        original_http_status: 201, receipt: reloadReceipt() }));
+    render(<CanonicalIntakeCasePicker context={restored} />);
+    await screen.findByText(/HTTP 409/);
+    expect(JSON.stringify(Object.entries(window.sessionStorage))).toContain(originalKey);
+    expect(screen.queryByRole("button", { name: "重試原操作" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查詢原操作回執" }));
+    await screen.findByText(/原操作已收到回執/);
+    const lookups = vi.mocked(restored.fetchImpl).mock.calls.filter(([path]) => String(path).endsWith("submissions/receipt"));
+    expect(lookups).toHaveLength(2);
+    for (const [, init] of lookups) {
+      expect(new Headers(init?.headers).get("idempotency-key")).toBe(originalKey);
+      expect(init?.body).toBeUndefined(); expect(init?.method).toBeUndefined();
+    }
+    expect(posts(restored)).toHaveLength(0);
+  });
+
+  it.each([{ ...receiptOwner, subject: "different-account" }, { ...receiptOwner, tenantId: id(999) },
+    { ...receiptOwner, roleId: "site-reviewer" }])("isolates references from a different verified scope %j", async (owner) => {
+    const { originalKey } = await captureURLForProviderReplacement();
+    const restored = contextForRestoredReference(owner);
+    render(<CanonicalIntakeCasePicker context={restored} />);
+    await screen.findByRole("button", { name: "選取收件／比對案件" });
+    expect(screen.queryByRole("region", { name: "先前收件操作" })).not.toBeInTheDocument();
+    expect(vi.mocked(restored.fetchImpl).mock.calls.some(([path]) => String(path).endsWith("submissions/receipt"))).toBe(false);
+    expect(JSON.stringify(Object.entries(window.sessionStorage))).toContain(originalKey);
+    expect(posts(restored)).toHaveLength(0);
+  });
+});
 
 describe("native Intake and case selection", () => {
   it("restores exact URL selections across history and refuses late detail JSON from a departed selection", async () => {

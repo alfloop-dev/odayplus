@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime
+from uuid import uuid4
 
 import pytest
 
@@ -433,7 +434,7 @@ def test_exact_receipt_read_uses_original_manual_envelope_without_fields_or_posi
         assert cancelled.status_code == 200 and cancelled.json()["status"] == "WITHDRAWN", cancelled.text
     recheck, _, _, _, result, _ = assisted
     start = recheck[0][0]
-    client, _, store = start[1]
+    client, caller, store = start[1]
     retire_settings(monkeypatch)
     def no_legacy(*args, **kwargs):
         raise AssertionError("Exact native manual receipt must not use legacy refresh/flush")
@@ -441,7 +442,19 @@ def test_exact_receipt_read_uses_original_manual_envelope_without_fields_or_posi
     monkeypatch.setattr(store, "flush", no_legacy)
     before = snapshot(assisted)
     path = f'/api/v1/canonical-intakes/{result["intake_id"]}/assisted-entry-completions/receipt'
-    observed = client.get(path, headers={"Idempotency-Key": "synthetic-assisted-human-request-001"})
+    for expected, denied_status in [(str(uuid4()), 409), ("malformed-tenant", 422)]:
+        denied = client.get(path, headers={"Idempotency-Key": "synthetic-assisted-human-request-001", "If-Tenant-Match": expected})
+        assert denied.status_code == denied_status and "receipt" not in denied.json(), denied.text
+        assert snapshot(assisted) == before
+    actor, tenant = caller["principal"].subject_id, caller["principal"].tenant_id
+    for expected, denied_status in [(str(uuid4()), 409), ("malformed-actor", 422)]:
+        denied = client.get(path, headers={"Idempotency-Key": "synthetic-assisted-human-request-001", "If-Actor-Match": expected})
+        assert denied.status_code == denied_status and "receipt" not in denied.json(), denied.text
+        assert snapshot(assisted) == before
+    for header, value in [("If-Actor-Match", actor), ("If-Tenant-Match", tenant)]:
+        duplicate = client.get(path, headers=[("Idempotency-Key", "synthetic-assisted-human-request-001"), (header, value), (header, value)])
+        assert duplicate.status_code == 422 and snapshot(assisted) == before
+    observed = client.get(path, headers={"Idempotency-Key": "synthetic-assisted-human-request-001", "If-Tenant-Match": tenant, "If-Actor-Match": actor})
     assert observed.status_code == 200, observed.text
     assert observed.json()["observation"] == "RECEIPT_COMMITTED"
     assert observed.json()["original_http_status"] == 202 and observed.json()["receipt"] == receipt
