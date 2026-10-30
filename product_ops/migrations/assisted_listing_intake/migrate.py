@@ -17,6 +17,11 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
+from pydantic import ValidationError
+
+from modules.external_data.application.assisted_intake import content_fingerprint
+from modules.listing.application.native_intake_assisted_entry_input import NativeAssistedEntryFields
+from modules.listing.application.native_intake_url_identity import normalize_native_intake_url
 from shared.infrastructure.persistence import assisted_listing_intake as intake_schema
 
 logger = logging.getLogger("assisted-listing-intake-migration")
@@ -316,6 +321,38 @@ class IntakeMigrator:
                 columns = [col[0] for col in cur.description]
                 return [dict(zip(columns, row, strict=False)) for row in cur.fetchall()]
             return []
+
+    def _native_revision_errors(self, tenant_id: str, listing_id: str) -> list[dict[str, str]]:
+        """Check the real mapped target before resume or candidate reconciliation.
+
+        Old migration receipts prove counts only. They cannot certify an older
+        partial revision or permit overwriting that immutable historical row.
+        """
+        rows = self._execute(
+            "SELECT r.effective_values,r.material_fingerprint FROM expansion.listings l "
+            "JOIN expansion.listing_revisions r ON r.listing_revision_id=l.current_revision_id "
+            "AND r.listing_id=l.listing_id AND r.tenant_id=l.tenant_id "
+            "WHERE l.listing_id=%s AND l.tenant_id=%s",
+            (listing_id, tenant_id), tenant_id=tenant_id,
+        )
+        if not rows:
+            return [{"field": "current_revision", "code": "NATIVE_CURRENT_REVISION_REQUIRED"}]
+        row = rows[0]
+        try:
+            values = row["effective_values"]
+            # PostgreSQL's driver has already decoded JSONB. A scalar string
+            # must remain a string and fail the same native typed contract.
+            # Only the existing SQLite adapter represents a JSON object as text.
+            values = json.loads(values) if self._is_sqlite() and isinstance(values, str) else values
+            material = NativeAssistedEntryFields.model_validate(values).values()
+        except ValidationError as exc:
+            return [{"field": ".".join(map(str, error["loc"])), "code": error["type"]}
+                    for error in exc.errors(include_url=False, include_input=False)]
+        except json.JSONDecodeError:
+            return [{"field": "effective_values", "code": "NATIVE_TYPED_MATERIAL_REQUIRED"}]
+        if row["material_fingerprint"].strip() != content_fingerprint(material):
+            return [{"field": "material_fingerprint", "code": "NATIVE_MATERIAL_FINGERPRINT_MISMATCH"}]
+        return []
 
     def apply_schema(self) -> None:
         """Apply the ordered PostgreSQL upgrade schema if it doesn't exist."""
@@ -822,6 +859,8 @@ class IntakeMigrator:
             scoped_listings: list[tuple[Any, Any, str]] = []
             scoped_candidates: list[tuple[Any, Any, str | None]] = []
             resource_excluded = {"legacy_listing": 0, "legacy_candidate": 0}
+            resource_quarantined = {"legacy_listing": 0, "legacy_candidate": 0}
+            resource_mapped_records = {"legacy_listing": 0, "legacy_candidate": 0}
 
             for kind, records in (("legacy_listing", legacy_listings), ("legacy_candidate", legacy_candidates)):
                 for record in records:
@@ -910,6 +949,7 @@ class IntakeMigrator:
                     if errors:
                         findings_count += 1
                         quarantined_count += 1
+                        resource_quarantined[kind] += 1
                         self._create_finding(
                             tenant_id=target_tenant, source_kind=kind,
                             source_id=str(record_id or "unknown-resource"), target_ids=[],
@@ -1343,6 +1383,7 @@ class IntakeMigrator:
                     if not lst_month or lst_month != month:
                         findings_count += 1
                         quarantined_count += 1
+                        resource_quarantined["legacy_listing"] += 1
                         self._create_finding(
                             tenant_id=i_tenant,
                             source_kind="legacy_listing",
@@ -1361,6 +1402,7 @@ class IntakeMigrator:
                     if existing and existing[0]["source_id"] != i_source:
                         findings_count += 1
                         quarantined_count += 1
+                        resource_quarantined["legacy_listing"] += 1
                         self._create_finding(
                             tenant_id=i_tenant, source_kind="legacy_listing", source_id=l_id,
                             target_ids=[listing_uuid], finding_type="STATE_MAPPING_CONFLICT", severity="BLOCKING",
@@ -1368,9 +1410,22 @@ class IntakeMigrator:
                         )
                         continue
                     if existing:
+                        errors = self._native_revision_errors(i_tenant, listing_uuid)
+                        if errors:
+                            findings_count += 1
+                            quarantined_count += 1
+                            resource_quarantined["legacy_listing"] += 1
+                            self._create_finding(
+                                tenant_id=i_tenant, source_kind="legacy_listing", source_id=l_id,
+                                target_ids=[listing_uuid], finding_type="STATE_MAPPING_CONFLICT", severity="BLOCKING",
+                                expected={"native_current_revision": "readable original native material and fingerprint"},
+                                actual={"errors": errors},
+                            )
+                            continue
                         skipped_count += 1
                         if listing_uuid not in processed_listing_uuids:
                             processed_listing_uuids.append(listing_uuid)
+                        resource_mapped_records["legacy_listing"] += 1
                         continue
 
                 self._execute("SELECT 1", tenant_id=i_tenant)
@@ -1385,9 +1440,40 @@ class IntakeMigrator:
                     lat = get_val(legacy_lst, "latitude")
                     lng = get_val(legacy_lst, "longitude")
 
-                if not address_str:
+                # A native current revision is read through this same closed
+                # contract by the matcher and the registered executor. Retain
+                # observed facts; neither missing values nor legacy defaults
+                # are evidence for a fabricated address/amount/floor.
+                aliases = {}
+                for name, keys in (("rent", ("rent_amount", "rentPerMonth")),
+                                   ("areaPing", ("area_ping", "areaPing")),
+                                   ("providerListingId", ("source_listing_id", "sourceListingId"))):
+                    candidates = [get_val(legacy_lst, key) for key in keys
+                                  if get_val(legacy_lst, key) is not None and get_val(legacy_lst, key) != ""]
+                    if candidates:
+                        aliases[name] = candidates
+                material = {"address": address_str, **{name: values[0] for name, values in aliases.items()}}
+                for name, value in (
+                    ("floor", get_val(legacy_lst, "floor")),
+                    ("listingType", get_val(legacy_lst, "listingType")),
+                    # listing_status/status is the operator workflow, not a
+                    # separately observed provider listingStatus.
+                    ("listingStatus", get_val(legacy_lst, "listingStatus")),
+                ):
+                    if value is not None and value != "":
+                        material[name] = value
+                try:
+                    normalized_vals = NativeAssistedEntryFields.model_validate(material).values()
+                    alias_conflicts = []
+                    for name, values in aliases.items():
+                        for value in values[1:]:
+                            observed = NativeAssistedEntryFields.model_validate({**material, name: value}).values()
+                            if observed[name] != normalized_vals[name]:
+                                alias_conflicts.append(name)
+                except ValidationError as exc:
                     findings_count += 1
                     quarantined_count += 1
+                    resource_quarantined["legacy_listing"] += 1
                     self._create_finding(
                         tenant_id=i_tenant,
                         source_kind="legacy_listing",
@@ -1395,17 +1481,88 @@ class IntakeMigrator:
                         target_ids=[listing_uuid],
                         finding_type="STATE_MAPPING_CONFLICT",
                         severity="BLOCKING",
-                        expected={"address": "valid string"},
-                        actual={"address": None},
+                        expected={"native_current_revision": "valid observed material fields"},
+                        actual={"errors": [{"field": ".".join(map(str, error["loc"])), "code": error["type"]}
+                                            for error in exc.errors(include_url=False, include_input=False)]},
                     )
-                    prop_status = "QUARANTINED"
-                else:
-                    prop_status = "ACTIVE"
+                    continue
+                if alias_conflicts:
+                    findings_count += 1
+                    quarantined_count += 1
+                    resource_quarantined["legacy_listing"] += 1
+                    self._create_finding(
+                        tenant_id=i_tenant, source_kind="legacy_listing", source_id=l_id,
+                        target_ids=[listing_uuid], finding_type="STATE_MAPPING_CONFLICT", severity="BLOCKING",
+                        expected={"material_aliases": "agreeing recorded facts"},
+                        actual={"conflicting_fields": sorted(set(alias_conflicts))},
+                    )
+                    continue
+                source_listing_id = normalized_vals.get("providerListingId")
+
+                # The operator's snapshot_id historically also held sourceUrl.
+                # An opaque snapshot identity is not a URL natural key. Fold
+                # only the original native URL rule, without retrieval or I/O.
+                urls = [get_val(legacy_lst, key) for key in ("sourceUrl", "originalUrl", "original_url")
+                        if get_val(legacy_lst, key) is not None and get_val(legacy_lst, key) != ""]
+                if not urls:
+                    legacy_snapshot = get_val(legacy_lst, "snapshot_id")
+                    if isinstance(legacy_snapshot, str) and legacy_snapshot.lower().startswith(("http://", "https://")):
+                        urls.append(legacy_snapshot)
+                try:
+                    url_hashes = {normalize_native_intake_url(url).canonical_url_sha256 for url in urls}
+                    if len(url_hashes) > 1:
+                        raise ValueError("CONFLICTING_RECORDED_URL_IDENTITIES")
+                    url_sha = next(iter(url_hashes)) if url_hashes else None
+                except ValueError:
+                    findings_count += 1
+                    quarantined_count += 1
+                    resource_quarantined["legacy_listing"] += 1
+                    self._create_finding(
+                        tenant_id=i_tenant, source_kind="legacy_listing", source_id=l_id,
+                        target_ids=[listing_uuid], finding_type="STATE_MAPPING_CONFLICT", severity="BLOCKING",
+                        expected={"sourceUrl": "supported original native URL identity"},
+                        actual={"sourceUrl": "UNSUPPORTED_URL_IDENTITY"},
+                    )
+                    continue
+                if source_listing_id is None and url_sha is None:
+                    findings_count += 1
+                    quarantined_count += 1
+                    resource_quarantined["legacy_listing"] += 1
+                    self._create_finding(
+                        tenant_id=i_tenant, source_kind="legacy_listing", source_id=l_id,
+                        target_ids=[listing_uuid], finding_type="MISSING_EVIDENCE", severity="BLOCKING",
+                        expected={"listing_identity": "recorded provider key or supported source URL"},
+                        actual={"listing_identity": "MISSING"},
+                    )
+                    continue
+
+                # These are recorded aggregate/workflow states, never source
+                # material fields. Do not infer removal from an unknown state.
+                lifecycle_mapping = {
+                    "active": "ACTIVE", "new": "ACTIVE", "watching": "ACTIVE", "candidate": "ACTIVE",
+                    "removed": "REMOVED", "expired": "EXPIRED", "stale": "STALE",
+                    "quarantined": "QUARANTINED", "archived": "ARCHIVED",
+                }
+                states = [get_val(legacy_lst, key) for key in ("listing_status", "status")
+                          if get_val(legacy_lst, key) is not None and get_val(legacy_lst, key) != ""]
+                mapped_states = [lifecycle_mapping.get(state.lower()) if isinstance(state, str) else None for state in states]
+                lifecycle_state = mapped_states[0] if mapped_states and len(set(mapped_states)) == 1 else None
+                if lifecycle_state is None:
+                    findings_count += 1
+                    quarantined_count += 1
+                    resource_quarantined["legacy_listing"] += 1
+                    self._create_finding(
+                        tenant_id=i_tenant, source_kind="legacy_listing", source_id=l_id,
+                        target_ids=[listing_uuid], finding_type="STATE_MAPPING_CONFLICT", severity="BLOCKING",
+                        expected={"listing_status": "recorded supported aggregate/workflow state"},
+                        actual={"listing_status": "UNSUPPORTED_MAPPING"},
+                    )
+                    continue
 
                 lat_val = float(lat) if lat is not None else None
                 lng_val = float(lng) if lng is not None else None
 
-                prop_addr_str = address_str or f"NO_ADDRESS_{listing_uuid}"
+                prop_addr_str = normalized_vals["address"]
                 prop_uuid = ensure_uuid(f"PROP-{prop_addr_str}")
                 addr_fingerprint = hashlib.sha256(prop_addr_str.encode()).hexdigest()
 
@@ -1426,16 +1583,11 @@ class IntakeMigrator:
                             addr_fingerprint,
                             lat_val,
                             lng_val,
-                            prop_status,
+                            "ACTIVE",
                             1,
                         ),
                         tenant_id=i_tenant,
                     )
-
-                status = get_val(legacy_lst, "listing_status") or get_val(legacy_lst, "status") or "ACTIVE"
-                source_listing_id = get_val(legacy_lst, "source_listing_id") or get_val(legacy_lst, "sourceListingId") or f"src-{l_id}"
-                snap_url = get_val(legacy_lst, "snapshot_id") or get_val(legacy_lst, "sourceUrl") or ""
-                url_sha = hashlib.sha256(snap_url.encode()).hexdigest() if snap_url else None
 
                 rev_uuid = ensure_uuid(f"REV-{l_id}")
                 obs_uuid = ensure_uuid(f"OBS-{l_id}")
@@ -1456,7 +1608,7 @@ class IntakeMigrator:
                         i_source,
                         source_listing_id,
                         url_sha,
-                        "ACTIVE" if status in ("new", "watching", "ACTIVE") else "REMOVED",
+                        lifecycle_state,
                         1,
                     ),
                     tenant_id=i_tenant,
@@ -1470,17 +1622,7 @@ class IntakeMigrator:
                             tenant_id=i_tenant,
                         )
 
-                rent = float(get_val(legacy_lst, "rent_amount") or get_val(legacy_lst, "rentPerMonth") or 0)
-                area = float(get_val(legacy_lst, "area_ping") or get_val(legacy_lst, "areaPing") or 0)
-                floor = get_val(legacy_lst, "floor") or ""
-
-                normalized_vals = {
-                    "rent": rent,
-                    "areaPing": area,
-                    "floor": floor,
-                    "providerListingId": source_listing_id,
-                }
-                mat_fingerprint = hashlib.sha256(f"{rent}:{area}:{floor}".encode()).hexdigest()
+                mat_fingerprint = content_fingerprint(normalized_vals)
 
                 insert_rev_sql = """
                     INSERT INTO expansion.listing_revisions (
@@ -1509,7 +1651,13 @@ class IntakeMigrator:
                 obs_kind = get_val(legacy_lst, "observation_kind") or "UNCHANGED"
                 if obs_kind not in ('UNCHANGED', 'FRESHNESS_REFRESHED', 'REMOVED', 'UNAVAILABLE', 'BLOCKED', 'EXPIRED', 'STALE'):
                     obs_kind = "UNCHANGED"
-                obs_evidence = json.dumps(get_val(legacy_lst, "evidence") or {"source_listing_id": source_listing_id})
+                obs_evidence = json.dumps({
+                    "source_listing_id": source_listing_id,
+                    "legacy_evidence": get_val(legacy_lst, "evidence"),
+                    "legacy_recorded_identity": {key: get_val(legacy_lst, key) for key in
+                        ("source_listing_id", "sourceListingId", "sourceUrl", "originalUrl", "original_url", "snapshot_id")
+                        if get_val(legacy_lst, key) is not None},
+                })
 
                 insert_obs_sql = """
                     INSERT INTO expansion.listing_observations (
@@ -1537,30 +1685,27 @@ class IntakeMigrator:
                     tenant_id=i_tenant,
                 )
 
-                edge_uuid = ensure_uuid(f"EDGE-{l_id}")
-                insert_edge_sql = """
-                    INSERT INTO identity.source_identity_edges (
-                        edge_id, tenant_id, source_id, source_entity_id,
-                        listing_id, property_id, match_strategy, confidence,
-                        edge_version, effective_from
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """
-                self._execute(
-                    insert_edge_sql,
-                    (
-                        edge_uuid,
-                        i_tenant,
-                        i_source,
-                        source_listing_id,
-                        listing_uuid,
-                        prop_uuid,
-                        "EXACT_SOURCE_KEY",
-                        1.0,
-                        1,
-                        datetime.now(UTC).isoformat(),
-                    ),
-                    tenant_id=i_tenant,
-                )
+                # URL-only history has no observed provider identity edge.
+                # The existing graph resolves its real Listing.property_id;
+                # an internal legacy ID must not masquerade as a source key.
+                if source_listing_id is not None:
+                    edge_uuid = ensure_uuid(f"EDGE-{l_id}")
+                    insert_edge_sql = """
+                        INSERT INTO identity.source_identity_edges (
+                            edge_id, tenant_id, source_id, source_entity_id,
+                            listing_id, property_id, match_strategy, confidence,
+                            edge_version, effective_from
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """
+                    self._execute(
+                        insert_edge_sql,
+                        (
+                            edge_uuid, i_tenant, i_source, source_listing_id,
+                            listing_uuid, prop_uuid, "EXACT_SOURCE_KEY", 1.0, 1,
+                            datetime.now(UTC).isoformat(),
+                        ),
+                        tenant_id=i_tenant,
+                    )
 
                 if get_val(legacy_lst, "redirected_to_property_id"):
                     to_prop_uuid = ensure_uuid(get_val(legacy_lst, "redirected_to_property_id"))
@@ -1604,6 +1749,7 @@ class IntakeMigrator:
                         )
 
                 processed_listing_uuids.append(listing_uuid)
+                resource_mapped_records["legacy_listing"] += 1
 
             # 3. Backfill Candidates
             for legacy_cand, lst_id, c_source in scoped_candidates:
@@ -1630,6 +1776,7 @@ class IntakeMigrator:
                     if not c_month or c_month != month:
                         findings_count += 1
                         quarantined_count += 1
+                        resource_quarantined["legacy_candidate"] += 1
                         self._create_finding(
                             tenant_id=i_tenant,
                             source_kind="legacy_candidate",
@@ -1652,6 +1799,7 @@ class IntakeMigrator:
                 if not prop_row:
                     findings_count += 1
                     quarantined_count += 1
+                    resource_quarantined["legacy_candidate"] += 1
                     self._create_finding(
                         tenant_id=i_tenant,
                         source_kind="legacy_candidate",
@@ -1667,6 +1815,7 @@ class IntakeMigrator:
                 if c_source is not None and c_source != prop_row[0]["source_id"]:
                     findings_count += 1
                     quarantined_count += 1
+                    resource_quarantined["legacy_candidate"] += 1
                     self._create_finding(
                         tenant_id=i_tenant, source_kind="legacy_candidate", source_id=c_id,
                         target_ids=[candidate_uuid], finding_type="STATE_MAPPING_CONFLICT", severity="BLOCKING",
@@ -1675,6 +1824,18 @@ class IntakeMigrator:
                     continue
                 if source_id and prop_row[0]["source_id"] != source_id:
                     resource_excluded["legacy_candidate"] += 1
+                    continue
+                errors = self._native_revision_errors(i_tenant, listing_uuid)
+                if errors:
+                    findings_count += 1
+                    quarantined_count += 1
+                    resource_quarantined["legacy_candidate"] += 1
+                    self._create_finding(
+                        tenant_id=i_tenant, source_kind="legacy_candidate", source_id=c_id,
+                        target_ids=[candidate_uuid], finding_type="STATE_MAPPING_CONFLICT", severity="BLOCKING",
+                        expected={"native_current_revision": "readable original native material and fingerprint"},
+                        actual={"errors": errors},
+                    )
                     continue
                 if resume:
                     check_exists = (
@@ -1690,6 +1851,7 @@ class IntakeMigrator:
                     ):
                         findings_count += 1
                         quarantined_count += 1
+                        resource_quarantined["legacy_candidate"] += 1
                         self._create_finding(
                             tenant_id=i_tenant, source_kind="legacy_candidate", source_id=c_id,
                             target_ids=[candidate_uuid], finding_type="STATE_MAPPING_CONFLICT", severity="BLOCKING",
@@ -1703,6 +1865,7 @@ class IntakeMigrator:
                         skipped_count += 1
                         if candidate_uuid not in processed_candidate_uuids:
                             processed_candidate_uuids.append(candidate_uuid)
+                        resource_mapped_records["legacy_candidate"] += 1
                         continue
 
                 prop_uuid = prop_row[0]["property_id"]
@@ -1754,6 +1917,7 @@ class IntakeMigrator:
                 else:
                     findings_count += 1
                     quarantined_count += 1
+                    resource_quarantined["legacy_candidate"] += 1
                     self._create_finding(
                         tenant_id=i_tenant,
                         source_kind="legacy_candidate",
@@ -1872,6 +2036,7 @@ class IntakeMigrator:
                 )
 
                 processed_candidate_uuids.append(candidate_uuid)
+                resource_mapped_records["legacy_candidate"] += 1
 
             t_key = target_tenant
             p_key = f"{t_key}:{source_id or 'ALL'}:{month or 'ALL'}"
@@ -1887,8 +2052,12 @@ class IntakeMigrator:
                 "intakes_excluded": intake_excluded,
                 "listings_received": len(legacy_listings),
                 "listings_excluded": resource_excluded["legacy_listing"],
+                "listings_quarantined": resource_quarantined["legacy_listing"],
+                "listings_mapped_records": resource_mapped_records["legacy_listing"],
                 "candidates_received": len(legacy_candidates),
                 "candidates_excluded": resource_excluded["legacy_candidate"],
+                "candidates_quarantined": resource_quarantined["legacy_candidate"],
+                "candidates_mapped_records": resource_mapped_records["legacy_candidate"],
                 "intakes": len(processed_intake_uuids),
                 "listings": len(processed_listing_uuids),
                 "candidates": len(processed_candidate_uuids),
@@ -1963,8 +2132,12 @@ class IntakeMigrator:
                 "intakes_excluded": intake_excluded,
                 "listings_received": len(legacy_listings),
                 "listings_excluded": resource_excluded["legacy_listing"],
+                "listings_quarantined": resource_quarantined["legacy_listing"],
+                "listings_mapped_records": resource_mapped_records["legacy_listing"],
                 "candidates_received": len(legacy_candidates),
                 "candidates_excluded": resource_excluded["legacy_candidate"],
+                "candidates_quarantined": resource_quarantined["legacy_candidate"],
+                "candidates_mapped_records": resource_mapped_records["legacy_candidate"],
                 "intakes_processed": reconciled_count,
                 "listings_processed": len(processed_listing_uuids),
                 "candidates_processed": len(processed_candidate_uuids),

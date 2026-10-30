@@ -114,6 +114,10 @@ def matching_case(completed_parser, case_api, request):
         policy_id = "synthetic-native-matching-v1:" + ids["tenant"]
         params = {"schema_version": 1, "enabled": True, "service_subjects": ["service:synthetic-native-matcher"],
             "source_ids": [source_id], "corpus_source_ids": [corpus_source], "max_corpus_rows": 100}
+        if options.get("backfill_corpus"):
+            # Explicit isolated policy premise for the actual migrated target;
+            # keep the existing corpus and its independent source checks.
+            params["corpus_source_ids"] = list(dict.fromkeys([corpus_source, source_id]))
         params.update(options.get("policy_changes", {}))
         owner_role = options.get("owner_role", "data_owner")
         if owner_role != "data_owner":
@@ -182,6 +186,137 @@ def _match(fixture, **kwargs):
     case, parsed, repo, boundary, credentials, policy_id, _ = fixture
     return repo.match_parser_result(case[1]["tenant"], parsed["intake_id"], expected_intake_version=parsed["version"],
         policy_version_id=policy_id, boundary=boundary, credentials=kwargs.get("credentials", credentials))
+
+
+@pytest.mark.parametrize("parser_admission_case", [
+    pytest.param({"fields": {**BODY["fields"], "providerListingId": "synthetic-migrated-original-provider"}}, id="PROVIDER_KEY"),
+    pytest.param(None, id="CANONICAL_URL"),
+], indirect=True)
+@pytest.mark.parametrize("matching_case", [{"mode": "NEW", "backfill_corpus": True, "policy_changes": {
+    "service_subjects": ["service:synthetic-native-matcher", "service:native-intake-identity"]}}], indirect=True)
+@pytest.mark.parametrize("exact_service_case", [True], indirect=True)
+@pytest.mark.parametrize("changed", [False, True], ids=["UNCHANGED", "REVISE"])
+def test_real_backfill_revision_reaches_original_native_matcher_and_executor(matching_case, case_api, monkeypatch, changed, exact_service_case):
+    from modules.listing.application.identity_delivery import (
+        IDENTITY_POLICY_ENV,
+        IDENTITY_SIGNING_KEY_ENV,
+    )
+    from product_ops.migrations.assisted_listing_intake.migrate import IntakeMigrator
+    from shared.auth import Principal, Role
+    from shared.jobs.queue import JobStatus
+    from tests.integration.test_canonical_identity_admission_postgresql import _claim
+
+    case, parsed, repo, _, _, _, _ = matching_case
+    ids, database = case[1], case[2]
+    listing_id = str(uuid4())
+    with database.connect() as connection:
+        values = dict(connection.execute("SELECT field_path,corrected_value FROM intake.human_corrections "
+            "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], parsed["intake_id"])).fetchall())
+        source, original_url = connection.execute("SELECT source_id,original_url FROM intake.intakes "
+            "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], parsed["intake_id"])).fetchone()
+        source_before = connection.execute("SELECT row_to_json(s) FROM intake.source_registry s WHERE source_id=%s", (source,)).fetchone()[0]
+        release = connection.execute("SELECT row_to_json(p) FROM intake.parser_releases p WHERE source_id=%s", (source,)).fetchone()[0]
+        assert release["parser_release_id"] == str(case[4])
+        # Provider-key and URL-only identity are separate, real legacy facts.
+        legacy_url = (original_url + "?legacy=provider-key" if values.get("providerListingId") else
+            original_url.replace("https://", "HTTPS://", 1).replace(".example.invalid/", ".example.invalid:443/", 1))
+        legacy = {"listing_id": listing_id, "tenant_id": ids["tenant"], "source_id": source,
+            "listing_status": "active", "address": values["address"],
+            "rent_amount": values["rent"] - int(changed), "area_ping": values["areaPing"],
+            "snapshot_id": "SNAP-OPAQUE-" + listing_id, "sourceUrl": legacy_url}
+        assert legacy["rent_amount"] > 0
+        if "providerListingId" in values:
+            legacy["source_listing_id"] = values["providerListingId"]
+        for name in ("floor", "listingType", "listingStatus"):
+            if name in values:
+                legacy[name] = values[name]
+        migration = IntakeMigrator(connection, migration_ref="synthetic-native-corpus-backfill")
+        result = migration.backfill([], [legacy], [], tenant_id=ids["tenant"], source_id=source,
+            sources=[(source, source_before["display_name"], source_before["retrieval_mode"], source_before["allowed_hosts"])],
+            parser_release=release)
+        assert result["counts"]["listings_processed"] == 1 and result["counts"]["findings"] == 0
+        assert connection.execute("SELECT row_to_json(s) FROM intake.source_registry s WHERE source_id=%s", (source,)).fetchone()[0] == source_before
+        assert connection.execute("SELECT source_listing_id FROM expansion.listings WHERE listing_id=%s", (listing_id,)).fetchone()[0] == values.get("providerListingId")
+        edges = connection.execute("SELECT source_entity_id,match_strategy FROM identity.source_identity_edges WHERE listing_id=%s", (listing_id,)).fetchall()
+        assert edges == ([(values["providerListingId"], "EXACT_SOURCE_KEY")] if values.get("providerListingId") else [])
+        original_revision = connection.execute("SELECT row_to_json(r) FROM expansion.listing_revisions r "
+            "WHERE tenant_id=%s AND listing_id=%s", (ids["tenant"], listing_id)).fetchone()[0]
+
+    # Use the actual service matcher against the actual backfilled revision;
+    # no canonical row, case outcome or revision payload is seeded here.
+    proposed = _match(matching_case)
+    assert proposed["outcome"] == ("REVISION" if changed else "EXACT_DUPLICATE")
+    with repo.graph.transaction(ids["tenant"]):
+        selected = repo.get_for_intake(ids["tenant"], parsed["intake_id"])
+        assert {row["listing_id"] for row in selected["candidates"]} == {listing_id}
+        current = repo.graph._one("SELECT version,lifecycle_state,current_revision_id FROM expansion.listings "
+            "WHERE tenant_id=? AND listing_id=?", (ids["tenant"], listing_id))
+        assert current["version"] == 1 and current["lifecycle_state"] == "ACTIVE"
+    if not changed:
+        # Exact duplicate still goes through the original separately approved
+        # service, current target proof and registered executor. It resolves the
+        # Intake without creating another business revision or applying fields.
+        _, _, identity, _, policy_id, store = exact_service_case
+        canonical = repo.graph, ids, None, database
+        before, fields_before = _snapshot(canonical), persisted(case)
+        receipt = identity.confirm_exact_case(ids["tenant"], proposed["match_case_id"],
+            expected_case_version=proposed["version"], policy_version_id=policy_id, replay_store=store)
+        delivery, registry, bundle = _claim(canonical, receipt["job_id"])
+        registry.handle(delivery, bundle)
+        assert bundle.job_queue.get(delivery.job_id).status == JobStatus.SUCCEEDED
+        after = _snapshot(canonical)
+        for table in ("identity.properties", "identity.source_identity_edges", "expansion.listings", "expansion.listing_revisions"):
+            assert after[table] == before[table], table
+        assert persisted(case)["intake.human_corrections"] == fields_before["intake.human_corrections"]
+        with database.connect() as connection:
+            ready, resolved = connection.execute("SELECT processing_state,resolved_listing_id FROM intake.intakes "
+                "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], parsed["intake_id"])).fetchone()
+            assert ready == "READY" and str(resolved) == listing_id
+        assert identity.confirm_exact_case(ids["tenant"], proposed["match_case_id"],
+            expected_case_version=proposed["version"], policy_version_id=policy_id, replay_store=store) == receipt
+        assert _snapshot(canonical) == after
+        return
+
+    monkeypatch.setenv(IDENTITY_SIGNING_KEY_ENV, "Explicit synthetic migrated-listing execution signing material")
+    monkeypatch.setenv(IDENTITY_POLICY_ENV, canonical_json({"policy_id": "synthetic-migrated-listing-execution", "version": 1,
+        "max_attempts": 3, "deadline_seconds": 120, "backoff_seconds": [1, 2]}))
+    _add_sql_manager(database, ids["tenant"], ids["reviewer"])
+    client, caller, _ = case_api
+    caller["principal"] = Principal(ids["reviewer"], frozenset({Role.SITE_REVIEWER}),
+        Scope(tenant_id=ids["tenant"], modules=frozenset({"listing"}), clearance=DataClassification.CONFIDENTIAL))
+    response = client.get(f"/api/v1/match-cases/{proposed['match_case_id']}/identity-context", params={"include_listing_input": "true"})
+    assert response.status_code == 200, response.text
+    context = response.json()
+    reference = context["listing_input"]
+    binding = {key: reference[key] for key in ("parser_job_id", "parser_run_id", "parser_run_version",
+        "source_snapshot_id", "original_input_sha256", "normalized_payload_sha256")}
+    binding["expected_correction_versions"] = {row["correction_id"]: row["version"] for row in reference["fields"]}
+    property_ids = {row["effective_property_id"] for row in context["anchors"] if row["listing_id"] == listing_id}
+    body = {"decision_type": "REVISE", "risk_acknowledged": True, "reason": "Confirm actual migrated Listing revision from original parsed evidence",
+        "plan": {"expected_intake_version": context["intake_version"], "input_binding": binding,
+            "expected_property_versions": {row["property_id"]: row["version"] for row in context["properties"] if row["property_id"] in property_ids},
+            "expected_listing_versions": {row["listing_id"]: row["version"] for row in context["listings"] if row["listing_id"] == listing_id},
+            "expected_edge_versions": {row["edge_id"]: row["edge_version"] for row in context["source_identity_edges"] if row["listing_id"] == listing_id},
+            "candidate_reassignment_plan": []}}
+    confirmed = client.post(f"/api/v1/match-cases/{proposed['match_case_id']}/identity-decisions", json=body,
+        headers={"Idempotency-Key": "synthetic-original-migrated-revise", "If-Match": f'W/"{proposed["version"]}"'})
+    assert confirmed.status_code == 201, confirmed.text
+    delivery, registry, bundle = _claim((repo.graph, ids, None, database), confirmed.json()["job_id"])
+    registry.handle(delivery, bundle)
+    assert bundle.job_queue.get(delivery.job_id).status == JobStatus.SUCCEEDED
+    with database.connect() as connection:
+        current = connection.execute("SELECT version,current_revision_id FROM expansion.listings WHERE tenant_id=%s AND listing_id=%s",
+            (ids["tenant"], listing_id)).fetchone()
+        assert current[0] == 2 and str(current[1]) != original_revision["listing_revision_id"]
+        old = connection.execute("SELECT row_to_json(r) FROM expansion.listing_revisions r WHERE tenant_id=%s AND listing_revision_id=%s",
+            (ids["tenant"], original_revision["listing_revision_id"])).fetchone()[0]
+        assert old == original_revision
+        new = connection.execute("SELECT revision_no,supersedes_revision_id,effective_values FROM expansion.listing_revisions "
+            "WHERE tenant_id=%s AND listing_revision_id=%s", (ids["tenant"], current[1])).fetchone()
+        assert new[0] == 2 and str(new[1]) == original_revision["listing_revision_id"] and new[2]["rent"] == values["rent"]
+        ready, resolved = connection.execute("SELECT processing_state,resolved_listing_id FROM intake.intakes "
+            "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], parsed["intake_id"])).fetchone()
+        assert ready == "READY" and str(resolved) == listing_id
 
 
 @pytest.mark.parametrize("matching_case", ["POSSIBLE_MATCH"], indirect=True)

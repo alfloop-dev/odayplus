@@ -215,12 +215,12 @@ def test_b1_property_identity_preservation_and_geocodes(conn) -> None:
 
     tenant_id = "00000000-0000-0000-0000-000000000001"
 
-    listing1 = Listing(listing_id="L-1", source_listing_id="s1", source_id="SRC-591", rent_amount=30000.0)
+    listing1 = Listing(listing_id="L-1", source_listing_id="s1", source_id="SRC-591", rent_amount=30000.0, area_ping=18.0)
     addr1 = AddressLocation(address_id="A-1", normalized_address="台北市信義區松仁路 96 號 1F", latitude=25.0330, longitude=121.5654)
     cand1 = CandidateSite(candidate_site_id="CS-1", listing_id="L-1", address_id="A-1")
     draft1 = CandidateSiteDraft(listing=listing1, address=addr1, candidate_site=cand1)
 
-    listing2 = Listing(listing_id="L-2", source_listing_id="s2", source_id="SRC-591", rent_amount=45000.0)
+    listing2 = Listing(listing_id="L-2", source_listing_id="s2", source_id="SRC-591", rent_amount=45000.0, area_ping=18.0)
     addr2 = AddressLocation(address_id="A-2", normalized_address="台北市大安區新生南路一段 100 號 2F", latitude=25.0400, longitude=121.5300)
     cand2 = CandidateSite(candidate_site_id="CS-2", listing_id="L-2", address_id="A-2")
     draft2 = CandidateSiteDraft(listing=listing2, address=addr2, candidate_site=cand2)
@@ -254,7 +254,7 @@ def test_b1_probe_null_coordinates_and_no_fabricated_identities(conn) -> None:
     tenant_id = "00000000-0000-0000-0000-000000000001"
 
     # Address with NO latitude or longitude
-    listing = Listing(listing_id="L-NO-COORDS", source_listing_id="s-nocoords", source_id="SRC-591")
+    listing = Listing(listing_id="L-NO-COORDS", source_listing_id="s-nocoords", source_id="SRC-591", rent_amount=30000.0, area_ping=18.0)
     addr = AddressLocation(address_id="A-NO-COORDS", normalized_address="台北市中山區南京東路三段 2 號", latitude=None, longitude=None)
     cand = CandidateSite(candidate_site_id="CS-NO-COORDS", listing_id="L-NO-COORDS", address_id="A-NO-COORDS")
     draft = CandidateSiteDraft(listing=listing, address=addr, candidate_site=cand)
@@ -338,7 +338,7 @@ def test_b3_shadow_comparison_count_and_checksum_proof(conn) -> None:
         "submittedAt": "2026-07-14T06:10:00Z",
         "matchResult": {"targetListingId": "L-1"},
     }
-    listing = Listing(listing_id="L-1", source_listing_id="s1", source_id="SRC-591")
+    listing = Listing(listing_id="L-1", source_listing_id="s1", source_id="SRC-591", rent_amount=30000.0, area_ping=18.0)
     addr = AddressLocation(address_id="A-1", normalized_address="台北市信義區松仁路 96 號 1F")
     cand = CandidateSite(candidate_site_id="CS-1", listing_id="L-1", address_id="A-1")
     draft = CandidateSiteDraft(listing=listing, address=addr, candidate_site=cand)
@@ -377,7 +377,7 @@ def test_b3_probe_shadow_proof_persistence_on_fresh_migrator(conn) -> None:
         "submittedAt": "2026-07-14T06:10:00Z",
         "matchResult": {"targetListingId": "L-FRESH"},
     }
-    listing = Listing(listing_id="L-FRESH", source_listing_id="s-fresh", source_id="SRC-591")
+    listing = Listing(listing_id="L-FRESH", source_listing_id="s-fresh", source_id="SRC-591", rent_amount=30000.0, area_ping=18.0)
     addr = AddressLocation(address_id="A-FRESH", normalized_address="台北市信義區松仁路 96 號 1F")
     cand = CandidateSite(candidate_site_id="CS-FRESH", listing_id="L-FRESH", address_id="A-FRESH")
     draft = CandidateSiteDraft(listing=listing, address=addr, candidate_site=cand)
@@ -460,7 +460,7 @@ def test_b5_probe_no_synthetic_intake_creation(conn) -> None:
         "submittedAt": "2026-07-14T06:10:00Z",
     }
 
-    listing = Listing(listing_id="L-NO-INTAKE", source_listing_id="s-nointake", source_id="SRC-591")
+    listing = Listing(listing_id="L-NO-INTAKE", source_listing_id="s-nointake", source_id="SRC-591", rent_amount=30000.0, area_ping=18.0)
     addr = AddressLocation(address_id="A-NO-INTAKE", normalized_address="台北市信義區松仁路 96 號 1F")
     cand = CandidateSite(candidate_site_id="CS-NO-INTAKE", listing_id="L-NO-INTAKE", address_id="A-NO-INTAKE")
     draft = CandidateSiteDraft(listing=listing, address=addr, candidate_site=cand)
@@ -499,7 +499,7 @@ def test_major_b_probe_complete_table_scoped_rollback(conn) -> None:
         "parsedFields": {"rent": 40000, "address": "台北市信義區松仁路 96 號 1F"},
         "matchResult": {"targetListingId": "L-ROLLBACK", "outcome": "NEW"},
     }
-    listing = Listing(listing_id="L-ROLLBACK", source_listing_id="s-rb", source_id="SRC-591")
+    listing = Listing(listing_id="L-ROLLBACK", source_listing_id="s-rb", source_id="SRC-591", rent_amount=40000.0, area_ping=18.0)
     addr = AddressLocation(address_id="A-ROLLBACK", normalized_address="台北市信義區松仁路 96 號 1F")
     cand = CandidateSite(candidate_site_id="CS-ROLLBACK", listing_id="L-ROLLBACK", address_id="A-ROLLBACK")
     draft = CandidateSiteDraft(listing=listing, address=addr, candidate_site=cand)
@@ -510,6 +510,9 @@ def test_major_b_probe_complete_table_scoped_rollback(conn) -> None:
         legacy_candidates=[draft],
         tenant_id=tenant_id,
     )
+
+    assert conn.execute("SELECT count(*) FROM expansion.listings").fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM expansion.candidate_sites").fetchone()[0] == 1
 
     # Perform scoped rollback
     migrator.rollback_migration(tenant_id=tenant_id)
@@ -956,7 +959,7 @@ def test_blocker3_rollback_preserves_live_outbox_and_orphan_properties(conn) -> 
     conn.commit()
 
     # Backfill migration candidate
-    listing = Listing(listing_id="L-MIG", source_listing_id="s-mig", source_id="SRC-591")
+    listing = Listing(listing_id="L-MIG", source_listing_id="s-mig", source_id="SRC-591", rent_amount=30000.0, area_ping=18.0)
     addr = AddressLocation(address_id="A-MIG", normalized_address="台北市信義區松仁路 96 號 1F")
     cand = CandidateSite(candidate_site_id="CS-MIG", listing_id="L-MIG", address_id="A-MIG")
     draft = CandidateSiteDraft(listing=listing, address=addr, candidate_site=cand)
@@ -977,6 +980,9 @@ def test_blocker3_rollback_preserves_live_outbox_and_orphan_properties(conn) -> 
         legacy_candidates=[draft],
         tenant_id=tenant_id,
     )
+
+    assert conn.execute("SELECT count(*) FROM expansion.listings").fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM expansion.candidate_sites").fetchone()[0] == 1
 
     # Roll back migration
     migrator.rollback_migration(tenant_id=tenant_id)
@@ -1127,7 +1133,7 @@ def test_blocker1_multi_partition_listings_and_candidates(conn) -> None:
         listing_status="new",
         rent_amount=30000.0,
         snapshot_id="https://591.com.tw/detail-jan.html",
-    )
+     area_ping=18.0)
     addr_jan = AddressLocation(
         address_id="ADDR-JAN",
         raw_address="台北市信義區松仁路 10 號 1F",
@@ -1166,7 +1172,7 @@ def test_blocker1_multi_partition_listings_and_candidates(conn) -> None:
         listing_status="new",
         rent_amount=35000.0,
         snapshot_id="https://591.com.tw/detail-feb.html",
-    )
+     area_ping=18.0)
     addr_feb = AddressLocation(
         address_id="ADDR-FEB",
         raw_address="台北市大安區新生南路一段 20 號 2F",
@@ -2010,7 +2016,7 @@ def test_backfill_foreign_candidate_cannot_poison_local_listing_prepass(conn):
     tenant = "00000000-0000-0000-0000-000000000001"
     foreign = "00000000-0000-0000-0000-000000000002"
     listing = {"id": "L-SHARED-LEGACY-ID", "tenantId": tenant, "sourceId": "SRC-591",
-               "sourceListingId": "source-local", "address": "Synthetic local address"}
+               "sourceListingId": "source-local", "address": "Synthetic local address", "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active"}
     candidate = {"listing": {**listing, "tenantId": foreign},
                  "candidate_site": {"candidate_site_id": "C-FOREIGN", "tenant_id": foreign},
                  "address": {"normalized_address": "Synthetic foreign address", "latitude": 1, "longitude": 2}}
@@ -2030,7 +2036,7 @@ def test_backfill_foreign_candidate_cannot_poison_local_listing_prepass(conn):
 def test_backfill_candidate_owner_conflicts_cannot_supply_listing_facts(conn, fault):
     tenant = "00000000-0000-0000-0000-000000000001"
     listing = {"id": "L-OWNER", "tenantId": tenant, "sourceId": "SRC-591",
-               "sourceListingId": "source-owner", "address": "Synthetic owner address"}
+               "sourceListingId": "source-owner", "address": "Synthetic owner address", "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active"}
     candidate = {"listing": dict(listing),
                  "candidate_site": {"candidate_site_id": "C-CONFLICT", "listing_id": "L-OWNER", "address_id": "A-OWNER"},
                  "address": {"address_id": "A-OWNER", "normalized_address": "Synthetic conflicting address"}}
@@ -2065,7 +2071,7 @@ def test_backfill_candidate_source_comes_from_actual_listing_owner_across_resume
     intake["stage"] = "READY"
     intake["matchResult"] = {"outcome": "NEW", "targetListingId": "L-BROKER-OWNER"}
     listing = {"id": "L-BROKER-OWNER", "tenantId": tenant, "sourceId": "SRC-BROKER",
-               "sourceListingId": "broker-owner", "address": "Synthetic broker owner address"}
+               "sourceListingId": "broker-owner", "address": "Synthetic broker owner address", "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active"}
     migrator = IntakeMigrator(conn)
     first = migrator.backfill([intake], [listing], [], tenant_id=tenant, parser_release=parser_provenance())
     assert first["counts"]["listings_processed"] == 1
@@ -2099,7 +2105,7 @@ def test_backfill_match_target_does_not_supply_missing_listing_source(conn):
 def test_backfill_listing_resume_proof_uses_actual_owner_source(conn):
     tenant = "00000000-0000-0000-0000-000000000001"
     listing = {"id": "L-RESUME-OWNER", "tenantId": tenant, "sourceId": "SRC-BROKER",
-               "sourceListingId": "broker-resume", "address": "Synthetic resume owner address"}
+               "sourceListingId": "broker-resume", "address": "Synthetic resume owner address", "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active"}
     first = IntakeMigrator(conn).backfill([], [listing], [], tenant_id=tenant,
                                          parser_release=parser_provenance())
     assert first["counts"]["listings_processed"] == 1
@@ -2125,9 +2131,9 @@ def test_backfill_candidate_resume_proof_uses_saved_listing_owner(conn):
     intake_b.update(id="IN-RESUME-B", stage="READY",
                     matchResult={"outcome": "NEW", "targetListingId": "L-RESUME-B"})
     listing_a = {"id": "L-RESUME-A", "tenantId": tenant, "sourceId": "SRC-591",
-                 "sourceListingId": "source-resume-a", "address": "Synthetic resume A address"}
+                 "sourceListingId": "source-resume-a", "address": "Synthetic resume A address", "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active"}
     listing_b = {"id": "L-RESUME-B", "tenantId": tenant, "sourceId": "SRC-BROKER",
-                 "sourceListingId": "source-resume-b", "address": "Synthetic resume B address"}
+                 "sourceListingId": "source-resume-b", "address": "Synthetic resume B address", "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active"}
     candidate = {"id": "C-RESUME-SAVED-OWNER", "listingId": "L-RESUME-B"}
     first = IntakeMigrator(conn).backfill([intake_a, intake_b], [listing_a, listing_b], [candidate],
                                          tenant_id=tenant, parser_release=parser_provenance())
@@ -2237,7 +2243,7 @@ def test_backfill_unselected_source_domain_errors_are_excluded_consistently(conn
 def test_backfill_unselected_existing_owner_is_resolved_before_candidate_month(conn):
     tenant = "00000000-0000-0000-0000-000000000001"
     listing = {"id": "L-EXISTING-UNSELECTED", "tenantId": tenant, "sourceId": "SRC-BROKER",
-               "address": "Synthetic native owner address"}
+               "address": "Synthetic native owner address", "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active", "sourceUrl": "https://synthetic.example.invalid/test_backfill_unselected_existing_owner_is_resolved_before_candidate_month"}
     first = IntakeMigrator(conn).backfill([], [listing], [], tenant_id=tenant,
                                          parser_release=parser_provenance())
     assert first["counts"]["listings_processed"] == 1
@@ -2293,7 +2299,7 @@ def test_backfill_conflicting_primary_address_owners_fail_before_source_exclusio
 def test_backfill_unselected_claim_cannot_hide_selected_native_listing_owner(conn, kind):
     tenant = "00000000-0000-0000-0000-000000000001"
     listing = {"id": "L-NATIVE-SOURCE-TRUST", "tenantId": tenant, "sourceId": "SRC-591",
-               "address": "Synthetic native source owner address"}
+               "address": "Synthetic native source owner address", "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active", "sourceUrl": "https://synthetic.example.invalid/test_backfill_unselected_claim_cannot_hide_selected_native_listing_owner"}
     first = IntakeMigrator(conn).backfill([], [listing], [], tenant_id=tenant,
                                          parser_release=parser_provenance())
     assert first["counts"]["listings_processed"] == 1
@@ -2312,3 +2318,162 @@ def test_backfill_unselected_claim_cannot_hide_selected_native_listing_owner(con
     assert cur.fetchall() == [(f"legacy_{kind}",)]
     cur.execute("SELECT source_id FROM expansion.listings")
     assert cur.fetchall() == [("SRC-591",)]
+
+
+@pytest.mark.parametrize("overrides", [
+    {"address": None}, {"address": "   "}, {"rentPerMonth": 0}, {"rentPerMonth": -1},
+    {"rentPerMonth": True}, {"rentPerMonth": "30000"}, {"rentPerMonth": float("nan")},
+    {"rentPerMonth": float("inf")}, {"areaPing": 0}, {"areaPing": False}, {"areaPing": "18"},
+    {"floor": "   "}, {"sourceListingId": False},
+    {"rent_amount": 31000.0}, {"area_ping": 19.0}, {"source_listing_id": "conflicting-provider"},
+    {"sourceUrl": False}, {"sourceUrl": 0}, {"sourceUrl": []},
+    {"sourceUrl": "https://user:password@synthetic.example.invalid/listing"},
+    {"sourceUrl": "https://synthetic.example.invalid/one", "originalUrl": "https://synthetic.example.invalid/two"},
+    {"listing_status": "archived", "status": "active"},
+    {"listing_status": "inactive"}, {"listing_status": "leased"},
+    {"listing_status": "manual_review"}, {"listing_status": "duplicate"}, {"listing_status": ""},
+    {"sourceListingId": None, "snapshot_id": "SNAP-OPAQUE-NOT-A-URL"},
+])
+def test_backfill_invalid_native_material_or_identity_never_writes_partial_corpus(conn, overrides):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-NATIVE-QUALITY", "tenantId": tenant, "sourceId": "SRC-591",
+        "sourceListingId": "synthetic-recorded-provider", "address": "Synthetic native quality address",
+        "rentPerMonth": 30000.0, "areaPing": 18.0, "listing_status": "active", **overrides}
+    original = json.dumps(listing, sort_keys=True)
+    migrator = IntakeMigrator(conn)
+    result = migrator.backfill([], [listing], [], tenant_id=tenant, parser_release=parser_provenance())
+    counts = result["counts"]
+    assert counts["listings_received"] == counts["listings_quarantined"] == counts["quarantined"] == 1
+    assert counts["listings_processed"] == counts["listings_excluded"] == 0
+    assert json.dumps(listing, sort_keys=True) == original
+    for table in ("identity.properties", "expansion.listings", "expansion.listing_revisions",
+                  "expansion.listing_observations", "identity.source_identity_edges"):
+        assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+    assert conn.execute("SELECT source_kind,severity FROM workflow.reconciliation_findings WHERE severity='BLOCKING'").fetchall() == [("legacy_listing", "BLOCKING")]
+    proof = conn.execute("SELECT expected FROM workflow.reconciliation_findings WHERE severity='INFO'").fetchone()[0]
+    assert proof["listings_received"] == proof["listings"] + proof["listings_quarantined"] + proof["listings_excluded"]
+    assert proof["listing_ids"] == []
+    assert migrator.verify_shadow_comparison(tenant)["shadow_comparison_success"] is False
+
+
+def test_backfill_invalid_listing_blocks_dependent_candidate_without_a_dummy_target(conn):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-INCOMPLETE-CANDIDATE", "sourceId": "SRC-591", "sourceListingId": "synthetic-incomplete",
+        "listing_status": "active", "rentPerMonth": 30000.0, "areaPing": 18.0}
+    candidate = {"id": "C-INCOMPLETE-TARGET", "listingId": listing["id"]}
+    result = IntakeMigrator(conn).backfill([], [listing], [candidate], tenant_id=tenant, parser_release=parser_provenance())
+    counts = result["counts"]
+    assert counts["listings_quarantined"] == counts["candidates_quarantined"] == 1
+    assert counts["listings_processed"] == counts["candidates_processed"] == 0
+    assert counts["quarantined"] == 2
+    for table in ("identity.properties", "expansion.listings", "expansion.listing_revisions",
+                  "identity.source_identity_edges", "expansion.promotion_decisions", "expansion.candidate_sites"):
+        assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+    assert {row[0] for row in conn.execute("SELECT source_kind FROM workflow.reconciliation_findings WHERE severity='BLOCKING'").fetchall()} == {"legacy_listing", "legacy_candidate"}
+
+
+@pytest.mark.parametrize("state,expected", [("active", "ACTIVE"), ("new", "ACTIVE"), ("watching", "ACTIVE"),
+    ("CANDIDATE", "ACTIVE"), ("ARCHIVED", "ARCHIVED"), ("stale", "STALE"), ("removed", "REMOVED"),
+    ("expired", "EXPIRED"), ("quarantined", "QUARANTINED")])
+def test_backfill_keeps_recorded_workflow_separate_from_provider_material(conn, state, expected):
+    from modules.external_data.application.assisted_intake import content_fingerprint
+    from modules.listing.application.native_intake_assisted_entry_input import (
+        NativeAssistedEntryFields,
+    )
+
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-RECORDED-WORKFLOW", "sourceId": "SRC-591", "sourceListingId": "synthetic-workflow",
+        "address": "Synthetic workflow address", "listing_status": state, "rentPerMonth": 30000.0, "areaPing": 18.0, "floor": ""}
+    result = IntakeMigrator(conn).backfill([], [listing], [], tenant_id=tenant, parser_release=parser_provenance())
+    assert result["counts"]["listings_processed"] == 1 and result["counts"]["quarantined"] == 0
+    lifecycle, values, fingerprint = conn.execute("SELECT l.lifecycle_state,r.effective_values,r.material_fingerprint "
+        "FROM expansion.listings l JOIN expansion.listing_revisions r ON r.listing_revision_id=l.current_revision_id").fetchone()
+    assert lifecycle == expected
+    assert "listingStatus" not in values and "floor" not in values
+    assert NativeAssistedEntryFields.model_validate(values).values() == values
+    assert fingerprint.strip() == content_fingerprint(values)
+
+
+@pytest.mark.parametrize("identity,expected_url,provider", [
+    ({"sourceUrl": "HTTPS://SYNTHETIC.EXAMPLE.INVALID:443/path?q=1", "originalUrl": "https://synthetic.example.invalid/path?q=1", "snapshot_id": "SNAP-OPAQUE"}, "https://synthetic.example.invalid/path?q=1", None),
+    ({"snapshot_id": "https://synthetic.example.invalid/legacy-url"}, "https://synthetic.example.invalid/legacy-url", None),
+    ({"snapshot_id": "SNAP-OPAQUE", "sourceListingId": "synthetic-provider"}, None, "synthetic-provider"),
+])
+def test_backfill_source_identity_uses_original_url_rule_without_fabricating_edges(conn, identity, expected_url, provider):
+    from modules.listing.application.native_intake_url_identity import normalize_native_intake_url
+
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-RECORDED-IDENTITY", "sourceId": "SRC-591", "listing_status": "active",
+        "address": "Synthetic identity address", "rentPerMonth": 30000.0, "areaPing": 18.0, **identity}
+    result = IntakeMigrator(conn).backfill([], [listing], [], tenant_id=tenant, parser_release=parser_provenance())
+    assert result["counts"]["listings_processed"] == 1 and result["counts"]["findings"] == 0
+    key, url_hash = conn.execute("SELECT source_listing_id,canonical_url_sha256 FROM expansion.listings").fetchone()
+    assert key == provider
+    assert url_hash == (normalize_native_intake_url(expected_url).canonical_url_sha256 if expected_url else None)
+    assert conn.execute("SELECT source_entity_id,match_strategy FROM identity.source_identity_edges").fetchall() == ([(provider, "EXACT_SOURCE_KEY")] if provider else [])
+    evidence = conn.execute("SELECT evidence FROM expansion.listing_observations").fetchone()[0]
+    assert evidence["legacy_recorded_identity"] == identity
+
+
+@pytest.mark.parametrize("fault", ["address", "floor", "fingerprint", "revision", "json_string", "json_object_string"])
+@pytest.mark.parametrize("resume_kind", ["listing", "candidate"])
+def test_resume_cannot_certify_old_incompatible_revision_or_reconcile_candidate(conn, fault, resume_kind):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-RESUME-QUALITY", "sourceId": "SRC-591", "sourceListingId": "synthetic-resume-quality",
+        "listing_status": "active", "address": "Synthetic resume quality address", "rentPerMonth": 30000.0, "areaPing": 18.0}
+    intake = {**migration_input(), "stage": "READY", "matchResult": {"outcome": "NEW", "targetListingId": listing["id"]}}
+    first = IntakeMigrator(conn).backfill([intake], [listing], [], tenant_id=tenant, parser_release=parser_provenance())
+    assert first["counts"]["intakes_processed"] == first["counts"]["listings_processed"] == 1
+    assert first["counts"]["findings"] == 0
+    if fault == "address":
+        conn.execute("UPDATE expansion.listing_revisions SET effective_values=effective_values-'address'")
+    elif fault == "floor":
+        conn.execute("UPDATE expansion.listing_revisions SET effective_values=jsonb_set(effective_values,'{floor}',to_jsonb(''::text))")
+    elif fault == "fingerprint":
+        conn.execute("UPDATE expansion.listing_revisions SET material_fingerprint=%s", ("f" * 64,))
+    elif fault == "json_object_string":
+        actual = conn.execute("SELECT effective_values FROM expansion.listing_revisions").fetchone()[0]
+        conn.execute("UPDATE expansion.listing_revisions SET effective_values=to_jsonb(%s::text)", (json.dumps(actual),))
+        assert conn.execute("SELECT jsonb_typeof(effective_values),effective_values->'address' FROM expansion.listing_revisions").fetchone() == ("string", None)
+    elif fault == "json_string":
+        conn.execute("UPDATE expansion.listing_revisions SET effective_values=%s::jsonb", (json.dumps("not a typed material object"),))
+    else:
+        conn.execute("UPDATE expansion.listings SET current_revision_id=NULL")
+    conn.commit()
+    tables = ("identity.properties", "expansion.listings", "expansion.listing_revisions", "expansion.listing_observations", "identity.source_identity_edges")
+    before = {table: conn.execute(f"SELECT row_to_json(t) FROM {table} t").fetchall() for table in tables}
+    candidates = [{"id": "C-RESUME-QUALITY", "listingId": listing["id"]}] if resume_kind == "candidate" else []
+    second = IntakeMigrator(conn).backfill([], [listing] if resume_kind == "listing" else [], candidates,
+        tenant_id=tenant, resume=True, parser_release=parser_provenance())
+    assert second["counts"][f"{resume_kind}s_processed"] == second["counts"]["skipped_due_to_resume"] == 0
+    assert second["counts"][f"{resume_kind}s_quarantined"] == 1
+    assert second["counts"]["quarantined"] == 1
+    assert {table: conn.execute(f"SELECT row_to_json(t) FROM {table} t").fetchall() for table in tables} == before
+    assert conn.execute("SELECT count(*) FROM expansion.promotion_decisions").fetchone()[0] == 0
+    assert conn.execute("SELECT count(*) FROM expansion.candidate_sites").fetchone()[0] == 0
+    assert conn.execute("SELECT source_kind FROM workflow.reconciliation_findings WHERE severity='BLOCKING'").fetchall() == [(f"legacy_{resume_kind}",)]
+    expected, actual = conn.execute("SELECT expected,actual FROM workflow.reconciliation_findings WHERE severity='BLOCKING'").fetchone()
+    assert "native_current_revision" in expected and actual["errors"]
+
+
+@pytest.mark.parametrize("resume_kind", ["listing", "candidate"])
+def test_resume_record_counts_do_not_mislabel_repeated_valid_records_as_quarantine(conn, resume_kind):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    listing = {"id": "L-REPEATED-VALID", "sourceId": "SRC-591", "sourceListingId": "synthetic-repeated-valid",
+        "listing_status": "active", "address": "Synthetic repeated valid address", "rentPerMonth": 30000.0, "areaPing": 18.0}
+    candidate = {"id": "C-REPEATED-VALID", "listingId": listing["id"]}
+    intake = {**migration_input(), "stage": "READY", "matchResult": {"outcome": "NEW", "targetListingId": listing["id"]}}
+    first = IntakeMigrator(conn).backfill([intake], [listing], [candidate], tenant_id=tenant, parser_release=parser_provenance())
+    assert first["counts"]["listings_processed"] == first["counts"]["candidates_processed"] == 1
+    second = IntakeMigrator(conn).backfill([], [listing, listing] if resume_kind == "listing" else [],
+        [candidate, candidate] if resume_kind == "candidate" else [], tenant_id=tenant, resume=True, parser_release=parser_provenance())
+    counts = second["counts"]
+    assert counts[f"{resume_kind}s_received"] == counts[f"{resume_kind}s_mapped_records"] == counts["skipped_due_to_resume"] == 2
+    assert counts[f"{resume_kind}s_processed"] == 1
+    assert counts[f"{resume_kind}s_quarantined"] == counts["quarantined"] == counts[f"{resume_kind}s_excluded"] == 0
+    proof = conn.execute("SELECT expected FROM workflow.reconciliation_findings WHERE severity='INFO'").fetchone()[0]
+    for kind in ("listing", "candidate"):
+        assert proof[f"{kind}s_received"] == proof[f"{kind}s_mapped_records"] + proof[f"{kind}s_quarantined"] + proof[f"{kind}s_excluded"]
+    assert conn.execute("SELECT count(*) FROM expansion.listing_revisions").fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM expansion.candidate_sites").fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM workflow.reconciliation_findings WHERE severity='BLOCKING'").fetchone()[0] == 0
