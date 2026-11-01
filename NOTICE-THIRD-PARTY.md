@@ -274,7 +274,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `Pygments` 2.20.0 (pypi)
 - `lazy-object-proxy` 1.12.0 (pypi)
 - `patsy` 1.0.2 (pypi)
-- `pyasn1` 0.6.4 (pypi)
+- `pyasn1` 0.6.5 (pypi)
 - `pyasn1_modules` 0.4.2 (pypi)
 - `wrapt` 2.2.2 (pypi)
 
@@ -314,7 +314,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `psutil` 7.2.2 (pypi)
 - `pycparser` 3.0 (pypi)
 - `pyomo` 6.10.1 (pypi)
-- `pypdf` 6.21.2 (pypi)
+- `pypdf` 6.21.4 (pypi)
 - `python-dotenv` 1.2.2 (pypi)
 - `reportlab` 5.0.1 (pypi)
 - `scikit-learn` 1.9.0 (pypi)
