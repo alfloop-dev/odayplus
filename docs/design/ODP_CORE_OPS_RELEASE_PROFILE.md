@@ -359,7 +359,7 @@ Task: ODP-CORE-OPS-STAGING-LIVE-GATE-001 · Owner: Claude2 · Reviewer: Codex2
 
 1. **ID token 簽發權**：模組只授予 deployer `roles/iam.serviceAccountUser`（`actAs`），它不含 `iam.serviceAccounts.getOpenIdToken`。verify 既有的 `_live_identity_token` 與本 gate 都需要 deployer 對 release runtime SA 有 `roles/iam.serviceAccountOpenIdTokenCreator`（或在專案層級已有同等權限）。
 2. **Cloud Run invoker**：模組只授予 web SA 與 worker SA `run.invoker`。verify 以 runtime SA 的 token 讀 API 與 Web，需要 runtime SA 對兩個 service 有 `roles/run.invoker`（或在專案層級已有同等權限）。
-3. **API 可達性**：staging API 的 ingress 是 `INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER`。執行 verify 的 runner 必須在可到達它的網路路徑上（既有 `/platform/health` 讀取也是如此）。
+3. **API 可達性**：staging API 的 ingress 原本是 `INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER`，已由 §12.5.1 改為 `INGRESS_TRAFFIC_ALL`（仍只靠 IAM）。執行 verify 的 runner 必須在可到達它的網路路徑上（既有 `/platform/health` 讀取也是如此）。
 4. **JWKS 連線**：API 的 egress 是 `ALL_TRAFFIC`，經過 default-deny 的 VPC。驗證 smoke token 需要從 API 連到 `www.googleapis.com`（Private Google Access 與對應的 firewall/DNS）。GCS、Pub/Sub 本來就需要同樣的路徑。
 5. **`worker_idempotency` 自行 enqueue（ODP-STAGING-WORKER-IDEMPOTENCY-SELF-ENQUEUE-001 已修正）**：worker job 以 `--max-jobs 1 --require-job` 執行，scheduler trigger 是 paused，演練中沒有其他步驟先 enqueue，原本佇列為空時這個 stage 必定以 `required_job_not_claimed` 失敗。現在這個 stage 以 gate 的 `_check_worker_and_audit` 透過 staging API 排入 provider disabled 的 `external-fetch` 探測（smoke principal 與 API transport token 與 `release_profile_readback` 相同），重放確認 `created=False`，再以 Terraform 原參數執行 worker job，最後讀回終態 `succeeded` 與 audit receipt。`--require-job` 保留，worker 沒有處理工作時 stage 仍失敗。
 

@@ -237,7 +237,7 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         # Neither grant is widened to the project, and no service is public.
         self.assertNotRegex(
             main_tf,
-            r'google_project_iam_member"[^}]*(serviceAccountOpenIdTokenCreator|run\.invoker)',
+            r'google_project_iam_(member|binding|policy)"[^}]*(serviceAccountOpenIdTokenCreator|run\.invoker)',
         )
         self.assertNotIn("allUsers", main_tf)
         self.assertNotIn("allAuthenticatedUsers", main_tf)
