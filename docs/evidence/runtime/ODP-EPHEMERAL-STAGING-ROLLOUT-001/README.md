@@ -143,6 +143,33 @@ Build handoff（從 run artifact 下載後讀取）：
 2. Human/Ops 用新的 approval_id 和 nonce 登記 lease。
 3. 本 task owner 接續 staging deploy 與 rehearsal。
 
+## 2026-11-02 第三次 lease 簽發失敗：簽章私鑰讀不到（Claude）
+
+`ODP-STAGING-ADMISSION-CCB9553BB-001`（#1640，dev `3672d00a`）已把 staging admission 換綁到 `ccb9553b`。Human/Ops 依負責人 HD-10c 登記 `HUMANOPS-STAGING-LEASE-20261102C`（build run `41426783637`）。supervisor 簽發結果（live `ai-activity-log.jsonl`）：
+
+| 時間 (UTC) | 狀態 | 內容 |
+|---|---|---|
+| 14:20:53 | `issuing` | 已保留請求，fingerprint `sha256:c063e132…97c2`，`errors` 空 |
+| 14:21:58 | `blocked` | `Secret Manager signing key is unavailable`；`dispatch_ref_sha=3672d00a…` |
+
+`dispatch_ref_sha` 已寫入，代表請求驗證、exact binding、ancestry、nonce 與 GCS lease state 都通過（上一輪 B8 的 sync 逾時沒有再發生），停在 `release_lease_integration.load_private_key_from_secret_reference`。這個函式跑 `gcloud secrets versions access latest`，stderr 丟棄。
+
+本機 gcloud log 有完整原因（`~/.config/gcloud/logs/2026.11.02/14.20.57.727369.log`、`14.21.35.493593.log`、`14.21.36.582927.log`，三次都是這個 secret access 指令）：
+
+```text
+(gcloud.secrets.versions.access) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.
+```
+
+supervisor（pid 2002345，`/usr/bin/python3.12`，`HOME=/home/lupin`，沒有 `CLOUDSDK_CONFIG`／`GOOGLE_APPLICATION_CREDENTIALS`）共用本機 gcloud 設定，active account 是 `deborah.lu@dev.cctech-support.com`。同一帳號在 04:11 讀 secret 成功（lease `…20261102B` 簽發），之後 reauth 期限到了，背景程序無法互動重新驗證。這不是程式缺陷，也不是 IAM 問題。
+
+本輪沒有讀 secret 內容、沒有呼叫任何 GCP API，只讀本機 gcloud config／log 與 activity log。blocked fingerprint 不會自動重試，所以要：
+
+1. 使用者在這台機器以互動方式重新登入 `deborah.lu@dev.cctech-support.com`（`gcloud auth login`），確認非互動的 `gcloud secrets versions list --secret <id> --project <number>` 不再要求 reauth。
+2. Human/Ops 用新的 approval_id 和 nonce 登記 lease，之後 reopen 本 task。
+3. 本 task owner 接續 staging deploy 與 rehearsal。
+
+這張 lease 簽發前 reauth 期限可能再到期；若要長期避免，需要讓 supervisor 用不受 reauth 限制的身分（例如有 secret accessor 權限的 service account）讀簽章私鑰，這是 Human/Ops 的決定，本 task 不改。
+
 ## Blockers 與解除條件
 
 | Blocker | 解除條件 |
@@ -153,7 +180,8 @@ Build handoff（從 run artifact 下載後讀取）：
 | B4：Runtime Release 未註冊且沒有 staging 執行 provenance | Human/Ops 發布 `origin/dev` 的唯一 workflow，補 protected vars／lease authority／approval authority，再以 `environment=staging` 成功 dispatch。 |
 | B5：staging foundation 僅部分就緒 | 完成依賴的 staging bootstrap/IAC 與 masked snapshot materialization，提供 release-scoped bucket/database/tenant/IAM、Cloud Run services、paused Scheduler 與 TTL 的 redacted readback。 |
 | B6：沒有 app image handoff | 以 exact candidate 執行一次 Runtime Release build/sign，取得 Artifact Registry API/Web/Worker/Scheduler immutable digests。 |
-| B9：staging deploy／closeout job 沒有安裝 terraform（run 41387164145）— `partially_resolved` | 修正已合入 dev（PR #1637，`f81b9373`；`deploy-dev.yml` 兩處 `hashicorp/setup-terraform@v3`）。含它的 candidate `ccb9553b` 已 build（run `41426783637`）。仍需：完成 staging admission，再由 Human/Ops 登記新 lease。 |
+| B9：staging deploy／closeout job 沒有安裝 terraform（run 41387164145）— `partially_resolved` | 修正已合入 dev（PR #1637，`f81b9373`；`deploy-dev.yml` 兩處 `hashicorp/setup-terraform@v3`）。含它的 candidate `ccb9553b` 已 build（run `41426783637`），staging admission 已由 #1640 換綁。仍需：lease 簽發（見 B10）並 dispatch staging deploy。 |
+| B10：supervisor 讀不到 lease 簽章私鑰（`HUMANOPS-STAGING-LEASE-20261102C`）— `open` | 使用者互動重新登入 supervisor 使用的 gcloud 帳號（目前 reauth 失敗），再由 Human/Ops 用新 approval_id／nonce 登記 lease。 |
 
 ## 正式重跑要求
 
