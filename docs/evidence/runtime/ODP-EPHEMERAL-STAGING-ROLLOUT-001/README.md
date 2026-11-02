@@ -104,11 +104,26 @@ run 上傳的 receipt 原樣保存為 [`run-41387164145-staging-lifecycle-create
 
 修正與後續：
 
-- 前置修正 `ODP-STAGING-DEPLOY-TERRAFORM-SETUP-001`（PR #1637，已送審）：在 deploy job（只限 staging）與 `staging_closeout` 第一次呼叫 lifecycle 前加 `hashicorp/setup-terraform@v3`，版本與 `ci.yml` 同為 1.9.8，關閉 wrapper（lifecycle 會解析 `terraform output -json`）。另加一條 contract test，拿掉步驟或打開 wrapper 都會變紅。
+- 前置修正 `ODP-STAGING-DEPLOY-TERRAFORM-SETUP-001`（PR #1637，2026-11-02T09:18:56Z 以 merge commit `f81b9373` 合入 dev）：在 deploy job（只限 staging）與 `staging_closeout` 第一次呼叫 lifecycle 前加 `hashicorp/setup-terraform@v3`，版本與 `ci.yml` 同為 1.9.8，關閉 wrapper（lifecycle 會解析 `terraform output -json`）。另加一條 contract test，拿掉步驟或打開 wrapper 都會變紅。
 - `check_candidate_ancestry` 不接受 candidate 之後 dev 上有 workflow 改動，所以 #1637 合併後 candidate `730328798` 不能再用。順序：#1637 合併 → 在含它的 dev commit 跑 staging build → staging admission task 綁定新 candidate → Human/Ops 用新 approval_id／nonce 登記 lease。
 - 另外確認 `staging_lifecycle.py` 只會呼叫 `terraform` 與 `gcloud` 這兩個外部執行檔；live E2E gate 在只有 stdlib 的 Python 3.12 下可以正常載入（runner 用系統 `python3` 執行 lifecycle）。所以就靜態檢查來看，沒有發現第二個缺少的工具。下一個失敗點仍要等實際 run 才知道。
 
 仍然沒有 staging 部署、migration、E2E、worker／scheduler、backup／restore 或 rollback 被觀測到，本目錄沒有 `staging-verified` 收據。
+
+## 2026-11-02 重查：terraform 修正已合入，等待新 candidate（Claude）
+
+10:05Z 起的 owner dispatch 唯讀重查，結果如下：
+
+- PR #1637 已於 09:18:56Z 合入 dev（merge commit `f81b9373`）。`origin/dev` 現為 `ccb9553b`，`deploy-dev.yml` 的 staging deploy job 與 `staging_closeout` 都有 `hashicorp/setup-terraform@v3`。
+- `f81b9373` 之後沒有 staging build。`deploy-dev.yml` 最近一次 staging run 仍是失敗的 deploy `41387164145`（candidate `730328798`），最近一次 staging build 是 `41363014110`（同一 candidate）。`730328798` 之後 dev 有 workflow 改動，不能再通過 ancestry 檢查。
+- 本 task branch 已用 merge 吸收 `origin/dev` `ccb9553b`。merge tree `220360aa` 與 `git merge-tree --write-tree` 的結果相同。
+
+這次沒有 dispatch build、deploy 或建立 lease。staging build 會被 auto-mode 判為 deploy 動作，要由使用者觸發。後續順序：
+
+1. 由使用者在 `origin/dev`（含 `f81b9373`，例如 `ccb9553b`）上執行 `deploy-dev.yml` 的 staging build。
+2. staging admission task 綁定新 candidate。
+3. Human/Ops 用新的 approval_id 和 nonce 登記 lease。
+4. 本 task owner 接續 staging deploy 與 rehearsal。
 
 ## Blockers 與解除條件
 
@@ -120,7 +135,7 @@ run 上傳的 receipt 原樣保存為 [`run-41387164145-staging-lifecycle-create
 | B4：Runtime Release 未註冊且沒有 staging 執行 provenance | Human/Ops 發布 `origin/dev` 的唯一 workflow，補 protected vars／lease authority／approval authority，再以 `environment=staging` 成功 dispatch。 |
 | B5：staging foundation 僅部分就緒 | 完成依賴的 staging bootstrap/IAC 與 masked snapshot materialization，提供 release-scoped bucket/database/tenant/IAM、Cloud Run services、paused Scheduler 與 TTL 的 redacted readback。 |
 | B6：沒有 app image handoff | 以 exact candidate 執行一次 Runtime Release build/sign，取得 Artifact Registry API/Web/Worker/Scheduler immutable digests。 |
-| B9：staging deploy／closeout job 沒有安裝 terraform（run 41387164145） | `ODP-STAGING-DEPLOY-TERRAFORM-SETUP-001`（PR #1637）合入 dev，以含它的 dev commit 重建 candidate、完成 staging admission，再由 Human/Ops 登記新 lease。 |
+| B9：staging deploy／closeout job 沒有安裝 terraform（run 41387164145）— `partially_resolved` | 修正已合入 dev（PR #1637，`f81b9373`；`deploy-dev.yml` 兩處 `hashicorp/setup-terraform@v3`）。仍需：以含它的 dev commit 重建 candidate、完成 staging admission，再由 Human/Ops 登記新 lease。 |
 
 ## 正式重跑要求
 
