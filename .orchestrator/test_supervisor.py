@@ -586,6 +586,15 @@ class AccountPoolSchedulingTests(unittest.TestCase):
             ["reviewer_unavailable:account pool codex_exhausted is disabled"],
         )
 
+        # Only the pool state counts; a reason that mentions cooldown does not.
+        config["account_pools"]["codex_exhausted"] = {
+            "max_concurrent": 1, "state": "exhausted", "reason": "pool is cooldown-exempt",
+        }
+        self.assertEqual(
+            supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task),
+            ["reviewer_unavailable:account pool codex_exhausted is exhausted: pool is cooldown-exempt"],
+        )
+
     def test_assignment_integrity_does_not_reassign_human_gate(self) -> None:
         config = self._config()
         task = {

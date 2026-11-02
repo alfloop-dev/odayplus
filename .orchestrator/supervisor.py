@@ -4051,7 +4051,7 @@ def task_actor_assignment_block_reason(
     # and dispatch-time failover (`reassign_unavailable_reviewers`) already
     # routes around it. Reporting it here moved every open task's reviewer to
     # the other pool each time the pools took turns cooling down.
-    if pool_reason and " is cooldown" not in pool_reason:
+    if pool_reason and not pool_reason.partition(":")[0].endswith(" is cooldown"):
         return pool_reason
     provider = str(agent.get("provider") or normalized)
     return provider_runtime_config_block_reason(config, provider)
