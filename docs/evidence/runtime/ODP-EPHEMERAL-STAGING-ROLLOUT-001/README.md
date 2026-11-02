@@ -62,6 +62,23 @@ gcloud run services list ...   # 失敗：需要互動式 reauth，未繞過
 uv run --python 3.12 pytest -q tests/ops/test_staging_rollout.py tests/release/test_release_manifest.py
 ```
 
+## 2026-11-02 staging lease 簽發失敗（Claude）
+
+candidate 已改為 `730328798ce8456ae698bf5ade35d5e75f5ff662`（staging build run `41363014110`，manifest `sha256:2c9159d5…5830`），registry 由 `ODP-STAGING-ADMISSION-730328798-001`（#1635，dev `2de5a4bf`）綁定 staging admission。Human/Ops 登記 lease 請求 `HUMANOPS-STAGING-LEASE-20261102`（01:56:23Z 核准，07:56:23Z 到期）。
+
+supervisor 簽發結果（從 live 看板 `release_lease_issuance` 讀回）：
+
+| 時間（UTC） | state | 內容 |
+|---|---|---|
+| 02:25:17 | `issuing` | 已保留請求，`dispatch_ref_sha` 尚未寫入，沒有 lease_id |
+| 02:31:04 | `blocked` | `issuing reservation has no durable lease record`；`dispatch_ref_sha=2de5a4bf…` |
+
+第二輪走 issuing recovery，GCS lease state 的查詢有成功（沒有出現 `durable GCS lease state is unavailable`），但 store 裡沒有這個 task 的 lease。代表第一輪保留後，在寫入 GCS 之前就結束了。`.orchestrator/release_lease_integration.py` 在這段有幾個不記錄就 `continue` 的分支（`_status_still_reserved` 回 `None`），supervisor log 也沒有對應紀錄，所以第一輪實際停在哪裡**未確認**。同一份程式在 2026-09-30、10-02 都有成功簽發過，不是每次都會失敗。
+
+依設計，同一 fingerprint 的 `blocked` 不會重試，舊 nonce 也不能再用。要重試只能由 Human/Ops 用新的 `approval_id` 與新的 nonce 重新登記請求。`gh run list --workflow deploy-dev.yml` 確認沒有 `environment=staging` 的 run 被觸發；02:29:55Z 的 run `41378043338` 是 `2de5a4bf` 的 dev 自動部署，與本 task 無關。
+
+本輪也把 `origin/dev` `2de5a4bf` 以一般 merge 合入 task branch（無衝突，merge tree 與 `git merge-tree --write-tree` 相同）。沒有執行任何 deploy 或 rehearsal，仍然沒有 `staging-verified` 收據。
+
 ## Blockers 與解除條件
 
 | Blocker | 解除條件 |

@@ -177,17 +177,17 @@
   },
   "release_manifest": {
     "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
-    "release_id": "odp-6140d0ef633c",
-    "candidate_sha": "6140d0ef633cbf94522c171d9927103ab200257f",
-    "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@6140d0ef633cbf94522c171d9927103ab200257f",
+    "release_id": "odp-730328798ce8",
+    "candidate_sha": "730328798ce8456ae698bf5ade35d5e75f5ff662",
+    "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@730328798ce8456ae698bf5ade35d5e75f5ff662",
     "release_status": "ready",
-    "current_origin_dev_sha": "09ede4db62d7706e492e66c227f7f1446bb60be7",
-    "manifest_digest": "sha256:d286dd009978a5b9aaa9ee9fc01d1c1be1d8b846855539be63b18504ad368108",
+    "current_origin_dev_sha": "2de5a4bfab191b2d8ed677f82adb1973d22ee0e0",
+    "manifest_digest": "sha256:2c9159d5e8d720f6feb1b4abaaa0df777962703a2b555e9ffbec812f24ae5830",
     "manifest_digest_recomputes": true,
     "placeholder_digest_count": 0,
     "placeholder_digest_fields": [],
     "candidate_is_current_dev": false,
-    "admission_scope_note": "Manifest digests come from the dev Runtime Release build handoff; they are dev-admitted artifacts only and are not staging admission or staging deployment proof.",
+    "admission_scope_note": "Manifest copied from staging build run 41363014110 by ODP-STAGING-ADMISSION-730328798-001 (#1635). The registry admits it for one staging release; this is not staging deployment proof.",
     "superseded_record": {
       "recorded_at": "2026-08-26T01:18:58Z",
       "release_id": "odp-20260730-001",
@@ -207,6 +207,12 @@
         "sbom_refs[0]",
         "signature_refs[0]"
       ]
+    },
+    "candidate_to_dev_non_evidence_paths": 0,
+    "previous_manifest": {
+      "release_id": "odp-6140d0ef633c",
+      "candidate_sha": "6140d0ef633cbf94522c171d9927103ab200257f",
+      "manifest_digest": "sha256:d286dd009978a5b9aaa9ee9fc01d1c1be1d8b846855539be63b18504ad368108"
     }
   },
   "deployment_path": {
@@ -246,9 +252,9 @@
       "severity": "blocking",
       "summary": "The source manifest candidate is stale and does not identify the current dev release.",
       "required_action": "Create a new release manifest for the current candidate after a successful build.",
-      "status": "open",
-      "status_note": "Manifest candidate 6140d0ef633cbf94522c171d9927103ab200257f is not the current origin/dev head 09ede4db62d7706e492e66c227f7f1446bb60be7, and every Runtime Release dev run observed on 2026-10-25/26 failed at the migration Cloud Run Job (see B7). A staging candidate must be the one admitted by a successful dev run.",
-      "status_recorded_at": "2026-10-26T03:58:00Z"
+      "status": "resolved_at_dev_layer",
+      "status_note": "Manifest candidate 730328798ce8456ae698bf5ade35d5e75f5ff662 was deployed to dev by Runtime Release run 41285267801 (success) and rebuilt for staging by run 41363014110 (success). origin/dev 2de5a4bf differs from it only under docs/evidence/.",
+      "status_recorded_at": "2026-11-02T02:36:00Z"
     },
     {
       "id": "B4",
@@ -280,10 +286,19 @@
     {
       "id": "B7",
       "severity": "blocking",
-      "status": "open",
-      "status_recorded_at": "2026-10-26T03:58:00Z",
+      "status": "resolved_at_dev_layer",
+      "status_recorded_at": "2026-11-02T02:36:00Z",
       "summary": "Runtime Release dev deploys are failing: runs 40234550449, 40238065702, 40242673217 and 40260645830 (2026-10-25T21:14Z to 2026-10-26T02:45Z) concluded failure; run 40260645830 failed in 'Deploy Cloud Run by immutable digest' because the migration Cloud Run Job execution failed, after which the recorded API/Web traffic split was restored. Run 40265674132 for origin/dev 09ede4db was still in progress at readback time.",
-      "required_action": "Restore a successful dev Runtime Release (migration job included) for the candidate that staging will promote by identical digest before dispatching environment=staging."
+      "required_action": "Restore a successful dev Runtime Release (migration job included) for the candidate that staging will promote by identical digest before dispatching environment=staging.",
+      "status_note": "Dev Runtime Release run 41285267801 for candidate 730328798 concluded success, including the migration, worker and scheduler job checks."
+    },
+    {
+      "id": "B8",
+      "severity": "blocking",
+      "status": "open",
+      "status_recorded_at": "2026-11-02T02:36:00Z",
+      "summary": "Supervisor staging lease issuance for approval HUMANOPS-STAGING-LEASE-20261102 ended blocked: reserved as issuing at 2026-11-02T02:25:17Z, then 'issuing reservation has no durable lease record' at 02:31:04Z. No lease was written and no environment=staging run was dispatched. Why the first pass stopped before the GCS write was not determined.",
+      "required_action": "Human/Ops registers a new staging lease request with a new approval_id and a new nonce (the blocked fingerprint is not retried and the old nonce is spent); the owner then reopens the task so the request passes request_errors."
     }
   ],
   "desired_state_not_observed": {
