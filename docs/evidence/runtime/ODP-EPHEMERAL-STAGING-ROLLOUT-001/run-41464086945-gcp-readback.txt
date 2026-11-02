@@ -1,0 +1,57 @@
+# Run 41464086945 post-failure read-only GCP evidence (recorded by Claude)
+# Only list/describe/logging read commands were run; no mutation, no secret values read.
+
+## 1. Cloud Audit Logs (admin activity) for github-deployer, 2026-11-02T14:42:30Z..14:44:00Z
+$ gcloud logging read 'protoPayload.authenticationInfo.principalEmail="github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com" AND timestamp>="2026-11-02T14:42:30Z" AND timestamp<="2026-11-02T14:44:00Z" AND logName:"cloudaudit.googleapis.com%2Factivity"' --project=odayplus-runtime-20260825 --limit=100 --format=json
+exit=0 (9 entries; summarised below as timestamp method resource status.code status.message; callerIp/userAgent omitted)
+2026-11-02T14:43:05.059874067Z google.iam.admin.v1.CreateServiceAccount projects/odayplus-runtime-20260825 7 Permission 'iam.serviceAccounts.create' denied on resource '//cloudresourcemanager.googleapis.com/projects/odayplus-runtime-20260825' (or it may not exist).
+2026-11-02T14:43:05.060437732Z google.iam.admin.v1.CreateServiceAccount projects/odayplus-runtime-20260825 7 Permission 'iam.serviceAccounts.create' denied on resource '//cloudresourcemanager.googleapis.com/projects/odayplus-runtime-20260825' (or it may not exist).
+2026-11-02T14:43:05.080698022Z google.pubsub.v1.Publisher.CreateTopic projects/odayplus-runtime-20260825/topics/stg-odp-ccb9553bb151-46d39e68-jobs-dlq 7 User not authorized to perform this action.
+2026-11-02T14:43:05.093602414Z google.cloud.secretmanager.v1.SecretManagerService.CreateSecret projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-web-session 7 Permission 'secretmanager.secrets.create' denied on resource (or it may not exist).
+2026-11-02T14:43:05.096960188Z google.cloud.secretmanager.v1.SecretManagerService.CreateSecret projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-database-url 7 Permission 'secretmanager.secrets.create' denied on resource (or it may not exist).
+2026-11-02T14:43:05.112120394Z google.pubsub.v1.Publisher.CreateTopic projects/odayplus-runtime-20260825/topics/stg-odp-ccb9553bb151-46d39e68-jobs 7 User not authorized to perform this action.
+2026-11-02T14:43:05.115779918Z google.iam.admin.v1.CreateServiceAccount projects/odayplus-runtime-20260825 7 Permission 'iam.serviceAccounts.create' denied on resource '//cloudresourcemanager.googleapis.com/projects/odayplus-runtime-20260825' (or it may not exist).
+2026-11-02T14:43:05.148067777Z google.cloud.secretmanager.v1.SecretManagerService.CreateSecret projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-cursor-signing-key 7 Permission 'secretmanager.secrets.create' denied on resource (or it may not exist).
+2026-11-02T14:43:05.770293143Z storage.buckets.create projects/_/buckets/stg-odp-ccb9553b-46d39e68-data-odayplus-runtime-20260825 7 gi...r@od...m does not have storage.buckets.create access to the Google Cloud project. Permission 'storage.buckets.create' denied on resource '//storage.googleapis.com/projects/_/buckets/stg-odp-ccb9553b-46d39e68-data-odayplus-runtime-20260825' (or it may not exist).
+
+## 2. Remaining release-scoped resources
+$ gcloud run services list --project=odayplus-runtime-20260825 --region=asia-east1 --filter=metadata.name~^stg-odp-ccb9553bb151 --format=value(metadata.name)
+<empty>
+exit=0
+$ gcloud run jobs list --project=odayplus-runtime-20260825 --region=asia-east1 --filter=metadata.name~^stg-odp-ccb9553bb151 --format=value(metadata.name)
+<empty>
+exit=0
+$ gcloud sql databases list --instance=oday-staging-foundation-sql --project=odayplus-runtime-20260825 --filter=name~^stg_odp_ccb9553bb151 --format=value(name)
+<empty>
+exit=0
+$ gcloud sql users list --instance=oday-staging-foundation-sql --project=odayplus-runtime-20260825 --filter=name~^stg_odp_ccb9553bb151 --format=value(name)
+<empty>
+exit=0
+$ gcloud iam service-accounts list --project=odayplus-runtime-20260825 --filter=email~^stg-odp-ccb9553bb151 --format=value(email)
+<empty>
+exit=0
+$ gcloud pubsub topics list --project=odayplus-runtime-20260825 --filter=name~stg-odp-ccb9553bb151 --format=value(name)
+WARNING: The following filter keys were not present in any resource : name
+exit=0
+$ gcloud secrets list --project=odayplus-runtime-20260825 --filter=name~stg-odp-ccb9553bb151 --format=value(name)
+<empty>
+exit=0
+$ gcloud storage buckets list --project=odayplus-runtime-20260825 --filter=name~^stg-odp-ccb9553b --format=value(name)
+<empty>
+exit=0
+$ gcloud scheduler jobs list --project=odayplus-runtime-20260825 --location=asia-east1 --filter=name~stg-odp-ccb9553bb151 --format=value(name)
+<empty>
+exit=0
+$ gcloud storage ls gs://oday-staging-recovery-odayplus-runtime-20260825/oday-plus/ephemeral-staging/odp-ccb9553bb151/
+ERROR: (gcloud.storage.ls) One or more URLs matched no objects.
+exit=1
+# note: the pubsub WARNING means the project has no topics at all, so no stg-odp-ccb9553bb151 topic exists.
+
+## 3. Project-level roles currently bound to github-deployer
+$ gcloud projects get-iam-policy odayplus-runtime-20260825 --flatten=bindings[].members --filter=bindings.members:serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com --format=value(bindings.role,bindings.condition.title)
+roles/cloudscheduler.admin	
+roles/cloudsql.client	
+roles/logging.viewer	
+roles/run.admin	
+roles/serviceusage.serviceUsageConsumer	
+exit=0

@@ -177,17 +177,17 @@
   },
   "release_manifest": {
     "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
-    "release_id": "odp-730328798ce8",
-    "candidate_sha": "730328798ce8456ae698bf5ade35d5e75f5ff662",
-    "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@730328798ce8456ae698bf5ade35d5e75f5ff662",
+    "release_id": "odp-ccb9553bb151",
+    "candidate_sha": "ccb9553bb1511ec746e69a831a1a8f5ad483a91f",
+    "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@ccb9553bb1511ec746e69a831a1a8f5ad483a91f",
     "release_status": "ready",
-    "current_origin_dev_sha": "2de5a4bfab191b2d8ed677f82adb1973d22ee0e0",
-    "manifest_digest": "sha256:2c9159d5e8d720f6feb1b4abaaa0df777962703a2b555e9ffbec812f24ae5830",
+    "current_origin_dev_sha": "3672d00aef2dbb1953520f614e32e3b888cdfb23",
+    "manifest_digest": "sha256:93ffa139fcfde2f4b478cf0f4a257d0e4fd0c73d72dd02edd0bd93d250b62362",
     "manifest_digest_recomputes": true,
     "placeholder_digest_count": 0,
     "placeholder_digest_fields": [],
     "candidate_is_current_dev": false,
-    "admission_scope_note": "Manifest copied from staging build run 41363014110 by ODP-STAGING-ADMISSION-730328798-001 (#1635). The registry admits it for one staging release; this is not staging deployment proof.",
+    "admission_scope_note": "Manifest copied from staging build run 41426783637 by ODP-STAGING-ADMISSION-CCB9553BB-001 (#1640). The registry admits it for one staging release; this is not staging deployment proof.",
     "superseded_record": {
       "recorded_at": "2026-08-26T01:18:58Z",
       "release_id": "odp-20260730-001",
@@ -210,9 +210,9 @@
     },
     "candidate_to_dev_non_evidence_paths": 0,
     "previous_manifest": {
-      "release_id": "odp-6140d0ef633c",
-      "candidate_sha": "6140d0ef633cbf94522c171d9927103ab200257f",
-      "manifest_digest": "sha256:d286dd009978a5b9aaa9ee9fc01d1c1be1d8b846855539be63b18504ad368108"
+      "release_id": "odp-730328798ce8",
+      "candidate_sha": "730328798ce8456ae698bf5ade35d5e75f5ff662",
+      "manifest_digest": "sha256:2c9159d5e8d720f6feb1b4abaaa0df777962703a2b555e9ffbec812f24ae5830"
     }
   },
   "deployment_path": {
@@ -304,10 +304,45 @@
     {
       "id": "B9",
       "severity": "blocking",
-      "status": "open",
-      "status_recorded_at": "2026-11-02T04:30:00Z",
+      "status": "partially_resolved",
+      "status_recorded_at": "2026-11-02T14:50:00Z",
       "summary": "Runtime Release staging deploy run 41387164145 (candidate 730328798, manifest sha256:2c9159d5...5830) failed in 'Execute ephemeral staging lifecycle create' with \"Creation executor failed: [Errno 2] No such file or directory: 'terraform'\". deploy-dev.yml installs no Terraform in the deploy or staging_closeout jobs and GitHub-hosted runners do not ship it. The failure hold step died on the same FileNotFoundError. Terraform never ran, so no release-scoped resource was created.",
-      "required_action": "Merge ODP-STAGING-DEPLOY-TERRAFORM-SETUP-001 (PR #1637) into dev. Because check_candidate_ancestry refuses a workflow change after the candidate, candidate 730328798 cannot be reused: run a staging build on the dev commit that contains #1637, bind it through a staging admission task, then Human/Ops registers a new lease request (new approval_id and nonce) for that candidate."
+      "required_action": "Merge ODP-STAGING-DEPLOY-TERRAFORM-SETUP-001 (PR #1637) into dev. Because check_candidate_ancestry refuses a workflow change after the candidate, candidate 730328798 cannot be reused: run a staging build on the dev commit that contains #1637, bind it through a staging admission task, then Human/Ops registers a new lease request (new approval_id and nonce) for that candidate.",
+      "status_note": "PR #1637 (merge f81b9373) is in candidate ccb9553b. In staging deploy run 41464086945 'Set up Terraform for the staging lifecycle' succeeded and terraform init/plan/apply executed; the run then failed on deployer IAM (B11), not on a missing terraform binary. The staging_closeout job's setup-terraform step has not run yet (closeout only runs after a verified production watch), so the fix is observed in the deploy job only."
+    },
+    {
+      "id": "B10",
+      "severity": "blocking",
+      "status": "partially_resolved",
+      "status_recorded_at": "2026-11-02T14:50:00Z",
+      "summary": "Lease request HUMANOPS-STAGING-LEASE-20261102C ended blocked at 14:21:58Z with 'Secret Manager signing key is unavailable': the supervisor's shared gcloud user credential needed interactive reauth (ReauthFailError in the local gcloud logs).",
+      "required_action": "Owner re-login of the supervisor gcloud account, then a new Human/Ops lease request with a new approval_id and nonce.",
+      "status_note": "After the owner re-login, HUMANOPS-STAGING-LEASE-20261102D was issued at 14:39:48Z (lease lease-64c1dd57d7a7d73381a4d4245848aa0c, candidate ccb9553b, manifest sha256:93ffa139...2362, dispatch_ref_sha 3672d00a) and dispatched run 41464086945, whose lease verification job succeeded. The user-credential reauth expiry can recur; a non-reauth identity for the signer remains a Human/Ops decision."
+    },
+    {
+      "id": "B11",
+      "severity": "blocking",
+      "status": "open",
+      "status_recorded_at": "2026-11-02T14:50:00Z",
+      "summary": "Staging deploy run 41464086945 failed in 'Execute ephemeral staging lifecycle create': terraform apply of infra/terraform/modules/ephemeral_staging exited 1. Cloud Audit Logs show every create by the deploy identity github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com was denied with code 7 at 14:43:05Z: iam.serviceAccounts.create (3x), secretmanager.secrets.create (3x), pubsub.topics.create (2x), storage.buckets.create (1x). The deployer's only project roles are run.admin, cloudscheduler.admin, cloudsql.client, logging.viewer and serviceusage.serviceUsageConsumer (infra/terraform/iam.tf grants the same set). Nothing was created.",
+      "missing_permissions_for_module": {
+        "observed_denied": [
+          "iam.serviceAccounts.create",
+          "secretmanager.secrets.create",
+          "pubsub.topics.create",
+          "storage.buckets.create"
+        ],
+        "not_yet_reached_but_required_by_module_resources": [
+          "cloudsql.databases.create/delete and cloudsql.users.create/delete (google_sql_database, google_sql_user; cloudsql.client does not include them)",
+          "resourcemanager.projects.setIamPolicy (google_project_iam_member staging_runtime_cloudsql)",
+          "iam.serviceAccounts.setIamPolicy/delete (google_service_account_iam_member x4)",
+          "secretmanager.versions.add, secretmanager.secrets.setIamPolicy/delete (secret versions and secret IAM members)",
+          "pubsub.topics/subscriptions create/delete/setIamPolicy (subscriptions and topic/subscription IAM members)",
+          "storage.buckets.setIamPolicy/delete (google_storage_bucket_iam_member, cleanup)"
+        ],
+        "basis": "resource types in origin/dev infra/terraform/modules/ephemeral_staging/main.tf; static mapping, not observed as denials"
+      },
+      "required_action": "Human/Ops decides which identity runs the ephemeral staging lifecycle and grants it the module's create/delete/IAM permissions (for example a dedicated staging deployer instead of widening the dev github-deployer), lands the grant in IaC, applies it, and points ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT/WIF at it if it changes. Then a new staging lease request (new approval_id and nonce) for an admissible candidate."
     }
   ],
   "desired_state_not_observed": {
@@ -386,6 +421,46 @@
       "rehearsal_observed": false,
       "staging_verified": false,
       "gcp_readback_file": "run-41387164145-gcp-readback.txt"
+    },
+    {
+      "recorded_at": "2026-11-02T14:50:00Z",
+      "recorded_by": "Claude",
+      "run_id": 41464086945,
+      "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/41464086945",
+      "display_title": "Runtime Release staging deploy ccb9553bb1511ec746e69a831a1a8f5ad483a91f",
+      "head_branch": "dev",
+      "head_sha": "3672d00aef2dbb1953520f614e32e3b888cdfb23",
+      "candidate_sha": "ccb9553bb1511ec746e69a831a1a8f5ad483a91f",
+      "manifest_digest": "sha256:93ffa139fcfde2f4b478cf0f4a257d0e4fd0c73d72dd02edd0bd93d250b62362",
+      "build_run_id": 41426783637,
+      "approval_id": "HUMANOPS-STAGING-LEASE-20261102D",
+      "lease_id": "lease-64c1dd57d7a7d73381a4d4245848aa0c",
+      "conclusion": "failure",
+      "jobs": {
+        "Validate release phase inputs": "success",
+        "Verify the Supervisor lease authorises this deploy": "success",
+        "Deploy the admitted artifact by immutable digest": "failure",
+        "Verify production watch and clean up ephemeral staging": "skipped"
+      },
+      "failed_steps": [
+        "Execute ephemeral staging lifecycle create",
+        "Hold ephemeral staging resources on failure"
+      ],
+      "failure": "terraform apply -input=false failed (exit 1); the receipt keeps only the stderr tail (google_secret_manager_secret.staging_web_session, main.tf line 517). Root cause from Cloud Audit Logs: PERMISSION_DENIED for github-deployer on iam.serviceAccounts.create, secretmanager.secrets.create, pubsub.topics.create and storage.buckets.create (see B11).",
+      "hold_failure": "ERROR: cannot read durable staging Terraform state: Terraform durable state pull returned no managed resources",
+      "receipt_artifact": {
+        "name": "runtime-release-staging-lifecycle-receipts",
+        "artifact_id": 13151175340,
+        "file": "run-41464086945-staging-lifecycle-create.json",
+        "sha256": "b5e7e00a3011c3a14a19cc5d0847ad7a04f76d66f699e8ea54ec52caa1dc116f",
+        "fidelity_note": "Unmodified. The receipt lists the 19 planned resources with status 'failed' and a failure_cleanup_receipt listing them as 'deleted'. Neither list is an observation: audit logs show every create was denied, so there was nothing to delete."
+      },
+      "resources_created": false,
+      "resources_created_basis": "All 9 admin-activity audit entries by github-deployer in 14:42:30Z..14:44:00Z are denied creates (code 7); none succeeded. Read-only readback found no Cloud Run service/job, Cloud SQL database/user, service account, Pub/Sub topic, secret, bucket or Scheduler job for stg-odp-ccb9553bb151 and an empty recovery-bundle prefix; the hold step found no managed resources in the durable terraform state.",
+      "rehearsal_observed": false,
+      "staging_verified": false,
+      "lease_spent": true,
+      "gcp_readback_file": "run-41464086945-gcp-readback.txt"
     }
   ]
 }

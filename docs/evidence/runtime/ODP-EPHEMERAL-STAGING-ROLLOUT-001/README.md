@@ -170,6 +170,56 @@ supervisor（pid 2002345，`/usr/bin/python3.12`，`HOME=/home/lupin`，沒有 `
 
 這張 lease 簽發前 reauth 期限可能再到期；若要長期避免，需要讓 supervisor 用不受 reauth 限制的身分（例如有 secret accessor 權限的 service account）讀簽章私鑰，這是 Human/Ops 的決定，本 task 不改。
 
+## 2026-11-02 第二次 staging dispatch 失敗：deployer 沒有建立資源的權限（Claude）
+
+負責人重新登入後，Human/Ops 登記 `HUMANOPS-STAGING-LEASE-20261102D`。lease `lease-64c1dd57d7a7d73381a4d4245848aa0c` 於 14:39:48Z 簽發（candidate `ccb9553b`、manifest `sha256:93ffa139…2362`、`dispatch_ref_sha=3672d00a`），dispatch 出 run [`41464086945`](https://github.com/alfloop-dev/odayplus/actions/runs/41464086945)。B10 這次已解除，但使用者憑證的 reauth 期限仍會再到。這張 lease 已用掉。
+
+| Job | 結果 |
+|---|---|
+| Validate release phase inputs | success |
+| Verify the Supervisor lease authorises this deploy | success |
+| Deploy the admitted artifact by immutable digest | **failure** |
+| Verify production watch and clean up ephemeral staging | skipped |
+
+這次 `Set up Terraform for the staging lifecycle` 成功，terraform 有實際執行，B9 在 deploy job 這一段已解除（closeout job 尚未跑到）。失敗在 `Execute ephemeral staging lifecycle create`：`terraform apply -input=false failed (exit 1)`。receipt 只留 stderr 最後 8 行（`google_secret_manager_secret.staging_web_session`，main.tf 第 517 行），看不到原因。
+
+原因從 Cloud Audit Logs 讀到（唯讀 `gcloud logging read`，見 [`run-41464086945-gcp-readback.txt`](run-41464086945-gcp-readback.txt)）。14:43:05Z 部署身分 `github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com` 的 9 筆 admin activity 全部是 `PERMISSION_DENIED`（code 7），沒有一筆成功：
+
+| 權限 | 次數 | 對應資源 |
+|---|---|---|
+| `iam.serviceAccounts.create` | 3 | 三個 release-scoped service account |
+| `secretmanager.secrets.create` | 3 | `database-url`、`cursor-signing-key`、`web-session` |
+| `pubsub.topics.create` | 2 | `jobs`、`jobs-dlq` |
+| `storage.buckets.create` | 1 | release-scoped data bucket |
+
+`github-deployer` 目前的專案角色只有 `run.admin`、`cloudscheduler.admin`、`cloudsql.client`、`logging.viewer`、`serviceusage.serviceUsageConsumer`。`infra/terraform/iam.tf` 也只給這幾個（dev 部署用）。`ephemeral_staging` module 要建立 service account、secret、Pub/Sub、bucket、Cloud SQL database／user 並設定它們的 IAM，沒有任何 IaC 給部署身分這些權限（新 blocker **B11**）。
+
+依 module 的 resource type 靜態對照，除了上面四個被拒的權限，**之後還會需要**（這次 apply 沒走到，不是觀測到的拒絕）：
+
+- `cloudsql.databases.*`、`cloudsql.users.*`（`cloudsql.client` 沒有）
+- `resourcemanager.projects.setIamPolicy`（`google_project_iam_member.staging_runtime_cloudsql`）
+- service account、secret、topic／subscription、bucket 的 `setIamPolicy` 與刪除權限（各個 `*_iam_member` 與 cleanup）
+- `secretmanager.versions.add`
+
+CMEK 的 service agent 授權在 `runtime_foundation/kms.tf` 已有，這次沒有看到 KMS 錯誤。
+
+沒有建立任何資源，依據：
+
+1. audit log 裡 deployer 的 create 全部被拒。
+2. 唯讀 readback：沒有 `stg-odp-ccb9553bb151` 的 Cloud Run service／job、Cloud SQL database／user、service account、Pub/Sub topic、secret、bucket 或 Scheduler job；recovery bundle prefix 沒有物件。
+3. `Hold ephemeral staging resources on failure` 報 `Terraform durable state pull returned no managed resources`，代表 state 裡沒有資源。hold 因此 exit 1。
+
+run 上傳的 receipt 原樣保存為 [`run-41464086945-staging-lifecycle-create.json`](run-41464086945-staging-lifecycle-create.json)（sha256 `b5e7e00a…116f`，artifact `13151175340`）。它把 19 個計畫中的資源列為 `failed`，`failure_cleanup_receipt` 又把它們列為 `deleted`；兩份清單都是 lifecycle 的預定清單，不是觀測結果，實際上沒有東西可刪，不需要人工清理。
+
+要給哪個身分這些權限是 Human/Ops 的決定，本 task 不改 IAM，也不改 IaC。後續：
+
+1. Human/Ops 決定由哪個身分執行 staging lifecycle（例如另建 staging 專用 deployer，不擴大 dev 用的 `github-deployer`），把 module 需要的建立／刪除／IAM 權限寫進 IaC 並 apply；身分若改變，同步更新 `ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT` 與 WIF。
+2. 若這項修正改到 `deploy-dev.yml` 或 candidate 之後的 workflow，`ccb9553b` 就不能再通過 ancestry 檢查，要重新 build、重新綁 admission。只改 GCP IAM 則可沿用 `ccb9553b`。
+3. Human/Ops 用新的 approval_id 和 nonce 登記 lease。
+4. 本 task owner 接續 staging deploy 與 rehearsal。
+
+仍然沒有 staging 部署、migration、E2E、worker／scheduler、backup／restore 或 rollback 被觀測到，本目錄沒有 `staging-verified` 收據。
+
 ## Blockers 與解除條件
 
 | Blocker | 解除條件 |
@@ -180,8 +230,9 @@ supervisor（pid 2002345，`/usr/bin/python3.12`，`HOME=/home/lupin`，沒有 `
 | B4：Runtime Release 未註冊且沒有 staging 執行 provenance | Human/Ops 發布 `origin/dev` 的唯一 workflow，補 protected vars／lease authority／approval authority，再以 `environment=staging` 成功 dispatch。 |
 | B5：staging foundation 僅部分就緒 | 完成依賴的 staging bootstrap/IAC 與 masked snapshot materialization，提供 release-scoped bucket/database/tenant/IAM、Cloud Run services、paused Scheduler 與 TTL 的 redacted readback。 |
 | B6：沒有 app image handoff | 以 exact candidate 執行一次 Runtime Release build/sign，取得 Artifact Registry API/Web/Worker/Scheduler immutable digests。 |
-| B9：staging deploy／closeout job 沒有安裝 terraform（run 41387164145）— `partially_resolved` | 修正已合入 dev（PR #1637，`f81b9373`；`deploy-dev.yml` 兩處 `hashicorp/setup-terraform@v3`）。含它的 candidate `ccb9553b` 已 build（run `41426783637`），staging admission 已由 #1640 換綁。仍需：lease 簽發（見 B10）並 dispatch staging deploy。 |
-| B10：supervisor 讀不到 lease 簽章私鑰（`HUMANOPS-STAGING-LEASE-20261102C`）— `open` | 使用者互動重新登入 supervisor 使用的 gcloud 帳號（目前 reauth 失敗），再由 Human/Ops 用新 approval_id／nonce 登記 lease。 |
+| B9：staging deploy／closeout job 沒有安裝 terraform（run 41387164145）— `partially_resolved` | PR #1637（`f81b9373`）已在 candidate `ccb9553b` 內；run `41464086945` 的 deploy job 已安裝並實際執行 terraform。`staging_closeout` 的安裝步驟要等 production watch 通過才會跑，尚未觀測。 |
+| B10：supervisor 讀不到 lease 簽章私鑰（`HUMANOPS-STAGING-LEASE-20261102C`）— `partially_resolved` | 負責人重新登入後，`…20261102D` 於 14:39:48Z 簽發並 dispatch run `41464086945`。使用者憑證的 reauth 期限仍可能再到；改用不受 reauth 限制的身分是 Human/Ops 的決定。 |
+| B11：部署身分 `github-deployer` 沒有建立 staging 資源的權限（run 41464086945）— `open` | Human/Ops 決定執行 staging lifecycle 的身分，把 `ephemeral_staging` module 需要的建立／刪除／IAM 權限寫進 IaC 並 apply，再用新 approval_id／nonce 登記 lease。 |
 
 ## 正式重跑要求
 
@@ -240,5 +291,7 @@ uv run --python 3.12 pytest -q tests/ops/test_staging_rollout.py tests/release/t
 - [`staging-rollout-dry-run.json`](staging-rollout-dry-run.json)：唯一的 real-preflight / blocked / desired-state record；包含 redacted project、artifact、runtime、GKE、GitHub environment 與 Terraform readback。
 - [`run-41387164145-staging-lifecycle-create.json`](run-41387164145-staging-lifecycle-create.json)：失敗 staging run 上傳的原始 create receipt（未修改；sha256 記錄在 JSON 的 `staging_dispatch_attempts`）。
 - [`run-41387164145-gcp-readback.txt`](run-41387164145-gcp-readback.txt)：該 run 之後的唯讀 gcloud readback 輸出與 exit code。
+- [`run-41464086945-staging-lifecycle-create.json`](run-41464086945-staging-lifecycle-create.json)：第二次失敗 staging run 的原始 create receipt（未修改）。
+- [`run-41464086945-gcp-readback.txt`](run-41464086945-gcp-readback.txt)：該 run 之後的 audit log 摘要、唯讀 readback 與 deployer 專案角色，含 exit code。
 - `delivery_toolchain/release/release_manifest.py`：placeholder digest 偵測 predicate。
 - `tests/ops/test_staging_rollout.py`：dry-run、provenance、registry 與 placeholder fail-closed contract tests。
