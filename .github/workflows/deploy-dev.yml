@@ -1721,6 +1721,18 @@ jobs:
           path: .odp_data/release/dev-failed-live-step-readback.json
           if-no-files-found: error
 
+      # staging_lifecycle.py drives create/verify/hold through the Terraform
+      # CLI. GitHub-hosted runners do not ship it, so without this step the
+      # staging create dies on `FileNotFoundError: 'terraform'` before any
+      # resource exists (Runtime Release run 41387164145). Same pin as ci.yml;
+      # the wrapper stays off because the lifecycle reads raw terraform stdout.
+      - name: Set up Terraform for the staging lifecycle
+        if: ${{ inputs.environment == 'staging' }}
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
       - name: Prepare release-scoped staging handoff paths
         if: ${{ inputs.environment == 'staging' }}
         run: |
@@ -1994,6 +2006,12 @@ jobs:
 
       - name: Set up Cloud SDK for staging closeout
         uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Terraform for staging closeout
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
 
       - name: Prepare release-scoped staging closeout paths
         run: |

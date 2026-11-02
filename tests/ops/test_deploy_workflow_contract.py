@@ -1021,6 +1021,54 @@ def test_staging_uses_release_scoped_remote_backend_and_persists_recovery_sideca
     assert "MANIFEST_DIGEST" in closeout_run
 
 
+def test_every_staging_lifecycle_job_installs_the_ci_pinned_terraform_first() -> None:
+    """staging_lifecycle.py shells out to `terraform`; hosted runners do not ship it.
+
+    Runtime Release run 41387164145 died on `FileNotFoundError: 'terraform'`
+    in the staging create step because no job installed it. Every job that
+    invokes the lifecycle must install the same Terraform that ci.yml tests
+    the module with, before the first invocation, under the same gate, with
+    the wrapper off because the lifecycle parses `terraform output -json`.
+    """
+    jobs = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    ci_jobs = yaml.safe_load((WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8"))["jobs"]
+    ci_pins = [
+        str(step.get("with", {}).get("terraform_version", ""))
+        for job in ci_jobs.values()
+        for step in _job_steps(job)
+        if str(step.get("uses", "")).startswith("hashicorp/setup-terraform")
+    ]
+    assert len(ci_pins) == 1 and ci_pins[0]
+
+    lifecycle_jobs = {
+        job_id: job
+        for job_id, job in jobs.items()
+        if any("staging_lifecycle.py" in str(step.get("run", "")) for step in _job_steps(job))
+    }
+    assert set(lifecycle_jobs) == {"deploy", "staging_closeout"}
+
+    for job_id, job in lifecycle_jobs.items():
+        steps = _job_steps(job)
+        setups = [
+            index
+            for index, step in enumerate(steps)
+            if str(step.get("uses", "")).startswith("hashicorp/setup-terraform")
+        ]
+        assert len(setups) == 1, f"{job_id} must install terraform exactly once"
+        setup = steps[setups[0]]
+        assert str(setup["with"]["terraform_version"]) == ci_pins[0]
+        assert setup["with"]["terraform_wrapper"] is False
+        first_lifecycle = next(
+            index for index, step in enumerate(steps) if "staging_lifecycle.py" in str(step.get("run", ""))
+        )
+        assert setups[0] < first_lifecycle, f"{job_id} invokes the lifecycle before terraform exists"
+        lifecycle_gate = steps[first_lifecycle].get("if")
+        if lifecycle_gate == "${{ inputs.environment == 'staging' }}":
+            assert setup.get("if") == lifecycle_gate
+        else:
+            assert setup.get("if") is None
+
+
 def test_staging_recovery_bundle_storage_boundary_contract() -> None:
     """Staging recovery bundle storage must be strictly separated from Terraform state bucket across deploy and closeout."""
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
