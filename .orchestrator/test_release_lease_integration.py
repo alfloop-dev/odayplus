@@ -1906,6 +1906,28 @@ def test_no_duplicate_sign_or_dispatch_on_recovery(harness: dict) -> None:
     assert len(dispatches) == 1
 
 
+def test_written_snapshot_with_failed_status_sync_still_issues_once(harness: dict) -> None:
+    """The Supervisor commit returns False when only its status sync fails after the write landed."""
+    key_loader_calls: list[str] = []
+    dispatches: list[dict] = []
+
+    def write_then_sync_timeout(config, candidate):
+        harness["status_path"].write_text(json.dumps(candidate), encoding="utf-8")
+        return False
+
+    def loader(ref):
+        key_loader_calls.append(ref)
+        return harness["private_key"]
+
+    harness["commit"] = write_then_sync_timeout
+    assert _run(harness, lambda **kwargs: dispatches.append(kwargs), loader=loader)
+    assert len(key_loader_calls) == 1
+    assert len(dispatches) == 1
+    record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "dispatched"
+    assert len(harness["store"].find_leases_for_task(TASK_ID)) == 1
+
+
 def test_no_secret_or_bearer_material_in_logs_or_status(harness: dict) -> None:
     """Neither private key material nor raw bearer tokens/signatures appear in issuance receipts or logs."""
     dispatches: list[dict] = []

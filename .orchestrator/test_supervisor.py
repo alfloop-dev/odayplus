@@ -560,6 +560,41 @@ class AccountPoolSchedulingTests(unittest.TestCase):
             ["reviewer_unavailable:unregistered actor UnknownReviewer"],
         )
 
+    def test_assignment_integrity_treats_pool_cooldown_as_momentary_capacity(self) -> None:
+        config = self._config()
+        config["account_pools"]["codex_exhausted"] = {
+            "max_concurrent": 1, "state": "cooldown", "reason": "quota_terminal",
+        }
+        task = {
+            "id": "BLOCKED-ON-CODEX",
+            "status": "blocked",
+            "priority": "P1",
+            "owner": "Antigravity",
+            "reviewer": "Codex",
+            "waiting_for": "Codex",
+        }
+
+        # A cooling pool re-probes on its own; moving the reviewer (or what a
+        # blocked task waits for) to the other pool is not a repair.
+        self.assertEqual(supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task), [])
+        task["status"] = "todo"
+        self.assertEqual(supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task), [])
+
+        config["account_pools"]["codex_exhausted"] = {"enabled": False, "reason": "known exhausted quota"}
+        self.assertEqual(
+            supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task),
+            ["reviewer_unavailable:account pool codex_exhausted is disabled"],
+        )
+
+        # Only the pool state counts; a reason that mentions cooldown does not.
+        config["account_pools"]["codex_exhausted"] = {
+            "max_concurrent": 1, "state": "exhausted", "reason": "pool is cooldown-exempt",
+        }
+        self.assertEqual(
+            supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task),
+            ["reviewer_unavailable:account pool codex_exhausted is exhausted: pool is cooldown-exempt"],
+        )
+
     def test_assignment_integrity_does_not_reassign_human_gate(self) -> None:
         config = self._config()
         task = {

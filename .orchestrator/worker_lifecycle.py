@@ -1524,6 +1524,26 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     changed = True
                     if resumed:
                         continue
+                    refused = worker.pop("protected_resume_refused", None)
+                    if refused:
+                        # No sandbox, no session: the protected worker ends
+                        # here rather than waiting forever or resuming bare.
+                        worker["status"] = "failed"
+                        worker["last_event_at"] = utc_now()
+                        message = f"Protected resume refused: {refused}"
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "worker_failed",
+                                "provider": worker.get("provider"),
+                                "task_id": worker.get("task_id"),
+                                "message": message,
+                                "worker_run_id": worker["run_id"],
+                                "approval_id": latest.get("approval_id"),
+                            },
+                        )
+                        finalize_queue_event_record(config, state, worker, "failed", message)
+                        continue
                 if latest.get("decision") == "deny":
                     worker["status"] = "failed"
                     worker["last_event_at"] = utc_now()

@@ -39,6 +39,75 @@ def _pytest_available() -> bool:
     return completed.returncode == 0
 
 
+class ProtectedSelectionRefusalTests(unittest.TestCase):
+    """A protected selection is refused before any subprocess exists."""
+
+    GUARD = ["guarded/zone"]
+
+    def test_protected_selections_never_start_a_process(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            marker = root / "ran.txt"
+            touch = f"{sys.executable} -c 'open(\"{marker}\", \"w\").close()'"
+            commands = [
+                f"{touch} guarded/zone/test_x.py",
+                f"{touch} guarded",
+                f"{touch} ./guarded/zone/test_x.py::test_case",
+                f"{touch} {root}/guarded/zone",
+                f"{touch} /elsewhere/fleet/guarded/zone/test_x.py",
+                f"{touch} 'guarded/*'",
+                f"bash -c 'cat guarded/zone/x; {touch}'",
+                "uv run --frozen pytest -q",
+                f"{touch} --rootdir=guarded/zone",
+            ]
+            for command in commands:
+                with self.subTest(command=command), mock.patch.object(ve.subprocess, "run") as run:
+                    result = ve.run_verification_command(command, cwd=str(root), protected_paths=self.GUARD)
+                    run.assert_not_called()
+                    self.assertFalse(result["executed"])
+                    self.assertIsNone(result["exit_code"])
+                    self.assertTrue(result["not_executed_reason"])
+            self.assertFalse(marker.exists())
+
+            allowed = ve.run_verification_command(
+                f"{touch} unrelated/test_y.py", cwd=str(root), protected_paths=self.GUARD
+            )
+            self.assertTrue(allowed["executed"])
+            self.assertEqual(allowed["exit_code"], 0)
+            self.assertTrue(marker.exists())
+
+    def test_refusal_is_receipted_as_not_executed_never_pass(self) -> None:
+        decision, receipt = ve.verify_and_build_receipt(
+            "uv run --frozen pytest -q guarded/zone",
+            task_id="GUARD-VERIFY-1",
+            head_sha=HEAD_SHA,
+            protected_paths=self.GUARD,
+        )
+        self.assertTrue(decision.allowed)
+        self.assertEqual(receipt["outcome"], ve.OUTCOME_NOT_EXECUTED)
+        self.assertFalse(receipt["passed"])
+        self.assertIsNone(receipt["exit_code"])
+        self.assertEqual(receipt["head_sha"], HEAD_SHA)
+        self.assertEqual(receipt["command"], "uv run --frozen pytest -q guarded/zone")
+        self.assertIn("guarded/zone", receipt["not_executed_reason"])
+        self.assertEqual(ve.validate_receipt(receipt), [])
+        self.assertFalse(ve.receipt_proves(receipt))
+        # A refused run settles nothing: the same head and selection may run
+        # once the selection is fixed, without a retry reason.
+        follow_up = ve.evaluate_baseline_request(
+            [receipt],
+            head_sha=HEAD_SHA,
+            selection_id=receipt["selection"]["fingerprint"],
+            task_id="GUARD-VERIFY-1",
+            command=receipt["command"],
+        )
+        self.assertTrue(follow_up.allowed)
+
+    def test_unprotected_tasks_keep_existing_behaviour(self) -> None:
+        self.assertIsNone(ve.protected_selection_refusal("uv run --frozen pytest -q", None))
+        self.assertIsNone(ve.protected_selection_refusal("uv run --frozen pytest -q guarded/zone", []))
+
+
 class RealExitCodeTests(unittest.TestCase):
     """The recorded exit code must be the process's own, not the shell's."""
 

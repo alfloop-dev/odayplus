@@ -307,6 +307,33 @@ class WorkerSettlementPathTests(unittest.TestCase):
             self._settle(supervisor.poll_workers, worker),
         )
 
+    def test_refused_protected_resume_fails_the_worker_instead_of_waiting(self) -> None:
+        """A protected session whose sandbox cannot be re-proven is never resumed bare."""
+        worker = self._worker(status="waiting_approval", session_id="sess-1", last_approval_id=None)
+
+        def refuse(_config, target, _report, *, approval):
+            target["protected_resume_refused"] = "protected_paths drifted"
+            return None
+
+        approvals = {
+            "pending": [],
+            "history": [{"approval_id": "ap-1", "worker_run_id": "run-1", "decision": "allow", "status": "resolved"}],
+        }
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value=approvals),
+            mock.patch.object(supervisor, "provider_uses_claude_cli", return_value=True),
+            mock.patch.object(supervisor, "resume_claude_worker", side_effect=refuse) as resume,
+        ):
+            state, activity = self._run_settlement(supervisor.poll_workers, worker, pid_alive=True)
+
+        resume.assert_called_once()
+        settled = state["workers"]["run-1"]
+        self.assertEqual(settled["status"], "failed")
+        self.assertNotIn("protected_resume_refused", settled)
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "failed")
+        messages = [call.args[1].get("message", "") for call in activity.call_args_list]
+        self.assertTrue(any("Protected resume refused" in message for message in messages), messages)
+
     def test_boot_path_has_no_retry_resume_or_preemption_branch(self) -> None:
         """Structural guard: the divergence above comes from these being absent."""
         import ast

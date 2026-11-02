@@ -128,6 +128,9 @@ def cmd_run(args: argparse.Namespace) -> int:
             agent=os.environ.get("AI_NAME") or None,
             run_id=os.environ.get("ORCH_RUN_ID") or None,
             produced_by=PRODUCED_BY,
+            # The canonical task already loaded above carries any deny-only
+            # protection; the shared rule refuses before a subprocess starts.
+            protected_paths=(task or {}).get("protected_paths"),
         )
         if receipt is None:
             print(f"task_verification: refused ({decision.kind}): {decision.reason}", file=sys.stderr)
@@ -152,6 +155,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             f"(exit {receipt['exit_code']}, {receipt['duration_seconds']}s) {command}"
         )
         print(f"  receipt: {path}")
+        if receipt.get("not_executed_reason"):
+            print(f"  not executed: {receipt['not_executed_reason']}", file=sys.stderr)
         if not receipt["passed"]:
             failed = True
             if receipt["outcome"] == ve.OUTCOME_INTERRUPTED:

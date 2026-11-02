@@ -4966,3 +4966,60 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProtectedClaudeResumeTests(unittest.TestCase):
+    """Resume is the same native launch: same canonical guard, same sandbox."""
+
+    def _resume(self, canonical, prepared):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            task = {"id": "GUARD-RES-1"}
+            if canonical is not None:
+                task["protected_paths"] = canonical
+            (root / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+            config = {
+                "paths": {
+                    "state_file": str(root / "state.json"),
+                    "status_file": str(root / "ai-status.json"),
+                    "activity_log": str(root / "activity.jsonl"),
+                },
+                "providers": {"claude": {"runtime": {"cli": "claude"}}},
+            }
+            metadata = {"workspace_path": str(root), "status_root": str(root)}
+            if prepared is not None:
+                metadata["protected_paths"] = prepared
+            worker = {
+                "run_id": "run-1",
+                "session_id": "sess-1",
+                "agent_id": "claude",
+                "task_id": "GUARD-RES-1",
+                "request_snapshot": {"metadata": metadata},
+            }
+            with (
+                mock.patch.object(worker_failure_policy, "configured_provider_binary", return_value="claude"),
+                mock.patch.object(
+                    worker_failure_policy, "spawn_background_process", return_value=(mock.Mock(pid=77), None)
+                ) as spawn,
+                mock.patch.object(supervisor, "write_activity_log") as activity,
+            ):
+                result = worker_failure_policy.resume_claude_worker(config, worker, {})
+        return result, worker, spawn, activity, root
+
+    def test_resume_reuses_the_prepared_protection(self) -> None:
+        result, _worker, spawn, _activity, root = self._resume(["guarded/zone"], ["guarded/zone"])
+        self.assertIsNotNone(result)
+        self.assertEqual(spawn.call_args.kwargs["protected_paths"], ("guarded/zone",))
+        self.assertEqual(spawn.call_args.kwargs["protected_alias_roots"], (root.resolve(),))
+
+    def test_resume_refuses_policy_loss_or_drift_without_spawning(self) -> None:
+        for canonical, prepared in ((None, ["guarded/zone"]), (["guarded/zone"], None), (["guarded"], ["guarded/zone"])):
+            with self.subTest(canonical=canonical, prepared=prepared):
+                result, worker, spawn, activity, _root = self._resume(canonical, prepared)
+                self.assertIsNone(result)
+                spawn.assert_not_called()
+                self.assertIn("protected_resume_refused", worker)
+                self.assertNotIn("pid", worker)
+                self.assertEqual(
+                    activity.call_args.args[1]["type"], "worker_resume_protected_execution_refused"
+                )

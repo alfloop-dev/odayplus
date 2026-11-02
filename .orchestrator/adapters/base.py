@@ -7,12 +7,15 @@ from typing import Any
 
 from common import (
     delivery_runtime_env,
+    delivery_status_root,
     delivery_workspace_root,
     new_runtime_id,
+    protected_execution_paths,
     runtime_log_path,
     spawn_background_process,
     worker_runtime_paths,
 )
+from worktree_cleanliness import ProtectedExecutionUnavailable
 
 
 @dataclass
@@ -117,7 +120,8 @@ class BaseAdapter:
         result.mode = "file_inbox"
         result.notes = f"{result.notes}. {capability.notes}"
         if not capability.supported:
-            result.error = capability.notes
+            # Keep the inbox's own refusal (a protected task) when it has one.
+            result.error = result.error or capability.notes
         return result
 
     def spawn_cli_delivery(
@@ -169,19 +173,42 @@ class BaseAdapter:
         if request.reason:
             env["ORCH_REASON"] = request.reason
 
-        process, _ = spawn_background_process(
-            command,
-            cwd=root,
-            log_path=log_path,
-            env=env,
-            run_id=run_id,
-            heartbeat_path=runtime_paths["heartbeat_path"],
-            status_path=runtime_paths["status_path"],
-        )
+        try:
+            protected = protected_execution_paths(
+                self.config, request.task_id, request.metadata.get("protected_paths")
+            )
+            process, _ = spawn_background_process(
+                command,
+                cwd=root,
+                log_path=log_path,
+                env=env,
+                run_id=run_id,
+                heartbeat_path=runtime_paths["heartbeat_path"],
+                status_path=runtime_paths["status_path"],
+                protected_paths=protected,
+                protected_alias_roots=(delivery_status_root(self.config, request.metadata),) if protected else (),
+            )
+        except ProtectedExecutionUnavailable as error:
+            reason = f"Protected execution refused for {request.task_id}: {error}"
+            return DeliveryResult(
+                ok=False,
+                adapter=self.name,
+                mode=mode,
+                target=display_name,
+                auto_delivered=False,
+                manual_confirmation_required=False,
+                notes=reason,
+                command=command,
+                error=reason,
+                metadata={"protected_execution": "refused"},
+            )
         result_metadata = {
             "heartbeat_path": str(runtime_paths["heartbeat_path"]),
             "runner_status_path": str(runtime_paths["status_path"]),
         }
+        if protected:
+            result_metadata["protected_paths"] = list(protected)
+            result_metadata["protected_execution"] = "bwrap"
         result_metadata.update(metadata or {})
         return DeliveryResult(
             ok=True,

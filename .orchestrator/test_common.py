@@ -755,3 +755,104 @@ class UtcTimestampParsingTests(unittest.TestCase):
         for module in (github_bus, branch_drift_alarms, supervisor_watchdog):
             with self.subTest(module=module.__name__):
                 self.assertIs(module.parse_utc_timestamp, common.parse_utc_timestamp)
+
+
+class ProtectedNativeLaunchTests(unittest.TestCase):
+    """The shared native launch for protected tasks, with real Bubblewrap."""
+
+    GUARD = ["guarded/zone"]
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.repo = self.root / "worktree"
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "--quiet"], cwd=self.repo, check=True)
+        (self.repo / "guarded" / "zone").mkdir(parents=True)
+        (self.repo / "guarded" / "zone" / "canary.txt").write_text("synthetic canary\n", encoding="utf-8")
+        self.status_file = self.root / "ai-status.json"
+        self.config = {"paths": {"status_file": str(self.status_file)}}
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _board(self, task: dict | None) -> None:
+        self.status_file.write_text(json.dumps({"tasks": [task] if task else []}), encoding="utf-8")
+
+    def test_canonical_protection_must_equal_what_the_lease_prepared(self) -> None:
+        self._board({"id": "GUARD-1", "protected_paths": self.GUARD})
+        self.assertEqual(common.protected_execution_paths(self.config, "GUARD-1", self.GUARD), tuple(self.GUARD))
+        for prepared in (None, ["guarded"], ["guarded/zone", "other"]):
+            with self.subTest(prepared=prepared), self.assertRaises(common.worktree_cleanliness.ProtectedExecutionUnavailable):
+                common.protected_execution_paths(self.config, "GUARD-1", prepared)
+        self._board({"id": "GUARD-1"})
+        with self.assertRaises(common.worktree_cleanliness.ProtectedExecutionUnavailable):
+            common.protected_execution_paths(self.config, "GUARD-1", self.GUARD)
+        self._board(None)
+        with self.assertRaises(common.worktree_cleanliness.ProtectedExecutionUnavailable):
+            common.protected_execution_paths(self.config, "GUARD-1", self.GUARD)
+        self.assertEqual(common.protected_execution_paths(self.config, "GUARD-1", None), ())
+        self.assertEqual(common.protected_execution_paths(self.config, None, None), ())
+
+    def test_missing_capability_creates_no_process(self) -> None:
+        log_path = self.root / "logs" / "worker.log"
+        with (
+            mock.patch.object(common.worktree_cleanliness, "BWRAP_BINARY", str(self.root / "no-bwrap")),
+            mock.patch.object(common.subprocess, "Popen", wraps=subprocess.Popen) as popen,
+            self.assertRaises(common.worktree_cleanliness.ProtectedExecutionUnavailable),
+        ):
+            common.spawn_background_process(
+                ["true"], cwd=self.repo, log_path=log_path, run_id="guard-run", protected_paths=self.GUARD
+            )
+        # Only metadata/probe helpers ran; the worker runner never started.
+        launched = [call.args[0] for call in popen.call_args_list]
+        self.assertFalse(any("worker_runner.py" in " ".join(map(str, argv)) for argv in launched), launched)
+        self.assertFalse(log_path.exists())
+
+    def test_protected_runner_is_sandboxed_and_cancellation_leaves_no_orphan(self) -> None:
+        import os
+        import signal
+        import time
+
+        # The workspace is the only writable checkout inside the sandbox.
+        pid_file = self.repo / "child.pid"
+        log_path = self.root / "logs" / "worker.log"
+        process, _ = common.spawn_background_process(
+            [
+                "sh",
+                "-c",
+                f"cat guarded/zone/canary.txt; echo $$ > {pid_file}; exec sleep 120",
+            ],
+            cwd=self.repo,
+            log_path=log_path,
+            run_id="guard-run",
+            protected_paths=self.GUARD,
+        )
+        self.addCleanup(lambda: process.poll() is None and process.kill())
+        deadline = time.monotonic() + 30
+        while not pid_file.exists() and time.monotonic() < deadline and process.poll() is None:
+            time.sleep(0.05)
+        self.assertTrue(pid_file.exists(), log_path.read_text(encoding="utf-8"))
+        child = int(pid_file.read_text(encoding="utf-8").strip())
+        self.assertEqual(Path(f"/proc/{process.pid}/exe").resolve().name, "bwrap")
+
+        os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=30)
+        deadline = time.monotonic() + 10
+        alive = True
+        while alive and time.monotonic() < deadline:
+            try:
+                os.kill(child, 0)
+                stat_line = Path(f"/proc/{child}/stat").read_text(encoding="utf-8")
+                alive = stat_line.split(")")[-1].split()[0] != "Z"
+            except (ProcessLookupError, FileNotFoundError):
+                alive = False
+            if alive:
+                time.sleep(0.05)
+        self.assertFalse(alive, f"sandboxed child {child} outlived its cancelled launcher")
+        self.assertNotIn("synthetic canary", log_path.read_text(encoding="utf-8"))
+
+    def test_snapshot_carries_protected_paths(self) -> None:
+        schema = {"task_id_field": "id", "status_field": "status", "assignee_field": "owner", "reviewer_field": "reviewer"}
+        snapshot = common.snapshot_task({"id": "GUARD-1", "protected_paths": self.GUARD}, schema)
+        self.assertEqual(snapshot["protected_paths"], self.GUARD)
