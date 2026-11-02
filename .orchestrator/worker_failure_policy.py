@@ -17,6 +17,7 @@ from common import (
     claude_model_selection_args,
     load_json,
     parse_iso_timestamp,
+    protected_execution_paths,
     spawn_background_process,
     substantive_review_reopen_count,
 )
@@ -33,6 +34,7 @@ from dispatch_policy import is_human_gate_agent
 from dispatch_policy import agent_provider_identity_ids as dispatch_policy_agent_provider_identity_ids
 from provider_runtime import configured_provider_binary, provider_config_entry
 import status_transition
+from worktree_cleanliness import ProtectedExecutionUnavailable
 
 
 def _supervisor_module():
@@ -47,6 +49,7 @@ def _sync_supervisor_scope() -> None:
         "__name__", "__doc__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__",
         "Any", "_supervisor_module", "_sync_supervisor_scope", "_entrypoint", "_sync_scope_guard", "status_transition",
         "claude_model_selection_args", "configured_provider_binary", "provider_config_entry", "spawn_background_process",
+        "protected_execution_paths", "ProtectedExecutionUnavailable",
         # The role/provider policy is a leaf that both this module and the
         # supervisor import from `dispatch_policy`. Listing the names keeps this
         # module's own bindings authoritative rather than depending on the two
@@ -4588,15 +4591,37 @@ def resume_claude_worker(
         }
     )
     runtime_paths = worker_runtime_paths(config, worker["run_id"])
-    process, _ = spawn_background_process(
-        command,
-        cwd=workspace_root,
-        log_path=log_path,
-        env=env,
-        run_id=worker["run_id"],
-        heartbeat_path=runtime_paths["heartbeat_path"],
-        status_path=runtime_paths["status_path"],
-    )
+    # Resume is the same native launch: it reconfirms the canonical
+    # protection against what the original lease enforced, and never resumes
+    # a protected session outside the sandbox.
+    try:
+        protected = protected_execution_paths(
+            config, worker.get("task_id"), request_metadata.get("protected_paths")
+        )
+        process, _ = spawn_background_process(
+            command,
+            cwd=workspace_root,
+            log_path=log_path,
+            env=env,
+            run_id=worker["run_id"],
+            heartbeat_path=runtime_paths["heartbeat_path"],
+            status_path=runtime_paths["status_path"],
+            protected_paths=protected,
+            protected_alias_roots=(status_root,) if protected else (),
+        )
+    except ProtectedExecutionUnavailable as error:
+        write_activity_log(
+            config,
+            {
+                "type": "worker_resume_protected_execution_refused",
+                "provider": provider_id,
+                "task_id": worker.get("task_id"),
+                "worker_run_id": worker.get("run_id"),
+                "message": f"Protected resume refused: {error}",
+            },
+        )
+        worker["protected_resume_refused"] = str(error)
+        return None
     previous_logs = list(worker.get("previous_log_paths") or [])
     if worker.get("log_path"):
         previous_logs.append(worker["log_path"])

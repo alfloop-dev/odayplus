@@ -7255,6 +7255,45 @@ def _validate_assign_optional_pin_removal(
     return prior_pin
 
 
+def validate_assignment_protected_paths(
+    task_id: str,
+    task: dict[str, Any] | None,
+    metadata: dict[str, Any],
+) -> None:
+    """Accept only a literal deny-only list, and never shrink a recorded one.
+
+    The list is normalized in place so every later reader sees the same
+    canonical form.  Once a task records protection, an assignment may keep
+    or extend it but cannot drop or narrow any entry.
+    """
+    from worktree_cleanliness import (
+        PROTECTED_PATHS_FIELD,
+        ProtectedPathPolicyError,
+        normalize_protected_paths,
+        protected_paths_reduction,
+    )
+
+    recorded = (task or {}).get(PROTECTED_PATHS_FIELD)
+    if PROTECTED_PATHS_FIELD not in metadata:
+        return
+    try:
+        if recorded is not None:
+            normalize_protected_paths(recorded)
+        proposed = normalize_protected_paths(metadata[PROTECTED_PATHS_FIELD])
+    except ProtectedPathPolicyError as exc:
+        raise SystemExit(f"Cannot assign {task_id}: {exc}。未寫入任何 assignment。") from exc
+    removed = protected_paths_reduction(recorded, list(proposed))
+    if removed:
+        raise SystemExit(
+            f"Cannot assign {task_id}: protected_paths may not be removed or narrowed once recorded "
+            f"(would drop {list(removed)})。未寫入任何 assignment。"
+        )
+    if not proposed and recorded is None:
+        metadata.pop(PROTECTED_PATHS_FIELD)
+        return
+    metadata[PROTECTED_PATHS_FIELD] = list(proposed)
+
+
 def command_assign(state: dict[str, Any], args: list[str]) -> None:
     from wave_guards import WaveGuardError, check_wave_assign
 
@@ -7304,6 +7343,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
             metadata=metadata,
         )
     effective_metadata = {} if clearing_optional_pin else metadata
+    validate_assignment_protected_paths(task_id, task, effective_metadata)
     # Do this before priority checks, timestamping, or any task/agent mutation.
     # An invalid source document must fail at assignment time rather than leave
     # a board record that the dispatcher can only reject repeatedly later.

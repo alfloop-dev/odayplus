@@ -10,9 +10,11 @@ from common import (
     ensure_parent,
     new_runtime_id,
     normalize_agent_id,
+    protected_execution_paths,
     relpath,
 )
 from provider_runtime import provider_config
+from worktree_cleanliness import ProtectedExecutionUnavailable
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 
@@ -34,6 +36,29 @@ class FileInboxAdapter(BaseAdapter):
         )
 
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
+        # Every inbox route (direct, Claude's fallback, the shared unavailable
+        # route) ends here.  An inbox item is worked outside any sandbox, so a
+        # protected -- or unconfirmable -- task never gets one.
+        try:
+            protected = protected_execution_paths(
+                self.config, request.task_id, request.metadata.get("protected_paths")
+            )
+        except ProtectedExecutionUnavailable as error:
+            protected, refusal = ("unconfirmed",), str(error)
+        else:
+            refusal = f"protected_paths {list(protected)}"
+        if protected:
+            reason = f"Inbox delivery refused for protected task {request.task_id}: {refusal}"
+            return DeliveryResult(
+                ok=False,
+                adapter=self.name,
+                mode="file_inbox",
+                target=request.agent_id,
+                auto_delivered=False,
+                manual_confirmation_required=False,
+                notes=reason,
+                error=reason,
+            )
         agent = agent_config_for(self.config, request.agent_id)
         provider = provider_config(self.config, agent.get("provider", request.provider))
         inbox_settings = provider.get("file_inbox", {})
