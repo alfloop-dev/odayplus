@@ -125,6 +125,24 @@ run 上傳的 receipt 原樣保存為 [`run-41387164145-staging-lifecycle-create
 3. Human/Ops 用新的 approval_id 和 nonce 登記 lease。
 4. 本 task owner 接續 staging deploy 與 rehearsal。
 
+## 2026-11-02 新 candidate `ccb9553b` staging build 成功（Claude）
+
+使用者於 10:11:32Z 在 `origin/dev` `ccb9553bb1511ec746e69a831a1a8f5ad483a91f`（含 `f81b9373`）dispatch `deploy-dev.yml` staging build，run `41426783637` 於 10:21:24Z 以 `success` 結束（`gh run watch --exit-status` exit 0）。`Validate release phase inputs` 與 `Build once and publish the immutable artifact handoff` 成功；lease、deploy、closeout 三個 job 依 build phase 設計為 skipped。
+
+Build handoff（從 run artifact 下載後讀取）：
+
+- `RELEASE_MANIFEST.json` 檔案 sha256：`6e649d5e1e221fd386ef29da4f3e6166b42f370bc116a7a2a04adb1e1838fa34`（artifact `runtime-release-manifest-ccb9553b…`，id `13132826575`）。`candidate_sha` 為 `ccb9553b…`，`external_sources_expected_enabled` 為空。
+- api：`oday-staging-api@sha256:8a425e18362fd34dfbbafa39bd097a7f6fb07aee2578e02fdb82663d031e3efc`
+- web：`oday-staging-web@sha256:112239d226d28bacef19e74df57d025ae36e15cb2b3310b3cf6bfccb62bdb774`
+- worker（migration 共用）：`oday-staging-worker@sha256:ee7643e84c6c9aceebb2ddb33849bc5714fcbf661c9c8543aabfc29d7570536b`
+- scheduler：`oday-staging-scheduler@sha256:025c36d08711a7099aff14c27eaa0beb5a1ced6a47ebb7d8d59f58e71789d22c`
+
+以上 image 都在 `asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/`。這只表示 build 階段完成，沒有部署、沒有 rehearsal，本目錄仍然沒有 `staging-verified` 收據。上一節的第 1 步已完成，剩下：
+
+1. staging admission task 綁定 candidate `ccb9553b` 與上列 manifest。
+2. Human/Ops 用新的 approval_id 和 nonce 登記 lease。
+3. 本 task owner 接續 staging deploy 與 rehearsal。
+
 ## Blockers 與解除條件
 
 | Blocker | 解除條件 |
@@ -135,7 +153,7 @@ run 上傳的 receipt 原樣保存為 [`run-41387164145-staging-lifecycle-create
 | B4：Runtime Release 未註冊且沒有 staging 執行 provenance | Human/Ops 發布 `origin/dev` 的唯一 workflow，補 protected vars／lease authority／approval authority，再以 `environment=staging` 成功 dispatch。 |
 | B5：staging foundation 僅部分就緒 | 完成依賴的 staging bootstrap/IAC 與 masked snapshot materialization，提供 release-scoped bucket/database/tenant/IAM、Cloud Run services、paused Scheduler 與 TTL 的 redacted readback。 |
 | B6：沒有 app image handoff | 以 exact candidate 執行一次 Runtime Release build/sign，取得 Artifact Registry API/Web/Worker/Scheduler immutable digests。 |
-| B9：staging deploy／closeout job 沒有安裝 terraform（run 41387164145）— `partially_resolved` | 修正已合入 dev（PR #1637，`f81b9373`；`deploy-dev.yml` 兩處 `hashicorp/setup-terraform@v3`）。仍需：以含它的 dev commit 重建 candidate、完成 staging admission，再由 Human/Ops 登記新 lease。 |
+| B9：staging deploy／closeout job 沒有安裝 terraform（run 41387164145）— `partially_resolved` | 修正已合入 dev（PR #1637，`f81b9373`；`deploy-dev.yml` 兩處 `hashicorp/setup-terraform@v3`）。含它的 candidate `ccb9553b` 已 build（run `41426783637`）。仍需：完成 staging admission，再由 Human/Ops 登記新 lease。 |
 
 ## 正式重跑要求
 
