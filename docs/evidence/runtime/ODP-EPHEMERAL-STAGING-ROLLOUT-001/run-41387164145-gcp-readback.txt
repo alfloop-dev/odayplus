@@ -1,0 +1,31 @@
+# Read-only GCP readback after Runtime Release run 41387164145 (staging create failed: terraform missing)
+# Recorded 2026-11-02 by Claude from the local operator gcloud account; list/describe only, no secret values read.
+
+## gcloud run services list --project odayplus-runtime-20260825 --region asia-east1 --format=value(metadata.name)
+oday-api
+oday-mlflow
+oday-staging-mlflow
+oday-web
+exit=0
+## gcloud run jobs list --project odayplus-runtime-20260825 --region asia-east1 --filter=metadata.name~stg-odp --format=value(metadata.name)
+exit=0
+## gcloud sql databases list --instance oday-staging-foundation-sql --project odayplus-runtime-20260825 --format=value(name)
+postgres
+exit=0
+## gcloud iam service-accounts list --project odayplus-runtime-20260825 --filter=email~stg-odp --format=value(email)
+exit=0
+## gcloud pubsub topics list --project odayplus-runtime-20260825 --filter=name~stg-odp --format=value(name)
+WARNING: The following filter keys were not present in any resource : name
+exit=0
+## gcloud secrets list --project odayplus-runtime-20260825 --filter=name~stg-odp --format=value(name)
+exit=0
+## gcloud storage buckets list --project odayplus-runtime-20260825 --filter=name~stg-odp --format=value(name)
+exit=0
+## gcloud scheduler jobs list --project odayplus-runtime-20260825 --location asia-east1 --filter=name~stg-odp --format=value(name)
+exit=0
+## gcloud storage ls -r gs://oday-tfstate-staging-odayplus-runtime-20260825/oday-plus/ephemeral-staging/odp-730328798ce8/
+ERROR: (gcloud.storage.ls) [deborah.lu@dev.cctech-support.com] does not have permission to access b instance [oday-tfstate-staging-odayplus-runtime-20260825] (or it may not exist): deborah.lu@dev.cctech-support.com does not have storage.objects.list access to the Google Cloud Storage bucket. Permission 'storage.objects.list' denied on resource '//storage.googleapis.com/projects/_/buckets/oday-tfstate-staging-odayplus-runtime-20260825' (or it may not exist). This command is authenticated as deborah.lu@dev.cctech-support.com which is the active account specified by the [core/account] property.
+exit=1
+## gcloud storage ls -r gs://oday-staging-recovery-odayplus-runtime-20260825/oday-plus/ephemeral-staging/odp-730328798ce8/
+ERROR: (gcloud.storage.ls) One or more URLs matched no objects.
+exit=1

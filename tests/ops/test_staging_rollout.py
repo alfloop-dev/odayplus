@@ -3,11 +3,13 @@
 This task has no successful staging run to attest.  The tests therefore guard
 against the exact regression that caused the previous review rejection:
 shape-valid placeholder digests and self-authored status fields must never be
-accepted as deployed evidence.
+accepted as deployed evidence.  A failed staging dispatch may be recorded, but
+only with the raw run receipt it cites, byte-identical to the recorded hash.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -23,11 +25,22 @@ DRY_RUN_PATH = EVIDENCE_DIR / "staging-rollout-dry-run.json"
 README_PATH = EVIDENCE_DIR / "README.md"
 
 
-def test_only_dry_run_record_exists() -> None:
+def test_only_the_record_and_its_cited_run_receipts_exist() -> None:
     assert DRY_RUN_PATH.is_file()
     assert README_PATH.is_file()
+    record = json.loads(DRY_RUN_PATH.read_text(encoding="utf-8"))
+    cited: set[str] = set()
+    for attempt in record.get("staging_dispatch_attempts", []):
+        run_prefix = f"run-{attempt['run_id']}-"
+        receipt = attempt["receipt_artifact"]
+        for name in (receipt["file"], attempt["gcp_readback_file"]):
+            assert name.startswith(run_prefix)
+            cited.add(name)
+        raw = (EVIDENCE_DIR / receipt["file"]).read_bytes()
+        assert hashlib.sha256(raw).hexdigest() == receipt["sha256"]
+        assert json.loads(raw)["success"] is False
     evidence_files = {path.name for path in EVIDENCE_DIR.iterdir() if path.is_file()}
-    assert evidence_files == {"README.md", "staging-rollout-dry-run.json"}
+    assert evidence_files == {"README.md", "staging-rollout-dry-run.json"} | cited
 
 
 def test_dry_run_record_cannot_claim_staging_verified() -> None:
@@ -36,7 +49,11 @@ def test_dry_run_record_cannot_claim_staging_verified() -> None:
     assert record["evidence_status"] == "blocked"
     assert record["deployment_observed"] is False
     assert record["stage"] == "not-admitted"
-    assert record["deployment_path"]["staging_dispatch_observed"] is False
+    attempts = record.get("staging_dispatch_attempts", [])
+    assert record["deployment_path"]["staging_dispatch_observed"] is bool(attempts)
+    assert all(attempt["conclusion"] != "success" for attempt in attempts)
+    assert all(attempt["staging_verified"] is False for attempt in attempts)
+    assert all(attempt["rehearsal_observed"] is False for attempt in attempts)
     assert record["deployment_path"]["successful_staging_run"] is False
     assert record["deployment_path"]["remote_staging_proof"] is None
     assert "ghcr.io" not in record["deployment_path"]["configured_registry"]

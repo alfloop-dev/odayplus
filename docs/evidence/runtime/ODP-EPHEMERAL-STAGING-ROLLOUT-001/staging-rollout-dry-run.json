@@ -221,12 +221,12 @@
     "target_input": "staging",
     "registry_pattern": "${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GCP_AR_REPO}/<service>@sha256:<64-hex>",
     "configured_registry": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev",
-    "runtime_release_workflow_registered": false,
-    "runtime_release_workflow_registration_detail": "origin/dev contains .github/workflows/deploy-dev.yml, but GitHub Actions exposes no registered Runtime Release workflow",
-    "staging_dispatch_observed": false,
+    "runtime_release_workflow_registered": true,
+    "runtime_release_workflow_registration_detail": "gh run list --workflow deploy-dev.yml returns Runtime Release runs, including staging build 41363014110 and staging deploy 41387164145 (2026-11-02).",
+    "staging_dispatch_observed": true,
     "successful_staging_run": false,
     "remote_staging_proof": null,
-    "preflight_readback_only": true
+    "preflight_readback_only": false
   },
   "blockers": [
     {
@@ -295,10 +295,19 @@
     {
       "id": "B8",
       "severity": "blocking",
-      "status": "open",
-      "status_recorded_at": "2026-11-02T02:36:00Z",
+      "status": "partially_resolved",
+      "status_recorded_at": "2026-11-02T04:30:00Z",
       "summary": "Supervisor staging lease issuance for approval HUMANOPS-STAGING-LEASE-20261102 ended blocked: reserved as issuing at 2026-11-02T02:25:17Z, then 'issuing reservation has no durable lease record' at 02:31:04Z. No lease was written and no environment=staging run was dispatched. Why the first pass stopped before the GCS write was not determined.",
-      "required_action": "Human/Ops registers a new staging lease request with a new approval_id and a new nonce (the blocked fingerprint is not retried and the old nonce is spent); the owner then reopens the task so the request passes request_errors."
+      "required_action": "Human/Ops registers a new staging lease request with a new approval_id and a new nonce (the blocked fingerprint is not retried and the old nonce is spent); the owner then reopens the task so the request passes request_errors.",
+      "status_note": "Replacement request HUMANOPS-STAGING-LEASE-20261102B (new nonce) was issued after external_command_timeout_seconds was raised to 180: lease lease-50bffe872ccd71b82ff2dac8a9e921d0 issued 04:11:20Z, dispatched to deploy-dev.yml on dev 2de5a4bf (run 41387164145), and the run's 'Verify the Supervisor lease authorises this deploy' job succeeded. That lease authorised one staging deploy and is spent; the next attempt needs a new request, so the issuer fix has been observed once, not proven durable."
+    },
+    {
+      "id": "B9",
+      "severity": "blocking",
+      "status": "open",
+      "status_recorded_at": "2026-11-02T04:30:00Z",
+      "summary": "Runtime Release staging deploy run 41387164145 (candidate 730328798, manifest sha256:2c9159d5...5830) failed in 'Execute ephemeral staging lifecycle create' with \"Creation executor failed: [Errno 2] No such file or directory: 'terraform'\". deploy-dev.yml installs no Terraform in the deploy or staging_closeout jobs and GitHub-hosted runners do not ship it. The failure hold step died on the same FileNotFoundError. Terraform never ran, so no release-scoped resource was created.",
+      "required_action": "Merge ODP-STAGING-DEPLOY-TERRAFORM-SETUP-001 (PR #1637) into dev. Because check_candidate_ancestry refuses a workflow change after the candidate, candidate 730328798 cannot be reused: run a staging build on the dev commit that contains #1637, bind it through a staging admission task, then Human/Ops registers a new lease request (new approval_id and nonce) for that candidate."
     }
   ],
   "desired_state_not_observed": {
@@ -338,6 +347,45 @@
     "terraform -chdir=infra/terraform/modules/ephemeral_staging validate"
   ],
   "secret_values_redacted": true,
-  "recorded_at": "2026-10-26T03:58:00Z",
-  "recorded_by": "Antigravity3"
+  "recorded_at": "2026-11-02T04:30:00Z",
+  "recorded_by": "Claude",
+  "staging_dispatch_attempts": [
+    {
+      "recorded_at": "2026-11-02T04:30:00Z",
+      "recorded_by": "Claude",
+      "run_id": 41387164145,
+      "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/41387164145",
+      "display_title": "Runtime Release staging deploy 730328798ce8456ae698bf5ade35d5e75f5ff662",
+      "head_branch": "dev",
+      "head_sha": "2de5a4bfab191b2d8ed677f82adb1973d22ee0e0",
+      "candidate_sha": "730328798ce8456ae698bf5ade35d5e75f5ff662",
+      "manifest_digest": "sha256:2c9159d5e8d720f6feb1b4abaaa0df777962703a2b555e9ffbec812f24ae5830",
+      "approval_id": "HUMANOPS-STAGING-LEASE-20261102B",
+      "lease_id": "lease-50bffe872ccd71b82ff2dac8a9e921d0",
+      "conclusion": "failure",
+      "jobs": {
+        "Validate release phase inputs": "success",
+        "Verify the Supervisor lease authorises this deploy": "success",
+        "Deploy the admitted artifact by immutable digest": "failure",
+        "Verify production watch and clean up ephemeral staging": "skipped"
+      },
+      "failed_steps": [
+        "Execute ephemeral staging lifecycle create",
+        "Hold ephemeral staging resources on failure"
+      ],
+      "failure": "Creation executor failed: [Errno 2] No such file or directory: 'terraform'",
+      "receipt_artifact": {
+        "name": "runtime-release-staging-lifecycle-receipts",
+        "artifact_id": 13116146237,
+        "file": "run-41387164145-staging-lifecycle-create.json",
+        "sha256": "d549611b3e6c9025f832f8c49f807a100e800c3aad78c7bd676c67b4c3f53f52",
+        "fidelity_note": "The receipt lists the 19 planned release-scoped resources with status 'failed', a created_at timestamp and remediation_required=true. Those are the lifecycle's planned inventory, not observed resources: terraform never executed. Hold and rehearsal receipts were not produced."
+      },
+      "resources_created": false,
+      "resources_created_basis": "run log shows the executor failed before any terraform invocation; the 'Persist staging hold state' step copied no sidecar; read-only gcloud readback (run-41387164145-gcp-readback.txt) found no Cloud Run service/job, Cloud SQL database, service account, Pub/Sub topic, secret, bucket or Scheduler job named for stg-odp-730328798ce8 and an empty recovery-bundle prefix. The terraform state bucket prefix was not readable by the local account (storage.objects.list denied).",
+      "rehearsal_observed": false,
+      "staging_verified": false,
+      "gcp_readback_file": "run-41387164145-gcp-readback.txt"
+    }
+  ]
 }

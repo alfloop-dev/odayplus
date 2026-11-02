@@ -79,6 +79,37 @@ supervisor 簽發結果（從 live 看板 `release_lease_issuance` 讀回）：
 
 本輪也把 `origin/dev` `2de5a4bf` 以一般 merge 合入 task branch（無衝突，merge tree 與 `git merge-tree --write-tree` 相同）。沒有執行任何 deploy 或 rehearsal，仍然沒有 `staging-verified` 收據。
 
+## 2026-11-02 第一次 staging dispatch 失敗：runner 沒有 terraform（Claude）
+
+`external_command_timeout_seconds` 調為 180 並重啟 supervisor 後，Human/Ops 用新 nonce 登記 `HUMANOPS-STAGING-LEASE-20261102B`。這次簽發成功：lease `lease-50bffe872ccd71b82ff2dac8a9e921d0` 於 04:11:20Z 簽發，dispatch 到 dev `2de5a4bf` 的 `deploy-dev.yml`，產生 run [`41387164145`](https://github.com/alfloop-dev/odayplus/actions/runs/41387164145)。B8 改為 `partially_resolved`：簽發器修正只觀測到一次成功，而這張 lease 只授權一次 staging deploy，已用掉。
+
+run 的結果（`gh run view 41387164145 --json jobs`、`--log-failed`）：
+
+| Job | 結果 |
+|---|---|
+| Validate release phase inputs | success |
+| Verify the Supervisor lease authorises this deploy | success |
+| Deploy the admitted artifact by immutable digest | **failure** |
+| Verify production watch and clean up ephemeral staging | skipped |
+
+失敗在 `Execute ephemeral staging lifecycle create`：`Creation executor failed: [Errno 2] No such file or directory: 'terraform'`。`Hold ephemeral staging resources on failure` 也因同一個 `FileNotFoundError` 結束。`staging_lifecycle.py` 的 create／verify／hold／cleanup 都要呼叫 Terraform CLI，但 `deploy-dev.yml` 的 deploy job 與 `staging_closeout` 都沒有安裝它，GitHub-hosted runner 也不內建（新 blocker **B9**）。
+
+沒有建立任何資源，依據有三項：
+
+1. log 顯示 executor 在第一次呼叫 terraform 時就失敗；`Persist staging hold state` 沒有複製任何 sidecar。
+2. 唯讀 gcloud readback（[`run-41387164145-gcp-readback.txt`](run-41387164145-gcp-readback.txt)）：沒有名為 `stg-odp-730328798ce8` 的 Cloud Run service／job、Cloud SQL database、service account、Pub/Sub topic、secret、bucket 或 Scheduler job；recovery bundle prefix 沒有物件。
+3. 限制：本機帳號沒有 terraform state bucket 的 `storage.objects.list` 權限，那個 prefix 沒有讀到。
+
+run 上傳的 receipt 原樣保存為 [`run-41387164145-staging-lifecycle-create.json`](run-41387164145-staging-lifecycle-create.json)（sha256 `d549611b…3f52`，artifact `13116146237`）。注意：它把 19 個**計畫中**的資源列成 `status=failed`，並帶 `created_at` 與 `remediation_required=true`。這些是 lifecycle 預定建立的清單，不是觀測到的資源，不需要人工清理。
+
+修正與後續：
+
+- 前置修正 `ODP-STAGING-DEPLOY-TERRAFORM-SETUP-001`（PR #1637，已送審）：在 deploy job（只限 staging）與 `staging_closeout` 第一次呼叫 lifecycle 前加 `hashicorp/setup-terraform@v3`，版本與 `ci.yml` 同為 1.9.8，關閉 wrapper（lifecycle 會解析 `terraform output -json`）。另加一條 contract test，拿掉步驟或打開 wrapper 都會變紅。
+- `check_candidate_ancestry` 不接受 candidate 之後 dev 上有 workflow 改動，所以 #1637 合併後 candidate `730328798` 不能再用。順序：#1637 合併 → 在含它的 dev commit 跑 staging build → staging admission task 綁定新 candidate → Human/Ops 用新 approval_id／nonce 登記 lease。
+- 另外確認 `staging_lifecycle.py` 只會呼叫 `terraform` 與 `gcloud` 這兩個外部執行檔；live E2E gate 在只有 stdlib 的 Python 3.12 下可以正常載入（runner 用系統 `python3` 執行 lifecycle）。所以就靜態檢查來看，沒有發現第二個缺少的工具。下一個失敗點仍要等實際 run 才知道。
+
+仍然沒有 staging 部署、migration、E2E、worker／scheduler、backup／restore 或 rollback 被觀測到，本目錄沒有 `staging-verified` 收據。
+
 ## Blockers 與解除條件
 
 | Blocker | 解除條件 |
@@ -89,6 +120,7 @@ supervisor 簽發結果（從 live 看板 `release_lease_issuance` 讀回）：
 | B4：Runtime Release 未註冊且沒有 staging 執行 provenance | Human/Ops 發布 `origin/dev` 的唯一 workflow，補 protected vars／lease authority／approval authority，再以 `environment=staging` 成功 dispatch。 |
 | B5：staging foundation 僅部分就緒 | 完成依賴的 staging bootstrap/IAC 與 masked snapshot materialization，提供 release-scoped bucket/database/tenant/IAM、Cloud Run services、paused Scheduler 與 TTL 的 redacted readback。 |
 | B6：沒有 app image handoff | 以 exact candidate 執行一次 Runtime Release build/sign，取得 Artifact Registry API/Web/Worker/Scheduler immutable digests。 |
+| B9：staging deploy／closeout job 沒有安裝 terraform（run 41387164145） | `ODP-STAGING-DEPLOY-TERRAFORM-SETUP-001`（PR #1637）合入 dev，以含它的 dev commit 重建 candidate、完成 staging admission，再由 Human/Ops 登記新 lease。 |
 
 ## 正式重跑要求
 
@@ -145,5 +177,7 @@ uv run --python 3.12 pytest -q tests/ops/test_staging_rollout.py tests/release/t
 ## 產物
 
 - [`staging-rollout-dry-run.json`](staging-rollout-dry-run.json)：唯一的 real-preflight / blocked / desired-state record；包含 redacted project、artifact、runtime、GKE、GitHub environment 與 Terraform readback。
+- [`run-41387164145-staging-lifecycle-create.json`](run-41387164145-staging-lifecycle-create.json)：失敗 staging run 上傳的原始 create receipt（未修改；sha256 記錄在 JSON 的 `staging_dispatch_attempts`）。
+- [`run-41387164145-gcp-readback.txt`](run-41387164145-gcp-readback.txt)：該 run 之後的唯讀 gcloud readback 輸出與 exit code。
 - `delivery_toolchain/release/release_manifest.py`：placeholder digest 偵測 predicate。
 - `tests/ops/test_staging_rollout.py`：dry-run、provenance、registry 與 placeholder fail-closed contract tests。
