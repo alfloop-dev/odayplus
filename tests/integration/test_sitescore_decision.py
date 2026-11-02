@@ -22,7 +22,7 @@ from shared.workflow.sitescore import (
     SiteScoreDecisionError,
     SiteScoreDecisionWorkflow,
 )
-from tests.integration._authz import SITESCORE_HEADERS
+from tests.integration._authz import AUDIT_HEADERS, SITESCORE_HEADERS
 from tests.integration._operation_flag_fixtures import (
     SITE_GO_FLAG,
     enable_operation_flag,
@@ -316,7 +316,14 @@ def test_sitescore_api_scores_reports_and_runs_decision_loop() -> None:
     assert realized.json()["items"][0]["candidate_site_id"] == "CS-API-001"
     assert realized.json()["items"][0]["site_status"] == "approved"
 
-    audit = client.get("/audit/events", params={"correlation_id": "corr-ss-1"})
+    # The audit read needs audit:view and is scoped to the reader's tenant: an
+    # auditor of the scoring tenant reads the run back.
+    audit = client.get(
+        "/audit/events",
+        params={"correlation_id": "corr-ss-1"},
+        headers={**AUDIT_HEADERS, "x-tenant-id": SITESCORE_HEADERS["x-tenant-id"]},
+    )
+    assert audit.status_code == 200, audit.text
     assert any(event["action"] == "run_model" for event in audit.json()["events"])
 
 

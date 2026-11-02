@@ -5,8 +5,8 @@ Guarantees:
 1. `.github/workflows/ci.yml` sets up pinned Terraform (1.9.8) and collects `infra` in the `orchestrator` job.
 2. `pyproject.toml` includes `infra` in `[tool.pytest.ini_options].testpaths`.
 3. Change scope classification recognizes `infra/terraform/` as development tooling, ensuring the `orchestrator` job runs the suite without being skipped.
-4. All 18 ephemeral staging contract and plan tests are collected and fail closed (no green skips) in CI when Terraform or init is unavailable.
-5. The selection CI actually runs collects those 18 tests for real, so a marker
+4. All 20 ephemeral staging contract and plan tests are collected and fail closed (no green skips) in CI when Terraform or init is unavailable.
+5. The selection CI actually runs collects those 20 tests for real, so a marker
    expression or a conftest that silently empties the run cannot pass as wiring.
    The probe replays the workflow's whole argument vector, so an exclusion the
    probe has no case for (`--ignore`, `--deselect`, `-k`) cannot be dropped on
@@ -45,7 +45,7 @@ PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 EPHEMERAL_TEST_PATH = REPO_ROOT / "infra" / "terraform" / "tests" / "test_ephemeral_staging.py"
 EPHEMERAL_TEST_RELPATH = EPHEMERAL_TEST_PATH.relative_to(REPO_ROOT)
 EPHEMERAL_NODE_PREFIX = f"{EPHEMERAL_TEST_RELPATH.as_posix()}::"
-EXPECTED_EPHEMERAL_TEST_COUNT = 18
+EXPECTED_EPHEMERAL_TEST_COUNT = 20
 EXACT_SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
 
@@ -363,7 +363,7 @@ class StagingIaCChangeScopeClassificationTests(unittest.TestCase):
 
 
 class EphemeralStagingTestCollectionIntegrityTests(unittest.TestCase):
-    EXPECTED_TEST_COUNT = 18
+    EXPECTED_TEST_COUNT = 20
 
     def test_ephemeral_staging_test_file_exists(self) -> None:
         self.assertTrue(
@@ -385,9 +385,9 @@ class EphemeralStagingTestCollectionIntegrityTests(unittest.TestCase):
             if attr.startswith("test_")
         ]
 
-        # EphemeralStagingModuleContractTests has 13 contract tests + 1 standalone plan test = 14
+        # EphemeralStagingModuleContractTests has 15 contract tests + 1 standalone plan test = 16
         # EphemeralStagingDefaultTenantPlanTests has 4 default/empty/long/explicit tenant plan tests = 4
-        # Total = 18 tests
+        # Total = 20 tests
         self.assertEqual(
             len(contract_tests) + len(plan_tests),
             self.EXPECTED_TEST_COUNT,
@@ -398,6 +398,9 @@ class EphemeralStagingTestCollectionIntegrityTests(unittest.TestCase):
         self.assertIn("test_all_release_scoped_cloud_run_resources_use_controlled_vpc_egress", contract_tests)
         self.assertIn("test_module_variables_validation_rules", contract_tests)
         self.assertIn("test_module_no_dynamic_timestamp_leak", contract_tests)
+        # ODP-STAGING-REHEARSAL-NETWORK-IDENTITY-001 (design §12.5.1 items 1-3).
+        self.assertIn("test_verify_operator_identity_grants_are_release_scoped", contract_tests)
+        self.assertIn("test_staging_api_is_reachable_by_the_runner_but_iam_only", contract_tests)
         self.assertIn("test_release_and_owner_identity_matches_python_normalization_order", contract_tests)
         self.assertIn("test_provider_configuration_and_resource_projects", contract_tests)
         self.assertIn("test_scheduler_worker_invoker_iam_binding", contract_tests)

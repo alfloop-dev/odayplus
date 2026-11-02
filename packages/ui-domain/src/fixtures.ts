@@ -74,7 +74,7 @@ export const siteScoreReportFixture: SiteScoreReportSummaryContract = {
   m12: { p10: 10600000, p50: 12400000, p90: 14100000, unit: "TWD" },
   mature: { p10: 12000000, p50: 14800000, p90: 16900000, unit: "TWD" },
   paybackPeriod: { p10: 18, p50: 24, p90: 33, unit: "months" },
-  rentReasonableness: "medium",
+  rentReasonableness: 0.5722, // Synthetic score, not a risk category or percentage.
   cannibalizationRisk: "high",
   comparableStores: [
     { storeId: "store-a", distance: 1.2, locationType: "street", similarityScore: 0.82, revenueM6: 6200000 },

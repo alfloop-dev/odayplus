@@ -2368,7 +2368,9 @@ class NetworkListingService:
             effect_summary = f"Created new listing {new_id} from intake {intake_id}."
 
         elif action == "revise":
-            target_id = target_listing_id or (intake.get("matchResult") or {}).get("targetListingId") or (self._state["listings"][0]["id"] if self._state.get("listings") else None)
+            # Only an operator-named target or the recorded match may be revised;
+            # an unmatched intake must not overwrite whichever listing is first.
+            target_id = target_listing_id or (intake.get("matchResult") or {}).get("targetListingId")
             if not target_id:
                 raise NetworkListingConflict("no target listing found for revision")
             target = self._listing(target_id)

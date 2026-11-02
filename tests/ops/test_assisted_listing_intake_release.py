@@ -9,8 +9,11 @@ canary ladder blocking, and the governed cutover gate.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
+import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -132,6 +135,89 @@ def test_migration_reconciliation_drill(tmp_path: Path) -> None:
     assert result["rollback_proof"]["other_tenant_rows_untouched"] == 3
     # rollback ran on an isolated copy; the staging record stays intact
     assert result["rollback_proof"]["staging_record_untouched"] == 3
+    # Count/ID reconciliation is not field/evidence parity: inspect saved rows.
+    with closing(sqlite3.connect(result["staging_db"])) as conn:
+        conn.row_factory = sqlite3.Row
+        for tenant in (drills.STAGING_TENANT_A, drills.STAGING_TENANT_B):
+            counts = result["tenants"][tenant]["backfill_counts"]
+            assert counts["intakes_received"] == counts["intakes_processed"] == 3
+            assert counts["listings_processed"] == counts["candidates_processed"] == 3
+            assert counts["findings"] == counts["intakes_quarantined"] == counts["intakes_excluded"] == 0
+            fixture = drills._legacy_fixture(tenant, 3)["legacy_intakes"]
+            for source in fixture:
+                saved = conn.execute(
+                    "SELECT * FROM intakes WHERE tenant_id = ? AND correlation_id = ?",
+                    (tenant, source["correlationId"]),
+                ).fetchone()
+                assert saved["submitter_subject_id"] == source["submittedBy"]
+                assert saved["submitted_at"] == source["submittedAt"]
+                assert saved["intake_method"] == source["intakeMethod"]
+                assert saved["heat_zone_id"] == source["heatZoneId"]
+                assert saved["source_policy_state"] == source["sourcePolicyState"]
+                history = conn.execute(
+                    "SELECT reason_text FROM intake_stage_transitions WHERE intake_id = ?",
+                    (saved["intake_id"],),
+                ).fetchone()
+                assert json.loads(history[0])["source_history"]["version"] == 7
+                snapshot = conn.execute(
+                    "SELECT * FROM source_snapshots WHERE intake_id = ?", (saved["intake_id"],),
+                ).fetchone()
+                raw = source["rawSnapshot"].encode("utf-8")
+                assert snapshot["content_sha256"] == source["rawSnapshotSha256"] == hashlib.sha256(raw).hexdigest()
+                assert snapshot["byte_length"] == len(raw)
+                assert snapshot["raw_object_uri"] == source["rawObjectUri"]
+                assert snapshot["raw_object_uri"].startswith("odp-artifact://release-drill/")
+                for column, key in (("captured_at", "capturedAt"), ("observed_at", "observedAt"),
+                                    ("capture_method", "captureMethod"), ("media_type", "mediaType"),
+                                    ("retention_class", "retentionClass"), ("encryption_key_ref", "encryptionKeyRef")):
+                    assert snapshot[column] == source[key]
+                parser = conn.execute(
+                    "SELECT * FROM parser_runs WHERE intake_id = ?", (saved["intake_id"],),
+                ).fetchone()
+                assert parser["status"] == "SUCCEEDED"
+                assert parser["source_snapshot_id"] == snapshot["source_snapshot_id"]
+                assert parser["correlation_id"] == source["correlationId"]
+                assert json.loads(parser["parsed_payload"]) == source["parsedFields"]
+                assert json.loads(parser["normalized_payload"]) is None  # not supplied
+                release = conn.execute(
+                    "SELECT * FROM parser_releases WHERE parser_release_id = ?", (parser["parser_release_id"],),
+                ).fetchone()
+                assert release["source_id"] == source["sourceId"]
+                assert release["semantic_version"] == source["parserVersion"]
+                assert release["artifact_sha256"] == hashlib.sha256(b"synthetic-release-drill-parser-v1.4").hexdigest()
+                assert release["input_schema_version"] == "synthetic-html-v1"
+                assert release["output_schema_version"] == "synthetic-listing-v1"
+                assert release["test_corpus_version"] == "synthetic-release-drill-v1"
+        assert conn.execute("SELECT count(*) FROM match_decisions").fetchone()[0] == 0
+        assert conn.execute("SELECT DISTINCT status FROM match_cases").fetchall()[0][0] == "PENDING_REVIEW"
+
+
+@pytest.mark.parametrize("field,value,intakes,snapshots", [
+    ("submittedBy", None, 0, 0), ("heatZoneId", "HZ-01", 0, 0),
+    ("rawSnapshot", None, 2, 0), ("rawSnapshotSha256", "a" * 64, 2, 0),
+    ("parserVersion", None, 2, 2),
+])
+def test_migration_drill_malformed_history_fails_closed(tmp_path, monkeypatch, field, value, intakes, snapshots):
+    original = drills._legacy_fixture
+
+    def malformed(tenant_id, count):
+        fixture = original(tenant_id, count)
+        for row in fixture["legacy_intakes"]:
+            row[field] = value
+        return fixture
+
+    monkeypatch.setattr(drills, "_legacy_fixture", malformed)
+    result = drills.run_migration_reconciliation(tmp_path / "malformed", rows_per_tenant=2)
+    assert result["passed"] is False
+    assert result["blocking_findings"] > 0
+    with closing(sqlite3.connect(result["staging_db"])) as conn:
+        for tenant in (drills.STAGING_TENANT_A, drills.STAGING_TENANT_B):
+            for table, count in (("intakes", intakes), ("source_snapshots", snapshots), ("parser_runs", 0)):
+                assert conn.execute(f"SELECT count(*) FROM {table} WHERE tenant_id = ?", (tenant,)).fetchone()[0] == count
+            assert conn.execute(
+                "SELECT count(*) FROM reconciliation_findings WHERE tenant_id = ? AND severity = 'BLOCKING'",
+                (tenant,),
+            ).fetchone()[0] > 0
 
 
 def test_shadow_drill_meets_acceptance(config, tmp_path: Path) -> None:

@@ -382,6 +382,15 @@ def _build_pool(
         ) from exc
 
     try:
+        # A pooled connection the server already closed (Cloud SQL restart or
+        # failover, VPC connector rebuild) still looks idle and healthy to the
+        # client, so lending it unchecked fails the caller's first statement
+        # with "server closed the connection unexpectedly" -- and keeps doing
+        # so for every such connection left in the pool. ``check`` runs one
+        # empty round trip before each loan and replaces a dead connection
+        # with a fresh one. The default ``max_idle`` / ``max_lifetime`` stay:
+        # recycling sooner would only narrow the window, at the cost of extra
+        # reconnects, while the check closes it on every borrow.
         return ConnectionPool(
             conninfo=database_url,
             min_size=min_pool_size,
@@ -390,6 +399,7 @@ def _build_pool(
                 "autocommit": False,
                 "row_factory": dict_row,
             },
+            check=ConnectionPool.check_connection,
             open=True,
         )
     except Exception as exc:

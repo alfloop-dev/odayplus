@@ -821,9 +821,10 @@ class WebInvitationExecutor:
             raise ProvisioningRefused("PROVISIONING_SESSION_INVALID")
         return cookie
 
-    def _session(self, cookie: str, username: str) -> None:
+    def _session(self, cookie: str, account: str) -> None:
+        # /auth/session names the server-side account UUID, never the username.
         current = self._request("GET", "/auth/session", cookie=cookie).payload
-        if current.get("subject") != username:
+        if current.get("subject") != account:
             raise ProvisioningRefused("PROVISIONING_SESSION_INVALID")
 
     def _users(self, cookie: str) -> list[dict[str, Any]]:
@@ -883,7 +884,7 @@ class WebInvitationExecutor:
                 raise ProvisioningRefused("PROVISIONING_CREDENTIAL_INPUT_INVALID")
             self._observe_admission(plan, release_sha=release_sha, manifest_digest=manifest_digest)
             admin_cookie = self._login("ajoe734", admin_password)
-            self._session(admin_cookie, "ajoe734")
+            self._session(admin_cookie, PRESERVED_ACCOUNT_ID)
             # Fresh trusted before-state: the authoritative user inventory and
             # the verified session principal must agree on the ACTUAL roles.
             # The consent receipt's role list bounds them; it is never restored.
@@ -926,7 +927,7 @@ class WebInvitationExecutor:
                 raise ProvisioningRefused("PROVISIONING_ACCEPTANCE_INVALID")
             self._observe_admission(plan, release_sha=release_sha, manifest_digest=manifest_digest)
             new_cookie = self._login(checked.username, new_password)
-            self._session(new_cookie, checked.username)
+            self._session(new_cookie, account)
             self._principal(new_cookie, account, ["platform_admin"])
             after = self._users(new_cookie)
             if self._original(after) != original:

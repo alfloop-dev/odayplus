@@ -2050,10 +2050,13 @@ class JourneyRunner:
             "/auth/session",
             headers={"accept": "application/json", "cookie": _cookie_header(cookies)},
         )
+        # /auth/session names the server-side account UUID, never the username.
+        account = self.scope.account_ids.get(actor)
         if not self.result.check(
             not session.failed
             and session.status == 200
-            and session.payload.get("subject") == credential.username,
+            and bool(account)
+            and session.payload.get("subject") == account,
             f"session:{actor}_resolves_account",
             f"status={session.status}",
             "business-credential",

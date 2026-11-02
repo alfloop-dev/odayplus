@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-c5ec94d7b82d2f462bf2715af2a91a95",
+  "serialNumber": "urn:uuid:sha256-9ee93a02bc784634de75a14d59e5a0e8",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-24T08:14:52.039136+00:00",
+    "timestamp": "2026-11-01T00:06:06.833144+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@efbdaf4365e12c2b5cff13f5a7c40bd40495c857",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@efbdaf4365e12c2b5cff13f5a7c40bd40495c857"
+      "purl": "pkg:generic/alfloop-dev/odayplus@7d5189ef6f4733c1d3da06b1e87f8325214001b7",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@7d5189ef6f4733c1d3da06b1e87f8325214001b7"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "efbdaf4365e12c2b5cff13f5a7c40bd40495c857"
+        "value": "7d5189ef6f4733c1d3da06b1e87f8325214001b7"
       },
       {
         "name": "sbom-hash",
-        "value": "c5ec94d7b82d2f462bf2715af2a91a955d7661a5c0532b97d5ed9799a16aed1f"
+        "value": "9ee93a02bc784634de75a14d59e5a0e85f73ae3da8cb726d09689e427531e199"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:a56087db0c4df2903b1bb44816f92e014646e6cf7a457c3fa9d35a08feb6e71a"
+        "value": "sha256:d9e7192a145bd7e438de4f91213e41a8ab37b470e82c04832979f40f72d1fa9e"
       },
       {
         "name": "container-base-images",
@@ -14465,10 +14465,10 @@
     },
     {
       "name": "pyasn1",
-      "version": "0.6.4",
+      "version": "0.6.5",
       "type": "library",
-      "purl": "pkg:pypi/pyasn1@0.6.4",
-      "bom-ref": "pkg:pypi/pyasn1@0.6.4",
+      "purl": "pkg:pypi/pyasn1@0.6.5",
+      "bom-ref": "pkg:pypi/pyasn1@0.6.5",
       "scope": "required",
       "licenses": [
         {
@@ -14480,11 +14480,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "9c447d8431c947fe4c8febc4ed9e760bc29011a5b01e5c74b67025bd9fb8ce81"
+          "content": "6b11616a6bcf3a40e635f082bb232fa57b5e0dd7f517bd7ddd69ec3794508a47"
         },
         {
           "alg": "SHA256",
-          "content": "deda9277cfd454080ec40b207fb6df82206a3a2688735233cdcd8d3d565f088b"
+          "content": "4017b0fce125096b8573b39c989fdb1a4b19cf761e683398184550fea0e66587"
         }
       ],
       "supplier": {
@@ -14773,10 +14773,10 @@
     },
     {
       "name": "pypdf",
-      "version": "6.21.2",
+      "version": "6.21.4",
       "type": "library",
-      "purl": "pkg:pypi/pypdf@6.21.2",
-      "bom-ref": "pkg:pypi/pypdf@6.21.2",
+      "purl": "pkg:pypi/pypdf@6.21.4",
+      "bom-ref": "pkg:pypi/pypdf@6.21.4",
       "scope": "optional",
       "licenses": [
         {
@@ -14788,11 +14788,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "0a3e1c5c886a1be03646c16a04827cc166c2a0575c971b26a4bf89686551c2d4"
+          "content": "c8817e3f888d47a087872ded69812c1ef30cacb871d6e053e0c00bbaf0bc2163"
         },
         {
           "alg": "SHA256",
-          "content": "1d44d1a3a200f25062adff0085b02040e4646431ac2ccac22e42679e91466084"
+          "content": "33e4fb41ca352810eb4e9838aa0d82d6888a5f8bf682f43e99cce5faa666255c"
         }
       ],
       "supplier": {
@@ -18608,7 +18608,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@efbdaf4365e12c2b5cff13f5a7c40bd40495c857",
+      "ref": "pkg:generic/alfloop-dev/odayplus@7d5189ef6f4733c1d3da06b1e87f8325214001b7",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -18653,7 +18653,7 @@
         "pkg:pypi/pymoo@0.6.2",
         "pkg:pypi/pynacl@1.6.2",
         "pkg:pypi/pyomo@6.10.1",
-        "pkg:pypi/pypdf@6.21.2",
+        "pkg:pypi/pypdf@6.21.4",
         "pkg:pypi/pytest-xdist@3.8.0",
         "pkg:pypi/pytest@9.1.1",
         "pkg:pypi/pyyaml@6.0.3",
@@ -21734,7 +21734,7 @@
     {
       "ref": "pkg:pypi/pyasn1-modules@0.4.2",
       "dependsOn": [
-        "pkg:pypi/pyasn1@0.6.4"
+        "pkg:pypi/pyasn1@0.6.5"
       ]
     },
     {

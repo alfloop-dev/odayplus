@@ -32,6 +32,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
@@ -234,8 +235,8 @@ def staging_live_gate_proof(report: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _live_gate_correlation_id(expected_sha: str) -> str:
-    return f"corr-staging-live-e2e-{expected_sha[:12]}-{int(datetime.now(UTC).timestamp())}"
+def _live_gate_correlation_id(expected_sha: str, *, purpose: str = "live-e2e") -> str:
+    return f"corr-staging-{purpose}-{expected_sha[:12]}-{int(datetime.now(UTC).timestamp())}"
 
 
 def _live_gate_clients(
@@ -3238,6 +3239,92 @@ def make_live_rehearsal_executor(
             "model_checks": [check.name for check in checks],
         }
 
+    def execute_worker_idempotency(context: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Enqueue this stage's own probe, replay it, then drain it with the worker job.
+
+        The worker job runs ``--max-jobs 1 --require-job`` and nothing earlier
+        in the rehearsal enqueues (the scheduler trigger stays paused), so an
+        empty queue must fail it. The stage therefore puts the live gate's
+        provider-disabled ``external-fetch`` probe on the queue through the
+        release API itself. Enqueue, idempotent replay, terminal state and
+        audit receipts are judged by the gate's own ``_check_worker_and_audit``;
+        the drain is the worker job with its Terraform args unchanged, so the
+        job still fails when it claims nothing.
+        """
+
+        gate = _live_e2e_gate()
+        execute_job("staging_worker_job_name", "staging_worker_image", "worker", run=False)
+        # Same principal and transport as release_profile_readback: the smoke
+        # bearer for the release-bound audience, the API token for Cloud Run.
+        smoke_token = token_for(staging_smoke_token_audience(str(outputs["release_id"])))
+        api_token = token_for(api_uri)
+        redact = gate._redactor(smoke_token, api_token)
+        config = staging_live_gate_config(
+            outputs,
+            release_profile=str(context.get("release_profile") or ""),
+            manifest_digest=str(context.get("manifest_digest") or ""),
+            bearer_token=smoke_token,
+            api_transport_token=api_token,
+        )
+        correlation_id = _live_gate_correlation_id(config.expected_sha, purpose="worker-idempotency")
+
+        class RequiredJobDrain:
+            def drain(self) -> tuple[bool, str]:
+                try:
+                    execute_job("staging_worker_job_name", "staging_worker_image", "worker")
+                except Exception as exc:
+                    return False, f"worker job execution failed: {exc}"
+                return True, "worker job claimed a required job and completed"
+
+        checks: list[Any] = []
+        report: dict[str, Any] = {}
+        try:
+            api_client, _ = _live_gate_clients(
+                config, web_transport_token="", correlation_id=correlation_id
+            )
+            readiness = api_client.request("GET", "/readiness", authenticated=False)
+            provider = gate._as_dict(gate._as_dict(readiness.payload.get("details")).get("provider"))
+            gate._check_worker_and_audit(
+                http=api_client,
+                config=config,
+                worker_driver=RequiredJobDrain(),
+                correlation_id=correlation_id,
+                checks=checks,
+                report=report,
+                provider=provider,
+                monotonic=time.monotonic,
+                sleep=time.sleep,
+            )
+        except Exception as exc:
+            # Only the exception type: a message could carry request data.
+            raise RuntimeError(f"worker idempotency probe could not run: {type(exc).__name__}") from None
+        worker = report.get("worker") if isinstance(report.get("worker"), Mapping) else {}
+        failed = [check for check in checks if not check.ok]
+        proof = {
+            "ok": bool(checks) and not failed,
+            "checks": [{"name": check.name, "ok": check.ok} for check in checks],
+            "terminal_status": worker.get("terminal_status"),
+            "expected_terminal_status": worker.get("expected_terminal_status"),
+            "secret_values_redacted": True,
+        }
+        if proof["ok"]:
+            return {
+                "success": True,
+                "job": str(outputs["staging_worker_job_name"]).strip(),
+                "execution": "succeeded",
+                "status": "verified",
+                "worker_idempotency": proof,
+            }
+        return {
+            "success": False,
+            "status": "failed",
+            "detail": redact(
+                "staging worker idempotency failed: "
+                + "; ".join(f"{check.name}: {str(check.detail)[:300]}" for check in failed)
+            ),
+            "worker_idempotency": proof,
+        }
+
     def execute_live_gate(context: Mapping[str, Any]) -> Mapping[str, Any]:
         """Run the complete canonical live E2E gate against this release.
 
@@ -3322,7 +3409,7 @@ def make_live_rehearsal_executor(
             profile_proof = release_profile_readback(_context)
             return {**endpoint("/operator", web=True), "release_profile": profile_proof}
         if stage_name == "worker_idempotency":
-            return execute_job("staging_worker_job_name", "staging_worker_image", "worker")
+            return execute_worker_idempotency(_context)
         if stage_name == "scheduler_oneshot":
             trigger_state = _live_gcloud(
                 [
@@ -3694,6 +3781,7 @@ def verify_ephemeral_staging(
                             "health_readback",
                             "rollback_targets",
                             "release_profile",
+                            "worker_idempotency",
                             "live_e2e_gate",
                         ):
                             if key in stage_result:

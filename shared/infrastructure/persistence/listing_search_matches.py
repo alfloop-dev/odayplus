@@ -105,7 +105,6 @@ class ListingSearchMatchStore:
                     raise ValueError("LISTING_SEARCH_RECEIPT_REVISION_REQUIRED")
                 if (receipt.get("scope") or {}).get("tenant_id") != self.tenant_id:
                     raise ValueError("LISTING_SEARCH_RECEIPT_TENANT_REQUIRED")
-                result = criteria.evaluate(receipt, tenant_id=self.tenant_id)
                 identity_key = json.dumps(
                     [search_id, version, identity, revision], separators=(",", ":")
                 )
@@ -120,22 +119,32 @@ class ListingSearchMatchStore:
                     "intakeId": identity,
                     "intakeVersion": revision,
                     "receiptFactsSha256": evidence_digest(receipt_matching_facts(receipt)),
-                    "outcome": result.outcome,
-                    "reasonCodes": list(result.reasons),
                 }
+                # Identity and complete evidence are immutable. A newer evaluator
+                # may reject an old MATCH (e.g. unknown rent currency); that does
+                # not make an unchanged pair a reused version. Preserve its first
+                # disposition; current readers still recheck facts and permissions.
                 existing = self.documents.get(self.COLLECTION, match_id)
                 if existing is not None:
-                    if {k: existing.get(k) for k in value} != value:
+                    if not isinstance(existing, dict) or any(
+                        existing.get(k) != v for k, v in value.items()
+                    ):
                         raise ListingSearchMatchConflict("LISTING_SEARCH_MATCH_VERSION_REUSED")
                     continue
-                value["recordedAt"] = datetime.now(UTC).isoformat()
+                result = criteria.evaluate(receipt, tenant_id=self.tenant_id)
+                recorded = {
+                    **value,
+                    "outcome": result.outcome,
+                    "reasonCodes": list(result.reasons),
+                    "recordedAt": datetime.now(UTC).isoformat(),
+                }
                 created = self.documents.put_if_absent(
-                    self.COLLECTION, match_id, value, group_key=self._group(search_id, version)
+                    self.COLLECTION, match_id, recorded, group_key=self._group(search_id, version)
                 )
                 if not created:
                     existing = self.documents.get(self.COLLECTION, match_id)
                     if not isinstance(existing, dict) or any(
-                        existing.get(k) != v for k, v in value.items() if k != "recordedAt"
+                        existing.get(k) != v for k, v in value.items()
                     ):
                         raise ListingSearchMatchConflict("LISTING_SEARCH_MATCH_VERSION_REUSED")
 

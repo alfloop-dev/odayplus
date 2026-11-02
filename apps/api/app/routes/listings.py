@@ -8,6 +8,7 @@ import json
 import os
 import re
 import secrets
+from collections.abc import Callable
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -2087,6 +2088,7 @@ else:
             make: Any,
             *,
             resource_id: str | None = None,
+            authorize_replay: Callable[[dict[str, Any]], None] | None = None,
         ) -> tuple[dict[str, Any], int, bool]:
             prior = load_replay(
                 key,
@@ -2097,6 +2099,8 @@ else:
                 resource_id=resource_id,
             )
             if prior is not None:
+                if authorize_replay is not None:
+                    authorize_replay(prior[0])
                 return prior[0], prior[1], True
             try:
                 # Intake bootstrap/assignment is one rollback boundary. Other
@@ -2109,6 +2113,8 @@ else:
                     # entering it so concurrent same-key submissions converge.
                     prior = load_replay(key, body, tenant_id, actor_id, operation_id, resource_id=resource_id)
                     if prior is not None:
+                        if authorize_replay is not None:
+                            authorize_replay(prior[0])
                         return prior[0], prior[1], True
                     high_risk = operation_id in {
                         "requestCandidatePromotion", "decideMatchCase", "mergeProperties", "splitProperty",
@@ -2480,7 +2486,7 @@ else:
                     "description": "Idempotent replay",
                     "headers": response_headers("Idempotency-Replayed"),
                 },
-                **api_error_responses(503, 403, 409, 422, idempotency_conflict=True),
+                **api_error_responses(503, 403, 404, 409, 422, idempotency_conflict=True),
             },
         )
         def submit_url(
@@ -2565,7 +2571,25 @@ else:
                 }
                 return receipt_val, 202
 
-            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "submitUrlIntake", make)
+            def authorize_replay(receipt: dict[str, Any]) -> None:
+                # A retained receipt is an outcome, not a retained access grant.
+                # Match GET's current-target policy without comparing versions.
+                value = active.intakes.get(receipt["intake_id"])
+                if value is None:
+                    raise HTTPException(404, "intake not found")
+                authorize_intake_action(
+                    principal,
+                    "view",
+                    resource=intake_auth_resource(value),
+                    operator_role_id=operator_role_id,
+                    audit_log=active_audit_log,
+                    correlation_id=correlation_id,
+                )
+
+            val, code, was_replayed = replay(
+                key, body.model_dump(), tenant_id, actor_id, "submitUrlIntake", make,
+                authorize_replay=authorize_replay,
+            )
             response.status_code = 200 if was_replayed else code
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
             response.headers["ETag"] = f'W/"{val["version"]}"'

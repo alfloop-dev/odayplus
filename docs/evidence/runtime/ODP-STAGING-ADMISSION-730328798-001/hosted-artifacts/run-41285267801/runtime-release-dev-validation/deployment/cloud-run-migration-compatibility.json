@@ -1,0 +1,246 @@
+{
+  "api_invoker_authenticated": true,
+  "api_url": "https://oday-api-2l6wuyl67q-de.a.run.app",
+  "checks": [
+    {
+      "detail": "status=200 attempts=1 elapsed=0.2s",
+      "name": "compatibility:/platform/version:http",
+      "ok": true
+    },
+    {
+      "detail": "old revision remains compatible with the migrated production database",
+      "name": "compatibility:/platform/health:database",
+      "ok": true
+    }
+  ],
+  "correlation_id": "corr-cloud-run-compat-dev-730328798ce8456ae698bf5ade35d5e75f5ff662",
+  "generated_at": "2026-11-01T07:49:04Z",
+  "health": {
+    "correlation_id": "corr-cloud-run-compat-dev-730328798ce8456ae698bf5ade35d5e75f5ff662",
+    "data_mode": "live",
+    "dependencies": {
+      "database": "healthy",
+      "external_providers": {
+        "checked_at": null,
+        "configuration_errors": [],
+        "configuration_valid": true,
+        "connectivity_healthy": false,
+        "expires_at": null,
+        "mode": "disabled",
+        "probes": [],
+        "required_provider_ids": [],
+        "status": "disabled"
+      },
+      "job_queue": "healthy (durable postgresql job queue)"
+    },
+    "modes": {
+      "data": {
+        "blockingReasons": [],
+        "liveReady": true,
+        "mode": "live",
+        "operatorRepositoryProbe": {
+          "checkedAt": "2026-11-01T07:49:04.817572+00:00",
+          "errors": [],
+          "persistenceMode": "postgresql",
+          "ready": true,
+          "repository": "OperatorLiveRepository"
+        },
+        "operatorRepositoryReady": true,
+        "origin": {
+          "completeness": "request-scoped",
+          "kind": "authoritative",
+          "persistenceMode": "postgresql",
+          "repository": "OperatorLiveRepository",
+          "sourceId": "operator-live-repository"
+        }
+      },
+      "deploymentMode": "dev",
+      "models": {
+        "autoSeeded": false,
+        "blockingReasons": [
+          "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
+        ],
+        "capabilities": {
+          "avm": {
+            "available": false,
+            "error": null,
+            "governedDisabled": true,
+            "governedDisabledEvidence": {
+              "activationGate": "Requires >= 120 eligible labeled PG16 rows in model_ready.valuation_view (mature realized transaction outcomes) and independent label-authority approval",
+              "activationThreshold": 120,
+              "autoSeeded": false,
+              "eligibleCount": 0,
+              "inventoryVersion": "pg16-production-model-inventory-2026-07-25-v1",
+              "observedAt": "2026-07-25T15:20:00Z",
+              "observedCount": 0,
+              "owner": "avm-platform-team",
+              "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+              "sourceContract": "model_ready.valuation_view@valuation-view-v1"
+            },
+            "modelName": "dealroom_avm",
+            "outcomeContractRequired": true,
+            "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+            "requiredForPlatformReadiness": true,
+            "service": "avm",
+            "trainable": true,
+            "trainingSpecKey": "avm"
+          },
+          "forecastops": {
+            "available": false,
+            "error": "forecast_revenue_interval: configured MLflow registry has no production alias",
+            "governedDisabled": false,
+            "governedDisabledEvidence": null,
+            "modelName": "forecast_revenue_interval",
+            "outcomeContractRequired": true,
+            "reasonCode": "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE",
+            "requiredForPlatformReadiness": true,
+            "service": "forecastops",
+            "trainable": true,
+            "trainingSpecKey": "forecastops"
+          },
+          "heatzone": {
+            "available": false,
+            "error": null,
+            "governedDisabled": true,
+            "governedDisabledEvidence": {
+              "activationGate": "Requires >= 200 eligible labeled PG16 rows in model_ready.heatzone_training_view (approved immutable opened_on authority) and independent label-authority approval",
+              "activationThreshold": 200,
+              "autoSeeded": false,
+              "eligibleCount": 0,
+              "inventoryVersion": "pg16-production-model-inventory-2026-07-25-v1",
+              "observedAt": "2026-07-25T15:20:00Z",
+              "observedCount": 0,
+              "owner": "heatzone-platform-team",
+              "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+              "sourceContract": "model_ready.heatzone_training_view@heatzone-training-view-v2"
+            },
+            "modelName": "heatzone_priority",
+            "outcomeContractRequired": true,
+            "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+            "requiredForPlatformReadiness": true,
+            "service": "heatzone",
+            "trainable": true,
+            "trainingSpecKey": "heatzone"
+          },
+          "sitescore": {
+            "available": false,
+            "error": null,
+            "governedDisabled": true,
+            "governedDisabledEvidence": {
+              "activationGate": "Requires >= 200 eligible labeled PG16 rows in model_ready.candidate_site_view and independent label-authority approval",
+              "activationThreshold": 200,
+              "autoSeeded": false,
+              "eligibleCount": 0,
+              "inventoryVersion": "pg16-production-model-inventory-2026-07-25-v1",
+              "observedAt": "2026-07-25T15:20:00Z",
+              "observedCount": 0,
+              "owner": "sitescore-platform-team",
+              "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+              "sourceContract": "model_ready.candidate_site_view@candidate-site-view-v2"
+            },
+            "modelName": "sitescore_propensity",
+            "outcomeContractRequired": true,
+            "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+            "requiredForPlatformReadiness": true,
+            "service": "sitescore",
+            "trainable": true,
+            "trainingSpecKey": "sitescore"
+          }
+        },
+        "error": "forecastops: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE: forecast_revenue_interval: configured MLflow registry has no production alias",
+        "learninghubRegistryBound": true,
+        "mode": "mlflow-production-unverified",
+        "productionBindingsReady": false,
+        "requiredServices": [
+          "avm",
+          "forecastops",
+          "heatzone",
+          "sitescore"
+        ]
+      },
+      "persistence": {
+        "configuredMode": "postgresql",
+        "durable": true,
+        "production_persistence_supported": true,
+        "reachable": true,
+        "runtimeMode": "postgresql"
+      },
+      "provider": {
+        "configurationValid": true,
+        "connectivityHealthy": false,
+        "healthy": true,
+        "live": false,
+        "mode": "disabled",
+        "probeEvidence": {
+          "checked_at": null,
+          "configuration_errors": [],
+          "configuration_valid": true,
+          "connectivity_healthy": false,
+          "expires_at": null,
+          "mode": "disabled",
+          "probes": [],
+          "required_provider_ids": [],
+          "status": "disabled"
+        }
+      },
+      "releaseProfile": {
+        "error": null,
+        "modelReadinessClaimed": false,
+        "name": "dev-admin",
+        "valid": true
+      },
+      "requireLiveData": true
+    },
+    "service": "oday-api",
+    "status": "ok",
+    "time": "2026-11-01T07:49:04.817703+00:00",
+    "version": "0.1.0"
+  },
+  "health_probe": {
+    "attempt_count": 1,
+    "attempts": [
+      {
+        "elapsed_seconds": 0.411,
+        "error": "",
+        "provenance": "json_object",
+        "status": 200,
+        "transient": false
+      }
+    ],
+    "elapsed_seconds": 0.411,
+    "outcome": "answered"
+  },
+  "ok": true,
+  "probe_retry_policy": {
+    "attempts": 4,
+    "backoff_seconds": 2.0,
+    "max_backoff_seconds": 8.0,
+    "per_attempt_timeout_seconds": 15.0,
+    "total_deadline_seconds": 120.0
+  },
+  "schema_version": 1,
+  "secret_values_redacted": true,
+  "version": {
+    "api_version": "0.1.0",
+    "correlation_id": "corr-cloud-run-compat-dev-730328798ce8456ae698bf5ade35d5e75f5ff662",
+    "release_sha": "14e436fda466f843cfdf6c6a1f7feabba72095a2",
+    "service": "oday-api",
+    "status": "ok",
+    "time": "2026-11-01T07:49:04.409871+00:00"
+  },
+  "version_probe": {
+    "attempt_count": 1,
+    "attempts": [
+      {
+        "elapsed_seconds": 0.224,
+        "error": "",
+        "provenance": "json_object",
+        "status": 200,
+        "transient": false
+      }
+    ],
+    "elapsed_seconds": 0.224,
+    "outcome": "answered"
+  },
+  "web_url": "https://oday-web-2l6wuyl67q-de.a.run.app"
+}
