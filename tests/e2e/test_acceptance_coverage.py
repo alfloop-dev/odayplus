@@ -129,7 +129,7 @@ def _commit(path: Path, relative: str, content: str, message: str) -> None:
 
 def _clone_packet_repo(path: Path) -> None:
     subprocess.run(
-        ["git", "clone", "-q", "--no-hardlinks", str(ROOT), str(path)],
+        ["git", "clone", "-q", "--shared", str(ROOT), str(path)],
         check=True,
     )
 
