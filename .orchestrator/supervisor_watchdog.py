@@ -28,6 +28,7 @@ from common import (
     pid_is_supervisor_process,
     supervisor_lock_path,
     supervisor_pid_path,
+    terminate_supervisor_processes,
     utc_now,
     write_activity_log,
     write_json,
@@ -117,9 +118,28 @@ def read_pid_file(path: Path) -> int | None:
         return None
 
 
+def supervisor_repo_root(config: dict[str, Any]) -> Path:
+    return config_path(config, "state_file").parents[1]
+
+
 def supervisor_pid_is_live(config: dict[str, Any], pid: int | None) -> bool:
     """Return True only when `pid` is this repo's supervisor, not just some process."""
-    return pid_is_supervisor_process(pid, config_path(config, "state_file").parents[1])
+    return pid_is_supervisor_process(pid, supervisor_repo_root(config))
+
+
+def stop_live_supervisor(config: dict[str, Any], lock_release_seconds: float = 2.0) -> tuple[dict[int, bool], bool]:
+    """Stop this repo's running supervisor so a replacement can take the lock.
+
+    A supervisor that is alive but no longer heartbeating still holds the
+    singleton flock, so a freshly started one exits immediately and the stuck one
+    keeps running.  Returns ``({pid: stopped}, lock_free)``; the caller must not
+    start a replacement unless every signalled pid stopped and the lock is free.
+    """
+    stopped = terminate_supervisor_processes(supervisor_repo_root(config))
+    deadline = time.time() + lock_release_seconds
+    while supervisor_lock_held(config) and time.time() < deadline:
+        time.sleep(0.1)
+    return stopped, not supervisor_lock_held(config)
 
 
 def active_worker_count(runtime_state: dict[str, Any]) -> int:
@@ -389,6 +409,7 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
     reason = str(health.get("reason") or "healthy")
     new_pid: int | None = None
     log_path: Path | None = None
+    stopped: dict[int, bool] = {}
 
     if not settings.get("enabled", True):
         decision = "observe_only"
@@ -418,17 +439,41 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
             decision = "restart_supervisor"
             reason = str(health.get("reason") or "unhealthy")
             enter_watchdog_safe_mode(config, runtime_state, now, settings, reason)
-            new_pid, log_path = start_supervisor(config, settings, now)
+            lock_free = True
+            if alive:
+                # Alive but unhealthy (stale/missing heartbeat, degraded): the old
+                # supervisor still holds the singleton lock, so a new one would exit
+                # at once.  Stop it first, and never start a second supervisor
+                # beside one that would not stop.
+                stopped, lock_free = stop_live_supervisor(config)
+            if lock_free and all(stopped.values()):
+                new_pid, log_path = start_supervisor(config, settings, now)
+            else:
+                decision = "suppress_restart"
+                reason = f"old_supervisor_not_stopped:{reason}"
             attempts.append(
                 {
                     "at": isoformat_utc(now),
                     "reason": reason,
                     "old_pid": pid,
                     "new_pid": new_pid,
-                    "log_path": str(log_path),
+                    "stopped_pids": sorted(stopped),
+                    "log_path": str(log_path) if log_path else None,
                 }
             )
             watchdog_state["restart_attempts"] = attempts
+            for old_pid, was_stopped in stopped.items():
+                if was_stopped:
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "supervisor_replaced",
+                            "message": f"Watchdog terminated unhealthy supervisor process {old_pid} ({reason}); replacement {new_pid}.",
+                            "old_pid": old_pid,
+                            "new_pid": new_pid,
+                            "reason": reason,
+                        },
+                    )
 
     result = summarize_decision(
         decision=decision,
@@ -441,6 +486,7 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
         log_path=log_path,
     )
     result["lock_held"] = lock_held
+    result["stopped_pids"] = sorted(stopped)
     watchdog_state["last_decision"] = result
     save_watchdog_state(config, watchdog_state, settings)
     append_watchdog_metric(

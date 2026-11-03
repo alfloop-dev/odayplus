@@ -8864,8 +8864,12 @@ class SingleSupervisorGuardTests(unittest.TestCase):
                 alive[pid] = False
 
         with (
-            mock.patch.object(supervisor, "iter_matching_supervisor_pids", return_value=[101, 202, 404]),
-            mock.patch.object(supervisor, "pid_is_alive", side_effect=lambda pid: alive.get(pid, False)),
+            mock.patch.object(common, "iter_supervisor_pids", return_value=[101, 202, 404]),
+            mock.patch.object(
+                common,
+                "pid_is_supervisor_process",
+                side_effect=lambda pid, _root: alive.get(pid, False),
+            ),
             mock.patch.object(supervisor.os, "getpid", return_value=202),
             mock.patch.object(supervisor.os, "kill", side_effect=fake_kill),
             mock.patch.object(supervisor.time, "sleep"),

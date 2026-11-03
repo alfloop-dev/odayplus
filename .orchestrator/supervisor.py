@@ -88,6 +88,7 @@ from common import (
     summarize_failure_reason,
     supervisor_lock_path,
     supervisor_pid_path,
+    terminate_supervisor_processes,
     utc_now,
     validate_destination_context_path,
     validate_source_doc_path,
@@ -726,30 +727,6 @@ def clear_supervisor_pid(config: dict[str, Any]) -> None:
         path.unlink(missing_ok=True)
 
 
-def iter_matching_supervisor_pids() -> list[int]:
-    current_repo_root = str(THIS_DIR.parent.resolve())
-    matches: list[int] = []
-    for proc_dir in Path("/proc").iterdir():
-        if not proc_dir.name.isdigit():
-            continue
-        pid = int(proc_dir.name)
-        cmdline_path = proc_dir / "cmdline"
-        try:
-            raw = cmdline_path.read_bytes()
-        except OSError:
-            continue
-        if not raw:
-            continue
-        parts = [part.decode("utf-8", errors="ignore") for part in raw.split(b"\x00") if part]
-        try:
-            proc_cwd = str((proc_dir / "cwd").resolve())
-        except OSError:
-            proc_cwd = ""
-        if cmdline_is_supervisor_process(parts) and proc_cwd == current_repo_root:
-            matches.append(pid)
-    return sorted(matches)
-
-
 def terminate_other_supervisors(config: dict[str, Any]) -> None:
     """Terminate every other matching supervisor process except this one.
 
@@ -760,28 +737,7 @@ def terminate_other_supervisors(config: dict[str, Any]) -> None:
     later-started supervisor with a smaller PID coexist with an earlier one.
     """
     current_pid = os.getpid()
-    terminated: list[int] = []
-    for pid in iter_matching_supervisor_pids():
-        if pid == current_pid:
-            continue
-        if not pid_is_alive(pid):
-            continue
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError:
-            continue
-        deadline = time.time() + 2.0
-        while time.time() < deadline and pid_is_alive(pid):
-            time.sleep(0.1)
-        if pid_is_alive(pid):
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except OSError:
-                pass
-            deadline = time.time() + 1.0
-            while time.time() < deadline and pid_is_alive(pid):
-                time.sleep(0.05)
-        terminated.append(pid)
+    terminated = terminate_supervisor_processes(THIS_DIR.parent.resolve(), exclude_pid=current_pid)
     for pid in terminated:
         write_activity_log(
             config,
