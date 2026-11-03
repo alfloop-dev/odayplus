@@ -866,7 +866,7 @@ def advance_approved_prs_to_merge(
         if not str(task.get("approved_head") or "").strip():
             continue
         try:
-            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id, task=task)
         except Exception:
             continue
         if ci_status != "success" or str(pr_status or "").strip().upper() == "MERGED":
@@ -1049,7 +1049,7 @@ def recover_conflicted_review_prs(
         # drop the many tasks that are obviously not this shape without paying
         # for a `gh` call each tick, not to authorise the transition.
         try:
-            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id, task=task)
         except Exception:
             continue
         if ci_status != "none" or str(pr_status or "").strip().upper() != "OPEN":
@@ -1075,7 +1075,7 @@ def recover_conflicted_review_prs(
         # including a read that fails - waits for the next tick.
         try:
             fresh_pr_status, fresh_ci_status = runtime_ai_status.task_pr_ci_status(
-                task_id, max_age_seconds=0
+                task_id, max_age_seconds=0, task=task
             )
         except Exception:
             continue
@@ -1211,7 +1211,7 @@ def recover_failed_ci_review_prs(
         # Cheapest disqualifier first, through the canonical CI reader.
         # Any answer other than failure on an open PR ends this lane's business.
         try:
-            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id, task=task)
         except Exception:
             continue
         if ci_status != "failure" or str(pr_status or "").strip().upper() != "OPEN":
@@ -1227,7 +1227,7 @@ def recover_failed_ci_review_prs(
         # Fresh uncached CI read to ensure CI failure is current.
         try:
             fresh_pr_status, fresh_ci_status = runtime_ai_status.task_pr_ci_status(
-                task_id, max_age_seconds=0
+                task_id, max_age_seconds=0, task=task
             )
         except Exception:
             continue
@@ -1453,7 +1453,7 @@ def is_task_review_dispatch_eligible(
     task_id = str(task.get(schema.get("task_id_field", "id")) or task.get("id") or "")
     try:
         current_head = runtime_ai_status.resolve_task_sha(
-            task_id, force_refresh=readiness_force_refresh
+            task_id, force_refresh=readiness_force_refresh, task=task
         )
     except Exception:
         return False
@@ -1474,7 +1474,7 @@ def is_task_review_dispatch_eligible(
 
     # Exact head required CI terminal success check
     try:
-        pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+        pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id, task=task)
     except Exception:
         return False
     if ci_status != "success":
@@ -1540,7 +1540,7 @@ def dispatch_priority_for_task(
         except Exception:
             return None
         try:
-            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(str(task.get("id") or ""))
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(str(task.get("id") or ""), task=task)
             if str(pr_status or "").strip().upper() != "MERGED" or ci_status not in {"success", "none"}:
                 return None
         except Exception:
@@ -2928,14 +2928,16 @@ def dispatch_ready_tasks(
                         )
                         current_head = None
                         try:
-                            current_head = runtime_ai_status.resolve_task_sha(task_id, force_refresh=True)
+                            current_head = runtime_ai_status.resolve_task_sha(
+                                task_id, force_refresh=True, task=task
+                            )
                         except Exception:
                             current_head = None
 
                         pr_status = None
                         ci_status = "unknown"
                         try:
-                            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+                            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id, task=task)
                         except Exception:
                             pass
 
@@ -3074,7 +3076,7 @@ def dispatch_ready_tasks(
                         pr_status = "UNKNOWN"
                         ci_status = "unknown"
                         try:
-                            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+                            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id, task=task)
                         except Exception as err:
                             console_log(f"Failed to check CI status for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
 

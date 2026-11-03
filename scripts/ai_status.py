@@ -2538,7 +2538,23 @@ def clear_ai_status_caches() -> None:
     _TASK_SHA_CACHE.clear()
 
 
-def task_pr_lookup_scope(task_id: str) -> tuple[Path, list[str], int | None]:
+def loaded_task_record(task_id: str, task: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """The record a per-task reader binds to: the caller's, or the board's.
+
+    Readers asked once per task in a loop (`resolve_task_sha`,
+    `task_pr_lookup_scope`) only need the task's own record for its branch and
+    repository binding. A caller that already holds that record passes it, so
+    a dispatch tick does not reload and re-normalize the whole state per task.
+    A record for any other id is not this task's binding and is ignored.
+    """
+    if isinstance(task, dict) and task.get("id") == task_id:
+        return task
+    return get_task(load_state(), task_id)
+
+
+def task_pr_lookup_scope(
+    task_id: str, task: dict[str, Any] | None = None
+) -> tuple[Path, list[str], int | None]:
     """Where to ask GitHub about a task's PR: checkout, `--repo` args, number.
 
     A task is not necessarily in this repository. `gh pr view <branch>` run from
@@ -2555,7 +2571,7 @@ def task_pr_lookup_scope(task_id: str) -> tuple[Path, list[str], int | None]:
     pr_number: int | None = None
     try:
         config = status_runtime_config()
-        task = get_task(load_state(), task_id)
+        task = loaded_task_record(task_id, task)
         if task:
             try:
                 pr_number = int(task.get("pr_number") or 0) or None
@@ -2575,6 +2591,7 @@ def task_pr_ci_status(
     task_id: str,
     repository_root: Path | None = None,
     max_age_seconds: float = 10.0,
+    task: dict[str, Any] | None = None,
 ) -> tuple[str | None, str]:
     now = time.time()
     cache_key = f"{task_id}:{repository_root}"
@@ -2583,7 +2600,7 @@ def task_pr_ci_status(
         if now - ts < max_age_seconds:
             return val
 
-    root, repo_args, pr_number = task_pr_lookup_scope(task_id)
+    root, repo_args, pr_number = task_pr_lookup_scope(task_id, task)
     if repository_root is not None:
         root = repository_root
     # The recorded PR number is exact; the branch names are the fallback for
@@ -10941,7 +10958,14 @@ def resolve_task_sha(
     max_age_seconds: float = 5.0,
     force_refresh: bool = False,
     fresh: bool = False,
+    task: dict[str, Any] | None = None,
 ) -> str | None:
+    """The task branch head on origin, or None when origin confirms it absent.
+
+    `task` is the caller's loaded record for `task_id` (see
+    `loaded_task_record`); it only spares the board reload. Origin is still
+    read whenever `force_refresh`/`fresh` asks for it.
+    """
     now = time.time()
     if not (force_refresh or fresh) and max_age_seconds > 0:
         if task_id in _TASK_SHA_CACHE:
@@ -10953,8 +10977,7 @@ def resolve_task_sha(
     recorded_branch: str | None = None
     try:
         config = status_runtime_config()
-        state = load_state()
-        task = get_task(state, task_id)
+        task = loaded_task_record(task_id, task)
         if task:
             recorded_branch = task_explicit_branch(task)
             binding = resolve_task_repository(config, task)
@@ -11075,7 +11098,7 @@ def resolve_task_checkout_sha(
         return None
 
     try:
-        remote_sha = resolve_task_sha(task_id, force_refresh=force_refresh)
+        remote_sha = resolve_task_sha(task_id, force_refresh=force_refresh, task=task_dict)
     except RuntimeError:
         remote_sha = None
     if remote_sha:
