@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -1016,6 +1017,53 @@ def pid_is_supervisor_process(pid: Any, repo_root: Path) -> bool:
     if cwd != repo_root.resolve():
         return False
     return cmdline_is_supervisor_process(parts)
+
+
+def iter_supervisor_pids(repo_root: Path) -> list[int]:
+    """Return every live process that is *repo_root*'s supervisor."""
+    matches: list[int] = []
+    for proc_dir in Path("/proc").iterdir():
+        if proc_dir.name.isdigit() and pid_is_supervisor_process(int(proc_dir.name), repo_root):
+            matches.append(int(proc_dir.name))
+    return sorted(matches)
+
+
+def terminate_supervisor_processes(
+    repo_root: Path,
+    *,
+    exclude_pid: int | None = None,
+    term_grace_seconds: float = 2.0,
+    kill_grace_seconds: float = 1.0,
+) -> dict[int, bool]:
+    """SIGTERM, then SIGKILL, every *repo_root* supervisor except ``exclude_pid``.
+
+    This is the one stop path for supervisors: the singleton winner uses it to
+    clear stragglers and the watchdog uses it to replace a heartbeat-stale one
+    that still holds the lock.  Identity is re-verified before each signal, so a
+    pid that exits and is recycled mid-shutdown is never signalled.  Returns
+    ``{pid: stopped}`` for every supervisor that was signalled.
+    """
+    results: dict[int, bool] = {}
+    for pid in iter_supervisor_pids(repo_root):
+        if pid == exclude_pid:
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            continue
+        deadline = time.time() + term_grace_seconds
+        while time.time() < deadline and pid_is_supervisor_process(pid, repo_root):
+            time.sleep(0.1)
+        if pid_is_supervisor_process(pid, repo_root):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+            deadline = time.time() + kill_grace_seconds
+            while time.time() < deadline and pid_is_supervisor_process(pid, repo_root):
+                time.sleep(0.05)
+        results[pid] = not pid_is_supervisor_process(pid, repo_root)
+    return results
 
 
 def normalize_agent_id(value: str | None) -> str:

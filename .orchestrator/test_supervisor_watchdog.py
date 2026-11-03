@@ -4,6 +4,9 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import signal
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -255,3 +258,205 @@ class SupervisorPidIdentityTests(unittest.TestCase):
                 os.waitpid(pid, 0)
             except ChildProcessError:
                 pass
+
+
+FAKE_SUPERVISOR = """\
+import fcntl, os, pathlib, signal, sys, time
+if "--ignore-sigterm" in sys.argv:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+handle = open(pathlib.Path(__file__).resolve().parent / "supervisor.lock", "a+")
+try:
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+except OSError:
+    sys.exit(0)
+handle.seek(0)
+handle.truncate()
+handle.write(f"{os.getpid()}\\n")
+handle.flush()
+time.sleep(600)
+"""
+
+
+class StaleSupervisorReplacementTests(unittest.TestCase):
+    """A heartbeat-stale supervisor that still holds the singleton lock is replaced."""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        # state_file lives in <root>/.orchestrator so the identity root is <root>,
+        # which only the fake supervisors below ever run in.
+        self.root = Path(self.tmpdir.name).resolve()
+        self.orch = self.root / ".orchestrator"
+        self.orch.mkdir()
+        self.state_file = self.orch / "state.json"
+        self.activity_log = self.root / "activity-log.jsonl"
+        self.activity_log.write_text("", encoding="utf-8")
+        self.script = self.orch / "supervisor.py"
+        self.script.write_text(FAKE_SUPERVISOR, encoding="utf-8")
+        self.lock_path = self.orch / "supervisor.lock"
+        self.config = {
+            "paths": {"state_file": str(self.state_file), "activity_log": str(self.activity_log)},
+            "watchdog": {
+                "state_file": str(self.root / "watchdog-state.json"),
+                "metrics_file": str(self.root / "metrics.jsonl"),
+                "backoff_schedule_seconds": [0],
+                "supervisor_command": [sys.executable, str(self.script)],
+            },
+        }
+        self.write_stale_state()
+
+    def write_stale_state(self) -> None:
+        self.state_file.write_text(
+            json.dumps({"supervisor": {"last_heartbeat_at": "2026-05-18T13:00:00Z", "lifecycle": "running"}}) + "\n",
+            encoding="utf-8",
+        )
+
+    def ok_resource(self) -> dict:
+        return {
+            "disk_free_gb": 10.0,
+            "disk_used_percent": 50.0,
+            "memory_available_mb": 4096,
+            "load_1m": 1.0,
+            "active_worker_count": 0,
+            "state_parent_writable": True,
+        }
+
+    def spawn_old_supervisor(self, *args: str) -> subprocess.Popen:
+        process = subprocess.Popen([sys.executable, str(self.script), *args], cwd=self.root)
+        self.addCleanup(self.kill_and_reap, process.pid)
+        deadline = time.time() + 10.0
+        while time.time() < deadline and not self.lock_owner() == process.pid:
+            time.sleep(0.05)
+        self.assertEqual(self.lock_owner(), process.pid)
+        self.assertTrue(supervisor_watchdog.supervisor_lock_held(self.config))
+        (self.orch / "supervisor.pid").write_text(f"{process.pid}\n", encoding="utf-8")
+        return process
+
+    def lock_owner(self) -> int | None:
+        try:
+            return int(self.lock_path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
+
+    @staticmethod
+    def kill_and_reap(pid: int | None) -> None:
+        if not pid:
+            return
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+        try:
+            os.waitpid(pid, 0)
+        except ChildProcessError:
+            pass
+
+    def activity_events(self) -> list[dict]:
+        return [json.loads(line) for line in self.activity_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    def test_stale_lock_holder_is_stopped_and_replacement_takes_the_lock(self) -> None:
+        # SIGTERM is ignored, so this also exercises the SIGKILL escalation.
+        old = self.spawn_old_supervisor("--ignore-sigterm")
+
+        with mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+        self.addCleanup(self.kill_and_reap, result["new_pid"])
+
+        self.assertEqual(result["decision"], "restart_supervisor")
+        self.assertEqual(result["reason"], "stale_heartbeat")
+        self.assertEqual(result["stopped_pids"], [old.pid])
+        self.assertIsNotNone(old.poll())
+        new_pid = result["new_pid"]
+        deadline = time.time() + 10.0
+        while time.time() < deadline and self.lock_owner() != new_pid:
+            time.sleep(0.05)
+        self.assertEqual(self.lock_owner(), new_pid)
+        self.assertTrue(supervisor_watchdog.supervisor_lock_held(self.config))
+        replaced = [event for event in self.activity_events() if event["type"] == "supervisor_replaced"]
+        self.assertEqual(len(replaced), 1)
+        self.assertEqual(
+            (replaced[0]["old_pid"], replaced[0]["new_pid"], replaced[0]["reason"]),
+            (old.pid, new_pid, "stale_heartbeat"),
+        )
+        attempt = json.loads((self.root / "watchdog-state.json").read_text(encoding="utf-8"))["restart_attempts"][-1]
+        self.assertEqual((attempt["old_pid"], attempt["new_pid"], attempt["stopped_pids"]), (old.pid, new_pid, [old.pid]))
+
+    def test_unstoppable_supervisor_blocks_second_supervisor(self) -> None:
+        self.spawn_old_supervisor()
+
+        with (
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+            mock.patch.object(supervisor_watchdog, "terminate_supervisor_processes", return_value={4242: False}),
+            mock.patch.object(supervisor_watchdog, "start_supervisor") as start,
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        start.assert_not_called()
+        self.assertEqual(result["decision"], "suppress_restart")
+        self.assertEqual(result["reason"], "old_supervisor_not_stopped:stale_heartbeat")
+        self.assertIsNone(result["new_pid"])
+        events = self.activity_events()
+        self.assertEqual(events[-1]["type"], "supervisor_restart_suppressed")
+        self.assertEqual(events[-1]["reason"], "old_supervisor_not_stopped:stale_heartbeat")
+        self.assertFalse(any(event["type"] == "supervisor_replaced" for event in events))
+        attempts = json.loads((self.root / "watchdog-state.json").read_text(encoding="utf-8"))["restart_attempts"]
+        self.assertEqual(attempts[-1]["new_pid"], None)
+
+    def test_unidentified_lock_holder_is_never_signalled(self) -> None:
+        # The lock is held by this test runner, which is not a supervisor of the
+        # identity root; it must neither be killed nor be joined by a second one.
+        handle = open(self.lock_path, "a+", encoding="utf-8")
+        self.addCleanup(handle.close)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        with (
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+            mock.patch.object(common.os, "kill") as kill,
+            mock.patch.object(supervisor_watchdog, "start_supervisor") as start,
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        # kill(pid, 0) is pid_is_alive's existence probe, not a signal.
+        self.assertEqual([c for c in kill.call_args_list if c.args[1] != 0], [])
+        start.assert_not_called()
+        self.assertEqual(result["decision"], "suppress_restart")
+        self.assertEqual(result["reason"], "old_supervisor_not_stopped:stale_heartbeat")
+        self.assertEqual(result["stopped_pids"], [])
+
+    def test_dry_run_sends_no_signal(self) -> None:
+        old = self.spawn_old_supervisor()
+
+        with (
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+            mock.patch.object(common.os, "kill") as kill,
+            mock.patch.object(supervisor_watchdog, "start_supervisor") as start,
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True, dry_run=True)
+
+        # kill(pid, 0) is pid_is_alive's existence probe, not a signal.
+        self.assertEqual([c for c in kill.call_args_list if c.args[1] != 0], [])
+        start.assert_not_called()
+        self.assertEqual(result["decision"], "restart_supervisor")
+        self.assertEqual(result["reason"], "dry_run:stale_heartbeat")
+        self.assertIsNone(old.poll())
+
+    def test_healthy_supervisor_is_left_running(self) -> None:
+        old = self.spawn_old_supervisor()
+        self.state_file.write_text(
+            json.dumps({"supervisor": {"last_heartbeat_at": supervisor_watchdog.utc_now(), "lifecycle": "running"}}) + "\n",
+            encoding="utf-8",
+        )
+
+        with (
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+            mock.patch.object(supervisor_watchdog, "terminate_supervisor_processes") as terminate,
+            mock.patch.object(supervisor_watchdog, "start_supervisor") as start,
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        terminate.assert_not_called()
+        start.assert_not_called()
+        self.assertEqual(result["decision"], "observe_only")
+        self.assertEqual(result["reason"], "supervisor_healthy")
+        self.assertIsNone(old.poll())
+        self.assertTrue(supervisor_watchdog.supervisor_pid_is_live(self.config, old.pid))
