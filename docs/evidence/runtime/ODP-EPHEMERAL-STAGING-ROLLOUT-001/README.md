@@ -220,6 +220,41 @@ run 上傳的 receipt 原樣保存為 [`run-41464086945-staging-lifecycle-create
 
 仍然沒有 staging 部署、migration、E2E、worker／scheduler、backup／restore 或 rollback 被觀測到，本目錄沒有 `staging-verified` 收據。
 
+## 2026-11-03 第三次 staging dispatch 失敗：Cloud SQL 授權條件不成立（Claude）
+
+負責人同意後，Human/Ops 給 `github-deployer` 加上 `iam.serviceAccountAdmin`、`secretmanager.admin`、`pubsub.admin`、`storage.admin`、`cloudsql.admin`（條件限 `oday-staging-foundation-sql`）、`projectIamAdmin`（條件限只授出 `roles/cloudsql.client`），並登記 `HUMANOPS-STAGING-LEASE-20261102E`。lease `lease-900733ca7628f1a63e93183f8f248f26` 於 00:20:37Z 簽發（candidate `ccb9553b`、manifest `sha256:93ffa139…2362`、`dispatch_ref_sha=3672d00a`），dispatch 出 run [`41552168108`](https://github.com/alfloop-dev/odayplus/actions/runs/41552168108)，00:24:40Z 以 `failure` 結束（`gh run watch --exit-status` exit 1）。這張 lease 已用掉。
+
+| Job | 結果 |
+|---|---|
+| Validate release phase inputs | success |
+| Verify the Supervisor lease authorises this deploy | success |
+| Deploy the admitted artifact by immutable digest | **failure** |
+| Verify production watch and clean up ephemeral staging | skipped |
+
+這次 B11 大致解除：Cloud Audit Logs 顯示 00:23:30Z–00:23:46Z 部署身分成功建立 3 個 service account、3 個 secret（2 個 secret version）、2 個 topic、2 個 subscription、1 個 bucket，以及它們的 IAM member 和專案層的 `cloudsql.client` 授權，54 筆 admin activity 全部 status 0。
+
+失敗在 `google_sql_user.staging`（main.tf 第 216 行），這次 receipt 有完整錯誤：
+
+```text
+Error, failed to insert user stg_odp_ccb9553bb151_46d39e68_app into instance oday-staging-foundation-sql:
+googleapi: Error 403: The client is not authorized to make this request., notAuthorized
+```
+
+`github-deployer` 的 `roles/cloudsql.admin` 帶條件 `resource.name.startsWith('projects/odayplus-runtime-20260825/instances/oday-staging-foundation-sql')`。我用 Policy Troubleshooter 查 `//cloudsql.googleapis.com/projects/odayplus-runtime-20260825/instances/oday-staging-foundation-sql`，`cloudsql.users.create` 和 `cloudsql.databases.create` 的這個條件都算出 **false**（overall `UNKNOWN_INFO`），和實際 403 一致（新 blocker **B12**）。Cloud SQL 沒有替被拒的呼叫寫 audit log。`google_sql_database` 和 user 平行建立，receipt 只留 stderr 尾段，所以 database 是否也被拒沒有直接觀測到；Troubleshooter 對它的判斷相同。
+
+為什麼文件寫的 `projects/PROJECT_ID/instances/INSTANCE_ID` 格式在這裡比對不到，我沒有查出來。Cloud SQL 的 IAM Conditions 文件會把名稱和 `resource.service` 或 `resource.type` 一起用，但沒有列出哪些 Cloud SQL 權限會帶 instance 屬性。
+
+失敗路徑把建好的資源刪掉了（audit log 00:24:24Z–00:24:32Z 有 Destroy／Delete，全部 status 0）。之後唯讀 readback（[`run-41552168108-gcp-readback.txt`](run-41552168108-gcp-readback.txt)）沒有找到任何 `stg-odp` 的 service account、secret、topic、subscription、bucket、Cloud Run service／job、Scheduler job 或專案 IAM member；foundation instance 只剩 `postgres` database 和 user；recovery bundle prefix 沒有物件。hold step 一樣報 `Terraform durable state pull returned no managed resources`，沒有東西要保留到 TTL，不需要人工清理。run 上傳的 receipt 原樣保存為 [`run-41552168108-staging-lifecycle-create.json`](run-41552168108-staging-lifecycle-create.json)（sha256 `0bdc763a…05d4`，artifact `13192841910`）。
+
+本 task 不改 IAM，也不改 IaC。後續：
+
+1. Human/Ops（經負責人同意）調整 `github-deployer` 的 Cloud SQL 授權，讓它能在 `oday-staging-foundation-sql` 建立、刪除 database 和 user，並先用 Policy Troubleshooter 確認 `cloudsql.users.create`、`cloudsql.databases.create` 都是 GRANTED 再登記 lease。可選做法：給 instance 加 tag、改用 `resource.matchTag` 條件（不會涵蓋 dev SQL）；或改成只含 database／user 權限、不帶條件的 custom role（會涵蓋專案內所有 instance，包括 `oday-dev-sql`）。
+2. 只改 GCP IAM 可以沿用 `ccb9553b`；改 `deploy-dev.yml` 或 module 就要重新 build、重新綁 admission。
+3. Human/Ops 用新的 approval_id 和 nonce 登記 lease。
+4. 本 task owner 接續 staging deploy 與 rehearsal。
+
+仍然沒有 staging 部署、migration、E2E、worker／scheduler、backup／restore 或 rollback 被觀測到，本目錄沒有 `staging-verified` 收據。
+
 ## Blockers 與解除條件
 
 | Blocker | 解除條件 |
@@ -232,7 +267,8 @@ run 上傳的 receipt 原樣保存為 [`run-41464086945-staging-lifecycle-create
 | B6：沒有 app image handoff | 以 exact candidate 執行一次 Runtime Release build/sign，取得 Artifact Registry API/Web/Worker/Scheduler immutable digests。 |
 | B9：staging deploy／closeout job 沒有安裝 terraform（run 41387164145）— `partially_resolved` | PR #1637（`f81b9373`）已在 candidate `ccb9553b` 內；run `41464086945` 的 deploy job 已安裝並實際執行 terraform。`staging_closeout` 的安裝步驟要等 production watch 通過才會跑，尚未觀測。 |
 | B10：supervisor 讀不到 lease 簽章私鑰（`HUMANOPS-STAGING-LEASE-20261102C`）— `partially_resolved` | 負責人重新登入後，`…20261102D` 於 14:39:48Z 簽發並 dispatch run `41464086945`。使用者憑證的 reauth 期限仍可能再到；改用不受 reauth 限制的身分是 Human/Ops 的決定。 |
-| B11：部署身分 `github-deployer` 沒有建立 staging 資源的權限（run 41464086945）— `open` | Human/Ops 決定執行 staging lifecycle 的身分，把 `ephemeral_staging` module 需要的建立／刪除／IAM 權限寫進 IaC 並 apply，再用新 approval_id／nonce 登記 lease。 |
+| B11：部署身分 `github-deployer` 沒有建立 staging 資源的權限（run 41464086945）— `partially_resolved` | Human/Ops 已直接授予 GCP 角色；run `41552168108` 裡 SA、secret、Pub/Sub、bucket 與 IAM member 都建立成功。剩下的 Cloud SQL 拒絕記在 B12。這些授權還沒寫進 IaC。 |
+| B12：`cloudsql.admin` 的 instance 名稱條件不成立，建立 Cloud SQL user 回 403（run 41552168108）— `open` | Human/Ops 調整 Cloud SQL 授權，Policy Troubleshooter 對 `oday-staging-foundation-sql` 的 `cloudsql.users.create`、`cloudsql.databases.create` 回 GRANTED 後，用新 approval_id／nonce 登記 lease。 |
 
 ## 正式重跑要求
 
@@ -293,5 +329,7 @@ uv run --python 3.12 pytest -q tests/ops/test_staging_rollout.py tests/release/t
 - [`run-41387164145-gcp-readback.txt`](run-41387164145-gcp-readback.txt)：該 run 之後的唯讀 gcloud readback 輸出與 exit code。
 - [`run-41464086945-staging-lifecycle-create.json`](run-41464086945-staging-lifecycle-create.json)：第二次失敗 staging run 的原始 create receipt（未修改）。
 - [`run-41464086945-gcp-readback.txt`](run-41464086945-gcp-readback.txt)：該 run 之後的 audit log 摘要、唯讀 readback 與 deployer 專案角色，含 exit code。
+- [`run-41552168108-staging-lifecycle-create.json`](run-41552168108-staging-lifecycle-create.json)：第三次失敗 staging run 的原始 create receipt（未修改）。
+- [`run-41552168108-gcp-readback.txt`](run-41552168108-gcp-readback.txt)：該 run 的 audit log 摘要、deployer IAM 條件、Policy Troubleshooter 結果與殘留資源 readback，含 exit code。
 - `delivery_toolchain/release/release_manifest.py`：placeholder digest 偵測 predicate。
 - `tests/ops/test_staging_rollout.py`：dry-run、provenance、registry 與 placeholder fail-closed contract tests。

@@ -322,8 +322,8 @@
     {
       "id": "B11",
       "severity": "blocking",
-      "status": "open",
-      "status_recorded_at": "2026-11-02T14:50:00Z",
+      "status": "partially_resolved",
+      "status_recorded_at": "2026-11-03T00:45:00Z",
       "summary": "Staging deploy run 41464086945 failed in 'Execute ephemeral staging lifecycle create': terraform apply of infra/terraform/modules/ephemeral_staging exited 1. Cloud Audit Logs show every create by the deploy identity github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com was denied with code 7 at 14:43:05Z: iam.serviceAccounts.create (3x), secretmanager.secrets.create (3x), pubsub.topics.create (2x), storage.buckets.create (1x). The deployer's only project roles are run.admin, cloudscheduler.admin, cloudsql.client, logging.viewer and serviceusage.serviceUsageConsumer (infra/terraform/iam.tf grants the same set). Nothing was created.",
       "missing_permissions_for_module": {
         "observed_denied": [
@@ -342,7 +342,31 @@
         ],
         "basis": "resource types in origin/dev infra/terraform/modules/ephemeral_staging/main.tf; static mapping, not observed as denials"
       },
-      "required_action": "Human/Ops decides which identity runs the ephemeral staging lifecycle and grants it the module's create/delete/IAM permissions (for example a dedicated staging deployer instead of widening the dev github-deployer), lands the grant in IaC, applies it, and points ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT/WIF at it if it changes. Then a new staging lease request (new approval_id and nonce) for an admissible candidate."
+      "required_action": "Human/Ops decides which identity runs the ephemeral staging lifecycle and grants it the module's create/delete/IAM permissions (for example a dedicated staging deployer instead of widening the dev github-deployer), lands the grant in IaC, applies it, and points ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT/WIF at it if it changes. Then a new staging lease request (new approval_id and nonce) for an admissible candidate.",
+      "status_note": "After the owner approved, Human/Ops granted github-deployer iam.serviceAccountAdmin, secretmanager.admin, pubsub.admin, storage.admin, cloudsql.admin (conditioned to oday-staging-foundation-sql) and projectIamAdmin (conditioned to granting only roles/cloudsql.client). In staging deploy run 41552168108 every service account, secret, secret version, topic, subscription, bucket, resource IAM member and the project cloudsql.client grant was created with status 0 (Cloud Audit Logs). The remaining denial is the conditioned cloudsql.admin binding, tracked as B12."
+    },
+    {
+      "id": "B12",
+      "severity": "blocking",
+      "status": "open",
+      "status_recorded_at": "2026-11-03T00:45:00Z",
+      "summary": "Staging deploy run 41552168108 (lease HUMANOPS-STAGING-LEASE-20261102E) failed in 'Execute ephemeral staging lifecycle create': terraform apply exited 1 on google_sql_user.staging (main.tf line 216) with 'failed to insert user stg_odp_ccb9553bb151_46d39e68_app into instance oday-staging-foundation-sql: googleapi: Error 403: The client is not authorized to make this request., notAuthorized'. github-deployer holds roles/cloudsql.admin only under the condition resource.name.startsWith('projects/odayplus-runtime-20260825/instances/oday-staging-foundation-sql') (title staging-foundation-sql-only). Policy Troubleshooter for cloudsql.users.create and cloudsql.databases.create on //cloudsql.googleapis.com/projects/odayplus-runtime-20260825/instances/oday-staging-foundation-sql evaluates that condition to false (overallAccessState UNKNOWN_INFO), matching the observed 403. Cloud SQL wrote no audit entry for the denied call.",
+      "observed": {
+        "denied_resource": "google_sql_user.staging",
+        "google_sql_database_outcome": "not directly observed: it runs in parallel with the user, the receipt keeps only the stderr tail, and Cloud SQL logged no databases.insert; Policy Troubleshooter evaluates the same condition false for cloudsql.databases.create",
+        "condition_expression": "resource.name.startsWith('projects/odayplus-runtime-20260825/instances/oday-staging-foundation-sql')",
+        "troubleshooter": {
+          "cloudsql.users.create": "condition false",
+          "cloudsql.databases.create": "condition false"
+        }
+      },
+      "not_determined": "Why the documented Cloud SQL resource-name form does not match for users/databases insert. The Cloud SQL IAM Conditions page documents projects/PROJECT_ID/instances/INSTANCE_ID and pairs it with resource.service or resource.type, but does not list which Cloud SQL permissions carry instance resource attributes.",
+      "required_action": "Human/Ops (with owner approval) changes the github-deployer Cloud SQL grant so cloudsql.databases.create/delete/get/list and cloudsql.users.create/delete/list/update are allowed on oday-staging-foundation-sql, confirms with Policy Troubleshooter that access is GRANTED for cloudsql.users.create and cloudsql.databases.create on that instance, then registers a new staging lease request (new approval_id and nonce). Changing only GCP IAM keeps candidate ccb9553b admissible; changing deploy-dev.yml or the module does not.",
+      "options_for_human_ops": [
+        "Tag oday-staging-foundation-sql and condition the grant on resource.matchTag (the Cloud SQL IAM Conditions page shows tag-based conditions), keeping dev SQL out of scope.",
+        "Replace the conditioned roles/cloudsql.admin with an unconditioned custom role holding only the database/user permissions the module needs; this also covers oday-dev-sql at project level.",
+        "Keep the name condition but add resource.service/resource.type per the documented examples, and accept it only if Policy Troubleshooter then reports GRANTED."
+      ]
     }
   ],
   "desired_state_not_observed": {
@@ -461,6 +485,47 @@
       "staging_verified": false,
       "lease_spent": true,
       "gcp_readback_file": "run-41464086945-gcp-readback.txt"
+    },
+    {
+      "recorded_at": "2026-11-03T00:45:00Z",
+      "recorded_by": "Claude",
+      "run_id": 41552168108,
+      "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/41552168108",
+      "display_title": "Runtime Release staging deploy ccb9553bb1511ec746e69a831a1a8f5ad483a91f",
+      "head_branch": "dev",
+      "head_sha": "3672d00aef2dbb1953520f614e32e3b888cdfb23",
+      "candidate_sha": "ccb9553bb1511ec746e69a831a1a8f5ad483a91f",
+      "manifest_digest": "sha256:93ffa139fcfde2f4b478cf0f4a257d0e4fd0c73d72dd02edd0bd93d250b62362",
+      "build_run_id": 41426783637,
+      "approval_id": "HUMANOPS-STAGING-LEASE-20261102E",
+      "lease_id": "lease-900733ca7628f1a63e93183f8f248f26",
+      "conclusion": "failure",
+      "jobs": {
+        "Validate release phase inputs": "success",
+        "Verify the Supervisor lease authorises this deploy": "success",
+        "Deploy the admitted artifact by immutable digest": "failure",
+        "Verify production watch and clean up ephemeral staging": "skipped"
+      },
+      "failed_steps": [
+        "Execute ephemeral staging lifecycle create",
+        "Hold ephemeral staging resources on failure"
+      ],
+      "failure": "terraform apply -input=false failed (exit 1): google_sql_user.staging 403 notAuthorized on oday-staging-foundation-sql (see B12).",
+      "hold_failure": "ERROR: cannot read durable staging Terraform state: Terraform durable state pull returned no managed resources",
+      "receipt_artifact": {
+        "name": "runtime-release-staging-lifecycle-receipts",
+        "artifact_id": 13192841910,
+        "file": "run-41552168108-staging-lifecycle-create.json",
+        "sha256": "0bdc763a34c70d8bc52a5734e88acd651f3a95bf4b2516e7ec83898a8dcd05d4",
+        "fidelity_note": "Unmodified. Unlike run 41464086945, resources really were created this time: audit logs show 3 service accounts, 3 secrets, 2 secret versions, 2 topics, 2 subscriptions, 1 bucket and their IAM members created 00:23:30Z..00:23:46Z, then destroyed or deleted 00:24:24Z..00:24:32Z by the failure-path cleanup."
+      },
+      "resources_created": true,
+      "resources_remaining": false,
+      "resources_remaining_basis": "Read-only readback after the run (run-41552168108-gcp-readback.txt): no stg-odp service account, secret, Pub/Sub topic or subscription, bucket, Cloud Run service/job, Scheduler job or project IAM member; oday-staging-foundation-sql has only the postgres database and user; the recovery-bundle prefix has no objects. The hold step found no managed resources in durable terraform state, so failure retention to TTL was not applicable.",
+      "rehearsal_observed": false,
+      "staging_verified": false,
+      "lease_spent": true,
+      "gcp_readback_file": "run-41552168108-gcp-readback.txt"
     }
   ]
 }
