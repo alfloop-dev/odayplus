@@ -279,7 +279,7 @@ class RuntimeConfigTests(unittest.TestCase):
             pinned_resolver.call_args_list,
             [
                 mock.call("PINNED-RUNTIME-001"),
-                mock.call("PINNED-RUNTIME-001", force_refresh=True),
+                mock.call("PINNED-RUNTIME-001", force_refresh=True, task=mock.ANY),
             ],
         )
         stale_module.resolve_task_sha.assert_not_called()
@@ -16441,7 +16441,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")):
             prio = supervisor.dispatch_priority_for_task(config, task, "Antigravity4")
             self.assertIsNotNone(prio)
-            mock_resolve.assert_called_with("FREEZE-TEST-FRESH-001", force_refresh=True)
+            mock_resolve.assert_called_with("FREEZE-TEST-FRESH-001", force_refresh=True, task=task)
 
     def test_task_review_gate_status_check_pending_on_head_mismatch(self) -> None:
         task = {
