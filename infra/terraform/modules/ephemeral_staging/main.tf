@@ -210,7 +210,9 @@ resource "google_sql_database" "staging" {
   name     = local.database_name
   instance = var.cloud_sql_instance_name
 
-  depends_on = [terraform_data.staging_ownership]
+  # The release user owns the migrated objects, so destroy must drop the
+  # database before the user; Cloud SQL refuses to drop a role that owns objects.
+  depends_on = [terraform_data.staging_ownership, google_sql_user.staging]
 }
 
 resource "google_sql_user" "staging" {
@@ -337,6 +339,16 @@ resource "google_storage_bucket_iam_member" "staging_runtime_data" {
   bucket = google_storage_bucket.staging_data.name
   role   = "roles/storage.objectUser"
   member = "serviceAccount:${google_service_account.staging_runtime.email}"
+}
+
+# The verify backup/restore drill exports the release database into this bucket
+# and imports it back; Cloud SQL reads and writes the dump as the instance's own
+# service account.
+resource "google_storage_bucket_iam_member" "staging_sql_backup_drill" {
+  count  = var.cloud_sql_service_account_email == null ? 0 : 1
+  bucket = google_storage_bucket.staging_data.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${var.cloud_sql_service_account_email}"
 }
 
 # Deployer can act as the staging service accounts.
@@ -1020,9 +1032,13 @@ resource "google_cloud_run_v2_job" "staging_migration" {
     }
   }
 
+  # The lifecycle applies this job alone (-target) and runs it before the rest
+  # of the release, so everything it needs to reach the database is listed.
   depends_on = [
+    google_project_iam_member.staging_runtime_cloudsql,
     google_secret_manager_secret_iam_member.staging_runtime_db_url,
     google_secret_manager_secret_version.staging_database_url,
+    google_service_account_iam_member.deployer_sa_user_runtime,
   ]
 }
 
@@ -1126,6 +1142,7 @@ resource "google_cloud_run_v2_job" "staging_worker" {
   }
 
   depends_on = [
+    google_project_iam_member.staging_runtime_cloudsql,
     google_secret_manager_secret_iam_member.staging_runtime_db_url,
     google_secret_manager_secret_version.staging_database_url,
   ]
@@ -1231,6 +1248,7 @@ resource "google_cloud_run_v2_job" "staging_scheduler" {
   }
 
   depends_on = [
+    google_project_iam_member.staging_runtime_cloudsql,
     google_secret_manager_secret_iam_member.staging_runtime_db_url,
     google_secret_manager_secret_version.staging_database_url,
   ]

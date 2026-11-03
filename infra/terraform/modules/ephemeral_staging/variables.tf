@@ -135,6 +135,12 @@ variable "cloud_sql_connection_name" {
   description = "Connection name of the long-lived staging Cloud SQL instance."
 }
 
+variable "cloud_sql_service_account_email" {
+  type        = string
+  default     = null
+  description = "Service account of the staging Cloud SQL instance; it writes and reads the verify backup/restore drill dump in the release bucket."
+}
+
 variable "network_name" {
   type        = string
   description = "Name of the shared staging VPC network."

@@ -812,7 +812,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             )
             # Patch _run_terraform inside executor
             import unittest.mock as mock
-            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"):
+            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"), mock.patch("product_ops.deployment.staging_lifecycle._live_gcloud"):
                 # First run at 12:00:00Z
                 executor(cfg, planned_first)
                 self.assertTrue(vars_p.is_file())
@@ -1096,7 +1096,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
                 initialize=False,
             )
 
-            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"):
+            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"), mock.patch("product_ops.deployment.staging_lifecycle._live_gcloud"):
                 # First run succeeds and writes initial tfvars/inventory
                 executor(cfg1, planned_first)
                 self.assertTrue(vars_p.is_file())
@@ -1157,7 +1157,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
                 initialize=False,
             )
 
-            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"):
+            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"), mock.patch("product_ops.deployment.staging_lifecycle._live_gcloud"):
                 executor(cfg1, planned)
 
                 # Same candidate, but different manifest digest
@@ -1196,7 +1196,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
                 initialize=False,
             )
 
-            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"):
+            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"), mock.patch("product_ops.deployment.staging_lifecycle._live_gcloud"):
                 executor(cfg1, planned)
 
                 # Changed api_image
@@ -1254,22 +1254,144 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
                 initialize=False,
             )
 
-            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform") as mock_tf:
+            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform") as mock_tf, mock.patch("product_ops.deployment.staging_lifecycle._live_gcloud"):
                 # First run
                 res1 = executor(cfg, planned)
                 self.assertTrue(res1)
-                self.assertEqual(mock_tf.call_count, 1)  # apply only since initialize=False
+                # initialize=False: the migration-job apply and the full apply
+                self.assertEqual(mock_tf.call_count, 2)
 
                 # Second run with same config and empty created_at
                 cfg_rerun = dataclasses_replace(cfg, created_at="")
                 res2 = executor(cfg_rerun, planned)
                 self.assertTrue(res2)
-                self.assertEqual(mock_tf.call_count, 2)  # 2 applies total
+                self.assertEqual(mock_tf.call_count, 4)
 
                 persisted = json.loads(vars_p.read_text(encoding="utf-8"))
                 self.assertEqual(persisted["created_at"], "2026-08-24T12:00:00Z")
                 self.assertEqual(persisted["candidate_sha"], cfg.candidate_sha)
                 self.assertEqual(persisted["manifest_digest"], cfg.manifest_digest)
+
+    def test_create_runs_the_migration_job_before_applying_the_services(self) -> None:
+        """The API refuses an unmigrated database, and Terraform waits for it to start."""
+        import tempfile
+        import unittest.mock as mock
+
+        from product_ops.deployment.staging_lifecycle import (
+            STAGING_MIGRATION_JOB_ADDRESS,
+            get_ephemeral_resource_names,
+            make_terraform_creation_executor,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cfg = dataclasses_replace(self.valid_config, release_id="odp-migrate-first-001")
+            planned = plan_staging_resources(cfg, created_at=datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC))
+            executor = make_terraform_creation_executor(
+                module_dir=MODULE_DIR,
+                state_dir=Path(tmp_dir),
+                initialize=False,
+                gcloud_bin="/opt/gcloud",
+            )
+            calls: list[tuple[str, list[str]]] = []
+            with (
+                mock.patch(
+                    "product_ops.deployment.staging_lifecycle._run_terraform",
+                    side_effect=lambda **kw: calls.append(("terraform", list(kw["arguments"]))),
+                ),
+                mock.patch(
+                    "product_ops.deployment.staging_lifecycle._live_gcloud",
+                    side_effect=lambda args, **kw: calls.append(("gcloud", [kw["gcloud_bin"], *args])),
+                ),
+            ):
+                executor(cfg, planned)
+
+        job = get_ephemeral_resource_names(cfg.release_id, cfg.project_id, tenant_id=cfg.tenant_id)[
+            "cloud_run_migration_job"
+        ]
+        self.assertEqual([kind for kind, _ in calls], ["terraform", "gcloud", "terraform"])
+        self.assertEqual(calls[0][1][0], "apply")
+        self.assertIn(f"-target={STAGING_MIGRATION_JOB_ADDRESS}", calls[0][1])
+        self.assertEqual(
+            calls[1][1],
+            [
+                "/opt/gcloud", "run", "jobs", "execute", job,
+                f"--region={cfg.region}", f"--project={cfg.project_id}", "--wait", "--quiet",
+            ],
+        )
+        self.assertEqual(calls[2][1][0], "apply")
+        self.assertFalse(any(arg.startswith("-target=") for arg in calls[2][1]))
+
+    def test_create_does_not_apply_the_services_when_the_migration_fails(self) -> None:
+        import tempfile
+        import unittest.mock as mock
+
+        from product_ops.deployment.staging_lifecycle import make_terraform_creation_executor
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cfg = dataclasses_replace(self.valid_config, release_id="odp-migrate-fails-001")
+            planned = plan_staging_resources(cfg, created_at=datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC))
+            executor = make_terraform_creation_executor(
+                module_dir=MODULE_DIR, state_dir=Path(tmp_dir), initialize=False
+            )
+            with (
+                mock.patch("product_ops.deployment.staging_lifecycle._run_terraform") as run_tf,
+                mock.patch(
+                    "product_ops.deployment.staging_lifecycle._live_gcloud",
+                    side_effect=RuntimeError("gcloud run jobs execute failed with exit status 1"),
+                ) as cloud,
+                mock.patch("product_ops.deployment.staging_lifecycle.time.sleep") as sleep,
+                self.assertRaises(RuntimeError),
+            ):
+                executor(cfg, planned)
+        self.assertEqual(run_tf.call_count, 1)
+        self.assertEqual(cloud.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_create_retries_a_migration_refused_while_its_grants_propagate(self) -> None:
+        import tempfile
+        import unittest.mock as mock
+
+        from product_ops.deployment.staging_lifecycle import make_terraform_creation_executor
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cfg = dataclasses_replace(self.valid_config, release_id="odp-migrate-retry-001")
+            planned = plan_staging_resources(cfg, created_at=datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC))
+            executor = make_terraform_creation_executor(
+                module_dir=MODULE_DIR, state_dir=Path(tmp_dir), initialize=False
+            )
+            with (
+                mock.patch("product_ops.deployment.staging_lifecycle._run_terraform") as run_tf,
+                mock.patch(
+                    "product_ops.deployment.staging_lifecycle._live_gcloud",
+                    side_effect=[RuntimeError("cloudsql connect refused"), ""],
+                ) as cloud,
+                mock.patch("product_ops.deployment.staging_lifecycle.time.sleep") as sleep,
+            ):
+                executor(cfg, planned)
+        self.assertEqual(cloud.call_count, 2)
+        self.assertEqual(sleep.call_count, 1)
+        self.assertEqual(run_tf.call_count, 2)
+
+    def test_live_egress_readback_follows_the_dev_release_rule(self) -> None:
+        from product_ops.deployment.staging_lifecycle import _live_cloud_run_egress
+
+        annotation = "run.googleapis.com/vpc-access-egress"
+        # gcloud describe returns the v1 shape: egress is an annotation.
+        service_v1 = {"spec": {"template": {"metadata": {"annotations": {annotation: "all-traffic"}},
+                                            "spec": {"containers": [{"image": "x"}]}}}}
+        job_v1 = {"spec": {"template": {"metadata": {"annotations": {annotation: "all-traffic"}}}}}
+        job_v2 = {"template": {"template": {"vpcAccess": {"egress": "ALL_TRAFFIC"}}}}
+        for payload in (service_v1, job_v1, job_v2):
+            self.assertEqual(_live_cloud_run_egress(payload, field_name="egress"), "ALL_TRAFFIC")
+        private = {"spec": {"template": {"metadata": {"annotations": {annotation: "private-ranges-only"}}}}}
+        self.assertEqual(_live_cloud_run_egress(private, field_name="egress"), "PRIVATE_RANGES_ONLY")
+        with self.assertRaisesRegex(RuntimeError, "missing"):
+            _live_cloud_run_egress({"spec": {"template": {}}}, field_name="egress")
+        with self.assertRaisesRegex(RuntimeError, "not a recognised"):
+            _live_cloud_run_egress({"metadata": {"annotations": {annotation: "everything"}}}, field_name="egress")
+        contradictory = {**job_v1, "template": {"template": {"vpcAccess": {"egress": "PRIVATE_RANGES_ONLY"}}}}
+        with self.assertRaisesRegex(RuntimeError, "contradictory"):
+            _live_cloud_run_egress(contradictory, field_name="egress")
 
     def test_create_conflict_does_not_trigger_failure_cleanup_of_existing_release(self) -> None:
         """Verify that a rejected create rerun due to immutable identity conflict does NOT destroy existing release."""
@@ -2907,6 +3029,101 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         self.assertEqual([argv[1:4] for argv in sql_calls], [
             ["export", "sql", "oday-staging-pg"], ["import", "sql", "oday-staging-pg"],
         ])
+        # Restoring into the same release database: the dump drops before it creates.
+        self.assertIn("--clean", sql_calls[0])
+        self.assertIn("--if-exists", sql_calls[0])
+
+    def test_rollback_restore_ignores_the_tag_only_probe_route(self) -> None:
+        """gcloud keeps the probe as a tag-only route (no percent) after restore."""
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
+
+        outputs = self._valid_outputs()
+        traffic: dict[str, list[dict[str, Any]]] = {}
+
+        def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
+            routes = traffic.setdefault(name, [{"revisionName": f"{name}-a", "percent": 100}])
+            return {"status": {"traffic": [dict(route) for route in routes]}}
+
+        def cloud(argv: list[str], **_kwargs: Any) -> str:
+            if argv[0] == "iam":
+                return argv[3]
+            if argv[:3] == ["run", "services", "update"]:
+                traffic[argv[3]].append({"revisionName": f"{argv[3]}-probe", "tag": "rollback-probe"})
+            if argv[:3] == ["run", "services", "update-traffic"]:
+                shares = dict(item.split("=") for item in argv[4].removeprefix("--to-revisions=").split(","))
+                traffic[argv[3]] = [
+                    {**route, "percent": int(shares[route["revisionName"]])}
+                    if route["revisionName"] in shares
+                    else {key: value for key, value in route.items() if key != "percent"}
+                    for route in traffic[argv[3]]
+                    # An untagged revision left out of the allocation drops off.
+                    if route["revisionName"] in shares or route.get("tag")
+                ]
+                listed = {route["revisionName"] for route in traffic[argv[3]]}
+                traffic[argv[3]] += [
+                    {"revisionName": revision, "percent": int(share)}
+                    for revision, share in shares.items()
+                    if revision not in listed
+                ]
+            return ""
+
+        with patch(
+            "product_ops.deployment.staging_lifecycle._live_gcloud", side_effect=cloud
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_cloud_run_description", side_effect=describe
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_identity_token", return_value="token"
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_json_get", return_value={"status": "ok"}
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_web_operator_requires_login",
+            return_value=(True, ""),
+        ):
+            executor = make_live_rehearsal_executor(
+                outputs,
+                project_id=self.project_id,
+                region="asia-east1",
+                operator_identity=outputs["staging_runtime_service_account"],
+            )
+            result = executor("rollback_rehearsal", {})
+
+        self.assertTrue(result["success"])
+        self.assertEqual(len(result["rollback_targets"]), 2)
+        for name, routes in traffic.items():
+            self.assertIn({"revisionName": f"{name}-probe", "tag": "rollback-probe"}, routes)
+
+    def test_provider_readback_uses_the_live_gate_consumer_only_rule(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
+
+        outputs = self._valid_outputs()
+        disabled = {"mode": "disabled", "configurationValid": True, "connectivityHealthy": False, "live": False}
+
+        def run(provider: dict[str, Any]) -> Any:
+            readiness = {"status": "ready", "details": {"provider": provider}}
+            with patch(
+                "product_ops.deployment.staging_lifecycle._live_gcloud",
+                side_effect=lambda argv, **kwargs: argv[3] if argv[0] == "iam" else "",
+            ), patch(
+                "product_ops.deployment.staging_lifecycle._live_identity_token", return_value="token"
+            ), patch(
+                "product_ops.deployment.staging_lifecycle._live_json_get",
+                side_effect=lambda url, _token, **_kw: readiness if url.endswith("/readiness") else {},
+            ):
+                executor = make_live_rehearsal_executor(
+                    outputs,
+                    project_id=self.project_id,
+                    region="asia-east1",
+                    operator_identity=outputs["staging_runtime_service_account"],
+                )
+                return executor("external_providers_disabled_readback", {"release_profile": "core-ops"})
+
+        self.assertTrue(run(disabled)["success"])
+        with self.assertRaisesRegex(RuntimeError, "external providers are disabled"):
+            run({**disabled, "mode": "live", "live": True})
 
     def test_sql_rehearsal_rejects_a_different_instance_before_any_api_call(self) -> None:
         from unittest.mock import patch
@@ -3371,6 +3588,9 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             return_value="token",
         ), patch(
             "product_ops.deployment.staging_lifecycle._live_json_get", side_effect=json_get
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_web_operator_requires_login",
+            return_value=(True, ""),
         ), patch(
             "product_ops.deployment.staging_lifecycle._live_http_get", side_effect=http_get
         ):
@@ -4104,6 +4324,8 @@ class StagingLiveE2EGateTests(unittest.TestCase):
                 "staging_runtime_cloudsql",
                 "staging_runtime_db_url",
                 "staging_runtime_data",
+                # Cloud SQL instance SA, release bucket only: backup/restore drill.
+                "staging_sql_backup_drill",
                 "deployer_sa_user_runtime",
                 "deployer_sa_user_web",
                 "deployer_sa_user_worker",
@@ -4301,6 +4523,8 @@ class StagingSmokeAudienceIntegrationTests(unittest.TestCase):
             ("_live_cloud_run_description", {"side_effect": describe}),
             ("_live_identity_token", {"side_effect": lambda *, audience, **kw: edge.token(audience)}),
             ("_live_gate_clients", {"side_effect": clients}),
+            # Web is judged by the gate's own redirect rule, as in `clients`.
+            ("_live_web_operator_requires_login", {"return_value": (True, "")}),
             ("_live_gate_worker_driver", {"return_value": self.fx.base.FakeWorkerDriver()}),
             ("_live_gate_correlation_id", {"return_value": self.fx.base.CORRELATION_ID}),
             ("STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS", {"new": 0.001}),
