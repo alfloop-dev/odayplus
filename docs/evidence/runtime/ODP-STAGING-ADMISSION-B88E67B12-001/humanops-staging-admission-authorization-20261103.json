@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "record_kind": "humanops-runtime-release-staging-admission-authorization",
+  "status": "approved",
+  "is_approval": true,
+  "task_id": "ODP-STAGING-ADMISSION-B88E67B12-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-STAGING-ADMISSION-20261103C",
+  "candidate_sha": "b88e67b128d8f11f9653dd3acf518fe87cb1832c",
+  "manifest_digest": "sha256:f194e6efcea07b8eeacb162ea2d5c93344050bc122fdd1defb75507af1aa028b",
+  "manifest_run_id": "41582327336",
+  "target_environment": "staging",
+  "release_profile": "core-ops",
+  "approved_at": "2026-11-03T13:24:53Z",
+  "decisions": {
+    "HD-08c": {
+      "decision": "approve",
+      "subject": "gate-2 Data Gate passed-with-deviation for this candidate's staging admission only",
+      "accepted_deviations": [
+        "source contract and sample data reviewed: not applicable — the core-ops profile keeps every external source disabled (sources-off attestation in the build manifest).",
+        "point-in-time correctness checked for model-ready data: not applicable — core-ops serves no model (release_profile.model_readiness=not_claimed).",
+        "freshness and lineage evidence captured: check_live_production_data.py has never run against this candidate; deferred to the staging verify run and the production gates, not claimed as passed."
+      ]
+    },
+    "HD-09c": {
+      "decision": "approve",
+      "subject": "release.stage=dev-verified, admission_target=staging, decision=go for this exact candidate and staging manifest"
+    }
+  },
+  "authorization_basis": {
+    "user_reply": "同意此處置 / 同意 staging go",
+    "context": "Answers to an exact-tuple question naming candidate b88e67b12, staging build run 41582327336, manifest sha256:f194e6ef…, the gate-2 evidence (CI 41582285623 all 11 jobs success; dev deploy 41586245245 succeeded on attempt 3 with live E2E 77/77, smoke, migration, worker, scheduler and egress probe ok, attempts 1 and 2 rolled back on a transient 504 in admin:scoped_business_read; npm audit 0 findings), the three deviations above and the scope limits below. Supersedes HUMANOPS-STAGING-ADMISSION-20261102B for candidate ccb9553bb, whose staging deploys failed in the staging create step (fixed by PR #1641).",
+    "interpretation": "Owner 蔡尚志 approved HD-08c and HD-09c in the Claude Code conversation on 2026-11-03T13:24:53Z. Transcribed by Claude; not an external identity-system signature."
+  },
+  "authorized_scope": {
+    "max_release_requests": 1,
+    "max_short_lived_supervisor_leases": 1,
+    "runtime_release_deploy_phases": 1,
+    "allowed_environment": "staging",
+    "external_sources_enabled": false,
+    "production_changes": false,
+    "github_staging_environment_approval_still_required": true,
+    "supervisor_lease_still_required": true
+  },
+  "recorded_by": "Claude (interactive owner-response transcription; no external identity signature claimed)",
+  "evidence": {
+    "exact_ci": "docs/evidence/runtime/ODP-STAGING-ADMISSION-B88E67B12-001/candidate-ci-b88e67b12.json",
+    "staging_build_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/41582327336",
+    "dev_deploy_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/41586245245"
+  }
+}

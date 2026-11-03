@@ -1,25 +1,25 @@
 {
-  "candidate_sha": "ccb9553bb1511ec746e69a831a1a8f5ad483a91f",
+  "candidate_sha": "b88e67b128d8f11f9653dd3acf518fe87cb1832c",
   "components": {
     "api": {
-      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api@sha256:8a425e18362fd34dfbbafa39bd097a7f6fb07aee2578e02fdb82663d031e3efc"
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api@sha256:f974a6d9f35d7e70aab4802ea18e10246a838f0f8a3d06f5e7bee2d921db4ec9"
     },
     "migration": {
-      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:ee7643e84c6c9aceebb2ddb33849bc5714fcbf661c9c8543aabfc29d7570536b",
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:3cad64f3d4d67ca2ae4bee604240454c99cd7b8a096d9a0bc4cc9c3ea70fd53c",
       "shares_image_with": "worker"
     },
     "scheduler": {
-      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:025c36d08711a7099aff14c27eaa0beb5a1ced6a47ebb7d8d59f58e71789d22c"
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:9e5f58dc000174b2920ca9bc95e8f2988630d1f17fec7adf7f9c8153d59b90ea"
     },
     "web": {
-      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:112239d226d28bacef19e74df57d025ae36e15cb2b3310b3cf6bfccb62bdb774"
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:61db96781dccbb25b33289d0cb365753922e1fda573709aa3a08f1af6a1568ce"
     },
     "worker": {
-      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:ee7643e84c6c9aceebb2ddb33849bc5714fcbf661c9c8543aabfc29d7570536b"
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:3cad64f3d4d67ca2ae4bee604240454c99cd7b8a096d9a0bc4cc9c3ea70fd53c"
     }
   },
-  "created_at": "2026-11-02T09:40:56+00:00",
-  "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@ccb9553bb1511ec746e69a831a1a8f5ad483a91f",
+  "created_at": "2026-11-03T04:34:45+00:00",
+  "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@b88e67b128d8f11f9653dd3acf518fe87cb1832c",
   "data_contract_digest": "sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73",
   "external_sources_expected_enabled": [],
   "initial_release_recovery": {
@@ -34,40 +34,40 @@
           "component": "api",
           "exists": false,
           "resource_kind": "cloud-run-service",
-          "resource_name": "stg-odp-ccb9553bb151-46d39e68-api",
+          "resource_name": "stg-odp-b88e67b128d8-7827f15c-api",
           "serving_traffic": false
         },
         {
           "component": "migration",
           "exists": false,
           "resource_kind": "cloud-run-job",
-          "resource_name": "stg-odp-ccb9553bb151-46d39e68-migration",
+          "resource_name": "stg-odp-b88e67b128d8-7827f15c-migration",
           "serving_traffic": false
         },
         {
           "component": "scheduler",
           "exists": false,
           "resource_kind": "cloud-run-job",
-          "resource_name": "stg-odp-ccb9553bb151-46d39e68-scheduler",
+          "resource_name": "stg-odp-b88e67b128d8-7827f15c-scheduler",
           "serving_traffic": false
         },
         {
           "component": "web",
           "exists": false,
           "resource_kind": "cloud-run-service",
-          "resource_name": "stg-odp-ccb9553bb151-46d39e68-web",
+          "resource_name": "stg-odp-b88e67b128d8-7827f15c-web",
           "serving_traffic": false
         },
         {
           "component": "worker",
           "exists": false,
           "resource_kind": "cloud-run-job",
-          "resource_name": "stg-odp-ccb9553bb151-46d39e68-worker",
+          "resource_name": "stg-odp-b88e67b128d8-7827f15c-worker",
           "serving_traffic": false
         }
       ]
     },
-    "binding_digest": "sha256:534a65077b6767bcae7124ba9f92a3cb3b34daa2d64cb9f8e00fdd4b83ae103c",
+    "binding_digest": "sha256:06b67c5f2098a3263347244ba22747243d18198e218ba26b991ce6c5dc6429f7",
     "kind": "initial-release-recovery",
     "prior_release_absent": true,
     "promotion_recovery": {
@@ -88,9 +88,9 @@
     "rollback_target_available": false,
     "target_environment": "staging"
   },
-  "manifest_digest": "sha256:93ffa139fcfde2f4b478cf0f4a257d0e4fd0c73d72dd02edd0bd93d250b62362",
+  "manifest_digest": "sha256:f194e6efcea07b8eeacb162ea2d5c93344050bc122fdd1defb75507af1aa028b",
   "migration_digest": "sha256:1aa0ecad4df722cf568e6a469ecbf4dfc765c56efbe2c1431af75363e851e440",
-  "release_id": "odp-ccb9553bb151",
+  "release_id": "odp-b88e67b128d8",
   "release_profile": {
     "model_readiness": "not_claimed",
     "name": "core-ops",
@@ -98,25 +98,25 @@
   },
   "release_status": "ready",
   "sbom_refs": [
-    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api@sha256:edd703ebf7f89b5c3b30bfadb19dd3dc6f3e448a0abb3104d0fddb65871447c5",
-    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:1b0cde90d632ad5963150efd302337b3b5c75ce420aa45e60316fef6760f6bcb",
-    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:19a478effa234dd36b13a28e21ebde8c82b4ccbe13e2fec632cc468fc3d753ce",
-    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:45477d9810a6438b5e992a479096692c7906082d20f16b09068afb30f45f58b2"
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api@sha256:bc5dd16268363de074b5c8382c20cb4e700eb4841142db284d49e745df781553",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:dedb61bdf38bb4d58991dd4211bd49acd733283154fb181a0d77c8d4bda92856",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:761880e74cd311e2a18d4ed062855c9a62518eac04be0fef79a34fbebff831c5",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:810aa2e57983d4ebf5c08701ec12c8bb7356f25304d69383632c36fb9f499455"
   ],
   "schema_version": 2,
   "signature_refs": [
-    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api@sha256:bc18433c0ff3c43b326f0051ee764e6616f688656c430162dae1f789dda08a81",
-    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:d590e211fd150a1733b83918702823342058bb284e353050e85743d0c7531136",
-    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:f440f6cea7fc16132f0d9f3dc57f10fbdb87bb4d607c91c9c5a14569dc22c623",
-    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:35d66df67b97674667e561ca59bdd262982c67dca1dce8b84263c8ae4c4b7b04"
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api@sha256:52491328b0ed70994f2819d2bbb8721937af75351a49e501c994ecae3a5a0cd3",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:1ffd0c4e96be62326b184eb6db15eea24e21a6c5a721db65623a49f79a00c654",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:f2ed74475da50c8c734aa40a3dc8ba73ae2ae066caea5a7218d5e226dc869dc3",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:7bafcfd785468f9595d208955e1a4816c34b60a806232f0ec43789b56be83a61"
   ],
   "source_policy_digest": "sha256:f3cd9557c11f63721300914c31fbceb97250cc76e0c5dcfbe89c9249c93dfcbf",
   "sources_off_attestation": {
     "all_sources_disabled": true,
-    "binding_digest": "sha256:a8968c718569ca2dfe835d253e8790554cc59ab5c77ba8c3a5e3b68f3134ba94",
+    "binding_digest": "sha256:2e2107cc9b338e14dba4c5382a4d3bbe9ee983c9367a61bd56cac76163d4cf59",
     "egress_evidence": {
       "cloud_run_egress": "ALL_TRAFFIC",
-      "contract_digest": "sha256:c50fa29a29364458ded7ad7d80b3263063911ebe2eb60224a27b39b0952c6a4a",
+      "contract_digest": "sha256:6d28f694d80e12de0adba51ebe72acf7f3f2727fea8e0892146312ae7ad03d53",
       "deploy_entrypoint_vpc_binding": "verified",
       "firewall_egress": "default-deny",
       "kind": "runtime-release-egress-contract",

@@ -1,0 +1,50 @@
+{
+  "checks": [
+    {
+      "detail": "exact release SHA is present in image/env/labels",
+      "name": "jobs-smoke:scheduler:release_sha",
+      "ok": true
+    },
+    {
+      "detail": "bounded scheduler entrypoint is configured",
+      "name": "jobs-smoke:scheduler:entrypoint",
+      "ok": true
+    },
+    {
+      "detail": "no external providers selected (consumer-only deployment)",
+      "name": "jobs-smoke:scheduler:provider_selection",
+      "ok": true
+    },
+    {
+      "detail": "database and every selected provider secret are bound to Secret Manager references: ODAY_DATABASE_URL",
+      "name": "jobs-smoke:scheduler:secret_bindings",
+      "ok": true
+    },
+    {
+      "detail": "latest execution completed with succeededCount>=1 and failedCount=0",
+      "name": "jobs-smoke:scheduler:execution",
+      "ok": true
+    },
+    {
+      "detail": "execution has a queryable Cloud Run status receipt",
+      "name": "jobs-smoke:scheduler:execution_receipt",
+      "ok": true
+    }
+  ],
+  "execution_name": "oday-scheduler-r-b88e67b128d8-xmrp7",
+  "expected_sha": "b88e67b128d8f11f9653dd3acf518fe87cb1832c",
+  "generated_at": "2026-11-03T10:32:36Z",
+  "job_kind": "scheduler",
+  "job_name": "oday-scheduler-r-b88e67b128d8",
+  "ok": true,
+  "required_secret_env_vars": [
+    "ODAY_DATABASE_URL"
+  ],
+  "schema_version": 1,
+  "secret_bound_env_vars": [
+    "ODAY_DATABASE_URL"
+  ],
+  "secret_values_redacted": true,
+  "selected_provider_ids": [],
+  "unselected_provider_secret_env_vars": []
+}
