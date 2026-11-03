@@ -1760,6 +1760,10 @@ jobs:
         if: ${{ inputs.environment == 'staging' }}
         run: |
           set -euo pipefail
+          # The verify backup/restore drill dumps the release database into the
+          # release bucket as the Cloud SQL instance's own service account.
+          sql_service_account="$(gcloud sql instances describe "${GCP_CLOUD_SQL_INSTANCE##*:}" --project "${GCP_PROJECT}" --format='value(serviceAccountEmailAddress)')"
+          : "${sql_service_account:?staging Cloud SQL instance service account readback is empty}"
           python3 product_ops/deployment/staging_lifecycle.py create \
             --release-id "${STAGING_RELEASE_ID}" \
             --candidate-sha "${ODAY_RELEASE_SHA}" \
@@ -1767,6 +1771,7 @@ jobs:
             --project-id "${GCP_PROJECT}" \
             --region "${GCP_REGION}" \
             --cloud-sql-instance "${GCP_CLOUD_SQL_INSTANCE}" \
+            --cloud-sql-service-account-email "${sql_service_account}" \
             --network-name "${ODP_STAGING_VPC_NETWORK}" \
             --subnetwork-name "${ODP_STAGING_VPC_SUBNETWORK}" \
             --kms-key-id "${ODP_STAGING_KMS_KEY_ID}" \
@@ -1853,9 +1858,12 @@ jobs:
           if [ -z "${STAGING_BUNDLE_URI:-}" ] || [ -z "${STAGING_STATE_DIR:-}" ]; then
             exit 0
           fi
+          # The recovery bucket has a retention policy: the create step already
+          # wrote <release>.lifecycle.json there and it cannot be overwritten,
+          # so each run's hold state lands under its own object name.
           for sidecar in "${STAGING_STATE_DIR}"/*.lifecycle.json; do
             [ -f "${sidecar}" ] || continue
-            gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"
+            gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/hold-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(basename "${sidecar}")"
           done
 
       - name: Upload staging lifecycle receipts

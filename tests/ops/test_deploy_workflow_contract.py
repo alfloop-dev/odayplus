@@ -1099,7 +1099,13 @@ def test_staging_recovery_bundle_storage_boundary_contract() -> None:
         step for step in deploy_steps if step.get("name") == "Persist staging hold state to protected recovery storage"
     )
     assert persist_hold.get("if") == "${{ always() && inputs.environment == 'staging' }}"
-    assert 'gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"' in str(persist_hold["run"])
+    # The recovery bucket's retention policy forbids overwriting the
+    # create-time sidecar, so each run's hold state gets its own object name.
+    assert (
+        'gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/hold-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(basename "${sidecar}")"'
+        in str(persist_hold["run"])
+    )
+    assert '"${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"' not in str(persist_hold["run"])
 
     # 3. closeout job environment exports and path preparation checks
     closeout_job = parsed["jobs"]["staging_closeout"]
