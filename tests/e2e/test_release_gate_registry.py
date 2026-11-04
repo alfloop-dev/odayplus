@@ -835,6 +835,36 @@ def test_is_evidence_path_accepts_generated_boundary_inventory() -> None:
     assert not module.is_evidence_path("delivery_toolchain/release/release_manifest.py")
 
 
+def test_is_evidence_path_exempts_only_the_supervisor_control_plane() -> None:
+    """Control-plane merges must not void a candidate; release tooling must."""
+    module = load_checker_module()
+    for path in (
+        ".orchestrator/supervisor.py",
+        ".orchestrator/dispatch_engine.py",
+        ".orchestrator/task-briefs/ODP-X.md",
+        "scripts/ai_status.py",
+        "scripts/test_ai_status.py",
+        "scripts/ai-status.sh",
+        "scripts/orchestrator/rollout_supervisor_runtime.py",
+    ):
+        assert module.is_evidence_path(path), path
+    # What the Runtime Release jobs read from the dispatch ref, or ship.
+    for path in (
+        ".github/workflows/deploy-dev.yml",
+        ".github/actions/setup/action.yml",
+        "delivery_toolchain/e2e/check_release_gate_registry.py",
+        "delivery_toolchain/release/check_runtime_admission.py",
+        "product_ops/deployment/staging_lifecycle.py",
+        "infra/terraform/modules/ephemeral_staging/main.tf",
+        "pyproject.toml",
+        "uv.lock",
+        "scripts/ops/grant_dev_operations_manager.cjs",
+        "scripts/ai_status_helper.py",
+        "apps/api/oday_api/main.py",
+    ):
+        assert not module.is_evidence_path(path), path
+
+
 def test_cli_expected_sha_ancestry_inventory_only_merge_descendant_passes(
     tmp_path: Path,
 ) -> None:

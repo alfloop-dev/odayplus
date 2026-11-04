@@ -689,7 +689,15 @@ def print_report(report: dict[str, Any], registry: dict[str, Any]) -> None:
 
 
 def is_evidence_path(path: str) -> bool:
-    """True if path is a documented evidence/doc/receipt or worker context file."""
+    """True if a change to path cannot alter what a candidate releases.
+
+    Evidence, docs and receipts qualify, and so does the Supervisor control
+    plane (.orchestrator/, the ai-status board tooling, scripts/orchestrator/):
+    the Runtime Release jobs check out the exact candidate SHA and never run
+    those files, and the lease issuer runs from its own runtime checkout. The
+    workflow definitions, delivery_toolchain, product code and dependency
+    locks are not exempt, because the dispatch ref's copies are what run.
+    """
     normalized = path.replace("\\", "/").strip()
     if not normalized:
         return True
@@ -700,13 +708,17 @@ def is_evidence_path(path: str) -> bool:
         or normalized.startswith("docs/testing/")
         or normalized.startswith("docs/uat/")
         or normalized == "docs/audits/code-boundary-inventory.csv"
-        or normalized.startswith(".orchestrator/task-briefs/")
+        or normalized.startswith(".orchestrator/")
+        or normalized.startswith("scripts/orchestrator/")
         or normalized
         in {
             "AI_COLLABORATION_GUIDE.md",
             "ai-status.json",
             "current-work.md",
             "ai-activity-log.jsonl",
+            "scripts/ai-status.sh",
+            "scripts/ai_status.py",
+            "scripts/test_ai_status.py",
         }
     ):
         return True
