@@ -37,16 +37,23 @@ jobs:
             /*
             !/tests/sources
 
-      # Git path, tree and index metadata only; the denied body is never opened.
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
       # Host Git config is excluded because hosted runners ship a global LFS
       # filter that is unrelated to this checkout and would always be refused.
       - name: Prove protected path stayed out of checkout
         env:
           GIT_CONFIG_NOSYSTEM: "1"
           GIT_CONFIG_GLOBAL: /dev/null
+          PROTECTED_COMPARE_SHAS: >-
+            ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+            ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after }}
         run: |
           python3 -I - <<'PY'
           import os
+          import re
           import subprocess
           import sys
           from pathlib import Path
@@ -55,6 +62,9 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
 
 
           def git(*args):
@@ -62,20 +72,29 @@ jobs:
 
 
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
-          index = git("ls-files", "-t", "-z", "--", f":(literal){denied}").split("\0")
-          verdict = wc.inspect_protected_git_metadata(
-              Path.cwd(), "HEAD", (denied,), worktree_path=Path.cwd(), check_index=True
-          )
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
           failures = [
               label
               for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
                   ("deny patterns changed", patterns != ["/*", f"!/{denied}"]),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
-                  ("denied path in index without skip-worktree", any(entry and not entry.startswith("S ") for entry in index)),
+                  ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
-                  (f"{verdict.reason}: {verdict.detail}", not verdict.ok),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
               )
               if failed
           ]
@@ -143,7 +162,10 @@ jobs:
             /*
             !/tests/sources
 
-      # Git path, tree and index metadata only; the denied body is never opened.
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
       # Host Git config is excluded because hosted runners ship a global LFS
       # filter that is unrelated to this checkout and would always be refused.
       - name: Prove protected path stayed out of checkout
@@ -153,6 +175,7 @@ jobs:
         run: |
           python3 -I - <<'PY'
           import os
+          import re
           import subprocess
           import sys
           from pathlib import Path
@@ -161,6 +184,9 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
 
 
           def git(*args):
@@ -168,20 +194,29 @@ jobs:
 
 
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
-          index = git("ls-files", "-t", "-z", "--", f":(literal){denied}").split("\0")
-          verdict = wc.inspect_protected_git_metadata(
-              Path.cwd(), "HEAD", (denied,), worktree_path=Path.cwd(), check_index=True
-          )
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
           failures = [
               label
               for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
                   ("deny patterns changed", patterns != ["/*", f"!/{denied}"]),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
-                  ("denied path in index without skip-worktree", any(entry and not entry.startswith("S ") for entry in index)),
+                  ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
-                  (f"{verdict.reason}: {verdict.detail}", not verdict.ok),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
               )
               if failed
           ]
@@ -321,7 +356,10 @@ jobs:
             /*
             !/tests/sources
 
-      # Git path, tree and index metadata only; the denied body is never opened.
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
       # Host Git config is excluded because hosted runners ship a global LFS
       # filter that is unrelated to this checkout and would always be refused.
       - name: Prove protected path stayed out of checkout
@@ -331,6 +369,7 @@ jobs:
         run: |
           python3 -I - <<'PY'
           import os
+          import re
           import subprocess
           import sys
           from pathlib import Path
@@ -339,6 +378,9 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
 
 
           def git(*args):
@@ -346,20 +388,29 @@ jobs:
 
 
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
-          index = git("ls-files", "-t", "-z", "--", f":(literal){denied}").split("\0")
-          verdict = wc.inspect_protected_git_metadata(
-              Path.cwd(), "HEAD", (denied,), worktree_path=Path.cwd(), check_index=True
-          )
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
           failures = [
               label
               for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
                   ("deny patterns changed", patterns != ["/*", f"!/{denied}"]),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
-                  ("denied path in index without skip-worktree", any(entry and not entry.startswith("S ") for entry in index)),
+                  ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
-                  (f"{verdict.reason}: {verdict.detail}", not verdict.ok),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
               )
               if failed
           ]
@@ -450,7 +501,10 @@ jobs:
             /*
             !/tests/sources
 
-      # Git path, tree and index metadata only; the denied body is never opened.
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
       # Host Git config is excluded because hosted runners ship a global LFS
       # filter that is unrelated to this checkout and would always be refused.
       - name: Prove protected path stayed out of checkout
@@ -460,6 +514,7 @@ jobs:
         run: |
           python3 -I - <<'PY'
           import os
+          import re
           import subprocess
           import sys
           from pathlib import Path
@@ -468,6 +523,9 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
 
 
           def git(*args):
@@ -475,20 +533,29 @@ jobs:
 
 
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
-          index = git("ls-files", "-t", "-z", "--", f":(literal){denied}").split("\0")
-          verdict = wc.inspect_protected_git_metadata(
-              Path.cwd(), "HEAD", (denied,), worktree_path=Path.cwd(), check_index=True
-          )
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
           failures = [
               label
               for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
                   ("deny patterns changed", patterns != ["/*", f"!/{denied}"]),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
-                  ("denied path in index without skip-worktree", any(entry and not entry.startswith("S ") for entry in index)),
+                  ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
-                  (f"{verdict.reason}: {verdict.detail}", not verdict.ok),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
               )
               if failed
           ]
@@ -641,7 +708,10 @@ jobs:
             /*
             !/tests/sources
 
-      # Git path, tree and index metadata only; the denied body is never opened.
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
       # Host Git config is excluded because hosted runners ship a global LFS
       # filter that is unrelated to this checkout and would always be refused.
       - name: Prove protected path stayed out of checkout
@@ -651,6 +721,7 @@ jobs:
         run: |
           python3 -I - <<'PY'
           import os
+          import re
           import subprocess
           import sys
           from pathlib import Path
@@ -659,6 +730,9 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
 
 
           def git(*args):
@@ -666,20 +740,29 @@ jobs:
 
 
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
-          index = git("ls-files", "-t", "-z", "--", f":(literal){denied}").split("\0")
-          verdict = wc.inspect_protected_git_metadata(
-              Path.cwd(), "HEAD", (denied,), worktree_path=Path.cwd(), check_index=True
-          )
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
           failures = [
               label
               for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
                   ("deny patterns changed", patterns != ["/*", f"!/{denied}"]),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
-                  ("denied path in index without skip-worktree", any(entry and not entry.startswith("S ") for entry in index)),
+                  ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
-                  (f"{verdict.reason}: {verdict.detail}", not verdict.ok),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
               )
               if failed
           ]
@@ -732,7 +815,10 @@ jobs:
             /*
             !/tests/sources
 
-      # Git path, tree and index metadata only; the denied body is never opened.
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
       # Host Git config is excluded because hosted runners ship a global LFS
       # filter that is unrelated to this checkout and would always be refused.
       - name: Prove protected path stayed out of checkout
@@ -742,6 +828,7 @@ jobs:
         run: |
           python3 -I - <<'PY'
           import os
+          import re
           import subprocess
           import sys
           from pathlib import Path
@@ -750,6 +837,9 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
 
 
           def git(*args):
@@ -757,20 +847,29 @@ jobs:
 
 
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
-          index = git("ls-files", "-t", "-z", "--", f":(literal){denied}").split("\0")
-          verdict = wc.inspect_protected_git_metadata(
-              Path.cwd(), "HEAD", (denied,), worktree_path=Path.cwd(), check_index=True
-          )
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
           failures = [
               label
               for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
                   ("deny patterns changed", patterns != ["/*", f"!/{denied}"]),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
-                  ("denied path in index without skip-worktree", any(entry and not entry.startswith("S ") for entry in index)),
+                  ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
-                  (f"{verdict.reason}: {verdict.detail}", not verdict.ok),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
               )
               if failed
           ]
@@ -824,7 +923,10 @@ jobs:
             /*
             !/tests/sources
 
-      # Git path, tree and index metadata only; the denied body is never opened.
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
       # Host Git config is excluded because hosted runners ship a global LFS
       # filter that is unrelated to this checkout and would always be refused.
       - name: Prove protected path stayed out of checkout
@@ -834,6 +936,7 @@ jobs:
         run: |
           python3 -I - <<'PY'
           import os
+          import re
           import subprocess
           import sys
           from pathlib import Path
@@ -842,6 +945,9 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
 
 
           def git(*args):
@@ -849,20 +955,29 @@ jobs:
 
 
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
-          index = git("ls-files", "-t", "-z", "--", f":(literal){denied}").split("\0")
-          verdict = wc.inspect_protected_git_metadata(
-              Path.cwd(), "HEAD", (denied,), worktree_path=Path.cwd(), check_index=True
-          )
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
           failures = [
               label
               for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
                   ("deny patterns changed", patterns != ["/*", f"!/{denied}"]),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
-                  ("denied path in index without skip-worktree", any(entry and not entry.startswith("S ") for entry in index)),
+                  ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
-                  (f"{verdict.reason}: {verdict.detail}", not verdict.ok),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
               )
               if failed
           ]
@@ -923,7 +1038,10 @@ jobs:
             /*
             !/tests/sources
 
-      # Git path, tree and index metadata only; the denied body is never opened.
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
       # Host Git config is excluded because hosted runners ship a global LFS
       # filter that is unrelated to this checkout and would always be refused.
       - name: Prove protected path stayed out of checkout
@@ -933,6 +1051,7 @@ jobs:
         run: |
           python3 -I - <<'PY'
           import os
+          import re
           import subprocess
           import sys
           from pathlib import Path
@@ -941,6 +1060,9 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
 
 
           def git(*args):
@@ -948,20 +1070,29 @@ jobs:
 
 
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
-          index = git("ls-files", "-t", "-z", "--", f":(literal){denied}").split("\0")
-          verdict = wc.inspect_protected_git_metadata(
-              Path.cwd(), "HEAD", (denied,), worktree_path=Path.cwd(), check_index=True
-          )
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
           failures = [
               label
               for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
                   ("deny patterns changed", patterns != ["/*", f"!/{denied}"]),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
-                  ("denied path in index without skip-worktree", any(entry and not entry.startswith("S ") for entry in index)),
+                  ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
-                  (f"{verdict.reason}: {verdict.detail}", not verdict.ok),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
               )
               if failed
           ]
@@ -1011,7 +1142,10 @@ jobs:
             /*
             !/tests/sources
 
-      # Git path, tree and index metadata only; the denied body is never opened.
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
       # Host Git config is excluded because hosted runners ship a global LFS
       # filter that is unrelated to this checkout and would always be refused.
       - name: Prove protected path stayed out of checkout
@@ -1021,6 +1155,7 @@ jobs:
         run: |
           python3 -I - <<'PY'
           import os
+          import re
           import subprocess
           import sys
           from pathlib import Path
@@ -1029,6 +1164,9 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
 
 
           def git(*args):
@@ -1036,20 +1174,29 @@ jobs:
 
 
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
-          index = git("ls-files", "-t", "-z", "--", f":(literal){denied}").split("\0")
-          verdict = wc.inspect_protected_git_metadata(
-              Path.cwd(), "HEAD", (denied,), worktree_path=Path.cwd(), check_index=True
-          )
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
           failures = [
               label
               for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
                   ("deny patterns changed", patterns != ["/*", f"!/{denied}"]),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
-                  ("denied path in index without skip-worktree", any(entry and not entry.startswith("S ") for entry in index)),
+                  ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
-                  (f"{verdict.reason}: {verdict.detail}", not verdict.ok),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
               )
               if failed
           ]
@@ -1157,7 +1304,10 @@ jobs:
             /*
             !/tests/sources
 
-      # Git path, tree and index metadata only; the denied body is never opened.
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
       # Host Git config is excluded because hosted runners ship a global LFS
       # filter that is unrelated to this checkout and would always be refused.
       - name: Prove protected path stayed out of checkout
@@ -1167,6 +1317,7 @@ jobs:
         run: |
           python3 -I - <<'PY'
           import os
+          import re
           import subprocess
           import sys
           from pathlib import Path
@@ -1175,6 +1326,9 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
 
 
           def git(*args):
@@ -1182,20 +1336,29 @@ jobs:
 
 
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
-          index = git("ls-files", "-t", "-z", "--", f":(literal){denied}").split("\0")
-          verdict = wc.inspect_protected_git_metadata(
-              Path.cwd(), "HEAD", (denied,), worktree_path=Path.cwd(), check_index=True
-          )
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
           failures = [
               label
               for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
                   ("deny patterns changed", patterns != ["/*", f"!/{denied}"]),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
-                  ("denied path in index without skip-worktree", any(entry and not entry.startswith("S ") for entry in index)),
+                  ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
-                  (f"{verdict.reason}: {verdict.detail}", not verdict.ok),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
               )
               if failed
           ]
@@ -1412,7 +1575,10 @@ jobs:
             /*
             !/tests/sources
 
-      # Git path, tree and index metadata only; the denied body is never opened.
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
       # Host Git config is excluded because hosted runners ship a global LFS
       # filter that is unrelated to this checkout and would always be refused.
       - name: Prove protected path stayed out of checkout
@@ -1422,6 +1588,7 @@ jobs:
         run: |
           python3 -I - <<'PY'
           import os
+          import re
           import subprocess
           import sys
           from pathlib import Path
@@ -1430,6 +1597,9 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
 
 
           def git(*args):
@@ -1437,20 +1607,29 @@ jobs:
 
 
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
-          index = git("ls-files", "-t", "-z", "--", f":(literal){denied}").split("\0")
-          verdict = wc.inspect_protected_git_metadata(
-              Path.cwd(), "HEAD", (denied,), worktree_path=Path.cwd(), check_index=True
-          )
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
           failures = [
               label
               for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
                   ("deny patterns changed", patterns != ["/*", f"!/{denied}"]),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
-                  ("denied path in index without skip-worktree", any(entry and not entry.startswith("S ") for entry in index)),
+                  ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
-                  (f"{verdict.reason}: {verdict.detail}", not verdict.ok),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
               )
               if failed
           ]

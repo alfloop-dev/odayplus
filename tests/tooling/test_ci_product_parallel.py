@@ -702,6 +702,16 @@ FULL_HISTORY_JOBS = {
     "emgi-consumer-boundary.yml": {"boundary"},
     "tooling-scope-review-gate.yml": {"classify"},
 }
+PR_COMPARED_COMMITS = "${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }}"
+# The jobs whose steps hand these exact commits to a diff. Every other job proves HEAD only.
+COMPARED_COMMITS = {
+    ("ci.yml", "change-scope"): (
+        "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }} "
+        "${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after }}"
+    ),
+    ("emgi-consumer-boundary.yml", "boundary"): PR_COMPARED_COMMITS,
+    ("tooling-scope-review-gate.yml", "classify"): PR_COMPARED_COMMITS,
+}
 GIT_PREFLIGHT_NAME = "Require sparse-capable Git before checkout"
 DENIAL_PROOF_NAME = "Prove protected path stayed out of checkout"
 DENY_PATTERNS = ["/*", "!/tests/sources"]
@@ -745,8 +755,11 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
         following = steps[at + 1] if at + 1 < len(steps) else {}
         if following.get("name") != DENIAL_PROOF_NAME or following.get("run") != proof_run:
             violations.append(f"{here}: exact denial proof must directly follow checkout")
-        if following.get("env") != {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}:
-            violations.append(f"{here}: denial proof must judge repository configuration alone")
+        expected_env = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
+        if (name, job_name) in COMPARED_COMMITS:
+            expected_env["PROTECTED_COMPARE_SHAS"] = COMPARED_COMMITS[(name, job_name)]
+        if following.get("env") != expected_env:
+            violations.append(f"{here}: denial proof must judge repository configuration and every compared commit")
         for step in (steps[0], checkout, following):
             for softener in ("if", "continue-on-error"):
                 if softener in step:
@@ -774,6 +787,25 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
 @pytest.mark.parametrize("name", sorted(PROTECTED_PR_WORKFLOWS))
 def test_pr_workflow_denies_protected_prefix_before_every_checkout(name: str) -> None:
     assert protected_checkout_violations(name, load_pr_workflow(name)) == []
+
+
+def test_compared_commits_are_the_ones_the_downstream_consumers_read() -> None:
+    """The proof must vouch for the exact values handed to the later diff, not lookalikes."""
+    expression = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
+    for name in ("emgi-consumer-boundary.yml", "tooling-scope-review-gate.yml"):
+        steps = next(iter(load_pr_workflow(name)["jobs"].values()))["steps"]
+        consumer = next(step for step in steps if "BASE_SHA" in (step.get("env") or {}))
+        assert steps.index(consumer) > 2, "the consumer must run after the proof"
+        assert steps[2]["env"]["PROTECTED_COMPARE_SHAS"] == f"{consumer['env']['BASE_SHA']} {consumer['env']['HEAD_SHA']}"
+
+    steps = load_pr_workflow("ci.yml")["jobs"]["change-scope"]["steps"]
+    consumer = next(step for step in steps if step.get("name") == "Classify change scope")
+    assert steps.index(consumer) > 2
+    base, head = expression.findall(steps[2]["env"]["PROTECTED_COMPARE_SHAS"])
+    env = consumer["env"]
+    # One alternative per case the classifier selects from, in each endpoint.
+    assert [expression.fullmatch(env[key]).group(1) for key in ("PR_BASE_SHA", "MERGE_GROUP_BASE_SHA", "PUSH_BEFORE_SHA")] == base.split(" || ")
+    assert [expression.fullmatch(env[key]).group(1) for key in ("PR_HEAD_SHA", "MERGE_GROUP_HEAD_SHA", "PUSH_AFTER_SHA")] == head.split(" || ")
 
 
 def test_full_history_jobs_are_all_the_jobs_that_declared_it() -> None:
@@ -817,6 +849,8 @@ def _mutated(mutate: Any) -> list[str]:
         ("proof skipped", lambda s: s[2].update({"if": "false"})),
         ("proof weakened", lambda s: s[2].update({"run": "true"})),
         ("proof judged by host config", lambda s: s[2].pop("env")),
+        ("compare endpoints dropped", lambda s: s[2]["env"].pop("PROTECTED_COMPARE_SHAS")),
+        ("compare head only", lambda s: s[2]["env"].update({"PROTECTED_COMPARE_SHAS": "${{ github.sha }}"})),
         ("second checkout", lambda s: s.append({"uses": "actions/checkout@v4"})),
         ("sparse disabled later", lambda s: s.append({"name": "x", "run": "git sparse-checkout disable"})),
         ("later checkout", lambda s: s.append({"name": "x", "run": "git -c a=b checkout HEAD -- ."})),
@@ -869,7 +903,11 @@ def test_git_preflight_refuses_a_runner_without_git(tmp_path: Path) -> None:
 
 
 class _CheckoutFixture:
-    """A body-bearing synthetic repository checked out the way actions/checkout@v4 does."""
+    """A synthetic repository checked out the way actions/checkout@v4 does.
+
+    `dev` tracks nothing under the deny prefix, as a passing commit must;
+    `bodied` is that commit plus a body under it, and `removed` then deletes it.
+    """
 
     PREFIX = "guarded/zone"
 
@@ -884,24 +922,42 @@ class _CheckoutFixture:
         self.git(root, "init", "-q", "-b", "dev", str(self.seed))
         self.git(self.seed, "config", "user.name", "Test")
         self.git(self.seed, "config", "user.email", "test@example.invalid")
-        (self.seed / self.PREFIX).mkdir(parents=True)
-        (self.seed / self.PREFIX / "body.txt").write_text("synthetic body\n", encoding="utf-8")
+        (self.seed / "guarded").mkdir()
         (self.seed / "guarded" / "sibling.txt").write_text("sibling\n", encoding="utf-8")
         (self.seed / ".orchestrator").mkdir()
         shutil.copy(ROOT / ".orchestrator" / "worktree_cleanliness.py", self.seed / ".orchestrator")
         self.git(self.seed, "add", ".")
-        self.git(self.seed, "commit", "-q", "-m", "base")
-        self.body_oid = self.git(self.seed, "rev-parse", f"HEAD:{self.PREFIX}/body.txt").stdout.strip()
+        self.git(self.seed, "commit", "-q", "-m", "clean")
+        self.clean = self.rev("HEAD")
+        self.git(self.seed, "checkout", "-q", "-b", "bodied")
+        (self.seed / self.PREFIX).mkdir(parents=True)
+        (self.seed / self.PREFIX / "body.txt").write_text("synthetic body\n", encoding="utf-8")
+        self.git(self.seed, "add", ".")
+        self.git(self.seed, "commit", "-q", "-m", "body")
+        self.bodied = self.rev("HEAD")
+        self.body_oid = self.rev(f"HEAD:{self.PREFIX}/body.txt")
+        self.git(self.seed, "checkout", "-q", "-b", "removed")
+        self.git(self.seed, "mv", f"{self.PREFIX}/body.txt", "moved.txt")
+        with (self.seed / "moved.txt").open("a", encoding="utf-8") as stream:
+            stream.write("edited after the move\n")
+        self.git(self.seed, "add", ".")
+        self.git(self.seed, "commit", "-q", "-m", "moved")
+        self.removed = self.rev("HEAD")
         self.git(root, "init", "-q", "--bare", str(self.origin))
         self.git(self.origin, "config", "uploadpack.allowFilter", "true")
         self.git(self.origin, "config", "uploadpack.allowAnySHA1InWant", "true")
-        self.git(self.seed, "push", "-q", str(self.origin), "dev")
+        self.git(self.seed, "push", "-q", str(self.origin), "dev", "bodied", "removed")
 
     @staticmethod
     def git(cwd: Path, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
         return subprocess.run(["git", *args], cwd=cwd, text=True, input=stdin, capture_output=True, check=True)
 
-    def action_checkout(self, patterns: list[str], *, depth: int | None = None, blob_filter: str = "blob:none") -> None:
+    def rev(self, ref: str) -> str:
+        return self.git(self.seed, "rev-parse", ref).stdout.strip()
+
+    def action_checkout(
+        self, patterns: list[str], *, ref: str = "dev", depth: int | None = None, blob_filter: str = "blob:none"
+    ) -> None:
         """Mirror git-source-provider.ts: fetch with the filter, sparse setup, then checkout."""
         self.git(self.root, "init", "-q", str(self.checkout))
         self.git(self.checkout, "remote", "add", "origin", f"file://{self.origin}")
@@ -914,18 +970,22 @@ class _CheckoutFixture:
         sparse.parent.mkdir(exist_ok=True)
         with sparse.open("a", encoding="utf-8") as stream:
             stream.write("\n" + "\n".join(patterns) + "\n")
-        self.git(self.checkout, "checkout", "-q", "--force", "-B", "dev", "refs/remotes/origin/dev")
+        self.git(self.checkout, "checkout", "-q", "--force", "-B", "current", f"refs/remotes/origin/{ref}")
 
     def deny_patterns(self) -> list[str]:
         return [line.replace("tests/sources", self.PREFIX) for line in DENY_PATTERNS]
 
-    def run_proof(self) -> subprocess.CompletedProcess[str]:
+    def run_proof(self, compare: str | None = None) -> subprocess.CompletedProcess[str]:
         _preflight, proof = reference_step_scripts()
         assert proof.count('denied = "tests/sources"') == 1
+        env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
+        env.pop("PROTECTED_COMPARE_SHAS", None)
+        if compare is not None:
+            env["PROTECTED_COMPARE_SHAS"] = compare
         return subprocess.run(
             ["bash", "-e", "-c", proof.replace('denied = "tests/sources"', f'denied = "{self.PREFIX}"')],
             cwd=self.checkout,
-            env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"},
+            env=env,
             capture_output=True,
             text=True,
             check=False,
@@ -940,60 +1000,104 @@ def checkout_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Checko
     return _CheckoutFixture(tmp_path, monkeypatch)
 
 
-@pytest.mark.parametrize("depth", [None, 1])
-def test_deny_patterns_keep_body_out_of_tree_and_object_store(checkout_fixture: _CheckoutFixture, depth: int | None) -> None:
+def test_clean_commits_pass_the_proof_with_and_without_compared_endpoints(checkout_fixture: _CheckoutFixture) -> None:
     fixture = checkout_fixture
-    fixture.action_checkout(fixture.deny_patterns(), depth=depth)
-    assert not (fixture.checkout / fixture.PREFIX).exists()
+    fixture.action_checkout(fixture.deny_patterns())
     assert (fixture.checkout / "guarded" / "sibling.txt").is_file(), "only the exact prefix is denied"
-    assert fixture.body_oid not in fixture.local_objects()
     assert fixture.git(fixture.checkout, "status", "--porcelain").stdout == ""
+    for compare in (None, f"{fixture.clean} {fixture.clean}"):
+        proof = fixture.run_proof(compare)
+        assert proof.returncode == 0, proof.stdout + proof.stderr
+
+
+@pytest.mark.parametrize("depth", [None, 1])
+def test_tracked_body_is_never_materialized_or_downloaded_and_then_refused(
+    checkout_fixture: _CheckoutFixture, depth: int | None
+) -> None:
+    fixture = checkout_fixture
+    fixture.action_checkout(fixture.deny_patterns(), ref="bodied", depth=depth)
+    assert not (fixture.checkout / fixture.PREFIX).exists()
+    assert fixture.body_oid not in fixture.local_objects()
     proof = fixture.run_proof()
-    assert proof.returncode == 0, proof.stdout + proof.stderr
+    assert proof.returncode != 0
+    assert "denied path tracked" in proof.stderr
+    assert fixture.body_oid not in fixture.local_objects(), "the refusal itself reads metadata only"
 
 
 def test_full_history_survives_the_deny(checkout_fixture: _CheckoutFixture) -> None:
     fixture = checkout_fixture
-    (fixture.seed / "second.txt").write_text("second\n", encoding="utf-8")
-    fixture.git(fixture.seed, "add", "second.txt")
-    fixture.git(fixture.seed, "commit", "-q", "-m", "second")
-    fixture.git(fixture.seed, "push", "-q", str(fixture.origin), "dev")
-    fixture.action_checkout(fixture.deny_patterns())
-    assert fixture.git(fixture.checkout, "rev-list", "--count", "HEAD").stdout.strip() == "2"
-    assert fixture.git(fixture.checkout, "merge-base", "HEAD", "origin/dev").stdout.strip()
+    fixture.action_checkout(fixture.deny_patterns(), ref="removed")
+    assert fixture.git(fixture.checkout, "rev-list", "--count", "HEAD").stdout.strip() == "3"
+    assert fixture.git(fixture.checkout, "merge-base", "HEAD", "origin/dev").stdout.strip() == fixture.clean
     assert fixture.body_oid not in fixture.local_objects()
 
 
-def test_classifying_diff_of_the_denied_prefix_fetches_no_body(checkout_fixture: _CheckoutFixture) -> None:
+def test_base_only_body_deleted_at_head_is_refused_before_a_rename_diff_can_fetch_it(
+    checkout_fixture: _CheckoutFixture,
+) -> None:
+    """HEAD is clean here; only the compared base tracks the body."""
     fixture = checkout_fixture
-    base = fixture.git(fixture.seed, "rev-parse", "HEAD").stdout.strip()
-    fixture.git(fixture.seed, "mv", f"{fixture.PREFIX}/body.txt", "moved.txt")
-    with (fixture.seed / "moved.txt").open("a", encoding="utf-8") as stream:
-        stream.write("edited after the move\n")
-    fixture.git(fixture.seed, "add", "moved.txt")
-    fixture.git(fixture.seed, "commit", "-q", "-m", "rename and edit")
-    head = fixture.git(fixture.seed, "rev-parse", "HEAD").stdout.strip()
-    fixture.git(fixture.seed, "push", "-q", str(fixture.origin), "dev")
-    fixture.action_checkout(fixture.deny_patterns())
+    fixture.action_checkout(fixture.deny_patterns(), ref="removed")
+    assert fixture.run_proof().returncode == 0, "a HEAD-only proof sees nothing wrong"
 
-    changed = fixture.git(fixture.checkout, "diff", "--no-renames", "--name-only", base, head).stdout.split()
-    assert changed == [f"{fixture.PREFIX}/body.txt", "moved.txt"]
+    proof = fixture.run_proof(f"{fixture.bodied} {fixture.removed}")
+    assert proof.returncode != 0
+    assert f"denied path tracked at {fixture.bodied}" in proof.stderr
     assert fixture.body_oid not in fixture.local_objects()
 
-    # Why the flag matters: rename detection lazily downloads the denied body.
-    fixture.git(fixture.checkout, "diff", "--name-only", base, head)
+    # Why it must be refused first: the validator's own diff would download it.
+    fixture.git(fixture.checkout, "diff", "--name-status", "-M", fixture.bodied, fixture.removed)
     assert fixture.body_oid in fixture.local_objects()
+
+
+def test_pr_head_body_absent_from_the_merge_checkout_is_refused(checkout_fixture: _CheckoutFixture) -> None:
+    """A pull_request checkout is the merge commit, which is not the PR head the job compares."""
+    fixture = checkout_fixture
+    fixture.action_checkout(fixture.deny_patterns())
+    proof = fixture.run_proof(f"{fixture.clean} {fixture.bodied}")
+    assert proof.returncode != 0
+    assert f"denied path tracked at {fixture.bodied}" in proof.stderr
+    assert fixture.body_oid not in fixture.local_objects()
+
+
+def test_classifier_diff_without_renames_fetches_no_body(checkout_fixture: _CheckoutFixture) -> None:
+    fixture = checkout_fixture
+    fixture.action_checkout(fixture.deny_patterns(), ref="removed")
+    changed = fixture.git(fixture.checkout, "diff", "--no-renames", "--name-only", fixture.bodied, fixture.removed)
+    assert changed.stdout.split() == [f"{fixture.PREFIX}/body.txt", "moved.txt"]
+    assert fixture.body_oid not in fixture.local_objects()
+
+
+@pytest.mark.parametrize(
+    "compare",
+    [
+        pytest.param("", id="empty"),
+        pytest.param("   ", id="blank"),
+        pytest.param("{clean}", id="one-endpoint"),
+        pytest.param("{clean} {clean} {clean}", id="three-endpoints"),
+        pytest.param("HEAD HEAD", id="symbolic"),
+        pytest.param("{short} {clean}", id="abbreviated"),
+        pytest.param("{clean} " + "0" * 40, id="all-zero"),
+        pytest.param("{clean} " + "a" * 40, id="unknown-commit"),
+    ],
+)
+def test_unresolved_compared_commits_fail_closed(checkout_fixture: _CheckoutFixture, compare: str) -> None:
+    fixture = checkout_fixture
+    fixture.action_checkout(fixture.deny_patterns())
+    proof = fixture.run_proof(compare.format(clean=fixture.clean, short=fixture.clean[:12]))
+    assert proof.returncode != 0, proof.stdout
 
 
 @pytest.mark.parametrize(
     "damage",
     [
-        pytest.param(lambda f: f.git(f.checkout, "sparse-checkout", "disable"), id="sparse-disabled-rematerializes"),
         pytest.param(lambda f: f.git(f.checkout, "config", "core.sparseCheckout", "false"), id="sparse-config-off"),
         pytest.param(lambda f: f.git(f.checkout, "config", "core.sparseCheckoutCone", "true"), id="cone-on"),
         pytest.param(
-            lambda f: f.git(f.checkout, "update-index", "--no-skip-worktree", f"{f.PREFIX}/body.txt"),
-            id="index-entry-unprotected",
+            lambda f: f.git(
+                f.checkout, "update-index", "--add", "--cacheinfo", f"100644,{f.rev('HEAD:guarded/sibling.txt')},{f.PREFIX}/x"
+            ),
+            id="index-entry-added",
         ),
         pytest.param(lambda f: (f.checkout / f.PREFIX).mkdir(parents=True), id="prefix-path-created"),
         pytest.param(
@@ -1002,7 +1106,9 @@ def test_classifying_diff_of_the_denied_prefix_fetches_no_body(checkout_fixture:
         pytest.param(lambda f: f.git(f.checkout, "config", "remote.origin.partialclonefilter", "blob:limit=1g"), id="filter-changed"),
         pytest.param(lambda f: f.git(f.checkout, "config", "filter.x.clean", "cat"), id="unsafe-content-filter"),
         pytest.param(
-            lambda f: f.git(f.checkout, "update-index", "--add", "--replace", "--cacheinfo", f"120000,{f.body_oid},guarded"),
+            lambda f: f.git(
+                f.checkout, "update-index", "--add", "--replace", "--cacheinfo", f"120000,{f.rev('HEAD:guarded/sibling.txt')},guarded"
+            ),
             id="unsafe-index-ancestor",
         ),
     ],
@@ -1016,6 +1122,14 @@ def test_denial_proof_fails_closed(checkout_fixture: _CheckoutFixture, damage: A
     assert proof.returncode != 0, proof.stdout
 
 
+def test_disabling_sparse_rematerializes_and_is_refused(checkout_fixture: _CheckoutFixture) -> None:
+    fixture = checkout_fixture
+    fixture.action_checkout(fixture.deny_patterns(), ref="bodied")
+    fixture.git(fixture.checkout, "sparse-checkout", "disable")
+    assert (fixture.checkout / fixture.PREFIX / "body.txt").is_file(), "the synthetic hazard the deny exists for"
+    assert fixture.run_proof().returncode != 0
+
+
 def test_denial_proof_fails_without_a_git_repository(checkout_fixture: _CheckoutFixture) -> None:
     """What a REST archive fallback would have left behind."""
     fixture = checkout_fixture
@@ -1024,24 +1138,23 @@ def test_denial_proof_fails_without_a_git_repository(checkout_fixture: _Checkout
     assert fixture.run_proof().returncode != 0
 
 
-def _commit_with_entry(fixture: _CheckoutFixture, entry: str) -> None:
+def _commit_with_entry(fixture: _CheckoutFixture, entry: str) -> str:
     tree = fixture.git(fixture.seed, "mktree", stdin=entry + "\n").stdout.strip()
-    parent = fixture.git(fixture.seed, "rev-parse", "HEAD").stdout.strip()
-    commit = fixture.git(fixture.seed, "commit-tree", tree, "-p", parent, "-m", "unsafe").stdout.strip()
+    commit = fixture.git(fixture.seed, "commit-tree", tree, "-p", fixture.clean, "-m", "unsafe").stdout.strip()
     fixture.git(fixture.seed, "push", "-q", str(fixture.origin), f"+{commit}:refs/heads/dev")
+    return commit
 
 
 def test_denial_proof_refuses_unsafe_ancestor_and_gitlink_trees(checkout_fixture: _CheckoutFixture) -> None:
     fixture = checkout_fixture
-    tooling = fixture.git(fixture.seed, "ls-tree", "HEAD", ".orchestrator").stdout.strip()
+    tooling = fixture.git(fixture.seed, "ls-tree", fixture.clean, ".orchestrator").stdout.strip()
     blob = fixture.git(fixture.seed, "hash-object", "-w", "--stdin", stdin="elsewhere").stdout.strip()
     _commit_with_entry(fixture, f"{tooling}\n120000 blob {blob}\tguarded")
     fixture.action_checkout(fixture.deny_patterns())
     assert "ancestor_escape" in fixture.run_proof().stderr
 
     shutil.rmtree(fixture.checkout)
-    base = fixture.git(fixture.seed, "rev-parse", "HEAD").stdout.strip()
-    inner = fixture.git(fixture.seed, "mktree", stdin=f"160000 commit {base}\tzone\n").stdout.strip()
+    inner = fixture.git(fixture.seed, "mktree", stdin=f"160000 commit {fixture.clean}\tzone\n").stdout.strip()
     _commit_with_entry(fixture, f"{tooling}\n040000 tree {inner}\tguarded")
     fixture.action_checkout(fixture.deny_patterns())
     assert "protected_entry_escape" in fixture.run_proof().stderr

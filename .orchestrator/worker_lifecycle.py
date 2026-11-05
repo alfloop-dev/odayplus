@@ -11,6 +11,7 @@ from common import (
     isoformat_utc,
     parse_iso_timestamp,
 )
+import worker_workspace
 from runtime_state import HANDED_OFF_WORKER_STATUSES, TERMINAL_WORKER_STATUSES
 
 
@@ -21,7 +22,7 @@ def _supervisor_module():
 
 def _sync_supervisor_scope() -> None:
     sv = _supervisor_module()
-    excluded = {"_parse_iso_utc", "__name__", "__doc__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__", "Any", "_supervisor_module", "_sync_supervisor_scope", "_entrypoint", "_sync_scope_guard"}
+    excluded = {"finalize_queue_event_record", "_parse_iso_utc", "__name__", "__doc__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__", "Any", "_supervisor_module", "_sync_supervisor_scope", "_entrypoint", "_sync_scope_guard"}
     module_exports = {"process_queue", "poll_workers"}
     # Skip only dunders. The four copies of this function used to disagree --
     # two skipped every `_`-prefixed name, two skipped only `__` -- so whether a
@@ -35,6 +36,19 @@ def _sync_supervisor_scope() -> None:
         if key in excluded or key in module_exports or key.startswith("__"):
             continue
         g[key] = value
+
+
+def finalize_queue_event_record(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    status: str,
+    error: str | None = None,
+) -> None:
+    """The original finalizer, except for an event this worker no longer holds."""
+    if worker_workspace.queue_event_moved_from_worker(state, worker):
+        return
+    _supervisor_module().finalize_queue_event_record(config, state, worker, status, error)
 
 
 def _entrypoint(func):
@@ -1181,7 +1195,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             if not worker_heartbeat_is_stale(config, worker, now):
                 refresh_worker_lease(config, worker, now)
                 poll_counts["lease_refreshes"] += 1
-                if worker.get("queue_event_id"):
+                if worker.get("queue_event_id") and not worker_workspace.queue_event_moved_from_worker(state, worker):
                     record = queue_event_record(state, worker["queue_event_id"])
                     record["lease_owner"] = worker.get("run_id")
                     record["lease_expires_at"] = queue_lease_expiry(config, now)
@@ -1516,7 +1530,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         "approval_id": approval.get("approval_id"),
                     },
                 )
-                if worker.get("queue_event_id"):
+                if worker.get("queue_event_id") and not worker_workspace.queue_event_moved_from_worker(state, worker):
                     queue_event_record(state, worker["queue_event_id"])["status"] = "manual_pending"
                 changed = True
             continue

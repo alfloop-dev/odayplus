@@ -5161,6 +5161,10 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
         self.worktree = Path(request.metadata["workspace_path"])
         marker = self.root / "runner-status.json"
         marker.write_text(json.dumps(runner or {"status": "completed", "exit_code": 0, "signal": None}), encoding="utf-8")
+        # The shape process_queue records after a real delivery.
+        self.state["queue"]["events"]["evt-1"].update(
+            {"status": "started", "run_id": "run-1", "lease_owner": "run-1", "processed_at": "2026-11-05T00:00:00Z"}
+        )
         self.worker = {
             "run_id": "run-1",
             "task_id": self.TASK_ID,
@@ -5437,6 +5441,126 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
         self._blocked_after_real_commit()
         self.state["workers"]["run-2"] = {"run_id": "run-2", "task_id": self.TASK_ID, "pid": os.getpid()}
         self.assertEqual(self._proof().reason, "another_writer_alive")
+
+    def _requeue(self) -> dict[str, Any]:
+        record = self.state["queue"]["events"]["evt-1"]
+        supervisor._reset_queue_record_for_redispatch(record, reason="redispatch")
+        self.assertEqual(record["status"], "queued")
+        self.assertNotIn("lease_owner", record)
+        return record
+
+    def test_requeued_event_is_neither_credited_nor_consumed_by_the_old_run(self) -> None:
+        for task_status in ("blocked", "in_progress"):
+            with self.subTest(task_status=task_status):
+                self._dispatch()
+                self._commit(f"{task_status}.txt")
+                self._set_task(status=task_status, waiting_for="Codex")
+                record = self._requeue()
+                before = dict(record)
+                self.assertEqual(self._proof().reason, "queue_event_not_bound_to_run")
+                self._poll()
+                self._assert_not_credited()
+                self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+                self.assertIn(self.worker["status"], {"superseded", "failed"})
+                _git_run(self.worktree, "reset", "--quiet", "--hard", self.base)
+                self._set_task(status="in_progress")
+
+    def test_requeued_event_survives_the_assignment_mismatch_fallback_and_preemption(self) -> None:
+        for higher_priority in (False, True):
+            with self.subTest(higher_priority=higher_priority):
+                self._dispatch()
+                self._commit()
+                if higher_priority:
+                    self._set_task(status="in_progress")
+                else:
+                    self._set_task(status="blocked", owner="Codex", reviewer="Claude")
+                record = self._requeue()
+                before = dict(record)
+                self._poll(higher_priority=higher_priority)
+                self.assertEqual(self.worker["status"], "superseded")
+                self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+                self.task.update(owner="Claude", reviewer="Codex", status="in_progress")
+                self._write_board()
+                _git_run(self.worktree, "reset", "--quiet", "--hard", self.base)
+
+    def test_event_moved_to_another_run_is_not_credited_or_rewritten(self) -> None:
+        for fields in ({"run_id": "run-9", "lease_owner": "run-9"}, {"lease_owner": "run-9"}, {"run_id": "run-9"}):
+            with self.subTest(fields=fields):
+                self._blocked_after_real_commit()
+                record = self.state["queue"]["events"]["evt-1"]
+                record.update(fields)
+                before = dict(record)
+                self.assertEqual(self._proof().reason, "queue_event_not_bound_to_run")
+                self._poll()
+                self._assert_not_credited()
+                self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+                self.task.update(status="in_progress")
+                self._write_board()
+                _git_run(self.worktree, "reset", "--quiet", "--hard", self.base)
+
+    def test_unbound_or_unlaunched_event_shapes_are_not_credited(self) -> None:
+        for name, mutate in (
+            ("no run binding", lambda r: (r.pop("run_id"), r.pop("lease_owner"))),
+            ("no lease", lambda r: r.pop("lease_owner")),
+            ("no run", lambda r: r.pop("run_id")),
+            ("manual pending", lambda r: r.update(status="manual_pending")),
+            ("already completed", lambda r: r.update(status="completed")),
+        ):
+            with self.subTest(name):
+                self._blocked_after_real_commit()
+                mutate(self.state["queue"]["events"]["evt-1"])
+                self.assertEqual(self._proof().reason, "queue_event_not_bound_to_run")
+                self.state["queue"]["events"].pop("evt-1")
+                self.assertEqual(self._proof().reason, "queue_event_not_bound_to_run")
+                self.task.update(status="in_progress")
+                self._write_board()
+                _git_run(self.worktree, "reset", "--quiet", "--hard", self.base)
+
+    def test_retry_child_still_settles_the_event_its_parent_held(self) -> None:
+        self._dispatch()
+        self.worker["run_id"] = "run-child"
+        self.worker["parent_run_id"] = "run-1"
+        self.state["workers"] = {"run-child": self.worker}
+        self.assertFalse(worker_workspace.queue_event_moved_from_worker(self.state, self.worker))
+        supervisor.poll_workers(self.config, self.state, provider_report={})
+        self.assertIn(self.state["queue"]["events"]["evt-1"]["status"], {"completed", "failed"})
+
+    def test_live_heartbeat_does_not_take_a_requeued_event_back(self) -> None:
+        self._dispatch()
+        self.worker["last_heartbeat_at"] = supervisor.utc_now()
+        record = self._requeue()
+        before = dict(record)
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "refresh_worker_lease") as refresh,
+        ):
+            self._poll()
+        refresh.assert_called_once()
+        self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+
+    def test_approval_wait_does_not_overwrite_a_requeued_event(self) -> None:
+        self._dispatch()
+        record = self._requeue()
+        before = dict(record)
+        (self.root / "approval_queue.json").write_text(
+            json.dumps({"pending": [{"approval_id": "a-1", "worker_run_id": "run-1", "status": "pending"}], "history": []}),
+            encoding="utf-8",
+        )
+        with mock.patch.object(supervisor, "worker_supports_approval_resume", return_value=True):
+            self._poll()
+        self.assertEqual(self.worker["status"], "suspended_approval")
+        self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+
+    def test_fence_settlement_leaves_a_requeued_event_alone(self) -> None:
+        self._dispatch()
+        record = self._requeue()
+        before = dict(record)
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=False):
+            settled = worker_failure_policy._settle_fenced_sibling_worker(
+                self.config, self.state, self.worker, "claude_main", "Individual quota reached"
+            )
+        self.assertTrue(settled)
+        self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
 
     def test_canonical_blocker_history_and_roles_survive_a_credited_exit(self) -> None:
         self._blocked_after_real_commit()

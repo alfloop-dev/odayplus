@@ -1738,6 +1738,28 @@ class TerminalLocalHandoff(NamedTuple):
 _LOCAL_HANDOFF_WORKER_STATUSES = frozenset({"running", "stalled"})
 
 
+def _worker_queue_record(state: dict[str, Any], worker: dict[str, Any]) -> dict[str, Any] | None:
+    queue_id = worker.get("queue_event_id")
+    record = ((state.get("queue") or {}).get("events") or {}).get(queue_id) if queue_id else None
+    return record if isinstance(record, dict) else None
+
+
+def queue_event_moved_from_worker(state: dict[str, Any], worker: dict[str, Any]) -> bool:
+    """Whether this worker's queue event has been requeued or now belongs to another run.
+
+    Settling such a worker must leave the event alone: finalizing would consume
+    work already returned for redispatch. A retry child still answers for the
+    event its parent was bound to, until process_queue rebinds it.
+    """
+    record = _worker_queue_record(state, worker)
+    if record is None:
+        return False
+    if str(record.get("status") or "").lower() == "queued":
+        return True
+    holders = {worker.get("run_id"), worker.get("parent_run_id"), worker.get("queue_event_id")}
+    return any(record.get(field) and record.get(field) not in holders for field in ("run_id", "lease_owner"))
+
+
 def _local_handoff_identity_refusal(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -1769,12 +1791,18 @@ def _local_handoff_identity_refusal(
         return "helper_claim_present"
     if task_review_source_identity(config, task).error:
         return "unresolved_source_identity"
-    queue_id = worker.get("queue_event_id")
-    record = ((state.get("queue") or {}).get("events") or {}).get(queue_id) if queue_id else None
-    if not isinstance(record, dict) or str(record.get("status") or "").lower() in {"completed", "failed", "done"}:
-        return "queue_event_not_open"
-    if record.get("lease_owner") and record.get("lease_owner") != worker.get("run_id"):
-        return "queue_lease_moved"
+    # process_queue binds a launched event to its run; anything else (requeued,
+    # moved or never bound) is an event this run no longer holds.
+    record = _worker_queue_record(state, worker)
+    run_id = worker.get("run_id")
+    if (
+        not isinstance(record, dict)
+        or str(record.get("status") or "").lower() != "started"
+        or not run_id
+        or record.get("run_id") != run_id
+        or record.get("lease_owner") != run_id
+    ):
+        return "queue_event_not_bound_to_run"
     return None
 
 

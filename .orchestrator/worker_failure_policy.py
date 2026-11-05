@@ -35,6 +35,7 @@ from dispatch_policy import agent_provider_identity_ids as dispatch_policy_agent
 from provider_runtime import configured_provider_binary, provider_config_entry
 import status_transition
 from capacity_controller import is_capacity_sidecar
+from worker_workspace import queue_event_moved_from_worker
 from worktree_cleanliness import ProtectedExecutionUnavailable
 
 
@@ -4002,13 +4003,14 @@ def _settle_fenced_sibling_worker(
         # pop() removes the key from memory, but update() only sets keys
         # present in the source dict, so the disk's pending_fence survives.
         sibling["pending_fence"] = None
-        finalize_queue_event_record(
-            config,
-            state,
-            sibling,
-            "completed" if reassigned_to else "failed",
-            sibling["last_error"],
-        )
+        if not queue_event_moved_from_worker(state, sibling):
+            finalize_queue_event_record(
+                config,
+                state,
+                sibling,
+                "completed" if reassigned_to else "failed",
+                sibling["last_error"],
+            )
         write_activity_log(
             config,
             {
@@ -4278,7 +4280,8 @@ def maybe_trigger_retry_or_fallback(
         worker["reassigned_to"] = reassigned_to
         worker["last_error"] = reason
         worker["last_event_at"] = utc_now()
-        finalize_queue_event_record(config, state, worker, "completed")
+        if not queue_event_moved_from_worker(state, worker):
+            finalize_queue_event_record(config, state, worker, "completed")
         return True, True
 
     if retry.get("fallback_mode") == "file_inbox":
