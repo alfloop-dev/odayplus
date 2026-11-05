@@ -35,7 +35,7 @@ from dispatch_policy import agent_provider_identity_ids as dispatch_policy_agent
 from provider_runtime import configured_provider_binary, provider_config_entry
 import status_transition
 from capacity_controller import is_capacity_sidecar
-from worker_workspace import queue_event_moved_from_worker
+from worker_workspace import queue_event_moved_from_worker, release_moved_queue_event
 from worktree_cleanliness import ProtectedExecutionUnavailable
 
 
@@ -3504,6 +3504,11 @@ def maybe_reassign_task_after_worker_failure(
     settings = worker_reassignment_settings(config)
     if not settings.get("enabled", True):
         return None
+    # A run that lost its event no longer answers for the task. process_queue's
+    # pre-launch failure record has no lifecycle status: its event is still queued
+    # because it is the attempt being made, not because the attempt moved away.
+    if worker.get("status") and queue_event_moved_from_worker(state, worker):
+        return None
 
     attempt_number = failure_count if failure_count is not None else int(worker.get("retry_count", 0)) + 1
     if not force and (not terminal or respect_threshold) and attempt_number < int(settings.get("after_attempts", 2)):
@@ -4003,7 +4008,7 @@ def _settle_fenced_sibling_worker(
         # pop() removes the key from memory, but update() only sets keys
         # present in the source dict, so the disk's pending_fence survives.
         sibling["pending_fence"] = None
-        if not queue_event_moved_from_worker(state, sibling):
+        if not release_moved_queue_event(state, sibling):
             finalize_queue_event_record(
                 config,
                 state,
@@ -4235,6 +4240,33 @@ def existing_file_inbox_fallback_run_id(state: dict[str, Any], queue_event_id: s
     return None
 
 @_entrypoint
+def supersede_worker_without_queue_event(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any]) -> bool:
+    """End a run whose event was requeued or taken, before it can launch a successor.
+
+    Parking it would not hold: process_queue adopts an unbound event for any
+    active-looking worker, which would bind it back and launch it a tick later.
+    """
+    queue_event_id = worker.get("queue_event_id")
+    if not release_moved_queue_event(state, worker):
+        return False
+    worker["status"] = "superseded"
+    worker["next_retry_at"] = None
+    worker["last_error"] = "Worker superseded after its queue event was requeued or moved to another run."
+    worker["last_event_at"] = utc_now()
+    write_activity_log(
+        config,
+        {
+            "type": "worker_superseded",
+            "provider": worker.get("provider"),
+            "task_id": worker.get("task_id"),
+            "message": worker["last_error"],
+            "worker_run_id": worker.get("run_id"),
+            "queue_event_id": queue_event_id,
+        },
+    )
+    return True
+
+@_entrypoint
 def maybe_trigger_retry_or_fallback(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -4242,6 +4274,8 @@ def maybe_trigger_retry_or_fallback(
     worker: dict[str, Any],
     reason: str,
 ) -> tuple[bool, bool]:
+    if supersede_worker_without_queue_event(config, state, worker):
+        return True, True
     retry = worker_retry_settings(config, worker.get("provider"))
     failure = classify_worker_failure(config, worker, reason)
     max_attempts = int(retry.get("max_attempts", 5))
@@ -4280,8 +4314,7 @@ def maybe_trigger_retry_or_fallback(
         worker["reassigned_to"] = reassigned_to
         worker["last_error"] = reason
         worker["last_event_at"] = utc_now()
-        if not queue_event_moved_from_worker(state, worker):
-            finalize_queue_event_record(config, state, worker, "completed")
+        finalize_queue_event_record(config, state, worker, "completed")
         return True, True
 
     if retry.get("fallback_mode") == "file_inbox":
@@ -4335,6 +4368,11 @@ def retry_due_workers(
         if worker.get("pending_fence"):
             continue
         if worker.get("status") != "retry_backoff":
+            continue
+        # Ahead of the due check: a run waiting out its backoff would otherwise
+        # be adopted back onto the reset event before its retry falls due.
+        if supersede_worker_without_queue_event(config, state, worker):
+            changed = True
             continue
         next_retry_at = _parse_iso_utc(worker.get("next_retry_at"))
         if next_retry_at is None or next_retry_at > now:

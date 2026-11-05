@@ -46,7 +46,7 @@ def finalize_queue_event_record(
     error: str | None = None,
 ) -> None:
     """The original finalizer, except for an event this worker no longer holds."""
-    if worker_workspace.queue_event_moved_from_worker(state, worker):
+    if worker_workspace.release_moved_queue_event(state, worker):
         return
     _supervisor_module().finalize_queue_event_record(config, state, worker, status, error)
 

@@ -25,6 +25,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 import runtime_state
 import supervisor
 import worker_failure_policy
+import worker_lifecycle
 import worker_runner
 import worker_workspace
 import worktree_cleanliness
@@ -5561,6 +5562,315 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
             )
         self.assertTrue(settled)
         self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+
+    # --- retry and fallback launch: the real poll, spied only at adapter.deliver
+
+    FAILED_RUNNER = {"status": "failed", "exit_code": 1, "signal": None}
+    # Each way an event stops being this run's: the original reset, the original
+    # manual requeue shape, and each field naming another run.
+    MOVED_EVENTS = (
+        ("reset", lambda record: supervisor._reset_queue_record_for_redispatch(record, reason="redispatch")),
+        ("requeued", lambda record: (record.update(status="queued"), record.pop("run_id"), record.pop("lease_owner"))),
+        ("foreign run", lambda record: record.update(run_id="run-9", lease_owner="run-9")),
+        ("foreign lease", lambda record: record.update(lease_owner="run-9")),
+        ("foreign record", lambda record: record.update(run_id="run-9")),
+    )
+
+    def _launch_spy(self) -> Any:
+        """Replace only the adapter's deliver; every launch below it would be a real process."""
+        from adapters.base import DeliveryResult
+
+        # Launch persistence keeps only queue records whose event is really queued.
+        runtime_state.enqueue_event(
+            self.config,
+            {
+                "event_id": "evt-1",
+                "target_agent": "claude",
+                "provider": "claude",
+                "task_id": self.TASK_ID,
+                "reason": "owned_in_progress_dispatch",
+                "message": "go",
+            },
+        )
+        sleeper = subprocess.Popen(["sleep", "300"])
+        self.addCleanup(sleeper.wait)
+        self.addCleanup(sleeper.kill)
+        launches: list[tuple[str, Any]] = []
+
+        def build(mode: str, **_: Any) -> Any:
+            def deliver(request: Any) -> Any:
+                launches.append((mode, request))
+                manual = mode == "file_inbox"
+                return DeliveryResult(
+                    ok=True,
+                    adapter=mode,
+                    mode=mode,
+                    target="fixture",
+                    auto_delivered=not manual,
+                    manual_confirmation_required=manual,
+                    run_id=f"launched-{len(launches)}",
+                    pid=sleeper.pid,
+                )
+
+            return mock.Mock(deliver=deliver)
+
+        patcher = mock.patch.object(supervisor, "build_adapter", side_effect=build)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return launches
+
+    def _park_for_retry(self, run_id: str = "run-1", *, due: bool = True) -> dict[str, Any]:
+        worker = self.state["workers"][run_id]
+        worker.update(
+            status="retry_backoff",
+            retry_count=int(worker.get("retry_count", 0)) + 1,
+            next_retry_at="2000-01-01T00:00:00Z" if due else "2999-01-01T00:00:00Z",
+            pid=999999,
+        )
+        return worker
+
+    def _dispatch_failed(self, *, log_line: str = "Error when talking to gemini api: 429 rate limit") -> None:
+        self.config["worker_retry"] = {"enabled": True, "max_attempts": 2, "jitter_seconds": 0}
+        self._dispatch(runner=self.FAILED_RUNNER)
+        log = self.root / "worker.log"
+        log.write_text(log_line + "\n", encoding="utf-8")
+        self.worker["log_path"] = str(log)
+
+    def _enable_reassignment(self) -> Any:
+        self.config["worker_reassignment"] = {
+            "enabled": True,
+            "eligible_statuses": ["in_progress"],
+            "after_attempts": 1,
+            "reassign_on_terminal_failure": True,
+        }
+        patches = (
+            mock.patch.object(supervisor, "first_viable_agent", return_value="Gemini"),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True),
+        )
+        persist = None
+        for patcher in patches:
+            persist = patcher.start()
+            self.addCleanup(patcher.stop)
+        return persist
+
+    def _assert_stale_run_ended_without_side_effects(self, launches: list[Any], before: dict[str, Any], board: bytes) -> None:
+        worker = self.state["workers"]["run-1"]
+        self.assertEqual(launches, [])
+        self.assertEqual(worker["status"], "superseded")
+        self.assertIsNone(worker["next_retry_at"])
+        self.assertEqual(self.status_file.read_bytes(), board)
+        self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+        # The caller's own next step in the real tick must not consume it either.
+        supervisor.reconcile_queue_records(self.config, self.state)
+        self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+
+    def test_bound_due_retry_launches_one_child_on_the_same_event(self) -> None:
+        launches = self._launch_spy()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self._park_for_retry()
+        before = dict(self.state["queue"]["events"]["evt-1"])
+        self._poll()
+        self.assertEqual(len(launches), 1)
+        parent = self.state["workers"]["run-1"]
+        self.assertEqual((parent["status"], parent["superseded_by_run_id"]), ("retried", "launched-1"))
+        child = self.state["workers"]["launched-1"]
+        self.assertEqual((child["parent_run_id"], child["queue_event_id"]), ("run-1", "evt-1"))
+        self.assertEqual(self.state["queue"]["events"]["evt-1"]["run_id"], before["run_id"])
+
+    def test_due_retry_on_a_moved_event_does_not_launch_or_touch_it(self) -> None:
+        launches = self._launch_spy()
+        for name, move in self.MOVED_EVENTS:
+            with self.subTest(name):
+                self._dispatch(runner=self.FAILED_RUNNER)
+                self._park_for_retry()
+                record = self.state["queue"]["events"]["evt-1"]
+                move(record)
+                before = dict(record)
+                board = self.status_file.read_bytes()
+                self._poll()
+                self._assert_stale_run_ended_without_side_effects(launches, before, board)
+
+    def test_retry_still_backing_off_cannot_be_adopted_back_onto_a_reset_event(self) -> None:
+        launches = self._launch_spy()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self._park_for_retry(due=False)
+        record = self._requeue()
+        before = dict(record)
+        board = self.status_file.read_bytes()
+        self._poll()
+        self._assert_stale_run_ended_without_side_effects(launches, before, board)
+
+    def test_retry_with_a_model_cooldown_wait_on_a_moved_event_does_not_launch(self) -> None:
+        launches = self._launch_spy()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self._park_for_retry()[worker_failure_policy.model_rotation.DISPATCH_WAIT_KEY] = {
+            "kind": "model_cooldown",
+            "retry_at": "2000-01-01T00:00:00Z",
+        }
+        record = self._requeue()
+        before = dict(record)
+        board = self.status_file.read_bytes()
+        self._poll()
+        self._assert_stale_run_ended_without_side_effects(launches, before, board)
+
+    def test_reset_event_reaches_a_fresh_dispatch_and_never_the_stale_parent(self) -> None:
+        """The whole tick: poll, reconcile, prune, process_queue, poll."""
+        launches = self._launch_spy()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self._park_for_retry()
+        self._requeue()
+        report = {"agent_adapters": {"claude": {"can_auto_deliver": True, "delivery_mode": "claude_cli"}}}
+        # This host's own Claude processes are not this fixture's workers.
+        host_scan = mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None)
+        host_scan.start()
+        self.addCleanup(host_scan.stop)
+        supervisor.poll_workers(self.config, self.state, report)
+        supervisor.reconcile_queue_records(self.config, self.state)
+        supervisor.prune_event_queue(self.config, self.state)
+        self.assertEqual(launches, [])
+        self.assertEqual(self.state["queue"]["events"]["evt-1"]["status"], "queued")
+        supervisor.process_queue(self.config, self.state, report, base_cache={})
+        self.assertEqual(len(launches), 1, self.state["queue"]["events"]["evt-1"])
+        fresh = self.state["workers"]["launched-1"]
+        self.assertIsNone(fresh.get("parent_run_id"))
+        record = self.state["queue"]["events"]["evt-1"]
+        self.assertEqual((record["status"], record["run_id"]), ("started", "launched-1"))
+        self.assertEqual(self.state["workers"]["run-1"]["status"], "superseded")
+        supervisor.poll_workers(self.config, self.state, report)
+        self.assertEqual(len(launches), 1)
+
+    def test_retry_lineage_keeps_the_event_across_generations(self) -> None:
+        launches = self._launch_spy()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self.config["worker_retry"] = {"enabled": True, "max_attempts": 5, "jitter_seconds": 0}
+        run_id = "run-1"
+        for generation in range(1, 4):
+            self._park_for_retry(run_id)
+            self._poll()
+            self.assertEqual(len(launches), generation, self.state["workers"][run_id].get("last_error"))
+            self.assertEqual(self.state["workers"][run_id]["status"], "retried")
+            run_id = f"launched-{generation}"
+            child = self.state["workers"][run_id]
+            self.assertFalse(worker_workspace.queue_event_moved_from_worker(self.state, child))
+            # A live child's heartbeat takes the lease and leaves the first run_id.
+            self.state["queue"]["events"]["evt-1"]["lease_owner"] = run_id
+        self.assertEqual(self.state["queue"]["events"]["evt-1"]["run_id"], "run-1")
+        settled = dict(self.state["workers"][run_id], status="running", pid=999999)
+        self.state["workers"][run_id] = settled
+        worker_lifecycle.finalize_queue_event_record(self.config, self.state, settled, "failed", "ended")
+        self.assertEqual(self.state["queue"]["events"]["evt-1"]["status"], "failed")
+
+    def test_reset_after_generations_releases_the_whole_lineage(self) -> None:
+        launches = self._launch_spy()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self.config["worker_retry"] = {"enabled": True, "max_attempts": 5, "jitter_seconds": 0}
+        self._park_for_retry()
+        self._poll()
+        self._park_for_retry("launched-1")
+        self._poll()
+        self._park_for_retry("launched-2")
+        record = self._requeue()
+        before = dict(record)
+        self._poll()
+        self.assertEqual(len(launches), 2)
+        self.assertEqual(self.state["workers"]["launched-2"]["status"], "superseded")
+        supervisor.reconcile_queue_records(self.config, self.state)
+        self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+
+    def test_ancestor_of_another_event_or_cycle_does_not_extend_the_lineage(self) -> None:
+        self._dispatch()
+        self.state["queue"]["events"]["evt-1"].update(run_id="older", lease_owner="older")
+        self.state["workers"]["older"] = {"run_id": "older", "queue_event_id": "evt-1"}
+        self.state["workers"]["other"] = {"run_id": "other", "queue_event_id": "evt-2", "parent_run_id": "older"}
+        self.worker["parent_run_id"] = "other"
+        self.assertTrue(worker_workspace.queue_event_moved_from_worker(self.state, self.worker))
+        self.state["workers"]["other"].update(queue_event_id="evt-1", parent_run_id="run-1")
+        self.assertTrue(worker_workspace.queue_event_moved_from_worker(self.state, self.worker))
+
+    def test_transient_failure_schedules_a_retry_only_while_bound(self) -> None:
+        launches = self._launch_spy()
+        self._dispatch_failed()
+        self._poll()
+        worker = self.state["workers"]["run-1"]
+        self.assertEqual((worker["status"], worker["retry_count"]), ("retry_backoff", 1))
+        self.assertEqual(launches, [])
+        for name, move in self.MOVED_EVENTS:
+            with self.subTest(name):
+                self._dispatch_failed()
+                record = self.state["queue"]["events"]["evt-1"]
+                move(record)
+                before = dict(record)
+                board = self.status_file.read_bytes()
+                self._poll()
+                self.assertEqual(self.state["workers"]["run-1"]["retry_count"], 0)
+                self._assert_stale_run_ended_without_side_effects(launches, before, board)
+
+    def test_exhausted_retry_falls_back_only_while_bound(self) -> None:
+        launches = self._launch_spy()
+        self._dispatch_failed()
+        self.config["worker_retry"].update(max_attempts=0, fallback_mode="file_inbox")
+        self._poll()
+        self.assertEqual([mode for mode, _ in launches], ["file_inbox"])
+        self.assertEqual(self.state["workers"]["run-1"]["status"], "fallback")
+        launches.clear()
+        for name, move in self.MOVED_EVENTS:
+            with self.subTest(name):
+                self._dispatch_failed()
+                self.config["worker_retry"].update(max_attempts=0, fallback_mode="file_inbox")
+                record = self.state["queue"]["events"]["evt-1"]
+                move(record)
+                before = dict(record)
+                board = self.status_file.read_bytes()
+                self._poll()
+                self._assert_stale_run_ended_without_side_effects(launches, before, board)
+
+    def test_exhausted_retry_reassigns_only_while_bound(self) -> None:
+        self._launch_spy()
+        persist = self._enable_reassignment()
+        self._dispatch_failed()
+        self.config["worker_retry"].update(max_attempts=0)
+        self._poll()
+        self.assertEqual(self.state["workers"]["run-1"]["status"], "reassigned")
+        persist.assert_called_once()
+        persist.reset_mock()
+        for name, move in self.MOVED_EVENTS:
+            with self.subTest(name):
+                self._dispatch_failed()
+                self.config["worker_retry"].update(max_attempts=0)
+                record = self.state["queue"]["events"]["evt-1"]
+                move(record)
+                before = dict(record)
+                self._poll()
+                persist.assert_not_called()
+                self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+
+    def test_nontransient_failure_on_a_moved_event_does_not_reassign_or_finalize(self) -> None:
+        self._launch_spy()
+        persist = self._enable_reassignment()
+        for name, move in self.MOVED_EVENTS:
+            with self.subTest(name):
+                self._dispatch_failed(log_line='"error": "authentication_failed"')
+                record = self.state["queue"]["events"]["evt-1"]
+                move(record)
+                before = dict(record)
+                self._poll()
+                persist.assert_not_called()
+                self.assertEqual(self.state["workers"]["run-1"]["status"], "failed")
+                supervisor.reconcile_queue_records(self.config, self.state)
+                self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+
+    def test_prelaunch_failure_of_the_queued_attempt_can_still_reassign(self) -> None:
+        persist = self._enable_reassignment()
+        self._dispatch()
+        self._requeue()
+        attempt = {"provider": "claude", "agent_id": "claude", "task_id": self.TASK_ID, "queue_event_id": "evt-1", "run_id": None}
+        self.assertEqual(
+            worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                self.config, self.state, attempt, "launch failed", terminal=True, force=True
+            ),
+            "Gemini",
+        )
+        persist.assert_called_once()
 
     def test_canonical_blocker_history_and_roles_survive_a_credited_exit(self) -> None:
         self._blocked_after_real_commit()
