@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from common import display_name_for, normalize_agent_id
+from dispatch_policy import is_human_gate_agent
 from task_archive import load_archived_task
 from worktree_cleanliness import ProtectedPathPolicyError, task_protected_paths
 
@@ -58,10 +59,23 @@ def _parent_selected_owner(config: dict[str, Any], parent: dict[str, Any]) -> st
 
 
 def parent_sidecar_refusal(config: dict[str, Any], parent: dict[str, Any]) -> str | None:
-    """Why no capacity sidecar may act under this parent, when it is created or later."""
+    """Why no capacity sidecar may act under this parent, when it is created or later.
+
+    The child never carries the parent's gate, so its own eligibility cannot see it.
+    """
+    from supervisor import runtime_ai_status, task_is_human_gate
+
     prose = " ".join(str(parent.get(key) or "") for key in ("blocked_reason", "next", "waiting_for")).lower()
     if str(parent.get("status") or "").lower() == "blocked" and any(marker in prose for marker in HARD_GATE_MARKERS):
         return "capacity sidecar parent is blocked on a human or manual gate"
+    if parent.get("non_dispatchable"):
+        return "capacity sidecar parent is non-dispatchable"
+    if (
+        task_is_human_gate(parent)
+        or is_human_gate_agent(parent.get("waiting_for"))
+        or runtime_ai_status.task_unresolved_human_or_independent_gate_reason(parent)
+    ):
+        return "capacity sidecar parent is held by a structured human gate"
     if _parent_selected_owner(config, parent) is None:
         return "capacity sidecar parent has no registered automatic owner"
     if "frozen_evidence_base_sha" in parent:

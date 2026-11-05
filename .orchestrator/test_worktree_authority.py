@@ -629,6 +629,12 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
             ("parent frozen later", self._sidecar(), {**parent, "frozen_evidence_base_sha": "a" * 40}, "frozen evidence base"),
             ("parent manual gate later", self._sidecar(), {**parent, "status": "blocked", "next": "Waiting for manual approval"}, "human or manual gate"),
             ("parent owner unregistered", self._sidecar(owner="Ghost"), {**parent, "owner": "Ghost"}, "no registered automatic owner"),
+            ("parent gate status later", self._sidecar(), {**parent, "gate_status": "pending_human_signoff"}, "human gate"),
+            ("parent gate class later", self._sidecar(), {**parent, "task_class": "human_gate"}, "human gate"),
+            ("parent human roles later", self._sidecar(), {**parent, "human_required_roles": ["Human/Ops"]}, "human gate"),
+            ("parent waits for human later", self._sidecar(), {**parent, "waiting_for": "Human/Ops"}, "human gate"),
+            ("parent approval required later", self._sidecar(), {**parent, "requires_human_approval": True}, "human gate"),
+            ("parent non-dispatchable later", self._sidecar(), {**parent, "non_dispatchable": True}, "non-dispatchable"),
         ):
             with self.subTest(name):
                 ok, message = self._prepare_sidecar(sidecar, board_parent)
@@ -637,6 +643,9 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
                 self.assertFalse((self.root / "worktrees" / "pantheon" / "sc-001").exists())
 
         ok, message = self._prepare_sidecar(self._sidecar(), parent)
+        self.assertTrue(ok, message)
+        ordinary_blocked = {**parent, "status": "blocked", "blocked_reason": "upstream API defect", "waiting_for": "Codex"}
+        ok, message = self._prepare_sidecar(self._sidecar(), ordinary_blocked)
         self.assertTrue(ok, message)
 
     def test_archived_parent_remains_the_sidecar_authority(self) -> None:

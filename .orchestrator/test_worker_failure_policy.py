@@ -5962,6 +5962,17 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
 
     PARENT_ID = "T-PARENT-001"
 
+    # Each shape alone, on an otherwise ordinary blocked parent with no marker prose.
+    PARENT_GATES = (
+        ("gate status", {"gate_status": "pending_human_signoff"}, "human gate"),
+        ("gate class", {"task_class": "human_gate"}, "human gate"),
+        ("human roles", {"human_required_roles": ["Human/Ops"]}, "human gate"),
+        ("waiting for human", {"waiting_for": "Human/Ops"}, "human gate"),
+        ("approval required", {"requires_human_approval": True}, "human gate"),
+        ("independent gate", {"credentials_gate": "pending"}, "human gate"),
+        ("non dispatchable", {"non_dispatchable": True}, "non-dispatchable"),
+    )
+
     def _queue_capacity_sidecar(self) -> None:
         protected = ["guarded/zone"]
         self.task.update(
@@ -6011,6 +6022,7 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
             ("parent frozen", "parent", {"frozen_evidence_base_sha": "8e5872544bff88d421a1923c7957ca6b12429ce2"}, "frozen"),
             ("parent manual gate", "parent", {"next": "Waiting for manual approval"}, "human or manual gate"),
             ("child widened", "child", {"protected_paths": ["guarded/zone", "private/new-zone"]}, "prepared without"),
+            *((f"parent {name}", "parent", fields, expected) for name, fields, expected in self.PARENT_GATES),
         ):
             with self.subTest(name):
                 self._queue_capacity_sidecar()
@@ -6036,6 +6048,7 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
             ("parent lane moved", {"owner": "Codex"}),
             ("parent frozen", {"frozen_evidence_base_sha": "8e5872544bff88d421a1923c7957ca6b12429ce2"}),
             ("parent manual gate", {"next": "Waiting for manual approval"}),
+            *((f"parent {name}", fields) for name, fields, _ in self.PARENT_GATES),
         ):
             with self.subTest(name):
                 self._queue_capacity_sidecar()
@@ -6046,6 +6059,55 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
                 board = self.status_file.read_bytes()
                 self._poll()
                 self._assert_refused_before_launch(launches, board)
+
+    def test_due_sidecar_retry_under_an_ordinary_blocked_parent_launches(self) -> None:
+        launches = self._launch_spy()
+        self._queue_capacity_sidecar()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self._park_for_retry()
+        self.other_tasks[0].update(blocked_reason="upstream API defect", waiting_for="Codex")
+        self._write_board()
+        self._poll()
+        self.assertEqual(len(launches), 1)
+        self.assertEqual(self.state["workers"]["launched-1"]["parent_run_id"], "run-1")
+
+    def test_sidecar_file_inbox_fallback_needs_its_parent_authority_too(self) -> None:
+        launches = self._launch_spy()
+        for name, fields, expected in self.PARENT_GATES:
+            with self.subTest(name):
+                self._queue_capacity_sidecar()
+                self._dispatch_failed()
+                self.config["worker_retry"].update(max_attempts=0, fallback_mode="file_inbox")
+                self.other_tasks[0].update(fields)
+                self._write_board()
+                board = self.status_file.read_bytes()
+                outcome = supervisor.maybe_trigger_retry_or_fallback(self.config, self.state, {}, self.worker, "429 rate limit")
+                self.assertEqual(outcome, (True, True))
+                self.assertEqual(launches, [])
+                self.assertEqual(self.worker["status"], "superseded")
+                self.assertIn(expected, self.worker["last_error"])
+                self.assertEqual(self.state["queue"]["events"]["evt-1"]["status"], "completed")
+                self.assertEqual(self.status_file.read_bytes(), board)
+
+        self._queue_capacity_sidecar()
+        self._dispatch_failed()
+        self.config["worker_retry"].update(max_attempts=0, fallback_mode="file_inbox")
+        self.assertEqual(supervisor.maybe_trigger_retry_or_fallback(self.config, self.state, {}, self.worker, "429 rate limit"), (True, True))
+        self.assertEqual([mode for mode, _ in launches], ["file_inbox"])
+
+    def test_sidecar_approved_resume_needs_its_parent_authority_too(self) -> None:
+        for name, fields, _ in self.PARENT_GATES:
+            with self.subTest(name):
+                self._queue_capacity_sidecar()
+                self._dispatch(runner=self.FAILED_RUNNER)
+                self.other_tasks[0].update(fields)
+                resume = self._poll_approved_resume({}, status="suspended_approval")
+                resume.assert_not_called()
+                self.assertEqual(self.state["workers"]["run-1"]["status"], "superseded")
+
+        self._queue_capacity_sidecar()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self._poll_approved_resume({}, status="suspended_approval").assert_called_once()
 
     # --- the persisted tick: real run_once over real files, spied at adapter.deliver
 

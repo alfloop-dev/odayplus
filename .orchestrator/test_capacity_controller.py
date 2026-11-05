@@ -1331,6 +1331,33 @@ def test_parent_authority_that_cannot_be_carried_refuses_the_child() -> None:
         assert candidates_for(parent) == [], parent
 
 
+def test_structured_parent_gate_refuses_the_child_without_any_marker_prose() -> None:
+    for fields in (
+        {"gate_status": "pending_human_signoff"},
+        {"task_class": "human_gate"},
+        {"human_required_roles": ["Human/Ops"]},
+        {"non_dispatchable": True},
+        {"waiting_for": "Human/Ops"},
+        {"requires_human_approval": True},
+        {"credentials_gate": "pending"},
+    ):
+        parent = blocked_parent(blocked_reason="upstream API defect", **fields)
+        assert candidates_for(parent) == [], fields
+        assert capacity_controller.parent_sidecar_refusal(config(), parent), fields
+
+
+def test_ordinary_blocked_parent_keeps_its_sidecar() -> None:
+    for fields in (
+        {},
+        {"waiting_for": "Codex"},
+        {"gate_status": "passed"},
+        {"non_dispatchable": False, "human_required_roles": [], "requires_human_approval": False},
+    ):
+        parent = blocked_parent(blocked_reason="upstream API defect", **fields)
+        assert [child["helper_parent"] for child in candidates_for(parent)] == ["PARENT-1"], fields
+        assert capacity_controller.parent_sidecar_refusal(config(), parent) is None, fields
+
+
 def test_capacity_sidecar_owner_lane_cannot_move_but_reviewers_keep_their_pools() -> None:
     cfg = {
         "agents": {
