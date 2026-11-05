@@ -7,11 +7,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import worker_workspace
 from common import (
     isoformat_utc,
     parse_iso_timestamp,
 )
-import worker_workspace
 from runtime_state import HANDED_OFF_WORKER_STATUSES, TERMINAL_WORKER_STATUSES
 
 
