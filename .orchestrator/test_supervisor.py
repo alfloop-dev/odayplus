@@ -21885,11 +21885,18 @@ class CapacityControllerReconciliationTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.archive_root = archive_root
+        (archive_root / "fleet").mkdir()
+        environment = mock.patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in [name for name in os.environ if name.endswith("_LOCAL_PATHS")]:
+            del os.environ[name]
 
     def _config(self, slot_count: int = 2) -> dict[str, Any]:
         return {
-            # The creator resolves each parent's source; keep the registry inside this root.
-            "paths": {"status_file": str(self.archive_root / "ai-status.json")},
+            # The creator resolves each parent's source. One level down, so the registry's
+            # relative siblings stay inside this root too.
+            "paths": {"status_file": str(self.archive_root / "fleet" / "ai-status.json")},
             "schema": {"tasks_path": "tasks"},
             "agents": {
                 "claude": {"provider": "claude", "slot_id": "slot-0"},

@@ -2683,6 +2683,8 @@ def launch_protection_refusal(
     from multi_repo_registry import canonical_repository_id_for_root
 
     source = worker_task_repository_binding(config, task)
+    if not source.resolved:
+        return f"capacity sidecar source is unresolved: {source.error or source.source}"
     current = canonical_repository_id_for_root(config, source.root, fallback=source.repo_id)
     prepared_source = str(request_metadata.get("repository_id") or "")
     if prepared_source != current:

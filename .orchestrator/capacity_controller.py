@@ -696,6 +696,20 @@ def sidecar_candidates(
                 _render_template(value, variables)
                 for value in template.get("artifact_targets", [])
             ]
+            # A legacy parent may name no repository and resolve from artifacts the child
+            # does not share. Prefer its declaration or slug: `pantheon` has no slug here
+            # and its child keeps the plain record, since a declared `pantheon` is what the
+            # merge route cannot address. The registry id says it when nothing else lands
+            # on the parent's checkout. An unresolved binding is never a match.
+            for repository in (
+                str(parent.get("repository") or "").strip() or parent_source.slug,
+                parent_source.repo_id,
+            ):
+                child_source = resolve_task_repository(config, {"repository": repository, "artifacts": artifacts})
+                if child_source.resolved and child_source.root == parent_source.root:
+                    break
+            else:
+                continue
             sidecar_dict = {
                 "id": sidecar_id,
                 "title": _render_template(
@@ -710,10 +724,7 @@ def sidecar_candidates(
                 "owner": parent_owner,
                 "reviewer": "DIFFERENT_AGENT_REQUIRED",
                 "depends_on": [],
-                # A legacy parent may name no repository and resolve from artifacts the
-                # child does not share, so the child states where the parent resolved.
-                # `pantheon` has no slug here: that child keeps its plain record.
-                "repository": str(parent.get("repository") or "").strip() or parent_source.slug,
+                "repository": repository,
                 "base_branch": parent.get("base_branch") or "dev",
                 "artifacts": artifacts,
                 "task_class": "sidecar",
@@ -735,9 +746,6 @@ def sidecar_candidates(
                 sidecar_dict["protected_paths"] = list(protected_paths)
             if isinstance(parent.get("source_docs"), list):
                 sidecar_dict["source_docs"] = list(parent["source_docs"])
-            # What the record resolves to is what would act, whichever field decided it.
-            if resolve_task_repository(config, sidecar_dict).root != parent_source.root:
-                continue
             candidates.append(sidecar_dict)
             existing_signatures.add(signature)
             if len(candidates) >= budget:

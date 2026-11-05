@@ -10,6 +10,7 @@ import capacity_controller
 import pytest
 import supervisor
 import task_archive
+import worker_workspace
 
 NOW = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
 # Set per test by the autouse fixture: the creator now resolves each parent's source,
@@ -1302,7 +1303,12 @@ def candidates_for(*parents: dict) -> list[dict]:
 
 
 def source_config(tmp_path: Path) -> dict:
-    """The original registry and resolver, with its checkouts at owned paths."""
+    """The original registry and resolver, with its checkouts at owned paths.
+
+    These are empty directories. The resolver accepts a checkout with no origin, so they
+    exercise which source is chosen and say nothing about its provenance; the real Git
+    checkouts are in test_worktree_authority and test_worker_failure_policy.
+    """
     home, platform, front = tmp_path / "home", tmp_path / "platform", tmp_path / "front"
     for checkout in (home, platform, front):
         checkout.mkdir()
@@ -1368,17 +1374,18 @@ def test_parent_source_that_cannot_be_resolved_refuses_the_child(tmp_path: Path)
     assert [c["helper_parent"] for c in source_candidates(cfg, blocked_parent(repository="org/x"), ok)] == ["PARENT-2"]
 
 
-def test_child_that_would_not_resolve_to_its_parent_source_is_not_created(tmp_path: Path) -> None:
+def test_child_is_declared_by_registry_id_when_nothing_else_reaches_its_parent_source(tmp_path: Path) -> None:
     cfg = source_config(tmp_path)
-    # Registered without a slug, so there is nothing to write that names it.
+    # Registered and resolvable, with no slug to write. The resolver accepts its id.
     (tmp_path / "unslugged").mkdir()
     cfg["coordination"]["repositories"]["unslugged"] = {
         "repo": None,
         "local_path": str(tmp_path / "unslugged"),
         "artifact_prefixes": ["unslugged/"],
     }
-    assert source_candidates(cfg, blocked_parent(artifacts=["unslugged/diag.md"])) == []
-    assert [c["repository"] for c in source_candidates(cfg, blocked_parent(repository="unslugged"))] == ["unslugged"]
+    [child] = source_candidates(cfg, blocked_parent(artifacts=["unslugged/diag.md"]))
+    assert child["repository"] == "unslugged"
+    assert supervisor.worker_task_repository_binding(cfg, child).root == tmp_path / "unslugged"
 
     # The catalog names the child's artifacts, which an undeclared record resolves from.
     catalog = tmp_path / "catalog.json"
@@ -1397,8 +1404,35 @@ def test_child_that_would_not_resolve_to_its_parent_source_is_not_created(tmp_pa
         encoding="utf-8",
     )
     cfg["sidecar_catalog_path"] = str(catalog)
-    assert source_candidates(cfg, blocked_parent()) == []
-    assert source_candidates(cfg, blocked_parent(repository="oday_data_platform")) != []
+    [child] = source_candidates(cfg, blocked_parent())
+    assert child["repository"] == "pantheon"
+    assert supervisor.worker_task_repository_binding(cfg, child).root == tmp_path / "home"
+
+
+def test_a_checkout_gone_after_the_parent_check_is_no_source_at_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = source_config(tmp_path)
+    parent = blocked_parent(repository="absent_checkout")
+    child = {
+        "id": "SC",
+        "task_class": "sidecar",
+        "auto_created_by": "capacity-controller",
+        "helper_parent": parent["id"],
+        "owner": "Claude",
+        "repository": "absent_checkout",
+    }
+    Path(cfg["paths"]["status_file"]).write_text(json.dumps({"tasks": [parent, child]}), encoding="utf-8")
+    prepared = {"repository_id": "absent_checkout"}
+    # Passed a moment ago, and unresolved at every later read: two missing roots are not a match.
+    monkeypatch.setattr(capacity_controller, "parent_sidecar_refusal", lambda *_: None)
+    assert source_candidates(cfg, parent) == []
+    monkeypatch.setattr(worker_workspace, "parent_sidecar_refusal", lambda *_: None)
+    refusal = supervisor.launch_protection_refusal(cfg, child, prepared)
+    assert refusal and "is not its parent's current source" in refusal
+    monkeypatch.setattr(worker_workspace, "_capacity_sidecar_authority_refusal", lambda *_: None)
+    refusal = supervisor.launch_protection_refusal(cfg, child, prepared)
+    assert refusal and "source is unresolved" in refusal
 
 
 def test_valid_parent_source_keeps_its_declaration_and_checkout(tmp_path: Path) -> None:

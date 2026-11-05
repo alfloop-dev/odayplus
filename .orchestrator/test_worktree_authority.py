@@ -714,35 +714,41 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
                 self.assertTrue((self.root / "worktrees" / namespace / sidecar["id"].lower()).is_dir())
 
     def test_artifact_inferred_parent_prepares_its_real_child_in_the_parents_checkout(self) -> None:
-        repositories = self._side_checkout()
-        parent = {
-            "id": "PARENT-001",
-            "status": "blocked",
-            "owner": "Claude",
-            "reviewer": "Codex",
-            "artifacts": ["side-repo/diag.md"],
-            "protected_paths": PROTECTED,
-        }
+        with_slug = self._side_checkout()
+        without_slug = {**with_slug, "side_repo": {**with_slug["side_repo"], "repo": None}}
         wave = {
             "capacity_controller": {
                 "chair_decision": {"valid_until": "2999-01-01T00:00:00Z", "sidecar_wave": {"approved": True}}
             }
         }
-        [child] = capacity_controller.sidecar_candidates(
-            self._sidecar_config(repositories), wave, [parent], runnable_tasks=set()
-        )
-        self.assertEqual(child["repository"], "org/side-repo")
+        for parent_id, repositories, declared in (
+            ("PARENT-001", with_slug, "org/side-repo"),
+            ("PARENT-002", without_slug, "side_repo"),
+        ):
+            with self.subTest(declared):
+                parent = {
+                    "id": parent_id,
+                    "status": "blocked",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "artifacts": ["side-repo/diag.md"],
+                    "protected_paths": PROTECTED,
+                }
+                [child] = capacity_controller.sidecar_candidates(
+                    self._sidecar_config(repositories), wave, [parent], runnable_tasks=set()
+                )
+                self.assertEqual(child["repository"], declared)
 
-        ok, message = self._prepare_sidecar(child, parent, repositories)
+                ok, message = self._prepare_sidecar(child, parent, repositories)
 
-        self.assertTrue(ok, message)
-        metadata = self.prepared_request.metadata
-        self.assertEqual(metadata["repository_id"], "side_repo")
-        self.assertEqual(metadata["protected_paths"], PROTECTED)
-        self.assertTrue(Path(metadata["workspace_path"]).is_relative_to(self.root / "worktrees" / "side-repo"))
-        # The source's own configured branch, not the parent's or the fleet's.
-        self.assertEqual(self.base_resolver.call_args.kwargs["default_branch"], "trunk")
-        self.assertEqual(self.base_resolver.call_args.args[0], self.root / "side")
+                self.assertTrue(ok, message)
+                metadata = self.prepared_request.metadata
+                self.assertEqual(metadata["repository_id"], "side_repo")
+                self.assertEqual(metadata["protected_paths"], PROTECTED)
+                self.assertTrue(Path(metadata["workspace_path"]).is_relative_to(self.root / "worktrees" / "side-repo"))
+                # The source's own configured branch, not the parent's or the fleet's.
+                self.assertEqual(self.base_resolver.call_args.kwargs["default_branch"], "trunk")
+                self.assertEqual(self.base_resolver.call_args.args[0], self.root / "side")
 
     def test_archived_parent_remains_the_sidecar_authority(self) -> None:
         archived = {"id": "PARENT-001", "owner": "Claude", "protected_paths": PROTECTED}
