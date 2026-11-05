@@ -18,6 +18,7 @@ MIGRATION_DIR = THIS_DIR.parent / "scripts" / "orchestrator"
 if str(MIGRATION_DIR) not in sys.path:
     sys.path.insert(0, str(MIGRATION_DIR))
 
+import capacity_controller
 import migrate_worker_worktree_config as migration
 import supervisor
 import worker_workspace
@@ -596,18 +597,7 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         status_file = self.root / "sidecar-status.json"
         board = [sidecar, *([parent] if parent else [])]
         status_file.write_text(json.dumps({"tasks": board}), encoding="utf-8")
-        config = {
-            "paths": {"status_file": str(status_file), "activity_log": str(self.root / "activity.jsonl")},
-            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
-            "coordination": {
-                "repositories": {
-                    "pantheon": {"repo": None, "local_path": str(self.repo), "default_branch": "dev"},
-                    **(repositories or {}),
-                }
-            },
-            "worker_worktrees": {"root": str(self.root / "worktrees")},
-            "agents": {"claude": {"provider": "claude"}},
-        }
+        config = self._sidecar_config(repositories)
         request = supervisor.DeliveryRequest(
             agent_id="claude", provider="claude", delivery_mode="claude", message="wake",
             task_id=sidecar["id"], reason="owned_ready_dispatch", metadata={"task": {"id": sidecar["id"]}},
@@ -618,11 +608,31 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         with (
             mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),
             mock.patch.object(supervisor, "write_activity_log"),
-            mock.patch.object(supervisor, "resolve_worker_base", return_value=(base, None)),
+            mock.patch.object(supervisor, "resolve_worker_base", return_value=(base, None)) as base_resolver,
         ):
-            return supervisor.prepare_worker_workspace(
+            result = supervisor.prepare_worker_workspace(
                 config, {}, request, queue_event_id="event", target_agent="Claude", base_cache={}
             )
+        self.prepared_request, self.base_resolver = request, base_resolver
+        return result
+
+    def _sidecar_config(self, repositories: dict | None = None) -> dict:
+        return {
+            "paths": {"status_file": str(self.root / "sidecar-status.json"), "activity_log": str(self.root / "activity.jsonl")},
+            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            "coordination": {
+                "repositories": {
+                    "pantheon": {"repo": None, "local_path": str(self.repo), "default_branch": "dev"},
+                    **(repositories or {}),
+                }
+            },
+            "worker_worktrees": {"root": str(self.root / "worktrees")},
+            "agents": {"claude": {"provider": "claude"}, **{f"slot-{index}": {"slot_id": f"slot-{index}"} for index in range(8)}},
+            "capacity_controller": {
+                "coordination_reserved_slots": 1,
+                "sidecars": {"max_new_per_wave": 1, "max_active": 4, "max_capacity_ratio": 0.5, "ttl_seconds": 7200},
+            },
+        }
 
     def test_capacity_sidecar_prepares_only_under_its_live_parent_authority(self) -> None:
         parent = {"id": "PARENT-001", "owner": "Claude", "protected_paths": PROTECTED}
@@ -656,11 +666,12 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
     def _side_checkout(self) -> dict:
         side = self.root / "side"
         self._git(self.root, "clone", "--quiet", str(self.repo), str(side))
+        self._git(side, "remote", "set-url", "origin", "https://github.com/org/side-repo.git")
         return {
             "side_repo": {
-                "repo": None,
+                "repo": "org/side-repo",
                 "local_path": str(side),
-                "default_branch": "dev",
+                "default_branch": "trunk",
                 "artifact_prefixes": ["side-repo/"],
             },
             "second_repo": {"repo": None, "local_path": str(self.root), "artifact_prefixes": ["second-repo/"]},
@@ -701,6 +712,37 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
                 ok, message = self._prepare_sidecar(sidecar, board_parent, repositories)
                 self.assertTrue(ok, message)
                 self.assertTrue((self.root / "worktrees" / namespace / sidecar["id"].lower()).is_dir())
+
+    def test_artifact_inferred_parent_prepares_its_real_child_in_the_parents_checkout(self) -> None:
+        repositories = self._side_checkout()
+        parent = {
+            "id": "PARENT-001",
+            "status": "blocked",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "artifacts": ["side-repo/diag.md"],
+            "protected_paths": PROTECTED,
+        }
+        wave = {
+            "capacity_controller": {
+                "chair_decision": {"valid_until": "2999-01-01T00:00:00Z", "sidecar_wave": {"approved": True}}
+            }
+        }
+        [child] = capacity_controller.sidecar_candidates(
+            self._sidecar_config(repositories), wave, [parent], runnable_tasks=set()
+        )
+        self.assertEqual(child["repository"], "org/side-repo")
+
+        ok, message = self._prepare_sidecar(child, parent, repositories)
+
+        self.assertTrue(ok, message)
+        metadata = self.prepared_request.metadata
+        self.assertEqual(metadata["repository_id"], "side_repo")
+        self.assertEqual(metadata["protected_paths"], PROTECTED)
+        self.assertTrue(Path(metadata["workspace_path"]).is_relative_to(self.root / "worktrees" / "side-repo"))
+        # The source's own configured branch, not the parent's or the fleet's.
+        self.assertEqual(self.base_resolver.call_args.kwargs["default_branch"], "trunk")
+        self.assertEqual(self.base_resolver.call_args.args[0], self.root / "side")
 
     def test_archived_parent_remains_the_sidecar_authority(self) -> None:
         archived = {"id": "PARENT-001", "owner": "Claude", "protected_paths": PROTECTED}

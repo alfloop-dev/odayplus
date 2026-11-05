@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -11,6 +12,9 @@ import supervisor
 import task_archive
 
 NOW = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
+# Set per test by the autouse fixture: the creator now resolves each parent's source,
+# and an unbound config would resolve it to the checkout running these tests.
+OWNED_STATUS_ROOT = Path("/nonexistent/unbound-status-root")
 
 
 @pytest.fixture(autouse=True)
@@ -25,12 +29,21 @@ def scoped_task_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     monkeypatch.setattr(task_archive, "ARCHIVE_DIR", archive_dir)
     monkeypatch.setattr(task_archive, "ARCHIVE_TASKS_DIR", tasks_dir)
     monkeypatch.setattr(task_archive, "ARCHIVE_INDEX_FILE", index_file)
+    # Relative registry paths hang off the status file, so even the default registry's
+    # siblings stay inside this test's root, and no host override can name a checkout.
+    monkeypatch.setitem(globals(), "OWNED_STATUS_ROOT", test_status_root)
+    for name in [name for name in os.environ if name.endswith("_LOCAL_PATHS")]:
+        monkeypatch.delenv(name)
     return test_status_root
 
 
 
 def config(slot_count: int = 8) -> dict:
     return {
+        "paths": {
+            "status_file": str(OWNED_STATUS_ROOT / "ai-status.json"),
+            "activity_log": str(OWNED_STATUS_ROOT / "activity.jsonl"),
+        },
         "agents": {
             "Claude": {"provider": "claude", "slot_id": "slot-0"},
             "Codex": {"provider": "codex", "slot_id": "slot-1"},
@@ -1295,7 +1308,6 @@ def source_config(tmp_path: Path) -> dict:
         checkout.mkdir()
     return {
         **config(),
-        "paths": {"status_file": str(tmp_path / "ai-status.json"), "activity_log": str(tmp_path / "activity.jsonl")},
         "coordination": {
             "repositories": {
                 "pantheon": {"repo": None, "local_path": str(home)},
@@ -1322,8 +1334,12 @@ def test_artifact_inferred_parent_source_reaches_the_child_and_its_launch(tmp_pa
     assert child["artifacts"][0].startswith("support/sidecars/"), "the child's own artifacts name no source"
     assert supervisor.worker_task_repository_binding(cfg, child).root == tmp_path / "platform"
     Path(cfg["paths"]["status_file"]).write_text(json.dumps({"tasks": [parent, child]}), encoding="utf-8")
-    prepared = {"protected_paths": ["guarded/zone"]}
+    prepared = {"protected_paths": ["guarded/zone"], "repository_id": "oday_data_platform"}
     assert supervisor.launch_protection_refusal(cfg, child, prepared) is None
+    # A request carries what it was prepared in; the current source cannot stand in for it.
+    for recorded, expected in (("pantheon", "prepared in pantheon"), (None, "no recorded source")):
+        refusal = supervisor.launch_protection_refusal(cfg, child, {**prepared, "repository_id": recorded})
+        assert refusal and expected in refusal
     # A child persisted before it could carry this resolves somewhere else, and may not act.
     refusal = supervisor.launch_protection_refusal(cfg, {**child, "repository": None}, prepared)
     assert refusal and "not its parent's current source" in refusal

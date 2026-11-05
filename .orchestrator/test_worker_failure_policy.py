@@ -5974,27 +5974,54 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
     )
     PARENT_SOURCES = (
         ("source moved", {"repository": "side_repo"}, "current source"),
-        ("source inferred elsewhere", {"artifacts": ["side-repo/diag.md"]}, "current source"),
+        ("source inferred elsewhere", {"repository": None, "artifacts": ["side-repo/diag.md"]}, "current source"),
         ("source unknown", {"repository": "org/unregistered"}, "source is unresolved"),
-        ("source ambiguous", {"artifacts": ["side-repo/a.md", "front-ai-trading-system/b.md"]}, "source is unresolved"),
+        (
+            "source ambiguous",
+            {"repository": None, "artifacts": ["side-repo/a.md", "front-ai-trading-system/b.md"]},
+            "source is unresolved",
+        ),
     )
     PARENT_REFUSALS = PARENT_GATES + PARENT_SOURCES
 
-    def _queue_capacity_sidecar(self) -> None:
-        protected = ["guarded/zone"]
+    def _side_checkout(self) -> Path:
+        """A second synthetic checkout and bare origin, registered under the fixture's root."""
         side = self.root / "side-checkout"
-        side.mkdir(exist_ok=True)
-        self.config["coordination"]["repositories"]["side_repo"] = {
-            "repo": None,
-            "local_path": str(side),
-            "artifact_prefixes": ["side-repo/"],
-        }
+        if not side.exists():
+            origin = self.root / "side-origin.git"
+            origin.mkdir()
+            _git_run(origin, "init", "--bare", "--quiet")
+            side.mkdir()
+            _git_run(side, "init", "--quiet", "-b", "dev")
+            _git_run(side, "config", "user.email", "test@pantheon.local")
+            _git_run(side, "config", "user.name", "Test Runner")
+            (side / "README.md").write_text("side\n", encoding="utf-8")
+            _git_run(side, "add", "README.md")
+            _git_run(side, "commit", "--quiet", "-m", "side base")
+            _git_run(side, "remote", "add", "origin", str(origin))
+            _git_run(side, "push", "--quiet", "-u", "origin", "dev")
+        return side
+
+    def _queue_capacity_sidecar(self, repository: str = "pantheon") -> None:
+        protected = ["guarded/zone"]
+        self.config["coordination"]["repositories"].update(
+            {
+                "side_repo": {
+                    "repo": None,
+                    "local_path": str(self._side_checkout()),
+                    "default_branch": "dev",
+                    "artifact_prefixes": ["side-repo/"],
+                },
+                # Another id of the one checkout `pantheon` names.
+                "odayplus": {"repo": None, "local_path": str(self.repo), "default_branch": "dev"},
+            }
+        )
         self.task.update(
             task_class="sidecar",
             auto_created_by="capacity-controller",
             helper_parent=self.PARENT_ID,
             protected_paths=protected,
-            repository="pantheon",
+            repository=repository,
         )
         self.other_tasks = [
             {
@@ -6003,6 +6030,7 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
                 "reviewer": "Codex",
                 "status": "blocked",
                 "protected_paths": protected,
+                "repository": repository,
             }
         ]
         self._write_board()
@@ -6057,12 +6085,100 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
         self.assertEqual(len(launches), 1, self.state["queue"]["events"]["evt-1"])
         self.assertEqual(launches[0][1].metadata["protected_paths"], ["guarded/zone"])
 
-    def test_final_launch_keeps_one_source_named_by_another_id(self) -> None:
+    def _move_sidecar_source(self, repository: str) -> None:
+        self.task.update(repository=repository)
+        self.other_tasks[0].update(repository=repository)
+
+    def test_final_launch_refuses_child_and_parent_that_moved_together(self) -> None:
         launches = self._launch_spy()
         self._queue_capacity_sidecar()
-        self.config["coordination"]["repositories"]["odayplus"] = {"repo": None, "local_path": str(self.repo)}
-        self._process_with_board_change_during_prepare(lambda: self.other_tasks[0].update(repository="odayplus"))
+        self._process_with_board_change_during_prepare(lambda: self._move_sidecar_source("side_repo"))
+        self.assertEqual(launches, [])
+        event = self.state["queue"]["events"]["evt-1"]
+        self.assertEqual(event["status"], "failed", event)
+        self.assertIn("Worker launch refused: capacity sidecar was prepared in pantheon", event["error"])
+
+    def test_final_launch_keeps_one_source_named_by_another_id(self) -> None:
+        launches = self._launch_spy()
+        for name, change in (
+            ("parent only", lambda: self.other_tasks[0].update(repository="odayplus")),
+            ("child only", lambda: self.task.update(repository="odayplus")),
+            ("both", lambda: self._move_sidecar_source("odayplus")),
+        ):
+            with self.subTest(name):
+                launches.clear()
+                self._queue_capacity_sidecar()
+                self._process_with_board_change_during_prepare(change)
+                self.assertEqual(len(launches), 1, self.state["queue"]["events"]["evt-1"])
+                self.assertEqual(launches[0][1].metadata["repository_id"], "pantheon")
+
+    def test_final_launch_keeps_an_unchanged_nondefault_source(self) -> None:
+        launches = self._launch_spy()
+        self._queue_capacity_sidecar("side_repo")
+        self._process_with_board_change_during_prepare(lambda: None)
         self.assertEqual(len(launches), 1, self.state["queue"]["events"]["evt-1"])
+        metadata = launches[0][1].metadata
+        self.assertEqual(metadata["repository_id"], "side_repo")
+        self.assertTrue(Path(metadata["workspace_path"]).is_relative_to(self.root / "worktrees" / "side-repo"))
+
+    def test_sidecar_retry_fallback_and_resume_refuse_every_source_move(self) -> None:
+        launches = self._launch_spy()
+        for name, change in (
+            ("child only", lambda: self.task.update(repository="side_repo")),
+            ("both", lambda: self._move_sidecar_source("side_repo")),
+        ):
+            with self.subTest(f"retry, {name}"):
+                self._queue_capacity_sidecar()
+                self._dispatch(runner=self.FAILED_RUNNER)
+                self._park_for_retry()
+                change()
+                self._write_board()
+                board = self.status_file.read_bytes()
+                self._poll()
+                self._assert_refused_before_launch(launches, board)
+            with self.subTest(f"fallback, {name}"):
+                self._queue_capacity_sidecar()
+                self._dispatch_failed()
+                self.config["worker_retry"].update(max_attempts=0, fallback_mode="file_inbox")
+                change()
+                self._write_board()
+                board = self.status_file.read_bytes()
+                outcome = supervisor.maybe_trigger_retry_or_fallback(self.config, self.state, {}, self.worker, "429 rate limit")
+                self.assertEqual(outcome, (True, True))
+                self.assertEqual(launches, [])
+                self.assertEqual(self.worker["status"], "superseded")
+                self.assertEqual(self.status_file.read_bytes(), board)
+            with self.subTest(f"resume, {name}"):
+                self._queue_capacity_sidecar()
+                self._dispatch(runner=self.FAILED_RUNNER)
+                change()
+                resume = self._poll_approved_resume({}, status="suspended_approval")
+                resume.assert_not_called()
+                self.assertEqual(self.state["workers"]["run-1"]["status"], "superseded")
+
+    def test_sidecar_retry_fallback_and_resume_keep_an_unchanged_nondefault_source(self) -> None:
+        launches = self._launch_spy()
+        self._queue_capacity_sidecar("side_repo")
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self._park_for_retry()
+        self._poll()
+        self.assertEqual(len(launches), 1)
+        self.assertEqual(self.state["workers"]["launched-1"]["parent_run_id"], "run-1")
+        self.assertEqual(launches[0][1].metadata["repository_id"], "side_repo")
+
+        launches.clear()
+        self._queue_capacity_sidecar("side_repo")
+        self._dispatch_failed()
+        self.config["worker_retry"].update(max_attempts=0, fallback_mode="file_inbox")
+        self.assertEqual(
+            supervisor.maybe_trigger_retry_or_fallback(self.config, self.state, {}, self.worker, "429 rate limit"),
+            (True, True),
+        )
+        self.assertEqual([mode for mode, _ in launches], ["file_inbox"])
+
+        self._queue_capacity_sidecar("side_repo")
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self._poll_approved_resume({}, status="suspended_approval").assert_called_once()
 
     def test_due_sidecar_retry_needs_its_parent_authority_too(self) -> None:
         launches = self._launch_spy()

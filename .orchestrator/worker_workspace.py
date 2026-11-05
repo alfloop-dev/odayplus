@@ -2674,7 +2674,20 @@ def launch_protection_refusal(
         return f"protected_paths are invalid: {error}"
     if missing:
         return f"request was prepared without protected_paths {sorted(missing)}"
-    return _capacity_sidecar_authority_refusal(config, task, prepared)
+    refusal = _capacity_sidecar_authority_refusal(config, task, prepared)
+    if refusal or not is_capacity_sidecar(task):
+        return refusal
+    # Child and parent can move together and still agree, while this request stays
+    # on the checkout prepared for the old source. A request with no recorded source
+    # proves nothing, and the current one is not evidence of what it was prepared in.
+    from multi_repo_registry import canonical_repository_id_for_root
+
+    source = worker_task_repository_binding(config, task)
+    current = canonical_repository_id_for_root(config, source.root, fallback=source.repo_id)
+    prepared_source = str(request_metadata.get("repository_id") or "")
+    if prepared_source != current:
+        return f"capacity sidecar was prepared in {prepared_source or '(no recorded source)'}, its source is now {current}"
+    return None
 
 
 @_entrypoint

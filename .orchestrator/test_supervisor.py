@@ -21888,6 +21888,8 @@ class CapacityControllerReconciliationTests(unittest.TestCase):
 
     def _config(self, slot_count: int = 2) -> dict[str, Any]:
         return {
+            # The creator resolves each parent's source; keep the registry inside this root.
+            "paths": {"status_file": str(self.archive_root / "ai-status.json")},
             "schema": {"tasks_path": "tasks"},
             "agents": {
                 "claude": {"provider": "claude", "slot_id": "slot-0"},
