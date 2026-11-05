@@ -57,6 +57,22 @@ def _parent_selected_owner(config: dict[str, Any], parent: dict[str, Any]) -> st
     return owner
 
 
+def parent_sidecar_refusal(config: dict[str, Any], parent: dict[str, Any]) -> str | None:
+    """Why no capacity sidecar may act under this parent, when it is created or later."""
+    prose = " ".join(str(parent.get(key) or "") for key in ("blocked_reason", "next", "waiting_for")).lower()
+    if str(parent.get("status") or "").lower() == "blocked" and any(marker in prose for marker in HARD_GATE_MARKERS):
+        return "capacity sidecar parent is blocked on a human or manual gate"
+    if _parent_selected_owner(config, parent) is None:
+        return "capacity sidecar parent has no registered automatic owner"
+    if "frozen_evidence_base_sha" in parent:
+        return "capacity sidecar cannot carry its parent's frozen evidence base"
+    try:
+        task_protected_paths(parent)
+    except ProtectedPathPolicyError as error:
+        return f"capacity sidecar parent protection is invalid: {error}"
+    return None
+
+
 def build_sidecar_task_id(parent_id: str, kind: str) -> str:
     """Build a deterministic, bounded sidecar task ID (at most 48 characters).
 
@@ -643,24 +659,15 @@ def sidecar_candidates(
             # keeps the catalog, rather than controller heuristics, authoritative.
             if not statuses and not parent_ids and not phase_match:
                 continue
-            prose = " ".join(
-                str(parent.get(key) or "")
-                for key in ("blocked_reason", "next", "waiting_for")
-            ).lower()
-            if parent_status == "blocked" and any(marker in prose for marker in HARD_GATE_MARKERS):
+            # The child record is the only authority downstream. Parent authority
+            # it cannot carry refuses the child here, before it is persisted.
+            if parent_sidecar_refusal(config, parent):
                 continue
             sidecar_id = build_sidecar_task_id(parent_id, kind)
             if sidecar_id in existing_ids or load_archived_task(sidecar_id) is not None:
                 continue
-            # The child record is the only authority downstream. Parent authority
-            # it cannot carry refuses the child here, before it is persisted.
             parent_owner = _parent_selected_owner(config, parent)
-            if parent_owner is None or "frozen_evidence_base_sha" in parent:
-                continue
-            try:
-                protected_paths = task_protected_paths(parent)
-            except ProtectedPathPolicyError:
-                continue
+            protected_paths = task_protected_paths(parent)
             variables = {
                 "parent_task_id": parent_id,
                 "sidecar_task_id": sidecar_id,

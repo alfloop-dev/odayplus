@@ -709,6 +709,28 @@ def process_queue(
             )
             changed = True
             continue
+        protection_refusal = launch_protection_refusal(
+            config,
+            latest_task_map.get(str(event.get("task_id") or "")),
+            request_metadata,
+        )
+        if protection_refusal:
+            record["status"] = "failed"
+            record["processed_at"] = utc_now()
+            record["error"] = f"Worker launch refused: {protection_refusal}"
+            write_activity_log(
+                config,
+                {
+                    "type": "dispatch_preflight_blocked",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "provider": request_provider,
+                    "queue_event_id": event_id,
+                    "message": record["error"],
+                },
+            )
+            changed = True
+            continue
 
         record["attempt_count"] = int(record.get("attempt_count", 0)) + 1
         record["last_attempt_at"] = utc_now()
@@ -1551,6 +1573,13 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     and provider_uses_claude_cli(config, worker.get("provider"))
                     and not queue_event_moved_from_worker(state, worker)
                 ):
+                    # This poll's assignment check read the board when the tick began.
+                    if supersede_worker_without_execution_authority(config, state, worker):
+                        preserve_worker_worktree_once("worker_superseded:execution_authority")
+                        if alive:
+                            terminate_worker_pid(worker.get("pid"))
+                        changed = True
+                        continue
                     resumed = resume_claude_worker(config, worker, provider_report, approval=latest)
                     write_activity_log(
                         config,

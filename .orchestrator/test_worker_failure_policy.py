@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -4613,7 +4614,10 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
         from adapters.base import DeliveryResult
 
         self.config['paths'].update(state_file=str(Path(self.tmpdir.name) / 'state.json'),
-                                    event_queue=str(Path(self.tmpdir.name) / 'queue.jsonl'))
+                                    event_queue=str(Path(self.tmpdir.name) / 'queue.jsonl'),
+                                    approval_queue=str(Path(self.tmpdir.name) / 'approvals.json'))
+        board = {'tasks': [{'id': f'TASK-RETRY-{index}', 'owner': 'Antigravity', 'reviewer': 'Codex2',
+                            'status': 'in_progress'} for index in range(2)]}
         state = {'workers': {}}
         for index in range(2):
             request = DeliveryRequest(agent_id='antigravity', provider='antigravity',
@@ -4636,6 +4640,7 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, 'save_runtime_state', side_effect=runtime_state.save_runtime_state),
             mock.patch.object(supervisor, 'write_activity_log'),
             mock.patch.object(supervisor, 'record_worker_runtime_measurement'),
+            mock.patch.object(supervisor, 'load_status', return_value=board),
         ):
             adapter.return_value.deliver.side_effect = [
                 DeliveryResult(ok=True, adapter='antigravity', mode='antigravity', target='fixture',
@@ -4666,7 +4671,8 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
         aliases = ['antigravity', 'antigravity2', 'antigravity3']
         self.config['worker_retry'].update(max_attempts=2, fallback_mode='file_inbox')
         self.config['paths'].update(state_file=str(Path(self.tmpdir.name) / 'state.json'),
-                                    event_queue=str(Path(self.tmpdir.name) / 'queue.jsonl'))
+                                    event_queue=str(Path(self.tmpdir.name) / 'queue.jsonl'),
+                                    approval_queue=str(Path(self.tmpdir.name) / 'approvals.json'))
         for agent in self.config['agents'].values():
             agent['adapter'] = 'antigravity'
         for alias in aliases:
@@ -5068,6 +5074,7 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
             "next": "Working",
         }
         self.blocker = {"task_id": self.TASK_ID, "owner": "Claude", "waiting_for": "Codex", "status": "open"}
+        self.other_tasks: list[dict[str, Any]] = []
         self._write_board()
         (self.root / "approval_queue.json").write_text('{"pending": [], "history": []}', encoding="utf-8")
         (self.root / "event_queue.jsonl").touch()
@@ -5115,7 +5122,8 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
 
     def _write_board(self) -> None:
         self.status_file.write_text(
-            json.dumps({"tasks": [self.task], "blockers": [self.blocker], "handoffs": []}, indent=2), encoding="utf-8"
+            json.dumps({"tasks": [self.task, *self.other_tasks], "blockers": [self.blocker], "handoffs": []}, indent=2),
+            encoding="utf-8",
         )
 
     def _set_task(self, **fields: Any) -> None:
@@ -5682,6 +5690,212 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
         self.assertEqual((child["parent_run_id"], child["queue_event_id"]), ("run-1", "evt-1"))
         self.assertEqual(self.state["queue"]["events"]["evt-1"]["run_id"], before["run_id"])
 
+    # --- the same bound event: the board withdraws what the old dispatch was given
+
+    AUTHORITY_DRIFT = (
+        ("owner moved", {"owner": "Codex"}),
+        ("blocked for approval", {"status": "blocked", "next": "Waiting for user manual approval"}),
+        ("in review", {"status": "review"}),
+        ("approved", {"status": "review_approved"}),
+        ("done", {"status": "done"}),
+        ("reviewer moved", {"reviewer": "Gemini"}),
+        ("non dispatchable", {"non_dispatchable": True}),
+        ("human gate", {"gate_status": "pending_human_signoff"}),
+        ("dependency open", {"depends_on": ["T-OPEN"]}),
+        ("protection widened", {"protected_paths": ["guarded/zone"]}),
+        ("protection invalid", {"protected_paths": "guarded/zone"}),
+    )
+
+    def _set_board_for_retry(self, fields: dict[str, Any]) -> None:
+        self.other_tasks = [{"id": "T-OPEN", "status": "in_progress", "owner": "Codex", "reviewer": "Claude"}]
+        self._set_task(**fields)
+
+    def _assert_refused_before_launch(self, launches: list[Any], board: bytes) -> None:
+        worker = self.state["workers"]["run-1"]
+        self.assertEqual(launches, [])
+        self.assertEqual(worker["status"], "superseded", worker.get("last_error"))
+        self.assertIsNone(worker["next_retry_at"])
+        self.assertEqual(worker["retry_count"], 1)
+        self.assertNotIn("launched-1", self.state["workers"])
+        self.assertEqual(self.state["queue"]["events"]["evt-1"]["status"], "completed")
+        self.assertEqual(self.status_file.read_bytes(), board)
+        self._poll()
+        self.assertEqual(launches, [])
+
+    def test_due_retry_needs_fresh_authority_while_its_event_stays_bound(self) -> None:
+        launches = self._launch_spy()
+        for name, fields in self.AUTHORITY_DRIFT:
+            with self.subTest(name):
+                self._dispatch(runner=self.FAILED_RUNNER)
+                self._park_for_retry()
+                self._set_board_for_retry(fields)
+                self.assertFalse(runtime_state.queue_event_moved_from_worker(self.state, self.worker))
+                board = self.status_file.read_bytes()
+                self._poll()
+                self._assert_refused_before_launch(launches, board)
+                self._set_task(owner="Claude", reviewer="Codex", status="in_progress", next="Working")
+                for field in ("non_dispatchable", "gate_status", "depends_on", "protected_paths"):
+                    self.task.pop(field, None)
+                self.other_tasks = []
+                self._write_board()
+
+    def test_due_retry_from_a_slot_outside_its_logical_pool_does_not_launch(self) -> None:
+        launches = self._launch_spy()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self._park_for_retry()
+        self.worker["agent_id"] = "codex"
+        board = self.status_file.read_bytes()
+        self._poll()
+        self._assert_refused_before_launch(launches, board)
+
+    def _poll_approved_resume(self, change: dict[str, Any], *, status: str) -> Any:
+        """Answer this run's approval, then move the board after the tick has read it."""
+        self.worker.update(status=status, session_id="session-1", last_approval_id="approval-0")
+        history = [{"approval_id": "approval-1", "worker_run_id": "run-1", "decision": "allow", "status": "allowed"}]
+        (self.root / "approval_queue.json").write_text(json.dumps({"pending": [], "history": history}), encoding="utf-8")
+
+        def moved_mid_tick(*_: Any, **__: Any) -> bool:
+            self._set_task(**change)
+            return True
+
+        with (
+            mock.patch.object(supervisor, "provider_uses_claude_cli", side_effect=moved_mid_tick),
+            mock.patch.object(supervisor, "resume_claude_worker", return_value={"command": []}) as resume,
+        ):
+            self._poll()
+        return resume
+
+    def test_approved_resume_needs_fresh_authority(self) -> None:
+        for name, fields in (("owner moved", {"owner": "Codex"}), ("blocked", {"status": "blocked"}), ("gated", {"non_dispatchable": True})):
+            with self.subTest(name):
+                self._dispatch(runner=self.FAILED_RUNNER)
+                resume = self._poll_approved_resume(fields, status="suspended_approval")
+                resume.assert_not_called()
+                self.assertEqual(self.state["workers"]["run-1"]["status"], "superseded")
+                self.assertEqual(self.state["queue"]["events"]["evt-1"]["status"], "completed")
+                self.task.pop("non_dispatchable", None)
+                self._set_task(owner="Claude", status="in_progress")
+
+    def test_approved_resume_stops_a_live_session_it_refuses(self) -> None:
+        live = subprocess.Popen(["sleep", "300"])
+        self.addCleanup(live.wait)
+        self.addCleanup(live.kill)
+        self._dispatch()
+        self.worker.update(pid=live.pid)
+        (self.root / "runner-status.json").unlink()
+        with mock.patch.object(supervisor, "terminate_worker_pid") as terminate:
+            resume = self._poll_approved_resume({"owner": "Codex"}, status="waiting_approval")
+        resume.assert_not_called()
+        terminate.assert_called_with(live.pid)
+        self.assertEqual(self.state["workers"]["run-1"]["status"], "superseded")
+
+    def test_approved_resume_with_unchanged_authority_still_resumes(self) -> None:
+        self._dispatch(runner=self.FAILED_RUNNER)
+        resume = self._poll_approved_resume({}, status="suspended_approval")
+        resume.assert_called_once()
+
+    def test_due_retry_with_unchanged_authority_keeps_its_lineage_and_budget(self) -> None:
+        launches = self._launch_spy()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self._park_for_retry()
+        # A real dispatch snapshot normalizes role names; the board keeps display names.
+        snapshot = self.worker["request_snapshot"]["metadata"]["task"]
+        snapshot.update(owner="claude", reviewer="codex")
+        self._set_board_for_retry({"depends_on": []})
+        self._poll()
+        self.assertEqual(len(launches), 1)
+        child = self.state["workers"]["launched-1"]
+        self.assertEqual((child["parent_run_id"], child["retry_count"]), ("run-1", 1))
+
+    def test_due_retry_after_the_lineage_pushed_its_own_work_still_launches(self) -> None:
+        launches = self._launch_spy()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self._commit()
+        _git_run(self.worktree, "push", "--quiet", "origin", self.BRANCH)
+        supervisor.runtime_ai_status._TASK_SHA_CACHE.clear()
+        self._park_for_retry()
+        self._poll()
+        self.assertEqual(len(launches), 1, self.state["workers"]["run-1"].get("last_error"))
+        self.assertEqual(self.state["workers"]["launched-1"]["retry_count"], 1)
+
+    def test_due_retry_waits_for_an_approval_opened_on_its_own_run(self) -> None:
+        launches = self._launch_spy()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        worker = self._park_for_retry()
+        (self.root / "approval_queue.json").write_text(
+            json.dumps({"pending": [{"approval_id": "a-1", "worker_run_id": "run-1"}], "history": []}), encoding="utf-8"
+        )
+        self.assertFalse(supervisor.retry_due_workers(self.config, self.state, {}, datetime.now(UTC)))
+        self.assertEqual((launches, worker["status"]), ([], "retry_backoff"))
+        self._poll()
+        self.assertEqual(launches, [])
+        self.assertEqual(self.state["workers"]["run-1"]["status"], "failed")
+
+    def _helper_lease(self, **fields: Any) -> dict[str, Any]:
+        expires = (datetime.now(UTC) + timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+        return {"claimed_by": "Claude", "generation": 1, "lease_expires_at": expires, "run_id": "run-1", **fields}
+
+    def _dispatch_helper_retry(self) -> None:
+        self._set_task(owner="Codex", reviewer="Gemini", helper_execution_lease=self._helper_lease())
+        self._dispatch(runner=self.FAILED_RUNNER)
+        snapshot = self.worker["request_snapshot"]
+        snapshot["reason"] = "helper_claim_dispatch"
+        snapshot["metadata"]["task"].update(
+            owner="Codex", reviewer="Gemini", helper_execution_lease=self._helper_lease()
+        )
+        self._park_for_retry()
+
+    def test_due_helper_retry_keeps_only_its_own_live_claim_generation(self) -> None:
+        launches = self._launch_spy()
+        for name, lease in (
+            ("generation moved", self._helper_lease(generation=2)),
+            ("claimant moved", self._helper_lease(claimed_by="Gemini")),
+            ("claim expired", self._helper_lease(lease_expires_at="2000-01-01T00:00:00Z")),
+        ):
+            with self.subTest(name):
+                self._dispatch_helper_retry()
+                self._set_task(helper_execution_lease=lease)
+                supervisor.retry_due_workers(self.config, self.state, {}, datetime.now(UTC))
+                self.assertEqual(launches, [])
+                self.assertEqual(self.state["workers"]["run-1"]["status"], "superseded")
+                self.assertEqual(self.state["queue"]["events"]["evt-1"]["status"], "completed")
+
+    def test_due_helper_retry_with_its_claim_unchanged_launches(self) -> None:
+        launches = self._launch_spy()
+        self._dispatch_helper_retry()
+        supervisor.retry_due_workers(self.config, self.state, {}, datetime.now(UTC))
+        self.assertEqual(len(launches), 1, self.state["workers"]["run-1"].get("last_error"))
+
+    def test_retry_refused_by_the_persisted_tick_does_not_launch_or_return(self) -> None:
+        launches = self._launch_spy()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self._park_for_retry()
+        self._persist()
+        self._set_task(owner="Codex")
+        board = self.status_file.read_bytes()
+        state = self._tick(dispatch=False)
+        self.assertEqual(launches, [])
+        # A closed event leaves the queue with its run; only the audit record stays.
+        self.assertEqual((state["workers"], state["queue"]["events"]), ({}, {}))
+        self.assertEqual((self.root / "event_queue.jsonl").read_text(encoding="utf-8"), "")
+        self.assertIn(
+            "Worker superseded instead of starting execution",
+            (self.root / "activity.jsonl").read_text(encoding="utf-8"),
+        )
+        self.assertEqual(self.status_file.read_bytes(), board)
+        self._tick()
+        self.assertEqual(launches, [])
+
+    def test_cold_boot_with_a_moved_owner_does_not_launch_the_due_retry(self) -> None:
+        launches = self._launch_spy()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self._park_for_retry()
+        self._persist()
+        self._set_task(owner="Codex")
+        state = self._tick(boot=True)
+        self.assertEqual(launches, [])
+        self.assertNotIn(state["workers"].get("run-1", {}).get("status"), {"retried", "retry_backoff"})
+
     def test_due_retry_on_a_moved_event_does_not_launch_or_touch_it(self) -> None:
         launches = self._launch_spy()
         for name, move in self.MOVED_EVENTS:
@@ -5743,6 +5957,95 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
         self.assertEqual(self.state["workers"]["run-1"]["status"], "superseded")
         supervisor.poll_workers(self.config, self.state, report)
         self.assertEqual(len(launches), 1)
+
+    # --- the final launch: authority read after a preparation that took its time
+
+    PARENT_ID = "T-PARENT-001"
+
+    def _queue_capacity_sidecar(self) -> None:
+        protected = ["guarded/zone"]
+        self.task.update(
+            task_class="sidecar",
+            auto_created_by="capacity-controller",
+            helper_parent=self.PARENT_ID,
+            protected_paths=protected,
+        )
+        self.other_tasks = [
+            {
+                "id": self.PARENT_ID,
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "status": "blocked",
+                "protected_paths": protected,
+            }
+        ]
+        self._write_board()
+        self.state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "provider_guardrails": {"dispatch_pauses": {}, "task_failure_streaks": {}},
+        }
+
+    def _process_with_board_change_during_prepare(self, change: Any) -> None:
+        prepare = supervisor.prepare_worker_workspace
+
+        def prepared_then_changed(*args: Any, **kwargs: Any) -> Any:
+            result = prepare(*args, **kwargs)
+            change()
+            self._write_board()
+            return result
+
+        # This host's own Claude processes are not this fixture's workers.
+        with (
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "prepare_worker_workspace", side_effect=prepared_then_changed) as called,
+        ):
+            supervisor.process_queue(self.config, self.state, self.REPORT, base_cache={})
+        called.assert_called_once()
+
+    def test_final_launch_refuses_what_changed_after_preparation(self) -> None:
+        launches = self._launch_spy()
+        for name, target, fields, expected in (
+            ("parent widened", "parent", {"protected_paths": ["guarded/zone", "private/new-zone"]}, "does not carry"),
+            ("parent lane moved", "parent", {"owner": "Codex"}, "parent's selected owner"),
+            ("parent frozen", "parent", {"frozen_evidence_base_sha": "8e5872544bff88d421a1923c7957ca6b12429ce2"}, "frozen"),
+            ("parent manual gate", "parent", {"next": "Waiting for manual approval"}, "human or manual gate"),
+            ("child widened", "child", {"protected_paths": ["guarded/zone", "private/new-zone"]}, "prepared without"),
+        ):
+            with self.subTest(name):
+                self._queue_capacity_sidecar()
+                record = self.other_tasks[0] if target == "parent" else self.task
+                self._process_with_board_change_during_prepare(lambda r=record, f=fields: r.update(f))
+                self.assertEqual(launches, [])
+                event = self.state["queue"]["events"]["evt-1"]
+                self.assertEqual(event["status"], "failed", event)
+                self.assertIn("Worker launch refused", event["error"])
+                self.assertIn(expected, event["error"])
+
+    def test_final_launch_keeps_an_unchanged_sidecar_and_a_narrowed_parent(self) -> None:
+        launches = self._launch_spy()
+        self._queue_capacity_sidecar()
+        self._process_with_board_change_during_prepare(lambda: self.other_tasks[0].update(protected_paths=[]))
+        self.assertEqual(len(launches), 1, self.state["queue"]["events"]["evt-1"])
+        self.assertEqual(launches[0][1].metadata["protected_paths"], ["guarded/zone"])
+
+    def test_due_sidecar_retry_needs_its_parent_authority_too(self) -> None:
+        launches = self._launch_spy()
+        for name, fields in (
+            ("parent widened", {"protected_paths": ["guarded/zone", "private/new-zone"]}),
+            ("parent lane moved", {"owner": "Codex"}),
+            ("parent frozen", {"frozen_evidence_base_sha": "8e5872544bff88d421a1923c7957ca6b12429ce2"}),
+            ("parent manual gate", {"next": "Waiting for manual approval"}),
+        ):
+            with self.subTest(name):
+                self._queue_capacity_sidecar()
+                self._dispatch(runner=self.FAILED_RUNNER)
+                self._park_for_retry()
+                self.other_tasks[0].update(fields)
+                self._write_board()
+                board = self.status_file.read_bytes()
+                self._poll()
+                self._assert_refused_before_launch(launches, board)
 
     # --- the persisted tick: real run_once over real files, spied at adapter.deliver
 
@@ -6229,6 +6532,21 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
                 board = self.status_file.read_bytes()
                 self._poll()
                 self._assert_stale_run_ended_without_side_effects(launches, before, board)
+
+    def test_exhausted_retry_falls_back_only_with_fresh_authority(self) -> None:
+        """Past poll's own settlement, which read the board at the start of the tick."""
+        launches = self._launch_spy()
+        for name, fields in (("owner moved", {"owner": "Codex"}), ("blocked", {"status": "blocked"})):
+            with self.subTest(name):
+                self._dispatch_failed()
+                self.config["worker_retry"].update(max_attempts=0, fallback_mode="file_inbox")
+                self._set_task(**fields)
+                outcome = supervisor.maybe_trigger_retry_or_fallback(self.config, self.state, {}, self.worker, "429 rate limit")
+                self.assertEqual(outcome, (True, True))
+                self.assertEqual(launches, [])
+                self.assertEqual(self.worker["status"], "superseded")
+                self.assertEqual(self.state["queue"]["events"]["evt-1"]["status"], "completed")
+                self._set_task(owner="Claude", status="in_progress")
 
     def test_exhausted_retry_reassigns_only_while_bound(self) -> None:
         self._launch_spy()

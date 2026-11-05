@@ -601,6 +601,7 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
                 "repositories": {"pantheon": {"repo": None, "local_path": str(self.repo), "default_branch": "dev"}}
             },
             "worker_worktrees": {"root": str(self.root / "worktrees")},
+            "agents": {"claude": {"provider": "claude"}},
         }
         request = supervisor.DeliveryRequest(
             agent_id="claude", provider="claude", delivery_mode="claude", message="wake",
@@ -625,6 +626,9 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
             ("child dropped protection", self._sidecar(protected_paths=[]), parent, "does not carry parent protected_paths"),
             ("child owner moved", self._sidecar(owner="Antigravity3"), parent, "not its parent's selected owner"),
             ("parent policy invalid", self._sidecar(), {**parent, "protected_paths": "guarded/zone"}, "protection is invalid"),
+            ("parent frozen later", self._sidecar(), {**parent, "frozen_evidence_base_sha": "a" * 40}, "frozen evidence base"),
+            ("parent manual gate later", self._sidecar(), {**parent, "status": "blocked", "next": "Waiting for manual approval"}, "human or manual gate"),
+            ("parent owner unregistered", self._sidecar(owner="Ghost"), {**parent, "owner": "Ghost"}, "no registered automatic owner"),
         ):
             with self.subTest(name):
                 ok, message = self._prepare_sidecar(sidecar, board_parent)

@@ -885,6 +885,8 @@ def _run_preflight(path_dir: Path) -> subprocess.CompletedProcess[str]:
         ("git version 2.28.0", True),
         ("git version 2.43.0", True),
         ("git version 3.0.1 (Apple)", True),
+        ("git version 2.43.0\nextra stdout banner", False),
+        ("extra stdout banner\ngit version 2.43.0", False),
         ("git version 2.27.1", False),
         ("git version 2.9.5", False),
         ("not a version", False),

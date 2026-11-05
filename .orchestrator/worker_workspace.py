@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from capacity_controller import is_capacity_sidecar
+from capacity_controller import is_capacity_sidecar, parent_sidecar_refusal
 from common import normalize_agent_id, utc_now
 from dispatch_policy import REASON_HELPER_CLAIM, REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY, REASON_REVIEW_READY, worker_logical_dispatch_agent_id
 import verification_evidence
@@ -1748,10 +1748,7 @@ def _local_handoff_identity_refusal(
     """Refuse unless this run is still the canonical owner's dispatched execution."""
     if not _dead_owner_continuation_eligible(config, worker, task):
         return "not_owner_execution"
-    logical = worker_logical_dispatch_agent_id(config, worker)
-    physical = normalize_agent_id(str(worker.get("agent_id") or worker.get("provider") or ""))
-    logical_pool = agent_account_pool_id(config, logical)
-    if not logical_pool or logical_pool != agent_account_pool_id(config, physical):
+    if worker_slot_left_logical_pool(config, worker):
         return "physical_slot_mismatch"
     schema = config.get("schema") if isinstance(config.get("schema"), dict) else {}
     owner_field = schema.get("assignee_field", "owner")
@@ -2638,16 +2635,38 @@ def _capacity_sidecar_authority_refusal(
     parent = canonical_task_record(config, parent_id) or load_archived_task(parent_id)
     if not isinstance(parent, dict):
         return f"capacity sidecar parent {parent_id or '(none)'} has no canonical or archived record"
-    try:
-        missing = set(task_protected_paths(parent)) - set(protected_paths)
-    except ProtectedPathPolicyError as error:
-        return f"capacity sidecar parent protection is invalid: {error}"
+    refusal = parent_sidecar_refusal(config, parent)
+    if refusal:
+        return refusal
+    missing = set(task_protected_paths(parent)) - set(protected_paths)
     if missing:
         return f"capacity sidecar does not carry parent protected_paths {sorted(missing)}"
     owner_field = (config.get("schema") or {}).get("assignee_field", "owner")
     if normalize_agent_id(str(task.get(owner_field) or "")) != normalize_agent_id(str(parent.get(owner_field) or "")):
         return "capacity sidecar owner is not its parent's selected owner"
     return None
+
+
+@_entrypoint
+def launch_protection_refusal(
+    config: dict[str, Any],
+    task: dict[str, Any] | None,
+    request_metadata: dict[str, Any],
+) -> str | None:
+    """Why a prepared request may no longer launch under its task's current authority.
+
+    The launch enforces the protection recorded at preparation, and neither a task
+    nor a sidecar's parent stands still until then. Preparation already refused what
+    it could see, so this asks the same question of the current records.
+    """
+    try:
+        prepared = normalize_protected_paths(request_metadata.get("protected_paths"))
+        missing = set(task_protected_paths(task)) - set(prepared)
+    except ProtectedPathPolicyError as error:
+        return f"protected_paths are invalid: {error}"
+    if missing:
+        return f"request was prepared without protected_paths {sorted(missing)}"
+    return _capacity_sidecar_authority_refusal(config, task, prepared)
 
 
 @_entrypoint
