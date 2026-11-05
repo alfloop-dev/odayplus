@@ -397,6 +397,12 @@ def _worker_event_lineage(state: dict[str, Any], worker: dict[str, Any]) -> set[
     return lineage
 
 
+def _queue_reset_pending(record: dict[str, Any]) -> bool:
+    """Whether this record has a reset that no attempt has answered yet."""
+    requeued_at = str(record.get("requeued_at") or "")
+    return bool(requeued_at) and str(record.get("last_attempt_at") or "") < requeued_at
+
+
 def queue_event_moved_from_worker(state: dict[str, Any], worker: dict[str, Any]) -> bool:
     """Whether this worker lost its queue event; the one queue custody rule.
 
@@ -417,14 +423,13 @@ def queue_event_moved_from_worker(state: dict[str, Any], worker: dict[str, Any])
     record = worker_queue_record(state, worker)
     if record is None:
         return False
-    requeued_at = str(record.get("requeued_at") or "")
-    if requeued_at and str(record.get("last_attempt_at") or "") < requeued_at:
+    if _queue_reset_pending(record):
         return True
     lineage = _worker_event_lineage(state, worker)
     binding = {record[field] for field in ("run_id", "lease_owner") if record.get(field)}
     if binding:
         return not binding <= {worker.get("run_id"), worker.get("queue_event_id"), *lineage}
-    if not requeued_at:
+    if not record.get("requeued_at"):
         return False
     workers = state.get("workers") or {}
     runs = [worker, *(workers.get(run_id) for run_id in lineage)]
@@ -674,11 +679,23 @@ def _merge_worker_record(disk_worker: dict[str, Any], mem_worker: dict[str, Any]
 
 
 def _queue_reset_supersedes(event: dict[str, Any], other: dict[str, Any]) -> bool:
-    """Whether ``event`` carries a reset newer than anything ``other`` recorded."""
+    """Whether ``event`` carries a reset that ``other`` was written without seeing.
+
+    Every writer after a reset mutates the record holding it, so a snapshot with
+    an older reset, or none, predates it however late it was saved: its later
+    ``processed_at`` is a stale run finishing, not a new grant. Timestamps have
+    one-second resolution, so two resets can share one. A real attempt after a
+    reset raises ``attempt_count``, which tells a snapshot that answered this
+    reset from one this reset cleared.
+    """
     requeued_at = str(event.get("requeued_at") or "")
+    other_requeued_at = str(other.get("requeued_at") or "")
+    if requeued_at != other_requeued_at:
+        return requeued_at > other_requeued_at
     return (
-        requeued_at > str(other.get("requeued_at") or "")
-        and str(other.get("processed_at") or "") <= requeued_at
+        _queue_reset_pending(event)
+        and not _queue_reset_pending(other)
+        and int(other.get("attempt_count") or 0) <= int(event.get("attempt_count") or 0)
     )
 
 

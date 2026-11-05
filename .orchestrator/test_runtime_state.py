@@ -658,15 +658,66 @@ class QueueCustodyPersistenceTests(unittest.TestCase):
         self.assertEqual(runtime_state._merge_queue_record(bound, reset), reset)
         self.assertEqual(runtime_state._merge_queue_record(reset, bound), reset)
 
-    def test_merge_keeps_a_later_transition_over_a_stale_reset(self) -> None:
-        reset = {"status": "queued", "requeued_at": "2026-11-05T00:00:05Z"}
-        rebound = {"status": "started", "run_id": "run-new", "lease_owner": "run-new", "processed_at": "2026-11-05T00:00:09Z"}
-        self.assertEqual(runtime_state._merge_queue_record(rebound, reset)["lease_owner"], "run-new")
-        self.assertEqual(runtime_state._merge_queue_record(reset, rebound)["lease_owner"], "run-new")
-        # The same reset carried forward by both sides is ranked as before.
-        attempt = {**reset, "status": "started", "run_id": "run-new", "lease_owner": "run-new", "last_attempt_at": "2026-11-05T00:00:06Z"}
-        self.assertEqual(runtime_state._merge_queue_record(attempt, reset)["lease_owner"], "run-new")
-        self.assertEqual(runtime_state._merge_queue_record(reset, attempt)["lease_owner"], "run-new")
+    def _save_both_orders(self, reset: dict, stale: dict) -> dict:
+        """The reset and the stale record through the real locked save, each writing last."""
+        outcomes = {}
+        for name, writers in (("stale writes last", (reset, stale)), ("reset writes last", (stale, reset))):
+            state_file = Path(self.config["paths"]["state_file"])
+            state_file.unlink(missing_ok=True)
+            for record in writers:
+                runtime_state.save_runtime_state(self.config, {"workers": {}, "queue": {"events": {"evt-1": deepcopy(record)}}})
+            outcomes[name] = self._record()
+        return outcomes
+
+    def test_late_completion_from_a_pre_reset_snapshot_does_not_undo_the_reset(self) -> None:
+        reset = {"status": "queued", "attempt_count": 4, "requeued_at": "2026-11-05T00:00:05Z", "requeue_reason": "redispatch"}
+        stale_shapes = {
+            "older reset": {"requeued_at": "2026-11-05T00:00:01Z", "last_attempt_at": "2026-11-05T00:00:02Z"},
+            "no reset": {"last_attempt_at": "2026-11-05T00:00:02Z"},
+        }
+        for name, facts in stale_shapes.items():
+            completed = {
+                **facts,
+                "status": "completed",
+                "attempt_count": 4,
+                "run_id": "old-run",
+                "lease_owner": "old-run",
+                "processed_at": "2026-11-05T00:00:09Z",
+            }
+            for order, record in self._save_both_orders(reset, completed).items():
+                with self.subTest(name, order=order):
+                    self.assertEqual(record, reset)
+
+    def test_second_reset_in_the_same_second_is_not_lost_to_rank(self) -> None:
+        second = {"status": "queued", "attempt_count": 5, "requeued_at": "2026-11-05T00:00:05Z", "requeue_reason": "second"}
+        attempted = {
+            "status": "started",
+            "attempt_count": 5,
+            "requeued_at": "2026-11-05T00:00:05Z",
+            "last_attempt_at": "2026-11-05T00:00:05Z",
+            "run_id": "previous-attempt",
+            "lease_owner": "previous-attempt",
+            "processed_at": "2026-11-05T00:00:05Z",
+        }
+        for order, record in self._save_both_orders(second, attempted).items():
+            with self.subTest(order=order):
+                self.assertEqual(record, second)
+
+    def test_attempt_answering_the_same_reset_is_kept(self) -> None:
+        """The attempt's own increment is what tells it from a record the reset cleared."""
+        reset = {"status": "queued", "attempt_count": 4, "requeued_at": "2026-11-05T00:00:05Z"}
+        attempt = {
+            **reset,
+            "status": "started",
+            "attempt_count": 5,
+            "last_attempt_at": "2026-11-05T00:00:05Z",
+            "run_id": "run-new",
+            "lease_owner": "run-new",
+            "processed_at": "2026-11-05T00:00:06Z",
+        }
+        for order, record in self._save_both_orders(reset, attempt).items():
+            with self.subTest(order=order):
+                self.assertEqual((record["status"], record["lease_owner"], record["attempt_count"]), ("started", "run-new", 5))
 
     def test_merge_without_a_reset_keeps_the_furthest_transition(self) -> None:
         started = {"status": "started", "lease_owner": "run-new"}

@@ -230,16 +230,18 @@ class QueueCustodySupervisorOwnerTests(unittest.TestCase):
         self.assertTrue(supervisor.prune_event_queue(self.config, self.state))
         self.assertEqual(self._queue_ids(), [], "a genuinely stale reset event may still be cancelled")
 
-    def test_finalizer_leaves_an_event_the_worker_no_longer_holds(self) -> None:
-        for name, move in (
-            ("reset", lambda: supervisor._reset_queue_record_for_redispatch(self.record, reason="redispatch")),
-            ("taken", self._bind_to_new_run),
-        ):
-            with self.subTest(name):
-                move()
-                before = dict(self.record)
-                supervisor.finalize_queue_event_record(self.config, self.state, self.state["workers"]["run-old"], "failed", "late")
-                self.assertEqual(self.record, before)
+    def _assert_late_finalize_changes_nothing(self) -> None:
+        before = dict(self.record)
+        supervisor.finalize_queue_event_record(self.config, self.state, self.state["workers"]["run-old"], "failed", "late")
+        self.assertEqual(self.record, before)
+
+    def test_finalizer_leaves_a_reset_event_alone(self) -> None:
+        supervisor._reset_queue_record_for_redispatch(self.record, reason="redispatch")
+        self._assert_late_finalize_changes_nothing()
+
+    def test_finalizer_leaves_an_event_another_run_took(self) -> None:
+        self._bind_to_new_run()
+        self._assert_late_finalize_changes_nothing()
 
     def test_old_active_run_does_not_hold_up_the_holders_settlement(self) -> None:
         fresh = self._bind_to_new_run("completed")
