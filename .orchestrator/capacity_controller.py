@@ -7,6 +7,7 @@ from typing import Any
 
 from common import display_name_for, normalize_agent_id
 from task_archive import load_archived_task
+from worktree_cleanliness import ProtectedPathPolicyError, task_protected_paths
 
 THIS_DIR = Path(__file__).resolve().parent
 ROOT_DIR = THIS_DIR.parent
@@ -34,6 +35,26 @@ HARD_GATE_MARKERS = {
 }
 DEFAULT_SIDECAR_CATALOG = Path(__file__).with_name("sidecar_catalog.json")
 MAX_SIDECAR_ID_LENGTH = 48
+
+
+def is_capacity_sidecar(task: object) -> bool:
+    """A sidecar this controller created, whose actor is its parent's selection."""
+    return (
+        isinstance(task, dict)
+        and str(task.get("task_class") or "").strip().lower() == "sidecar"
+        and task.get("auto_created_by") == "capacity-controller"
+    )
+
+
+def _parent_selected_owner(config: dict[str, Any], parent: dict[str, Any]) -> str | None:
+    """The parent's registered automatic owner; anything else cannot be inherited."""
+    owner_field = (config.get("schema", {}) or {}).get("assignee_field", "owner")
+    owner = str(parent.get(owner_field) or "").strip()
+    agents = config.get("agents", {}) or {}
+    agent = agents.get(normalize_agent_id(owner)) or agents.get(owner)
+    if not isinstance(agent, dict) or str(agent.get("provider") or "") == "human_gate":
+        return None
+    return owner
 
 
 def build_sidecar_task_id(parent_id: str, kind: str) -> str:
@@ -631,6 +652,15 @@ def sidecar_candidates(
             sidecar_id = build_sidecar_task_id(parent_id, kind)
             if sidecar_id in existing_ids or load_archived_task(sidecar_id) is not None:
                 continue
+            # The child record is the only authority downstream. Parent authority
+            # it cannot carry refuses the child here, before it is persisted.
+            parent_owner = _parent_selected_owner(config, parent)
+            if parent_owner is None or "frozen_evidence_base_sha" in parent:
+                continue
+            try:
+                protected_paths = task_protected_paths(parent)
+            except ProtectedPathPolicyError:
+                continue
             variables = {
                 "parent_task_id": parent_id,
                 "sidecar_task_id": sidecar_id,
@@ -651,7 +681,7 @@ def sidecar_candidates(
                 "phase": "Capacity sidecar",
                 "priority": "P3",
                 "status": "todo",
-                "owner": "AUTO_ASSIGN",
+                "owner": parent_owner,
                 "reviewer": "DIFFERENT_AGENT_REQUIRED",
                 "depends_on": [],
                 "repository": parent.get("repository"),
@@ -672,6 +702,10 @@ def sidecar_candidates(
             }
             if task_id_field != "id":
                 sidecar_dict[task_id_field] = sidecar_id
+            if protected_paths:
+                sidecar_dict["protected_paths"] = list(protected_paths)
+            if isinstance(parent.get("source_docs"), list):
+                sidecar_dict["source_docs"] = list(parent["source_docs"])
             candidates.append(sidecar_dict)
             existing_signatures.add(signature)
             if len(candidates) >= budget:

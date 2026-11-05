@@ -20,6 +20,8 @@ if str(MIGRATION_DIR) not in sys.path:
 
 import migrate_worker_worktree_config as migration
 import supervisor
+import worker_workspace
+import worktree_cleanliness
 
 
 class RegistryBaseCacheTests(unittest.TestCase):
@@ -229,6 +231,92 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         inner = self._git(self.repo, "mktree", stdin=f"160000 commit {self.base}\tzone\n").stdout.strip()
         return self._synthetic_commit(f"040000 tree {inner}\tguarded")
 
+    def _tracked_protected_commit(self) -> str:
+        """A commit tracking a regular synthetic body under the deny prefix."""
+        blob = self._git(self.repo, "hash-object", "-w", "--stdin", stdin="synthetic body\n").stdout.strip()
+        zone = self._git(self.repo, "mktree", stdin=f"100644 blob {blob}\tbody.txt\n").stdout.strip()
+        guarded = self._git(self.repo, "mktree", stdin=f"040000 tree {zone}\tzone\n").stdout.strip()
+        return self._synthetic_commit(f"040000 tree {guarded}\tguarded")
+
+    def test_regular_protected_tree_is_metadata_safe_yet_refused_before_registration(self) -> None:
+        tracked = self._tracked_protected_commit()
+        self.assertEqual(
+            worktree_cleanliness.inspect_protected_git_metadata(self.repo, tracked, PROTECTED).reason, "metadata_safe"
+        )
+        worktree = self.root / "wt-tracked"
+
+        ok, error = supervisor._create_worker_worktree(
+            self.repo, worktree, "task/PROT-TRACKED-001", tracked, protected_paths=PROTECTED
+        )
+
+        self.assertFalse(ok)
+        self.assertIn("protected_entry_tracked", error or "")
+        self.assertFalse(worktree.exists())
+        self.assertNotIn(str(worktree), self._git(self.repo, "worktree", "list").stdout)
+
+    def test_unprotected_task_still_materializes_a_tracked_tree(self) -> None:
+        worktree = self.root / "wt-unprotected"
+        ok, error = supervisor._create_worker_worktree(
+            self.repo, worktree, "task/PLAIN-TRACKED-001", self._tracked_protected_commit()
+        )
+        self.assertTrue(ok, error)
+        self.assertTrue((worktree / "guarded/zone/body.txt").is_file())
+
+    def test_reuse_refuses_ff_and_review_targets_with_a_regular_protected_tree(self) -> None:
+        worktree = self.root / "wt-tracked-ff"
+        self._git(self.repo, "worktree", "add", "-b", "task/PROT-TRACKED-002", str(worktree), self.base)
+        tracked = self._tracked_protected_commit()
+
+        for required_head in (None, tracked):
+            with self.subTest(required_head=required_head):
+                ok, status = supervisor._refresh_reused_worker_worktree(
+                    self.repo, worktree, tracked, "task/PROT-TRACKED-002",
+                    required_head=required_head, protected_paths=PROTECTED,
+                )
+                self.assertFalse(ok)
+                self.assertIn("protected_entry_tracked", status)
+                self.assertEqual(self._rev(worktree, "HEAD"), self.base)
+                self.assertFalse((worktree / "guarded").exists())
+
+    def test_checkout_already_holding_a_protected_tree_refuses_before_status_and_keeps_wip(self) -> None:
+        tracked = self._tracked_protected_commit()
+        worktree = self.root / "wt-tracked-head"
+        self._git(self.repo, "worktree", "add", "--no-checkout", "-b", "task/PROT-TRACKED-003", str(worktree), tracked)
+        (worktree / "owner-wip.txt").write_text("keep me\n", encoding="utf-8")
+        commands: list[list[str]] = []
+        real_run = subprocess.run
+
+        def recording_run(args, *a, **kw):
+            commands.append(list(args))
+            return real_run(args, *a, **kw)
+
+        with mock.patch("subprocess.run", side_effect=recording_run):
+            ok, status = supervisor._refresh_reused_worker_worktree(
+                self.repo, worktree, self.base, "task/PROT-TRACKED-003", protected_paths=PROTECTED
+            )
+            identity = worker_workspace.compute_worktree_state_identity(worktree, protected_paths=PROTECTED)
+
+        self.assertFalse(ok)
+        self.assertIn("protected_entry_tracked", status)
+        self.assertTrue(identity.startswith("protected_metadata_refused:"), identity)
+        self.assertFalse([cmd for cmd in commands if cmd[:2] == ["git", "status"]])
+        self.assertEqual((worktree / "owner-wip.txt").read_text(encoding="utf-8"), "keep me\n")
+
+    def test_handoff_seal_refuses_a_protected_tree_the_owner_committed(self) -> None:
+        tracked = self._tracked_protected_commit()
+        worktree = self.root / "wt-tracked-seal"
+        self._git(self.repo, "worktree", "add", "--no-checkout", "-b", "task/PROT-TRACKED-004", str(worktree), tracked)
+        worker = {
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": str(worktree),
+            "workspace_branch": "task/PROT-TRACKED-004",
+            "task_id": "PROT-TRACKED-004",
+            "request_snapshot": {"metadata": {"protected_paths": PROTECTED}},
+        }
+        seal = supervisor.seal_worker_handoff({}, {}, worker, {"id": "PROT-TRACKED-004"})
+        self.assertFalse(seal.accepted)
+        self.assertEqual(seal.reason, "protected_metadata_refused")
+
     def test_new_allocation_is_metadata_first_at_the_exact_base(self) -> None:
         worktree = self.root / "wt-new"
         commands: list[list[str]] = []
@@ -436,8 +524,6 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
             metadata={"task": snapshot},
         )
         state: dict = {}
-        import worker_workspace
-
         base = worker_workspace.WorkerBaseResolution(
             repository_id="pantheon", default_branch="dev", sha=self.base, remote_ref="refs/remotes/origin/dev"
         )
@@ -465,6 +551,104 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("canonical task record does not", message or "")
         self.assertNotIn("workspace_path", request.metadata)
+
+
+    def test_prepare_records_the_exact_checkout_head_in_request_and_lease(self) -> None:
+        task = {"id": "PROT-LAUNCH-001"}
+        ok, message, request, state = self._prepare(task, {"id": "PROT-LAUNCH-001"})
+        self.assertTrue(ok, message)
+        self.assertEqual(request.metadata["workspace_launch_head"], self.base)
+        self.assertEqual(state["worker_worktrees"]["leases"]["PROT-LAUNCH-001"]["workspace_launch_head"], self.base)
+        self.assertEqual(
+            supervisor.request_snapshot(request)["metadata"]["workspace_launch_head"], self.base,
+            "the worker record carries it through the existing snapshot",
+        )
+
+        # A reused checkout holding an old local anchor is recorded as it is, ahead of base.
+        worktree = Path(request.metadata["workspace_path"])
+        self._git(worktree, "config", "user.name", "Test")
+        self._git(worktree, "config", "user.email", "test@example.invalid")
+        (worktree / "anchor.txt").write_text("old anchor\n", encoding="utf-8")
+        self._git(worktree, "add", "anchor.txt")
+        self._git(worktree, "commit", "-m", "old anchor")
+        anchor = self._rev(worktree, "HEAD")
+
+        ok, message, request, state = self._prepare(task, {"id": "PROT-LAUNCH-001"})
+        self.assertTrue(ok, message)
+        self.assertEqual(request.metadata["workspace_launch_head"], anchor)
+        self.assertNotEqual(anchor, request.metadata["base_sha"])
+
+    def _sidecar(self, **overrides) -> dict:
+        record = {
+            "id": "SC-001",
+            "task_class": "sidecar",
+            "auto_created_by": "capacity-controller",
+            "helper_parent": "PARENT-001",
+            "owner": "Claude",
+            "protected_paths": PROTECTED,
+        }
+        record.update(overrides)
+        return record
+
+    def _prepare_sidecar(self, sidecar: dict, parent: dict | None) -> tuple[bool, str | None]:
+        status_file = self.root / "sidecar-status.json"
+        board = [sidecar, *([parent] if parent else [])]
+        status_file.write_text(json.dumps({"tasks": board}), encoding="utf-8")
+        config = {
+            "paths": {"status_file": str(status_file), "activity_log": str(self.root / "activity.jsonl")},
+            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            "coordination": {
+                "repositories": {"pantheon": {"repo": None, "local_path": str(self.repo), "default_branch": "dev"}}
+            },
+            "worker_worktrees": {"root": str(self.root / "worktrees")},
+        }
+        request = supervisor.DeliveryRequest(
+            agent_id="claude", provider="claude", delivery_mode="claude", message="wake",
+            task_id=sidecar["id"], reason="owned_ready_dispatch", metadata={"task": {"id": sidecar["id"]}},
+        )
+        base = worker_workspace.WorkerBaseResolution(
+            repository_id="pantheon", default_branch="dev", sha=self.base, remote_ref="refs/remotes/origin/dev"
+        )
+        with (
+            mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "resolve_worker_base", return_value=(base, None)),
+        ):
+            return supervisor.prepare_worker_workspace(
+                config, {}, request, queue_event_id="event", target_agent="Claude", base_cache={}
+            )
+
+    def test_capacity_sidecar_prepares_only_under_its_live_parent_authority(self) -> None:
+        parent = {"id": "PARENT-001", "owner": "Claude", "protected_paths": PROTECTED}
+        for name, sidecar, board_parent, expected in (
+            ("parent unknown", self._sidecar(), None, "no canonical or archived record"),
+            ("child dropped protection", self._sidecar(protected_paths=[]), parent, "does not carry parent protected_paths"),
+            ("child owner moved", self._sidecar(owner="Antigravity3"), parent, "not its parent's selected owner"),
+            ("parent policy invalid", self._sidecar(), {**parent, "protected_paths": "guarded/zone"}, "protection is invalid"),
+        ):
+            with self.subTest(name):
+                ok, message = self._prepare_sidecar(sidecar, board_parent)
+                self.assertFalse(ok)
+                self.assertIn(expected, message or "")
+                self.assertFalse((self.root / "worktrees" / "pantheon" / "sc-001").exists())
+
+        ok, message = self._prepare_sidecar(self._sidecar(), parent)
+        self.assertTrue(ok, message)
+
+    def test_archived_parent_remains_the_sidecar_authority(self) -> None:
+        archived = {"id": "PARENT-001", "owner": "Claude", "protected_paths": PROTECTED}
+        with mock.patch.object(supervisor, "load_archived_task", return_value=archived):
+            ok, message = self._prepare_sidecar(self._sidecar(), None)
+            self.assertTrue(ok, message)
+            ok, message = self._prepare_sidecar(self._sidecar(id="SC-002", protected_paths=[]), None)
+            self.assertFalse(ok)
+            self.assertIn("does not carry parent protected_paths", message or "")
+
+    def test_ordinary_sidecar_without_controller_provenance_is_not_gated(self) -> None:
+        ok, message = self._prepare_sidecar(
+            {"id": "SC-OWN-001", "task_class": "sidecar", "owner": "Claude", "helper_parent": "GONE"}, None
+        )
+        self.assertTrue(ok, message)
 
 
 class ProtectedContextSeedingTests(unittest.TestCase):

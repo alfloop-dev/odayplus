@@ -5023,3 +5023,446 @@ class ProtectedClaudeResumeTests(unittest.TestCase):
                 self.assertEqual(
                     activity.call_args.args[1]["type"], "worker_resume_protected_execution_refused"
                 )
+
+
+class TerminalLocalHandoffPollTests(unittest.TestCase):
+    """The real poll chain over owned Git fixtures: commits stay local, origin stays put."""
+
+    TASK_ID = "T-LOCAL-001"
+    BRANCH = f"task/{TASK_ID}"
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        (self.root / "gitconfig").touch()
+        env = mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(self.root / "gitconfig"), "GIT_CONFIG_NOSYSTEM": "1"})
+        env.start()
+        self.addCleanup(env.stop)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        _git_run(self.repo, "init", "--quiet", "-b", "dev")
+        _git_run(self.repo, "config", "user.email", "test@pantheon.local")
+        _git_run(self.repo, "config", "user.name", "Test Runner")
+        (self.repo / "README.md").write_text("base\n", encoding="utf-8")
+        _git_run(self.repo, "add", "README.md")
+        _git_run(self.repo, "commit", "--quiet", "-m", "base")
+        self.origin = self.root / "origin.git"
+        self.origin.mkdir()
+        _git_run(self.origin, "init", "--bare", "--quiet")
+        _git_run(self.repo, "remote", "add", "origin", str(self.origin))
+        _git_run(self.repo, "push", "--quiet", "-u", "origin", "dev")
+        self.base = _git_run(self.repo, "rev-parse", "HEAD")
+        _git_run(self.repo, "branch", self.BRANCH, "dev")
+        _git_run(self.repo, "push", "--quiet", "origin", self.BRANCH)
+
+        self.status_file = self.root / "ai-status.json"
+        self.task: dict[str, Any] = {
+            "id": self.TASK_ID,
+            "title": "Local anchor",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "in_progress",
+            "repository": "pantheon",
+            "branch": self.BRANCH,
+            "next": "Working",
+        }
+        self.blocker = {"task_id": self.TASK_ID, "owner": "Claude", "waiting_for": "Codex", "status": "open"}
+        self._write_board()
+        (self.root / "approval_queue.json").write_text('{"pending": [], "history": []}', encoding="utf-8")
+        (self.root / "event_queue.jsonl").touch()
+        self.config: dict[str, Any] = {
+            "paths": {
+                "status_file": str(self.status_file),
+                "state_file": str(self.root / "runtime-state.json"),
+                "activity_log": str(self.root / "activity.jsonl"),
+                "event_queue": str(self.root / "event_queue.jsonl"),
+                "approval_queue": str(self.root / "approval_queue.json"),
+                "approval_history": str(self.root / "approval_history.json"),
+            },
+            "schema": {"assignee_field": "owner"},
+            "coordination": {
+                "repositories": {"pantheon": {"repo": None, "local_path": str(self.repo), "default_branch": "dev"}}
+            },
+            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            "worker_worktrees": {"root": str(self.root / "worktrees")},
+            "worker_reassignment": {"enabled": False},
+            "providers": {
+                "claude": {"dispatch_group": "claude", "delivery_mode": "claude_cli"},
+                "codex": {"dispatch_group": "codex", "delivery_mode": "codex"},
+            },
+            "agents": {
+                "claude": {"display_name": "Claude", "provider": "claude", "adapter": "claude_cli", "account_pool": "claude_main"},
+                "codex": {"display_name": "Codex", "provider": "codex", "adapter": "codex", "account_pool": "codex_main"},
+            },
+            "account_pools": {
+                "claude_main": {"enabled": True, "max_concurrent": 2, "providers": ["claude"]},
+                "codex_main": {"enabled": True, "max_concurrent": 2, "providers": ["codex"]},
+            },
+        }
+        # Origin is read for real, by the original resolver, from the synthetic
+        # bare remote; only its repository lookup is bound to this fixture.
+        supervisor.runtime_ai_status._TASK_SHA_CACHE.clear()
+        self.addCleanup(supervisor.runtime_ai_status._TASK_SHA_CACHE.clear)
+        for patcher in (
+            mock.patch.object(supervisor.runtime_ai_status, "ROOT", self.repo),
+            mock.patch.object(supervisor.runtime_ai_status, "loaded_task_record", return_value=None),
+            mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),
+            mock.patch.object(supervisor, "console_log"),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _write_board(self) -> None:
+        self.status_file.write_text(
+            json.dumps({"tasks": [self.task], "blockers": [self.blocker], "handoffs": []}, indent=2), encoding="utf-8"
+        )
+
+    def _set_task(self, **fields: Any) -> None:
+        self.task.update(fields)
+        self._write_board()
+
+    def _commit(self, name: str = "anchor.txt", text: str = "real work\n") -> str:
+        (self.worktree / name).write_text(text, encoding="utf-8")
+        _git_run(self.worktree, "add", name)
+        _git_run(self.worktree, "commit", "--quiet", "-m", f"anchor {name}")
+        return _git_run(self.worktree, "rev-parse", "HEAD")
+
+    def _dispatch(self, *, status: str = "running", runner: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Prepare through the original owner, then snapshot it as the worker record."""
+        request = DeliveryRequest(
+            agent_id="claude",
+            provider="claude",
+            delivery_mode="claude_cli",
+            message="go",
+            task_id=self.TASK_ID,
+            reason="owned_ready_dispatch",
+            metadata={
+                "task": {
+                    "id": self.TASK_ID,
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "status": "in_progress",
+                    "head": self.base,
+                    "pr_url": None,
+                    "artifacts": [],
+                }
+            },
+        )
+        self.state: dict[str, Any] = {
+            "workers": {},
+            "queue": {"events": {"evt-1": {"status": "started"}}},
+            "provider_guardrails": {"dispatch_pauses": {}, "task_failure_streaks": {}},
+        }
+        ok, message = supervisor.prepare_worker_workspace(
+            self.config, self.state, request, queue_event_id="evt-1", target_agent="Claude", base_cache={}
+        )
+        self.assertTrue(ok, message)
+        self.worktree = Path(request.metadata["workspace_path"])
+        marker = self.root / "runner-status.json"
+        marker.write_text(json.dumps(runner or {"status": "completed", "exit_code": 0, "signal": None}), encoding="utf-8")
+        self.worker = {
+            "run_id": "run-1",
+            "task_id": self.TASK_ID,
+            "provider": "claude",
+            "agent_id": "claude",
+            "logical_agent_id": "claude",
+            "target_agent": "Claude",
+            "status": status,
+            "pid": 999999,
+            "queue_event_id": "evt-1",
+            "retry_count": 0,
+            "attempt_count": 1,
+            "reason": "owned_ready_dispatch",
+            "runner_status_path": str(marker),
+            "workspace_mode": request.metadata["workspace_mode"],
+            "workspace_path": request.metadata["workspace_path"],
+            "workspace_branch": request.metadata["workspace_branch"],
+            "repository_id": request.metadata["repository_id"],
+            "request_snapshot": supervisor.request_snapshot(request),
+        }
+        self.state["workers"]["run-1"] = self.worker
+        return self.worker
+
+    def _poll(self, *, higher_priority: bool = False) -> dict[str, Any]:
+        with mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=higher_priority):
+            supervisor.poll_workers(self.config, self.state, provider_report={})
+        return self.state["workers"].get("run-1", {})
+
+    def _assert_settled_as_progress(self, board_before: bytes) -> None:
+        self.assertEqual(self.worker["status"], "completed", self.worker.get("last_error"))
+        self.assertEqual(self.worker["progress_outcome"], "incremental_progress")
+        self.assertEqual(self.state["queue"]["events"]["evt-1"]["status"], "completed")
+        self.assertEqual(self.status_file.read_bytes(), board_before, "the canonical record must stay untouched")
+        self.assertEqual(_git_run(self.origin, "rev-parse", self.BRANCH), self.base, "nothing may be published")
+
+    def _assert_not_credited(self) -> None:
+        self.assertNotEqual(self.worker.get("progress_outcome"), "incremental_progress")
+        self.assertEqual(_git_run(self.origin, "rev-parse", self.BRANCH), self.base)
+
+    def _proof(self) -> worker_workspace.TerminalLocalHandoff:
+        task = json.loads(self.status_file.read_text(encoding="utf-8"))["tasks"][0]
+        return worker_workspace.terminal_local_handoff(self.config, self.state, self.worker, task)
+
+    def _blocked_after_real_commit(self) -> None:
+        self._dispatch()
+        self._commit()
+        self._set_task(status="blocked", waiting_for="Codex", next="Root integration decision pending on the draft.")
+
+    # --- genuine same-owner handoff -------------------------------------
+
+    def test_blocked_owner_with_real_local_commit_settles_through_original_flow(self) -> None:
+        self._blocked_after_real_commit()
+        board = self.status_file.read_bytes()
+        task_map = supervisor.task_index_from_status(self.config, supervisor.load_status(self.config))
+        self.assertFalse(supervisor.worker_matches_current_assignment(self.config, self.worker, task_map))
+        self._poll()
+        self._assert_settled_as_progress(board)
+
+    def test_in_progress_owner_real_anchor_is_progress_not_no_progress(self) -> None:
+        self._dispatch()
+        self._commit()
+        board = self.status_file.read_bytes()
+        self._poll()
+        self._assert_settled_as_progress(board)
+
+    def test_higher_priority_work_does_not_preempt_a_finished_handoff(self) -> None:
+        self._blocked_after_real_commit()
+        board = self.status_file.read_bytes()
+        self._poll(higher_priority=True)
+        self._assert_settled_as_progress(board)
+        self.assertIsNone(self.worker.get("last_error"))
+
+    def test_dead_stalled_owner_shares_the_same_proof(self) -> None:
+        self._dispatch(status="stalled")
+        self._commit()
+        self._set_task(status="blocked", waiting_for="Codex")
+        board = self.status_file.read_bytes()
+        self._poll()
+        self._assert_settled_as_progress(board)
+
+    def test_rebased_continuation_is_not_rejected_for_changed_ancestry(self) -> None:
+        self._dispatch()
+        self._commit("first.txt", "one\n")
+        self._dispatch()  # launch baseline is the old anchor
+        (self.worktree / "first.txt").write_text("rewritten\n", encoding="utf-8")
+        _git_run(self.worktree, "add", "first.txt")
+        _git_run(self.worktree, "commit", "--amend", "--quiet", "-m", "rewritten anchor")
+        board = self.status_file.read_bytes()
+        self._poll()
+        self._assert_settled_as_progress(board)
+
+    # --- no new work ----------------------------------------------------
+
+    def test_reused_old_anchor_with_zero_new_commits_stays_no_progress(self) -> None:
+        self._dispatch()
+        anchor = self._commit()
+        worker = self._dispatch()
+        self.assertEqual(worker["request_snapshot"]["metadata"]["workspace_launch_head"], anchor)
+        self.assertNotEqual(anchor, self.base)
+        self.assertEqual(self._proof().reason, "no_new_commit")
+        self._poll()
+        self._assert_not_credited()
+        self.assertEqual(self.worker["status"], "failed")
+        self.assertEqual(self.worker["last_error"], supervisor.NO_PROGRESS_WORKER_EXIT_REASON)
+
+    def test_reused_old_anchor_blocked_is_not_attributed_to_this_run(self) -> None:
+        self._dispatch()
+        self._commit()
+        self._dispatch()
+        self._set_task(status="blocked", waiting_for="Codex")
+        self._poll()
+        self._assert_not_credited()
+        self.assertEqual(self.worker["status"], "superseded")
+
+    def test_missing_launch_baseline_is_unproven_and_not_backfilled(self) -> None:
+        self._blocked_after_real_commit()
+        del self.worker["request_snapshot"]["metadata"]["workspace_launch_head"]
+        self.assertEqual(self._proof().reason, "launch_head_unproven")
+        self._poll()
+        self._assert_not_credited()
+        self.assertNotIn("workspace_launch_head", self.worker["request_snapshot"]["metadata"])
+
+    def test_rewind_and_empty_commit_are_not_new_work(self) -> None:
+        self._dispatch()
+        self._commit()
+        self._dispatch()
+        _git_run(self.worktree, "commit", "--allow-empty", "--quiet", "-m", "empty")
+        self.assertEqual(self._proof().reason, "no_tree_change")
+        _git_run(self.worktree, "reset", "--quiet", "--hard", self.base)
+        self.assertEqual(self._proof().reason, "no_new_commit")
+
+    def test_ready_claim_without_submission_stays_no_progress(self) -> None:
+        self._dispatch()
+        self._commit()
+        self._set_task(next="ready for review")
+        self.assertEqual(self._proof().reason, "ready_without_submission")
+        self._poll()
+        self._assert_not_credited()
+        self.assertEqual(self.worker["status"], "failed")
+
+    # --- identity and custody -------------------------------------------
+
+    def test_identity_drift_refuses_and_keeps_original_supersede(self) -> None:
+        for field, value, reason in (
+            ("owner", "Codex", "not_owner_execution"),
+            ("reviewer", "Claude", "reviewer_moved_since_dispatch"),
+            ("helper_execution_lease", {"claimed_by": "Codex"}, "helper_claim_present"),
+        ):
+            with self.subTest(field=field):
+                self._blocked_after_real_commit()
+                self._set_task(**{field: value})
+                self.assertEqual(self._proof().reason, reason)
+                self._poll()
+                self._assert_not_credited()
+                self.assertEqual(self.worker["status"], "superseded")
+                self.task.update({"owner": "Claude", "reviewer": "Codex", "status": "in_progress"})
+                self.task.pop("helper_execution_lease", None)
+                self._write_board()
+                _git_run(self.worktree, "reset", "--quiet", "--hard", self.base)
+
+    def test_stale_poll_snapshot_cannot_vouch_for_a_moved_owner(self) -> None:
+        self._blocked_after_real_commit()
+        stale = dict(self.task)
+        self._set_task(owner="Codex", reviewer="Claude")
+        proof = worker_workspace.terminal_local_handoff(self.config, self.state, self.worker, stale)
+        self.assertFalse(proof.verified)
+
+    def test_physical_slot_and_role_mismatch_refuse(self) -> None:
+        self._blocked_after_real_commit()
+        self.worker["agent_id"] = "codex"
+        self.assertEqual(self._proof().reason, "physical_slot_mismatch")
+        self.worker["agent_id"] = "claude"
+        self.worker["request_snapshot"]["reason"] = "review_ready_dispatch"
+        self.assertEqual(self._proof().reason, "not_owner_execution")
+        self.worker["request_snapshot"]["reason"] = "helper_claim_dispatch"
+        self.assertEqual(self._proof().reason, "not_owner_execution")
+
+    def test_seal_and_checkout_failures_refuse(self) -> None:
+        cases = {
+            "dirty": lambda: (self.worktree / "wip.txt").write_text("uncommitted\n", encoding="utf-8"),
+            "wrong_branch": lambda: _git_run(self.worktree, "checkout", "--quiet", "-b", "someone-else"),
+            "git_operation": lambda: Path(_git_run(self.worktree, "rev-parse", "--absolute-git-dir"), "MERGE_HEAD").write_text(self.base + "\n"),
+        }
+        for name, damage in cases.items():
+            with self.subTest(name):
+                self._dispatch()
+                head = _git_run(self.worktree, "rev-parse", "HEAD")
+                self._commit(f"{name}.txt")
+                self._set_task(status="blocked", waiting_for="Codex")
+                damage()
+                self.assertFalse(self._proof().verified)
+                self._poll()
+                self._assert_not_credited()
+                self.assertEqual(self.worker["status"], "superseded")
+                # Restore the checkout for the next subcase.
+                if name == "wrong_branch":
+                    _git_run(self.worktree, "checkout", "--quiet", self.BRANCH)
+                (self.worktree / "wip.txt").unlink(missing_ok=True)
+                Path(_git_run(self.worktree, "rev-parse", "--absolute-git-dir"), "MERGE_HEAD").unlink(missing_ok=True)
+                _git_run(self.worktree, "reset", "--quiet", "--hard", head)
+                self._set_task(status="in_progress")
+
+    def test_foreign_or_unregistered_checkout_is_not_trusted(self) -> None:
+        self._blocked_after_real_commit()
+        foreign = self.root / "foreign"
+        foreign.mkdir()
+        _git_run(foreign, "init", "--quiet", "-b", self.BRANCH)
+        _git_run(foreign, "config", "user.email", "x@example.invalid")
+        _git_run(foreign, "config", "user.name", "x")
+        _git_run(foreign, "commit", "--allow-empty", "--quiet", "-m", "foreign")
+        self.worker["workspace_path"] = str(foreign)
+        self.assertEqual(self._proof().reason, "checkout_unverified")
+        self.assertEqual(self.worker["worktree_activity"]["reason"], "untrusted_repository")
+
+    def test_protection_drift_after_prepare_refuses(self) -> None:
+        self._blocked_after_real_commit()
+        self._set_task(protected_paths=["guarded/zone"])
+        self.assertEqual(self._proof().reason, "protected_policy_drift")
+
+    def test_failed_signalled_or_terminated_runner_is_not_success(self) -> None:
+        for runner in (
+            {"status": "failed", "exit_code": 1, "signal": None},
+            {"status": "failed", "exit_code": -15, "signal": "SIGTERM"},
+        ):
+            with self.subTest(runner=runner):
+                self._dispatch(runner=runner)
+                self._commit(f"r{runner['exit_code']}.txt")
+                self._set_task(status="blocked", waiting_for="Codex")
+                supervisor.update_worker_runtime_markers(self.worker)
+                self.assertEqual(self._proof().reason, "runner_not_successful")
+                self._poll()
+                self._assert_not_credited()
+                _git_run(self.worktree, "reset", "--quiet", "--hard", self.base)
+                self._set_task(status="in_progress")
+
+    def test_surviving_writer_and_pending_fence_refuse(self) -> None:
+        self._blocked_after_real_commit()
+        self.worker["child_pid"] = os.getpid()
+        self.assertEqual(self._proof().reason, "writer_alive")
+        self.worker.pop("child_pid")
+        self.worker["pending_fence"] = {"pool_id": "claude_main", "reason": "quota"}
+        self.assertEqual(self._proof().reason, "pending_fence")
+        with mock.patch.object(supervisor, "worker_writers_are_alive", return_value=True):
+            self._poll()
+        self.assertEqual(self.worker["status"], "running", "the original fence keeps precedence")
+        self._assert_not_credited()
+
+    def test_parked_retry_approval_and_handed_off_statuses_keep_their_owners(self) -> None:
+        for status in ("retry_backoff", "waiting_approval", "suspended_approval", "fallback", "manual_pending"):
+            with self.subTest(status=status):
+                self._dispatch(status=status)
+                self._commit(f"{status}.txt")
+                self.task.update(status="blocked", waiting_for="Codex")
+                self._write_board()
+                self.assertEqual(self._proof().reason, "worker_status_not_eligible")
+                self._poll()
+                self._assert_not_credited()
+                _git_run(self.worktree, "reset", "--quiet", "--hard", self.base)
+                self._set_task(status="in_progress")
+
+    def test_pending_approval_keeps_precedence(self) -> None:
+        self._dispatch()
+        self._commit()
+        self._set_task(status="blocked", waiting_for="Human/Ops")
+        (self.root / "approval_queue.json").write_text(
+            json.dumps({"pending": [{"approval_id": "a-1", "worker_run_id": "run-1", "status": "pending"}], "history": []}),
+            encoding="utf-8",
+        )
+        self._poll()
+        self._assert_not_credited()
+        self.assertNotEqual(self.worker.get("status"), "completed")
+
+    def test_second_writer_on_the_same_task_refuses(self) -> None:
+        self._blocked_after_real_commit()
+        self.state["workers"]["run-2"] = {"run_id": "run-2", "task_id": self.TASK_ID, "pid": os.getpid()}
+        self.assertEqual(self._proof().reason, "another_writer_alive")
+
+    def test_canonical_blocker_history_and_roles_survive_a_credited_exit(self) -> None:
+        self._blocked_after_real_commit()
+        self._poll()
+        board = json.loads(self.status_file.read_text(encoding="utf-8"))
+        self.assertEqual(board["blockers"], [self.blocker])
+        record = board["tasks"][0]
+        self.assertEqual(
+            (record["status"], record["owner"], record["reviewer"], record["waiting_for"]),
+            ("blocked", "Claude", "Codex", "Codex"),
+        )
+        self.assertNotIn("review_submission", record)
+        self.assertNotIn("approved_head", record)
+
+    def test_boot_reconciliation_stays_conservative(self) -> None:
+        self._blocked_after_real_commit()
+        supervisor.reconcile_runtime_on_boot(self.config, self.state)
+        self.assertNotEqual(self.state["workers"]["run-1"].get("progress_outcome"), "incremental_progress")
+
+    def test_classifier_keeps_ready_and_review_refusals_ahead_of_the_proof(self) -> None:
+        worker = {"request_snapshot": {"reason": "owned_ready_dispatch", "metadata": {"task": {"id": "T", "head": "a"}}}}
+        task = {"id": "T", "head": "a", "status": "in_progress"}
+        classify = worker_failure_policy.successful_worker_exit_outcome
+        self.assertEqual(classify(worker, task, terminal_statuses={"done"}), "no_progress")
+        self.assertEqual(classify(worker, task, terminal_statuses={"done"}, local_handoff_verified=True), "incremental_progress")
+        ready = {**task, "next": "ready for review"}
+        self.assertEqual(classify(worker, ready, terminal_statuses={"done"}, local_handoff_verified=True), "no_progress")
+        review = {"request_snapshot": {"reason": "review_ready_dispatch", "metadata": {"task": {"id": "T"}}}}
+        self.assertEqual(classify(review, {**task, "status": "review"}, terminal_statuses={"done"}, local_handoff_verified=True), "no_progress")

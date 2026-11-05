@@ -34,6 +34,7 @@ from dispatch_policy import is_human_gate_agent
 from dispatch_policy import agent_provider_identity_ids as dispatch_policy_agent_provider_identity_ids
 from provider_runtime import configured_provider_binary, provider_config_entry
 import status_transition
+from capacity_controller import is_capacity_sidecar
 from worktree_cleanliness import ProtectedExecutionUnavailable
 
 
@@ -2070,8 +2071,15 @@ def successful_worker_exit_outcome(
     current_task: dict[str, Any] | None,
     *,
     terminal_statuses: set[str],
+    local_handoff_verified: bool = False,
 ) -> str:
-    """Classify a zero-exit worker by its durable task-board postcondition."""
+    """Classify a zero-exit worker by its durable task-board postcondition.
+
+    Task progress is read from origin, so a sealed unpublished commit is
+    invisible to it; only the caller's ``terminal_local_handoff`` proof can
+    credit one. It sits after the ready-without-submission refusal and never
+    reaches a reviewer or a board status, and the boot path does not pass it.
+    """
     task = current_task if isinstance(current_task, dict) else {}
     status = str(task.get("status") or "").strip().lower()
     terminal_statuses = {str(value).lower() for value in terminal_statuses}
@@ -2090,7 +2098,7 @@ def successful_worker_exit_outcome(
         return "no_progress"
     if task_progress_fingerprint(dispatched) != task_progress_fingerprint(task):
         return "incremental_progress"
-    return "no_progress"
+    return "incremental_progress" if local_handoff_verified else "no_progress"
 
 @_entrypoint
 def worker_retry_settings(config: dict[str, Any], provider: str | None) -> dict[str, Any]:
@@ -2384,6 +2392,15 @@ def agent_can_take_task(
     # would mean one of those paths could still hand review to a lane the
     # policy excludes.
     if role_provider_block_reason(config, name, role=role, task=task):
+        return False
+    # A capacity sidecar works only in the owner lane selected for its parent,
+    # which is the owner it was created with. If that lane is unavailable the
+    # sidecar waits; no repair or failover may move it to an unselected provider.
+    if (
+        role != "reviewer"
+        and is_capacity_sidecar(task)
+        and normalize_agent_id(name) != normalize_agent_id(str(task.get("owner") or ""))
+    ):
         return False
     if task_is_sidecar(task):
         return True

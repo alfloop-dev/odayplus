@@ -101,7 +101,8 @@ def test_chair_approves_bounded_sidecars_after_sustained_idle_capacity() -> None
     assert {candidate["helper_parent"] for candidate in candidates} == {"BLOCKED-0", "BLOCKED-1"}
     assert all(candidate["task_class"] == "sidecar" for candidate in candidates)
     assert all(candidate["mutates_canonical"] is False for candidate in candidates)
-    assert all(candidate["owner"] == "AUTO_ASSIGN" for candidate in candidates)
+    assert all(candidate["owner"] == "Claude" for candidate in candidates)
+    assert all(candidate["reviewer"] == "DIFFERENT_AGENT_REQUIRED" for candidate in candidates)
     assert all(candidate["expires_at"] == "2026-08-20T14:00:00Z" for candidate in candidates)
 
 
@@ -1263,3 +1264,149 @@ def test_mixed_archived_and_fresh_candidates_preserves_full_wave_budget_for_fres
     assert len(candidates) == 2
     assert {c["helper_parent"] for c in candidates} == {"FRESH-BLOCKED-PARENT-001", "FRESH-BLOCKED-PARENT-002"}
 
+
+APPROVED_WAVE = {
+    "capacity_controller": {
+        "chair_decision": {
+            "issued_at": "2026-08-20T11:50:00Z",
+            "valid_until": "2026-08-20T12:30:00Z",
+            "sidecar_wave": {"approved": True},
+        },
+    }
+}
+
+
+def blocked_parent(parent_id: str = "PARENT-1", **fields: object) -> dict:
+    return {"id": parent_id, "status": "blocked", "owner": "Claude", "reviewer": "Codex", **fields}
+
+
+def candidates_for(*parents: dict) -> list[dict]:
+    return capacity_controller.sidecar_candidates(
+        config(), APPROVED_WAVE, list(parents), runnable_tasks=set(), now=NOW
+    )
+
+
+def test_sidecar_inherits_normalized_parent_protection_as_its_own_list() -> None:
+    declared = ["zeta/deny/", "alpha/deny", "alpha/deny"]
+    parent = blocked_parent(protected_paths=declared, repository="pantheon", base_branch="dev")
+
+    [child] = candidates_for(parent)
+
+    assert child["protected_paths"] == ["alpha/deny", "zeta/deny"]
+    assert child["repository"] == "pantheon" and child["base_branch"] == "dev"
+    child["protected_paths"].append("mutated")
+    assert parent["protected_paths"] == declared
+
+
+def test_unprotected_parent_keeps_the_previous_candidate_shape() -> None:
+    [child] = candidates_for(blocked_parent())
+    assert "protected_paths" not in child
+    assert "source_docs" not in child
+
+
+def test_malformed_parent_protection_never_yields_an_unprotected_child() -> None:
+    for bad in ("guarded/zone", ["../escape"], ["guarded/*"], [7]):
+        assert candidates_for(blocked_parent(protected_paths=bad)) == [], bad
+    assert [c["helper_parent"] for c in candidates_for(blocked_parent(protected_paths="x"), blocked_parent("PARENT-2"))] == [
+        "PARENT-2"
+    ]
+
+
+def test_sidecar_keeps_the_selected_owner_and_an_independent_reviewer_placeholder() -> None:
+    [child] = candidates_for(blocked_parent(owner="Claude2", source_docs=["github://org/repo@abc/AGENTS.md"]))
+    assert child["owner"] == "Claude2"
+    assert child["reviewer"] == "DIFFERENT_AGENT_REQUIRED"
+    assert child["source_docs"] == ["github://org/repo@abc/AGENTS.md"]
+    assert capacity_controller.is_capacity_sidecar(child)
+
+
+def test_parent_authority_that_cannot_be_carried_refuses_the_child() -> None:
+    for parent in (
+        blocked_parent(owner="AUTO_ASSIGN"),
+        blocked_parent(owner=""),
+        blocked_parent(owner="Human/Ops"),
+        blocked_parent(owner="UnregisteredLane"),
+        blocked_parent(frozen_evidence_base_sha="a" * 40),
+    ):
+        assert candidates_for(parent) == [], parent
+
+
+def test_capacity_sidecar_owner_lane_cannot_move_but_reviewers_keep_their_pools() -> None:
+    cfg = {
+        "agents": {
+            "claude": {"display_name": "Claude", "provider": "claude"},
+            "antigravity3": {"display_name": "Antigravity3", "provider": "antigravity"},
+            "codex": {"display_name": "Codex", "provider": "codex"},
+        },
+    }
+    sidecar = {"id": "SC", "task_class": "sidecar", "auto_created_by": "capacity-controller", "owner": "Claude"}
+    assert supervisor.agent_can_take_task(cfg, "Claude", sidecar, role="owner") is True
+    assert supervisor.agent_can_take_task(cfg, "Antigravity3", sidecar, role="owner") is False
+    assert supervisor.agent_can_take_task(cfg, "Antigravity3", sidecar, role="helper") is False
+    assert supervisor.agent_can_take_task(cfg, "Codex", sidecar, role="reviewer") is True
+    ordinary = {**sidecar, "auto_created_by": None}
+    assert supervisor.agent_can_take_task(cfg, "Antigravity3", ordinary, role="owner") is True
+
+
+def test_integrity_repair_cannot_move_an_unavailable_sidecar_owner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cfg = {
+        "paths": {"status_file": str(tmp_path / "status.json"), "activity_log": str(tmp_path / "activity.jsonl")},
+        "agents": {
+            "claude": {"display_name": "Claude", "provider": "claude", "account_pool": "claude"},
+            "antigravity3": {"display_name": "Antigravity3", "provider": "antigravity", "account_pool": "antigravity"},
+            "codex": {"display_name": "Codex", "provider": "codex", "account_pool": "codex"},
+        },
+        "worker_reassignment": {"owner_fallbacks": {"Claude": ["Antigravity3"]}},
+    }
+    child = {
+        "id": "SC",
+        "status": "todo",
+        "priority": "P3",
+        "task_class": "sidecar",
+        "auto_created_by": "capacity-controller",
+        "owner": "Claude",
+        "reviewer": "Codex",
+    }
+    persisted: list[dict] = []
+    monkeypatch.setattr(supervisor, "task_assignment_integrity_issues", lambda *_: ["owner_unavailable:paused"])
+    monkeypatch.setattr(supervisor, "persist_task_reassignment", lambda *_a, **kw: persisted.append(kw) or True)
+
+    assert supervisor.normalize_task_assignment_integrity(cfg, {}, {"tasks": [child]}, child) is False
+    assert persisted == []
+    assert child["owner"] == "Claude"
+
+    # The same record without controller provenance is free to move: the refusal
+    # above comes from the lane rule, not from this fixture.
+    ordinary = {**child, "auto_created_by": None}
+    assert supervisor.normalize_task_assignment_integrity(cfg, {}, {"tasks": [ordinary]}, ordinary) is True
+    assert persisted[0]["new_owner"] == "Antigravity3"
+
+
+def test_reconcile_persists_the_inherited_authority_through_the_original_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    parent = blocked_parent(protected_paths=["guarded/zone"])
+    status = {"tasks": [parent]}
+    committed: list[dict] = []
+    monkeypatch.setattr(supervisor, "load_status", lambda _cfg: status)
+    monkeypatch.setattr(supervisor, "release_dead_helper_claims", lambda *_a: ([], True))
+    monkeypatch.setattr(supervisor, "canonical_dispatchable_task_ids", lambda *_a: set())
+    monkeypatch.setattr(supervisor, "write_activity_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        supervisor,
+        "commit_canonical_task_transition",
+        lambda _cfg, payload: committed.append(payload) or True,
+    )
+    state = {"capacity_controller": dict(APPROVED_WAVE["capacity_controller"])}
+    state["capacity_controller"]["chair_decision"] = {
+        **APPROVED_WAVE["capacity_controller"]["chair_decision"],
+        "valid_until": "2999-01-01T00:00:00Z",
+    }
+    monkeypatch.setattr(
+        capacity_controller, "evaluate_chair", lambda _cfg, st, *_a, **_k: (st["capacity_controller"], False)
+    )
+
+    supervisor.reconcile_capacity_controller(config(), state, provider_report={})
+
+    [payload] = committed
+    child = next(task for task in payload["tasks"] if task.get("helper_parent") == "PARENT-1")
+    assert child["protected_paths"] == ["guarded/zone"]
+    assert child["owner"] == "Claude"

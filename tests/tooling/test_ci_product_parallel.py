@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -685,3 +687,361 @@ def test_quarterly_password_browser_is_a_required_isolated_supplement() -> None:
     assert diagnostics["if"] == "always()"
     assert diagnostics["with"]["retention-days"] == 90
     assert diagnostics["with"]["path"] == "${{ runner.temp }}/product-e2e-supplemental/area-planning3/"
+
+
+# --- protected checkout denial on the three unconditional PR workflows -------
+
+PROTECTED_PR_WORKFLOWS = {
+    "ci.yml": 11,
+    "emgi-consumer-boundary.yml": 1,
+    "tooling-scope-review-gate.yml": 1,
+}
+# Jobs whose gates diff, walk or prove ancestry; a shallow clone would silently weaken them.
+FULL_HISTORY_JOBS = {
+    "ci.yml": {"change-scope", "product-lint-unit", "product-db", "product-api-contract", "product-e2e-gate"},
+    "emgi-consumer-boundary.yml": {"boundary"},
+    "tooling-scope-review-gate.yml": {"classify"},
+}
+GIT_PREFLIGHT_NAME = "Require sparse-capable Git before checkout"
+DENIAL_PROOF_NAME = "Prove protected path stayed out of checkout"
+DENY_PATTERNS = ["/*", "!/tests/sources"]
+# `sparse-checkout` is what denies; every other input can widen, redirect or replace it.
+ALLOWED_CHECKOUT_INPUTS = {"fetch-depth", "sparse-checkout", "sparse-checkout-cone-mode"}
+REMATERIALIZING_COMMAND = re.compile(
+    r"\bgit(?:\s+-[cC]\s+\S+|\s+-\S+)*\s+(?:checkout|switch|restore|read-tree|stash|clone|archive|pull|merge|rebase"
+    r"|sparse-checkout|submodule|lfs|worktree\s+add|reset\s+--hard)\b"
+    r"|\bgh\s+repo\s+clone\b|/(?:tarball|zipball)/|\bgit\s+config\b[^\n]*core\.sparse"
+)
+
+
+def load_pr_workflow(name: str) -> dict[str, Any]:
+    return yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text())
+
+
+def reference_step_scripts() -> tuple[str, str]:
+    steps = load_pr_workflow("tooling-scope-review-gate.yml")["jobs"]["classify"]["steps"]
+    return steps[0]["run"], steps[2]["run"]
+
+
+def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[str]:
+    """Every way a job could materialize the denied prefix, stated as a violation."""
+    preflight_run, proof_run = reference_step_scripts()
+    violations: list[str] = []
+    checkouts = 0
+    for job_name, job in workflow["jobs"].items():
+        steps = job.get("steps", [])
+        here = f"{name}:{job_name}"
+        positions = [i for i, step in enumerate(steps) if "actions/checkout" in str(step.get("uses", ""))]
+        checkouts += len(positions)
+        if len(positions) != 1:
+            violations.append(f"{here}: expected exactly one checkout, found {len(positions)}")
+            continue
+        at = positions[0]
+        checkout = steps[at]
+        if checkout["uses"] != "actions/checkout@v4":
+            violations.append(f"{here}: checkout version changed: {checkout['uses']}")
+        if at != 1 or steps[0].get("name") != GIT_PREFLIGHT_NAME or steps[0].get("run") != preflight_run:
+            violations.append(f"{here}: exact Git preflight must be the only step before checkout")
+        following = steps[at + 1] if at + 1 < len(steps) else {}
+        if following.get("name") != DENIAL_PROOF_NAME or following.get("run") != proof_run:
+            violations.append(f"{here}: exact denial proof must directly follow checkout")
+        if following.get("env") != {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}:
+            violations.append(f"{here}: denial proof must judge repository configuration alone")
+        for step in (steps[0], checkout, following):
+            for softener in ("if", "continue-on-error"):
+                if softener in step:
+                    violations.append(f"{here}: {step.get('name') or step.get('uses')} may not set {softener}")
+        inputs = checkout.get("with") or {}
+        if set(inputs) - ALLOWED_CHECKOUT_INPUTS:
+            violations.append(f"{here}: unsupported checkout inputs {sorted(set(inputs) - ALLOWED_CHECKOUT_INPUTS)}")
+        if inputs.get("sparse-checkout-cone-mode") is not False:
+            violations.append(f"{here}: sparse checkout must stay non-cone")
+        if str(inputs.get("sparse-checkout") or "").split() != DENY_PATTERNS:
+            violations.append(f"{here}: deny patterns changed")
+        if job_name in FULL_HISTORY_JOBS[name] and inputs.get("fetch-depth") != 0:
+            violations.append(f"{here}: required full history was lost")
+        for step in steps:
+            script = str(step.get("run") or "")
+            if REMATERIALIZING_COMMAND.search(script):
+                violations.append(f"{here}: {step.get('name')} can re-materialize the denied prefix")
+            if re.search(r"git diff (?!--no-renames)[^\n]*--name-only", script):
+                violations.append(f"{here}: {step.get('name')} rename detection would fetch bodies")
+    if checkouts != PROTECTED_PR_WORKFLOWS[name]:
+        violations.append(f"{name}: expected {PROTECTED_PR_WORKFLOWS[name]} checkouts, found {checkouts}")
+    return violations
+
+
+@pytest.mark.parametrize("name", sorted(PROTECTED_PR_WORKFLOWS))
+def test_pr_workflow_denies_protected_prefix_before_every_checkout(name: str) -> None:
+    assert protected_checkout_violations(name, load_pr_workflow(name)) == []
+
+
+def test_full_history_jobs_are_all_the_jobs_that_declared_it() -> None:
+    """The list above is not a hand-picked subset of what the workflows ask for."""
+    for name, expected in FULL_HISTORY_JOBS.items():
+        jobs = load_pr_workflow(name)["jobs"]
+        declared = {
+            job_name
+            for job_name, job in jobs.items()
+            for step in job["steps"]
+            if (step.get("with") or {}).get("fetch-depth") == 0
+        }
+        assert declared == expected
+
+
+def _mutated(mutate: Any) -> list[str]:
+    workflow = load_pr_workflow("tooling-scope-review-gate.yml")
+    mutate(workflow["jobs"]["classify"]["steps"])
+    return protected_checkout_violations("tooling-scope-review-gate.yml", workflow)
+
+
+@pytest.mark.parametrize(
+    ("label", "mutate"),
+    [
+        ("deny omitted", lambda s: s[1]["with"].pop("sparse-checkout")),
+        ("cone mode", lambda s: s[1]["with"].update({"sparse-checkout-cone-mode": True})),
+        ("cone default", lambda s: s[1]["with"].pop("sparse-checkout-cone-mode")),
+        ("deny weakened", lambda s: s[1]["with"].update({"sparse-checkout": "/*\n"})),
+        ("deny re-allowed", lambda s: s[1]["with"].update({"sparse-checkout": "/*\n!/tests/sources\n/tests/sources/\n"})),
+        ("filter override", lambda s: s[1]["with"].update({"filter": "blob:limit=1g"})),
+        ("lfs", lambda s: s[1]["with"].update({"lfs": True})),
+        ("submodules", lambda s: s[1]["with"].update({"submodules": True})),
+        ("other repository", lambda s: s[1]["with"].update({"repository": "someone/else"})),
+        ("history lost", lambda s: s[1]["with"].pop("fetch-depth")),
+        ("floating action", lambda s: s[1].update({"uses": "actions/checkout@main"})),
+        ("wrong order", lambda s: s.insert(0, s.pop(1))),
+        ("preflight removed", lambda s: s.pop(0)),
+        ("preflight weakened", lambda s: s[0].update({"run": "git version || true"})),
+        ("preflight tolerated", lambda s: s[0].update({"continue-on-error": True})),
+        ("proof removed", lambda s: s.pop(2)),
+        ("proof skipped", lambda s: s[2].update({"if": "false"})),
+        ("proof weakened", lambda s: s[2].update({"run": "true"})),
+        ("proof judged by host config", lambda s: s[2].pop("env")),
+        ("second checkout", lambda s: s.append({"uses": "actions/checkout@v4"})),
+        ("sparse disabled later", lambda s: s.append({"name": "x", "run": "git sparse-checkout disable"})),
+        ("later checkout", lambda s: s.append({"name": "x", "run": "git -c a=b checkout HEAD -- ."})),
+        ("archive fallback", lambda s: s.append({"name": "x", "run": "git archive HEAD | tar -x"})),
+        ("rest tarball", lambda s: s.append({"name": "x", "run": "gh api repos/o/r/tarball/main > a.tgz"})),
+        ("clone", lambda s: s.append({"name": "x", "run": "git clone https://example.invalid/r.git"})),
+        ("worktree", lambda s: s.append({"name": "x", "run": "git worktree add ../w HEAD"})),
+        ("config reset", lambda s: s.append({"name": "x", "run": "git config core.sparseCheckout false"})),
+        ("rename fetch", lambda s: s.append({"name": "x", "run": "git diff --name-only a b"})),
+    ],
+)
+def test_checkout_contract_rejects_each_weakening(label: str, mutate: Any) -> None:
+    assert _mutated(mutate), label
+
+
+def _run_preflight(path_dir: Path) -> subprocess.CompletedProcess[str]:
+    preflight, _proof = reference_step_scripts()
+    for tool in ("sed", "sort", "head"):
+        (path_dir / tool).symlink_to(shutil.which(tool))
+    return subprocess.run(
+        [shutil.which("bash"), "-e", "-c", preflight],
+        env={"PATH": str(path_dir)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("reported", "accepted"),
+    [
+        ("git version 2.28.0", True),
+        ("git version 2.43.0", True),
+        ("git version 3.0.1 (Apple)", True),
+        ("git version 2.27.1", False),
+        ("git version 2.9.5", False),
+        ("not a version", False),
+        ("", False),
+    ],
+)
+def test_git_preflight_refuses_what_would_fall_back_to_rest(tmp_path: Path, reported: str, accepted: bool) -> None:
+    fake = tmp_path / "git"
+    fake.write_text(f"#!{shutil.which('bash')}\necho '{reported}'\n", encoding="utf-8")
+    fake.chmod(0o755)
+    assert (_run_preflight(tmp_path).returncode == 0) is accepted
+
+
+def test_git_preflight_refuses_a_runner_without_git(tmp_path: Path) -> None:
+    assert _run_preflight(tmp_path).returncode != 0
+
+
+class _CheckoutFixture:
+    """A body-bearing synthetic repository checked out the way actions/checkout@v4 does."""
+
+    PREFIX = "guarded/zone"
+
+    def __init__(self, root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.root = root
+        (root / "gitconfig").touch()
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(root / "gitconfig"))
+        monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+        self.seed = root / "seed"
+        self.origin = root / "origin.git"
+        self.checkout = root / "checkout"
+        self.git(root, "init", "-q", "-b", "dev", str(self.seed))
+        self.git(self.seed, "config", "user.name", "Test")
+        self.git(self.seed, "config", "user.email", "test@example.invalid")
+        (self.seed / self.PREFIX).mkdir(parents=True)
+        (self.seed / self.PREFIX / "body.txt").write_text("synthetic body\n", encoding="utf-8")
+        (self.seed / "guarded" / "sibling.txt").write_text("sibling\n", encoding="utf-8")
+        (self.seed / ".orchestrator").mkdir()
+        shutil.copy(ROOT / ".orchestrator" / "worktree_cleanliness.py", self.seed / ".orchestrator")
+        self.git(self.seed, "add", ".")
+        self.git(self.seed, "commit", "-q", "-m", "base")
+        self.body_oid = self.git(self.seed, "rev-parse", f"HEAD:{self.PREFIX}/body.txt").stdout.strip()
+        self.git(root, "init", "-q", "--bare", str(self.origin))
+        self.git(self.origin, "config", "uploadpack.allowFilter", "true")
+        self.git(self.origin, "config", "uploadpack.allowAnySHA1InWant", "true")
+        self.git(self.seed, "push", "-q", str(self.origin), "dev")
+
+    @staticmethod
+    def git(cwd: Path, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["git", *args], cwd=cwd, text=True, input=stdin, capture_output=True, check=True)
+
+    def action_checkout(self, patterns: list[str], *, depth: int | None = None, blob_filter: str = "blob:none") -> None:
+        """Mirror git-source-provider.ts: fetch with the filter, sparse setup, then checkout."""
+        self.git(self.root, "init", "-q", str(self.checkout))
+        self.git(self.checkout, "remote", "add", "origin", f"file://{self.origin}")
+        fetch = ["-c", "protocol.version=2", "fetch", "-q", "--no-tags", "--prune", f"--filter={blob_filter}"]
+        if depth:
+            fetch.append(f"--depth={depth}")
+        self.git(self.checkout, *fetch, "origin", "+refs/heads/*:refs/remotes/origin/*")
+        self.git(self.checkout, "config", "core.sparseCheckout", "true")
+        sparse = self.checkout / ".git" / "info" / "sparse-checkout"
+        sparse.parent.mkdir(exist_ok=True)
+        with sparse.open("a", encoding="utf-8") as stream:
+            stream.write("\n" + "\n".join(patterns) + "\n")
+        self.git(self.checkout, "checkout", "-q", "--force", "-B", "dev", "refs/remotes/origin/dev")
+
+    def deny_patterns(self) -> list[str]:
+        return [line.replace("tests/sources", self.PREFIX) for line in DENY_PATTERNS]
+
+    def run_proof(self) -> subprocess.CompletedProcess[str]:
+        _preflight, proof = reference_step_scripts()
+        assert proof.count('denied = "tests/sources"') == 1
+        return subprocess.run(
+            ["bash", "-e", "-c", proof.replace('denied = "tests/sources"', f'denied = "{self.PREFIX}"')],
+            cwd=self.checkout,
+            env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def local_objects(self) -> str:
+        return self.git(self.checkout, "cat-file", "--batch-check", "--batch-all-objects").stdout
+
+
+@pytest.fixture
+def checkout_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _CheckoutFixture:
+    return _CheckoutFixture(tmp_path, monkeypatch)
+
+
+@pytest.mark.parametrize("depth", [None, 1])
+def test_deny_patterns_keep_body_out_of_tree_and_object_store(checkout_fixture: _CheckoutFixture, depth: int | None) -> None:
+    fixture = checkout_fixture
+    fixture.action_checkout(fixture.deny_patterns(), depth=depth)
+    assert not (fixture.checkout / fixture.PREFIX).exists()
+    assert (fixture.checkout / "guarded" / "sibling.txt").is_file(), "only the exact prefix is denied"
+    assert fixture.body_oid not in fixture.local_objects()
+    assert fixture.git(fixture.checkout, "status", "--porcelain").stdout == ""
+    proof = fixture.run_proof()
+    assert proof.returncode == 0, proof.stdout + proof.stderr
+
+
+def test_full_history_survives_the_deny(checkout_fixture: _CheckoutFixture) -> None:
+    fixture = checkout_fixture
+    (fixture.seed / "second.txt").write_text("second\n", encoding="utf-8")
+    fixture.git(fixture.seed, "add", "second.txt")
+    fixture.git(fixture.seed, "commit", "-q", "-m", "second")
+    fixture.git(fixture.seed, "push", "-q", str(fixture.origin), "dev")
+    fixture.action_checkout(fixture.deny_patterns())
+    assert fixture.git(fixture.checkout, "rev-list", "--count", "HEAD").stdout.strip() == "2"
+    assert fixture.git(fixture.checkout, "merge-base", "HEAD", "origin/dev").stdout.strip()
+    assert fixture.body_oid not in fixture.local_objects()
+
+
+def test_classifying_diff_of_the_denied_prefix_fetches_no_body(checkout_fixture: _CheckoutFixture) -> None:
+    fixture = checkout_fixture
+    base = fixture.git(fixture.seed, "rev-parse", "HEAD").stdout.strip()
+    fixture.git(fixture.seed, "mv", f"{fixture.PREFIX}/body.txt", "moved.txt")
+    with (fixture.seed / "moved.txt").open("a", encoding="utf-8") as stream:
+        stream.write("edited after the move\n")
+    fixture.git(fixture.seed, "add", "moved.txt")
+    fixture.git(fixture.seed, "commit", "-q", "-m", "rename and edit")
+    head = fixture.git(fixture.seed, "rev-parse", "HEAD").stdout.strip()
+    fixture.git(fixture.seed, "push", "-q", str(fixture.origin), "dev")
+    fixture.action_checkout(fixture.deny_patterns())
+
+    changed = fixture.git(fixture.checkout, "diff", "--no-renames", "--name-only", base, head).stdout.split()
+    assert changed == [f"{fixture.PREFIX}/body.txt", "moved.txt"]
+    assert fixture.body_oid not in fixture.local_objects()
+
+    # Why the flag matters: rename detection lazily downloads the denied body.
+    fixture.git(fixture.checkout, "diff", "--name-only", base, head)
+    assert fixture.body_oid in fixture.local_objects()
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        pytest.param(lambda f: f.git(f.checkout, "sparse-checkout", "disable"), id="sparse-disabled-rematerializes"),
+        pytest.param(lambda f: f.git(f.checkout, "config", "core.sparseCheckout", "false"), id="sparse-config-off"),
+        pytest.param(lambda f: f.git(f.checkout, "config", "core.sparseCheckoutCone", "true"), id="cone-on"),
+        pytest.param(
+            lambda f: f.git(f.checkout, "update-index", "--no-skip-worktree", f"{f.PREFIX}/body.txt"),
+            id="index-entry-unprotected",
+        ),
+        pytest.param(lambda f: (f.checkout / f.PREFIX).mkdir(parents=True), id="prefix-path-created"),
+        pytest.param(
+            lambda f: (f.checkout / ".git" / "info" / "sparse-checkout").write_text("/*\n"), id="patterns-replaced"
+        ),
+        pytest.param(lambda f: f.git(f.checkout, "config", "remote.origin.partialclonefilter", "blob:limit=1g"), id="filter-changed"),
+        pytest.param(lambda f: f.git(f.checkout, "config", "filter.x.clean", "cat"), id="unsafe-content-filter"),
+        pytest.param(
+            lambda f: f.git(f.checkout, "update-index", "--add", "--replace", "--cacheinfo", f"120000,{f.body_oid},guarded"),
+            id="unsafe-index-ancestor",
+        ),
+    ],
+)
+def test_denial_proof_fails_closed(checkout_fixture: _CheckoutFixture, damage: Any) -> None:
+    fixture = checkout_fixture
+    fixture.action_checkout(fixture.deny_patterns())
+    assert fixture.run_proof().returncode == 0
+    damage(fixture)
+    proof = fixture.run_proof()
+    assert proof.returncode != 0, proof.stdout
+
+
+def test_denial_proof_fails_without_a_git_repository(checkout_fixture: _CheckoutFixture) -> None:
+    """What a REST archive fallback would have left behind."""
+    fixture = checkout_fixture
+    fixture.checkout.mkdir()
+    shutil.copytree(fixture.seed / ".orchestrator", fixture.checkout / ".orchestrator")
+    assert fixture.run_proof().returncode != 0
+
+
+def _commit_with_entry(fixture: _CheckoutFixture, entry: str) -> None:
+    tree = fixture.git(fixture.seed, "mktree", stdin=entry + "\n").stdout.strip()
+    parent = fixture.git(fixture.seed, "rev-parse", "HEAD").stdout.strip()
+    commit = fixture.git(fixture.seed, "commit-tree", tree, "-p", parent, "-m", "unsafe").stdout.strip()
+    fixture.git(fixture.seed, "push", "-q", str(fixture.origin), f"+{commit}:refs/heads/dev")
+
+
+def test_denial_proof_refuses_unsafe_ancestor_and_gitlink_trees(checkout_fixture: _CheckoutFixture) -> None:
+    fixture = checkout_fixture
+    tooling = fixture.git(fixture.seed, "ls-tree", "HEAD", ".orchestrator").stdout.strip()
+    blob = fixture.git(fixture.seed, "hash-object", "-w", "--stdin", stdin="elsewhere").stdout.strip()
+    _commit_with_entry(fixture, f"{tooling}\n120000 blob {blob}\tguarded")
+    fixture.action_checkout(fixture.deny_patterns())
+    assert "ancestor_escape" in fixture.run_proof().stderr
+
+    shutil.rmtree(fixture.checkout)
+    base = fixture.git(fixture.seed, "rev-parse", "HEAD").stdout.strip()
+    inner = fixture.git(fixture.seed, "mktree", stdin=f"160000 commit {base}\tzone\n").stdout.strip()
+    _commit_with_entry(fixture, f"{tooling}\n040000 tree {inner}\tguarded")
+    fixture.action_checkout(fixture.deny_patterns())
+    assert "protected_entry_escape" in fixture.run_proof().stderr

@@ -1109,6 +1109,19 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             preserve_worker_worktree_once(
                 "runner_failed" if runner_reports_failure else "missing_process"
             )
+        # One proof for every settlement branch below. It only routes a finished
+        # owner to the original settlement; running eligibility stays strict.
+        local_handoff_verified = (
+            not alive
+            and not runner_reports_failure
+            and worker_workspace.terminal_local_handoff(
+                config,
+                state,
+                worker,
+                task_map.get(str(worker.get("task_id") or "")),
+                has_pending_approval=bool(pending_by_run.get(run_id)),
+            ).verified
+        )
         if not alive and str(worker.get("status") or "").lower() == "stalled":
             current_task = task_map.get(str(worker.get("task_id") or ""), {})
             terminal_statuses = {
@@ -1121,6 +1134,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 worker,
                 current_task,
                 terminal_statuses=terminal_statuses,
+                local_handoff_verified=local_handoff_verified,
             )
             if progress_outcome in {"lifecycle_complete", "review_decided", "incremental_progress"}:
                 worker["status"] = "completed"
@@ -1249,8 +1263,13 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 task_map,
                 now,
             )
-        accepted_dead_worker_transition = False
-        if not assignment_matches and not alive and worker_runner_succeeded(worker):
+        accepted_dead_worker_transition = local_handoff_verified
+        if (
+            not accepted_dead_worker_transition
+            and not assignment_matches
+            and not alive
+            and worker_runner_succeeded(worker)
+        ):
             accepted_dead_worker_transition = successful_worker_exit_outcome(
                 worker,
                 task_map.get(str(worker.get("task_id") or ""), {}),
@@ -1340,6 +1359,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         if (
             worker.get("queue_event_id")
             and worker.get("status") in active_statuses
+            and not local_handoff_verified
             and higher_priority_ready_task_exists(config, worker, task_map, state)
         ):
             if not worker_can_be_preempted(config, worker, task_map, state, now=now):
@@ -1711,6 +1731,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 worker,
                 current_task,
                 terminal_statuses=terminal_statuses,
+                local_handoff_verified=local_handoff_verified,
             )
             if runner_succeeded
             else None
@@ -1931,6 +1952,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     worker,
                     current_task,
                     terminal_statuses=terminal_statuses,
+                    local_handoff_verified=local_handoff_verified,
                 )
                 if runner_succeeded
                 else None
@@ -2047,7 +2069,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 worker["progress_outcome"] = success_outcome
                 clear_task_failure_streaks_for_task(state, worker.get("task_id"))
                 message = (
-                    "Background worker process exited after recording meaningful incremental progress; task remains dispatchable."
+                    "Background worker process exited after recording meaningful incremental progress; canonical task state is unchanged."
                     if success_outcome == "incremental_progress"
                     else "Background worker process exited after completing its required task lifecycle transition."
                 )
