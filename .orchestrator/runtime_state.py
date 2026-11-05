@@ -678,25 +678,29 @@ def _merge_worker_record(disk_worker: dict[str, Any], mem_worker: dict[str, Any]
     return merged
 
 
-def _queue_reset_supersedes(event: dict[str, Any], other: dict[str, Any]) -> bool:
-    """Whether ``event`` carries a reset that ``other`` was written without seeing.
+def _queue_reset_position(record: dict[str, Any]) -> tuple[str, int, bool]:
+    """Where this record stands in its event's sequence of resets and attempts.
 
-    Every writer after a reset mutates the record holding it, so a snapshot with
-    an older reset, or none, predates it however late it was saved: its later
-    ``processed_at`` is a stale run finishing, not a new grant. Timestamps have
-    one-second resolution, so two resets can share one. A real attempt after a
-    reset raises ``attempt_count``, which tells a snapshot that answered this
-    reset from one this reset cleared.
+    They alternate on one record. A reset's timestamp has one-second resolution,
+    so several can share a marker. Within a marker a real attempt raises
+    ``attempt_count``, and a reset keeps the count but follows the attempt it
+    cleared.
     """
-    requeued_at = str(event.get("requeued_at") or "")
-    other_requeued_at = str(other.get("requeued_at") or "")
-    if requeued_at != other_requeued_at:
-        return requeued_at > other_requeued_at
     return (
-        _queue_reset_pending(event)
-        and not _queue_reset_pending(other)
-        and int(other.get("attempt_count") or 0) <= int(event.get("attempt_count") or 0)
+        str(record.get("requeued_at") or ""),
+        int(record.get("attempt_count") or 0),
+        _queue_reset_pending(record),
     )
+
+
+def _queue_reset_supersedes(event: dict[str, Any], other: dict[str, Any]) -> bool:
+    """Whether ``other`` was written before a reset or attempt ``event`` records.
+
+    Every writer after a reset mutates the record holding it, so an earlier
+    position is a stale snapshot however late it is saved: its ``processed_at`` is
+    an old run finishing, not a new grant. Records with no reset keep ranking.
+    """
+    return bool(event.get("requeued_at")) and _queue_reset_position(event) > _queue_reset_position(other)
 
 
 def _merge_queue_record(disk_event: dict[str, Any], mem_event: dict[str, Any]) -> dict[str, Any]:

@@ -658,14 +658,15 @@ class QueueCustodyPersistenceTests(unittest.TestCase):
         self.assertEqual(runtime_state._merge_queue_record(bound, reset), reset)
         self.assertEqual(runtime_state._merge_queue_record(reset, bound), reset)
 
-    def _save_both_orders(self, reset: dict, stale: dict) -> dict:
-        """The reset and the stale record through the real locked save, each writing last."""
+    def _save_both_orders(self, current: dict, stale: dict, workers: dict | None = None) -> dict:
+        """Both records through the real locked save, each writing last from a clean file."""
         outcomes = {}
-        for name, writers in (("stale writes last", (reset, stale)), ("reset writes last", (stale, reset))):
+        for name, writers in (("stale writes last", (current, stale)), ("current writes last", (stale, current))):
             state_file = Path(self.config["paths"]["state_file"])
             state_file.unlink(missing_ok=True)
             for record in writers:
-                runtime_state.save_runtime_state(self.config, {"workers": {}, "queue": {"events": {"evt-1": deepcopy(record)}}})
+                state = {"workers": deepcopy(workers or {}), "queue": {"events": {"evt-1": deepcopy(record)}}}
+                runtime_state.save_runtime_state(self.config, state)
             outcomes[name] = self._record()
         return outcomes
 
@@ -702,6 +703,66 @@ class QueueCustodyPersistenceTests(unittest.TestCase):
         for order, record in self._save_both_orders(second, attempted).items():
             with self.subTest(order=order):
                 self.assertEqual(record, second)
+
+    def test_stale_completed_attempt_does_not_replace_a_newer_attempt_on_the_same_marker(self) -> None:
+        marker = "2026-11-05T00:00:05Z"
+        newer = {
+            "status": "started",
+            "attempt_count": 6,
+            "requeued_at": marker,
+            "last_attempt_at": "2026-11-05T00:00:06Z",
+            "run_id": "fresh-run-6",
+            "lease_owner": "fresh-run-6",
+            "processed_at": "2026-11-05T00:00:06Z",
+        }
+        stale = {
+            "status": "completed",
+            "attempt_count": 5,
+            "requeued_at": marker,
+            "last_attempt_at": marker,
+            "run_id": "old-run-5",
+            "lease_owner": "old-run-5",
+            "processed_at": "2026-11-05T00:00:09Z",
+        }
+        workers = {
+            "old-run-5": self._worker("completed", "old-run-5", attempt_count=5),
+            "fresh-run-6": self._worker("running", "fresh-run-6", attempt_count=6),
+        }
+        for order, record in self._save_both_orders(newer, stale, workers).items():
+            with self.subTest(order=order):
+                self.assertEqual(record, newer)
+
+    def test_stale_pending_reset_does_not_roll_back_a_later_pending_reset(self) -> None:
+        marker = "2026-11-05T00:00:05Z"
+        later = {"status": "queued", "attempt_count": 5, "requeued_at": marker, "requeue_reason": "second"}
+        stale = {"status": "queued", "attempt_count": 4, "requeued_at": marker, "requeue_reason": "first"}
+        for order, record in self._save_both_orders(later, stale).items():
+            with self.subTest(order=order):
+                self.assertEqual(record, later)
+
+    def test_newer_reset_beats_a_snapshot_saved_mid_attempt_with_a_higher_count(self) -> None:
+        """A cooldown rolls its tentative attempt back, so a later reset can hold a lower count."""
+        reset = {"status": "queued", "attempt_count": 4, "requeued_at": "2026-11-05T00:00:05Z", "requeue_reason": "later"}
+        for name, facts in (("older marker", {"requeued_at": "2026-11-05T00:00:01Z"}), ("no marker", {})):
+            mid_attempt = {**facts, "status": "started", "attempt_count": 5, "last_attempt_at": "2026-11-05T00:00:02Z"}
+            for order, record in self._save_both_orders(reset, mid_attempt).items():
+                with self.subTest(name, order=order):
+                    self.assertEqual(record, reset)
+
+    def test_same_attempt_on_the_same_marker_still_keeps_its_furthest_transition(self) -> None:
+        marker = "2026-11-05T00:00:05Z"
+        started = {
+            "status": "started",
+            "attempt_count": 5,
+            "requeued_at": marker,
+            "last_attempt_at": marker,
+            "run_id": "run-5",
+            "lease_owner": "run-5",
+        }
+        completed = {**started, "status": "completed", "processed_at": "2026-11-05T00:00:09Z"}
+        for order, record in self._save_both_orders(completed, started).items():
+            with self.subTest(order=order):
+                self.assertEqual(record["status"], "completed")
 
     def test_attempt_answering_the_same_reset_is_kept(self) -> None:
         """The attempt's own increment is what tells it from a record the reset cleared."""

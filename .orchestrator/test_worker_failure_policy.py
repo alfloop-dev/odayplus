@@ -5893,28 +5893,76 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
         self.assertEqual(len(launches), 1, "returned work is dispatched, not pruned")
         self.assertEqual(self._persisted_record(state)["lease_owner"], "launched-1")
 
+    def _same_second(self) -> Any:
+        """Pin both clocks the producers read: reset, and process_queue's attempt."""
+        second = "2026-11-05T00:00:05Z"
+        patchers = [mock.patch.object(owner, "utc_now", return_value=second) for owner in (runtime_state, supervisor)]
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return second
+
     def test_second_reset_in_the_same_second_after_a_real_attempt_holds_for_both_writers(self) -> None:
         launches = self._launch_spy()
         self._dispatch(status="failed", runner=self.FAILED_RUNNER)
-        with mock.patch.object(runtime_state, "utc_now", return_value="2026-11-05T00:00:05Z"):
-            self._persist_bound_then_reset()
-            self._tick()
-            self.assertEqual(len(launches), 1)
-            attempted = runtime_state.load_runtime_state(self.config)
-            self.assertEqual(attempted["queue"]["events"]["evt-1"]["lease_owner"], "launched-1")
-            for name, writers in (("stale writes last", (True, False)), ("reset writes last", (False, True))):
-                with self.subTest(name):
-                    runtime_state.save_runtime_state(self.config, runtime_state.load_runtime_state(self.config))
-                    second = runtime_state.load_runtime_state(self.config)
-                    supervisor._reset_queue_record_for_redispatch(second["queue"]["events"]["evt-1"], reason="second")
-                    stale = {"workers": {}, "queue": {"events": {"evt-1": dict(attempted["queue"]["events"]["evt-1"])}}}
-                    for write_reset in writers:
-                        runtime_state.save_runtime_state(self.config, second if write_reset else stale)
-                    state = runtime_state.load_runtime_state(self.config)
-                    record = self._persisted_record(state)
-                    self.assertEqual((record["status"], record["requeue_reason"]), ("queued", "second"))
-                    self.assertNotIn("lease_owner", record)
-                    self.assertTrue(runtime_state.queue_event_moved_from_worker(state, state["workers"]["launched-1"]))
+        second = self._same_second()
+        self._persist_bound_then_reset()
+        self._tick()
+        self.assertEqual(len(launches), 1)
+        state_file = Path(self.config["paths"]["state_file"])
+        attempted_bytes = state_file.read_bytes()
+        attempted = self._persisted_record()
+        self.assertEqual(attempted["lease_owner"], "launched-1")
+        self.assertEqual((attempted["last_attempt_at"], attempted["requeued_at"]), (second, second))
+
+        for name, reset_last in (("stale writes last", False), ("reset writes last", True)):
+            with self.subTest(name):
+                state_file.write_bytes(attempted_bytes)
+                reset = runtime_state.load_runtime_state(self.config)
+                stale = runtime_state.load_runtime_state(self.config)
+                supervisor._reset_queue_record_for_redispatch(reset["queue"]["events"]["evt-1"], reason="second")
+                for writer in (stale, reset) if reset_last else (reset, stale):
+                    runtime_state.save_runtime_state(self.config, writer)
+                state = runtime_state.load_runtime_state(self.config)
+                record = self._persisted_record(state)
+                self.assertEqual((record["status"], record["requeue_reason"]), ("queued", "second"))
+                self.assertEqual(record["requeued_at"], second)
+                self.assertNotIn("lease_owner", record)
+                self.assertTrue(runtime_state.queue_event_moved_from_worker(state, state["workers"]["launched-1"]))
+
+    def test_stale_attempt_finishing_late_does_not_take_the_event_from_a_newer_attempt(self) -> None:
+        """Reset, launch, reset, launch, all in one second; then the first launch's snapshot ends."""
+        launches = self._launch_spy()
+        self._dispatch(status="failed", runner=self.FAILED_RUNNER)
+        self._same_second()
+        self._persist_bound_then_reset()
+        self._tick()
+        self.assertEqual(len(launches), 1)
+        stale = runtime_state.load_runtime_state(self.config)
+
+        current = runtime_state.load_runtime_state(self.config)
+        supervisor._reset_queue_record_for_redispatch(current["queue"]["events"]["evt-1"], reason="second")
+        current["workers"]["launched-1"].update(status="manual_pending", pid=999999)
+        runtime_state.save_runtime_state(self.config, current)
+        state = self._tick()
+        self.assertEqual(len(launches), 2)
+        self.assertEqual(state["workers"]["launched-1"]["status"], "superseded")
+        newer = self._persisted_record(state)
+        self.assertEqual(newer["lease_owner"], "launched-2")
+
+        stale["workers"]["launched-1"]["status"] = "completed"
+        supervisor.finalize_queue_event_record(self.config, stale, stale["workers"]["launched-1"], "completed")
+        self.assertEqual(stale["queue"]["events"]["evt-1"]["status"], "completed", "that snapshot still holds it")
+        runtime_state.save_runtime_state(self.config, stale)
+        state = runtime_state.load_runtime_state(self.config)
+        self.assertEqual(self._persisted_record(state), newer)
+        self.assertFalse(runtime_state.queue_event_moved_from_worker(state, state["workers"]["launched-2"]))
+        self.assertTrue(runtime_state.queue_event_moved_from_worker(state, state["workers"]["launched-1"]))
+
+        state = self._tick()
+        self.assertEqual(len(launches), 2, "the newer attempt keeps the event and nothing launches again")
+        self.assertEqual(self._persisted_record(state)["lease_owner"], "launched-2")
+        self.assertEqual(self._persisted_record(state)["status"], "started")
 
     def test_live_old_run_keeps_nothing_and_no_second_session_starts_beside_it(self) -> None:
         launches = self._launch_spy()
