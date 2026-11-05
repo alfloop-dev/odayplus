@@ -2623,7 +2623,7 @@ def _capacity_sidecar_authority_refusal(
     task: dict[str, Any] | None,
     protected_paths: tuple[str, ...],
 ) -> str | None:
-    """A capacity sidecar acts only under its live parent's deny list and owner lane.
+    """A capacity sidecar acts only under its live parent's deny list, lane and source.
 
     The child record is the authority downstream, so a child created before it
     could carry those, or whose parent has since changed, is refused here,
@@ -2644,6 +2644,14 @@ def _capacity_sidecar_authority_refusal(
     owner_field = (config.get("schema") or {}).get("assignee_field", "owner")
     if normalize_agent_id(str(task.get(owner_field) or "")) != normalize_agent_id(str(parent.get(owner_field) or "")):
         return "capacity sidecar owner is not its parent's selected owner"
+    # Roots, not ids: `pantheon` and `odayplus` are two ids of one checkout.
+    child_source = worker_task_repository_binding(config, task)
+    parent_source = worker_task_repository_binding(config, parent)
+    if not child_source.resolved or child_source.root != parent_source.root:
+        return (
+            f"capacity sidecar source {child_source.repo_id or child_source.error} "
+            f"is not its parent's current source {parent_source.repo_id}"
+        )
     return None
 
 

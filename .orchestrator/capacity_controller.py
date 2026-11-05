@@ -7,6 +7,7 @@ from typing import Any
 
 from common import display_name_for, normalize_agent_id
 from dispatch_policy import is_human_gate_agent
+from multi_repo_registry import resolve_task_repository
 from task_archive import load_archived_task
 from worktree_cleanliness import ProtectedPathPolicyError, task_protected_paths
 
@@ -84,6 +85,9 @@ def parent_sidecar_refusal(config: dict[str, Any], parent: dict[str, Any]) -> st
         task_protected_paths(parent)
     except ProtectedPathPolicyError as error:
         return f"capacity sidecar parent protection is invalid: {error}"
+    source = resolve_task_repository(config, parent)
+    if not source.resolved:
+        return f"capacity sidecar parent source is unresolved: {source.error or source.source}"
     return None
 
 
@@ -682,6 +686,7 @@ def sidecar_candidates(
                 continue
             parent_owner = _parent_selected_owner(config, parent)
             protected_paths = task_protected_paths(parent)
+            parent_source = resolve_task_repository(config, parent)
             variables = {
                 "parent_task_id": parent_id,
                 "sidecar_task_id": sidecar_id,
@@ -705,7 +710,10 @@ def sidecar_candidates(
                 "owner": parent_owner,
                 "reviewer": "DIFFERENT_AGENT_REQUIRED",
                 "depends_on": [],
-                "repository": parent.get("repository"),
+                # A legacy parent may name no repository and resolve from artifacts the
+                # child does not share, so the child states where the parent resolved.
+                # `pantheon` has no slug here: that child keeps its plain record.
+                "repository": str(parent.get("repository") or "").strip() or parent_source.slug,
                 "base_branch": parent.get("base_branch") or "dev",
                 "artifacts": artifacts,
                 "task_class": "sidecar",
@@ -727,6 +735,9 @@ def sidecar_candidates(
                 sidecar_dict["protected_paths"] = list(protected_paths)
             if isinstance(parent.get("source_docs"), list):
                 sidecar_dict["source_docs"] = list(parent["source_docs"])
+            # What the record resolves to is what would act, whichever field decided it.
+            if resolve_task_repository(config, sidecar_dict).root != parent_source.root:
+                continue
             candidates.append(sidecar_dict)
             existing_signatures.add(signature)
             if len(candidates) >= budget:

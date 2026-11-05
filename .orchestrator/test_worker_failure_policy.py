@@ -5972,14 +5972,29 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
         ("independent gate", {"credentials_gate": "pending"}, "human gate"),
         ("non dispatchable", {"non_dispatchable": True}, "non-dispatchable"),
     )
+    PARENT_SOURCES = (
+        ("source moved", {"repository": "side_repo"}, "current source"),
+        ("source inferred elsewhere", {"artifacts": ["side-repo/diag.md"]}, "current source"),
+        ("source unknown", {"repository": "org/unregistered"}, "source is unresolved"),
+        ("source ambiguous", {"artifacts": ["side-repo/a.md", "front-ai-trading-system/b.md"]}, "source is unresolved"),
+    )
+    PARENT_REFUSALS = PARENT_GATES + PARENT_SOURCES
 
     def _queue_capacity_sidecar(self) -> None:
         protected = ["guarded/zone"]
+        side = self.root / "side-checkout"
+        side.mkdir(exist_ok=True)
+        self.config["coordination"]["repositories"]["side_repo"] = {
+            "repo": None,
+            "local_path": str(side),
+            "artifact_prefixes": ["side-repo/"],
+        }
         self.task.update(
             task_class="sidecar",
             auto_created_by="capacity-controller",
             helper_parent=self.PARENT_ID,
             protected_paths=protected,
+            repository="pantheon",
         )
         self.other_tasks = [
             {
@@ -6022,7 +6037,8 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
             ("parent frozen", "parent", {"frozen_evidence_base_sha": "8e5872544bff88d421a1923c7957ca6b12429ce2"}, "frozen"),
             ("parent manual gate", "parent", {"next": "Waiting for manual approval"}, "human or manual gate"),
             ("child widened", "child", {"protected_paths": ["guarded/zone", "private/new-zone"]}, "prepared without"),
-            *((f"parent {name}", "parent", fields, expected) for name, fields, expected in self.PARENT_GATES),
+            ("child source moved", "child", {"repository": "side_repo"}, "current source"),
+            *((f"parent {name}", "parent", fields, expected) for name, fields, expected in self.PARENT_REFUSALS),
         ):
             with self.subTest(name):
                 self._queue_capacity_sidecar()
@@ -6041,6 +6057,13 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
         self.assertEqual(len(launches), 1, self.state["queue"]["events"]["evt-1"])
         self.assertEqual(launches[0][1].metadata["protected_paths"], ["guarded/zone"])
 
+    def test_final_launch_keeps_one_source_named_by_another_id(self) -> None:
+        launches = self._launch_spy()
+        self._queue_capacity_sidecar()
+        self.config["coordination"]["repositories"]["odayplus"] = {"repo": None, "local_path": str(self.repo)}
+        self._process_with_board_change_during_prepare(lambda: self.other_tasks[0].update(repository="odayplus"))
+        self.assertEqual(len(launches), 1, self.state["queue"]["events"]["evt-1"])
+
     def test_due_sidecar_retry_needs_its_parent_authority_too(self) -> None:
         launches = self._launch_spy()
         for name, fields in (
@@ -6048,7 +6071,7 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
             ("parent lane moved", {"owner": "Codex"}),
             ("parent frozen", {"frozen_evidence_base_sha": "8e5872544bff88d421a1923c7957ca6b12429ce2"}),
             ("parent manual gate", {"next": "Waiting for manual approval"}),
-            *((f"parent {name}", fields) for name, fields, _ in self.PARENT_GATES),
+            *((f"parent {name}", fields) for name, fields, _ in self.PARENT_REFUSALS),
         ):
             with self.subTest(name):
                 self._queue_capacity_sidecar()
@@ -6073,7 +6096,7 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
 
     def test_sidecar_file_inbox_fallback_needs_its_parent_authority_too(self) -> None:
         launches = self._launch_spy()
-        for name, fields, expected in self.PARENT_GATES:
+        for name, fields, expected in self.PARENT_REFUSALS:
             with self.subTest(name):
                 self._queue_capacity_sidecar()
                 self._dispatch_failed()
@@ -6096,7 +6119,7 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
         self.assertEqual([mode for mode, _ in launches], ["file_inbox"])
 
     def test_sidecar_approved_resume_needs_its_parent_authority_too(self) -> None:
-        for name, fields, _ in self.PARENT_GATES:
+        for name, fields, _ in self.PARENT_REFUSALS:
             with self.subTest(name):
                 self._queue_capacity_sidecar()
                 self._dispatch(runner=self.FAILED_RUNNER)

@@ -590,7 +590,9 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         record.update(overrides)
         return record
 
-    def _prepare_sidecar(self, sidecar: dict, parent: dict | None) -> tuple[bool, str | None]:
+    def _prepare_sidecar(
+        self, sidecar: dict, parent: dict | None, repositories: dict | None = None
+    ) -> tuple[bool, str | None]:
         status_file = self.root / "sidecar-status.json"
         board = [sidecar, *([parent] if parent else [])]
         status_file.write_text(json.dumps({"tasks": board}), encoding="utf-8")
@@ -598,7 +600,10 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
             "paths": {"status_file": str(status_file), "activity_log": str(self.root / "activity.jsonl")},
             "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
             "coordination": {
-                "repositories": {"pantheon": {"repo": None, "local_path": str(self.repo), "default_branch": "dev"}}
+                "repositories": {
+                    "pantheon": {"repo": None, "local_path": str(self.repo), "default_branch": "dev"},
+                    **(repositories or {}),
+                }
             },
             "worker_worktrees": {"root": str(self.root / "worktrees")},
             "agents": {"claude": {"provider": "claude"}},
@@ -647,6 +652,55 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         ordinary_blocked = {**parent, "status": "blocked", "blocked_reason": "upstream API defect", "waiting_for": "Codex"}
         ok, message = self._prepare_sidecar(self._sidecar(), ordinary_blocked)
         self.assertTrue(ok, message)
+
+    def _side_checkout(self) -> dict:
+        side = self.root / "side"
+        self._git(self.root, "clone", "--quiet", str(self.repo), str(side))
+        return {
+            "side_repo": {
+                "repo": None,
+                "local_path": str(side),
+                "default_branch": "dev",
+                "artifact_prefixes": ["side-repo/"],
+            },
+            "second_repo": {"repo": None, "local_path": str(self.root), "artifact_prefixes": ["second-repo/"]},
+            "absent_repo": {"repo": None, "local_path": str(self.root / "absent")},
+            # Another id of the one checkout `pantheon` names.
+            "odayplus": {"repo": None, "local_path": str(self.repo), "default_branch": "dev"},
+        }
+
+    def test_capacity_sidecar_prepares_only_in_its_live_parent_source(self) -> None:
+        repositories = self._side_checkout()
+        parent = {"id": "PARENT-001", "owner": "Claude", "protected_paths": PROTECTED}
+        for name, sidecar, board_parent, expected in (
+            ("legacy child, parent inferred elsewhere", self._sidecar(), {**parent, "artifacts": ["side-repo/diag.md"]}, "current source"),
+            ("child moved", self._sidecar(repository="side_repo"), parent, "current source"),
+            ("parent moved", self._sidecar(repository="pantheon"), {**parent, "repository": "side_repo"}, "current source"),
+            ("child names the unknown", self._sidecar(repository="org/unregistered"), parent, "current source"),
+            ("child checkout gone", self._sidecar(repository="absent_repo"), parent, "current source"),
+            ("parent names the unknown", self._sidecar(), {**parent, "repository": "org/unregistered"}, "source is unresolved"),
+            ("parent checkout gone", self._sidecar(), {**parent, "repository": "absent_repo"}, "source is unresolved"),
+            (
+                "parent ambiguous",
+                self._sidecar(),
+                {**parent, "artifacts": ["side-repo/a.md", "second-repo/b.md"]},
+                "source is unresolved",
+            ),
+        ):
+            with self.subTest(name):
+                ok, message = self._prepare_sidecar(sidecar, board_parent, repositories)
+                self.assertFalse(ok)
+                self.assertIn(expected, message or "")
+                self.assertFalse((self.root / "worktrees").exists(), "refused before anything is materialized")
+
+        for name, sidecar, board_parent, namespace in (
+            ("one source by another id", self._sidecar(id="SC-ALIAS"), {**parent, "repository": "odayplus"}, "pantheon"),
+            ("inherited elsewhere", self._sidecar(id="SC-SIDE", repository="side_repo"), {**parent, "artifacts": ["side-repo/diag.md"]}, "side-repo"),
+        ):
+            with self.subTest(name):
+                ok, message = self._prepare_sidecar(sidecar, board_parent, repositories)
+                self.assertTrue(ok, message)
+                self.assertTrue((self.root / "worktrees" / namespace / sidecar["id"].lower()).is_dir())
 
     def test_archived_parent_remains_the_sidecar_authority(self) -> None:
         archived = {"id": "PARENT-001", "owner": "Claude", "protected_paths": PROTECTED}
