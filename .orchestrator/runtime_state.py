@@ -367,6 +367,104 @@ QUEUE_STATUS_RANK = {
 }
 
 
+def worker_queue_record(state: dict[str, Any], worker: dict[str, Any]) -> dict[str, Any] | None:
+    queue_id = worker.get("queue_event_id")
+    record = ((state.get("queue") or {}).get("events") or {}).get(queue_id) if queue_id else None
+    return record if isinstance(record, dict) else None
+
+
+def _worker_event_lineage(state: dict[str, Any], worker: dict[str, Any]) -> set[str]:
+    """Run ids of the retry and fallback chain carrying this worker's queue event.
+
+    Nothing rebinds the event between generations, so its record can name any of
+    them. A run no longer on record is listed, because a neighbour still names it,
+    but it cannot extend the walk.
+    """
+    workers = state.get("workers") or {}
+    links = ("parent_run_id", "superseded_by_run_id", "fallback_run_id")
+    lineage: set[str] = set()
+    pending = [worker.get(link) for link in links]
+    while pending:
+        run_id = pending.pop()
+        if not run_id or run_id == worker.get("run_id") or run_id in lineage:
+            continue
+        run = workers.get(run_id)
+        if not isinstance(run, dict):
+            lineage.add(run_id)
+        elif run.get("queue_event_id") == worker.get("queue_event_id"):
+            lineage.add(run_id)
+            pending.extend(run.get(link) for link in links)
+    return lineage
+
+
+def queue_event_moved_from_worker(state: dict[str, Any], worker: dict[str, Any]) -> bool:
+    """Whether this worker lost its queue event; the one queue custody rule.
+
+    A run that lost its event must not launch, resume, reassign or settle
+    anything on the event's behalf, and its status says nothing about the event.
+    It decides from what the record already holds:
+
+    - a reset (``_reset_queue_record_for_redispatch``) drops the binding and the
+      last attempt, so until process_queue attempts the event again every run
+      that names it is old;
+    - a binding names the lineage that holds the event;
+    - a new attempt's run is known by its attempt number while it is between its
+      launch save and its binding, which a crash can leave it in.
+
+    This is custody only. It grants no execution: the current canonical role,
+    claim and approval checks remain separate and also required.
+    """
+    record = worker_queue_record(state, worker)
+    if record is None:
+        return False
+    requeued_at = str(record.get("requeued_at") or "")
+    if requeued_at and str(record.get("last_attempt_at") or "") < requeued_at:
+        return True
+    lineage = _worker_event_lineage(state, worker)
+    binding = {record[field] for field in ("run_id", "lease_owner") if record.get(field)}
+    if binding:
+        return not binding <= {worker.get("run_id"), worker.get("queue_event_id"), *lineage}
+    if not requeued_at:
+        return False
+    workers = state.get("workers") or {}
+    runs = [worker, *(workers.get(run_id) for run_id in lineage)]
+    return not any(
+        isinstance(run, dict)
+        and not run.get("parent_run_id")
+        and run.get("attempt_count") == record.get("attempt_count")
+        for run in runs
+    )
+
+
+def queue_event_holders(state: dict[str, Any], event_id: str) -> list[dict[str, Any]]:
+    """The runs whose status may speak for this queue event."""
+    return [
+        worker
+        for worker in (state.get("workers") or {}).values()
+        if isinstance(worker, dict)
+        and worker.get("queue_event_id") == event_id
+        and not queue_event_moved_from_worker(state, worker)
+    ]
+
+
+def _reset_queue_record_for_redispatch(record: dict[str, Any], *, reason: str) -> None:
+    record["status"] = "queued"
+    record["requeued_at"] = utc_now()
+    record["requeue_reason"] = reason
+    for key in (
+        "processed_at",
+        "error",
+        "run_id",
+        "lease_owner",
+        "lease_acquired_at",
+        "lease_expires_at",
+        "lease_released_at",
+        "last_attempt_at",
+        "last_wait_reason",
+    ):
+        record.pop(key, None)
+
+
 def _rebuild_queue_records(state: dict[str, Any], queued_events: list[dict[str, Any]]) -> None:
     valid_event_ids = [event.get("event_id") for event in queued_events if event.get("event_id")]
     queue = state.setdefault("queue", {})
@@ -376,9 +474,9 @@ def _rebuild_queue_records(state: dict[str, Any], queued_events: list[dict[str, 
         for event_id in valid_event_ids
     }
 
-    workers = state.setdefault("workers", {})
+    state.setdefault("workers", {})
     for event_id, record in queue["events"].items():
-        related = [worker for worker in workers.values() if worker.get("queue_event_id") == event_id]
+        related = queue_event_holders(state, event_id)
         if not related:
             continue
         latest = sorted(related, key=lambda item: item.get("last_event_at") or "", reverse=True)[0]
@@ -575,8 +673,25 @@ def _merge_worker_record(disk_worker: dict[str, Any], mem_worker: dict[str, Any]
     return merged
 
 
+def _queue_reset_supersedes(event: dict[str, Any], other: dict[str, Any]) -> bool:
+    """Whether ``event`` carries a reset newer than anything ``other`` recorded."""
+    requeued_at = str(event.get("requeued_at") or "")
+    return (
+        requeued_at > str(other.get("requeued_at") or "")
+        and str(other.get("processed_at") or "") <= requeued_at
+    )
+
+
 def _merge_queue_record(disk_event: dict[str, Any], mem_event: dict[str, Any]) -> dict[str, Any]:
-    """Preserve the furthest durable queue transition across concurrent saves."""
+    """Preserve the furthest durable queue transition across concurrent saves.
+
+    A reset deliberately moves an event backward, so rank cannot judge it. The
+    newer reset is taken whole: its dropped lease must not be merged back.
+    """
+    if _queue_reset_supersedes(mem_event, disk_event):
+        return deepcopy(mem_event)
+    if _queue_reset_supersedes(disk_event, mem_event):
+        return deepcopy(disk_event)
     disk_status = str(disk_event.get("status") or "").lower()
     mem_status = str(mem_event.get("status") or "").lower()
     disk_rank = QUEUE_STATUS_RANK.get(disk_status, 0)

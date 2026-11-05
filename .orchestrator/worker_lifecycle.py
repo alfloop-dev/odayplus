@@ -12,7 +12,12 @@ from common import (
     isoformat_utc,
     parse_iso_timestamp,
 )
-from runtime_state import HANDED_OFF_WORKER_STATUSES, TERMINAL_WORKER_STATUSES
+from runtime_state import (
+    HANDED_OFF_WORKER_STATUSES,
+    TERMINAL_WORKER_STATUSES,
+    queue_event_holders,
+    queue_event_moved_from_worker,
+)
 
 
 def _supervisor_module():
@@ -22,7 +27,7 @@ def _supervisor_module():
 
 def _sync_supervisor_scope() -> None:
     sv = _supervisor_module()
-    excluded = {"finalize_queue_event_record", "_parse_iso_utc", "__name__", "__doc__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__", "Any", "_supervisor_module", "_sync_supervisor_scope", "_entrypoint", "_sync_scope_guard"}
+    excluded = {"_parse_iso_utc", "__name__", "__doc__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__", "Any", "_supervisor_module", "_sync_supervisor_scope", "_entrypoint", "_sync_scope_guard"}
     module_exports = {"process_queue", "poll_workers"}
     # Skip only dunders. The four copies of this function used to disagree --
     # two skipped every `_`-prefixed name, two skipped only `__` -- so whether a
@@ -36,19 +41,6 @@ def _sync_supervisor_scope() -> None:
         if key in excluded or key in module_exports or key.startswith("__"):
             continue
         g[key] = value
-
-
-def finalize_queue_event_record(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    worker: dict[str, Any],
-    status: str,
-    error: str | None = None,
-) -> None:
-    """The original finalizer, except for an event this worker no longer holds."""
-    if worker_workspace.release_moved_queue_event(state, worker):
-        return
-    _supervisor_module().finalize_queue_event_record(config, state, worker, status, error)
 
 
 def _entrypoint(func):
@@ -462,17 +454,21 @@ def process_queue(
             if next_retry_at is not None and next_retry_at > datetime.now(UTC):
                 continue
         active_worker = next(
-            (
-                worker
-                for worker in state.get("workers", {}).values()
-                if (
-                    worker.get("queue_event_id") == event_id
-                    or (bool(event.get("task_id")) and worker.get("task_id") == event.get("task_id"))
-                )
-                and worker.get("status") in active_statuses
-            ),
+            (worker for worker in queue_event_holders(state, event_id) if worker.get("status") in active_statuses),
             None,
         )
+        # Another active run on this event or task keeps a second session from
+        # starting, but it holds nothing here: only a run between its launch save
+        # and its binding is bound below.
+        if not active_worker and any(
+            (
+                worker.get("queue_event_id") == event_id
+                or (bool(event.get("task_id")) and worker.get("task_id") == event.get("task_id"))
+            )
+            and worker.get("status") in active_statuses
+            for worker in state.get("workers", {}).values()
+        ):
+            continue
         if active_worker:
             desired_status = "manual_pending" if active_worker.get("status") in {"manual_pending", "waiting_approval"} else "started"
             if record.get("status") != desired_status or record.get("run_id") != active_worker.get("run_id"):
@@ -738,6 +734,7 @@ def process_queue(
                 # worker launched: do not spend the failure/retry budget,
                 # reassign the owner, or record another pool exhaustion.
                 record["status"] = "retry_backoff"
+                record.pop("last_attempt_at", None)
                 record["next_retry_at"] = dispatch_wait["retry_at"]
                 record["last_wait_reason"] = outcome
                 record[model_rotation.DISPATCH_WAIT_KEY] = dict(dispatch_wait)
@@ -1195,7 +1192,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             if not worker_heartbeat_is_stale(config, worker, now):
                 refresh_worker_lease(config, worker, now)
                 poll_counts["lease_refreshes"] += 1
-                if worker.get("queue_event_id") and not worker_workspace.queue_event_moved_from_worker(state, worker):
+                if worker.get("queue_event_id") and not queue_event_moved_from_worker(state, worker):
                     record = queue_event_record(state, worker["queue_event_id"])
                     record["lease_owner"] = worker.get("run_id")
                     record["lease_expires_at"] = queue_lease_expiry(config, now)
@@ -1236,6 +1233,16 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             current_worktree_activity_at
             and current_worktree_activity_at > str(previous_worktree_activity_at or "")
         )
+        # Parked on an event it lost: nothing here can wake it, and process_queue
+        # waits for it. A dead running worker still goes on to have its exit
+        # classified, since a real quota failure must still fence its pool.
+        if (
+            not alive
+            and worker.get("status") in {"fallback", "manual_pending", "waiting_approval", "suspended_approval"}
+            and supersede_worker_without_queue_event(config, state, worker)
+        ):
+            changed = True
+            continue
         if not runner_reports_failure and manual_pending_inbox_can_auto_redeliver(
             config, state, provider_report, worker
         ):
@@ -1530,7 +1537,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         "approval_id": approval.get("approval_id"),
                     },
                 )
-                if worker.get("queue_event_id") and not worker_workspace.queue_event_moved_from_worker(state, worker):
+                if worker.get("queue_event_id") and not queue_event_moved_from_worker(state, worker):
                     queue_event_record(state, worker["queue_event_id"])["status"] = "manual_pending"
                 changed = True
             continue
@@ -1539,7 +1546,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             latest = resolved[-1]
             if latest.get("approval_id") != worker.get("last_approval_id"):
                 worker["last_approval_id"] = latest.get("approval_id")
-                if latest.get("decision") == "allow" and provider_uses_claude_cli(config, worker.get("provider")):
+                if (
+                    latest.get("decision") == "allow"
+                    and provider_uses_claude_cli(config, worker.get("provider"))
+                    and not queue_event_moved_from_worker(state, worker)
+                ):
                     resumed = resume_claude_worker(config, worker, provider_report, approval=latest)
                     write_activity_log(
                         config,

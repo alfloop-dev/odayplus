@@ -35,7 +35,7 @@ from dispatch_policy import agent_provider_identity_ids as dispatch_policy_agent
 from provider_runtime import configured_provider_binary, provider_config_entry
 import status_transition
 from capacity_controller import is_capacity_sidecar
-from worker_workspace import queue_event_moved_from_worker, release_moved_queue_event
+from runtime_state import queue_event_moved_from_worker
 from worktree_cleanliness import ProtectedExecutionUnavailable
 
 
@@ -4008,14 +4008,13 @@ def _settle_fenced_sibling_worker(
         # pop() removes the key from memory, but update() only sets keys
         # present in the source dict, so the disk's pending_fence survives.
         sibling["pending_fence"] = None
-        if not release_moved_queue_event(state, sibling):
-            finalize_queue_event_record(
-                config,
-                state,
-                sibling,
-                "completed" if reassigned_to else "failed",
-                sibling["last_error"],
-            )
+        finalize_queue_event_record(
+            config,
+            state,
+            sibling,
+            "completed" if reassigned_to else "failed",
+            sibling["last_error"],
+        )
         write_activity_log(
             config,
             {
@@ -4199,10 +4198,7 @@ def requeue_stale_manual_pending_worker(
     state.setdefault("workers", {}).pop(run_id, None)
     if queue_event_id:
         record = queue_event_record(state, queue_event_id)
-        record["status"] = "queued"
-        record.pop("processed_at", None)
-        record.pop("error", None)
-        record.pop("run_id", None)
+        _reset_queue_record_for_redispatch(record, reason=reason)
     write_activity_log(
         config,
         {
@@ -4243,11 +4239,10 @@ def existing_file_inbox_fallback_run_id(state: dict[str, Any], queue_event_id: s
 def supersede_worker_without_queue_event(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any]) -> bool:
     """End a run whose event was requeued or taken, before it can launch a successor.
 
-    Parking it would not hold: process_queue adopts an unbound event for any
-    active-looking worker, which would bind it back and launch it a tick later.
+    Parking it would not hold: process_queue waits for an active run, so the
+    event would never be dispatched again.
     """
-    queue_event_id = worker.get("queue_event_id")
-    if not release_moved_queue_event(state, worker):
+    if not queue_event_moved_from_worker(state, worker):
         return False
     worker["status"] = "superseded"
     worker["next_retry_at"] = None
@@ -4261,7 +4256,7 @@ def supersede_worker_without_queue_event(config: dict[str, Any], state: dict[str
             "task_id": worker.get("task_id"),
             "message": worker["last_error"],
             "worker_run_id": worker.get("run_id"),
-            "queue_event_id": queue_event_id,
+            "queue_event_id": worker.get("queue_event_id"),
         },
     )
     return True
@@ -4370,7 +4365,7 @@ def retry_due_workers(
         if worker.get("status") != "retry_backoff":
             continue
         # Ahead of the due check: a run waiting out its backoff would otherwise
-        # be adopted back onto the reset event before its retry falls due.
+        # hold the reset event back from dispatch until its retry falls due.
         if supersede_worker_without_queue_event(config, state, worker):
             changed = True
             continue

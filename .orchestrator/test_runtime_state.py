@@ -494,6 +494,222 @@ class LoadRuntimeStateTests(unittest.TestCase):
         )
 
 
+class QueueCustodyRuleTests(unittest.TestCase):
+    """The one queue custody rule, over what the real writers leave on a record."""
+
+    OLD = {"run_id": "run-old", "queue_event_id": "evt-1", "status": "running", "attempt_count": 1}
+    FRESH = {"run_id": "run-new", "queue_event_id": "evt-1", "status": "running", "attempt_count": 2}
+
+    def _moved(self, record: dict, worker: dict, *others: dict) -> bool:
+        workers = {run["run_id"]: run for run in (worker, *others)}
+        state = {"workers": workers, "queue": {"events": {"evt-1": record}}}
+        return runtime_state.queue_event_moved_from_worker(state, worker)
+
+    def _bound(self, run_id: str = "run-old") -> dict:
+        return {
+            "status": "started",
+            "attempt_count": 1,
+            "last_attempt_at": "2026-11-05T00:00:00Z",
+            "run_id": run_id,
+            "lease_owner": run_id,
+            "processed_at": "2026-11-05T00:00:00Z",
+        }
+
+    def _reset(self, record: dict) -> dict:
+        runtime_state._reset_queue_record_for_redispatch(record, reason="redispatch")
+        return record
+
+    def test_bound_run_holds_and_every_other_run_does_not(self) -> None:
+        self.assertFalse(self._moved(self._bound(), self.OLD))
+        self.assertTrue(self._moved(self._bound("run-9"), self.OLD))
+        self.assertTrue(self._moved({**self._bound(), "lease_owner": "run-9"}, self.OLD))
+        self.assertTrue(self._moved({**self._bound(), "run_id": "run-9"}, self.OLD))
+
+    def test_event_without_a_record_or_a_run_that_names_none_is_not_moved(self) -> None:
+        self.assertFalse(self._moved(self._bound(), {"run_id": "x"}))
+        state = {"workers": {}, "queue": {"events": {}}}
+        self.assertFalse(runtime_state.queue_event_moved_from_worker(state, self.OLD))
+
+    def test_reset_takes_the_event_from_every_run_that_names_it(self) -> None:
+        record = self._reset(self._bound())
+        self.assertEqual(record["status"], "queued")
+        for dropped in ("run_id", "lease_owner", "processed_at", "last_attempt_at"):
+            self.assertNotIn(dropped, record)
+        self.assertTrue(self._moved(record, self.OLD))
+        self.assertTrue(self._moved(record, self.FRESH))
+
+    def test_reset_persisted_by_an_older_supervisor_still_holds(self) -> None:
+        record = {
+            "status": "queued",
+            "attempt_count": 1,
+            "run_id": "run-old",
+            "last_attempt_at": "2026-11-05T00:00:00Z",
+            "requeued_at": "2026-11-05T00:00:01Z",
+        }
+        self.assertTrue(self._moved(record, self.OLD))
+
+    def _attempted_after_reset(self) -> dict:
+        record = self._reset(self._bound())
+        record.update(attempt_count=2, last_attempt_at=record["requeued_at"])
+        return record
+
+    def test_launch_between_its_save_and_its_binding_holds_and_the_old_run_does_not(self) -> None:
+        never_reset = {"status": "started", "attempt_count": 1, "last_attempt_at": "2026-11-05T00:00:00Z"}
+        self.assertFalse(self._moved(never_reset, self.OLD))
+        record = self._attempted_after_reset()
+        self.assertFalse(self._moved(record, self.FRESH))
+        self.assertTrue(self._moved(record, self.OLD))
+
+    def test_retry_child_is_not_mistaken_for_the_new_attempt(self) -> None:
+        # A child counts its own attempts, so it can land on the new attempt's number.
+        child = {**self.FRESH, "run_id": "run-child", "parent_run_id": "run-old"}
+        self.assertTrue(self._moved(self._attempted_after_reset(), child, self.OLD))
+
+    def test_lineage_holds_across_generations_in_both_directions(self) -> None:
+        parent = {**self.OLD, "status": "retried", "superseded_by_run_id": "run-child"}
+        child = {**self.FRESH, "run_id": "run-child", "parent_run_id": "run-old"}
+        record = self._bound()
+        self.assertFalse(self._moved(record, child, parent))
+        record["lease_owner"] = "run-child"
+        self.assertFalse(self._moved(record, child, parent))
+        self.assertFalse(self._moved(record, parent, child))
+        # The first run may be gone from history; its child still names it.
+        self.assertFalse(self._moved(record, child))
+        self.assertTrue(self._moved(self._reset(record), child, parent))
+
+    def test_run_on_another_event_does_not_extend_the_lineage(self) -> None:
+        other = {"run_id": "other", "queue_event_id": "evt-2", "parent_run_id": "run-old"}
+        child = {**self.FRESH, "run_id": "run-child", "parent_run_id": "other"}
+        self.assertTrue(self._moved(self._bound(), child, other, self.OLD))
+
+    def test_cycle_in_run_links_terminates(self) -> None:
+        one = {"run_id": "one", "queue_event_id": "evt-1", "parent_run_id": "two"}
+        two = {"run_id": "two", "queue_event_id": "evt-1", "parent_run_id": "one"}
+        self.assertTrue(self._moved(self._bound("run-9"), one, two))
+
+
+class QueueCustodyPersistenceTests(unittest.TestCase):
+    """Reset and moved events through the real load, rebuild, merge and save."""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        root = Path(self.tmpdir.name)
+        self.config = {"paths": {"state_file": str(root / "state.json"), "event_queue": str(root / "queue.jsonl")}}
+        runtime_state.enqueue_event(
+            self.config,
+            {"event_id": "evt-1", "target_agent": "claude", "provider": "claude", "reason": "test", "message": "go"},
+        )
+
+    def _worker(self, status: str, run_id: str = "run-old", **fields: object) -> dict:
+        return {"run_id": run_id, "queue_event_id": "evt-1", "status": status, "attempt_count": 1, **fields}
+
+    def _bound_state(self, status: str = "running") -> dict:
+        return {
+            "workers": {"run-old": self._worker(status)},
+            "queue": {
+                "events": {
+                    "evt-1": {
+                        "status": "started",
+                        "attempt_count": 1,
+                        "last_attempt_at": "2026-11-05T00:00:00Z",
+                        "run_id": "run-old",
+                        "lease_owner": "run-old",
+                        "processed_at": "2026-11-05T00:00:00Z",
+                    }
+                }
+            },
+        }
+
+    def _record(self) -> dict:
+        return runtime_state.load_runtime_state(self.config)["queue"]["events"]["evt-1"]
+
+    def test_reset_survives_reload_whatever_the_old_run_became(self) -> None:
+        for status in ("running", "retry_backoff", "waiting_approval", "manual_pending", "failed", "completed", "retried"):
+            with self.subTest(status):
+                state = self._bound_state(status)
+                runtime_state.save_runtime_state(self.config, state)
+                runtime_state._reset_queue_record_for_redispatch(state["queue"]["events"]["evt-1"], reason="redispatch")
+                runtime_state.save_runtime_state(self.config, state)
+                self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "queued")
+                record = self._record()
+                self.assertEqual(record["status"], "queued")
+                self.assertNotIn("lease_owner", record)
+                self.assertNotIn("run_id", record)
+                self.assertEqual(self._record(), record, "reload must be stable")
+                Path(self.config["paths"]["state_file"]).unlink()
+
+    def test_stale_writer_cannot_undo_a_reset_on_disk(self) -> None:
+        stale = self._bound_state()
+        runtime_state.save_runtime_state(self.config, deepcopy(stale))
+        fresh = runtime_state.load_runtime_state(self.config)
+        runtime_state._reset_queue_record_for_redispatch(fresh["queue"]["events"]["evt-1"], reason="redispatch")
+        runtime_state.save_runtime_state(self.config, fresh)
+        runtime_state.save_runtime_state(self.config, stale)
+        self.assertEqual(stale["queue"]["events"]["evt-1"]["status"], "queued")
+        record = self._record()
+        self.assertEqual(record["status"], "queued")
+        self.assertNotIn("lease_owner", record)
+
+    def test_merge_takes_the_newer_reset_whole_from_either_side(self) -> None:
+        bound = self._bound_state()["queue"]["events"]["evt-1"]
+        reset = deepcopy(bound)
+        runtime_state._reset_queue_record_for_redispatch(reset, reason="redispatch")
+        self.assertEqual(runtime_state._merge_queue_record(bound, reset), reset)
+        self.assertEqual(runtime_state._merge_queue_record(reset, bound), reset)
+
+    def test_merge_keeps_a_later_transition_over_a_stale_reset(self) -> None:
+        reset = {"status": "queued", "requeued_at": "2026-11-05T00:00:05Z"}
+        rebound = {"status": "started", "run_id": "run-new", "lease_owner": "run-new", "processed_at": "2026-11-05T00:00:09Z"}
+        self.assertEqual(runtime_state._merge_queue_record(rebound, reset)["lease_owner"], "run-new")
+        self.assertEqual(runtime_state._merge_queue_record(reset, rebound)["lease_owner"], "run-new")
+        # The same reset carried forward by both sides is ranked as before.
+        attempt = {**reset, "status": "started", "run_id": "run-new", "lease_owner": "run-new", "last_attempt_at": "2026-11-05T00:00:06Z"}
+        self.assertEqual(runtime_state._merge_queue_record(attempt, reset)["lease_owner"], "run-new")
+        self.assertEqual(runtime_state._merge_queue_record(reset, attempt)["lease_owner"], "run-new")
+
+    def test_merge_without_a_reset_keeps_the_furthest_transition(self) -> None:
+        started = {"status": "started", "lease_owner": "run-new"}
+        self.assertEqual(runtime_state._merge_queue_record(started, {"status": "queued"})["status"], "started")
+        self.assertEqual(runtime_state._merge_queue_record({"status": "completed"}, started)["status"], "completed")
+        self.assertEqual(runtime_state._merge_queue_record(started, {"status": "failed"})["status"], "failed")
+
+    def test_event_moved_to_another_run_is_decided_by_that_run_alone(self) -> None:
+        state = self._bound_state("failed")
+        state["workers"]["run-new"] = self._worker("running", "run-new", attempt_count=2)
+        state["queue"]["events"]["evt-1"].update(run_id="run-new", lease_owner="run-new")
+        runtime_state.save_runtime_state(self.config, state)
+        record = self._record()
+        self.assertEqual((record["status"], record["lease_owner"]), ("started", "run-new"))
+        self.assertNotIn("error", record)
+
+        state["workers"]["run-new"]["status"] = "completed"
+        runtime_state.save_runtime_state(self.config, state)
+        self.assertEqual(self._record()["status"], "completed")
+
+    def test_ordinary_rebuild_outcomes_are_preserved(self) -> None:
+        for status, expected in (
+            ("running", "started"),
+            ("waiting_approval", "manual_pending"),
+            ("failed", "failed"),
+            ("completed", "completed"),
+        ):
+            with self.subTest(status):
+                state = self._bound_state(status)
+                state["workers"]["run-old"]["last_error"] = "boom"
+                runtime_state.save_runtime_state(self.config, state)
+                self.assertEqual(self._record()["status"], expected)
+                Path(self.config["paths"]["state_file"]).unlink()
+
+    def test_launch_saved_before_its_binding_is_rebuilt_as_started(self) -> None:
+        state = {
+            "workers": {"run-new": self._worker("running", "run-new")},
+            "queue": {"events": {"evt-1": {"status": "queued", "attempt_count": 1, "last_attempt_at": "2026-11-05T00:00:00Z"}}},
+        }
+        runtime_state.save_runtime_state(self.config, state)
+        self.assertEqual(self._record()["status"], "started")
+
+
 class TopLevelStateKeyPersistenceTests(unittest.TestCase):
     """`migrate_state` must never discard a top-level key without being told to.
 

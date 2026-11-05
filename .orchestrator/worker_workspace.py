@@ -14,7 +14,7 @@ from capacity_controller import is_capacity_sidecar
 from common import normalize_agent_id, utc_now
 from dispatch_policy import REASON_HELPER_CLAIM, REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY, REASON_REVIEW_READY, worker_logical_dispatch_agent_id
 import verification_evidence
-from runtime_state import ACTIVE_WORKER_STATUSES
+from runtime_state import ACTIVE_WORKER_STATUSES, worker_queue_record
 from task_archive import load_archived_task
 
 # Compatibility aliases remain exports while Supervisor callers migrate to the
@@ -1738,67 +1738,6 @@ class TerminalLocalHandoff(NamedTuple):
 _LOCAL_HANDOFF_WORKER_STATUSES = frozenset({"running", "stalled"})
 
 
-def _worker_queue_record(state: dict[str, Any], worker: dict[str, Any]) -> dict[str, Any] | None:
-    queue_id = worker.get("queue_event_id")
-    record = ((state.get("queue") or {}).get("events") or {}).get(queue_id) if queue_id else None
-    return record if isinstance(record, dict) else None
-
-
-def _worker_event_ancestors(state: dict[str, Any], worker: dict[str, Any]) -> dict[str, dict[str, Any] | None]:
-    """The retry and fallback parents of this run that held the same queue event.
-
-    Nothing rebinds the event between generations, so its record keeps naming
-    the first run while the lineage grows. A parent no longer on record is listed
-    as None: its child still names it, but it cannot extend the walk.
-    """
-    workers = state.get("workers") or {}
-    ancestors: dict[str, dict[str, Any] | None] = {}
-    run_id = worker.get("parent_run_id")
-    while run_id and run_id != worker.get("run_id") and run_id not in ancestors:
-        parent = workers.get(run_id)
-        if not isinstance(parent, dict):
-            ancestors[run_id] = None
-            break
-        if parent.get("queue_event_id") != worker.get("queue_event_id"):
-            break
-        ancestors[run_id] = parent
-        run_id = parent.get("parent_run_id")
-    return ancestors
-
-
-def queue_event_moved_from_worker(state: dict[str, Any], worker: dict[str, Any]) -> bool:
-    """Whether this worker's queue event has been requeued or now belongs to another run.
-
-    Such a worker must not launch, reassign or settle anything on the event's
-    behalf: finalizing would consume work already returned for redispatch. A
-    retry child still answers for the event its lineage was bound to, until
-    process_queue rebinds it.
-    """
-    record = _worker_queue_record(state, worker)
-    if record is None:
-        return False
-    if str(record.get("status") or "").lower() == "queued":
-        return True
-    holders = {worker.get("run_id"), worker.get("queue_event_id"), *_worker_event_ancestors(state, worker)}
-    return any(record.get(field) and record.get(field) not in holders for field in ("run_id", "lease_owner"))
-
-
-def release_moved_queue_event(state: dict[str, Any], worker: dict[str, Any]) -> bool:
-    """Drop a settling run's claim on an event it no longer holds; False if it still holds it.
-
-    A settled record that still names the event lets reconcile_queue_records
-    finish the event on its next call, consuming work returned for redispatch.
-    Retried parents still name it too, so they release it with the run. A handed
-    off fallback parent stays active and keeps its own disposition.
-    """
-    if not queue_event_moved_from_worker(state, worker):
-        return False
-    for run in (worker, *_worker_event_ancestors(state, worker).values()):
-        if run is worker or (run is not None and run.get("status") == "retried"):
-            run["released_queue_event_id"] = run.pop("queue_event_id", None)
-    return True
-
-
 def _local_handoff_identity_refusal(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -1832,7 +1771,7 @@ def _local_handoff_identity_refusal(
         return "unresolved_source_identity"
     # process_queue binds a launched event to its run; anything else (requeued,
     # moved or never bound) is an event this run no longer holds.
-    record = _worker_queue_record(state, worker)
+    record = worker_queue_record(state, worker)
     run_id = worker.get("run_id")
     if (
         not isinstance(record, dict)
