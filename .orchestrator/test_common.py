@@ -160,6 +160,85 @@ class ConfigContractTests(unittest.TestCase):
             with self.assertRaisesRegex(common.ConfigError, "typo"):
                 common.load_config(invalid)
 
+    HISTORICAL_LABELS = ["Codex foreground", "Codex-foreground"]
+
+    def test_source_aliases_are_an_optional_agent_field_of_the_normal_loader(self) -> None:
+        codex = {"display_name": "Codex", "provider": "codex", "account_pool": "codex_bjoe"}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            declared = self._write(
+                root,
+                "declared.json",
+                {"agents": {"codex": {**codex, "source_aliases": self.HISTORICAL_LABELS}}},
+            )
+            empty = self._write(root, "empty.json", {"agents": {"codex": {**codex, "source_aliases": []}}})
+            absent = self._write(root, "absent.json", {"agents": {"codex": codex}})
+            overlay = self._write(
+                root,
+                "overlay.json",
+                {"agents": {"codex": {"source_aliases": self.HISTORICAL_LABELS}}},
+            )
+
+            self.assertEqual(
+                common.load_config(declared)["agents"]["codex"]["source_aliases"], self.HISTORICAL_LABELS
+            )
+            self.assertEqual(common.load_config(empty)["agents"]["codex"]["source_aliases"], [])
+            self.assertNotIn("source_aliases", common.load_config(absent)["agents"]["codex"])
+            # The overlay adds only the aliases; the base record is kept as it is.
+            merged = common.load_config(absent, overlay_paths=(overlay,))
+            self.assertEqual(merged["agents"]["codex"], {**codex, "source_aliases": self.HISTORICAL_LABELS})
+
+    def test_malformed_source_aliases_are_refused_by_the_normal_loader(self) -> None:
+        malformed = (
+            "Codex foreground",
+            None,
+            {"Codex foreground": True},
+            [None],
+            [1],
+            [["Codex foreground"]],
+            [""],
+            ["   "],
+            [" Codex foreground"],
+            ["Codex foreground "],
+            ["Codex foreground\n"],
+            ["Codex\nforeground"],
+            ["Codex foreground", ""],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            for value in malformed:
+                with self.subTest(value=value):
+                    path = self._write(root, "runtime.json", {"agents": {"codex": {"source_aliases": value}}})
+                    with self.assertRaisesRegex(common.ConfigError, "agents.codex.source_aliases"):
+                        common.load_config(path)
+            # An overlay is validated by the same one loader.
+            base = self._write(root, "base.json", {"agents": {"codex": {"display_name": "Codex"}}})
+            overlay = self._write(root, "overlay.json", {"agents": {"codex": {"source_aliases": [""]}}})
+            with self.assertRaisesRegex(common.ConfigError, "agents.codex.source_aliases"):
+                common.load_config(base, overlay_paths=(overlay,))
+
+    def test_source_aliases_do_not_open_any_other_field_or_object(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            for name, payload, refused in (
+                ("near", {"agents": {"codex": {"source_alias": ["Codex foreground"]}}}, "source_alias"),
+                (
+                    "sibling",
+                    {"agents": {"codex": {"source_aliases": ["Codex foreground"], "typo": True}}},
+                    "typo",
+                ),
+                (
+                    "pool",
+                    {"account_pools": {"codex_bjoe": {"source_aliases": ["Codex foreground"]}}},
+                    "source_aliases",
+                ),
+                ("root", {"source_aliases": {"Codex foreground": "codex"}}, "source_aliases"),
+            ):
+                with self.subTest(case=name):
+                    path = self._write(root, f"{name}.json", payload)
+                    with self.assertRaisesRegex(common.ConfigError, refused):
+                        common.load_config(path)
+
     def test_explicit_overlay_is_deep_merged_by_the_canonical_loader(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
