@@ -3,7 +3,7 @@
   "record_kind": "exact-candidate-ci-reconciliation",
   "candidate_sha": "8e5872544bff88d421a1923c7957ca6b12429ce2",
   "result": "pass",
-  "recorded_at": "2026-11-04T01:50:05Z",
+  "recorded_at": "2026-11-06T01:11:08Z",
   "recorded_by": "Claude (exact candidate CI and Runtime Release run reconciliation via gh run view)",
   "runs": [
     {
@@ -182,6 +182,122 @@
       "status": "completed",
       "updatedAt": "2026-11-04T01:31:03Z",
       "url": "https://github.com/alfloop-dev/odayplus/actions/runs/41753392676"
+    },
+    {
+      "conclusion": "success",
+      "createdAt": "2026-11-05T16:50:22Z",
+      "databaseId": 42068563588,
+      "event": "pull_request",
+      "headSha": "e68b3688e601cc34d734cc9d7f9ae7afdbb763c8",
+      "jobs": [
+        {
+          "conclusion": "success",
+          "name": "orchestrator",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42068563588/job/127389620047"
+        },
+        {
+          "conclusion": "success",
+          "name": "change-scope",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42068563588/job/127389735580"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-security",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42068563588/job/127389901132"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-lint-unit",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42068563588/job/127389901221"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-db",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42068563588/job/127389901267"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-api-contract",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42068563588/job/127389901466"
+        },
+        {
+          "conclusion": "success",
+          "name": "performance-gate",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42068563588/job/127389901490"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-node",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42068563588/job/127389901813"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-e2e-gate",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42068563588/job/127389902263"
+        },
+        {
+          "conclusion": "success",
+          "name": "product",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42068563588/job/127414826071"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "Request automatic dev release after checks",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42068563588/job/127414962301"
+        }
+      ],
+      "name": "CI",
+      "status": "completed",
+      "updatedAt": "2026-11-05T17:32:38Z",
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42068563588"
     }
-  ]
+  ],
+  "lane_coverage": {
+    "exact_push_ci": {
+      "run_id": 41753251393,
+      "head_sha": "8e5872544bff88d421a1923c7957ca6b12429ce2",
+      "success": [
+        "orchestrator",
+        "change-scope",
+        "product",
+        "Request automatic dev release after checks"
+      ],
+      "skipped_by_change_scope": [
+        "product-lint-unit",
+        "product-db",
+        "product-api-contract",
+        "product-e2e-gate",
+        "product-security",
+        "performance-gate",
+        "product-node"
+      ]
+    },
+    "product_lanes_ci": {
+      "run_id": 42068563588,
+      "event": "pull_request",
+      "head_sha": "e68b3688e",
+      "relation_to_candidate": "8e5872544 plus one commit that changes only docs/evidence",
+      "success": [
+        "product-lint-unit",
+        "product-db",
+        "product-api-contract",
+        "product-e2e-gate",
+        "product-security",
+        "performance-gate",
+        "product-node"
+      ]
+    },
+    "note": "A run-level conclusion of success does not mean the product lanes ran; read per-job conclusions."
+  }
 }
