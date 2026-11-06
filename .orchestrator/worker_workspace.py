@@ -3,6 +3,7 @@ from __future__ import annotations
 """Workspace lifecycle helpers extracted from legacy supervisor."""
 # ruff: noqa: F401,F821,I001
 
+import os
 import re
 import shutil
 import stat
@@ -14,7 +15,7 @@ from capacity_controller import is_capacity_sidecar, parent_sidecar_refusal
 from common import normalize_agent_id, utc_now
 from dispatch_policy import REASON_HELPER_CLAIM, REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY, REASON_REVIEW_READY, worker_logical_dispatch_agent_id
 import verification_evidence
-from runtime_state import ACTIVE_WORKER_STATUSES, worker_queue_record
+from runtime_state import ACTIVE_WORKER_STATUSES, queue_event_moved_from_worker, worker_queue_record
 from task_archive import load_archived_task
 
 # Compatibility aliases remain exports while Supervisor callers migrate to the
@@ -26,6 +27,7 @@ from worktree_cleanliness import (
     inspect_protected_git_metadata,
     normalize_protected_paths,
     task_protected_paths,
+    _git_metadata,
     _tree_entry,
     blocking_dirt_entries as _blocking_dirt_entries,
     describe_dirt_entries as _describe_dirt_entries,
@@ -463,11 +465,19 @@ def _protected_commit_refusal(
     worktree_path: Path | None = None,
     check_index: bool = False,
 ) -> str | None:
-    """Why Git may not materialize ``commit`` for a protected task, if it may not.
+    """Why Git may not materialize or read ``commit`` for a protected task, if it may not.
 
     ``metadata_safe`` only proves the entry cannot escape.  A regular tracked
     protected entry would still be written by read-tree, merge and checkout,
     and read by status, so it is refused here from its tree entry alone.
+
+    Given the checkout itself (``worktree_path`` and ``check_index``), this also
+    answers for what status and hashing will meet there rather than what the
+    commit names: Git opens a staged body to compare it, and an ignore file under
+    the prefix as it walks in.  An indexed entry, or anything on disk under the
+    prefix, is refused before they run, as is any error proving neither.  The one
+    entry a healthy checkout holds is the empty directory its own protected
+    launch mounts the mask on (``plan_protected_execution``).
     """
     if not protected:
         return None
@@ -482,6 +492,27 @@ def _protected_commit_refusal(
             return f"protected_metadata_refused: unreadable_metadata: {path}"
         if entry is not None:
             return f"protected_metadata_refused: protected_entry_tracked: {path} ({entry[0]}) at {verdict.detail}"
+        if worktree_path is None or not check_index:
+            continue
+        # Modes only: a nested entry is proven present without naming it.
+        indexed = _git_metadata(
+            Path(worktree_path), "ls-files", "--cached", "-z", "--format=%(objectmode)", "--", f":(top,literal){path}"
+        )
+        if indexed is None or indexed.returncode != 0:
+            return f"protected_metadata_refused: unreadable_metadata: index {path}"
+        if indexed.stdout:
+            return f"protected_metadata_refused: protected_entry_indexed: {path}"
+        target = Path(worktree_path) / path
+        try:
+            if not stat.S_ISDIR(target.lstat().st_mode):
+                return f"protected_metadata_refused: protected_entry_present: {path}"
+            with os.scandir(target) as entries:
+                if next(entries, None) is not None:
+                    return f"protected_metadata_refused: protected_entry_present: {path}"
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return f"protected_metadata_refused: unreadable_metadata: worktree {path}"
     return None
 
 
@@ -948,7 +979,13 @@ def compute_worktree_state_identity(
     if _git_operation_in_progress(path):
         return f"unresolved_git_operation:{head_sha}"
     try:
-        if _protected_commit_refusal(path, "HEAD", normalize_protected_paths(list(protected_paths or ()))):
+        if _protected_commit_refusal(
+            path,
+            "HEAD",
+            normalize_protected_paths(list(protected_paths or ())),
+            worktree_path=path,
+            check_index=True,
+        ):
             return f"protected_metadata_refused:{head_sha}"
         inspection = inspect_worktree(path, materialized_paths=materialized_paths, protected_paths=protected_paths)
     except ProtectedPathPolicyError:
@@ -1672,7 +1709,9 @@ def seal_worker_handoff(
         protected_paths = _worker_recorded_protected_paths(worker, task)
     except ProtectedPathPolicyError as error:
         return WorkerHandoffSeal(False, "protected_policy_invalid", str(error), None, None)
-    refusal = _protected_commit_refusal(workspace_path, "HEAD", protected_paths)
+    refusal = _protected_commit_refusal(
+        workspace_path, "HEAD", protected_paths, worktree_path=workspace_path, check_index=True
+    )
     if refusal:
         return WorkerHandoffSeal(False, "protected_metadata_refused", refusal, _git_commit_oid(workspace_path, "HEAD"), None)
     inspection: WorktreeInspection = inspect_worktree(
@@ -1721,6 +1760,26 @@ def seal_worker_handoff(
 WORKSPACE_LAUNCH_HEAD_FIELD = "workspace_launch_head"
 
 
+@_entrypoint
+def record_workspace_launch_head(state: dict[str, Any], request: DeliveryRequest) -> None:
+    """Record the exact checkout HEAD this run starts from, on its request and lease.
+
+    A reused branch can hold it ahead of both base and origin, and a retry child
+    starts on whatever its parent committed.  Absent means unproven: never "assume
+    base", and never the head a parent's snapshot names.
+    """
+    workspace = str(request.metadata.get("workspace_path") or "")
+    launch_head = _git_commit_oid(Path(workspace), "HEAD") if workspace else None
+    leases = (state.get("worker_worktrees") or {}).get("leases") or {}
+    for record in (request.metadata, leases.get(worker_workspace_task_id(request))):
+        if not isinstance(record, dict):
+            continue
+        if launch_head:
+            record[WORKSPACE_LAUNCH_HEAD_FIELD] = launch_head
+        else:
+            record.pop(WORKSPACE_LAUNCH_HEAD_FIELD, None)
+
+
 class TerminalLocalHandoff(NamedTuple):
     """Whether a finished owner left new, sealed, unpublished work on its branch.
 
@@ -1766,16 +1825,17 @@ def _local_handoff_identity_refusal(
         return "helper_claim_present"
     if task_review_source_identity(config, task).error:
         return "unresolved_source_identity"
-    # process_queue binds a launched event to its run; anything else (requeued,
-    # moved or never bound) is an event this run no longer holds.
+    # process_queue binds a launched event to its run, and a retry child inherits
+    # that binding.  Custody says whose it is; an unbound or unstarted record is
+    # not moved, but neither does it prove a launch.
     record = worker_queue_record(state, worker)
-    run_id = worker.get("run_id")
     if (
         not isinstance(record, dict)
         or str(record.get("status") or "").lower() != "started"
-        or not run_id
-        or record.get("run_id") != run_id
-        or record.get("lease_owner") != run_id
+        or not worker.get("run_id")
+        or not record.get("run_id")
+        or not record.get("lease_owner")
+        or queue_event_moved_from_worker(state, worker)
     ):
         return "queue_event_not_bound_to_run"
     return None
@@ -1970,6 +2030,10 @@ def sealed_owner_continuation_allowed(
         protected_paths = _recorded_protected_paths(task, request.metadata)
     except ProtectedPathPolicyError:
         return False, "protected_policy_invalid"
+    if _protected_commit_refusal(
+        worktree_path, "HEAD", protected_paths, worktree_path=worktree_path, check_index=True
+    ):
+        return False, "protected_metadata_refused"
     inspection = inspect_worktree(
         worktree_path, materialized_paths=materialized_paths, protected_paths=protected_paths
     )
@@ -2675,20 +2739,35 @@ def launch_protection_refusal(
     if missing:
         return f"request was prepared without protected_paths {sorted(missing)}"
     refusal = _capacity_sidecar_authority_refusal(config, task, prepared)
-    if refusal or not is_capacity_sidecar(task):
+    if refusal:
         return refusal
-    # Child and parent can move together and still agree, while this request stays
-    # on the checkout prepared for the old source. A request with no recorded source
-    # proves nothing, and the current one is not evidence of what it was prepared in.
-    from multi_repo_registry import canonical_repository_id_for_root
+    if is_capacity_sidecar(task):
+        # Child and parent can move together and still agree, while this request stays
+        # on the checkout prepared for the old source. A request with no recorded source
+        # proves nothing, and the current one is not evidence of what it was prepared in.
+        from multi_repo_registry import canonical_repository_id_for_root
 
-    source = worker_task_repository_binding(config, task)
-    if not source.resolved:
-        return f"capacity sidecar source is unresolved: {source.error or source.source}"
-    current = canonical_repository_id_for_root(config, source.root, fallback=source.repo_id)
-    prepared_source = str(request_metadata.get("repository_id") or "")
-    if prepared_source != current:
-        return f"capacity sidecar was prepared in {prepared_source or '(no recorded source)'}, its source is now {current}"
+        source = worker_task_repository_binding(config, task)
+        if not source.resolved:
+            return f"capacity sidecar source is unresolved: {source.error or source.source}"
+        current = canonical_repository_id_for_root(config, source.root, fallback=source.repo_id)
+        prepared_source = str(request_metadata.get("repository_id") or "")
+        if prepared_source != current:
+            return f"capacity sidecar was prepared in {prepared_source or '(no recorded source)'}, its source is now {current}"
+    if str(request_metadata.get("workspace_mode") or "") != "isolated_worktree":
+        return None
+    # An id names a registry entry, whose path can come to mean another checkout while
+    # a prepared request waits. The worktree itself says which one it belongs to.
+    workspace_task_id = str(request_metadata.get("workspace_task_id") or "")
+    source_task = canonical_task_record(config, workspace_task_id, task) if workspace_task_id else task
+    if not isinstance(source_task, dict):
+        source_task = request_metadata.get("task")
+    workspace_source = worker_task_repository_binding(config, source_task if isinstance(source_task, dict) else None)
+    if not workspace_source.resolved:
+        return f"prepared checkout has no current source: {workspace_source.error or workspace_source.source}"
+    workspace = str(request_metadata.get("workspace_path") or "")
+    if not workspace or not _worktree_matches_repo_common_dir(workspace_source.root, Path(workspace)):
+        return f"prepared checkout {workspace or '(none recorded)'} is not a worktree of its current source {workspace_source.root}"
     return None
 
 
@@ -2966,6 +3045,7 @@ def prepare_worker_workspace(
                             expected_branch=branch,
                             trigger="lease_refused_dirty_worktree",
                             owning_repo_root=repo_root,
+                            protected_paths=protected_paths,
                         )
                     except Exception as error:  # never let preservation break the refusal
                         # The reporting must not be able to raise either: this
@@ -3195,13 +3275,6 @@ def prepare_worker_workspace(
     )
     if protected_paths:
         request.metadata["protected_paths"] = list(protected_paths)
-    # The exact checkout this run starts from, which a reused branch can hold
-    # ahead of both base and origin. Absent means unproven, never "assume base".
-    launch_head = _git_commit_oid(worktree_path, "HEAD")
-    if launch_head:
-        request.metadata[WORKSPACE_LAUNCH_HEAD_FIELD] = launch_head
-    else:
-        request.metadata.pop(WORKSPACE_LAUNCH_HEAD_FIELD, None)
     materialized_context_files = materialize_worker_context_files(config, request, worktree_path)
     leases = state.setdefault("worker_worktrees", {}).setdefault("leases", {})
     leases[workspace_task_id] = {
@@ -3224,8 +3297,7 @@ def prepare_worker_workspace(
     }
     if protected_paths:
         leases[workspace_task_id]["protected_paths"] = list(protected_paths)
-    if launch_head:
-        leases[workspace_task_id][WORKSPACE_LAUNCH_HEAD_FIELD] = launch_head
+    record_workspace_launch_head(state, request)
     write_activity_log(
         config,
         {
@@ -3766,6 +3838,26 @@ def prune_orphan_worktrees(
                 # reachable only through the worktree metadata itself.
                 skipped["detached_head_not_merged"] = skipped.get("detached_head_not_merged", 0) + 1
                 continue
+            # Both the status below and `git worktree remove` read the checkout.
+            # A settled task is usually archived, and its lease is what the
+            # dispatch recorded.
+            wt_task_id = _worktree_task_id(wt_path)
+            try:
+                protected_refusal = _protected_commit_refusal(
+                    wt_path,
+                    "HEAD",
+                    _recorded_protected_paths(
+                        canonical_task_record(config, wt_task_id) or load_archived_task(wt_task_id),
+                        ((state.get("worker_worktrees") or {}).get("leases") or {}).get(wt_task_id),
+                    ),
+                    worktree_path=wt_path,
+                    check_index=True,
+                )
+            except ProtectedPathPolicyError as error:
+                protected_refusal = str(error)
+            if protected_refusal:
+                skipped["protected_metadata_refused"] = skipped.get("protected_metadata_refused", 0) + 1
+                continue
             status_proc = subprocess.run(
                 ["git", "-C", str(wt_path), "status", "--porcelain"],
                 capture_output=True,
@@ -3987,6 +4079,7 @@ def preserve_dead_worker_worktree(
             run_id=str(worker.get("run_id") or "") or None,
             trigger=trigger,
             owning_repo_root=repo_root,
+            protected_paths=_worker_recorded_protected_paths(worker, record),
         )
     except Exception as error:  # pragma: no cover - settlement must not be blocked
         return _quarantine_refused("preserve_raised", str(error))
@@ -4064,6 +4157,7 @@ def _quarantine_and_preserve_dirty_worktree(
     run_id: str | None = None,
     trigger: str = "",
     owning_repo_root: Path | str | None = None,
+    protected_paths: Iterable[str] = (),
 ) -> QuarantineOutcome:
     """Quarantine and preserve dirty worktree state as an immutable backup without destructive reset/clean/stash or modifying the worktree.
 
@@ -4130,6 +4224,16 @@ def _quarantine_and_preserve_dirty_worktree(
         return _quarantine_refused("detached_head")
     if expected_branch and current_branch != expected_branch:
         return _quarantine_refused("branch_mismatch")
+    # The inventory below runs status, then hashes and copies what it lists.
+    protected_refusal = _protected_commit_refusal(
+        worktree_path,
+        "HEAD",
+        normalize_protected_paths(list(protected_paths or ())),
+        worktree_path=worktree_path,
+        check_index=True,
+    )
+    if protected_refusal:
+        return _quarantine_refused("protected_metadata_refused", protected_refusal)
     merge_snapshot = None
     if _git_operation_in_progress(worktree_path):
         merge_snapshot = _interrupted_merge_snapshot(worktree_path)

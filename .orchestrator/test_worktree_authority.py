@@ -318,6 +318,313 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         self.assertFalse(seal.accepted)
         self.assertEqual(seal.reason, "protected_metadata_refused")
 
+    # --- what the checkout holds now, ahead of every reader that would read it
+
+    def _protected_checkout(self, task_id: str) -> tuple[Path, str, dict, dict, dict]:
+        branch = f"task/{task_id}"
+        worktree = (self.root / "worktrees" / "pantheon" / task_id.lower()).resolve()
+        self._git(self.repo, "worktree", "add", "-b", branch, str(worktree), self.base)
+        task = {"id": task_id, "status": "review", "owner": "Claude", "reviewer": "Codex", "branch": branch}
+        status_file = self.root / "ai-status.json"
+        status_file.write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+        config = {
+            "paths": {
+                "status_file": str(status_file),
+                "activity_log": str(self.root / "activity.jsonl"),
+                "state_file": str(self.root / "state.json"),
+            },
+            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            "coordination": {
+                "repositories": {"pantheon": {"repo": None, "local_path": str(self.repo), "default_branch": "dev"}}
+            },
+            "worker_worktrees": {"root": str(self.root / "worktrees")},
+        }
+        worker = {
+            "run_id": f"run-{task_id}",
+            "task_id": task_id,
+            "status": "running",
+            "pid": os.getpid(),
+            "last_heartbeat_at": supervisor.utc_now(),
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": str(worktree),
+            "workspace_branch": branch,
+            "repository_id": "pantheon",
+            "request_snapshot": {"reason": "review_ready_dispatch", "metadata": {"protected_paths": PROTECTED}},
+        }
+        return worktree, branch, config, worker, task
+
+    @staticmethod
+    def _plant_staged_body(worktree: Path) -> None:
+        body = worktree / "guarded/zone/staged.txt"
+        body.parent.mkdir(parents=True)
+        body.write_text("aaaa\n", encoding="utf-8")
+        ProtectedWorktreeLifecycleTests._git(worktree, "add", "guarded/zone/staged.txt")
+        body.write_text("bbbb\n", encoding="utf-8")
+
+    @staticmethod
+    def _plant_index_only_body(worktree: Path) -> None:
+        ProtectedWorktreeLifecycleTests._plant_staged_body(worktree)
+        (worktree / "guarded/zone/staged.txt").unlink()
+        (worktree / "guarded/zone").rmdir()
+
+    @staticmethod
+    def _plant_untracked_ignore(worktree: Path) -> None:
+        (worktree / "guarded/zone").mkdir(parents=True)
+        (worktree / "guarded/zone/.gitignore").write_text("hidden.txt\n", encoding="utf-8")
+        (worktree / "guarded/zone/kept.txt").write_text("kept\n", encoding="utf-8")
+
+    @staticmethod
+    def _plant_untracked_file_at_root(worktree: Path) -> None:
+        (worktree / "guarded").mkdir()
+        (worktree / "guarded/zone").write_text("a file in the directory's place\n", encoding="utf-8")
+
+    @staticmethod
+    def _plant_fifo_at_root(worktree: Path) -> None:
+        (worktree / "guarded").mkdir()
+        os.mkfifo(worktree / "guarded/zone")
+
+    def _read_through_every_entry(self, worktree: Path, branch: str, config: dict, worker: dict, task: dict) -> dict:
+        """Each original caller that hands the checkout to status, hashing or copying."""
+        state: dict = {
+            "workers": {worker["run_id"]: worker},
+            "worker_worktrees": {
+                "handoff_blocks": {
+                    task["id"]: {
+                        "owner": "Claude",
+                        "workspace_path": str(worktree),
+                        "workspace_branch": branch,
+                        "head_sha": self.base,
+                        "dirt_fingerprint": "recorded",
+                        "reason": "owner_dirty",
+                    }
+                }
+            },
+        }
+        outcomes: dict = {}
+        outcomes["refresh"] = supervisor._refresh_reused_worker_worktree(
+            self.repo, worktree, self.base, branch, protected_paths=PROTECTED
+        )
+        outcomes["identity"] = worker_workspace.compute_worktree_state_identity(worktree, protected_paths=PROTECTED)
+        worker_workspace.observe_worker_worktree_activity(config, state, worker, task)
+        outcomes["observer"] = worker["worktree_activity"]
+        outcomes["seal"] = supervisor.seal_worker_handoff(config, state, worker, task)
+        request = supervisor.DeliveryRequest(
+            agent_id="claude",
+            provider="claude",
+            delivery_mode="claude",
+            message="wake",
+            task_id=task["id"],
+            reason="owned_in_progress_dispatch",
+            metadata={"protected_paths": PROTECTED},
+        )
+        outcomes["continuation"] = supervisor.sealed_owner_continuation_allowed(
+            config, state, request, task, target_agent="Claude", worktree_path=worktree, branch=branch
+        )
+        outcomes["preempt"] = supervisor.worker_can_be_preempted(config, worker, {task["id"]: task}, state)
+        outcomes["quarantine"] = worker_workspace._quarantine_and_preserve_dirty_worktree(
+            config, state, worktree, task["id"], expected_branch=branch, run_id=worker["run_id"],
+            owning_repo_root=self.repo, protected_paths=PROTECTED,
+        )
+        outcomes["preserve"] = supervisor.preserve_dead_worker_worktree(config, state, worker, task=task)
+        return outcomes
+
+    def test_body_only_in_index_or_on_disk_is_refused_before_any_reader_runs(self) -> None:
+        plants = (
+            self._plant_staged_body,
+            self._plant_index_only_body,
+            self._plant_untracked_ignore,
+            self._plant_untracked_file_at_root,
+            self._plant_fifo_at_root,
+        )
+        commands: list[list[str]] = []
+        real_run = subprocess.run
+
+        def recording_run(args, *a, **kw):
+            commands.append(list(args))
+            return real_run(args, *a, **kw)
+
+        for number, plant in enumerate(plants):
+            with self.subTest(plant.__name__):
+                commands.clear()
+                worktree, branch, config, worker, task = self._protected_checkout(f"PROT-BODY-{number}")
+                plant(worktree)
+                self.assertEqual(
+                    worktree_cleanliness.inspect_protected_git_metadata(
+                        worktree, "HEAD", PROTECTED, worktree_path=worktree, check_index=True
+                    ).reason,
+                    "metadata_safe",
+                    "the gap this closes: the metadata verdict alone lets a reader through",
+                )
+                with mock.patch("subprocess.run", side_effect=recording_run):
+                    outcomes = self._read_through_every_entry(worktree, branch, config, worker, task)
+
+                self.assertEqual([c for c in commands if "status" in c or "diff" in c], [])
+                self.assertFalse(outcomes["refresh"][0])
+                self.assertIn("protected_entry_", outcomes["refresh"][1])
+                self.assertTrue(outcomes["identity"].startswith("protected_metadata_refused:"), outcomes["identity"])
+                self.assertEqual(
+                    (outcomes["observer"]["status"], outcomes["observer"]["reason"]),
+                    ("unverifiable", "protected_metadata_refused"),
+                )
+                self.assertEqual((outcomes["seal"].accepted, outcomes["seal"].reason), (False, "protected_metadata_refused"))
+                self.assertEqual(outcomes["continuation"], (False, "protected_metadata_refused"))
+                self.assertFalse(outcomes["preempt"])
+                for name in ("quarantine", "preserve"):
+                    self.assertFalse(outcomes[name], name)
+                    self.assertEqual(outcomes[name].reason, "protected_metadata_refused", name)
+                self.assertFalse((self.root / ".orchestrator" / "worktree-dirt-backups").exists())
+
+    def test_empty_mount_point_of_a_real_protected_launch_stays_a_healthy_checkout(self) -> None:
+        worktree, branch, config, worker, task = self._protected_checkout("PROT-MOUNT-001")
+        for name, ready in (
+            ("nothing there", lambda: None),
+            ("mount point", lambda: worktree_cleanliness.plan_protected_execution(worktree, PROTECTED)),
+        ):
+            with self.subTest(name):
+                ready()
+                self.assertEqual((worktree / PROTECTED[0]).is_dir(), name == "mount point")
+                outcomes = self._read_through_every_entry(worktree, branch, config, worker, task)
+                self.assertTrue(outcomes["refresh"][0], outcomes["refresh"][1])
+                self.assertEqual(outcomes["identity"], f"clean:{self.base}")
+                self.assertEqual(outcomes["observer"]["status"], "verified")
+                self.assertTrue(outcomes["seal"].accepted, outcomes["seal"].reason)
+                self.assertEqual(outcomes["continuation"], (False, "dirt_changed"))
+                self.assertTrue(outcomes["preempt"])
+                for key in ("quarantine", "preserve"):
+                    self.assertEqual(outcomes[key].reason, "worktree_clean", key)
+
+    def test_owner_dirt_beside_a_mount_point_keeps_its_sealed_continuation_and_backup(self) -> None:
+        worktree, branch, config, worker, task = self._protected_checkout("PROT-MOUNT-002")
+        worktree_cleanliness.plan_protected_execution(worktree, PROTECTED)
+        (worktree / "owner-wip.txt").write_text("keep me\n", encoding="utf-8")
+        seal = supervisor.seal_worker_handoff(config, {}, worker, task)
+        self.assertEqual((seal.accepted, seal.reason), (False, "owner_dirty"))
+        state: dict = {"workers": {}}
+        supervisor.record_unsealed_worker_handoff(config, state, worker, task, seal)
+        request = supervisor.DeliveryRequest(
+            agent_id="claude",
+            provider="claude",
+            delivery_mode="claude",
+            message="wake",
+            task_id=task["id"],
+            reason="owned_in_progress_dispatch",
+            metadata={"protected_paths": PROTECTED},
+        )
+        allowed, detail = supervisor.sealed_owner_continuation_allowed(
+            config, state, request, task, target_agent="Claude", worktree_path=worktree, branch=branch
+        )
+        self.assertTrue(allowed, detail)
+        outcome = worker_workspace._quarantine_and_preserve_dirty_worktree(
+            config, state, worktree, task["id"], expected_branch=branch, run_id=worker["run_id"],
+            owning_repo_root=self.repo, protected_paths=PROTECTED,
+        )
+        self.assertTrue(outcome, getattr(outcome, "reason", ""))
+        self.assertEqual((worktree / "owner-wip.txt").read_text(encoding="utf-8"), "keep me\n")
+
+    def test_preemption_denies_on_task_or_recorded_protection_alone(self) -> None:
+        worktree, _branch, config, worker, task = self._protected_checkout("PROT-PREEMPT-001")
+        self._plant_untracked_ignore(worktree)
+        for name, recorded, on_task in (("recorded only", PROTECTED, None), ("task only", None, PROTECTED)):
+            with self.subTest(name):
+                worker["request_snapshot"]["metadata"] = {"protected_paths": recorded} if recorded else {}
+                record = {**task, "protected_paths": on_task} if on_task else task
+                with mock.patch("worktree_cleanliness.inspect_worktree") as inspect:
+                    self.assertFalse(supervisor.worker_can_be_preempted(config, worker, {task["id"]: record}, {}))
+                inspect.assert_not_called()
+
+    def test_entry_beside_the_prefix_is_not_refused(self) -> None:
+        worktree, _branch, config, worker, task = self._protected_checkout("PROT-SIBLING-001")
+        (worktree / "guarded").mkdir()
+        (worktree / "guarded/zone-two.txt").write_text("next door\n", encoding="utf-8")
+        self._git(worktree, "add", "guarded/zone-two.txt")
+        seal = supervisor.seal_worker_handoff(config, {}, worker, task)
+        self.assertEqual(seal.reason, "owner_dirty")
+
+    def test_a_current_checkout_that_cannot_be_proven_empty_is_refused(self) -> None:
+        worktree, _branch, _config, _worker, _task = self._protected_checkout("PROT-ERROR-001")
+
+        def refuse() -> str | None:
+            return worker_workspace._protected_commit_refusal(
+                worktree, "HEAD", tuple(PROTECTED), worktree_path=worktree, check_index=True
+            )
+
+        self.assertIsNone(refuse())
+        for name, failure in (
+            ("unsupported format", subprocess.CompletedProcess([], 129, b"", b"usage")),
+            ("git unavailable", None),
+        ):
+            with self.subTest(name), mock.patch.object(worker_workspace, "_git_metadata", return_value=failure):
+                self.assertIn("unreadable_metadata: index", refuse() or "")
+        worktree_cleanliness.plan_protected_execution(worktree, PROTECTED)
+        self.assertIsNone(refuse())
+        with mock.patch.object(worker_workspace.os, "scandir", side_effect=PermissionError("denied")):
+            self.assertIn("unreadable_metadata: worktree", refuse() or "")
+        (worktree / "guarded").chmod(0)
+        try:
+            self.assertIn("protected_metadata_refused", refuse() or "")
+        finally:
+            (worktree / "guarded").chmod(0o755)
+
+    def _prune_with_protected_task(self, protected_on: str, *, plant: bool = True) -> tuple[Path, list[list[str]], dict]:
+        task_id = f"PROT-PRUNE-{protected_on.upper()}"
+        worktree, _branch, config, _worker, task = self._protected_checkout(task_id)
+        if plant:
+            self._plant_untracked_ignore(worktree)
+        else:
+            worktree_cleanliness.plan_protected_execution(worktree, PROTECTED)
+        task.update(status="done")
+        lease: dict = {}
+        if protected_on == "board":
+            task["protected_paths"] = PROTECTED
+        elif protected_on == "lease":
+            lease["protected_paths"] = PROTECTED
+        Path(config["paths"]["status_file"]).write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+        archived = {**task, "protected_paths": PROTECTED} if protected_on == "archive" else None
+        config["worker_worktree_housekeeping"] = {"enabled": True, "tick_interval_seconds": 0}
+        state: dict = {"workers": {}, "worker_worktrees": {"leases": {task_id: lease}}}
+        if protected_on == "archive":
+            Path(config["paths"]["status_file"]).write_text(json.dumps({"tasks": []}), encoding="utf-8")
+        base = worker_workspace.WorkerBaseResolution(
+            repository_id="pantheon", default_branch="dev", sha=self.base, remote_ref="refs/remotes/origin/dev"
+        )
+        commands: list[list[str]] = []
+        real_run = subprocess.run
+
+        def recording_run(args, *a, **kw):
+            commands.append(list(args))
+            return real_run(args, *a, **kw)
+
+        with (
+            mock.patch("subprocess.run", side_effect=recording_run),
+            mock.patch.object(supervisor, "resolve_worker_base", return_value=(base, None)),
+            mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+            mock.patch.object(supervisor, "load_archived_task", return_value=archived),
+            mock.patch.object(supervisor, "_task_settlement", return_value="settled"),
+            mock.patch(
+                "multi_repo_registry.iter_local_repositories",
+                return_value=[{"id": "pantheon", "default_branch": "dev", "resolved_local_path": self.repo}],
+            ),
+        ):
+            supervisor.prune_orphan_worktrees(config, state)
+        return worktree, commands, state
+
+    def test_pruner_refuses_a_protected_worktree_before_status_or_removal(self) -> None:
+        for protected_on in ("board", "archive", "lease"):
+            with self.subTest(protected_on):
+                worktree, commands, state = self._prune_with_protected_task(protected_on)
+                self.assertTrue(worktree.is_dir())
+                self.assertEqual([c for c in commands if "status" in c or c[-2:-1] == ["remove"]], [])
+                self.assertEqual(
+                    state["worker_worktree_housekeeping"]["last_scan"]["skipped"], {"protected_metadata_refused": 1}
+                )
+                self._git(self.repo, "worktree", "remove", "--force", str(worktree))
+
+    def test_pruner_still_reclaims_a_settled_protected_worktree_holding_only_its_mount_point(self) -> None:
+        worktree, commands, state = self._prune_with_protected_task("board", plant=False)
+        self.assertFalse(worktree.exists())
+        self.assertEqual(state["worker_worktree_housekeeping"]["last_scan"]["removed"], 1)
+        self.assertTrue([c for c in commands if "status" in c])
+
     def test_new_allocation_is_metadata_first_at_the_exact_base(self) -> None:
         worktree = self.root / "wt-new"
         commands: list[list[str]] = []

@@ -5690,6 +5690,247 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
         self.assertEqual((child["parent_run_id"], child["queue_event_id"]), ("run-1", "evt-1"))
         self.assertEqual(self.state["queue"]["events"]["evt-1"]["run_id"], before["run_id"])
 
+    # --- a retry child: the event stays bound to its parent, the baseline is its own
+
+    def _finished_retry_child(self) -> dict[str, Any]:
+        """The child a real due retry launches, then its structured zero exit."""
+        self._poll()
+        run_id = self.state["workers"]["run-1"]["superseded_by_run_id"]
+        marker = self.root / "child-runner-status.json"
+        marker.write_text(json.dumps({"status": "completed", "exit_code": 0, "signal": None}), encoding="utf-8")
+        self.worker = self.state["workers"][run_id]
+        self.worker.update(pid=999999, runner_status_path=str(marker))
+        return self.worker
+
+    def test_retry_child_with_its_own_commit_settles_on_its_parents_binding(self) -> None:
+        for name, fields in (("blocked", {"status": "blocked", "waiting_for": "Codex"}), ("in progress", {})):
+            with self.subTest(name):
+                launches = self._launch_spy()
+                self._dispatch(runner=self.FAILED_RUNNER)
+                self._park_for_retry()
+                child = self._finished_retry_child()
+                self.assertEqual(len(launches), 1)
+                record = self.state["queue"]["events"]["evt-1"]
+                self.assertEqual((record["run_id"], record["lease_owner"]), ("run-1", "run-1"))
+                head = self._commit(f"child-{len(fields)}.txt")
+                self._set_task(**fields)
+                board = self.status_file.read_bytes()
+                self.assertEqual(self._proof(), worker_workspace.TerminalLocalHandoff(True, "verified", head))
+                self.assertEqual(child["request_snapshot"]["metadata"]["workspace_launch_head"], self.task_launch_head)
+                self._poll()
+                self._assert_settled_as_progress(board)
+                self._set_task(status="in_progress")
+                self.task.pop("waiting_for", None)
+                self._write_board()
+                _git_run(self.worktree, "reset", "--quiet", "--hard", self.base)
+
+    @property
+    def task_launch_head(self) -> str:
+        return self.state["workers"]["run-1"]["request_snapshot"]["metadata"]["workspace_launch_head"]
+
+    def test_retry_child_is_not_credited_with_the_anchor_its_parent_left(self) -> None:
+        for name, fields, expected_status in (
+            ("blocked", {"status": "blocked", "waiting_for": "Codex"}, "superseded"),
+            ("in progress", {}, "failed"),
+        ):
+            with self.subTest(name):
+                launches = self._launch_spy()
+                self._dispatch(runner=self.FAILED_RUNNER)
+                launched_from = self.task_launch_head
+                anchor = self._commit(f"parent-{len(fields)}.txt")
+                self._park_for_retry()
+                child = self._finished_retry_child()
+                self.assertEqual(launches[0][1].metadata["workspace_launch_head"], anchor)
+                self.assertEqual(child["request_snapshot"]["metadata"]["workspace_launch_head"], anchor)
+                self.assertEqual(self.state["worker_worktrees"]["leases"][self.TASK_ID]["workspace_launch_head"], anchor)
+                self.assertEqual(self.task_launch_head, launched_from, "the parent's own record stays what it was")
+                self._set_task(**fields)
+                board = self.status_file.read_bytes()
+                self.assertEqual(self._proof().reason, "no_new_commit")
+                self._poll()
+                self._assert_not_credited()
+                self.assertEqual(self.worker["status"], expected_status)
+                self.assertEqual(self.status_file.read_bytes(), board)
+                self._set_task(status="in_progress")
+                self.task.pop("waiting_for", None)
+                self._write_board()
+                _git_run(self.worktree, "reset", "--quiet", "--hard", self.base)
+
+    def test_each_retry_generation_starts_from_its_own_checkout_head(self) -> None:
+        launches = self._launch_spy()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self.config["worker_retry"] = {"enabled": True, "max_attempts": 5, "jitter_seconds": 0}
+        self._park_for_retry()
+        self._poll()
+        first = self._commit("generation-1.txt")
+        self._park_for_retry("launched-1")
+        self._poll()
+        self.assertEqual(len(launches), 2)
+        snapshots = {
+            run_id: self.state["workers"][run_id]["request_snapshot"]["metadata"]["workspace_launch_head"]
+            for run_id in ("run-1", "launched-1", "launched-2")
+        }
+        self.assertEqual(snapshots, {"run-1": self.base, "launched-1": self.base, "launched-2": first})
+
+    def test_replacement_that_cannot_read_its_checkout_has_no_baseline_not_its_parents(self) -> None:
+        state: dict[str, Any] = {"worker_worktrees": {"leases": {self.TASK_ID: {"workspace_launch_head": self.base}}}}
+        for name, workspace in (("no path", {}), ("gone", {"workspace_path": str(self.root / "gone")})):
+            with self.subTest(name):
+                request = DeliveryRequest(
+                    agent_id="claude",
+                    provider="claude",
+                    delivery_mode="claude_cli",
+                    message="go",
+                    task_id=self.TASK_ID,
+                    reason="owned_ready_dispatch",
+                    metadata={"workspace_launch_head": self.base, **workspace},
+                )
+                worker_workspace.record_workspace_launch_head(state, request)
+                self.assertNotIn("workspace_launch_head", request.metadata)
+                self.assertNotIn("workspace_launch_head", state["worker_worktrees"]["leases"][self.TASK_ID])
+
+    def test_retry_child_on_a_moved_event_is_not_credited(self) -> None:
+        for number, (name, move) in enumerate(self.MOVED_EVENTS):
+            with self.subTest(name):
+                self._launch_spy()
+                self._dispatch(runner=self.FAILED_RUNNER)
+                self._park_for_retry()
+                self._finished_retry_child()
+                self._commit(f"moved-{number}.txt")
+                self._set_task(status="blocked", waiting_for="Codex")
+                record = self.state["queue"]["events"]["evt-1"]
+                move(record)
+                before = dict(record)
+                self.assertEqual(self._proof().reason, "queue_event_not_bound_to_run")
+                self._poll()
+                self._assert_not_credited()
+                self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+                self._set_task(status="in_progress")
+                self.task.pop("waiting_for", None)
+                self._write_board()
+                _git_run(self.worktree, "reset", "--quiet", "--hard", self.base)
+
+    def test_retry_child_keeps_every_other_handoff_refusal(self) -> None:
+        def failed_runner(_: Any) -> None:
+            Path(self.worker["runner_status_path"]).write_text(json.dumps(self.FAILED_RUNNER), encoding="utf-8")
+
+        for name, change, expected in (
+            ("owner moved", lambda _: self._set_task(owner="Codex"), "not_owner_execution"),
+            ("reviewer moved", lambda _: self._set_task(reviewer="Gemini"), "reviewer_moved_since_dispatch"),
+            ("helper claim", lambda _: self._set_task(helper_execution_lease={"run_id": "x"}), "helper_claim_present"),
+            ("dirty", lambda wt: (wt / "dirt.txt").write_text("x\n", encoding="utf-8"), "seal_rejected:owner_dirty"),
+            ("wrong branch", lambda wt: _git_run(wt, "checkout", "--quiet", "-b", "elsewhere"), "checkout_unverified"),
+            ("protection drift", lambda _: self._set_task(protected_paths=["guarded/zone"]), "protected_policy_drift"),
+            ("failed runner", failed_runner, "runner_not_successful"),
+        ):
+            with self.subTest(name):
+                self._launch_spy()
+                self._dispatch(runner=self.FAILED_RUNNER)
+                self._park_for_retry()
+                self._finished_retry_child()
+                self._commit()
+                self._set_task(status="blocked", waiting_for="Codex")
+                change(self.worktree)
+                self.assertEqual(self._proof().reason, expected)
+                for command in (("checkout", "--quiet", self.BRANCH), ("reset", "--quiet", "--hard", self.base), ("clean", "-fdq")):
+                    _git_run(self.worktree, *command)
+                _git_run(self.worktree, "branch", "-q", "-D", "elsewhere") if name == "wrong branch" else None
+                self._set_task(owner="Claude", reviewer="Codex", status="in_progress")
+                for field in ("waiting_for", "helper_execution_lease", "protected_paths"):
+                    self.task.pop(field, None)
+                self._write_board()
+
+    # --- the registry path, one id, and which checkout it means now
+
+    def _source_through_symlink(self) -> Path:
+        link = self.root / "source-link"
+        if link.is_symlink():
+            link.unlink()
+        link.symlink_to(self.repo, target_is_directory=True)
+        self.config["coordination"]["repositories"]["pantheon"]["local_path"] = str(link)
+        return link
+
+    def _repoint(self, link: Path, target: Path) -> None:
+        link.unlink()
+        link.symlink_to(target, target_is_directory=True)
+
+    def _assert_refused_for_its_checkout(self, worker: dict[str, Any]) -> None:
+        self.assertEqual(worker["status"], "superseded")
+        self.assertIn("is not a worktree of its current source", worker["last_error"])
+
+    def test_retry_fallback_and_resume_refuse_a_source_that_became_another_checkout(self) -> None:
+        launches = self._launch_spy()
+        with self.subTest("retry"):
+            link = self._source_through_symlink()
+            self._dispatch(runner=self.FAILED_RUNNER)
+            self._park_for_retry()
+            self._repoint(link, self._side_checkout())
+            board = self.status_file.read_bytes()
+            self._poll()
+            self._assert_refused_before_launch(launches, board)
+            self._assert_refused_for_its_checkout(self.state["workers"]["run-1"])
+        with self.subTest("fallback"):
+            link = self._source_through_symlink()
+            self._dispatch_failed()
+            self.config["worker_retry"].update(max_attempts=0, fallback_mode="file_inbox")
+            self._repoint(link, self._side_checkout())
+            outcome = supervisor.maybe_trigger_retry_or_fallback(self.config, self.state, {}, self.worker, "429 rate limit")
+            self.assertEqual(outcome, (True, True))
+            self.assertEqual(launches, [])
+            self._assert_refused_for_its_checkout(self.worker)
+        with self.subTest("resume"):
+            link = self._source_through_symlink()
+            self._dispatch(runner=self.FAILED_RUNNER)
+            self._repoint(link, self._side_checkout())
+            self._poll_approved_resume({}, status="suspended_approval").assert_not_called()
+            self._assert_refused_for_its_checkout(self.state["workers"]["run-1"])
+
+    def test_final_launch_refuses_a_source_that_became_another_checkout(self) -> None:
+        launches = self._launch_spy()
+        link = self._source_through_symlink()
+        self.state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "provider_guardrails": {"dispatch_pauses": {}, "task_failure_streaks": {}},
+        }
+        self._process_with_board_change_during_prepare(lambda: self._repoint(link, self._side_checkout()))
+        self.assertEqual(launches, [])
+        event = self.state["queue"]["events"]["evt-1"]
+        self.assertEqual(event["status"], "failed", event)
+        self.assertIn("Worker launch refused: prepared checkout", event["error"])
+
+    def test_another_path_to_the_same_checkout_still_launches(self) -> None:
+        launches = self._launch_spy()
+        link = self._source_through_symlink()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        self._park_for_retry()
+        alias = self.root / "another-name"
+        alias.symlink_to(self.repo, target_is_directory=True)
+        self._repoint(link, alias)
+        self._poll()
+        self.assertEqual(len(launches), 1, self.state["workers"]["run-1"].get("last_error"))
+        self.assertEqual(self.state["workers"]["launched-1"]["parent_run_id"], "run-1")
+
+    def test_launch_guard_refuses_what_it_cannot_tie_to_the_current_source(self) -> None:
+        self._dispatch()
+        prepared = self.worker["request_snapshot"]["metadata"]
+        guard = supervisor.launch_protection_refusal
+        self.assertIsNone(guard(self.config, self.task, prepared))
+        (self.worktree / "subdir").mkdir()
+        for name, metadata, expected in (
+            ("no path", {**prepared, "workspace_path": ""}, "(none recorded)"),
+            ("missing path", {**prepared, "workspace_path": str(self.root / "gone")}, "is not a worktree"),
+            ("inside the checkout", {**prepared, "workspace_path": str(self.worktree / "subdir")}, "is not a worktree"),
+            ("the other checkout", {**prepared, "workspace_path": str(self._side_checkout())}, "is not a worktree"),
+        ):
+            with self.subTest(name):
+                self.assertIn(expected, guard(self.config, self.task, metadata) or "")
+        with self.subTest("source unresolved"):
+            refusal = guard(self.config, {**self.task, "repository": "absent_checkout"}, prepared)
+            self.assertIn("has no current source", refusal or "")
+        with self.subTest("not a prepared checkout"):
+            self.assertIsNone(guard(self.config, self.task, {"protected_paths": []}))
+
     # --- the same bound event: the board withdraws what the old dispatch was given
 
     AUTHORITY_DRIFT = (
@@ -6577,6 +6818,37 @@ class TerminalLocalHandoffPollTests(unittest.TestCase):
         self._tick()
         self.assertEqual(len(launches), 1, "a settled event is not dispatched again")
         self.assertEqual(runtime_state.load_event_queue(self.config), [], "and prune removes it")
+
+    def test_tick_credits_a_retry_childs_own_commit_and_leaves_the_blocker(self) -> None:
+        launches = self._launch_spy()
+        self._dispatch(runner=self.FAILED_RUNNER)
+        anchor = self._commit("parent-anchor.txt")
+        self._park_for_retry()
+        self._persist()
+        state = self._tick(boot=True)
+        self.assertEqual(len(launches), 1)
+        child = state["workers"]["launched-1"]
+        self.assertEqual(child["request_snapshot"]["metadata"]["workspace_launch_head"], anchor)
+        self._commit("child-work.txt")
+        self._set_task(status="blocked", waiting_for="Codex", next="Waiting on the integration decision.")
+        board = self.status_file.read_bytes()
+        marker = self.root / "child-runner-status.json"
+        marker.write_text(json.dumps({"status": "completed", "exit_code": 0, "signal": None}), encoding="utf-8")
+        child.update(pid=999999, runner_status_path=str(marker))
+        runtime_state.save_runtime_state(self.config, state)
+
+        state = self._tick(dispatch=False)
+
+        # A settled record leaves the state with its event; the log keeps what it settled as.
+        log = [json.loads(line) for line in (self.root / "activity.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(
+            [entry["type"] for entry in log if entry.get("worker_run_id") == "launched-1"][-1],
+            "worker_progress_recorded",
+        )
+        self.assertEqual(runtime_state.load_event_queue(self.config), [])
+        self.assertEqual(len(launches), 1)
+        self.assertEqual(self.status_file.read_bytes(), board)
+        self.assertEqual(_git_run(self.origin, "rev-parse", self.BRANCH), self.base)
 
     def test_parked_run_on_a_moved_event_ends_without_resuming_or_blocking_dispatch(self) -> None:
         for status in ("suspended_approval", "waiting_approval", "manual_pending", "fallback"):

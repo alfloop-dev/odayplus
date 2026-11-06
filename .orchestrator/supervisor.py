@@ -2365,6 +2365,10 @@ def start_worker_for_request(
     dispatched_at = datetime.now(UTC)
     adapter_name = delivery_mode_override or agent.get("adapter", "file_inbox")
     adapter = build_adapter(adapter_name, config=config, provider_capabilities=provider_report)
+    # A replacement skips preparation and copies its parent's request, whose baseline
+    # says where the parent began; only its own marks what this run goes on to add.
+    if parent_run_id and request.metadata.get("workspace_mode") == "isolated_worktree":
+        worker_workspace.record_workspace_launch_head(state, request)
     result = adapter.deliver(request)
     if not result.ok:
         dispatch_wait = result.metadata.get(model_rotation.DISPATCH_WAIT_KEY) if isinstance(result.metadata, dict) else None
@@ -5505,7 +5509,7 @@ def is_operator_emergency(config: dict[str, Any], state: dict[str, Any] | None, 
     return False
 
 
-def worker_worktree_is_clean(config: dict[str, Any], worker: dict[str, Any]) -> bool:
+def worker_worktree_is_clean(config: dict[str, Any], worker: dict[str, Any], task: dict[str, Any] | None) -> bool:
     workspace_path_str = str(worker.get("workspace_path") or "").strip()
     if not workspace_path_str:
         return True
@@ -5514,7 +5518,12 @@ def worker_worktree_is_clean(config: dict[str, Any], worker: dict[str, Any]) -> 
         return True
     try:
         from worktree_cleanliness import inspect_worktree
-        inspection = inspect_worktree(workspace_path)
+        protected = worker_workspace._worker_recorded_protected_paths(worker, task)
+        if worker_workspace._protected_commit_refusal(
+            workspace_path, "HEAD", protected, worktree_path=workspace_path, check_index=True
+        ):
+            return False
+        inspection = inspect_worktree(workspace_path, protected_paths=protected)
         return bool(inspection.handoff_clean)
     except Exception:
         return False
@@ -5570,7 +5579,7 @@ def worker_can_be_preempted(
         dispatch_reason in {REASON_REVIEW_READY, REASON_OWNED_FINALIZE}
         or task_status in {"review", "review_approved"}
     ):
-        return worker_worktree_is_clean(config, worker)
+        return worker_worktree_is_clean(config, worker, task)
 
     # Fail closed: healthy active execution workers (owned_ready, owned_in_progress,
     # helper_claim, todo, in_progress) or any other active workers are actively running
