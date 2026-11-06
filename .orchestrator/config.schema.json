@@ -70,6 +70,14 @@
           "slot_id": {
             "type": "string"
           },
+          "source_aliases": {
+            "description": "Literal historical LLM-Agent labels this logical agent wrote under. Read only when resolving immutable source authors; never an actor name.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^\\S(?:.*\\S)?(?![\\s\\S])"
+            }
+          },
           "wake_template": {
             "type": "string"
           },

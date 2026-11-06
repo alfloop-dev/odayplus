@@ -186,7 +186,7 @@ class ReviewSourceIdentity(NamedTuple):
         return not self.submitter or normalize_agent_id(self.submitter) == normalize_agent_id(owner or "")
 
 
-def _registered_actor_id(config: dict[str, Any], name: str) -> str:
+def _registered_actor_id(config: dict[str, Any], name: str, *, source_author: bool = False) -> str:
     """The configured agent id a recorded actor name refers to, or empty.
 
     A name is registered when it is an agent id, the configured display name of
@@ -197,24 +197,43 @@ def _registered_actor_id(config: dict[str, Any], name: str) -> str:
     either would drop the other's pool. Such a conflict, and anything else --
     including a label that merely resembles a registered one -- is unknown, not
     guessed.
+
+    `source_author` is for a name just read from immutable Git and nothing else:
+    it also counts the literal `source_aliases` a logical agent declares for
+    labels it once wrote under. They join the same matches without precedence.
+    Only the exact spelling is admitted, and a name that differs from a declared
+    alias by case alone is a conflict rather than a miss. A slot's declaration
+    and any malformed declaration leave the catalog unable to say who wrote the
+    range, so nothing resolves.
     """
     agents = config.get("agents", {}) or {}
-    wanted = str(name or "").strip().casefold()
+    literal = str(name or "").strip()
+    wanted = literal.casefold()
     if not wanted:
         return ""
     agent_id = normalize_agent_id(name)
     matches = {agent_id} if agent_id and isinstance(agents.get(agent_id), dict) else set()
-    matches.update(
-        normalize_agent_id(str(key))
-        for key, agent in agents.items()
-        if isinstance(agent, dict)
-        and not str(agent.get("dispatch_slot_for") or agent.get("dispatch_slot_for_pool") or "").strip()
-        and str(agent.get("display_name") or agent.get("name") or "").strip().casefold() == wanted
-    )
+    for key, agent in agents.items():
+        if not isinstance(agent, dict):
+            continue
+        is_slot = bool(str(agent.get("dispatch_slot_for") or agent.get("dispatch_slot_for_pool") or "").strip())
+        if not is_slot and str(agent.get("display_name") or agent.get("name") or "").strip().casefold() == wanted:
+            matches.add(normalize_agent_id(str(key)))
+        if not source_author or "source_aliases" not in agent:
+            continue
+        aliases = agent["source_aliases"]
+        if not isinstance(aliases, list) or not all(
+            isinstance(alias, str) and alias and alias == alias.strip() for alias in aliases
+        ):
+            return ""
+        if wanted in {alias.casefold() for alias in aliases}:
+            if is_slot or literal not in aliases:
+                return ""
+            matches.add(normalize_agent_id(str(key)))
     return next(iter(matches)) if len(matches) == 1 else ""
 
 
-def _registered_actor_pool(config: dict[str, Any], name: str) -> str:
+def _registered_actor_pool(config: dict[str, Any], name: str, *, source_author: bool = False) -> str:
     """The account pool of a registered agent, or empty for an unknown name.
 
     `agent_account_pool_id` answers for any string -- an unregistered label
@@ -222,7 +241,7 @@ def _registered_actor_pool(config: dict[str, Any], name: str) -> str:
     always "independent" of every real pool. Registration is therefore checked
     first, so an unknown actor is unresolvable rather than conveniently foreign.
     """
-    agent_id = _registered_actor_id(config, name)
+    agent_id = _registered_actor_id(config, name, source_author=source_author)
     return agent_account_pool_id(config, agent_id) if agent_id else ""
 
 
@@ -516,12 +535,15 @@ def task_review_source_identity(
         if role != "source author" and is_human_gate_agent(name):
             agents.add(normalize_agent_id(name))
             continue
-        pool = _registered_actor_pool(config, name)
+        # Only the authors just read from Git may name a declared historical
+        # label. The submitter and owner are live actors and stay strict.
+        source_author = role == "source author"
+        pool = _registered_actor_pool(config, name, source_author=source_author)
         if not pool:
             return identity._replace(
                 error=f"{role} {name!r} is not a registered agent with an account pool"
             )
-        agents.update({normalize_agent_id(name), _registered_actor_id(config, name)})
+        agents.update({normalize_agent_id(name), _registered_actor_id(config, name, source_author=source_author)})
         pools.add(pool)
     return identity._replace(agents=frozenset(agents), pools=frozenset(pools))
 

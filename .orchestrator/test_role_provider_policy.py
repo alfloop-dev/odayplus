@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+import unittest
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
@@ -85,6 +86,11 @@ CLASS_SCOPED_POLICY: dict[str, Any] = {
     ],
     "unclassified_owned_work": "allow",
 }
+
+
+#: The per-test status and event-queue files `build_config` binds its fleet to.
+#: Configs built while a test runs read nothing outside its own tmp directory.
+_OWNED_PATHS: dict[str, Path] = {}
 
 
 def build_config(policy: Any = POLICY, **overrides: Any) -> dict[str, Any]:
@@ -158,8 +164,8 @@ def build_config(policy: Any = POLICY, **overrides: Any) -> dict[str, Any]:
             },
         },
         "paths": {
-            "event_queue": "/tmp/pantheon-test-empty-event-queue.jsonl",
-            "status_file": "/tmp/pantheon-test-ai-status.json",
+            "event_queue": str(_OWNED_PATHS.get("event_queue", "/tmp/pantheon-test-empty-event-queue.jsonl")),
+            "status_file": str(_OWNED_PATHS.get("status_file", "/tmp/pantheon-test-ai-status.json")),
         },
         "account_pools": {
             "agy_main": {"enabled": True, "max_concurrent": 2},
@@ -205,8 +211,12 @@ _SOURCE_GIT: dict[str, Path] = {}
 @pytest.fixture(autouse=True)
 def _source_git_root(tmp_path: Path) -> Any:
     _SOURCE_GIT["root"] = tmp_path / "source-git"
+    _OWNED_PATHS["status_file"] = tmp_path / "ai-status.json"
+    _OWNED_PATHS["event_queue"] = tmp_path / "event-queue.jsonl"
+    _OWNED_PATHS["event_queue"].write_text("", encoding="utf-8")
     yield
     _SOURCE_GIT.clear()
+    _OWNED_PATHS.clear()
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -2764,3 +2774,475 @@ def test_failover_applies_the_common_rule_to_an_ambiguous_reviewer_candidate() -
     assert not worker_failure_policy.has_configured_reassignment_candidates(
         config, ["Codex"], set(), task=task, role="reviewer"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Historical source-author aliases
+# --------------------------------------------------------------------------- #
+
+#: The two literal labels the user confirmed are the existing Codex/codex_bjoe.
+HISTORICAL_LABELS = ("Codex foreground", "Codex-foreground")
+
+
+def _historical_alias_config() -> dict[str, Any]:
+    """The pool-alias fleet with only agent `codex` declaring both labels.
+
+    Codex4 is a second independent lane, so a failover that has to leave
+    unavailable Codex2 still has a genuine target.
+    """
+    config = _pool_alias_config()
+    config["agents"]["codex"]["source_aliases"] = list(HISTORICAL_LABELS)
+    config["account_pools"]["codex_charlie"] = {"enabled": True, "max_concurrent": 1}
+    config["agents"]["codex4"] = {
+        "display_name": "Codex4",
+        "account_pool": "codex_charlie",
+        "provider": "codex",
+        "adapter": "codex",
+    }
+    return config
+
+
+def _scanned_authors(config: dict[str, Any], task: dict[str, Any]) -> tuple[str, ...]:
+    """What the unchanged delivery scanner itself reads from the task's real range."""
+    import dispatch_policy
+
+    submission = task["review_submission"]
+    scan = dispatch_policy._inspect_delivery_identity(
+        Path(config["coordination"]["repositories"]["pantheon"]["local_path"]),
+        task_id=task["id"],
+        base=submission["source_base"],
+        head=submission["source_head"],
+    )
+    assert scan.errors == []
+    return scan.source_agents
+
+
+def _alias_overlap(config: dict[str, Any]) -> None:
+    config["agents"]["codex2"]["source_aliases"] = ["Codex foreground"]
+
+
+def _alias_names_another_agent_id(config: dict[str, Any]) -> None:
+    config["agents"]["codex_foreground"] = {
+        "display_name": "Lane",
+        "provider": "codex",
+        "adapter": "codex",
+        "account_pool": "codex_lupin",
+    }
+
+
+def _alias_names_another_display_name(config: dict[str, Any]) -> None:
+    config["agents"]["codex2"]["display_name"] = "Codex foreground"
+
+
+def _case_variant_alias_on_another_agent(config: dict[str, Any]) -> None:
+    config["agents"]["codex2"]["source_aliases"] = ["CODEX FOREGROUND"]
+
+
+def _alias_on_a_slot_as_well(config: dict[str, Any]) -> None:
+    config["agents"]["codex_lupin_slot_1"]["source_aliases"] = ["Codex foreground"]
+
+
+def _alias_on_a_slot_only(config: dict[str, Any]) -> None:
+    del config["agents"]["codex"]["source_aliases"]
+    config["agents"]["codex_bjoe_slot_1"]["source_aliases"] = ["Codex foreground"]
+
+
+def _no_alias_declared(config: dict[str, Any]) -> None:
+    del config["agents"]["codex"]["source_aliases"]
+
+
+def _malformed_aliases(value: Any, agent: str = "codex") -> Any:
+    def apply(config: dict[str, Any]) -> None:
+        config["agents"][agent]["source_aliases"] = value
+
+    return apply
+
+
+#: Every catalog that cannot say who wrote a `Codex foreground` commit.
+_UNRESOLVABLE_ALIAS_CATALOGS: dict[str, Any] = {
+    "undeclared": _no_alias_declared,
+    "overlap across logical agents": _alias_overlap,
+    "alias is another agent's normalized id": _alias_names_another_agent_id,
+    "alias is another agent's display name": _alias_names_another_display_name,
+    "alias differs from another's by case": _case_variant_alias_on_another_agent,
+    "slot declares it beside the logical agent": _alias_on_a_slot_as_well,
+    "only a slot declares it": _alias_on_a_slot_only,
+    "bare string": _malformed_aliases("Codex foreground"),
+    "null": _malformed_aliases(None),
+    "non-string item": _malformed_aliases(["Codex foreground", 1]),
+    "blank item": _malformed_aliases(["Codex foreground", "  "]),
+    "padded item": _malformed_aliases(["Codex foreground", " Codex-foreground"]),
+    "another agent's list is malformed": _malformed_aliases("Codex foreground", agent="claude"),
+}
+
+
+class HistoricalSourceAliasTests(unittest.TestCase):
+    """A declared historical label names its agent for source authorship only.
+
+    Every range here is a real synthetic Git range read by the unchanged
+    scanner. The reviewer paths are the original ones; what changes per case is
+    the catalog and the literal label on the commits.
+    """
+
+    def test_each_literal_alias_resolves_to_the_existing_pool_and_stays_raw(self) -> None:
+        config = _historical_alias_config()
+        for label in HISTORICAL_LABELS:
+            with self.subTest(label=label):
+                task = _finalized_by_claude(config, label, reviewer="Codex2")
+                before = json.loads(json.dumps(task))
+
+                source = task_review_source_identity(config, task)
+
+                assert source.error is None
+                # The evidence keeps the label; only the answer is resolved.
+                assert _scanned_authors(config, task) == (label,)
+                assert source.source_authors == (label,)
+                assert task["review_submission"]["source_authors"] == [label]
+                assert source.submitter == "Claude"
+                assert source.pools == frozenset({"codex_bjoe", "claude_main"})
+                assert "codex" in source.agents
+                assert task == before
+
+                assert "is itself a source author" in str(review_source_block_reason(config, task, "Codex"))
+                assert "codex_bjoe" in str(review_source_block_reason(config, task, "Codex3"))
+                assert "codex_bjoe" in str(review_source_block_reason(config, task, "codex_bjoe_slot_1"))
+                assert "claude_main" in str(review_source_block_reason(config, task, "Claude2"))
+                assert review_source_block_reason(config, task, "Codex2") is None
+
+    def test_canonical_and_multi_author_ranges_exclude_every_pool(self) -> None:
+        config = _historical_alias_config()
+
+        canonical = _finalized_by_claude(config, "Codex")
+        assert task_review_source_identity(config, canonical).pools == frozenset({"codex_bjoe", "claude_main"})
+        assert review_source_block_reason(config, canonical, "Codex2") is None
+
+        authors = ("Codex foreground", "Codex", "Antigravity", "Codex-foreground")
+        mixed = _finalized_by_claude(config, *authors)
+        source = task_review_source_identity(config, mixed)
+        assert source.error is None
+        assert _scanned_authors(config, mixed) == authors
+        assert source.source_authors == authors
+        assert source.pools == frozenset({"codex_bjoe", "agy_main", "claude_main"})
+        for reviewer in ("Codex", "Codex3", "Antigravity", "Antigravity2", "Claude", "Claude2"):
+            assert review_source_block_reason(config, mixed, reviewer) is not None, reviewer
+        assert review_source_block_reason(config, mixed, "Codex2") is None
+
+        # A label beside a genuine Codex2 commit: no first author is privileged.
+        for ordered in (("Codex foreground", "Codex2"), ("Codex2", "Codex-foreground")):
+            both = _finalized_by_claude(config, *ordered)
+            assert task_review_source_identity(config, both).pools == frozenset(
+                {"codex_bjoe", "codex_lupin", "claude_main"}
+            )
+            for reviewer in ("Codex", "Codex2", "Codex3"):
+                assert review_source_block_reason(config, both, reviewer) is not None, reviewer
+            assert review_source_block_reason(config, both, "Codex4") is None
+
+    def test_a_label_resembling_a_declared_alias_is_not_inferred(self) -> None:
+        """Exact declared spellings only: no case, prefix, fuzzy or punctuation family."""
+        config = _historical_alias_config()
+        for label in (
+            "codex foreground",
+            "CODEX-FOREGROUND",
+            "Codex_foreground",
+            "Codex  foreground",
+            "Codexforeground",
+            "Codex foreground 2",
+            "Codex-foreground-root",
+            "Codex fore",
+            "Codex-Root",
+        ):
+            with self.subTest(label=label):
+                task = _finalized_by_claude(config, label)
+                source = task_review_source_identity(config, task)
+                assert f"source author {label!r} is not a registered agent" in str(source.error)
+                assert source.source_authors == (label,)
+                assert not source.pools
+                for reviewer in ("Codex", "Codex2", "Antigravity"):
+                    assert review_source_block_reason(config, task, reviewer) == source.error
+
+    def test_an_unresolvable_catalog_admits_no_reviewer(self) -> None:
+        for name, damage in _UNRESOLVABLE_ALIAS_CATALOGS.items():
+            with self.subTest(catalog=name):
+                config = _historical_alias_config()
+                damage(config)
+                task = _finalized_by_claude(config, "Codex foreground", reviewer="Codex2")
+                source = task_review_source_identity(config, task)
+                assert "source author 'Codex foreground' is not a registered agent" in str(source.error)
+                assert not source.pools
+                for reviewer in ("Codex", "Codex2", "Codex4", "Antigravity"):
+                    assert review_source_block_reason(config, task, reviewer) == source.error, reviewer
+
+    def test_an_alias_cannot_collide_with_a_canonical_author_either(self) -> None:
+        """Another agent claiming `Codex` makes `Codex` two actors, by any spelling."""
+        for claimed in ("Codex", "CODEX", "codex"):
+            with self.subTest(claimed=claimed):
+                config = _historical_alias_config()
+                config["agents"]["codex2"]["source_aliases"] = [claimed]
+                task = _finalized_by_claude(config, "Codex", reviewer="Codex2")
+                source = task_review_source_identity(config, task)
+                assert "source author 'Codex' is not a registered agent" in str(source.error)
+                assert review_source_block_reason(config, task, "Codex2") == source.error
+
+        # A malformed list says nothing reliable about any name, canonical ones included.
+        config = _historical_alias_config()
+        config["agents"]["claude"]["source_aliases"] = "Codex"
+        task = _finalized_by_claude(config, "Codex", reviewer="Codex2")
+        assert "source author 'Codex' is not a registered agent" in str(
+            task_review_source_identity(config, task).error
+        )
+
+    def test_a_label_declared_by_one_other_agent_resolves_to_that_agent(self) -> None:
+        """The answer comes from the catalog, not from the label's spelling."""
+        config = _historical_alias_config()
+        del config["agents"]["codex"]["source_aliases"]
+        config["agents"]["antigravity"]["source_aliases"] = ["Codex foreground"]
+        task = _finalized_by_claude(config, "Codex foreground")
+        assert task_review_source_identity(config, task).pools == frozenset({"agy_main", "claude_main"})
+        assert "agy_main" in str(review_source_block_reason(config, task, "Antigravity2"))
+        assert review_source_block_reason(config, task, "Codex") is None
+
+    def test_owner_submitter_and_reviewer_stay_strict(self) -> None:
+        import dispatch_policy
+
+        config = _historical_alias_config()
+        for label in HISTORICAL_LABELS:
+            with self.subTest(label=label):
+                assert dispatch_policy._registered_actor_id(config, label) == ""
+                assert dispatch_policy._registered_actor_pool(config, label) == ""
+                assert dispatch_policy._registered_actor_id(config, label, source_author=True) == "codex"
+                assert dispatch_policy._registered_actor_pool(config, label, source_author=True) == "codex_bjoe"
+
+                as_owner = _finalized_by_claude(config, "Antigravity", owner=label)
+                assert f"owner {label!r} is not a registered agent" in str(
+                    task_review_source_identity(config, as_owner).error
+                )
+                as_submitter = _finalized_by_claude(config, "Antigravity")
+                as_submitter["review_submission"]["submitted_by"] = label
+                assert f"submitter {label!r} is not a registered agent" in str(
+                    task_review_source_identity(config, as_submitter).error
+                )
+                # Independent work, so only the reviewer's own registration can refuse.
+                independent = _finalized_by_claude(config, "Antigravity")
+                assert review_source_block_reason(config, independent, "Codex") is None
+                assert f"reviewer {label!r} is not a registered agent" in str(
+                    review_source_block_reason(config, independent, label)
+                )
+                # A label is no reviewer of its own commits either.
+                own = _finalized_by_claude(config, label)
+                assert review_source_block_reason(config, own, label) is not None
+
+    def test_a_forged_record_is_not_rewritten_into_passing(self) -> None:
+        """Git keeps the label; a record claiming a resolved or other name is refused."""
+        config = _historical_alias_config()
+        label, other = HISTORICAL_LABELS
+        genuine = _finalized_by_claude(config, label, reviewer="Codex2")
+        assert review_source_block_reason(config, genuine, "Codex2") is None
+
+        for forged_authors in (["Codex"], [other], ["Antigravity"], [label, "Codex"]):
+            with self.subTest(forged=forged_authors):
+                forged = json.loads(json.dumps(genuine))
+                forged["review_submission"]["source_authors"] = forged_authors
+                before = json.loads(json.dumps(forged))
+                source = task_review_source_identity(config, forged)
+                assert f"are not the immutable Git authors [{label!r}]" in str(source.error)
+                assert not source.pools
+                for reviewer in ("Codex", "Codex3", "Codex2", "Codex4"):
+                    assert review_source_block_reason(config, forged, reviewer) == source.error
+                assert forged == before
+
+        # A canonical range recorded under a declared label is just as forged.
+        canonical = _finalized_by_claude(config, "Codex", reviewer="Codex2")
+        canonical["review_submission"]["source_authors"] = [label]
+        assert "are not the immutable Git authors ['Codex']" in str(
+            task_review_source_identity(config, canonical).error
+        )
+
+    def test_cached_git_evidence_never_caches_the_resolved_identity(self) -> None:
+        """The same immutable range is re-resolved against whatever the catalog says now."""
+        import dispatch_policy
+
+        config = _historical_alias_config()
+        label = "Codex foreground"
+        task = _finalized_by_claude(config, label, reviewer="Codex2")
+        head = task["review_submission"]["source_head"]
+
+        def answers() -> tuple[Any, ...]:
+            source = task_review_source_identity(config, task)
+            return (source.error, source.pools, review_source_block_reason(config, task, "Codex2"))
+
+        def cached() -> list[tuple[str, ...]]:
+            return [
+                value
+                for key, value in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.items()
+                if head in key
+            ]
+
+        def reset_cache(warm: bool) -> None:
+            if not warm:
+                for key in [key for key in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS if head in key]:
+                    del dispatch_policy._IMMUTABLE_SOURCE_AUTHORS[key]
+
+        pools = frozenset({"codex_bjoe", "claude_main"})
+        assert answers() == (None, pools, None)
+        assert cached() == [(label,)]
+
+        for warm in (True, False):
+            with self.subTest(cache="warm" if warm else "cold"):
+                # The same label now declared by the reviewer's own account.
+                config["agents"]["codex"]["source_aliases"] = []
+                config["agents"]["codex2"]["source_aliases"] = [label]
+                reset_cache(warm)
+                error, moved, block = answers()
+                assert error is None
+                assert moved == frozenset({"codex_lupin", "claude_main"})
+                assert "is itself a source author" in str(block)
+
+                # Declared by both, then by nobody: no stale answer survives.
+                config["agents"]["codex"]["source_aliases"] = [label]
+                reset_cache(warm)
+                error, conflicted, block = answers()
+                assert "is not a registered agent" in str(error)
+                assert not conflicted
+                assert block == error
+
+                config["agents"]["codex"]["source_aliases"] = []
+                config["agents"]["codex2"]["source_aliases"] = []
+                reset_cache(warm)
+                error, _, block = answers()
+                assert "is not a registered agent" in str(error)
+                assert block == error
+
+                # The pool is read from the agent's current record, not remembered.
+                config["agents"]["codex"]["source_aliases"] = [label]
+                config["agents"]["codex"]["account_pool"] = "codex_lupin"
+                reset_cache(warm)
+                error, repooled, block = answers()
+                assert error is None
+                assert repooled == frozenset({"codex_lupin", "claude_main"})
+                assert "codex_lupin" in str(block)
+
+                config["agents"]["codex"]["account_pool"] = "codex_bjoe"
+                config["agents"]["codex"]["source_aliases"] = list(HISTORICAL_LABELS)
+                reset_cache(warm)
+                assert answers() == (None, pools, None)
+                # Only the literal Git label ever enters the cache.
+                assert cached() == [(label,)]
+
+    def test_normalizer_replaces_the_same_source_reviewer_and_keeps_the_finalizer(self) -> None:
+        for label in HISTORICAL_LABELS:
+            with self.subTest(label=label):
+                config = _historical_alias_config()
+                task = _finalized_by_claude(config, label)
+                assert supervisor.review_is_independent(config, "Claude", "Codex")
+                issues = supervisor.task_assignment_integrity_issues(config, {}, dict(task))
+                assert "reviewer_shares_source_account_pool" in issues
+                with mock.patch.object(
+                    supervisor,
+                    "get_agent_reassignment_candidates",
+                    lambda *a, **k: ["Codex3", "Codex", "Codex2"],
+                ):
+                    changes = _run_repair(config, task, pin_author=True)
+                assert changes == [("Claude", "Codex2")], changes
+
+    def test_both_failovers_exclude_the_alias_pool(self) -> None:
+        for label in HISTORICAL_LABELS:
+            with self.subTest(label=label):
+                config = _historical_alias_config()
+                # Codex2 goes away; Codex and Codex3 are the alias's own pool.
+                config["account_pools"]["codex_lupin"]["state"] = "paused"
+                task = _finalized_by_claude(config, label, reviewer="Codex2")
+                state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+                status: dict[str, Any] = {"tasks": [task]}
+                with (
+                    mock.patch("supervisor.persist_task_reassignment", return_value=True),
+                    mock.patch("supervisor.write_activity_log"),
+                ):
+                    assert dispatch_engine.reassign_unavailable_reviewers(config, state, status) is True
+                assert status["tasks"][0]["reviewer"] == "Codex4"
+                assert status["tasks"][0]["owner"] == "Claude"
+
+                config = _historical_alias_config()
+                task = _finalized_by_claude(config, label, reviewer="Codex2")
+                worker = {"task_id": "T-SOURCE", "agent_id": "codex2", "retry_count": 2}
+                with (
+                    mock.patch("supervisor.load_status", return_value={"tasks": [task]}),
+                    mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+                    mock.patch("supervisor.write_activity_log"),
+                    mock.patch.object(
+                        supervisor,
+                        "get_agent_reassignment_candidates",
+                        lambda *a, **k: ["Codex", "Codex3", "Codex4"],
+                    ),
+                ):
+                    assert (
+                        worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                            config, {}, worker, "terminal error", terminal=True
+                        )
+                        == "Codex4"
+                    )
+                assert persist.call_args.kwargs["new_owner"] == "Claude"
+                assert persist.call_args.kwargs["new_reviewer"] == "Codex4"
+
+    def test_no_reviewer_path_selects_anyone_against_an_unresolvable_source(self) -> None:
+        """Normalizer and both failovers, for every bad catalog and for a forged record."""
+
+        def forged_record(config: dict[str, Any]) -> dict[str, Any]:
+            task = _finalized_by_claude(config, "Codex foreground", reviewer="Codex2")
+            task["review_submission"]["source_authors"] = ["Antigravity"]
+            return task
+
+        def catalog_case(damage: Any) -> Any:
+            def build(config: dict[str, Any]) -> dict[str, Any]:
+                damage(config)
+                return _finalized_by_claude(config, "Codex foreground", reviewer="Codex2")
+
+            return build
+
+        cases = {name: catalog_case(damage) for name, damage in _UNRESOLVABLE_ALIAS_CATALOGS.items()}
+        cases["forged record"] = forged_record
+        candidates = ["Codex", "Codex3", "Codex4"]
+        for name, build in cases.items():
+            with self.subTest(case=name):
+                config = _historical_alias_config()
+                task = build(config)
+                issues = supervisor.task_assignment_integrity_issues(config, {}, dict(task))
+                assert any(issue.startswith("review_source_unresolved:") for issue in issues), issues
+                with mock.patch.object(
+                    supervisor, "get_agent_reassignment_candidates", lambda *a, **k: candidates
+                ):
+                    assert _run_repair(config, task, pin_author=True) == []
+
+                worker = {"task_id": "T-SOURCE", "agent_id": "codex2", "retry_count": 2}
+                with (
+                    mock.patch("supervisor.load_status", return_value={"tasks": [dict(task)]}),
+                    mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+                    mock.patch("supervisor.write_activity_log"),
+                    mock.patch.object(
+                        supervisor, "get_agent_reassignment_candidates", lambda *a, **k: candidates
+                    ),
+                ):
+                    assert (
+                        worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                            config, {}, worker, "terminal error", terminal=True
+                        )
+                        is None
+                    )
+                persist.assert_not_called()
+
+                config["account_pools"]["codex_lupin"]["state"] = "paused"
+                state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+                with mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist:
+                    assert (
+                        dispatch_engine.reassign_unavailable_reviewers(config, state, {"tasks": [dict(task)]})
+                        is False
+                    )
+                persist.assert_not_called()
+
+    def test_failover_paths_read_only_the_owned_event_queue(self) -> None:
+        """The fixture binding the failover cases above depend on."""
+        config = build_config()
+        queue = _OWNED_PATHS["event_queue"]
+        assert config["paths"]["event_queue"] == str(queue)
+        assert config["paths"]["status_file"] == str(_OWNED_PATHS["status_file"])
+        assert queue.read_text(encoding="utf-8") == ""
+        assert queue.parent == _SOURCE_GIT["root"].parent
