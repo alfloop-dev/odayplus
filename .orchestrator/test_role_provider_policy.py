@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
@@ -1312,8 +1313,16 @@ def _cli_state() -> dict[str, Any]:
     }
 
 
+#: Where the CLI tests' real activity-log writer appends. `ai_status.LOG_FILE`
+#: is whatever status root imported the module first -- another test module's
+#: since-removed temporary root, or, run on its own inside a worker, the live
+#: canonical log -- and neither is this module's to write.
+_CLI_LOG_DIR = tempfile.TemporaryDirectory(prefix="role-provider-policy-cli-")
+
+
 def _cli_patches(ai_status: Any, config: dict[str, Any]) -> list[Any]:
     return [
+        mock.patch.object(ai_status, "LOG_FILE", Path(_CLI_LOG_DIR.name) / "ai-activity-log.jsonl"),
         mock.patch.dict("os.environ", {"AI_NAME": "Codex"}, clear=False),
         mock.patch.object(
             ai_status,

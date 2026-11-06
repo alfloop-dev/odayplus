@@ -166,6 +166,10 @@
               "local_path": {
                 "type": "string"
               },
+              "remote": {
+                "type": "string",
+                "pattern": "^\\S(?:.*\\S)?$"
+              },
               "repo": {
                 "type": [
                   "null",
