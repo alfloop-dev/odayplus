@@ -3064,22 +3064,18 @@ class HistoricalSourceAliasTests(unittest.TestCase):
         config = _historical_alias_config()
         label = "Codex foreground"
         task = _finalized_by_claude(config, label, reviewer="Codex2")
-        head = task["review_submission"]["source_head"]
+        repo = config["coordination"]["repositories"]["pantheon"]["local_path"]
 
         def answers() -> tuple[Any, ...]:
             source = task_review_source_identity(config, task)
             return (source.error, source.pools, review_source_block_reason(config, task, "Codex2"))
 
         def cached() -> list[tuple[str, ...]]:
-            return [
-                value
-                for key, value in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.items()
-                if head in key
-            ]
+            return [value for key, value in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.items() if key[0] == repo]
 
         def reset_cache(warm: bool) -> None:
             if not warm:
-                for key in [key for key in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS if head in key]:
+                for key in [key for key in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS if key[0] == repo]:
                     del dispatch_policy._IMMUTABLE_SOURCE_AUTHORS[key]
 
         pools = frozenset({"codex_bjoe", "claude_main"})
