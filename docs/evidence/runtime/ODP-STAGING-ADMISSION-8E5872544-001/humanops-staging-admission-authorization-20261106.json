@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "record_kind": "humanops-runtime-release-staging-admission-authorization",
+  "status": "approved",
+  "is_approval": true,
+  "task_id": "ODP-STAGING-ADMISSION-8E5872544-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-STAGING-ADMISSION-20261105E",
+  "candidate_sha": "8e5872544bff88d421a1923c7957ca6b12429ce2",
+  "manifest_digest": "sha256:22c22bdcf83cfa3458670467be2d7e2a423da92aef4f2496854d3ffca44b2794",
+  "manifest_run_id": "41753392676",
+  "target_environment": "staging",
+  "release_profile": "core-ops",
+  "approved_at": "2026-11-06T01:08:56Z",
+  "decisions": {
+    "HD-08e": {
+      "decision": "approve",
+      "subject": "gate-2 Data Gate passed-with-deviation for this candidate's staging admission only, review_by 2026-11-19",
+      "accepted_deviations": [
+        "source contract and sample data reviewed: not applicable — the core-ops profile keeps every external source disabled (sources-off attestation in the build manifest).",
+        "point-in-time correctness checked for model-ready data: not applicable — core-ops serves no model (release_profile.model_readiness=not_claimed).",
+        "freshness and lineage evidence captured: check_live_production_data.py has never run against this candidate; deferred to the staging verify run and the production gates, not claimed as passed."
+      ]
+    },
+    "HD-09e": {
+      "decision": "approve",
+      "subject": "release.stage=dev-verified, admission_target=staging, decision=go for this exact candidate and staging manifest"
+    }
+  },
+  "authorization_basis": {
+    "user_reply": "同意此處置 / 同意 staging go",
+    "context": "Answers to a corrected exact-tuple question naming candidate 8e5872544, staging build run 41753392676, manifest sha256:22c22bdc…, the three deviations above, the scope limits below, and this evidence: exact push CI 41753251393 had 4 success and 7 product lanes skipped by change scope; pull_request CI 42068563588 at e68b3688e (8e5872544 plus an evidence-only commit) passed all 7 product lanes including product-db; dev deploy 41754011897 of 8e5872544 passed on its first attempt with live E2E 77/77, smoke, migration, worker, scheduler and egress probe ok; npm audit 0 findings.",
+    "interpretation": "Owner 蔡尚志 replied in the Claude Code conversation at 2026-11-06T01:08:56Z. Transcribed by Claude; not an external identity-system signature."
+  },
+  "authorized_scope": {
+    "max_release_requests": 1,
+    "max_short_lived_supervisor_leases": 1,
+    "runtime_release_deploy_phases": 1,
+    "allowed_environment": "staging",
+    "external_sources_enabled": false,
+    "production_changes": false,
+    "github_staging_environment_approval_still_required": true,
+    "supervisor_lease_still_required": true
+  },
+  "recorded_by": "Claude (interactive owner-response transcription; no external identity signature claimed)",
+  "evidence": {
+    "exact_ci": "docs/evidence/runtime/ODP-STAGING-ADMISSION-8E5872544-001/candidate-ci-8e5872544.json",
+    "staging_build_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/41753392676",
+    "dev_deploy_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/41754011897",
+    "product_lanes_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/42068563588"
+  },
+  "correction": {
+    "supersedes_approval_id": "HUMANOPS-STAGING-ADMISSION-20261104D",
+    "what_was_wrong": "The 2026-11-04 question for approval 20261104D stated that exact CI 41753251393 had all 11 jobs success. 7 of those jobs were skipped. Claude reused text from the previous candidate and checked only the job count and run-level conclusion.",
+    "how_found": "Read-only check by the Supervisor-dispatched worker on this task, 2026-11-05; confirmed by Claude with the GitHub jobs API.",
+    "effect": "The owner's earlier consent was withdrawn from use and the decision was asked again with the corrected facts. Nothing was approved, leased or deployed under 20261104D."
+  }
+}
