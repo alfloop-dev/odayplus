@@ -16,6 +16,7 @@ supervisor that loaded the selected code and config does.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -24,6 +25,7 @@ import stat
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -192,6 +194,7 @@ class WatchdogContext:
     """The config and policy the watchdog process of this rollout will act on."""
 
     runtime_link: Path
+    target: Path
     config_file: Path
     pid_file: Path
     env: dict[str, str]
@@ -214,10 +217,22 @@ def load_watchdog_context(runtime_link: Path, target: Path, status_root: Path, c
         os.environ.clear()
         os.environ.update(saved)
     settings = supervisor_watchdog.watchdog_settings(config)
-    # The deciding watchdog runs from the target, whose relative state path is
-    # anchored to its own root rather than to this operator's checkout.
-    settings["state_file"] = str(target / str(settings["state_file"]))
-    return WatchdogContext(runtime_link, config_file, pid_file, env, config, settings)
+    return WatchdogContext(runtime_link, target, config_file, pid_file, env, config, settings)
+
+
+@contextlib.contextmanager
+def watchdog_judging_from(root: Path) -> Iterator[None]:
+    """Have the original helpers answer as a watchdog running from ``root`` would.
+
+    They anchor a relative state file and measure the disk under their module's
+    ``ROOT``, which here is this operator's checkout rather than any runtime.
+    """
+    operator_root = supervisor_watchdog.ROOT
+    supervisor_watchdog.ROOT = root
+    try:
+        yield
+    finally:
+        supervisor_watchdog.ROOT = operator_root
 
 
 def supervisor_identity_refusal(context: WatchdogContext, runtime: Path | None) -> str | None:
@@ -238,6 +253,21 @@ def supervisor_identity_refusal(context: WatchdogContext, runtime: Path | None) 
     return f"unverified_supervisor_identity:pid={pid},lock_held={lock_held},running={running}"
 
 
+def budget_refusal(context: WatchdogContext, now: datetime) -> str | None:
+    """What the watchdog state under the current ``ROOT`` would suppress a restart with."""
+    config, settings = context.config, context.settings
+    # The original loader reads a non-object document as empty, which would pass
+    # as an unspent budget.
+    path = supervisor_watchdog.watchdog_state_path(config, settings)
+    if not isinstance(common.load_json(path, default={}), dict):
+        return f"unusable_state:{path}"
+    watchdog_state = supervisor_watchdog.load_watchdog_state(config, settings)
+    watchdog_state["restart_attempts"] = supervisor_watchdog.trim_restart_attempts(
+        watchdog_state["restart_attempts"], now
+    )
+    return supervisor_watchdog.budget_suppression_reason(watchdog_state, now, settings)
+
+
 def restart_refusal(context: WatchdogContext, previous_runtime: Path | None) -> str | None:
     """Why the watchdog could not replace the supervisor now, or None.
 
@@ -245,31 +275,31 @@ def restart_refusal(context: WatchdogContext, previous_runtime: Path | None) -> 
     it looks at the budget, and it persists what it decides.  Its policy helpers
     are read here on private copies, so no counter or circuit changes.
     """
-    config, settings = context.config, context.settings
+    config, settings, target = context.config, context.settings, context.target
     if not settings.get("enabled", True):
         return "watchdog_disabled"
     try:
         runtime_state, state_error = supervisor_watchdog.load_runtime_state_file(config)
-        resource = supervisor_watchdog.resource_snapshot(config, runtime_state, settings)
+        # The target watchdog measures its own root's disk.  Until the target is
+        # prepared, its filesystem is the runtime parent's.
+        with watchdog_judging_from(target if target.exists() else target.parent):
+            resource = supervisor_watchdog.resource_snapshot(config, runtime_state, settings)
         pressure = supervisor_watchdog.resource_pressure_reasons(resource, settings, state_error)
         if pressure:
             return "resource_pressure:" + ",".join(pressure)
-        # Both original loaders read a non-object document as empty, which would
-        # pass as an unspent budget.
-        for path in (
-            common.config_path(config, "state_file"),
-            supervisor_watchdog.watchdog_state_path(config, settings),
-        ):
-            if not isinstance(common.load_json(path, default={}), dict):
-                return f"unusable_state:{path}"
+        # The same non-object reading applies to the runtime state.
+        state_path = common.config_path(config, "state_file")
+        if not isinstance(common.load_json(state_path, default={}), dict):
+            return f"unusable_state:{state_path}"
         now = datetime.now(UTC).replace(microsecond=0)
-        watchdog_state = supervisor_watchdog.load_watchdog_state(config, settings)
-        watchdog_state["restart_attempts"] = supervisor_watchdog.trim_restart_attempts(
-            watchdog_state["restart_attempts"], now
-        )
-        budget = supervisor_watchdog.budget_suppression_reason(watchdog_state, now, settings)
-        if budget:
-            return budget
+        # A relative state file belongs to whichever runtime runs the watchdog.
+        # The previous one holds what this service has spent, and the target one
+        # is what the replacing watchdog will read; either may suppress.
+        for root in (target,) if previous_runtime is None else (previous_runtime, target):
+            with watchdog_judging_from(root):
+                budget = budget_refusal(context, now)
+            if budget:
+                return budget
         return supervisor_identity_refusal(context, previous_runtime)
     except (OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
         return f"unusable_state:{type(exc).__name__}: {exc}"
@@ -291,7 +321,7 @@ def config_digest(config_file: Path) -> str:
 
 def watchdog_decision_failure(result: Any) -> str | None:
     """Only a started replacement, or one the watchdog already finds healthy, can be proven."""
-    if not isinstance(result, dict):
+    if not isinstance(result, dict) or "new_pid" not in result:
         return f"malformed watchdog result: {result!r}"
     decision, reason, new_pid = result.get("decision"), result.get("reason"), result.get("new_pid")
     if decision == "restart_supervisor" and type(new_pid) is int and new_pid > 0:
@@ -348,25 +378,22 @@ def wait_for_loaded_runtime(context: WatchdogContext, runtime: Path, code_sha: s
 
 def run_watchdog_and_prove(context: WatchdogContext, runtime: Path, code_sha: str) -> str | None:
     """Run the one process manager from the stable link; None once ``runtime`` is proven."""
-    try:
-        result = subprocess.run(
-            [
-                "bash",
-                str(context.runtime_link / "scripts" / "run-supervisor-watchdog.sh"),
-                "--config",
-                str(context.config_file),
-                "--restart",
-                "--json",
-            ],
-            cwd=context.runtime_link,
-            env=context.env,
-            stdout=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-        digest = config_digest(context.config_file)
-    except OSError as exc:
-        return f"watchdog could not run: {exc}"
+    result = subprocess.run(
+        [
+            "bash",
+            str(context.runtime_link / "scripts" / "run-supervisor-watchdog.sh"),
+            "--config",
+            str(context.config_file),
+            "--restart",
+            "--json",
+        ],
+        cwd=context.runtime_link,
+        env=context.env,
+        stdout=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    digest = config_digest(context.config_file)
     print(f"watchdog_result={result.stdout.strip()}")
     if result.returncode:
         return f"watchdog exited {result.returncode}"
@@ -393,28 +420,32 @@ def restart_with_watchdog(context: WatchdogContext, previous_runtime: Path | Non
     The watchdog is the sole process manager on cron-based installations.  It
     starts from the stable runtime link and reads/writes state in the canonical
     status root, so a rollout does not introduce a systemd service alongside it.
-    Returns why the selected runtime is not proven to be serving, or None.
+    Returns why the selected runtime is not proven to be serving, or None; by now
+    the link and launcher are switched, so an exception is one such reason too.
     """
-    if previous_runtime is not None:
-        failure = stop_supervisors(previous_runtime)
-        if failure:
-            return failure
-    return run_watchdog_and_prove(context, target, target_sha)
+    try:
+        if previous_runtime is not None:
+            failure = stop_supervisors(previous_runtime)
+            if failure:
+                return failure
+        return run_watchdog_and_prove(context, target, target_sha)
+    except Exception as exc:
+        return f"restart raised {type(exc).__name__}: {exc}"
 
 
 def recover_previous_runtime(context: WatchdogContext, previous_runtime: Path | None, target: Path) -> str:
     """Report what actually serves after the link and launcher were restored."""
-    if previous_runtime != target:
-        failure = stop_supervisors(target)
-        if failure:
-            return f"previous supervisor NOT verified: {failure}"
-    if previous_runtime is None:
-        return "no previous runtime to restart"
     try:
+        if previous_runtime != target:
+            failure = stop_supervisors(target)
+            if failure:
+                return f"previous supervisor NOT verified: {failure}"
+        if previous_runtime is None:
+            return "no previous runtime to restart"
         previous_sha = git(previous_runtime, "rev-parse", "HEAD")
-    except (OSError, RuntimeError) as exc:
-        return f"previous supervisor NOT verified: {exc}"
-    failure = run_watchdog_and_prove(context, previous_runtime, previous_sha)
+        failure = run_watchdog_and_prove(context, previous_runtime, previous_sha)
+    except Exception as exc:
+        return f"previous supervisor NOT verified: {type(exc).__name__}: {exc}"
     return f"previous supervisor NOT verified: {failure}" if failure else "previous supervisor verified"
 
 

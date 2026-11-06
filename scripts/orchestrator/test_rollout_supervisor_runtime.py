@@ -404,6 +404,113 @@ class WatchdogRolloutTests(unittest.TestCase):
 
         self.assert_untouched(old, config, None)
 
+    def test_suppression_held_only_under_the_previous_runtime_refuses(self) -> None:
+        """A relative state file stays behind on the switch; its suppression still applies."""
+        old = self.spawn_supervisor(self.previous)
+        held = self.previous / ".orchestrator" / "watchdog-state.json"
+        future = (datetime.now(UTC) + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        spent_hour = (3000, 2800, 2600, 2400, 2200, 2000)
+        cases: list[tuple[str, dict[str, object], object]] = [
+            ("restart_budget_window_exhausted", {}, (120, 60, 30)),
+            ("restart_budget_hour_exhausted", {}, spent_hour),
+            ("watchdog_circuit_open", {}, {"open": True, "until": future}),
+            ("restart_backoff_active", {"backoff_schedule_seconds": [600]}, (60,)),
+            ("unusable_state", {}, "[]\n"),
+        ]
+        for expected, watchdog, state in cases:
+            with self.subTest(expected=expected):
+                self.write_config(state_file=".orchestrator/watchdog-state.json", **watchdog)
+                config = self.config_file.read_text()
+                if isinstance(state, tuple):
+                    self.write_attempts(*state)
+                elif isinstance(state, dict):
+                    self.write_attempts(circuit=state)
+                else:
+                    self.watchdog_state.write_text(state)
+                self.watchdog_state.replace(held)
+                recorded = held.read_text()
+
+                with mock.patch.object(rollout.common, "terminate_supervisor_processes") as terminate:
+                    with self.assertRaisesRegex(SystemExit, f"restart_not_admissible: {expected}"):
+                        self.roll_out()
+
+                terminate.assert_not_called()
+                self.assert_untouched(old, config, None)
+                self.assertEqual(held.read_text(), recorded)
+                self.assertFalse((self.target / ".orchestrator" / "watchdog-state.json").exists())
+
+    def test_relative_budget_is_neither_migrated_nor_reset_by_a_legitimate_restart(self) -> None:
+        self.spawn_supervisor(self.previous)
+        self.write_config(state_file=".orchestrator/watchdog-state.json")
+        held = self.previous / ".orchestrator" / "watchdog-state.json"
+        self.write_attempts(2000)
+        self.watchdog_state.replace(held)
+        recorded = held.read_text()
+
+        self.assertEqual(self.roll_out(), 0)
+
+        self.assertEqual(held.read_text(), recorded)
+        target_state = json.loads((self.target / ".orchestrator" / "watchdog-state.json").read_text())
+        running = rollout.common.iter_supervisor_pids(self.target)
+        self.assertEqual([attempt["new_pid"] for attempt in target_state["restart_attempts"]], running)
+
+    def fake_full_disks(self, *full: Path) -> object:
+        """Only the operator's in-process view; the target's real watchdog measures for real."""
+        real_statvfs = os.statvfs
+
+        def statvfs(path: object) -> object:
+            if Path(str(path)) in full:
+                return SimpleNamespace(f_bavail=0, f_frsize=4096, f_blocks=1000)
+            return real_statvfs(path)
+
+        return mock.patch.object(rollout.supervisor_watchdog.os, "statvfs", statvfs)
+
+    def test_full_runtime_parent_refuses_although_the_operator_checkout_has_room(self) -> None:
+        old = self.spawn_supervisor(self.previous)
+        self.write_config(min_disk_free_gb=0.01)
+        config = self.config_file.read_text()
+        shutil.rmtree(self.target)
+        operator_root = rollout.supervisor_watchdog.ROOT
+
+        with self.fake_full_disks(self.parent), \
+             mock.patch.object(rollout, "add_runtime_worktree") as prepare, \
+             mock.patch.object(rollout.common, "terminate_supervisor_processes") as terminate:
+            with self.assertRaisesRegex(SystemExit, "restart_not_admissible: resource_pressure:disk_free_below_threshold"):
+                self.roll_out()
+
+        prepare.assert_not_called()
+        terminate.assert_not_called()
+        self.assert_untouched(old, config, None)
+        self.assertEqual(rollout.supervisor_watchdog.ROOT, operator_root)
+
+    def test_target_filled_by_preparing_it_refuses_before_the_switch(self) -> None:
+        old = self.spawn_supervisor(self.previous)
+        self.write_config(min_disk_free_gb=0.01)
+        config = self.config_file.read_text()
+        self.target.rename(self.root / "prepared")
+
+        def prepare(_source: Path, target: Path, _branch: str, _sha: str) -> None:
+            (self.root / "prepared").rename(target)
+
+        with self.fake_full_disks(self.target), \
+             mock.patch.object(rollout, "add_runtime_worktree", prepare), \
+             mock.patch.object(rollout.common, "terminate_supervisor_processes") as terminate:
+            with self.assertRaisesRegex(SystemExit, "restart_not_admissible: resource_pressure:disk_free_below_threshold"):
+                self.roll_out()
+
+        terminate.assert_not_called()
+        self.assert_untouched(old, config, None)
+
+    def test_full_operator_checkout_does_not_refuse_a_target_with_room(self) -> None:
+        self.spawn_supervisor(self.previous)
+        self.write_config(min_disk_free_gb=0.01)
+
+        with self.fake_full_disks(rollout.supervisor_watchdog.ROOT):
+            self.assertEqual(self.roll_out(), 0)
+
+        self.assertEqual(self.link.resolve(), self.target)
+        self.assertEqual(len(rollout.common.iter_supervisor_pids(self.target)), 1)
+
     def test_unusable_config_refuses_with_the_service_running(self) -> None:
         old = self.spawn_supervisor(self.previous)
         for document in ('{"not_a_key": 1}\n', "{broken\n", "{}\n"):
@@ -482,7 +589,8 @@ class WatchdogRolloutTests(unittest.TestCase):
         cases = {
             "echo not json": "malformed watchdog result",
             "echo '[]'": "malformed watchdog result",
-            "echo '{}'": "decision=None",
+            "echo '{}'": "malformed watchdog result",
+            'echo \'{"decision": "observe_only", "reason": "supervisor_healthy"}\'': "malformed watchdog result",
             'echo \'{"decision": "restart_supervisor", "reason": "x", "new_pid": true}\'': "new_pid=True",
             'echo \'{"decision": "observe_only", "reason": "watchdog_disabled", "new_pid": null}\'': "reason=watchdog_disabled",
             "exit 3": "watchdog exited 3",
@@ -500,7 +608,65 @@ class WatchdogRolloutTests(unittest.TestCase):
                 self.assertIn(expected, str(caught.exception))
                 self.assertIn("previous supervisor verified", str(caught.exception))
                 self.assertEqual(self.link.resolve(), self.previous)
+                self.assertEqual(self.launcher.read_text(), "old writer\n")
+                self.assertEqual(len(rollout.common.iter_supervisor_pids(self.previous)), 1)
+                self.assertNotIn("rollout complete", self.stdout.getvalue())
                 self.stop_everything()
+
+    def test_exception_after_the_switch_takes_the_rollback_path(self) -> None:
+        real_terminate = rollout.common.terminate_supervisor_processes
+        real_proof = rollout.loaded_runtime_failure
+
+        def stop_raises(root: Path, **kwargs: object) -> dict[int, bool]:
+            if root == self.previous:
+                raise OSError("stop broke")
+            return real_terminate(root, **kwargs)
+
+        def proof_raises(context: object, runtime: Path, *args: object) -> str | None:
+            if runtime == self.target:
+                raise ValueError("proof broke")
+            return real_proof(context, runtime, *args)
+
+        cases = {
+            "OSError: stop broke": ("terminate_supervisor_processes", rollout.common, stop_raises),
+            "ValueError: proof broke": ("loaded_runtime_failure", rollout, proof_raises),
+        }
+        for expected, (name, owner, replacement) in cases.items():
+            with self.subTest(expected):
+                self.write_attempts()
+                self.spawn_supervisor(self.previous)
+
+                with mock.patch.object(owner, name, replacement), self.assertRaises(SystemExit) as caught:
+                    self.roll_out()
+
+                message = str(caught.exception)
+                self.assertIn(f"restart raised {expected}", message)
+                self.assertIn("restored previous runtime and status launcher; previous supervisor verified", message)
+                self.assertNotIn("rollout complete", self.stdout.getvalue())
+                self.assertEqual(self.link.resolve(), self.previous)
+                self.assertEqual(self.launcher.read_text(), "old writer\n")
+                self.assertEqual(rollout.common.iter_supervisor_pids(self.target), [])
+                self.assertEqual(len(rollout.common.iter_supervisor_pids(self.previous)), 1)
+                self.stop_everything()
+
+    def test_exception_during_recovery_is_reported_with_the_selection_restored(self) -> None:
+        self.spawn_supervisor(self.previous)
+        real_prove = rollout.run_watchdog_and_prove
+
+        def recovery_raises(context: object, runtime: Path, code_sha: str) -> str | None:
+            if runtime == self.previous:
+                raise ValueError("recovery broke")
+            return real_prove(context, runtime, code_sha)
+
+        (self.target / "scripts" / "run-supervisor-watchdog.sh").write_text("#!/usr/bin/env bash\nexit 3\n")
+        with mock.patch.object(rollout, "run_watchdog_and_prove", recovery_raises), self.assertRaises(SystemExit) as caught:
+            self.roll_out()
+
+        message = str(caught.exception)
+        self.assertIn("watchdog exited 3", message)
+        self.assertIn("previous supervisor NOT verified: ValueError: recovery broke", message)
+        self.assertEqual(self.link.resolve(), self.previous)
+        self.assertEqual(self.launcher.read_text(), "old writer\n")
 
     def test_supervisor_that_will_not_stop_is_not_joined_by_a_second(self) -> None:
         old = self.spawn_supervisor(self.previous)
