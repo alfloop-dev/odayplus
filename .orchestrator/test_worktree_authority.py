@@ -565,8 +565,10 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         finally:
             (worktree / "guarded").chmod(0o755)
 
-    def _prune_with_protected_task(self, protected_on: str, *, plant: bool = True) -> tuple[Path, list[list[str]], dict]:
-        task_id = f"PROT-PRUNE-{protected_on.upper()}"
+    def _prune_with_protected_task(
+        self, protected_on: str, *, plant: bool = True, archive_outcome: object = None
+    ) -> tuple[Path, list[list[str]], dict]:
+        task_id = f"PROT-PRUNE-{protected_on.upper().replace(' ', '-')}"
         worktree, _branch, config, _worker, task = self._protected_checkout(task_id)
         if plant:
             self._plant_untracked_ignore(worktree)
@@ -579,10 +581,10 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         elif protected_on == "lease":
             lease["protected_paths"] = PROTECTED
         Path(config["paths"]["status_file"]).write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
-        archived = {**task, "protected_paths": PROTECTED} if protected_on == "archive" else None
+        archived = {**task, "protected_paths": PROTECTED} if protected_on == "archive" else archive_outcome
         config["worker_worktree_housekeeping"] = {"enabled": True, "tick_interval_seconds": 0}
         state: dict = {"workers": {}, "worker_worktrees": {"leases": {task_id: lease}}}
-        if protected_on == "archive":
+        if protected_on in {"archive", "unreadable archive"}:
             Path(config["paths"]["status_file"]).write_text(json.dumps({"tasks": []}), encoding="utf-8")
         base = worker_workspace.WorkerBaseResolution(
             repository_id="pantheon", default_branch="dev", sha=self.base, remote_ref="refs/remotes/origin/dev"
@@ -598,7 +600,11 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
             mock.patch("subprocess.run", side_effect=recording_run),
             mock.patch.object(supervisor, "resolve_worker_base", return_value=(base, None)),
             mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
-            mock.patch.object(supervisor, "load_archived_task", return_value=archived),
+            mock.patch.object(
+                supervisor,
+                "load_archived_task",
+                **({"side_effect": archived} if isinstance(archived, Exception) else {"return_value": archived}),
+            ),
             mock.patch.object(supervisor, "_task_settlement", return_value="settled"),
             mock.patch(
                 "multi_repo_registry.iter_local_repositories",
@@ -618,6 +624,25 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
                     state["worker_worktree_housekeeping"]["last_scan"]["skipped"], {"protected_metadata_refused": 1}
                 )
                 self._git(self.repo, "worktree", "remove", "--force", str(worktree))
+
+    def test_pruner_keeps_a_worktree_whose_archived_protection_cannot_be_read(self) -> None:
+        for name, failure in (("corrupt", ValueError("not json")), ("unreadable", PermissionError("denied"))):
+            with self.subTest(name):
+                worktree, commands, state = self._prune_with_protected_task("unreadable archive", archive_outcome=failure)
+                self.assertTrue(worktree.is_dir())
+                self.assertEqual([c for c in commands if "status" in c or c[-2:-1] == ["remove"]], [])
+                self.assertEqual(
+                    state["worker_worktree_housekeeping"]["last_scan"]["skipped"], {"protected_metadata_refused": 1}
+                )
+                self._git(self.repo, "worktree", "remove", "--force", str(worktree))
+                self._git(self.repo, "branch", "-D", "task/PROT-PRUNE-UNREADABLE-ARCHIVE")
+
+    def test_pruner_treats_an_archive_that_vanished_as_absent(self) -> None:
+        worktree, _commands, state = self._prune_with_protected_task(
+            "unreadable archive", plant=False, archive_outcome=FileNotFoundError("gone")
+        )
+        self.assertFalse(worktree.exists())
+        self.assertEqual(state["worker_worktree_housekeeping"]["last_scan"]["removed"], 1)
 
     def test_pruner_still_reclaims_a_settled_protected_worktree_holding_only_its_mount_point(self) -> None:
         worktree, commands, state = self._prune_with_protected_task("board", plant=False)

@@ -3843,17 +3843,22 @@ def prune_orphan_worktrees(
             # dispatch recorded.
             wt_task_id = _worktree_task_id(wt_path)
             try:
+                try:
+                    wt_task = canonical_task_record(config, wt_task_id) or load_archived_task(wt_task_id)
+                except FileNotFoundError:
+                    wt_task = None
                 protected_refusal = _protected_commit_refusal(
                     wt_path,
                     "HEAD",
                     _recorded_protected_paths(
-                        canonical_task_record(config, wt_task_id) or load_archived_task(wt_task_id),
+                        wt_task,
                         ((state.get("worker_worktrees") or {}).get("leases") or {}).get(wt_task_id),
                     ),
                     worktree_path=wt_path,
                     check_index=True,
                 )
-            except ProtectedPathPolicyError as error:
+            except (ProtectedPathPolicyError, OSError, ValueError) as error:
+                # What the task protected cannot be told, so neither can what may be read.
                 protected_refusal = str(error)
             if protected_refusal:
                 skipped["protected_metadata_refused"] = skipped.get("protected_metadata_refused", 0) + 1

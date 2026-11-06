@@ -3177,6 +3177,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
                 mock.patch.object(supervisor, "build_request", return_value=request),
                 mock.patch.object(supervisor, "prepare_worker_workspace", side_effect=prepare_workspace),
+                # The stubbed preparation names a plain directory, and the subject here is the worker guard.
+                mock.patch.object(supervisor, "launch_protection_refusal", return_value=None),
                 mock.patch.object(supervisor, "start_worker_for_request", return_value=(True, "run-123", {"manual_confirmation_required": False, "auto_delivered": True})),
                 mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
             ):
