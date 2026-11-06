@@ -3523,6 +3523,9 @@ def make_live_rehearsal_executor(
         }
 
     def execute(stage_name: str, _context: Mapping[str, Any]) -> Mapping[str, Any]:
+        # Worker and SQL stages can outlast an ID token. Reuse credentials
+        # only within this stage, never across a long-running rehearsal.
+        token_cache.clear()
         ensure_release_identities_exist()
         if stage_name == "db_expand_migration":
             return execute_job("staging_migration_job_name", "staging_worker_image", "migration")
@@ -3671,7 +3674,7 @@ def make_live_rehearsal_executor(
                 # mutation is attempted; an absent target fails closed.
                 approved_traffic = normalize_traffic(service_name, describe_traffic(service_name))
                 baseline_revisions = set(approved_traffic)
-                switched_to_probe = False
+                traffic_switch_attempted = False
                 probe_revision = ""
                 try:
                     _live_gcloud(
@@ -3702,26 +3705,29 @@ def make_live_rehearsal_executor(
                     ).strip()
                     if not probe_revision or probe_revision in baseline_revisions:
                         raise RuntimeError(f"{service_name} rollback rehearsal target is not distinct")
+                    # A timeout or CLI error cannot prove the remote switch
+                    # did not commit. Arm restoration before issuing it.
+                    traffic_switch_attempted = True
                     update_traffic(service_name, {probe_revision: 100})
-                    switched_to_probe = True
                     if is_web:
                         health_readback = web_operator_requires_login()
                     else:
                         health_readback = endpoint("/platform/health")
                 finally:
-                    if switched_to_probe:
+                    if traffic_switch_attempted:
                         try:
                             update_traffic(service_name, approved_traffic)
+                            # Read back on failure paths too: a successful
+                            # restore command alone does not prove recovery.
+                            restored = normalize_traffic(service_name, describe_traffic(service_name))
                         except Exception as exc:
                             raise RuntimeError(
                                 f"{service_name} rollback target restore failed: {type(exc).__name__}"
                             ) from exc
-
-                restored = normalize_traffic(service_name, describe_traffic(service_name))
-                if restored != approved_traffic:
-                    raise RuntimeError(
-                        f"{service_name} rollback target readback does not match the approved allocation"
-                    )
+                        if restored != approved_traffic:
+                            raise RuntimeError(
+                                f"{service_name} rollback target readback does not match the approved allocation"
+                            )
                 rollback_proofs.append(
                     {
                         "service": service_name,

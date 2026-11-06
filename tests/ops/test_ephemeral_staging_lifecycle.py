@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -3033,41 +3035,83 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         self.assertIn("--clean", sql_calls[0])
         self.assertIn("--if-exists", sql_calls[0])
 
-    def test_rollback_restore_ignores_the_tag_only_probe_route(self) -> None:
-        """gcloud keeps the probe as a tag-only route (no percent) after restore."""
+    @contextmanager
+    def _rollback_rehearsal_runtime(
+        self, *, failure: str = "", failed_service: str = "api", restore_failure: str = ""
+    ) -> Any:
+        """Exercise the real executor; only the Cloud Run and HTTP boundaries are doubles."""
         from unittest.mock import patch
 
         from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
 
         outputs = self._valid_outputs()
-        traffic: dict[str, list[dict[str, Any]]] = {}
+        failed_name = outputs[f"staging_{failed_service}_service_name"]
+        baseline = {
+            outputs[f"staging_{kind}_service_name"]: [
+                {"revisionName": f"{outputs[f'staging_{kind}_service_name']}-a", "percent": 70},
+                {"revisionName": f"{outputs[f'staging_{kind}_service_name']}-b", "percent": 30},
+            ]
+            for kind in ("api", "web")
+        }
+        traffic = {name: [dict(route) for route in routes] for name, routes in baseline.items()}
+        trace: list[tuple[str, str]] = []
 
         def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
-            routes = traffic.setdefault(name, [{"revisionName": f"{name}-a", "percent": 100}])
-            return {"status": {"traffic": [dict(route) for route in routes]}}
+            trace.append(("read", name))
+            if name == failed_name and ("restore", name) in trace and restore_failure == "readback":
+                raise RuntimeError("restore readback unavailable")
+            return {"status": {"traffic": [dict(route) for route in traffic[name]]}}
 
         def cloud(argv: list[str], **_kwargs: Any) -> str:
             if argv[0] == "iam":
                 return argv[3]
+            name = argv[3]
             if argv[:3] == ["run", "services", "update"]:
-                traffic[argv[3]].append({"revisionName": f"{argv[3]}-probe", "tag": "rollback-probe"})
+                trace.append(("create", name))
+                if name == failed_name and failure == "create":
+                    raise RuntimeError("probe creation failed")
+                traffic[name].append({"revisionName": f"{name}-probe", "tag": "rollback-probe"})
             if argv[:3] == ["run", "services", "update-traffic"]:
                 shares = dict(item.split("=") for item in argv[4].removeprefix("--to-revisions=").split(","))
-                traffic[argv[3]] = [
+                switching = f"{name}-probe" in shares
+                trace.append(("switch" if switching else "restore", name))
+                if name == failed_name:
+                    if switching and failure == "switch-before":
+                        raise subprocess.TimeoutExpired(["gcloud", *argv], 900)
+                    if not switching and restore_failure == "command":
+                        raise RuntimeError("restore command failed")
+                    if not switching and restore_failure == "mismatch":
+                        return ""  # A successful CLI exit is not proof of restored traffic.
+                traffic[name] = [
                     {**route, "percent": int(shares[route["revisionName"]])}
                     if route["revisionName"] in shares
                     else {key: value for key, value in route.items() if key != "percent"}
-                    for route in traffic[argv[3]]
+                    for route in traffic[name]
                     # An untagged revision left out of the allocation drops off.
                     if route["revisionName"] in shares or route.get("tag")
                 ]
-                listed = {route["revisionName"] for route in traffic[argv[3]]}
-                traffic[argv[3]] += [
+                listed = {route["revisionName"] for route in traffic[name]}
+                traffic[name] += [
                     {"revisionName": revision, "percent": int(share)}
                     for revision, share in shares.items()
                     if revision not in listed
                 ]
+                if name == failed_name and switching and failure == "switch-after":
+                    raise subprocess.TimeoutExpired(["gcloud", *argv], 900)
             return ""
+
+        def health(kind: str) -> None:
+            trace.append(("health", outputs[f"staging_{kind}_service_name"]))
+            if kind == failed_service and failure == "health":
+                raise RuntimeError("probe health failed")
+
+        def api_health(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+            health("api")
+            return {"status": "ok"}
+
+        def web_health(*_args: Any, **_kwargs: Any) -> tuple[bool, str]:
+            health("web")
+            return True, ""
 
         with patch(
             "product_ops.deployment.staging_lifecycle._live_gcloud", side_effect=cloud
@@ -3076,10 +3120,9 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         ), patch(
             "product_ops.deployment.staging_lifecycle._live_identity_token", return_value="token"
         ), patch(
-            "product_ops.deployment.staging_lifecycle._live_json_get", return_value={"status": "ok"}
+            "product_ops.deployment.staging_lifecycle._live_json_get", side_effect=api_health
         ), patch(
-            "product_ops.deployment.staging_lifecycle._live_web_operator_requires_login",
-            return_value=(True, ""),
+            "product_ops.deployment.staging_lifecycle._live_web_operator_requires_login", side_effect=web_health
         ):
             executor = make_live_rehearsal_executor(
                 outputs,
@@ -3087,12 +3130,112 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 region="asia-east1",
                 operator_identity=outputs["staging_runtime_service_account"],
             )
-            result = executor("rollback_rehearsal", {})
+            yield executor, traffic, baseline, trace
 
+    def test_rollback_restore_ignores_the_tag_only_probe_route(self) -> None:
+        """gcloud keeps the probe as a tag-only route (no percent) after restore."""
+        with self._rollback_rehearsal_runtime() as (executor, traffic, baseline, trace):
+            result = executor("rollback_rehearsal", {})
         self.assertTrue(result["success"])
         self.assertEqual(len(result["rollback_targets"]), 2)
         for name, routes in traffic.items():
             self.assertIn({"revisionName": f"{name}-probe", "tag": "rollback-probe"}, routes)
+            self.assertCountEqual([r for r in routes if r.get("percent")], baseline[name])
+            restore_index = trace.index(("restore", name))
+            self.assertEqual(trace[restore_index + 1], ("read", name))
+
+    def test_rollback_restores_after_uncertain_switch_result(self) -> None:
+        for service in ("api", "web"):
+            for failure in ("switch-before", "switch-after"):
+                with self.subTest(service=service, failure=failure):
+                    with self._rollback_rehearsal_runtime(
+                        failure=failure, failed_service=service
+                    ) as (executor, traffic, baseline, trace):
+                        with self.assertRaises(subprocess.TimeoutExpired):
+                            executor("rollback_rehearsal", {})
+                    name = self._valid_outputs()[f"staging_{service}_service_name"]
+                    self.assertIn(("restore", name), trace)
+                    self.assertNotIn(("health", name), trace)
+                    self.assertEqual(trace[-2:], [("restore", name), ("read", name)])
+                    for name, routes in traffic.items():
+                        self.assertCountEqual([r for r in routes if r.get("percent")], baseline[name])
+
+    def test_rollback_reads_restored_allocation_even_when_health_fails(self) -> None:
+        for service in ("api", "web"):
+            with self.subTest(service=service):
+                with self._rollback_rehearsal_runtime(
+                    failure="health", failed_service=service
+                ) as (executor, traffic, baseline, trace):
+                    with self.assertRaisesRegex(RuntimeError, "probe health failed"):
+                        executor("rollback_rehearsal", {})
+                name = self._valid_outputs()[f"staging_{service}_service_name"]
+                self.assertEqual(trace[-2:], [("restore", name), ("read", name)])
+                self.assertCountEqual([r for r in traffic[name] if r.get("percent")], baseline[name])
+
+    def test_rollback_restore_failure_is_not_hidden_by_probe_failure(self) -> None:
+        for service in ("api", "web"):
+            for failure in ("switch-after", "health", ""):
+                for restore_failure in ("command", "mismatch", "readback"):
+                    with self.subTest(service=service, failure=failure, restore=restore_failure):
+                        with self._rollback_rehearsal_runtime(
+                            failure=failure, failed_service=service, restore_failure=restore_failure
+                        ) as (executor, _traffic, _baseline, trace):
+                            with self.assertRaisesRegex(RuntimeError, "rollback target (restore failed|readback)"):
+                                executor("rollback_rehearsal", {})
+                        name = self._valid_outputs()[f"staging_{service}_service_name"]
+                        self.assertIn(("restore", name), trace)
+
+    def test_rollback_does_not_restore_before_any_traffic_switch_attempt(self) -> None:
+        for service in ("api", "web"):
+            with self.subTest(service=service):
+                with self._rollback_rehearsal_runtime(
+                    failure="create", failed_service=service
+                ) as (executor, traffic, baseline, trace):
+                    with self.assertRaisesRegex(RuntimeError, "probe creation failed"):
+                        executor("rollback_rehearsal", {})
+                name = self._valid_outputs()[f"staging_{service}_service_name"]
+                self.assertNotIn(("switch", name), trace)
+                self.assertNotIn(("restore", name), trace)
+                self.assertEqual(traffic[name], baseline[name])
+
+    def test_uncertain_rollback_fails_verification_and_preserves_holdable_state(self) -> None:
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        outputs = self._valid_outputs()
+        with tempfile.TemporaryDirectory() as tmpdir, self._rollback_rehearsal_runtime(
+            failure="switch-after"
+        ) as (executor, traffic, baseline, _trace):
+            state_dir = Path(tmpdir)
+            self._seed_live_state(state_dir)
+            marker_path = lifecycle._lifecycle_state_path(self.release_id, state_dir)
+            seeded = json.loads(marker_path.read_text(encoding="utf-8"))
+            marker_path.write_text(json.dumps({**seeded, "outputs": outputs}), encoding="utf-8")
+            receipt_path = state_dir / "receipt.json"
+            receipt = lifecycle.verify_ephemeral_staging(
+                release_id=self.release_id,
+                candidate_sha=self.candidate_sha,
+                manifest_digest=self.manifest_digest,
+                project_id=self.project_id,
+                state_dir=state_dir,
+                operator_identity=outputs["staging_runtime_service_account"],
+                lifecycle_outputs=outputs,
+                stage_executor=lambda stage, context: (
+                    executor(stage, context) if stage == "rollback_rehearsal" else {"success": True}
+                ),
+                release_profile="core-ops",
+                now=self.now,
+                receipt_path=receipt_path,
+            )
+            self.assertFalse(receipt.success)
+            self.assertTrue(receipt.remediation_required)
+            self.assertEqual(json.loads(marker_path.read_text())["status"], "verification_failed")
+            self.assertFalse(json.loads(receipt_path.read_text())["success"])
+            stage = next(r for r in receipt.resources if r["stage"] == "rollback_rehearsal")
+            self.assertEqual(stage["status"], "failed")
+            self.assertNotIn("proof", stage)
+            self.assertTrue(any("rollback_rehearsal" in error and "TimeoutExpired" in error for error in receipt.errors))
+            for name, routes in traffic.items():
+                self.assertCountEqual([r for r in routes if r.get("percent")], baseline[name])
 
     def test_provider_readback_uses_the_live_gate_consumer_only_rule(self) -> None:
         from unittest.mock import patch
@@ -3124,6 +3267,61 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         self.assertTrue(run(disabled)["success"])
         with self.assertRaisesRegex(RuntimeError, "external providers are disabled"):
             run({**disabled, "mode": "live", "live": True})
+
+    def test_rehearsal_refreshes_tokens_after_long_running_stage(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
+
+        outputs = self._valid_outputs()
+        clock = 0
+        expires_at: dict[str, int] = {}
+
+        def cloud(argv: list[str], **_kwargs: Any) -> str:
+            nonlocal clock
+            if argv[0] == "iam":
+                return argv[3]
+            if argv[:3] in (["sql", "export", "sql"], ["sql", "import", "sql"]):
+                clock += 800  # Each command stays within its 900-second timeout.
+            return ""
+
+        def identity_token(**_kwargs: Any) -> str:
+            token = f"test-token-{len(expires_at)}"
+            expires_at[token] = clock + 3600
+            return token
+
+        def get(url: str, token: str, **_kwargs: Any) -> dict[str, Any]:
+            if clock >= expires_at[token]:
+                raise RuntimeError("expired staging transport credential")
+            return {
+                "status": "ok",
+                "details": {"provider": {
+                    "mode": "disabled", "configurationValid": True,
+                    "connectivityHealthy": False, "live": False,
+                }},
+            }
+
+        with patch(
+            "product_ops.deployment.staging_lifecycle._live_gcloud", side_effect=cloud
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_identity_token", side_effect=identity_token
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_json_get", side_effect=get
+        ):
+            executor = make_live_rehearsal_executor(
+                outputs,
+                project_id=self.project_id,
+                region="asia-east1",
+                operator_identity=outputs["staging_runtime_service_account"],
+                cloud_sql_instance=outputs["staging_cloud_sql_instance"],
+            )
+            self.assertTrue(executor("data_platform_snapshot", {})["success"])
+            clock += 2200  # Elapsed worker/scheduler execution before the backup.
+            self.assertTrue(executor("backup_restore_drill", {})["success"])
+            self.assertGreater(clock, 3600)
+            result = executor("external_providers_disabled_readback", {"release_profile": "core-ops"})
+        self.assertTrue(result["success"])
+        self.assertEqual(len(expires_at), 2)
 
     def test_sql_rehearsal_rejects_a_different_instance_before_any_api_call(self) -> None:
         from unittest.mock import patch
