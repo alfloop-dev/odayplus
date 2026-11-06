@@ -3850,12 +3850,15 @@ def collect_done_delivery_metadata(
 # assignment -- which any registered caller may invoke for a task it owns --
 # must not be able to write one: naming a different signer would make an old
 # same-source or unsigned approval look independent without anyone reviewing.
+# `merge_route` is the dispatch engine's record, and it freezes a closeout just
+# as `approved_head` does: writing one would exempt an actor from the policy.
 REVIEW_PROVENANCE_FIELDS = frozenset(
     {
         "status",
         "approved_head",
         "last_approved_head",
         "last_approved_by",
+        "merge_route",
         "review_notes_zh",
         "review_submission",
         "last_reopened_by",
@@ -7335,13 +7338,15 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
             "are written only by the review lifecycle commands. Run `re_review` so an "
             "independent reviewer signs the head. 未寫入任何 assignment。"
         )
-    # The argument is the task. Metadata is merged over the record below, so a
-    # different `id` here would both be judged and be written as some other task.
-    if "id" in metadata and metadata["id"] != task_id:
-        raise SystemExit(
-            f"Cannot assign {task_id}: TASK_METADATA_JSON may not set a different id "
-            f"({metadata['id']!r}). 未寫入任何 assignment。"
-        )
+    # The arguments name the task and its actors, and every check below judges
+    # them. Metadata is merged over the record afterwards, so a different value
+    # here would be written in place of what was judged.
+    for field, argument in (("id", task_id), ("owner", owner), ("reviewer", reviewer)):
+        if field in metadata and metadata[field] != argument:
+            raise SystemExit(
+                f"Cannot assign {task_id}: TASK_METADATA_JSON may not set a different {field} "
+                f"({metadata[field]!r}, argument is {argument!r}). 未寫入任何 assignment。"
+            )
     requested_dependencies = parse_csv_env("TASK_DEPENDS_ON")
     task = get_task(state, task_id)
     if task is not None and "TASK_DEPENDS_ON" in os.environ:

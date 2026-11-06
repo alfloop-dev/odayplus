@@ -3312,6 +3312,7 @@ def _scoped_cli_patches(ai_status: Any, config: dict[str, Any]) -> list[Any]:
             return_value={"Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Pi"},
         ),
         mock.patch.object(ai_status, "merged_orchestrator_config", return_value=config),
+        mock.patch.object(ai_status, "append_log"),
     ]
 
 

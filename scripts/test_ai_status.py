@@ -10165,7 +10165,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
     UNSCOPED_TASK_ID = "ODP-SCOPED-UNRELATED"
 
     def _scoped_policy_runtime(self, directory: Path, **target_rule: object) -> Path:
-        """A real runtime config whose only owner rule names one task and one actor."""
+        """A real runtime config whose only rules name one task and one actor per role."""
         return self._write_config(
             directory,
             {
@@ -10189,7 +10189,13 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
                                 "agent_ids": ["claude"],
                                 "providers": ["claude"],
                                 **target_rule,
-                            }
+                            },
+                            {
+                                "roles": ["reviewer"],
+                                "task_ids": [self.SCOPED_TASK_ID],
+                                "agent_ids": ["codex"],
+                                "providers": ["codex"],
+                            },
                         ],
                         "unclassified_owned_work": "allow",
                     }
@@ -10331,6 +10337,153 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
                 "owner Claude2",
                 metadata={"id": self.SCOPED_TASK_ID},
             )
+
+    def _stored_board(self, owner: str, reviewer: str, **fields: object) -> dict:
+        task = {
+            "id": self.SCOPED_TASK_ID,
+            "status": "todo",
+            "priority": "P2",
+            "owner": owner,
+            "reviewer": reviewer,
+            **fields,
+        }
+        return {**self._empty_board(), "tasks": [task]}
+
+    def _frozen_board(self, owner: str, reviewer: str) -> dict:
+        return self._stored_board(owner, reviewer, status="review_approved", approved_head="a" * 40)
+
+    def test_metadata_cannot_replace_the_actors_the_rule_judged(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-scoped-assign-actors-") as temp_dir:
+            runtime = self._scoped_policy_runtime(Path(temp_dir))
+            boards = {
+                "new": self._empty_board,
+                "existing": lambda: self._stored_board("Claude", "Codex"),
+                "frozen": lambda: self._frozen_board("Claude", "Codex"),
+            }
+            for label, board in boards.items():
+                for metadata in (
+                    {"owner": "Claude2"},
+                    {"reviewer": "Codex2"},
+                    {"owner": "Claude2", "reviewer": "Codex2"},
+                    # A second spelling of the checked actor is not what was checked.
+                    {"owner": "claude"},
+                    {"owner": None},
+                    {"reviewer": ""},
+                    {"reviewer": 7},
+                ):
+                    with self.subTest(board=label, metadata=metadata):
+                        self._assert_assign_refused_untouched(
+                            runtime,
+                            board(),
+                            [self.SCOPED_TASK_ID, "Claude", "Codex"],
+                            "TASK_METADATA_JSON",
+                            metadata=metadata,
+                        )
+
+            # Restating the argument writes exactly what was judged.
+            restated = self._stored_board("Claude", "Codex")
+            self._assign_with_real_loader(
+                runtime,
+                restated,
+                [self.SCOPED_TASK_ID, "Claude", "Codex"],
+                metadata={"owner": "Claude", "reviewer": "Codex"},
+            )
+            self.assertEqual(
+                ("Claude", "Codex"), (restated["tasks"][0]["owner"], restated["tasks"][0]["reviewer"])
+            )
+            # A restated actor the rule does not list is still refused by the rule.
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._empty_board(),
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "owner Claude2",
+                metadata={"owner": "Claude2"},
+            )
+
+    def test_metadata_cannot_install_a_new_actor_beside_recorded_frozen_history(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-scoped-assign-frozen-") as temp_dir:
+            runtime = self._scoped_policy_runtime(Path(temp_dir))
+
+            # Neither recorded actor is listed: they are history, not a new grant.
+            recorded = self._frozen_board("Claude2", "Codex2")
+            self._assign_with_real_loader(runtime, recorded, [self.SCOPED_TASK_ID, "Claude2", "Codex2"])
+            restated = self._frozen_board("Claude2", "Codex2")
+            self._assign_with_real_loader(
+                runtime,
+                restated,
+                [self.SCOPED_TASK_ID, "Claude2", "Codex2"],
+                metadata={"owner": "Claude2", "reviewer": "Codex2"},
+            )
+            for board in (recorded, restated):
+                task = board["tasks"][0]
+                self.assertEqual(("Claude2", "Codex2"), (task["owner"], task["reviewer"]))
+                self.assertEqual(("review_approved", "a" * 40), (task["status"], task["approved_head"]))
+
+            # Unchanged arguments must not lend that exemption to whoever metadata names.
+            for metadata in ({"owner": "Claude"}, {"reviewer": "Codex"}, {"owner": "Codex"}):
+                with self.subTest(metadata=metadata):
+                    self._assert_assign_refused_untouched(
+                        runtime,
+                        self._frozen_board("Claude2", "Codex2"),
+                        [self.SCOPED_TASK_ID, "Claude2", "Codex2"],
+                        "TASK_METADATA_JSON",
+                        metadata=metadata,
+                    )
+
+            # A real new grant is judged as one on the frozen record.
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._frozen_board("Antigravity", "Codex"),
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "owner Claude2",
+            )
+
+    def test_metadata_cannot_replace_a_pair_the_independence_check_judged(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-scoped-assign-pool-") as temp_dir:
+            runtime = self._scoped_policy_runtime(Path(temp_dir))
+            # No rule reaches this task, so nothing but the pair check could refuse.
+            for metadata in ({"reviewer": "Claude2"}, {"reviewer": "Claude"}, {"owner": "Codex"}):
+                with self.subTest(metadata=metadata):
+                    self._assert_assign_refused_untouched(
+                        runtime,
+                        self._empty_board(),
+                        [self.UNSCOPED_TASK_ID, "Claude", "Codex"],
+                        "TASK_METADATA_JSON",
+                        metadata=metadata,
+                    )
+
+    def test_metadata_cannot_claim_or_lift_the_freeze_the_exemption_reads(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-scoped-assign-route-") as temp_dir:
+            runtime = self._scoped_policy_runtime(Path(temp_dir))
+            route = {"head": "a" * 40, "route": "queued"}
+
+            # Not frozen, so this recorded actor answers to the rule...
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._stored_board("Claude2", "Codex"),
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "owner Claude2",
+            )
+            # ...and an assignment cannot make it frozen by saying so.
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._stored_board("Claude2", "Codex"),
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "may not set review provenance",
+                metadata={"merge_route": route},
+            )
+            # Nor can it drop the route a merging record's freeze rests on.
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._stored_board("Claude2", "Codex", merge_route=route),
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "may not set review provenance",
+                metadata={"merge_route": None},
+            )
+            # The recorded route still preserves its recorded actor.
+            merging = self._stored_board("Claude2", "Codex", merge_route=route)
+            self._assign_with_real_loader(runtime, merging, [self.SCOPED_TASK_ID, "Claude2", "Codex"])
+            self.assertEqual(route, merging["tasks"][0]["merge_route"])
 
     def test_an_unregistered_scoped_actor_fails_closed_through_the_real_assignment(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ai-status-scoped-assign-unknown-") as temp_dir:
