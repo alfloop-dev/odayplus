@@ -16,7 +16,7 @@ from common import normalize_agent_id, utc_now
 from dispatch_policy import REASON_HELPER_CLAIM, REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY, REASON_REVIEW_READY, worker_logical_dispatch_agent_id
 import verification_evidence
 from runtime_state import ACTIVE_WORKER_STATUSES, queue_event_moved_from_worker, worker_queue_record
-from task_archive import load_archived_task
+from task_archive import archive_task_path, load_archived_task
 
 # Compatibility aliases remain exports while Supervisor callers migrate to the
 # shared policy module. The runtime's scope injector resolves these names.
@@ -3364,6 +3364,40 @@ def _worktree_task_id(worktree_path: Path) -> str:
 
 
 @_entrypoint
+def _worktree_protection_record(config: dict[str, Any], task_id: str) -> dict[str, Any] | None:
+    """The record naming what a worktree's task protected; None only if none exists.
+
+    The ordinary readers answer alike for "no such record" and for a record they
+    could not use: `load_status` folds a blank or wrong-shaped board into `{}`,
+    `canonical_task_record` swallows every read failure, and `load_archived_task`
+    returns None for a wrong-shaped envelope. Deciding what may be read needs the
+    difference, so anything short of a readable board and an archive file that
+    is really not there raises, and the caller refuses the worktree.
+    """
+    status = load_status(config)
+    tasks_path = (config.get("schema") or {}).get("tasks_path", "tasks")
+    if not isinstance(status.get(tasks_path), list):
+        raise ValueError(f"task board has no usable {tasks_path} list")
+    record = task_index_from_status(config, status).get(task_id)
+    if record:
+        return record
+    try:
+        record = load_archived_task(task_id)
+    except FileNotFoundError:
+        record = None
+    if not record:
+        try:
+            # lstat: a dangling link is an entry the loader could not use, not absence.
+            archive_task_path(task_id).lstat()
+        except FileNotFoundError:
+            return None
+        raise ValueError(f"archive for {task_id} exists but holds no usable task")
+    if str(record.get("id") or "") != task_id:
+        raise ValueError(f"archive for {task_id} holds the task {record.get('id')!r}")
+    return record
+
+
+@_entrypoint
 def _task_board_settlement_index(config: dict[str, Any]) -> dict[str, str]:
     """Map every task the board still carries to `settled` or `active`.
 
@@ -3843,23 +3877,19 @@ def prune_orphan_worktrees(
             # dispatch recorded.
             wt_task_id = _worktree_task_id(wt_path)
             try:
-                try:
-                    wt_task = canonical_task_record(config, wt_task_id) or load_archived_task(wt_task_id)
-                except FileNotFoundError:
-                    wt_task = None
                 protected_refusal = _protected_commit_refusal(
                     wt_path,
                     "HEAD",
                     _recorded_protected_paths(
-                        wt_task,
+                        _worktree_protection_record(config, wt_task_id),
                         ((state.get("worker_worktrees") or {}).get("leases") or {}).get(wt_task_id),
                     ),
                     worktree_path=wt_path,
                     check_index=True,
                 )
-            except (ProtectedPathPolicyError, OSError, ValueError) as error:
+            except (ProtectedPathPolicyError, OSError, ValueError, AttributeError, TypeError) as error:
                 # What the task protected cannot be told, so neither can what may be read.
-                protected_refusal = str(error)
+                protected_refusal = str(error) or type(error).__name__
             if protected_refusal:
                 skipped["protected_metadata_refused"] = skipped.get("protected_metadata_refused", 0) + 1
                 continue

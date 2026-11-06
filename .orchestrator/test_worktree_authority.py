@@ -21,6 +21,7 @@ if str(MIGRATION_DIR) not in sys.path:
 import capacity_controller
 import migrate_worker_worktree_config as migration
 import supervisor
+import task_archive
 import worker_workspace
 import worktree_cleanliness
 
@@ -586,6 +587,18 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         state: dict = {"workers": {}, "worker_worktrees": {"leases": {task_id: lease}}}
         if protected_on in {"archive", "unreadable archive"}:
             Path(config["paths"]["status_file"]).write_text(json.dumps({"tasks": []}), encoding="utf-8")
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_archived_task",
+                **({"side_effect": archived} if isinstance(archived, Exception) else {"return_value": archived}),
+            ),
+            mock.patch.object(supervisor, "_task_settlement", return_value="settled"),
+        ):
+            commands = self._run_pruner(config, state)
+        return worktree, commands, state
+
+    def _run_pruner(self, config: dict, state: dict) -> list[list[str]]:
         base = worker_workspace.WorkerBaseResolution(
             repository_id="pantheon", default_branch="dev", sha=self.base, remote_ref="refs/remotes/origin/dev"
         )
@@ -600,18 +613,49 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
             mock.patch("subprocess.run", side_effect=recording_run),
             mock.patch.object(supervisor, "resolve_worker_base", return_value=(base, None)),
             mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
-            mock.patch.object(
-                supervisor,
-                "load_archived_task",
-                **({"side_effect": archived} if isinstance(archived, Exception) else {"return_value": archived}),
-            ),
-            mock.patch.object(supervisor, "_task_settlement", return_value="settled"),
             mock.patch(
                 "multi_repo_registry.iter_local_repositories",
                 return_value=[{"id": "pantheon", "default_branch": "dev", "resolved_local_path": self.repo}],
             ),
         ):
             supervisor.prune_orphan_worktrees(config, state)
+        return commands
+
+    def _prune_with_real_authority(self, task_id: str, *, archive=None, board=None, plant: bool = True):
+        """The real loader over real bytes, with a detached HEAD that really is merged.
+
+        `archive` and `board` each receive their real path and may write what they like.
+        """
+        worktree, _branch, config, _worker, _task = self._protected_checkout(task_id)
+        self._git(worktree, "checkout", "--detach", self.base)
+        if plant:
+            # Anything that reaches `git status` now sees dirt, so the refusal
+            # counter below tells "refused unread" from "read, then refused".
+            self._plant_untracked_ignore(worktree)
+        status_file = Path(config["paths"]["status_file"])
+        status_file.write_text(json.dumps({"tasks": []}), encoding="utf-8")
+        if board is not None:
+            board(status_file)
+        config["worker_worktree_housekeeping"] = {"enabled": True, "tick_interval_seconds": 0}
+        archive_root = self.root / "ai-task-archive"
+        state: dict = {"workers": {}, "worker_worktrees": {"leases": {}}}
+        with (
+            mock.patch.multiple(
+                task_archive,
+                STATUS_ROOT=self.root,
+                ARCHIVE_DIR=archive_root,
+                ARCHIVE_TASKS_DIR=archive_root / "tasks",
+                ARCHIVE_CORRECTIONS_DIR=archive_root / "corrections",
+                ARCHIVE_INDEX_FILE=archive_root / "index.json",
+            ),
+            # load_json re-reads an unparseable file for a couple of seconds.
+            mock.patch("common.time.sleep"),
+        ):
+            if archive is not None:
+                path = task_archive.archive_task_path(task_id)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                archive(path)
+            commands = self._run_pruner(config, state)
         return worktree, commands, state
 
     def test_pruner_refuses_a_protected_worktree_before_status_or_removal(self) -> None:
@@ -642,6 +686,90 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
             "unreadable archive", plant=False, archive_outcome=FileNotFoundError("gone")
         )
         self.assertFalse(worktree.exists())
+        self.assertEqual(state["worker_worktree_housekeeping"]["last_scan"]["removed"], 1)
+
+    def test_pruner_refuses_an_existing_archive_it_cannot_use_before_reading_the_checkout(self) -> None:
+        def text(content: str):
+            return lambda path: path.write_text(content, encoding="utf-8")
+
+        def foreign_task(path: Path) -> None:
+            path.write_text(json.dumps({"task": {"id": "SOMEONE-ELSE", "status": "done"}}), encoding="utf-8")
+
+        cases = {
+            "wrong_shape": text("[]"),
+            "blank": text(""),
+            "empty_envelope": text("{}"),
+            "no_task": text('{"terminal_status": "done"}'),
+            "task_not_a_record": text('{"task": []}'),
+            "empty_task": text('{"task": {}}'),
+            "malformed_protection": None,
+            "foreign_task": foreign_task,
+            "unparseable": text("{"),
+            "directory": lambda path: path.mkdir(),
+            "dangling_link": lambda path: path.symlink_to(path.with_name("missing.json")),
+        }
+        for number, (name, archive) in enumerate(cases.items()):
+            task_id = f"PROT-INVALID-ARCHIVE-{number}"
+            if archive is None:
+                archive = text(json.dumps({"task": {"id": task_id, "status": "done", "protected_paths": "guarded/zone"}}))
+            with self.subTest(name):
+                worktree, commands, state = self._prune_with_real_authority(task_id, archive=archive)
+                self.assertTrue(worktree.is_dir())
+                self.assertEqual([c for c in commands if "status" in c or c[-2:-1] == ["remove"]], [])
+                self.assertEqual(
+                    state["worker_worktree_housekeeping"]["last_scan"]["skipped"], {"protected_metadata_refused": 1}
+                )
+                self._git(self.repo, "worktree", "remove", "--force", str(worktree))
+
+    def test_pruner_refuses_when_the_board_cannot_say_what_the_task_protected(self) -> None:
+        def text(content: str):
+            return lambda path: path.write_text(content, encoding="utf-8")
+
+        cases = {
+            "missing": lambda path: path.unlink(),
+            "blank": text(""),
+            "empty_object": text("{}"),
+            "wrong_shape": text("[]"),
+            "tasks_not_a_list": text('{"tasks": null}'),
+            "task_not_a_record": text('{"tasks": [1]}'),
+            "unparseable": text("{"),
+        }
+        for number, (name, board) in enumerate(cases.items()):
+            with self.subTest(name):
+                worktree, commands, state = self._prune_with_real_authority(f"PROT-INVALID-BOARD-{number}", board=board)
+                self.assertTrue(worktree.is_dir())
+                self.assertEqual([c for c in commands if "status" in c or c[-2:-1] == ["remove"]], [])
+                self.assertEqual(
+                    state["worker_worktree_housekeeping"]["last_scan"]["skipped"], {"protected_metadata_refused": 1}
+                )
+                self._git(self.repo, "worktree", "remove", "--force", str(worktree))
+
+    def test_pruner_reads_a_usable_archive_with_the_real_loader(self) -> None:
+        def archived(task_id: str, **fields):
+            task = {"id": task_id, "status": "done", **fields}
+            return lambda path: path.write_text(
+                json.dumps({"terminal_status": "done", "terminal_outcome": "completed", "task": task}), encoding="utf-8"
+            )
+
+        worktree, commands, state = self._prune_with_real_authority(
+            "PROT-VALID-PROTECTED", archive=archived("PROT-VALID-PROTECTED", protected_paths=PROTECTED)
+        )
+        self.assertTrue(worktree.is_dir())
+        self.assertEqual([c for c in commands if "status" in c], [])
+        self.assertEqual(state["worker_worktree_housekeeping"]["last_scan"]["skipped"], {"protected_metadata_refused": 1})
+        self._git(self.repo, "worktree", "remove", "--force", str(worktree))
+
+        worktree, commands, state = self._prune_with_real_authority(
+            "PROT-VALID-PLAIN", archive=archived("PROT-VALID-PLAIN"), plant=False
+        )
+        self.assertFalse(worktree.exists())
+        self.assertTrue([c for c in commands if "status" in c])
+        self.assertEqual(state["worker_worktree_housekeeping"]["last_scan"]["removed"], 1)
+
+    def test_pruner_keeps_reclaiming_a_merged_checkout_whose_task_has_no_record_at_all(self) -> None:
+        worktree, commands, state = self._prune_with_real_authority("PROT-TRULY-ABSENT", plant=False)
+        self.assertFalse(worktree.exists())
+        self.assertTrue([c for c in commands if "status" in c])
         self.assertEqual(state["worker_worktree_housekeeping"]["last_scan"]["removed"], 1)
 
     def test_pruner_still_reclaims_a_settled_protected_worktree_holding_only_its_mount_point(self) -> None:
