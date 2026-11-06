@@ -215,6 +215,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_worktree_task_id",
 "materialize_worker_context_files",
 "observe_worker_worktree_activity",
+    "launch_protection_refusal",
     "prepare_worker_workspace",
     "prune_orphan_worktrees",
     "_dead_owner_continuation_eligible",
@@ -317,6 +318,9 @@ _FAILURE_HELPER_FUNCTIONS = [
 "retry_delay_seconds",
 "retry_due_workers",
 "schedule_queue_event_retry",
+"supersede_worker_without_execution_authority",
+"supersede_worker_without_queue_event",
+"worker_slot_left_logical_pool",
 "should_pause_dispatch_for_failure_kind",
 "sidecar_only_agent_names",
 "successful_worker_exit_outcome",
@@ -564,6 +568,9 @@ from runtime_state import (
     load_approval_state,
     load_event_queue,
     load_runtime_state,
+    _reset_queue_record_for_redispatch,
+    queue_event_holders,
+    queue_event_moved_from_worker,
     queue_event_record,
     replace_event_queue,
     save_runtime_state,
@@ -2358,6 +2365,10 @@ def start_worker_for_request(
     dispatched_at = datetime.now(UTC)
     adapter_name = delivery_mode_override or agent.get("adapter", "file_inbox")
     adapter = build_adapter(adapter_name, config=config, provider_capabilities=provider_report)
+    # A replacement skips preparation and copies its parent's request, whose baseline
+    # says where the parent began; only its own marks what this run goes on to add.
+    if parent_run_id and request.metadata.get("workspace_mode") == "isolated_worktree":
+        worker_workspace.record_workspace_launch_head(state, request)
     result = adapter.deliver(request)
     if not result.ok:
         dispatch_wait = result.metadata.get(model_rotation.DISPATCH_WAIT_KEY) if isinstance(result.metadata, dict) else None
@@ -3509,7 +3520,7 @@ def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bo
         return False
     active_statuses = active_worker_statuses(config)
     for event_id, record in queue_events.items():
-        workers = [worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id]
+        workers = queue_event_holders(state, event_id)
         if not workers:
             continue
         if any(worker.get("status") in active_statuses for worker in workers):
@@ -3523,22 +3534,6 @@ def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bo
                 record["error"] = latest.get("last_error")
             changed = True
     return changed
-
-
-def _reset_queue_record_for_redispatch(record: dict[str, Any], *, reason: str) -> None:
-    record["status"] = "queued"
-    record["requeued_at"] = utc_now()
-    record["requeue_reason"] = reason
-    for key in (
-        "processed_at",
-        "error",
-        "lease_owner",
-        "lease_acquired_at",
-        "lease_expires_at",
-        "lease_released_at",
-        "last_wait_reason",
-    ):
-        record.pop(key, None)
 
 
 def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> bool:
@@ -3638,7 +3633,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         if alive and not expired_lease and worker.get("last_heartbeat_at") and not worker_heartbeat_is_stale(config, worker, now):
             refresh_worker_lease(config, worker, now)
             counts["lease_refreshes"] += 1
-            if worker.get("queue_event_id"):
+            if worker.get("queue_event_id") and not queue_event_moved_from_worker(state, worker):
                 record = queue_event_record(state, worker["queue_event_id"])
                 record["lease_owner"] = worker.get("run_id")
                 record["lease_expires_at"] = queue_lease_expiry(config, now)
@@ -3862,9 +3857,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         if str(record.get("status") or "") not in {"started", "stalled"}:
             continue
         related_active = [
-            worker
-            for worker in workers.values()
-            if worker.get("queue_event_id") == event_id and worker.get("status") in active_statuses
+            worker for worker in queue_event_holders(state, event_id) if worker.get("status") in active_statuses
         ]
         if related_active:
             continue
@@ -5316,13 +5309,11 @@ def outstanding_delivery_indexes(config: dict[str, Any], state: dict[str, Any]) 
 
 def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any], status: str, error: str | None = None) -> None:
     queue_event_id = worker.get("queue_event_id")
-    if not queue_event_id:
+    if not queue_event_id or queue_event_moved_from_worker(state, worker):
         return
     active_statuses = active_worker_statuses(config)
-    for item in state.get("workers", {}).values():
-        if item.get("run_id") == worker.get("run_id"):
-            continue
-        if item.get("queue_event_id") == queue_event_id and worker_counts_as_active_capacity(config, item, active_statuses):
+    for item in queue_event_holders(state, queue_event_id):
+        if item.get("run_id") != worker.get("run_id") and worker_counts_as_active_capacity(config, item, active_statuses):
             return
     record = queue_event_record(state, queue_event_id)
     record["status"] = status
@@ -5353,8 +5344,11 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
             continue
 
         record = queue_events.get(event_id, {})
+        # A run that lost the event still keeps it from being an orphan, but its
+        # status no longer decides the event.
         related_workers = [worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id]
-        has_active_worker = any(worker.get("status") in active_statuses for worker in related_workers)
+        holders = queue_event_holders(state, event_id)
+        has_active_worker = any(worker.get("status") in active_statuses for worker in holders)
         if queue_event_is_orphaned(config, event, record, related_workers):
             age_seconds = queue_event_age_seconds(event)
             write_activity_log(
@@ -5384,13 +5378,11 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
             continue
 
         if (
-            not related_workers
+            not holders
             and record.get("status") in {"started", "manual_pending", "retry_backoff", "stalled"}
             and not model_rotation.has_dispatch_cooldown_wait(record)
         ):
-            record["status"] = "queued"
-            record.pop("processed_at", None)
-            record.pop("error", None)
+            _reset_queue_record_for_redispatch(record, reason="queue record had no worker holding it")
             changed = True
             kept.append(event)
             kept_ids.add(event_id)
@@ -5517,7 +5509,7 @@ def is_operator_emergency(config: dict[str, Any], state: dict[str, Any] | None, 
     return False
 
 
-def worker_worktree_is_clean(config: dict[str, Any], worker: dict[str, Any]) -> bool:
+def worker_worktree_is_clean(config: dict[str, Any], worker: dict[str, Any], task: dict[str, Any] | None) -> bool:
     workspace_path_str = str(worker.get("workspace_path") or "").strip()
     if not workspace_path_str:
         return True
@@ -5526,7 +5518,12 @@ def worker_worktree_is_clean(config: dict[str, Any], worker: dict[str, Any]) -> 
         return True
     try:
         from worktree_cleanliness import inspect_worktree
-        inspection = inspect_worktree(workspace_path)
+        protected = worker_workspace._worker_recorded_protected_paths(worker, task)
+        if worker_workspace._protected_commit_refusal(
+            workspace_path, "HEAD", protected, worktree_path=workspace_path, check_index=True
+        ):
+            return False
+        inspection = inspect_worktree(workspace_path, protected_paths=protected)
         return bool(inspection.handoff_clean)
     except Exception:
         return False
@@ -5582,7 +5579,7 @@ def worker_can_be_preempted(
         dispatch_reason in {REASON_REVIEW_READY, REASON_OWNED_FINALIZE}
         or task_status in {"review", "review_approved"}
     ):
-        return worker_worktree_is_clean(config, worker)
+        return worker_worktree_is_clean(config, worker, task)
 
     # Fail closed: healthy active execution workers (owned_ready, owned_in_progress,
     # helper_claim, todo, in_progress) or any other active workers are actively running

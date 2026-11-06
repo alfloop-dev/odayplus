@@ -21,6 +21,29 @@ import dispatch_engine
 import supervisor
 
 
+class RunningAssignmentPredicateTests(unittest.TestCase):
+    """Running eligibility stays strict; a finished handoff is proven elsewhere."""
+
+    CONFIG: dict[str, Any] = {"agents": {"claude": {"display_name": "Claude"}, "codex": {"display_name": "Codex"}}}
+
+    def _matches(self, agent: str, **task: Any) -> bool:
+        record = {"id": "T-1", "owner": "Claude", "reviewer": "Codex", **task}
+        worker = {"task_id": "T-1", "agent_id": agent, "logical_agent_id": agent}
+        return dispatch_engine.worker_matches_current_assignment(self.CONFIG, worker, {"T-1": record})
+
+    def test_blocked_is_never_running_eligible_for_either_role(self) -> None:
+        self.assertFalse(self._matches("claude", status="blocked", waiting_for="Claude"))
+        self.assertFalse(self._matches("codex", status="blocked", waiting_for="Codex"))
+
+    def test_other_statuses_keep_their_role_binding(self) -> None:
+        self.assertTrue(self._matches("claude", status="in_progress"))
+        self.assertTrue(self._matches("claude", status="review_approved"))
+        self.assertTrue(self._matches("codex", status="review"))
+        self.assertFalse(self._matches("codex", status="in_progress"))
+        self.assertFalse(self._matches("claude", status="review"))
+        self.assertFalse(self._matches("claude", status="done"))
+
+
 class PausedOwnerFailoverPreferenceTests(unittest.TestCase):
     """The paused-owner failover picks the first candidate that passes, so its
     ordering *is* its owner preference.

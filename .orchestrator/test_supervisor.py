@@ -117,6 +117,145 @@ def load_test_config() -> dict[str, Any]:
     return config
 
 
+class QueueCustodySupervisorOwnerTests(unittest.TestCase):
+    """reconcile, prune and the finalizer read one custody rule, not worker status."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.config = load_test_config()
+        self.config["paths"].update(
+            status_file=str(root / "ai-status.json"),
+            state_file=str(root / "state.json"),
+            event_queue=str(root / "queue.jsonl"),
+            activity_log=str(root / "activity.jsonl"),
+        )
+        self.task = {"id": "T-CUSTODY", "title": "Custody", "owner": "Claude", "reviewer": "Codex", "status": "in_progress"}
+        self._write_board()
+        self.event = runtime_state.enqueue_event(
+            self.config,
+            {
+                "event_id": "evt-1",
+                "target_agent": "claude",
+                "provider": "claude",
+                "task_id": "T-CUSTODY",
+                "reason": "owned_in_progress_dispatch",
+                "message": "go",
+                "created_at": "2020-01-01T00:00:00Z",
+            },
+        )
+        self.record = {
+            "status": "started",
+            "attempt_count": 1,
+            "last_attempt_at": "2026-11-05T00:00:00Z",
+            "run_id": "run-old",
+            "lease_owner": "run-old",
+            "processed_at": "2026-11-05T00:00:00Z",
+        }
+        self.state = {
+            "workers": {"run-old": self._worker("failed", "run-old", last_error="old failure")},
+            "queue": {"events": {"evt-1": self.record}},
+        }
+
+    def _write_board(self) -> None:
+        Path(self.config["paths"]["status_file"]).write_text(json.dumps({"tasks": [self.task]}), encoding="utf-8")
+
+    def _worker(self, status: str, run_id: str, **fields: Any) -> dict[str, Any]:
+        return {
+            "run_id": run_id,
+            "task_id": "T-CUSTODY",
+            "provider": "claude",
+            "agent_id": "claude",
+            "queue_event_id": "evt-1",
+            "status": status,
+            "attempt_count": 1,
+            "last_event_at": "2026-11-05T00:00:01Z",
+            **fields,
+        }
+
+    def _bind_to_new_run(self, status: str = "running") -> dict[str, Any]:
+        self.state["workers"]["run-new"] = self._worker(status, "run-new", attempt_count=2)
+        self.record.update(run_id="run-new", lease_owner="run-new", attempt_count=2)
+        return self.state["workers"]["run-new"]
+
+    def _queue_ids(self) -> list[str]:
+        return [event["event_id"] for event in runtime_state.load_event_queue(self.config)]
+
+    def test_reconcile_does_not_finish_a_reset_event_from_its_old_runs(self) -> None:
+        supervisor._reset_queue_record_for_redispatch(self.record, reason="redispatch")
+        before = dict(self.record)
+        self.assertFalse(supervisor.reconcile_queue_records(self.config, self.state))
+        self.assertEqual(self.record, before)
+
+    def test_reconcile_reads_only_the_run_holding_the_event(self) -> None:
+        self._bind_to_new_run()
+        self.assertFalse(supervisor.reconcile_queue_records(self.config, self.state))
+        self.assertEqual(self.record["status"], "started")
+        self.state["workers"]["run-new"]["status"] = "completed"
+        self.assertTrue(supervisor.reconcile_queue_records(self.config, self.state))
+        self.assertEqual(self.record["status"], "completed", "the old failed run no longer decides it")
+
+    def test_reconcile_still_settles_an_event_its_own_run_finished(self) -> None:
+        self.assertTrue(supervisor.reconcile_queue_records(self.config, self.state))
+        self.assertEqual((self.record["status"], self.record["error"]), ("failed", "old failure"))
+
+    def test_prune_keeps_a_reset_event_even_past_the_orphan_grace(self) -> None:
+        supervisor._reset_queue_record_for_redispatch(self.record, reason="redispatch")
+        before = dict(self.record)
+        self.assertFalse(supervisor.prune_event_queue(self.config, self.state))
+        self.assertEqual(self._queue_ids(), ["evt-1"])
+        self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+
+    def test_prune_returns_a_started_event_whose_holder_is_gone_with_real_reset_facts(self) -> None:
+        self.record.update(run_id="run-gone", lease_owner="run-gone")
+        self.assertTrue(supervisor.prune_event_queue(self.config, self.state))
+        self.assertEqual(self._queue_ids(), ["evt-1"])
+        self.assertEqual(self.record["status"], "queued")
+        self.assertIn("requeued_at", self.record)
+        self.assertNotIn("lease_owner", self.record)
+        self.assertTrue(runtime_state.queue_event_moved_from_worker(self.state, self.state["workers"]["run-old"]))
+
+    def test_prune_still_removes_a_settled_event_and_cancels_a_stale_one(self) -> None:
+        self.record["status"] = "completed"
+        self.assertTrue(supervisor.prune_event_queue(self.config, self.state))
+        self.assertEqual(self._queue_ids(), [])
+
+        runtime_state.enqueue_event(self.config, {**self.event, "created_at": supervisor.utc_now()})
+        fresh = dict(self.record, status="queued")
+        self.state["queue"]["events"]["evt-1"] = fresh
+        supervisor._reset_queue_record_for_redispatch(fresh, reason="redispatch")
+        self.task["status"] = "done"
+        self._write_board()
+        self.assertTrue(supervisor.prune_event_queue(self.config, self.state))
+        self.assertEqual(self._queue_ids(), [], "a genuinely stale reset event may still be cancelled")
+
+    def _assert_late_finalize_changes_nothing(self) -> None:
+        before = dict(self.record)
+        supervisor.finalize_queue_event_record(self.config, self.state, self.state["workers"]["run-old"], "failed", "late")
+        self.assertEqual(self.record, before)
+
+    def test_finalizer_leaves_a_reset_event_alone(self) -> None:
+        supervisor._reset_queue_record_for_redispatch(self.record, reason="redispatch")
+        self._assert_late_finalize_changes_nothing()
+
+    def test_finalizer_leaves_an_event_another_run_took(self) -> None:
+        self._bind_to_new_run()
+        self._assert_late_finalize_changes_nothing()
+
+    def test_old_active_run_does_not_hold_up_the_holders_settlement(self) -> None:
+        fresh = self._bind_to_new_run("completed")
+        self.state["workers"]["run-old"]["status"] = "running"
+        supervisor.finalize_queue_event_record(self.config, self.state, fresh, "completed")
+        self.assertEqual(self.record["status"], "completed")
+
+    def test_finalizer_still_waits_for_an_active_successor_of_the_same_lineage(self) -> None:
+        self.state["workers"]["run-old"].update(status="fallback", fallback_run_id="run-child")
+        self.state["workers"]["run-child"] = self._worker("running", "run-child", parent_run_id="run-old", pid=os.getpid())
+        supervisor.finalize_queue_event_record(self.config, self.state, self.state["workers"]["run-old"], "failed", "late")
+        self.assertEqual(self.record["status"], "started")
+
+
 class TestConfigFixtureTests(unittest.TestCase):
     """The fixture must be the committed example, never the machine's config.
 
@@ -3038,6 +3177,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
                 mock.patch.object(supervisor, "build_request", return_value=request),
                 mock.patch.object(supervisor, "prepare_worker_workspace", side_effect=prepare_workspace),
+                # The stubbed preparation names a plain directory, and the subject here is the worker guard.
+                mock.patch.object(supervisor, "launch_protection_refusal", return_value=None),
                 mock.patch.object(supervisor, "start_worker_for_request", return_value=(True, "run-123", {"manual_confirmation_required": False, "auto_delivered": True})),
                 mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
             ):
@@ -21746,9 +21887,18 @@ class CapacityControllerReconciliationTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.archive_root = archive_root
+        (archive_root / "fleet").mkdir()
+        environment = mock.patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in [name for name in os.environ if name.endswith("_LOCAL_PATHS")]:
+            del os.environ[name]
 
     def _config(self, slot_count: int = 2) -> dict[str, Any]:
         return {
+            # The creator resolves each parent's source. One level down, so the registry's
+            # relative siblings stay inside this root too.
+            "paths": {"status_file": str(self.archive_root / "fleet" / "ai-status.json")},
             "schema": {"tasks_path": "tasks"},
             "agents": {
                 "claude": {"provider": "claude", "slot_id": "slot-0"},
