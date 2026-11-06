@@ -10161,6 +10161,185 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
         self.assertEqual(["Codex5", "Codex6", "Codex8", "Codex9"], accepted)
         self.assertEqual("Codex5", folded)
 
+    SCOPED_TASK_ID = "ODP-SCOPED-TARGET"
+    UNSCOPED_TASK_ID = "ODP-SCOPED-UNRELATED"
+
+    def _scoped_policy_runtime(self, directory: Path, **target_rule: object) -> Path:
+        """A real runtime config whose only owner rule names one task and one actor."""
+        return self._write_config(
+            directory,
+            {
+                "providers": {
+                    "claude": {"delivery_mode": "claude_cli"},
+                    "codex": {"delivery_mode": "codex"},
+                },
+                "agents": {
+                    "claude": {"display_name": "Claude", "provider": "claude", "account_pool": "claude_main"},
+                    "claude2": {"display_name": "Claude2", "provider": "claude", "account_pool": "claude_main"},
+                    "codex": {"display_name": "Codex", "provider": "codex", "account_pool": "codex_bjoe"},
+                    "codex2": {"display_name": "Codex2", "provider": "codex", "account_pool": "codex_lupin"},
+                },
+                "ready_dispatcher": {
+                    "role_provider_policy": {
+                        "enabled": True,
+                        "rules": [
+                            {
+                                "roles": ["owner"],
+                                "task_ids": [self.SCOPED_TASK_ID],
+                                "agent_ids": ["claude"],
+                                "providers": ["claude"],
+                                **target_rule,
+                            }
+                        ],
+                        "unclassified_owned_work": "allow",
+                    }
+                },
+            },
+            name="supervisor-runtime.json",
+        )
+
+    def _assign_with_real_loader(
+        self,
+        runtime: Path,
+        state: dict,
+        args: list[str],
+        *,
+        metadata: dict | None = None,
+    ) -> mock.MagicMock:
+        env = {"ORCH_CONFIG_PATH": "", "PANTHEON_CONFIG_PATH": str(runtime), "AI_NAME": "Claude"}
+        env["TASK_METADATA_JSON"] = json.dumps(metadata or {})
+        with (
+            mock.patch.dict(ai_status.os.environ, env, clear=False),
+            mock.patch.object(ai_status, "append_log") as append_log,
+        ):
+            ai_status._MERGED_CONFIG_CACHE.clear()
+            ai_status.command_assign(state, args)
+        return append_log
+
+    def _assert_assign_refused_untouched(
+        self, runtime: Path, state: dict, args: list[str], fragment: str, *, metadata: dict | None = None
+    ) -> None:
+        before = json.loads(json.dumps(state))
+        roster_before = set(ai_status.KNOWN_AGENTS)
+        env = {"ORCH_CONFIG_PATH": "", "PANTHEON_CONFIG_PATH": str(runtime), "AI_NAME": "Claude"}
+        env["TASK_METADATA_JSON"] = json.dumps(metadata or {})
+        with (
+            mock.patch.dict(ai_status.os.environ, env, clear=False),
+            mock.patch.object(ai_status, "append_log") as append_log,
+        ):
+            ai_status._MERGED_CONFIG_CACHE.clear()
+            with self.assertRaises(SystemExit) as refused:
+                ai_status.command_assign(state, args)
+        self.assertIn(fragment, str(refused.exception))
+        self.assertEqual(before, state)
+        self.assertEqual(roster_before, set(ai_status.KNOWN_AGENTS))
+        append_log.assert_not_called()
+
+    @staticmethod
+    def _empty_board() -> dict:
+        return {"agents": [], "tasks": [], "blockers": [], "handoffs": []}
+
+    def test_scoped_assignment_is_refused_by_the_normal_loader_before_any_mutation(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-scoped-assign-") as temp_dir:
+            runtime = self._scoped_policy_runtime(Path(temp_dir))
+
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._empty_board(),
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "owner Claude2",
+            )
+
+            accepted = self._empty_board()
+            logged = self._assign_with_real_loader(runtime, accepted, [self.SCOPED_TASK_ID, "Claude", "Codex"])
+            self.assertEqual([self.SCOPED_TASK_ID], [task["id"] for task in accepted["tasks"]])
+            self.assertEqual("Claude", accepted["tasks"][0]["owner"])
+            logged.assert_called()
+
+            # The same actor is not refused anywhere else: nothing here is a
+            # fleet-wide Claude-only rule.
+            unrelated = self._empty_board()
+            self._assign_with_real_loader(runtime, unrelated, [self.UNSCOPED_TASK_ID, "Claude2", "Codex"])
+            self.assertEqual("Claude2", unrelated["tasks"][0]["owner"])
+
+            # Reassigning a stored record is judged by that record's real id.
+            stored = {**self._empty_board(), "tasks": [json.loads(json.dumps(accepted["tasks"][0]))]}
+            self._assert_assign_refused_untouched(
+                runtime, stored, [self.SCOPED_TASK_ID, "Claude2", "Codex"], "owner Claude2"
+            )
+
+    def test_metadata_cannot_rename_the_task_a_scoped_rule_is_asked_about(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-scoped-assign-id-") as temp_dir:
+            runtime = self._scoped_policy_runtime(Path(temp_dir))
+
+            # The argument names the target; the metadata tries to name another.
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._empty_board(),
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "TASK_METADATA_JSON",
+                metadata={"id": self.UNSCOPED_TASK_ID},
+            )
+            # The argument names another; the record would be written as the target.
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._empty_board(),
+                [self.UNSCOPED_TASK_ID, "Claude2", "Codex"],
+                "TASK_METADATA_JSON",
+                metadata={"id": self.SCOPED_TASK_ID},
+            )
+            # An existing record cannot be renamed out of the rule either.
+            stored = {
+                **self._empty_board(),
+                "tasks": [
+                    {
+                        "id": self.SCOPED_TASK_ID,
+                        "status": "todo",
+                        "priority": "P2",
+                        "owner": "Claude",
+                        "reviewer": "Codex",
+                    }
+                ],
+            }
+            self._assert_assign_refused_untouched(
+                runtime,
+                stored,
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "TASK_METADATA_JSON",
+                metadata={"id": self.UNSCOPED_TASK_ID},
+            )
+            for value in (None, 7, ""):
+                with self.subTest(value=value):
+                    self._assert_assign_refused_untouched(
+                        runtime,
+                        self._empty_board(),
+                        [self.SCOPED_TASK_ID, "Claude", "Codex"],
+                        "TASK_METADATA_JSON",
+                        metadata={"id": value},
+                    )
+
+            # Restating the real id changes nothing and is still judged.
+            same = self._empty_board()
+            self._assign_with_real_loader(
+                runtime, same, [self.SCOPED_TASK_ID, "Claude", "Codex"], metadata={"id": self.SCOPED_TASK_ID}
+            )
+            self.assertEqual([self.SCOPED_TASK_ID], [task["id"] for task in same["tasks"]])
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._empty_board(),
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "owner Claude2",
+                metadata={"id": self.SCOPED_TASK_ID},
+            )
+
+    def test_an_unregistered_scoped_actor_fails_closed_through_the_real_assignment(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-scoped-assign-unknown-") as temp_dir:
+            runtime = self._scoped_policy_runtime(Path(temp_dir), agent_ids=["claude9"])
+            for task_id in (self.SCOPED_TASK_ID, self.UNSCOPED_TASK_ID):
+                self._assert_assign_refused_untouched(
+                    runtime, self._empty_board(), [task_id, "Claude", "Codex"], "claude9"
+                )
+
     def test_without_the_overlay_the_same_workers_are_not_declared(self) -> None:
         """Proves the overlay — not a static table — is what admits Codex3-Codex9."""
         with tempfile.TemporaryDirectory(prefix="ai-status-base-only-") as temp_dir:

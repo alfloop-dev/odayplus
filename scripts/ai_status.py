@@ -7335,6 +7335,13 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
             "are written only by the review lifecycle commands. Run `re_review` so an "
             "independent reviewer signs the head. 未寫入任何 assignment。"
         )
+    # The argument is the task. Metadata is merged over the record below, so a
+    # different `id` here would both be judged and be written as some other task.
+    if "id" in metadata and metadata["id"] != task_id:
+        raise SystemExit(
+            f"Cannot assign {task_id}: TASK_METADATA_JSON may not set a different id "
+            f"({metadata['id']!r}). 未寫入任何 assignment。"
+        )
     requested_dependencies = parse_csv_env("TASK_DEPENDS_ON")
     task = get_task(state, task_id)
     if task is not None and "TASK_DEPENDS_ON" in os.environ:
@@ -7398,7 +7405,8 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     # `non_dispatchable`, `human_required_roles`. Creating a human gate would
     # otherwise be judged against a task that does not exist yet, and re-classing
     # an existing one against the class it is being moved off.
-    effective_task = {**(task or {}), **effective_metadata, "owner": owner, "reviewer": reviewer}
+    # A brand-new task has no stored id, and the policy can select by task id.
+    effective_task = {**(task or {}), **effective_metadata, "id": task_id, "owner": owner, "reviewer": reviewer}
     if clearing_optional_pin:
         effective_task.pop("frozen_evidence_base_sha", None)
     if effective_task_class:
