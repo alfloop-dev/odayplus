@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "record_kind": "humanops-runtime-release-staging-admission-authorization",
+  "status": "approved",
+  "is_approval": true,
+  "task_id": "ODP-STAGING-ADMISSION-C4F5771FF-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-STAGING-ADMISSION-20261106F",
+  "candidate_sha": "c4f5771ff3e047dd4c0983d52ed92ed5a65579ba",
+  "manifest_digest": "sha256:b591ab37bbb1da3e1cb083ddfd3eeb6000a1f1c52505e51dea03bf0703ca5290",
+  "manifest_run_id": "42209759190",
+  "target_environment": "staging",
+  "release_profile": "core-ops",
+  "approved_at": "2026-11-06T11:34:40Z",
+  "decisions": {
+    "HD-08f": {
+      "decision": "approve",
+      "subject": "gate-2 Data Gate passed-with-deviation for this candidate's staging admission only, review_by 2026-11-20",
+      "accepted_deviations": [
+        "source contract and sample data reviewed: not applicable — the core-ops profile keeps every external source disabled (sources-off attestation in the build manifest, 16 sources audited).",
+        "point-in-time correctness checked for model-ready data: not applicable — core-ops serves no model (release_profile.model_readiness=not_claimed).",
+        "freshness and lineage evidence captured: check_live_production_data.py has never run against this candidate; deferred to the staging verify run and the production gates, not claimed as passed."
+      ]
+    },
+    "HD-09f": {
+      "decision": "approve",
+      "subject": "release.stage=dev-verified, admission_target=staging, decision=go for this exact candidate and staging manifest"
+    }
+  },
+  "authorization_basis": {
+    "user_reply": "同意此處置 / 同意 staging go",
+    "context": "Answers to an exact-tuple question naming candidate c4f5771ff, staging build run 42209759190, manifest sha256:b591ab37…, the three deviations above, the scope limits below, and this evidence: push CI 42164409991 and merge group CI 42163390686 skipped all 7 product lanes by change scope; those lanes last ran on pull_request CI 42147962456 at fa374a69d (8e5872544 plus evidence) and all succeeded; c4f5771ff changes no product path relative to 8e5872544; the registry PR's CI re-runs the lanes on this candidate; dev deploy 42165191261 of c4f5771ff passed on its first attempt with live E2E 77/77, smoke, migration, worker, scheduler and egress probe ok; npm audit 0 findings.",
+    "interpretation": "Owner 蔡尚志 replied in the Claude Code conversation at 2026-11-06T11:34:40Z. Transcribed by Claude; not an external identity-system signature."
+  },
+  "authorized_scope": {
+    "max_release_requests": 1,
+    "max_short_lived_supervisor_leases": 1,
+    "runtime_release_deploy_phases": 1,
+    "allowed_environment": "staging",
+    "external_sources_enabled": false,
+    "production_changes": false,
+    "github_staging_environment_approval_still_required": true,
+    "supervisor_lease_still_required": true
+  },
+  "recorded_by": "Claude (interactive owner-response transcription; no external identity signature claimed)",
+  "evidence": {
+    "exact_ci": "docs/evidence/runtime/ODP-STAGING-ADMISSION-C4F5771FF-001/candidate-ci-c4f5771ff.json",
+    "staging_build_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/42209759190",
+    "dev_deploy_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/42165191261",
+    "last_product_lanes_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/42147962456"
+  }
+}

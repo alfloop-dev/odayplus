@@ -1,0 +1,308 @@
+{
+  "schema_version": 1,
+  "record_kind": "exact-candidate-ci-reconciliation",
+  "candidate_sha": "c4f5771ff3e047dd4c0983d52ed92ed5a65579ba",
+  "result": "pass",
+  "recorded_at": "2026-11-06T11:33:10Z",
+  "recorded_by": "Claude (exact candidate CI and Runtime Release run reconciliation via gh run view)",
+  "runs": [
+    {
+      "conclusion": "success",
+      "createdAt": "2026-11-06T04:45:48Z",
+      "databaseId": 42164409991,
+      "event": "push",
+      "headSha": "c4f5771ff3e047dd4c0983d52ed92ed5a65579ba",
+      "jobs": [
+        {
+          "conclusion": "success",
+          "name": "change-scope",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42164409991/job/127717383817"
+        },
+        {
+          "conclusion": "success",
+          "name": "orchestrator",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42164409991/job/127717384172"
+        },
+        {
+          "conclusion": "success",
+          "name": "product",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42164409991/job/127717439386"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "product-lint-unit",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42164409991/job/127717440069"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "product-db",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42164409991/job/127717440096"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "performance-gate",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42164409991/job/127717440146"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "product-api-contract",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42164409991/job/127717440323"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "product-e2e-gate",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42164409991/job/127717440481"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "product-node",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42164409991/job/127717440577"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "product-security",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42164409991/job/127717440580"
+        },
+        {
+          "conclusion": "success",
+          "name": "Request automatic dev release after checks",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42164409991/job/127719829823"
+        }
+      ],
+      "name": "CI",
+      "status": "completed",
+      "updatedAt": "2026-11-06T04:54:02Z",
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42164409991"
+    },
+    {
+      "conclusion": "success",
+      "createdAt": "2026-11-06T04:54:00Z",
+      "databaseId": 42165191261,
+      "event": "workflow_dispatch",
+      "headSha": "c4f5771ff3e047dd4c0983d52ed92ed5a65579ba",
+      "jobs": [
+        {
+          "conclusion": "success",
+          "name": "Validate release phase inputs",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42165191261/job/127719921539"
+        },
+        {
+          "conclusion": "success",
+          "name": "Build once and publish the immutable artifact handoff",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42165191261/job/127720382560"
+        },
+        {
+          "conclusion": "success",
+          "name": "Verify standing dev authority and exact built manifest",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42165191261/job/127723717369"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "Verify the Supervisor lease authorises this deploy",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42165191261/job/127723718415"
+        },
+        {
+          "conclusion": "success",
+          "name": "Deploy the admitted artifact by immutable digest",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42165191261/job/127723946045"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "Verify production watch and clean up ephemeral staging",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42165191261/job/127727209300"
+        }
+      ],
+      "name": "Runtime Release dev auto c4f5771ff3e047dd4c0983d52ed92ed5a65579ba",
+      "status": "completed",
+      "updatedAt": "2026-11-06T05:16:54Z",
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42165191261"
+    },
+    {
+      "conclusion": "success",
+      "createdAt": "2026-11-06T11:22:22Z",
+      "databaseId": 42209759190,
+      "event": "workflow_dispatch",
+      "headSha": "c4f5771ff3e047dd4c0983d52ed92ed5a65579ba",
+      "jobs": [
+        {
+          "conclusion": "success",
+          "name": "Validate release phase inputs",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42209759190/job/127865199535"
+        },
+        {
+          "conclusion": "success",
+          "name": "Build once and publish the immutable artifact handoff",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42209759190/job/127865316470"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "Verify the Supervisor lease authorises this deploy",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42209759190/job/127869184521"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "Deploy the admitted artifact by immutable digest",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42209759190/job/127869184704"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "Verify production watch and clean up ephemeral staging",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42209759190/job/127869186008"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "Verify standing dev authority and exact built manifest",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42209759190/job/127869187065"
+        }
+      ],
+      "name": "Runtime Release staging build c4f5771ff3e047dd4c0983d52ed92ed5a65579ba",
+      "status": "completed",
+      "updatedAt": "2026-11-06T11:32:05Z",
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42209759190"
+    },
+    {
+      "conclusion": "success",
+      "createdAt": "2026-11-06T02:04:34Z",
+      "databaseId": 42147962456,
+      "event": "pull_request",
+      "headSha": "fa374a69d962077b7e4d62029673e0388f5dd55c",
+      "jobs": [
+        {
+          "conclusion": "success",
+          "name": "change-scope",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42147962456/job/127663929130"
+        },
+        {
+          "conclusion": "success",
+          "name": "orchestrator",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42147962456/job/127663929183"
+        },
+        {
+          "conclusion": "success",
+          "name": "performance-gate",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42147962456/job/127664013881"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-node",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42147962456/job/127664013891"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-e2e-gate",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42147962456/job/127664013892"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-db",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42147962456/job/127664013901"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-api-contract",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42147962456/job/127664013909"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-security",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42147962456/job/127664013940"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-lint-unit",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42147962456/job/127664014037"
+        },
+        {
+          "conclusion": "success",
+          "name": "product",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42147962456/job/127673920856"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "Request automatic dev release after checks",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42147962456/job/127673998057"
+        }
+      ],
+      "name": "CI",
+      "status": "completed",
+      "updatedAt": "2026-11-06T02:32:56Z",
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/42147962456"
+    }
+  ],
+  "lane_coverage": {
+    "exact_push_ci": {
+      "run_id": 42164409991,
+      "head_sha": "c4f5771ff3e047dd4c0983d52ed92ed5a65579ba",
+      "success": [
+        "orchestrator",
+        "change-scope",
+        "product",
+        "Request automatic dev release after checks"
+      ],
+      "skipped_by_change_scope": [
+        "product-lint-unit",
+        "product-db",
+        "product-api-contract",
+        "product-e2e-gate",
+        "product-security",
+        "performance-gate",
+        "product-node"
+      ]
+    },
+    "merge_group_ci": {
+      "run_id": 42163390686,
+      "head_sha": "c4f5771ff3e047dd4c0983d52ed92ed5a65579ba",
+      "product_lanes": "skipped by change scope"
+    },
+    "last_product_lanes_ci": {
+      "run_id": 42147962456,
+      "event": "pull_request",
+      "head_sha": "fa374a69d",
+      "relation_to_candidate": "8e5872544 plus docs/evidence-only commits; c4f5771ff changes no product path relative to 8e5872544",
+      "success": [
+        "product-lint-unit",
+        "product-db",
+        "product-api-contract",
+        "product-e2e-gate",
+        "product-security",
+        "performance-gate",
+        "product-node"
+      ]
+    },
+    "note": "A run-level conclusion of success does not mean the product lanes ran; read per-job conclusions."
+  }
+}
