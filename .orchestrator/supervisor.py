@@ -5758,15 +5758,16 @@ def worker_matches_current_assignment(
     worker: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
 ) -> bool:
-    if worker_slot_left_logical_pool(config, worker):
-        return False
     event = worker_dispatch_event(config, worker)
     snapshot = worker.get("request_snapshot") if isinstance(worker.get("request_snapshot"), dict) else {}
     has_explicit_reason = "reason" in worker or "reason" in snapshot or "delivery_mode" in snapshot
     reason = event["reason"]
     if reason in OWNER_NOTIFICATION_QUEUE_REASONS:
+        # The generic matcher rejects a blocked task, so a notification run is held
+        # here instead; it keeps the registered slot/pool binding it was launched on.
         return (
-            owner_notification_block_reason(config, event, task_map) is None
+            not worker_slot_left_logical_pool(config, worker)
+            and owner_notification_block_reason(config, event, task_map) is None
             and launch_protection_refusal(config, task_map.get(event["task_id"]) or {}, event["metadata"]) is None
         )
     if has_explicit_reason and not (
