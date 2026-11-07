@@ -21,12 +21,14 @@ from delivery_toolchain.e2e.product_e2e_receipt import (
     SCHEMA_VERSION,
     bind_scenarios,
     canonical_json_bytes,
+    git_value,
     parse_playwright_payload,
     parse_pytest_payload,
     seal_normalized,
     sha256_bytes,
     source_identity,
     validate_acceptance_scenarios_and_inventory,
+    validate_evidence_proof_at_generation,
     validate_raw_artifact,
     validate_receipt_packet,
     verify_evidence_relationship,
@@ -127,11 +129,32 @@ def _commit(path: Path, relative: str, content: str, message: str) -> None:
     subprocess.run(["git", "commit", "-qm", message], cwd=path, check=True)
 
 
-def _clone_packet_repo(path: Path) -> None:
+def _clone_packet_repo(path: Path, *, source: Path = ROOT) -> None:
     subprocess.run(
-        ["git", "clone", "-q", "--shared", str(ROOT), str(path)],
+        ["git", "clone", "-q", "--shared", str(source), str(path)],
         check=True,
     )
+
+
+def _filtered_shared_clone(origin: Path, base: Path) -> Path:
+    """Reach ``origin`` the way product CI does: blob:none partial, then --shared."""
+    subprocess.run(["git", "config", "uploadpack.allowFilter", "true"], cwd=origin, check=True)
+    partial = base / "partial"
+    subprocess.run(
+        ["git", "clone", "-q", "--filter=blob:none", f"file://{origin}", str(partial)],
+        check=True,
+    )
+    shared = base / "shared"
+    _clone_packet_repo(shared, source=partial)
+    return shared
+
+
+def _generation_proof(proof: dict[str, Any]) -> dict[str, Any]:
+    """Extend a current-source proof with the raw paths a generation proof records."""
+    return {**proof, "working_tree_paths": sorted({RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH})}
+
+
+_RENAME_BODY = "".join(f"harmless synthetic line {index}\n" for index in range(40))
 
 
 def test_all_qa03_scenarios_are_registered_once_with_exact_refs() -> None:
@@ -637,6 +660,136 @@ def test_stale_or_mismatched_source_tree_is_rejected(tmp_path: Path) -> None:
     source["tree_sha"] = "0" * 40
     _proof, errors = verify_evidence_relationship(tmp_path, source, allow_worktree_evidence=False)
     assert any("tested tree mismatch" in error for error in errors)
+
+
+def _commit_rename(repo: Path, old: str, new: str, message: str) -> None:
+    """Commit a similar-bodied move so default rename detection must read both blobs."""
+    (repo / new).parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "mv", old, new], cwd=repo, check=True)
+    (repo / new).write_text(_RENAME_BODY + "evidence revision\n", encoding="utf-8")
+    subprocess.run(["git", "add", new], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", message], cwd=repo, check=True)
+
+
+def test_evidence_git_reads_are_metadata_only_in_filtered_shared_clone(
+    tmp_path: Path,
+) -> None:
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_repo(origin)
+    _commit(origin, RAW_PLAYWRIGHT_PATH, _RENAME_BODY, "prior evidence")
+    _commit(origin, "old_source.py", _RENAME_BODY, "prior source")
+    old_blob = git_value(origin, "rev-parse", f"HEAD:{RAW_PLAYWRIGHT_PATH}")
+    # The tested commit itself also moves a file, so reading it must stay metadata-only.
+    _commit_rename(origin, "old_source.py", "source.py", "tested source")
+    source = source_identity(origin)
+    _commit_rename(origin, RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH, "evidence-only rename")
+
+    clone = _filtered_shared_clone(origin, tmp_path)
+
+    # The fixture must really be the failing context, not a complete clone.
+    missing_blob = subprocess.run(
+        ["git", "cat-file", "-e", old_blob], cwd=clone, capture_output=True, check=False
+    )
+    assert missing_blob.returncode != 0
+    rename_detecting_log = subprocess.run(
+        ["git", "log", "--format=", "--name-only", f"{source['commit_sha']}..HEAD"],
+        cwd=clone,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rename_detecting_log.returncode == 128
+
+    # Both literal names are read, and both readers agree on the same metadata.
+    proof, errors = verify_evidence_relationship(clone, source, allow_worktree_evidence=False)
+    assert errors == []
+    assert proof["relation"] == "evidence_only_descendant"
+    assert proof["intervening_touched_paths"] == sorted({RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH})
+    generation_proof = _generation_proof(proof)
+    assert validate_evidence_proof_at_generation(clone, source, generation_proof) == []
+
+    # Metadata-only reads keep the literal proof comparison exact.
+    forged = copy.deepcopy(generation_proof)
+    forged["intervening_touched_paths"] = [RAW_PYTEST_PATH]
+    assert any(
+        "does not exactly match recomputed" in error
+        for error in validate_evidence_proof_at_generation(clone, source, forged)
+    )
+
+    # The separate tree and ancestry boundaries still hold in the same clone.
+    wrong_tree = {**source, "tree_sha": "0" * 40}
+    _proof, errors = verify_evidence_relationship(clone, wrong_tree, allow_worktree_evidence=False)
+    assert any("tested tree mismatch" in error for error in errors)
+    assert any(
+        "tested source tree does not match" in error
+        for error in validate_evidence_proof_at_generation(clone, wrong_tree, generation_proof)
+    )
+    head_before_source = {**generation_proof, "evidence_head_sha": source["commit_sha"]}
+    assert any(
+        "not an ancestor of evidence head" in error
+        for error in validate_evidence_proof_at_generation(
+            clone, source_identity(clone), head_before_source
+        )
+    )
+
+
+def test_intervening_non_evidence_change_is_rejected_in_filtered_shared_clone(
+    tmp_path: Path,
+) -> None:
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_repo(origin)
+    _commit(origin, "source.py", _RENAME_BODY, "source")
+    source = source_identity(origin)
+    _commit(origin, "source.py", "changed after test\n", "intervening source change")
+    _commit(origin, "source.py", _RENAME_BODY, "revert source")
+
+    clone = _filtered_shared_clone(origin, tmp_path)
+
+    proof, errors = verify_evidence_relationship(clone, source, allow_worktree_evidence=False)
+    assert any("non-evidence paths: source.py" in error for error in errors)
+    generation_proof = _generation_proof(proof)
+    assert any(
+        "intervening commits touch non-evidence paths: source.py" in error
+        for error in validate_evidence_proof_at_generation(clone, source, generation_proof)
+    )
+
+
+@pytest.mark.parametrize("filtered_shared", [False, True], ids=["complete", "filtered-shared"])
+def test_source_renamed_into_evidence_path_is_rejected_by_both_readers(
+    tmp_path: Path,
+    filtered_shared: bool,
+) -> None:
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_repo(origin)
+    _commit(origin, "source.py", _RENAME_BODY, "source")
+    source = source_identity(origin)
+    _commit_rename(origin, "source.py", RAW_PYTEST_PATH, "hide source as evidence")
+
+    repo = _filtered_shared_clone(origin, tmp_path) if filtered_shared else origin
+
+    proof, errors = verify_evidence_relationship(repo, source, allow_worktree_evidence=False)
+    assert proof["intervening_touched_paths"] == sorted({RAW_PYTEST_PATH, "source.py"})
+    assert any("non-evidence paths: source.py" in error for error in errors)
+    assert any(
+        "intervening commits touch non-evidence paths: source.py" in error
+        for error in validate_evidence_proof_at_generation(repo, source, _generation_proof(proof))
+    )
+
+
+def test_staged_source_rename_into_evidence_path_is_rejected(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _commit(tmp_path, "source.py", _RENAME_BODY, "source")
+    source = source_identity(tmp_path)
+    (tmp_path / RAW_PYTEST_PATH).parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "mv", "source.py", RAW_PYTEST_PATH], cwd=tmp_path, check=True)
+
+    proof, errors = verify_evidence_relationship(tmp_path, source, allow_worktree_evidence=True)
+
+    assert proof["working_tree_paths"] == sorted({RAW_PYTEST_PATH, "source.py"})
+    assert any("working tree contains non-evidence changes: source.py" in e for e in errors)
 
 
 def test_python_runner_propagates_pytest_failure(
