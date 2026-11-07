@@ -130,6 +130,7 @@ class QueueCustodySupervisorOwnerTests(unittest.TestCase):
             state_file=str(root / "state.json"),
             event_queue=str(root / "queue.jsonl"),
             activity_log=str(root / "activity.jsonl"),
+            approval_queue=str(root / "approval-queue.json"),
         )
         self.task = {"id": "T-CUSTODY", "title": "Custody", "owner": "Claude", "reviewer": "Codex", "status": "in_progress"}
         self._write_board()
@@ -274,6 +275,1340 @@ class QueueCustodySupervisorOwnerTests(unittest.TestCase):
         self.state["workers"]["run-child"] = self._worker("running", "run-child", parent_run_id="run-old", pid=os.getpid())
         supervisor.finalize_queue_event_record(self.config, self.state, self.state["workers"]["run-old"], "failed", "late")
         self.assertEqual(self.record["status"], "started")
+
+    def _provider_report(self) -> dict[str, Any]:
+        return {
+            "providers": {
+                "claude": {"auth_ready": True, "local_cli_worker_supported": True, "supports_auto_approve": True},
+                "codex": {"auth_ready": True, "local_cli_worker_supported": True},
+            },
+            "agent_adapters": {
+                "claude": {"can_auto_deliver": True, "delivery_mode": "claude_cli", "supported": True},
+                "claude_slot_1": {"can_auto_deliver": True, "delivery_mode": "claude_cli", "supported": True},
+                "claude_slot_2": {"can_auto_deliver": True, "delivery_mode": "claude_cli", "supported": True},
+                "codex": {"can_auto_deliver": True, "delivery_mode": "codex_cli", "supported": True},
+                "codex_bjoe_slot_1": {"can_auto_deliver": True, "delivery_mode": "codex_cli", "supported": True},
+            },
+        }
+
+    def _deliver_blocked_owner_notification(
+        self,
+        **task_updates: Any,
+    ) -> tuple[dict[str, Any], dict[str, Any], str, list[Any], dict[str, Any]]:
+        self.task = {
+            "id": "T-CUSTODY",
+            "title": "Custody",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "blocked",
+            "waiting_for": "Human/Ops",
+            "task_class": "implementation",
+            "depends_on": [],
+            **task_updates,
+        }
+        self._write_board()
+        Path(self.config["paths"]["event_queue"]).unlink(missing_ok=True)
+        self.state = {"workers": {}, "queue": {"events": {}}}
+        self.assertTrue(github_bus.queue_resume_for_task(self.config, self.task))
+        events = runtime_state.load_event_queue(self.config)
+        self.assertEqual(len(events), 1)
+        event_id = str(events[0]["event_id"])
+        self.assertEqual(events[0]["reason"], "github_retry")
+
+        from adapters.base import DeliveryResult
+
+        launched: list[Any] = []
+        provider_report = self._provider_report()
+        tmp_root = Path(self.tmp.name)
+
+        def fake_prepare_workspace(
+            _cfg: dict[str, Any],
+            _st: dict[str, Any],
+            req: Any,
+            **_kwargs: Any,
+        ) -> tuple[bool, str | None]:
+            req.metadata["workspace_path"] = str(tmp_root / "worktree")
+            req.metadata["workspace_branch"] = f"task/{req.task_id}"
+            req.metadata["status_root"] = str(tmp_root)
+            return True, None
+
+        class FakeAdapter:
+            def deliver(self, req: Any) -> DeliveryResult:
+                launched.append(req)
+                idx = len(launched)
+                return DeliveryResult(
+                    ok=True,
+                    target=req.agent_id,
+                    adapter="claude_cli",
+                    mode="claude_cli",
+                    auto_delivered=True,
+                    manual_confirmation_required=False,
+                    run_id=f"run-notif-{idx}",
+                    session_id=f"sess-notif-{idx}",
+                    resume_token=f"sess-notif-{idx}",
+                    pid=41000 + idx,
+                    command=["claude", "-p", req.message],
+                    log_path=str(tmp_root / f"run-notif-{idx}.log"),
+                    notes="delivered",
+                    metadata={},
+                )
+
+        with (
+            mock.patch.object(supervisor, "prepare_worker_workspace", side_effect=fake_prepare_workspace),
+            mock.patch.object(supervisor, "build_adapter", return_value=FakeAdapter()),
+        ):
+            self.assertTrue(supervisor.process_queue(self.config, self.state, provider_report))
+
+        self.assertEqual(len(launched), 1)
+        worker = self.state["workers"]["run-notif-1"]
+        record = self.state["queue"]["events"][event_id]
+        self.assertIsNone(worker.get("reason"))
+        self.assertEqual(worker["request_snapshot"]["reason"], "github_retry")
+        self.assertEqual(worker["agent_id"], "claude_slot_1")
+        self.assertEqual(worker["logical_agent_id"], "claude")
+        self.assertEqual(worker["dispatch_slot_id"], "claude_slot_1")
+        self.assertEqual(worker["account_pool"], "claude_main")
+        self.assertEqual(worker["status"], "running")
+        self.assertIsNone(worker.get("last_heartbeat_at"))
+        self.assertEqual(record["status"], "started")
+        self.assertEqual(record["run_id"], "run-notif-1")
+        self.assertEqual(record["lease_owner"], "run-notif-1")
+        self.assertEqual(record["attempt_count"], 1)
+        self.assertEqual(supervisor.load_status(self.config)["tasks"][0]["status"], "blocked")
+        return worker, record, event_id, launched, provider_report
+
+    def test_owner_notification_process_queue_to_poll_workers_retains_running_custody_while_blocked_and_after_reopen(
+        self,
+    ) -> None:
+        worker, record, event_id, launched, provider_report = self._deliver_blocked_owner_notification()
+
+        for task_status, heartbeat in (
+            ("blocked", None),
+            ("blocked", supervisor.utc_now()),
+            ("in_progress", None),
+            ("in_progress", supervisor.utc_now()),
+        ):
+            self.task["status"] = task_status
+            if task_status == "in_progress":
+                self.task.pop("waiting_for", None)
+            self._write_board()
+            worker["last_heartbeat_at"] = heartbeat
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+                mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid,
+            ):
+                supervisor.poll_workers(self.config, self.state, provider_report=provider_report)
+            self.assertEqual(worker["status"], "running")
+            self.assertNotIn("supersede_deferred_since", worker)
+            self.assertEqual(record["status"], "started")
+            self.assertEqual(record["lease_owner"], worker["run_id"])
+            self.assertEqual(self._queue_ids(), [event_id])
+            terminate_pid.assert_not_called()
+            self.assertFalse(supervisor.reconcile_queue_records(self.config, self.state))
+            self.assertFalse(supervisor.prune_event_queue(self.config, self.state))
+            self.assertEqual(self._queue_ids(), [event_id])
+        self.assertEqual(len(launched), 1)
+
+    def test_blocked_owner_notification_parked_retry_fallback_and_approval_resume_positives(self) -> None:
+        worker, record, event_id, launched, provider_report = self._deliver_blocked_owner_notification()
+        self.assertIsNone(supervisor.worker_failure_policy._execution_authority_refusal(self.config, worker))
+        self.assertFalse(supervisor.supersede_worker_without_execution_authority(self.config, self.state, worker))
+
+        handled, changed = supervisor.maybe_trigger_retry_or_fallback(
+            self.config,
+            self.state,
+            provider_report,
+            worker,
+            "429 rate limit",
+        )
+        self.assertEqual((handled, changed), (True, True))
+        self.assertEqual(worker["status"], "retry_backoff")
+        self.assertEqual(worker["retry_count"], 1)
+        worker["next_retry_at"] = "2020-01-01T00:00:00Z"
+
+        from adapters.base import DeliveryResult
+
+        tmp_root = Path(self.tmp.name)
+
+        class RetryAdapter:
+            def __init__(self, delivery_mode: str) -> None:
+                self.delivery_mode = delivery_mode
+
+            def deliver(self, req: Any) -> DeliveryResult:
+                launched.append(req)
+                idx = len(launched)
+                return DeliveryResult(
+                    ok=True,
+                    target=req.agent_id,
+                    adapter=self.delivery_mode,
+                    mode=self.delivery_mode,
+                    auto_delivered=self.delivery_mode != "file_inbox",
+                    manual_confirmation_required=self.delivery_mode == "file_inbox",
+                    run_id=f"run-notif-{idx}",
+                    session_id=f"sess-notif-{idx}",
+                    resume_token=f"sess-notif-{idx}",
+                    pid=41000 + idx,
+                    command=["claude", "-p", req.message],
+                    log_path=str(tmp_root / f"run-notif-{idx}.log"),
+                    notes="delivered",
+                    metadata={},
+                )
+
+        with mock.patch.object(
+            supervisor,
+            "build_adapter",
+            side_effect=lambda mode, *_a, **_kw: RetryAdapter(mode),
+        ):
+            self.assertTrue(
+                supervisor.retry_due_workers(self.config, self.state, provider_report, datetime.now(UTC))
+            )
+        self.assertEqual(worker["status"], "retried")
+        self.assertEqual(worker["superseded_by_run_id"], "run-notif-2")
+        run_2 = self.state["workers"]["run-notif-2"]
+        self.assertEqual(run_2["status"], "running")
+        self.assertIsNone(run_2.get("reason"))
+        self.assertEqual(run_2["request_snapshot"]["reason"], "github_retry")
+
+        record = self.state["queue"]["events"][event_id]
+        record.update(run_id="run-notif-2", lease_owner="run-notif-2", status="started")
+        run_2["retry_count"] = 5
+        with mock.patch.object(
+            supervisor,
+            "build_adapter",
+            side_effect=lambda mode, *_a, **_kw: RetryAdapter(mode),
+        ):
+            handled, changed = supervisor.maybe_trigger_retry_or_fallback(
+                self.config,
+                self.state,
+                provider_report,
+                run_2,
+                "429 rate limit",
+            )
+        self.assertEqual((handled, changed), (True, True))
+        self.assertEqual(self.state["workers"]["run-notif-2"]["status"], "fallback")
+        self.assertEqual(self.state["workers"]["run-notif-2"]["fallback_run_id"], "run-notif-3")
+        run_3 = self.state["workers"]["run-notif-3"]
+        self.assertEqual(run_3["mode"], "file_inbox")
+        self.assertEqual(run_3["status"], "manual_pending")
+
+        run_3.update(mode="claude_cli", status="suspended_approval", session_id="sess-notif-3")
+        record = self.state["queue"]["events"][event_id]
+        record.update(run_id="run-notif-3", lease_owner="run-notif-3", status="manual_pending")
+        approval_state = {
+            "pending": [],
+            "history": [
+                {
+                    "approval_id": "appr-notif-1",
+                    "worker_run_id": "run-notif-3",
+                    "decision": "allow",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "git status"},
+                }
+            ],
+        }
+
+        def fake_resume(
+            _cfg: dict[str, Any],
+            target_worker: dict[str, Any],
+            _report: dict[str, Any],
+            *,
+            approval: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            target_worker["status"] = "running"
+            return {
+                "command": ["claude", "--resume", str(target_worker.get("session_id"))],
+                "log_path": str(Path(self.tmp.name) / "resume.log"),
+                "pid": 41999,
+                "allowed_tools": [f"Bash({(approval or {}).get('tool_input', {}).get('command', '')})"],
+            }
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value=approval_state),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "resume_claude_worker", side_effect=fake_resume) as resume_mock,
+        ):
+            self.assertTrue(supervisor.poll_workers(self.config, self.state, provider_report=provider_report))
+        resume_mock.assert_called_once()
+        self.assertEqual(self.state["workers"]["run-notif-3"]["status"], "running")
+        self.assertEqual(self.state["workers"]["run-notif-3"]["last_approval_id"], "appr-notif-1")
+
+    def test_owner_notification_poll_and_parked_authority_negatives_and_bounded_grace(self) -> None:
+        base_worker, _base_record, event_id, launched, provider_report = self._deliver_blocked_owner_notification()
+        base_task = deepcopy(self.task)
+        base_config = deepcopy(self.config)
+        base_state = deepcopy(self.state)
+        self.assertEqual(len(launched), 1)
+        self.assertIsNone(base_worker.get("reason"))
+
+        def mutate_case(
+            case_name: str,
+            cfg: dict[str, Any],
+            task: dict[str, Any],
+            worker: dict[str, Any],
+        ) -> None:
+            snap = worker["request_snapshot"]
+            snap_task = snap.setdefault("metadata", {}).setdefault("task", {})
+            if case_name == "owner_drift":
+                task["owner"] = "Codex"
+            elif case_name == "snapshot_owner_drift":
+                snap_task["owner"] = "Codex"
+            elif case_name == "snapshot_reviewer_drift":
+                snap_task["reviewer"] = "Claude2"
+            elif case_name == "dependency_drift":
+                task["depends_on"] = ["DEP-MISSING"]
+            elif case_name == "typed_human_gate_class":
+                task["task_class"] = "human_gate"
+            elif case_name == "typed_human_required_roles":
+                task["human_required_roles"] = ["owner"]
+            elif case_name == "typed_human_gate_status":
+                task["gate_status"] = "pending_human_approval"
+            elif case_name == "non_dispatchable_hold":
+                task["non_dispatchable"] = True
+            elif case_name == "status_review":
+                task["status"] = "review"
+            elif case_name == "status_done":
+                task["status"] = "done"
+            elif case_name == "frozen_approved_head":
+                task["approved_head"] = "b" * 40
+            elif case_name == "frozen_merge_route":
+                task["merge_route"] = {"head": "b" * 40, "route": "queued"}
+            elif case_name == "protected_paths_drift":
+                task["protected_paths"] = ["docs/protected_fixture"]
+            elif case_name == "isolated_worktree_source_drift":
+                snap["metadata"]["workspace_mode"] = "isolated_worktree"
+                snap["metadata"]["workspace_path"] = str(Path(self.tmp.name) / "foreign-worktree")
+            elif case_name == "review_churn_escalated":
+                task["review_churn_escalated_at"] = "2026-11-07T00:00:00Z"
+                task["review_churn_escalated_at_count"] = 6
+            elif case_name == "role_provider_policy_drift":
+                cfg.setdefault("ready_dispatcher", {})["role_provider_policy"] = {
+                    "implementation": {"owner": ["codex"]}
+                }
+            elif case_name == "disabled_agent_policy_drift":
+                cfg.setdefault("ready_dispatcher", {})["disabled_agents"] = ["Claude"]
+            elif case_name == "provider_drift":
+                worker["provider"] = "codex"
+                snap["provider"] = "codex"
+            elif case_name == "missing_provider":
+                worker["provider"] = None
+                snap["provider"] = None
+            elif case_name == "conflicting_provider":
+                worker["provider"] = "codex"
+            elif case_name == "unregistered_physical_slot":
+                worker["agent_id"] = "claude_slot_99"
+                worker["dispatch_slot_id"] = "claude_slot_99"
+                snap["agent_id"] = "claude_slot_99"
+                snap["metadata"]["dispatch_slot_id"] = "claude_slot_99"
+            elif case_name == "foreign_physical_slot":
+                worker["agent_id"] = "codex_bjoe_slot_1"
+                worker["dispatch_slot_id"] = "codex_bjoe_slot_1"
+                snap["agent_id"] = "codex_bjoe_slot_1"
+                snap["metadata"]["dispatch_slot_id"] = "codex_bjoe_slot_1"
+            elif case_name == "unregistered_account_pool":
+                worker["account_pool"] = "ghost_pool"
+                snap["metadata"]["account_pool"] = "ghost_pool"
+            elif case_name == "foreign_account_pool":
+                worker["account_pool"] = "codex_bjoe"
+                snap["metadata"]["account_pool"] = "codex_bjoe"
+            elif case_name == "disabled_account_pool":
+                cfg["account_pools"]["claude_main"]["enabled"] = False
+            elif case_name == "missing_reason":
+                worker.pop("reason", None)
+                snap["reason"] = None
+            elif case_name == "empty_reason":
+                worker.pop("reason", None)
+                snap["reason"] = ""
+            elif case_name == "wrong_reason":
+                worker.pop("reason", None)
+                snap["reason"] = "wrong_reason"
+            elif case_name == "conflicting_reason":
+                worker["reason"] = "owned_in_progress_dispatch"
+            elif case_name == "ordinary_blocked_execution":
+                worker.pop("reason", None)
+                snap["reason"] = "owned_in_progress_dispatch"
+            else:
+                raise AssertionError(f"unknown case {case_name}")
+
+        cases = (
+            "owner_drift",
+            "snapshot_owner_drift",
+            "snapshot_reviewer_drift",
+            "dependency_drift",
+            "typed_human_gate_class",
+            "typed_human_required_roles",
+            "typed_human_gate_status",
+            "non_dispatchable_hold",
+            "status_review",
+            "status_done",
+            "frozen_approved_head",
+            "frozen_merge_route",
+            "protected_paths_drift",
+            "isolated_worktree_source_drift",
+            "review_churn_escalated",
+            "role_provider_policy_drift",
+            "disabled_agent_policy_drift",
+            "provider_drift",
+            "missing_provider",
+            "conflicting_provider",
+            "unregistered_physical_slot",
+            "foreign_physical_slot",
+            "unregistered_account_pool",
+            "foreign_account_pool",
+            "disabled_account_pool",
+            "missing_reason",
+            "empty_reason",
+            "wrong_reason",
+            "conflicting_reason",
+            "ordinary_blocked_execution",
+        )
+
+        for case_name in cases:
+            with self.subTest(case=case_name):
+                # 1. Live poll with fresh heartbeat defers within grace, then supersedes after grace;
+                #    absent heartbeat supersedes immediately.
+                cfg = deepcopy(base_config)
+                state = deepcopy(base_state)
+                self.task = deepcopy(base_task)
+                worker = state["workers"]["run-notif-1"]
+                record = state["queue"]["events"][event_id]
+                mutate_case(case_name, cfg, self.task, worker)
+                self._write_board()
+
+                worker["last_heartbeat_at"] = supervisor.utc_now()
+                with (
+                    mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                    mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+                    mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid,
+                    mock.patch.object(supervisor, "build_adapter") as adapter_mock,
+                ):
+                    self.assertTrue(supervisor.poll_workers(cfg, state, provider_report=provider_report))
+                    self.assertEqual(worker["status"], "running")
+                    self.assertIn("supersede_deferred_since", worker)
+                    terminate_pid.assert_not_called()
+
+                    worker["supersede_deferred_since"] = "2020-01-01T00:00:00Z"
+                    self.assertTrue(supervisor.poll_workers(cfg, state, provider_report=provider_report))
+                    self.assertEqual(worker["status"], "superseded")
+                    self.assertNotIn("supersede_deferred_since", worker)
+                    self.assertEqual(record["status"], "completed")
+                    self.assertEqual(record["attempt_count"], 1)
+                    terminate_pid.assert_called_once_with(worker["pid"])
+                    adapter_mock.assert_not_called()
+
+                # 1b. Absent initial heartbeat supersedes immediately without grace deferral.
+                cfg_no_hb = deepcopy(base_config)
+                state_no_hb = deepcopy(base_state)
+                self.task = deepcopy(base_task)
+                worker_no_hb = state_no_hb["workers"]["run-notif-1"]
+                record_no_hb = state_no_hb["queue"]["events"][event_id]
+                mutate_case(case_name, cfg_no_hb, self.task, worker_no_hb)
+                worker_no_hb.pop("last_heartbeat_at", None)
+                self._write_board()
+                with (
+                    mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                    mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+                    mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid_no_hb,
+                    mock.patch.object(supervisor, "build_adapter") as adapter_mock_no_hb,
+                ):
+                    self.assertTrue(supervisor.poll_workers(cfg_no_hb, state_no_hb, provider_report=provider_report))
+                    self.assertEqual(worker_no_hb["status"], "superseded")
+                    self.assertNotIn("supersede_deferred_since", worker_no_hb)
+                    self.assertEqual(record_no_hb["status"], "completed")
+                    self.assertEqual(record_no_hb["attempt_count"], 1)
+                    terminate_pid_no_hb.assert_called_once_with(worker_no_hb["pid"])
+                    adapter_mock_no_hb.assert_not_called()
+
+                # 2. Parked retry_backoff / approval resume refusal with 0 extra native launches.
+                cfg_parked = deepcopy(base_config)
+                state_parked = deepcopy(base_state)
+                self.task = deepcopy(base_task)
+                parked_worker = state_parked["workers"]["run-notif-1"]
+                parked_record = state_parked["queue"]["events"][event_id]
+                mutate_case(case_name, cfg_parked, self.task, parked_worker)
+                self._write_board()
+
+                self.assertTrue(
+                    bool(supervisor.worker_failure_policy._execution_authority_refusal(cfg_parked, parked_worker))
+                )
+                parked_worker["status"] = "retry_backoff"
+                parked_worker["next_retry_at"] = "2020-01-01T00:00:00Z"
+                with mock.patch.object(supervisor, "build_adapter") as adapter_mock:
+                    self.assertTrue(
+                        supervisor.retry_due_workers(
+                            cfg_parked,
+                            state_parked,
+                            provider_report,
+                            datetime.now(UTC),
+                        )
+                    )
+                    adapter_mock.assert_not_called()
+                self.assertEqual(parked_worker["status"], "superseded")
+                self.assertEqual(parked_record["status"], "completed")
+                self.assertEqual(parked_record["attempt_count"], 1)
+                self.assertEqual(len(state_parked["workers"]), 1)
+
+    def test_final_launch_boundary_refuses_ordinary_dispatches_held_during_workspace_preparation(self) -> None:
+        from adapters.base import DeliveryResult
+
+        provider_report = self._provider_report()
+        now_iso = supervisor.utc_now()
+        lease_until = (datetime.now(UTC) + timedelta(minutes=30)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+        def make_scenario(reason: str) -> tuple[dict[str, Any], dict[str, Any]]:
+            task: dict[str, Any] = {
+                "id": "T-FINAL-GATE",
+                "title": "Final gate",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "status": "in_progress",
+                "task_class": "implementation",
+                "depends_on": [],
+            }
+            target_agent = "claude"
+            target_display = "Claude"
+            provider = "claude"
+            if reason == "owned_ready_dispatch":
+                task["status"] = "todo"
+            elif reason == "review_ready_dispatch":
+                task["status"] = "review"
+                task["review_submission"] = {
+                    "pr_number": 99,
+                    "pr_url": "https://github.com/example/repo/pull/99",
+                    "remote_sha": "a" * 40,
+                    "base_branch": "dev",
+                    "submitted_at": now_iso,
+                    "source_authors": ["Claude"],
+                }
+                target_agent = "codex"
+                target_display = "Codex"
+                provider = "codex"
+            elif reason == "helper_claim_dispatch":
+                task["status"] = "in_progress"
+                task["helper_execution_lease"] = {
+                    "claimed_by": "Codex",
+                    "original_owner": "Claude",
+                    "generation": 1,
+                    "claimed_at": now_iso,
+                    "lease_expires_at": lease_until,
+                }
+                target_agent = "codex"
+                target_display = "Codex"
+                provider = "codex"
+            task_map = {task["id"]: task}
+            with (
+                mock.patch.object(supervisor, "resolve_task_progress_head", return_value="a" * 40),
+                mock.patch.object(ai_status, "resolve_task_sha", return_value="a" * 40),
+                mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+                mock.patch.object(supervisor, "review_source_block_reason", return_value=None),
+            ):
+                built = supervisor.build_dispatch_event(task, target_display, reason, task_map)
+            event_payload = {
+                "event_key": built["key"],
+                "task_id": task["id"],
+                "target_agent": target_agent,
+                "target_display_name": target_display,
+                "provider": provider,
+                "reason": reason,
+                "message": "go",
+                "metadata": {"task": deepcopy(task)},
+            }
+            return task, event_payload
+
+        tmp_root = Path(self.tmp.name)
+        for reason in (
+            "owned_in_progress_dispatch",
+            "owned_ready_dispatch",
+            "review_ready_dispatch",
+            "helper_claim_dispatch",
+        ):
+            for hold_kind in ("non_dispatchable", "human_gate", "role_policy", "disabled_agent"):
+                with self.subTest(reason=reason, hold_kind=hold_kind):
+                    cfg = deepcopy(self.config)
+                    task, event_payload = make_scenario(reason)
+                    self.task = task
+                    self._write_board()
+                    Path(cfg["paths"]["event_queue"]).unlink(missing_ok=True)
+                    queued = runtime_state.enqueue_event(cfg, event_payload)
+                    event_id = str(queued["event_id"])
+                    state: dict[str, Any] = {"workers": {}, "queue": {"events": {}}}
+                    native_launches: list[Any] = []
+                    workspace_prepared: list[str] = []
+
+                    def hold_during_workspace(
+                        active_cfg: dict[str, Any],
+                        _st: dict[str, Any],
+                        req: Any,
+                        *,
+                        _hold: str = hold_kind,
+                        _reason: str = reason,
+                        _target_display: str = str(event_payload["target_display_name"]),
+                        _prepared: list[str] = workspace_prepared,
+                        **_kwargs: Any,
+                    ) -> tuple[bool, str | None]:
+                        _prepared.append(str(req.task_id))
+                        req.metadata["workspace_path"] = str(tmp_root / "worktree")
+                        req.metadata["workspace_branch"] = f"task/{req.task_id}"
+                        req.metadata["status_root"] = str(tmp_root)
+                        if _hold == "non_dispatchable":
+                            self.task["non_dispatchable"] = True
+                        elif _hold == "human_gate":
+                            self.task["task_class"] = "human_gate"
+                        elif _hold == "role_policy":
+                            role = supervisor.dispatch_reason_role(_reason)
+                            active_cfg.setdefault("ready_dispatcher", {})["role_provider_policy"] = {
+                                "implementation": {role: ["gemini"]}
+                            }
+                        elif _hold == "disabled_agent":
+                            active_cfg.setdefault("ready_dispatcher", {})["disabled_agents"] = [
+                                _target_display
+                            ]
+                        self._write_board()
+                        return True, None
+
+                    with (
+                        mock.patch.object(supervisor, "resolve_task_progress_head", return_value="a" * 40),
+                        mock.patch.object(ai_status, "resolve_task_sha", return_value="a" * 40),
+                        mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+                        mock.patch.object(supervisor, "review_source_block_reason", return_value=None),
+                        mock.patch.object(
+                            supervisor,
+                            "prepare_worker_workspace",
+                            side_effect=hold_during_workspace,
+                        ),
+                        mock.patch.object(supervisor, "build_adapter") as adapter_mock,
+                    ):
+                        self.assertTrue(supervisor.process_queue(cfg, state, provider_report))
+                        native_launches.extend(adapter_mock.call_args_list)
+
+                    self.assertEqual(workspace_prepared, ["T-FINAL-GATE"])
+                    record = state["queue"]["events"][event_id]
+                    self.assertEqual(record["status"], "completed")
+                    self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+                    self.assertEqual(record.get("attempt_count", 0), 0)
+                    self.assertEqual(state["workers"], {})
+                    self.assertEqual(native_launches, [])
+
+        # Unchanged positive: when eligible at both pre-workspace and final-launch boundaries, launch succeeds.
+        cfg_pos = deepcopy(self.config)
+        pos_task, pos_event = make_scenario("owned_in_progress_dispatch")
+        self.task = pos_task
+        self._write_board()
+        Path(cfg_pos["paths"]["event_queue"]).unlink(missing_ok=True)
+        queued_pos = runtime_state.enqueue_event(cfg_pos, pos_event)
+        pos_event_id = str(queued_pos["event_id"])
+        pos_state: dict[str, Any] = {"workers": {}, "queue": {"events": {}}}
+        pos_launches: list[Any] = []
+
+        class PosAdapter:
+            def deliver(self, req: Any) -> DeliveryResult:
+                pos_launches.append(req)
+                return DeliveryResult(
+                    ok=True,
+                    target=req.agent_id,
+                    adapter="claude_cli",
+                    mode="claude_cli",
+                    auto_delivered=True,
+                    manual_confirmation_required=False,
+                    run_id="run-pos-1",
+                    session_id="sess-pos-1",
+                    resume_token="sess-pos-1",
+                    pid=42001,
+                    command=["claude", "-p", req.message],
+                    log_path=str(tmp_root / "run-pos-1.log"),
+                    notes="delivered",
+                    metadata={},
+                )
+
+        with (
+            mock.patch.object(supervisor, "resolve_task_progress_head", return_value="a" * 40),
+            mock.patch.object(
+                supervisor,
+                "prepare_worker_workspace",
+                return_value=(True, None),
+            ),
+            mock.patch.object(supervisor, "build_adapter", return_value=PosAdapter()),
+        ):
+            self.assertTrue(supervisor.process_queue(cfg_pos, pos_state, provider_report))
+
+        self.assertEqual(len(pos_launches), 1)
+        self.assertEqual(pos_state["queue"]["events"][pos_event_id]["status"], "started")
+        self.assertEqual(pos_state["queue"]["events"][pos_event_id]["attempt_count"], 1)
+        self.assertIn("run-pos-1", pos_state["workers"])
+
+    def test_pinned_evidence_base_owner_notification_retains_poll_and_parked_authority_and_base_ancestry_gate(
+        self,
+    ) -> None:
+        from adapters.base import DeliveryResult
+
+        pinned_sha = "a" * 40
+        worker, record, event_id, launched, provider_report = self._deliver_blocked_owner_notification(
+            frozen_evidence_base_sha=pinned_sha,
+        )
+        self.assertFalse(supervisor.task_closeout_is_frozen(self.config, self.task))
+        self.assertEqual(self.task["frozen_evidence_base_sha"], pinned_sha)
+
+        for task_status, heartbeat in (
+            ("blocked", None),
+            ("blocked", supervisor.utc_now()),
+            ("in_progress", None),
+            ("in_progress", supervisor.utc_now()),
+        ):
+            self.task["status"] = task_status
+            if task_status == "in_progress":
+                self.task.pop("waiting_for", None)
+            else:
+                self.task["waiting_for"] = "Human/Ops"
+            self._write_board()
+            worker["last_heartbeat_at"] = heartbeat
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+                mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid,
+            ):
+                supervisor.poll_workers(self.config, self.state, provider_report=provider_report)
+            self.assertEqual(worker["status"], "running")
+            self.assertNotIn("supersede_deferred_since", worker)
+            self.assertEqual(record["status"], "started")
+            self.assertEqual(record["lease_owner"], worker["run_id"])
+            self.assertEqual(self._queue_ids(), [event_id])
+            terminate_pid.assert_not_called()
+
+        self.task["status"] = "blocked"
+        self.task["waiting_for"] = "Human/Ops"
+        self._write_board()
+        self.assertIsNone(supervisor.worker_failure_policy._execution_authority_refusal(self.config, worker))
+        self.assertFalse(supervisor.supersede_worker_without_execution_authority(self.config, self.state, worker))
+
+        worker["status"] = "retry_backoff"
+        worker["next_retry_at"] = "2020-01-01T00:00:00Z"
+        tmp_root = Path(self.tmp.name)
+
+        class PinnedRetryAdapter:
+            def deliver(self, req: Any) -> DeliveryResult:
+                launched.append(req)
+                idx = len(launched)
+                return DeliveryResult(
+                    ok=True,
+                    target=req.agent_id,
+                    adapter="claude_cli",
+                    mode="claude_cli",
+                    auto_delivered=True,
+                    manual_confirmation_required=False,
+                    run_id=f"run-notif-{idx}",
+                    session_id=f"sess-notif-{idx}",
+                    resume_token=f"sess-notif-{idx}",
+                    pid=41000 + idx,
+                    command=["claude", "-p", req.message],
+                    log_path=str(tmp_root / f"run-notif-{idx}.log"),
+                    notes="delivered",
+                    metadata={},
+                )
+
+        with mock.patch.object(supervisor, "build_adapter", return_value=PinnedRetryAdapter()):
+            self.assertTrue(
+                supervisor.retry_due_workers(self.config, self.state, provider_report, datetime.now(UTC))
+            )
+        self.assertEqual(worker["status"], "retried")
+        self.assertEqual(self.state["workers"]["run-notif-2"]["status"], "running")
+
+        # Base ancestry remains enforced by resolve_frozen_evidence_base: ancestor succeeds, non-ancestor fails.
+        repo_dir = tmp_root / "ancestry-repo"
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        for git_args in (
+            ["init", "-q", "-b", "dev"],
+            ["config", "user.name", "Test"],
+            ["config", "user.email", "test@example.invalid"],
+        ):
+            subprocess.run(["git", *git_args], cwd=repo_dir, check=True, capture_output=True, text=True)
+        (repo_dir / "a.txt").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "a.txt"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "commit", "-qm", "base"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        ancestor_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo_dir, check=True, capture_output=True, text=True
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "switch", "-q", "-c", "task/T-CUSTODY"],
+            cwd=repo_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        (repo_dir / "b.txt").write_text("task\n", encoding="utf-8")
+        subprocess.run(["git", "add", "b.txt"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "commit", "-qm", "task"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "switch", "-q", "dev"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        (repo_dir / "c.txt").write_text("diverged\n", encoding="utf-8")
+        subprocess.run(["git", "add", "c.txt"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "commit", "-qm", "diverged"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        non_ancestor_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo_dir, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+        resolved_ok, err_ok = supervisor.resolve_frozen_evidence_base(
+            repo_dir,
+            repository_id="pantheon",
+            default_branch="dev",
+            branch="task/T-CUSTODY",
+            sha=ancestor_sha,
+        )
+        self.assertIsNotNone(resolved_ok)
+        self.assertIsNone(err_ok)
+
+        resolved_bad, err_bad = supervisor.resolve_frozen_evidence_base(
+            repo_dir,
+            repository_id="pantheon",
+            default_branch="dev",
+            branch="task/T-CUSTODY",
+            sha=non_ancestor_sha,
+        )
+        self.assertIsNone(resolved_bad)
+        self.assertIn("frozen_evidence_base_not_task_ancestor", str(err_bad))
+
+    def test_review_churn_blocked_escalation_refuses_until_continuation_approval_is_consumed_to_todo(
+        self,
+    ) -> None:
+        from adapters.base import DeliveryResult
+
+        provider_report = self._provider_report()
+        tmp_root = Path(self.tmp.name)
+
+        def make_churn_task(**overrides: Any) -> dict[str, Any]:
+            task: dict[str, Any] = {
+                "id": "T-CUSTODY",
+                "title": "Custody",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "status": "blocked",
+                "waiting_for": "Human/Ops",
+                "task_class": "implementation",
+                "depends_on": [],
+                "review_reopen_count": 6,
+                "review_churn_escalated_at_count": 6,
+                "review_churn_escalated_at": "2026-08-30T00:00:00Z",
+                "next": "Escalated to Human/Ops after 6 reviewer reopens.",
+            }
+            task.update(overrides)
+            return task
+
+        def make_approval(**overrides: Any) -> dict[str, Any]:
+            approval: dict[str, Any] = {
+                "approval_id": "apr-custody-1",
+                "approval_type": "human_ops_continuation",
+                "status": "issued",
+                "task_id": "T-CUSTODY",
+                "task_scope": "T-CUSTODY",
+                "scope": {"task_id": "T-CUSTODY"},
+                "reason": "Human reviewed the churn evidence and authorized one continuation.",
+                "issued_by": "Human/Ops",
+                "issued_at": "2026-08-30T00:00:00Z",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "nonce": "nonce-custody-valid-1",
+                "review_reopen_count": 6,
+                "review_churn_escalated_at_count": 6,
+                "review_churn_escalated_at": "2026-08-30T00:00:00Z",
+                "consumed_at": None,
+                "consumed_by": None,
+                "consumption_reason": None,
+            }
+            approval.update(overrides)
+            return approval
+
+        negative_cases = (
+            "missing_approval",
+            "invalid_issuer",
+            "invalid_scope",
+            "invalid_epoch",
+            "expired_approval",
+            "not_yet_consumed_approval",
+            "replayed_consumed_permit",
+        )
+
+        for case_name in negative_cases:
+            with self.subTest(case=case_name):
+                if case_name == "missing_approval":
+                    self.task = make_churn_task()
+                elif case_name == "invalid_issuer":
+                    self.task = make_churn_task(human_continuation_approval=make_approval(issued_by="Claude"))
+                elif case_name == "invalid_scope":
+                    self.task = make_churn_task(
+                        human_continuation_approval=make_approval(
+                            task_id="OTHER-TASK",
+                            task_scope="OTHER-TASK",
+                            scope={"task_id": "OTHER-TASK"},
+                        )
+                    )
+                elif case_name == "invalid_epoch":
+                    self.task = make_churn_task(
+                        human_continuation_approval=make_approval(review_churn_escalated_at_count=5)
+                    )
+                elif case_name == "expired_approval":
+                    self.task = make_churn_task(
+                        human_continuation_approval=make_approval(expires_at="2020-01-01T00:00:00Z")
+                    )
+                elif case_name == "not_yet_consumed_approval":
+                    self.task = make_churn_task(human_continuation_approval=make_approval())
+                elif case_name == "replayed_consumed_permit":
+                    self.task = make_churn_task(
+                        human_continuation_approval=make_approval(
+                            approval_id="apr-custody-replay",
+                            nonce="nonce-custody-reused",
+                        ),
+                        human_continuation_approval_history=[
+                            make_approval(
+                                approval_id="apr-custody-old",
+                                nonce="nonce-custody-reused",
+                                status="consumed",
+                            )
+                        ],
+                    )
+                self._write_board()
+                self.state = {"workers": {}, "queue": {"events": {}}}
+
+                if case_name != "not_yet_consumed_approval":
+                    with (
+                        mock.patch.object(ai_status, "merged_orchestrator_config", return_value=self.config),
+                        mock.patch.object(
+                            supervisor,
+                            "commit_canonical_task_transition",
+                            side_effect=lambda _cfg, st: Path(self.config["paths"]["status_file"]).write_text(
+                                json.dumps(st), encoding="utf-8"
+                            )
+                            or True,
+                        ),
+                    ):
+                        supervisor.consume_human_continuation_approvals(self.config, self.state)
+
+                current_task = supervisor.load_status(self.config)["tasks"][0]
+                self.assertEqual(current_task["status"], "blocked")
+
+                Path(self.config["paths"]["event_queue"]).unlink(missing_ok=True)
+                self.assertTrue(github_bus.queue_resume_for_task(self.config, current_task))
+                events = runtime_state.load_event_queue(self.config)
+                self.assertEqual(len(events), 1)
+                event_id = str(events[0]["event_id"])
+                self.assertIn(
+                    "Human gate",
+                    str(
+                        supervisor.owner_notification_block_reason(
+                            self.config, events[0], {current_task["id"]: current_task}
+                        )
+                    ),
+                )
+                with (
+                    mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+                    mock.patch.object(supervisor, "build_adapter") as adapter_mock,
+                ):
+                    self.assertTrue(supervisor.process_queue(self.config, self.state, provider_report))
+                    adapter_mock.assert_not_called()
+                record = self.state["queue"]["events"][event_id]
+                self.assertEqual(record["status"], "completed")
+                self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+                self.assertEqual(record.get("attempt_count", 0), 0)
+                self.assertEqual(self.state["workers"], {})
+
+        # Legitimately consumed original approval completes transition to todo and remains eligible under normal gates.
+        self.task = make_churn_task(human_continuation_approval=make_approval())
+        self._write_board()
+        self.state = {"workers": {}, "queue": {"events": {}}}
+        with (
+            mock.patch.object(ai_status, "merged_orchestrator_config", return_value=self.config),
+            mock.patch.object(
+                supervisor,
+                "commit_canonical_task_transition",
+                side_effect=lambda _cfg, st: Path(self.config["paths"]["status_file"]).write_text(
+                    json.dumps(st), encoding="utf-8"
+                )
+                or True,
+            ),
+        ):
+            self.assertTrue(supervisor.consume_human_continuation_approvals(self.config, self.state))
+
+        resumed_task = supervisor.load_status(self.config)["tasks"][0]
+        self.assertEqual(resumed_task["status"], "todo")
+        self.assertNotIn("waiting_for", resumed_task)
+        self.assertNotIn("human_continuation_approval", resumed_task)
+        self.assertEqual(resumed_task["human_continuation_approval_history"][-1]["status"], "consumed")
+        self.assertEqual(resumed_task["review_churn_reassigned_at_count"], 6)
+
+        Path(self.config["paths"]["event_queue"]).unlink(missing_ok=True)
+        self.assertTrue(github_bus.queue_resume_for_task(self.config, resumed_task))
+        post_events = runtime_state.load_event_queue(self.config)
+        self.assertEqual(len(post_events), 1)
+        post_event_id = str(post_events[0]["event_id"])
+        self.assertIsNone(
+            supervisor.owner_notification_block_reason(
+                self.config, post_events[0], {resumed_task["id"]: resumed_task}
+            )
+        )
+
+        post_launched: list[Any] = []
+
+        class PostConsumeAdapter:
+            def deliver(self, req: Any) -> DeliveryResult:
+                post_launched.append(req)
+                return DeliveryResult(
+                    ok=True,
+                    target=req.agent_id,
+                    adapter="claude_cli",
+                    mode="claude_cli",
+                    auto_delivered=True,
+                    manual_confirmation_required=False,
+                    run_id="run-post-consume-1",
+                    session_id="sess-post-consume-1",
+                    resume_token="sess-post-consume-1",
+                    pid=43001,
+                    command=["claude", "-p", req.message],
+                    log_path=str(tmp_root / "run-post-consume-1.log"),
+                    notes="delivered",
+                    metadata={},
+                )
+
+        with (
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+            mock.patch.object(supervisor, "build_adapter", return_value=PostConsumeAdapter()),
+        ):
+            self.assertTrue(supervisor.process_queue(self.config, self.state, provider_report))
+
+        self.assertEqual(len(post_launched), 1)
+        post_worker = self.state["workers"]["run-post-consume-1"]
+        post_record = self.state["queue"]["events"][post_event_id]
+        self.assertEqual(post_worker["status"], "running")
+        self.assertEqual(post_record["status"], "started")
+        self.assertEqual(post_record["attempt_count"], 1)
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid,
+        ):
+            supervisor.poll_workers(self.config, self.state, provider_report=provider_report)
+        self.assertEqual(post_worker["status"], "running")
+        terminate_pid.assert_not_called()
+        self.assertIsNone(
+            supervisor.worker_failure_policy._execution_authority_refusal(self.config, post_worker)
+        )
+
+    def test_consumed_churn_epoch_and_completed_rotation_keep_ordinary_blocked_notification_through_poll(
+        self,
+    ) -> None:
+        # Fields exactly as the original consumer and the rotation policy leave them:
+        # history/escalation timestamps are retained and the reassignment checkpoint
+        # is advanced to the consumed epoch; a past rotation only sets the checkpoint.
+        consumed_epoch = {
+            "review_reopen_count": 6,
+            "review_churn_escalated_at_count": 6,
+            "review_churn_escalated_at": "2026-08-30T00:00:00Z",
+            "review_churn_reassigned_at_count": 6,
+            "review_churn_continuation_consumed_at": "2026-08-30T01:00:00Z",
+            "review_churn_continuation_consumed_by": "Human/Ops",
+            "human_continuation_approval_history": [
+                {
+                    "approval_id": "apr-custody-consumed",
+                    "status": "consumed",
+                    "task_id": "T-CUSTODY",
+                    "nonce": "nonce-custody-consumed",
+                    "issued_by": "Human/Ops",
+                    "consumed_at": "2026-08-30T01:00:00Z",
+                    "consumed_by": "Orchestrator",
+                }
+            ],
+            "next": "Waiting for Human/Ops answer on fixture question; review churn epoch already consumed.",
+        }
+        completed_rotation = {
+            "review_reopen_count": 2,
+            "review_churn_reassigned_at_count": 2,
+            "review_churn_previous_owner": "Antigravity",
+            "review_churn_last_reassigned_at": "2026-11-07T11:45:45Z",
+            "review_churn_epoch_failed_owners": ["Antigravity"],
+            "next": "Auto-reassigned ownership after 2 reviewer reopens; now waiting for an answer.",
+        }
+        for case_name, task_updates in (
+            ("consumed_epoch", consumed_epoch),
+            ("completed_rotation", completed_rotation),
+        ):
+            with self.subTest(case=case_name):
+                worker, record, event_id, launched, provider_report = self._deliver_blocked_owner_notification(
+                    **json.loads(json.dumps(task_updates))
+                )
+                for task_status, heartbeat in (
+                    ("blocked", None),
+                    ("blocked", supervisor.utc_now()),
+                    ("in_progress", None),
+                    ("in_progress", supervisor.utc_now()),
+                ):
+                    self.task["status"] = task_status
+                    if task_status == "in_progress":
+                        self.task.pop("waiting_for", None)
+                    self._write_board()
+                    worker["last_heartbeat_at"] = heartbeat
+                    with (
+                        mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                        mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+                        mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid,
+                    ):
+                        supervisor.poll_workers(self.config, self.state, provider_report=provider_report)
+                    self.assertEqual(worker["status"], "running")
+                    self.assertEqual(record["status"], "started")
+                    self.assertEqual(record["lease_owner"], worker["run_id"])
+                    self.assertEqual(self._queue_ids(), [event_id])
+                    terminate_pid.assert_not_called()
+                    self.assertIsNone(
+                        supervisor.worker_failure_policy._execution_authority_refusal(self.config, worker)
+                    )
+                self.assertEqual(len(launched), 1)
+                # Waking the owner changes no task truth: counters/history are untouched.
+                board_task = supervisor.load_status(self.config)["tasks"][0]
+                for field, value in task_updates.items():
+                    if field != "next":
+                        self.assertEqual(board_task[field], value)
+
+    def test_new_churn_after_consumed_epoch_and_pending_permit_still_refuse_blocked_notification(self) -> None:
+        provider_report = self._provider_report()
+        consumed = {
+            "id": "T-CUSTODY",
+            "title": "Custody",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "blocked",
+            "waiting_for": "Human/Ops",
+            "task_class": "implementation",
+            "depends_on": [],
+            "review_reopen_count": 6,
+            "review_churn_escalated_at_count": 6,
+            "review_churn_escalated_at": "2026-08-30T00:00:00Z",
+            "review_churn_reassigned_at_count": 6,
+            "review_churn_continuation_consumed_at": "2026-08-30T01:00:00Z",
+        }
+        cases = {
+            # A later reopen epoch escalated again and nobody consumed it yet.
+            "new_unconsumed_churn_epoch": {
+                "review_reopen_count": 12,
+                "review_churn_escalated_at_count": 12,
+                "review_churn_escalated_at": "2026-09-30T00:00:00Z",
+            },
+            # A permit is present but the sole consumer has not run (or rejected it).
+            "pending_permit_on_consumed_epoch": {
+                "human_continuation_approval": {
+                    "approval_id": "apr-custody-pending",
+                    "status": "issued",
+                    "task_id": "T-CUSTODY",
+                    "nonce": "nonce-custody-consumed",
+                    "issued_by": "Human/Ops",
+                },
+            },
+            "malformed_epoch_checkpoint": {"review_churn_reassigned_at_count": "six"},
+        }
+        for case_name, overrides in cases.items():
+            with self.subTest(case=case_name):
+                self.task = {**json.loads(json.dumps(consumed)), **overrides}
+                self._write_board()
+                Path(self.config["paths"]["event_queue"]).unlink(missing_ok=True)
+                self.state = {"workers": {}, "queue": {"events": {}}}
+                self.assertTrue(github_bus.queue_resume_for_task(self.config, self.task))
+                events = runtime_state.load_event_queue(self.config)
+                self.assertEqual(len(events), 1)
+                event_id = str(events[0]["event_id"])
+                self.assertIn(
+                    "Human gate",
+                    str(supervisor.owner_notification_block_reason(self.config, events[0], {"T-CUSTODY": self.task})),
+                )
+                with (
+                    mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+                    mock.patch.object(supervisor, "build_adapter") as adapter_mock,
+                ):
+                    self.assertTrue(supervisor.process_queue(self.config, self.state, provider_report))
+                    adapter_mock.assert_not_called()
+                record = self.state["queue"]["events"][event_id]
+                self.assertEqual(record["status"], "completed")
+                self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+                self.assertEqual(record.get("attempt_count", 0), 0)
+                self.assertEqual(self.state["workers"], {})
+
+    def _assert_blocked_notification_refused_before_launch(self, task: dict[str, Any]) -> None:
+        self.task = json.loads(json.dumps(task))
+        self._write_board()
+        Path(self.config["paths"]["event_queue"]).unlink(missing_ok=True)
+        self.state = {"workers": {}, "queue": {"events": {}}}
+        self.assertTrue(github_bus.queue_resume_for_task(self.config, self.task))
+        events = runtime_state.load_event_queue(self.config)
+        self.assertEqual(len(events), 1)
+        event_id = str(events[0]["event_id"])
+        self.assertEqual(events[0]["reason"], "github_retry")
+        self.assertIn(
+            "Human gate",
+            str(supervisor.owner_notification_block_reason(self.config, events[0], {"T-CUSTODY": self.task})),
+        )
+        with (
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+            mock.patch.object(supervisor, "build_adapter") as adapter_mock,
+        ):
+            self.assertTrue(supervisor.process_queue(self.config, self.state, self._provider_report()))
+            adapter_mock.assert_not_called()
+        record = self.state["queue"]["events"][event_id]
+        self.assertEqual(record["status"], "completed")
+        self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+        self.assertEqual(record.get("attempt_count", 0), 0)
+        self.assertEqual(self.state["workers"], {})
+        self.assertEqual(supervisor.load_status(self.config)["tasks"][0]["status"], "blocked")
+
+    def test_no_viable_alternative_owner_churn_block_refuses_notification_until_consumed_then_resumes(
+        self,
+    ) -> None:
+        # Produce the Human/Ops block with the original review-churn policy itself:
+        # Antigravity already failed this epoch, so Claude has no viable alternative.
+        producer_config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {"enabled": True, "reassign_after_reopens": 2, "require_different_account_pool": True},
+                "owner_fallbacks": {"Claude": ["Antigravity"], "Antigravity": ["Claude"]},
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity", "account_pool": "agy"},
+                "claude": {"display_name": "Claude", "provider": "claude", "account_pool": "claude_main"},
+                "codex": {"display_name": "Codex", "provider": "codex", "account_pool": "codex_main"},
+            },
+        }
+        before = {
+            "id": "T-CUSTODY",
+            "title": "Custody",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "in_progress",
+            "task_class": "implementation",
+            "depends_on": [],
+            "review_reopen_count": 4,
+            "review_churn_reassigned_at_count": 2,
+            "review_churn_previous_owner": "Antigravity",
+            "review_churn_last_reassigned_at": "2026-11-07T09:00:00Z",
+            "review_churn_epoch_failed_owners": ["Antigravity"],
+        }
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            self.assertTrue(
+                supervisor.reassign_tasks_after_review_churn(
+                    producer_config, {}, {"tasks": [json.loads(json.dumps(before))]}
+                )
+            )
+        produced = persist.call_args.kwargs
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "review_churn_blocked")
+        self.assertEqual(produced["new_owner"], "Claude")
+        self.assertEqual(produced["new_status"], "blocked")
+        self.assertEqual(produced["new_waiting_for"], "Human/Ops")
+        self.assertNotIn("review_churn_escalated_at_count", produced["task_updates"])
+        self.assertEqual(produced["task_updates"]["review_churn_previous_owner"], "Claude")
+        self.assertEqual(produced["task_updates"]["review_churn_reassigned_at_count"], 4)
+        blocked_task = {
+            **before,
+            **produced["task_updates"],
+            "owner": produced["new_owner"],
+            "reviewer": produced["new_reviewer"],
+            "status": produced["new_status"],
+            "waiting_for": produced["new_waiting_for"],
+            "next": produced["message"],
+        }
+        # The original continuation gate treats this shape as review-churn recovery,
+        # so only its sole consumer may release it.
+        self.assertIsNone(ai_status.continuation_approval_gate_error(blocked_task))
+        blocked_at = blocked_task["review_churn_last_reassigned_at"]
+
+        approval = {
+            "approval_id": "apr-custody-exhausted",
+            "approval_type": "human_ops_continuation",
+            "status": "issued",
+            "task_id": "T-CUSTODY",
+            "task_scope": "T-CUSTODY",
+            "scope": {"task_id": "T-CUSTODY"},
+            "reason": "Human reviewed the exhausted-owner churn and authorized one continuation.",
+            "issued_by": "Human/Ops",
+            "issued_at": "2026-08-30T00:00:00Z",
+            "expires_at": "2099-01-01T00:00:00Z",
+            "nonce": "nonce-custody-exhausted-1",
+            "review_reopen_count": 4,
+            "consumed_at": None,
+            "consumed_by": None,
+            "consumption_reason": None,
+        }
+        refused_cases = {
+            "unconsumed_no_alternative_block": {},
+            "pending_permit_not_yet_consumed": {"human_continuation_approval": dict(approval)},
+            # An earlier epoch was consumed, then the producer fail-closed again later.
+            "consumed_before_a_later_block": {"review_churn_continuation_consumed_at": "2026-11-07T08:00:00Z"},
+            "malformed_block_timestamp": {
+                "review_churn_last_reassigned_at": "not-a-time",
+                "review_churn_continuation_consumed_at": "2099-01-01T00:00:00Z",
+            },
+            "malformed_consumed_timestamp": {"review_churn_continuation_consumed_at": "not-a-time"},
+        }
+        for case_name, overrides in refused_cases.items():
+            with self.subTest(case=case_name):
+                self._assert_blocked_notification_refused_before_launch({**blocked_task, **overrides})
+
+        # The sole existing consumer releases it through its normal transition.
+        self.task = {**json.loads(json.dumps(blocked_task)), "human_continuation_approval": dict(approval)}
+        self._write_board()
+        self.state = {"workers": {}, "queue": {"events": {}}}
+        with (
+            mock.patch.object(ai_status, "merged_orchestrator_config", return_value=self.config),
+            mock.patch.object(
+                supervisor,
+                "commit_canonical_task_transition",
+                side_effect=lambda _cfg, st: Path(self.config["paths"]["status_file"]).write_text(
+                    json.dumps(st), encoding="utf-8"
+                )
+                or True,
+            ),
+        ):
+            self.assertTrue(supervisor.consume_human_continuation_approvals(self.config, self.state))
+        resumed = supervisor.load_status(self.config)["tasks"][0]
+        self.assertEqual(resumed["status"], "todo")
+        self.assertEqual(resumed["human_continuation_approval_history"][-1]["status"], "consumed")
+        self.assertEqual(resumed["review_churn_previous_owner"], "Claude")
+        self.assertEqual(resumed["review_churn_last_reassigned_at"], blocked_at)
+        self.assertGreaterEqual(
+            supervisor._parse_iso_utc(resumed["review_churn_continuation_consumed_at"]),
+            supervisor._parse_iso_utc(blocked_at),
+        )
+
+        # A later ordinary question on the consumed epoch still wakes the owner
+        # through real poll custody, without changing any churn counter/history.
+        churn_fields = {
+            key: value
+            for key, value in resumed.items()
+            if key.startswith("review_") or key.startswith("human_continuation_approval")
+        }
+        worker, record, event_id, launched, provider_report = self._deliver_blocked_owner_notification(
+            **json.loads(json.dumps(churn_fields)),
+            next="Waiting for Human/Ops answer on fixture question after consumed continuation.",
+        )
+        for task_status, heartbeat in (
+            ("blocked", None),
+            ("blocked", supervisor.utc_now()),
+            ("in_progress", None),
+            ("in_progress", supervisor.utc_now()),
+        ):
+            self.task["status"] = task_status
+            if task_status == "in_progress":
+                self.task.pop("waiting_for", None)
+            self._write_board()
+            worker["last_heartbeat_at"] = heartbeat
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+                mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid,
+            ):
+                supervisor.poll_workers(self.config, self.state, provider_report=provider_report)
+            self.assertEqual(worker["status"], "running")
+            self.assertEqual(record["status"], "started")
+            self.assertEqual(record["lease_owner"], worker["run_id"])
+            self.assertEqual(self._queue_ids(), [event_id])
+            terminate_pid.assert_not_called()
+            self.assertIsNone(supervisor.worker_failure_policy._execution_authority_refusal(self.config, worker))
+        self.assertEqual(len(launched), 1)
+        board_task = supervisor.load_status(self.config)["tasks"][0]
+        for field, value in churn_fields.items():
+            self.assertEqual(board_task[field], value)
 
 
 class TestConfigFixtureTests(unittest.TestCase):
