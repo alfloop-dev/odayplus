@@ -6,7 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from common import display_name_for, normalize_agent_id
+from dispatch_policy import is_human_gate_agent
+from multi_repo_registry import resolve_task_repository
 from task_archive import load_archived_task
+from worktree_cleanliness import ProtectedPathPolicyError, task_protected_paths
 
 THIS_DIR = Path(__file__).resolve().parent
 ROOT_DIR = THIS_DIR.parent
@@ -34,6 +37,58 @@ HARD_GATE_MARKERS = {
 }
 DEFAULT_SIDECAR_CATALOG = Path(__file__).with_name("sidecar_catalog.json")
 MAX_SIDECAR_ID_LENGTH = 48
+
+
+def is_capacity_sidecar(task: object) -> bool:
+    """A sidecar this controller created, whose actor is its parent's selection."""
+    return (
+        isinstance(task, dict)
+        and str(task.get("task_class") or "").strip().lower() == "sidecar"
+        and task.get("auto_created_by") == "capacity-controller"
+    )
+
+
+def _parent_selected_owner(config: dict[str, Any], parent: dict[str, Any]) -> str | None:
+    """The parent's registered automatic owner; anything else cannot be inherited."""
+    owner_field = (config.get("schema", {}) or {}).get("assignee_field", "owner")
+    owner = str(parent.get(owner_field) or "").strip()
+    agents = config.get("agents", {}) or {}
+    agent = agents.get(normalize_agent_id(owner)) or agents.get(owner)
+    if not isinstance(agent, dict) or str(agent.get("provider") or "") == "human_gate":
+        return None
+    return owner
+
+
+def parent_sidecar_refusal(config: dict[str, Any], parent: dict[str, Any]) -> str | None:
+    """Why no capacity sidecar may act under this parent, when it is created or later.
+
+    The child never carries the parent's gate, so its own eligibility cannot see it.
+    """
+    from supervisor import runtime_ai_status, task_is_human_gate
+
+    prose = " ".join(str(parent.get(key) or "") for key in ("blocked_reason", "next", "waiting_for")).lower()
+    if str(parent.get("status") or "").lower() == "blocked" and any(marker in prose for marker in HARD_GATE_MARKERS):
+        return "capacity sidecar parent is blocked on a human or manual gate"
+    if parent.get("non_dispatchable"):
+        return "capacity sidecar parent is non-dispatchable"
+    if (
+        task_is_human_gate(parent)
+        or is_human_gate_agent(parent.get("waiting_for"))
+        or runtime_ai_status.task_unresolved_human_or_independent_gate_reason(parent)
+    ):
+        return "capacity sidecar parent is held by a structured human gate"
+    if _parent_selected_owner(config, parent) is None:
+        return "capacity sidecar parent has no registered automatic owner"
+    if "frozen_evidence_base_sha" in parent:
+        return "capacity sidecar cannot carry its parent's frozen evidence base"
+    try:
+        task_protected_paths(parent)
+    except ProtectedPathPolicyError as error:
+        return f"capacity sidecar parent protection is invalid: {error}"
+    source = resolve_task_repository(config, parent)
+    if not source.resolved:
+        return f"capacity sidecar parent source is unresolved: {source.error or source.source}"
+    return None
 
 
 def build_sidecar_task_id(parent_id: str, kind: str) -> str:
@@ -622,15 +677,16 @@ def sidecar_candidates(
             # keeps the catalog, rather than controller heuristics, authoritative.
             if not statuses and not parent_ids and not phase_match:
                 continue
-            prose = " ".join(
-                str(parent.get(key) or "")
-                for key in ("blocked_reason", "next", "waiting_for")
-            ).lower()
-            if parent_status == "blocked" and any(marker in prose for marker in HARD_GATE_MARKERS):
+            # The child record is the only authority downstream. Parent authority
+            # it cannot carry refuses the child here, before it is persisted.
+            if parent_sidecar_refusal(config, parent):
                 continue
             sidecar_id = build_sidecar_task_id(parent_id, kind)
             if sidecar_id in existing_ids or load_archived_task(sidecar_id) is not None:
                 continue
+            parent_owner = _parent_selected_owner(config, parent)
+            protected_paths = task_protected_paths(parent)
+            parent_source = resolve_task_repository(config, parent)
             variables = {
                 "parent_task_id": parent_id,
                 "sidecar_task_id": sidecar_id,
@@ -640,6 +696,20 @@ def sidecar_candidates(
                 _render_template(value, variables)
                 for value in template.get("artifact_targets", [])
             ]
+            # A legacy parent may name no repository and resolve from artifacts the child
+            # does not share. Prefer its declaration or slug: `pantheon` has no slug here
+            # and its child keeps the plain record, since a declared `pantheon` is what the
+            # merge route cannot address. The registry id says it when nothing else lands
+            # on the parent's checkout. An unresolved binding is never a match.
+            for repository in (
+                str(parent.get("repository") or "").strip() or parent_source.slug,
+                parent_source.repo_id,
+            ):
+                child_source = resolve_task_repository(config, {"repository": repository, "artifacts": artifacts})
+                if child_source.resolved and child_source.root == parent_source.root:
+                    break
+            else:
+                continue
             sidecar_dict = {
                 "id": sidecar_id,
                 "title": _render_template(
@@ -651,10 +721,10 @@ def sidecar_candidates(
                 "phase": "Capacity sidecar",
                 "priority": "P3",
                 "status": "todo",
-                "owner": "AUTO_ASSIGN",
+                "owner": parent_owner,
                 "reviewer": "DIFFERENT_AGENT_REQUIRED",
                 "depends_on": [],
-                "repository": parent.get("repository"),
+                "repository": repository,
                 "base_branch": parent.get("base_branch") or "dev",
                 "artifacts": artifacts,
                 "task_class": "sidecar",
@@ -672,6 +742,10 @@ def sidecar_candidates(
             }
             if task_id_field != "id":
                 sidecar_dict[task_id_field] = sidecar_id
+            if protected_paths:
+                sidecar_dict["protected_paths"] = list(protected_paths)
+            if isinstance(parent.get("source_docs"), list):
+                sidecar_dict["source_docs"] = list(parent["source_docs"])
             candidates.append(sidecar_dict)
             existing_signatures.add(signature)
             if len(candidates) >= budget:

@@ -18,8 +18,12 @@ MIGRATION_DIR = THIS_DIR.parent / "scripts" / "orchestrator"
 if str(MIGRATION_DIR) not in sys.path:
     sys.path.insert(0, str(MIGRATION_DIR))
 
+import capacity_controller
 import migrate_worker_worktree_config as migration
 import supervisor
+import task_archive
+import worker_workspace
+import worktree_cleanliness
 
 
 class RegistryBaseCacheTests(unittest.TestCase):
@@ -229,6 +233,551 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         inner = self._git(self.repo, "mktree", stdin=f"160000 commit {self.base}\tzone\n").stdout.strip()
         return self._synthetic_commit(f"040000 tree {inner}\tguarded")
 
+    def _tracked_protected_commit(self) -> str:
+        """A commit tracking a regular synthetic body under the deny prefix."""
+        blob = self._git(self.repo, "hash-object", "-w", "--stdin", stdin="synthetic body\n").stdout.strip()
+        zone = self._git(self.repo, "mktree", stdin=f"100644 blob {blob}\tbody.txt\n").stdout.strip()
+        guarded = self._git(self.repo, "mktree", stdin=f"040000 tree {zone}\tzone\n").stdout.strip()
+        return self._synthetic_commit(f"040000 tree {guarded}\tguarded")
+
+    def test_regular_protected_tree_is_metadata_safe_yet_refused_before_registration(self) -> None:
+        tracked = self._tracked_protected_commit()
+        self.assertEqual(
+            worktree_cleanliness.inspect_protected_git_metadata(self.repo, tracked, PROTECTED).reason, "metadata_safe"
+        )
+        worktree = self.root / "wt-tracked"
+
+        ok, error = supervisor._create_worker_worktree(
+            self.repo, worktree, "task/PROT-TRACKED-001", tracked, protected_paths=PROTECTED
+        )
+
+        self.assertFalse(ok)
+        self.assertIn("protected_entry_tracked", error or "")
+        self.assertFalse(worktree.exists())
+        self.assertNotIn(str(worktree), self._git(self.repo, "worktree", "list").stdout)
+
+    def test_unprotected_task_still_materializes_a_tracked_tree(self) -> None:
+        worktree = self.root / "wt-unprotected"
+        ok, error = supervisor._create_worker_worktree(
+            self.repo, worktree, "task/PLAIN-TRACKED-001", self._tracked_protected_commit()
+        )
+        self.assertTrue(ok, error)
+        self.assertTrue((worktree / "guarded/zone/body.txt").is_file())
+
+    def test_reuse_refuses_ff_and_review_targets_with_a_regular_protected_tree(self) -> None:
+        worktree = self.root / "wt-tracked-ff"
+        self._git(self.repo, "worktree", "add", "-b", "task/PROT-TRACKED-002", str(worktree), self.base)
+        tracked = self._tracked_protected_commit()
+
+        for required_head in (None, tracked):
+            with self.subTest(required_head=required_head):
+                ok, status = supervisor._refresh_reused_worker_worktree(
+                    self.repo, worktree, tracked, "task/PROT-TRACKED-002",
+                    required_head=required_head, protected_paths=PROTECTED,
+                )
+                self.assertFalse(ok)
+                self.assertIn("protected_entry_tracked", status)
+                self.assertEqual(self._rev(worktree, "HEAD"), self.base)
+                self.assertFalse((worktree / "guarded").exists())
+
+    def test_checkout_already_holding_a_protected_tree_refuses_before_status_and_keeps_wip(self) -> None:
+        tracked = self._tracked_protected_commit()
+        worktree = self.root / "wt-tracked-head"
+        self._git(self.repo, "worktree", "add", "--no-checkout", "-b", "task/PROT-TRACKED-003", str(worktree), tracked)
+        (worktree / "owner-wip.txt").write_text("keep me\n", encoding="utf-8")
+        commands: list[list[str]] = []
+        real_run = subprocess.run
+
+        def recording_run(args, *a, **kw):
+            commands.append(list(args))
+            return real_run(args, *a, **kw)
+
+        with mock.patch("subprocess.run", side_effect=recording_run):
+            ok, status = supervisor._refresh_reused_worker_worktree(
+                self.repo, worktree, self.base, "task/PROT-TRACKED-003", protected_paths=PROTECTED
+            )
+            identity = worker_workspace.compute_worktree_state_identity(worktree, protected_paths=PROTECTED)
+
+        self.assertFalse(ok)
+        self.assertIn("protected_entry_tracked", status)
+        self.assertTrue(identity.startswith("protected_metadata_refused:"), identity)
+        self.assertFalse([cmd for cmd in commands if cmd[:2] == ["git", "status"]])
+        self.assertEqual((worktree / "owner-wip.txt").read_text(encoding="utf-8"), "keep me\n")
+
+    def test_handoff_seal_refuses_a_protected_tree_the_owner_committed(self) -> None:
+        tracked = self._tracked_protected_commit()
+        worktree = self.root / "wt-tracked-seal"
+        self._git(self.repo, "worktree", "add", "--no-checkout", "-b", "task/PROT-TRACKED-004", str(worktree), tracked)
+        worker = {
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": str(worktree),
+            "workspace_branch": "task/PROT-TRACKED-004",
+            "task_id": "PROT-TRACKED-004",
+            "request_snapshot": {"metadata": {"protected_paths": PROTECTED}},
+        }
+        seal = supervisor.seal_worker_handoff({}, {}, worker, {"id": "PROT-TRACKED-004"})
+        self.assertFalse(seal.accepted)
+        self.assertEqual(seal.reason, "protected_metadata_refused")
+
+    # --- what the checkout holds now, ahead of every reader that would read it
+
+    def _protected_checkout(self, task_id: str) -> tuple[Path, str, dict, dict, dict]:
+        branch = f"task/{task_id}"
+        worktree = (self.root / "worktrees" / "pantheon" / task_id.lower()).resolve()
+        self._git(self.repo, "worktree", "add", "-b", branch, str(worktree), self.base)
+        task = {"id": task_id, "status": "review", "owner": "Claude", "reviewer": "Codex", "branch": branch}
+        status_file = self.root / "ai-status.json"
+        status_file.write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+        config = {
+            "paths": {
+                "status_file": str(status_file),
+                "activity_log": str(self.root / "activity.jsonl"),
+                "state_file": str(self.root / "state.json"),
+            },
+            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            "coordination": {
+                "repositories": {"pantheon": {"repo": None, "local_path": str(self.repo), "default_branch": "dev"}}
+            },
+            "worker_worktrees": {"root": str(self.root / "worktrees")},
+        }
+        worker = {
+            "run_id": f"run-{task_id}",
+            "task_id": task_id,
+            "status": "running",
+            "pid": os.getpid(),
+            "last_heartbeat_at": supervisor.utc_now(),
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": str(worktree),
+            "workspace_branch": branch,
+            "repository_id": "pantheon",
+            "request_snapshot": {"reason": "review_ready_dispatch", "metadata": {"protected_paths": PROTECTED}},
+        }
+        return worktree, branch, config, worker, task
+
+    @staticmethod
+    def _plant_staged_body(worktree: Path) -> None:
+        body = worktree / "guarded/zone/staged.txt"
+        body.parent.mkdir(parents=True)
+        body.write_text("aaaa\n", encoding="utf-8")
+        ProtectedWorktreeLifecycleTests._git(worktree, "add", "guarded/zone/staged.txt")
+        body.write_text("bbbb\n", encoding="utf-8")
+
+    @staticmethod
+    def _plant_index_only_body(worktree: Path) -> None:
+        ProtectedWorktreeLifecycleTests._plant_staged_body(worktree)
+        (worktree / "guarded/zone/staged.txt").unlink()
+        (worktree / "guarded/zone").rmdir()
+
+    @staticmethod
+    def _plant_untracked_ignore(worktree: Path) -> None:
+        (worktree / "guarded/zone").mkdir(parents=True)
+        (worktree / "guarded/zone/.gitignore").write_text("hidden.txt\n", encoding="utf-8")
+        (worktree / "guarded/zone/kept.txt").write_text("kept\n", encoding="utf-8")
+
+    @staticmethod
+    def _plant_untracked_file_at_root(worktree: Path) -> None:
+        (worktree / "guarded").mkdir()
+        (worktree / "guarded/zone").write_text("a file in the directory's place\n", encoding="utf-8")
+
+    @staticmethod
+    def _plant_fifo_at_root(worktree: Path) -> None:
+        (worktree / "guarded").mkdir()
+        os.mkfifo(worktree / "guarded/zone")
+
+    def _read_through_every_entry(self, worktree: Path, branch: str, config: dict, worker: dict, task: dict) -> dict:
+        """Each original caller that hands the checkout to status, hashing or copying."""
+        state: dict = {
+            "workers": {worker["run_id"]: worker},
+            "worker_worktrees": {
+                "handoff_blocks": {
+                    task["id"]: {
+                        "owner": "Claude",
+                        "workspace_path": str(worktree),
+                        "workspace_branch": branch,
+                        "head_sha": self.base,
+                        "dirt_fingerprint": "recorded",
+                        "reason": "owner_dirty",
+                    }
+                }
+            },
+        }
+        outcomes: dict = {}
+        outcomes["refresh"] = supervisor._refresh_reused_worker_worktree(
+            self.repo, worktree, self.base, branch, protected_paths=PROTECTED
+        )
+        outcomes["identity"] = worker_workspace.compute_worktree_state_identity(worktree, protected_paths=PROTECTED)
+        worker_workspace.observe_worker_worktree_activity(config, state, worker, task)
+        outcomes["observer"] = worker["worktree_activity"]
+        outcomes["seal"] = supervisor.seal_worker_handoff(config, state, worker, task)
+        request = supervisor.DeliveryRequest(
+            agent_id="claude",
+            provider="claude",
+            delivery_mode="claude",
+            message="wake",
+            task_id=task["id"],
+            reason="owned_in_progress_dispatch",
+            metadata={"protected_paths": PROTECTED},
+        )
+        outcomes["continuation"] = supervisor.sealed_owner_continuation_allowed(
+            config, state, request, task, target_agent="Claude", worktree_path=worktree, branch=branch
+        )
+        outcomes["preempt"] = supervisor.worker_can_be_preempted(config, worker, {task["id"]: task}, state)
+        outcomes["quarantine"] = worker_workspace._quarantine_and_preserve_dirty_worktree(
+            config, state, worktree, task["id"], expected_branch=branch, run_id=worker["run_id"],
+            owning_repo_root=self.repo, protected_paths=PROTECTED,
+        )
+        outcomes["preserve"] = supervisor.preserve_dead_worker_worktree(config, state, worker, task=task)
+        return outcomes
+
+    def test_body_only_in_index_or_on_disk_is_refused_before_any_reader_runs(self) -> None:
+        plants = (
+            self._plant_staged_body,
+            self._plant_index_only_body,
+            self._plant_untracked_ignore,
+            self._plant_untracked_file_at_root,
+            self._plant_fifo_at_root,
+        )
+        commands: list[list[str]] = []
+        real_run = subprocess.run
+
+        def recording_run(args, *a, **kw):
+            commands.append(list(args))
+            return real_run(args, *a, **kw)
+
+        for number, plant in enumerate(plants):
+            with self.subTest(plant.__name__):
+                commands.clear()
+                worktree, branch, config, worker, task = self._protected_checkout(f"PROT-BODY-{number}")
+                plant(worktree)
+                self.assertEqual(
+                    worktree_cleanliness.inspect_protected_git_metadata(
+                        worktree, "HEAD", PROTECTED, worktree_path=worktree, check_index=True
+                    ).reason,
+                    "metadata_safe",
+                    "the gap this closes: the metadata verdict alone lets a reader through",
+                )
+                with mock.patch("subprocess.run", side_effect=recording_run):
+                    outcomes = self._read_through_every_entry(worktree, branch, config, worker, task)
+
+                self.assertEqual([c for c in commands if "status" in c or "diff" in c], [])
+                self.assertFalse(outcomes["refresh"][0])
+                self.assertIn("protected_entry_", outcomes["refresh"][1])
+                self.assertTrue(outcomes["identity"].startswith("protected_metadata_refused:"), outcomes["identity"])
+                self.assertEqual(
+                    (outcomes["observer"]["status"], outcomes["observer"]["reason"]),
+                    ("unverifiable", "protected_metadata_refused"),
+                )
+                self.assertEqual((outcomes["seal"].accepted, outcomes["seal"].reason), (False, "protected_metadata_refused"))
+                self.assertEqual(outcomes["continuation"], (False, "protected_metadata_refused"))
+                self.assertFalse(outcomes["preempt"])
+                for name in ("quarantine", "preserve"):
+                    self.assertFalse(outcomes[name], name)
+                    self.assertEqual(outcomes[name].reason, "protected_metadata_refused", name)
+                self.assertFalse((self.root / ".orchestrator" / "worktree-dirt-backups").exists())
+
+    def test_empty_mount_point_of_a_real_protected_launch_stays_a_healthy_checkout(self) -> None:
+        worktree, branch, config, worker, task = self._protected_checkout("PROT-MOUNT-001")
+        for name, ready in (
+            ("nothing there", lambda: None),
+            ("mount point", lambda: worktree_cleanliness.plan_protected_execution(worktree, PROTECTED)),
+        ):
+            with self.subTest(name):
+                ready()
+                self.assertEqual((worktree / PROTECTED[0]).is_dir(), name == "mount point")
+                outcomes = self._read_through_every_entry(worktree, branch, config, worker, task)
+                self.assertTrue(outcomes["refresh"][0], outcomes["refresh"][1])
+                self.assertEqual(outcomes["identity"], f"clean:{self.base}")
+                self.assertEqual(outcomes["observer"]["status"], "verified")
+                self.assertTrue(outcomes["seal"].accepted, outcomes["seal"].reason)
+                self.assertEqual(outcomes["continuation"], (False, "dirt_changed"))
+                self.assertTrue(outcomes["preempt"])
+                for key in ("quarantine", "preserve"):
+                    self.assertEqual(outcomes[key].reason, "worktree_clean", key)
+
+    def test_owner_dirt_beside_a_mount_point_keeps_its_sealed_continuation_and_backup(self) -> None:
+        worktree, branch, config, worker, task = self._protected_checkout("PROT-MOUNT-002")
+        worktree_cleanliness.plan_protected_execution(worktree, PROTECTED)
+        (worktree / "owner-wip.txt").write_text("keep me\n", encoding="utf-8")
+        seal = supervisor.seal_worker_handoff(config, {}, worker, task)
+        self.assertEqual((seal.accepted, seal.reason), (False, "owner_dirty"))
+        state: dict = {"workers": {}}
+        supervisor.record_unsealed_worker_handoff(config, state, worker, task, seal)
+        request = supervisor.DeliveryRequest(
+            agent_id="claude",
+            provider="claude",
+            delivery_mode="claude",
+            message="wake",
+            task_id=task["id"],
+            reason="owned_in_progress_dispatch",
+            metadata={"protected_paths": PROTECTED},
+        )
+        allowed, detail = supervisor.sealed_owner_continuation_allowed(
+            config, state, request, task, target_agent="Claude", worktree_path=worktree, branch=branch
+        )
+        self.assertTrue(allowed, detail)
+        outcome = worker_workspace._quarantine_and_preserve_dirty_worktree(
+            config, state, worktree, task["id"], expected_branch=branch, run_id=worker["run_id"],
+            owning_repo_root=self.repo, protected_paths=PROTECTED,
+        )
+        self.assertTrue(outcome, getattr(outcome, "reason", ""))
+        self.assertEqual((worktree / "owner-wip.txt").read_text(encoding="utf-8"), "keep me\n")
+
+    def test_preemption_denies_on_task_or_recorded_protection_alone(self) -> None:
+        worktree, _branch, config, worker, task = self._protected_checkout("PROT-PREEMPT-001")
+        self._plant_untracked_ignore(worktree)
+        for name, recorded, on_task in (("recorded only", PROTECTED, None), ("task only", None, PROTECTED)):
+            with self.subTest(name):
+                worker["request_snapshot"]["metadata"] = {"protected_paths": recorded} if recorded else {}
+                record = {**task, "protected_paths": on_task} if on_task else task
+                with mock.patch("worktree_cleanliness.inspect_worktree") as inspect:
+                    self.assertFalse(supervisor.worker_can_be_preempted(config, worker, {task["id"]: record}, {}))
+                inspect.assert_not_called()
+
+    def test_entry_beside_the_prefix_is_not_refused(self) -> None:
+        worktree, _branch, config, worker, task = self._protected_checkout("PROT-SIBLING-001")
+        (worktree / "guarded").mkdir()
+        (worktree / "guarded/zone-two.txt").write_text("next door\n", encoding="utf-8")
+        self._git(worktree, "add", "guarded/zone-two.txt")
+        seal = supervisor.seal_worker_handoff(config, {}, worker, task)
+        self.assertEqual(seal.reason, "owner_dirty")
+
+    def test_a_current_checkout_that_cannot_be_proven_empty_is_refused(self) -> None:
+        worktree, _branch, _config, _worker, _task = self._protected_checkout("PROT-ERROR-001")
+
+        def refuse() -> str | None:
+            return worker_workspace._protected_commit_refusal(
+                worktree, "HEAD", tuple(PROTECTED), worktree_path=worktree, check_index=True
+            )
+
+        self.assertIsNone(refuse())
+        for name, failure in (
+            ("unsupported format", subprocess.CompletedProcess([], 129, b"", b"usage")),
+            ("git unavailable", None),
+        ):
+            with self.subTest(name), mock.patch.object(worker_workspace, "_git_metadata", return_value=failure):
+                self.assertIn("unreadable_metadata: index", refuse() or "")
+        worktree_cleanliness.plan_protected_execution(worktree, PROTECTED)
+        self.assertIsNone(refuse())
+        with mock.patch.object(worker_workspace.os, "scandir", side_effect=PermissionError("denied")):
+            self.assertIn("unreadable_metadata: worktree", refuse() or "")
+        (worktree / "guarded").chmod(0)
+        try:
+            self.assertIn("protected_metadata_refused", refuse() or "")
+        finally:
+            (worktree / "guarded").chmod(0o755)
+
+    def _prune_with_protected_task(
+        self, protected_on: str, *, plant: bool = True, archive_outcome: object = None
+    ) -> tuple[Path, list[list[str]], dict]:
+        task_id = f"PROT-PRUNE-{protected_on.upper().replace(' ', '-')}"
+        worktree, _branch, config, _worker, task = self._protected_checkout(task_id)
+        if plant:
+            self._plant_untracked_ignore(worktree)
+        else:
+            worktree_cleanliness.plan_protected_execution(worktree, PROTECTED)
+        task.update(status="done")
+        lease: dict = {}
+        if protected_on == "board":
+            task["protected_paths"] = PROTECTED
+        elif protected_on == "lease":
+            lease["protected_paths"] = PROTECTED
+        Path(config["paths"]["status_file"]).write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+        archived = {**task, "protected_paths": PROTECTED} if protected_on == "archive" else archive_outcome
+        config["worker_worktree_housekeeping"] = {"enabled": True, "tick_interval_seconds": 0}
+        state: dict = {"workers": {}, "worker_worktrees": {"leases": {task_id: lease}}}
+        if protected_on in {"archive", "unreadable archive"}:
+            Path(config["paths"]["status_file"]).write_text(json.dumps({"tasks": []}), encoding="utf-8")
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_archived_task",
+                **({"side_effect": archived} if isinstance(archived, Exception) else {"return_value": archived}),
+            ),
+            mock.patch.object(supervisor, "_task_settlement", return_value="settled"),
+        ):
+            commands = self._run_pruner(config, state)
+        return worktree, commands, state
+
+    def _run_pruner(self, config: dict, state: dict) -> list[list[str]]:
+        base = worker_workspace.WorkerBaseResolution(
+            repository_id="pantheon", default_branch="dev", sha=self.base, remote_ref="refs/remotes/origin/dev"
+        )
+        commands: list[list[str]] = []
+        real_run = subprocess.run
+
+        def recording_run(args, *a, **kw):
+            commands.append(list(args))
+            return real_run(args, *a, **kw)
+
+        with (
+            mock.patch("subprocess.run", side_effect=recording_run),
+            mock.patch.object(supervisor, "resolve_worker_base", return_value=(base, None)),
+            mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+            mock.patch(
+                "multi_repo_registry.iter_local_repositories",
+                return_value=[{"id": "pantheon", "default_branch": "dev", "resolved_local_path": self.repo}],
+            ),
+        ):
+            supervisor.prune_orphan_worktrees(config, state)
+        return commands
+
+    def _prune_with_real_authority(self, task_id: str, *, archive=None, board=None, plant: bool = True):
+        """The real loader over real bytes, with a detached HEAD that really is merged.
+
+        `archive` and `board` each receive their real path and may write what they like.
+        """
+        worktree, _branch, config, _worker, _task = self._protected_checkout(task_id)
+        self._git(worktree, "checkout", "--detach", self.base)
+        if plant:
+            # Anything that reaches `git status` now sees dirt, so the refusal
+            # counter below tells "refused unread" from "read, then refused".
+            self._plant_untracked_ignore(worktree)
+        status_file = Path(config["paths"]["status_file"])
+        status_file.write_text(json.dumps({"tasks": []}), encoding="utf-8")
+        if board is not None:
+            board(status_file)
+        config["worker_worktree_housekeeping"] = {"enabled": True, "tick_interval_seconds": 0}
+        archive_root = self.root / "ai-task-archive"
+        state: dict = {"workers": {}, "worker_worktrees": {"leases": {}}}
+        with (
+            mock.patch.multiple(
+                task_archive,
+                STATUS_ROOT=self.root,
+                ARCHIVE_DIR=archive_root,
+                ARCHIVE_TASKS_DIR=archive_root / "tasks",
+                ARCHIVE_CORRECTIONS_DIR=archive_root / "corrections",
+                ARCHIVE_INDEX_FILE=archive_root / "index.json",
+            ),
+            # load_json re-reads an unparseable file for a couple of seconds.
+            mock.patch("common.time.sleep"),
+        ):
+            if archive is not None:
+                path = task_archive.archive_task_path(task_id)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                archive(path)
+            commands = self._run_pruner(config, state)
+        return worktree, commands, state
+
+    def test_pruner_refuses_a_protected_worktree_before_status_or_removal(self) -> None:
+        for protected_on in ("board", "archive", "lease"):
+            with self.subTest(protected_on):
+                worktree, commands, state = self._prune_with_protected_task(protected_on)
+                self.assertTrue(worktree.is_dir())
+                self.assertEqual([c for c in commands if "status" in c or c[-2:-1] == ["remove"]], [])
+                self.assertEqual(
+                    state["worker_worktree_housekeeping"]["last_scan"]["skipped"], {"protected_metadata_refused": 1}
+                )
+                self._git(self.repo, "worktree", "remove", "--force", str(worktree))
+
+    def test_pruner_keeps_a_worktree_whose_archived_protection_cannot_be_read(self) -> None:
+        for name, failure in (("corrupt", ValueError("not json")), ("unreadable", PermissionError("denied"))):
+            with self.subTest(name):
+                worktree, commands, state = self._prune_with_protected_task("unreadable archive", archive_outcome=failure)
+                self.assertTrue(worktree.is_dir())
+                self.assertEqual([c for c in commands if "status" in c or c[-2:-1] == ["remove"]], [])
+                self.assertEqual(
+                    state["worker_worktree_housekeeping"]["last_scan"]["skipped"], {"protected_metadata_refused": 1}
+                )
+                self._git(self.repo, "worktree", "remove", "--force", str(worktree))
+                self._git(self.repo, "branch", "-D", "task/PROT-PRUNE-UNREADABLE-ARCHIVE")
+
+    def test_pruner_treats_an_archive_that_vanished_as_absent(self) -> None:
+        worktree, _commands, state = self._prune_with_protected_task(
+            "unreadable archive", plant=False, archive_outcome=FileNotFoundError("gone")
+        )
+        self.assertFalse(worktree.exists())
+        self.assertEqual(state["worker_worktree_housekeeping"]["last_scan"]["removed"], 1)
+
+    def test_pruner_refuses_an_existing_archive_it_cannot_use_before_reading_the_checkout(self) -> None:
+        def text(content: str):
+            return lambda path: path.write_text(content, encoding="utf-8")
+
+        def foreign_task(path: Path) -> None:
+            path.write_text(json.dumps({"task": {"id": "SOMEONE-ELSE", "status": "done"}}), encoding="utf-8")
+
+        cases = {
+            "wrong_shape": text("[]"),
+            "blank": text(""),
+            "empty_envelope": text("{}"),
+            "no_task": text('{"terminal_status": "done"}'),
+            "task_not_a_record": text('{"task": []}'),
+            "empty_task": text('{"task": {}}'),
+            "malformed_protection": None,
+            "foreign_task": foreign_task,
+            "unparseable": text("{"),
+            "directory": lambda path: path.mkdir(),
+            "dangling_link": lambda path: path.symlink_to(path.with_name("missing.json")),
+        }
+        for number, (name, archive) in enumerate(cases.items()):
+            task_id = f"PROT-INVALID-ARCHIVE-{number}"
+            if archive is None:
+                archive = text(json.dumps({"task": {"id": task_id, "status": "done", "protected_paths": "guarded/zone"}}))
+            with self.subTest(name):
+                worktree, commands, state = self._prune_with_real_authority(task_id, archive=archive)
+                self.assertTrue(worktree.is_dir())
+                self.assertEqual([c for c in commands if "status" in c or c[-2:-1] == ["remove"]], [])
+                self.assertEqual(
+                    state["worker_worktree_housekeeping"]["last_scan"]["skipped"], {"protected_metadata_refused": 1}
+                )
+                self._git(self.repo, "worktree", "remove", "--force", str(worktree))
+
+    def test_pruner_refuses_when_the_board_cannot_say_what_the_task_protected(self) -> None:
+        def text(content: str):
+            return lambda path: path.write_text(content, encoding="utf-8")
+
+        cases = {
+            "missing": lambda path: path.unlink(),
+            "blank": text(""),
+            "empty_object": text("{}"),
+            "wrong_shape": text("[]"),
+            "tasks_not_a_list": text('{"tasks": null}'),
+            "task_not_a_record": text('{"tasks": [1]}'),
+            "unparseable": text("{"),
+        }
+        for number, (name, board) in enumerate(cases.items()):
+            with self.subTest(name):
+                worktree, commands, state = self._prune_with_real_authority(f"PROT-INVALID-BOARD-{number}", board=board)
+                self.assertTrue(worktree.is_dir())
+                self.assertEqual([c for c in commands if "status" in c or c[-2:-1] == ["remove"]], [])
+                self.assertEqual(
+                    state["worker_worktree_housekeeping"]["last_scan"]["skipped"], {"protected_metadata_refused": 1}
+                )
+                self._git(self.repo, "worktree", "remove", "--force", str(worktree))
+
+    def test_pruner_reads_a_usable_archive_with_the_real_loader(self) -> None:
+        def archived(task_id: str, **fields):
+            task = {"id": task_id, "status": "done", **fields}
+            return lambda path: path.write_text(
+                json.dumps({"terminal_status": "done", "terminal_outcome": "completed", "task": task}), encoding="utf-8"
+            )
+
+        worktree, commands, state = self._prune_with_real_authority(
+            "PROT-VALID-PROTECTED", archive=archived("PROT-VALID-PROTECTED", protected_paths=PROTECTED)
+        )
+        self.assertTrue(worktree.is_dir())
+        self.assertEqual([c for c in commands if "status" in c], [])
+        self.assertEqual(state["worker_worktree_housekeeping"]["last_scan"]["skipped"], {"protected_metadata_refused": 1})
+        self._git(self.repo, "worktree", "remove", "--force", str(worktree))
+
+        worktree, commands, state = self._prune_with_real_authority(
+            "PROT-VALID-PLAIN", archive=archived("PROT-VALID-PLAIN"), plant=False
+        )
+        self.assertFalse(worktree.exists())
+        self.assertTrue([c for c in commands if "status" in c])
+        self.assertEqual(state["worker_worktree_housekeeping"]["last_scan"]["removed"], 1)
+
+    def test_pruner_keeps_reclaiming_a_merged_checkout_whose_task_has_no_record_at_all(self) -> None:
+        worktree, commands, state = self._prune_with_real_authority("PROT-TRULY-ABSENT", plant=False)
+        self.assertFalse(worktree.exists())
+        self.assertTrue([c for c in commands if "status" in c])
+        self.assertEqual(state["worker_worktree_housekeeping"]["last_scan"]["removed"], 1)
+
+    def test_pruner_still_reclaims_a_settled_protected_worktree_holding_only_its_mount_point(self) -> None:
+        worktree, commands, state = self._prune_with_protected_task("board", plant=False)
+        self.assertFalse(worktree.exists())
+        self.assertEqual(state["worker_worktree_housekeeping"]["last_scan"]["removed"], 1)
+        self.assertTrue([c for c in commands if "status" in c])
+
     def test_new_allocation_is_metadata_first_at_the_exact_base(self) -> None:
         worktree = self.root / "wt-new"
         commands: list[list[str]] = []
@@ -436,8 +985,6 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
             metadata={"task": snapshot},
         )
         state: dict = {}
-        import worker_workspace
-
         base = worker_workspace.WorkerBaseResolution(
             repository_id="pantheon", default_branch="dev", sha=self.base, remote_ref="refs/remotes/origin/dev"
         )
@@ -465,6 +1012,218 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("canonical task record does not", message or "")
         self.assertNotIn("workspace_path", request.metadata)
+
+
+    def test_prepare_records_the_exact_checkout_head_in_request_and_lease(self) -> None:
+        task = {"id": "PROT-LAUNCH-001"}
+        ok, message, request, state = self._prepare(task, {"id": "PROT-LAUNCH-001"})
+        self.assertTrue(ok, message)
+        self.assertEqual(request.metadata["workspace_launch_head"], self.base)
+        self.assertEqual(state["worker_worktrees"]["leases"]["PROT-LAUNCH-001"]["workspace_launch_head"], self.base)
+        self.assertEqual(
+            supervisor.request_snapshot(request)["metadata"]["workspace_launch_head"], self.base,
+            "the worker record carries it through the existing snapshot",
+        )
+
+        # A reused checkout holding an old local anchor is recorded as it is, ahead of base.
+        worktree = Path(request.metadata["workspace_path"])
+        self._git(worktree, "config", "user.name", "Test")
+        self._git(worktree, "config", "user.email", "test@example.invalid")
+        (worktree / "anchor.txt").write_text("old anchor\n", encoding="utf-8")
+        self._git(worktree, "add", "anchor.txt")
+        self._git(worktree, "commit", "-m", "old anchor")
+        anchor = self._rev(worktree, "HEAD")
+
+        ok, message, request, state = self._prepare(task, {"id": "PROT-LAUNCH-001"})
+        self.assertTrue(ok, message)
+        self.assertEqual(request.metadata["workspace_launch_head"], anchor)
+        self.assertNotEqual(anchor, request.metadata["base_sha"])
+
+    def _sidecar(self, **overrides) -> dict:
+        record = {
+            "id": "SC-001",
+            "task_class": "sidecar",
+            "auto_created_by": "capacity-controller",
+            "helper_parent": "PARENT-001",
+            "owner": "Claude",
+            "protected_paths": PROTECTED,
+        }
+        record.update(overrides)
+        return record
+
+    def _prepare_sidecar(
+        self, sidecar: dict, parent: dict | None, repositories: dict | None = None
+    ) -> tuple[bool, str | None]:
+        status_file = self.root / "sidecar-status.json"
+        board = [sidecar, *([parent] if parent else [])]
+        status_file.write_text(json.dumps({"tasks": board}), encoding="utf-8")
+        config = self._sidecar_config(repositories)
+        request = supervisor.DeliveryRequest(
+            agent_id="claude", provider="claude", delivery_mode="claude", message="wake",
+            task_id=sidecar["id"], reason="owned_ready_dispatch", metadata={"task": {"id": sidecar["id"]}},
+        )
+        base = worker_workspace.WorkerBaseResolution(
+            repository_id="pantheon", default_branch="dev", sha=self.base, remote_ref="refs/remotes/origin/dev"
+        )
+        with (
+            mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "resolve_worker_base", return_value=(base, None)) as base_resolver,
+        ):
+            result = supervisor.prepare_worker_workspace(
+                config, {}, request, queue_event_id="event", target_agent="Claude", base_cache={}
+            )
+        self.prepared_request, self.base_resolver = request, base_resolver
+        return result
+
+    def _sidecar_config(self, repositories: dict | None = None) -> dict:
+        return {
+            "paths": {"status_file": str(self.root / "sidecar-status.json"), "activity_log": str(self.root / "activity.jsonl")},
+            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            "coordination": {
+                "repositories": {
+                    "pantheon": {"repo": None, "local_path": str(self.repo), "default_branch": "dev"},
+                    **(repositories or {}),
+                }
+            },
+            "worker_worktrees": {"root": str(self.root / "worktrees")},
+            "agents": {"claude": {"provider": "claude"}, **{f"slot-{index}": {"slot_id": f"slot-{index}"} for index in range(8)}},
+            "capacity_controller": {
+                "coordination_reserved_slots": 1,
+                "sidecars": {"max_new_per_wave": 1, "max_active": 4, "max_capacity_ratio": 0.5, "ttl_seconds": 7200},
+            },
+        }
+
+    def test_capacity_sidecar_prepares_only_under_its_live_parent_authority(self) -> None:
+        parent = {"id": "PARENT-001", "owner": "Claude", "protected_paths": PROTECTED}
+        for name, sidecar, board_parent, expected in (
+            ("parent unknown", self._sidecar(), None, "no canonical or archived record"),
+            ("child dropped protection", self._sidecar(protected_paths=[]), parent, "does not carry parent protected_paths"),
+            ("child owner moved", self._sidecar(owner="Antigravity3"), parent, "not its parent's selected owner"),
+            ("parent policy invalid", self._sidecar(), {**parent, "protected_paths": "guarded/zone"}, "protection is invalid"),
+            ("parent frozen later", self._sidecar(), {**parent, "frozen_evidence_base_sha": "a" * 40}, "frozen evidence base"),
+            ("parent manual gate later", self._sidecar(), {**parent, "status": "blocked", "next": "Waiting for manual approval"}, "human or manual gate"),
+            ("parent owner unregistered", self._sidecar(owner="Ghost"), {**parent, "owner": "Ghost"}, "no registered automatic owner"),
+            ("parent gate status later", self._sidecar(), {**parent, "gate_status": "pending_human_signoff"}, "human gate"),
+            ("parent gate class later", self._sidecar(), {**parent, "task_class": "human_gate"}, "human gate"),
+            ("parent human roles later", self._sidecar(), {**parent, "human_required_roles": ["Human/Ops"]}, "human gate"),
+            ("parent waits for human later", self._sidecar(), {**parent, "waiting_for": "Human/Ops"}, "human gate"),
+            ("parent approval required later", self._sidecar(), {**parent, "requires_human_approval": True}, "human gate"),
+            ("parent non-dispatchable later", self._sidecar(), {**parent, "non_dispatchable": True}, "non-dispatchable"),
+        ):
+            with self.subTest(name):
+                ok, message = self._prepare_sidecar(sidecar, board_parent)
+                self.assertFalse(ok)
+                self.assertIn(expected, message or "")
+                self.assertFalse((self.root / "worktrees" / "pantheon" / "sc-001").exists())
+
+        ok, message = self._prepare_sidecar(self._sidecar(), parent)
+        self.assertTrue(ok, message)
+        ordinary_blocked = {**parent, "status": "blocked", "blocked_reason": "upstream API defect", "waiting_for": "Codex"}
+        ok, message = self._prepare_sidecar(self._sidecar(), ordinary_blocked)
+        self.assertTrue(ok, message)
+
+    def _side_checkout(self) -> dict:
+        side = self.root / "side"
+        self._git(self.root, "clone", "--quiet", str(self.repo), str(side))
+        self._git(side, "remote", "set-url", "origin", "https://github.com/org/side-repo.git")
+        return {
+            "side_repo": {
+                "repo": "org/side-repo",
+                "local_path": str(side),
+                "default_branch": "trunk",
+                "artifact_prefixes": ["side-repo/"],
+            },
+            "second_repo": {"repo": None, "local_path": str(self.root), "artifact_prefixes": ["second-repo/"]},
+            "absent_repo": {"repo": None, "local_path": str(self.root / "absent")},
+            # Another id of the one checkout `pantheon` names.
+            "odayplus": {"repo": None, "local_path": str(self.repo), "default_branch": "dev"},
+        }
+
+    def test_capacity_sidecar_prepares_only_in_its_live_parent_source(self) -> None:
+        repositories = self._side_checkout()
+        parent = {"id": "PARENT-001", "owner": "Claude", "protected_paths": PROTECTED}
+        for name, sidecar, board_parent, expected in (
+            ("legacy child, parent inferred elsewhere", self._sidecar(), {**parent, "artifacts": ["side-repo/diag.md"]}, "current source"),
+            ("child moved", self._sidecar(repository="side_repo"), parent, "current source"),
+            ("parent moved", self._sidecar(repository="pantheon"), {**parent, "repository": "side_repo"}, "current source"),
+            ("child names the unknown", self._sidecar(repository="org/unregistered"), parent, "current source"),
+            ("child checkout gone", self._sidecar(repository="absent_repo"), parent, "current source"),
+            ("parent names the unknown", self._sidecar(), {**parent, "repository": "org/unregistered"}, "source is unresolved"),
+            ("parent checkout gone", self._sidecar(), {**parent, "repository": "absent_repo"}, "source is unresolved"),
+            (
+                "parent ambiguous",
+                self._sidecar(),
+                {**parent, "artifacts": ["side-repo/a.md", "second-repo/b.md"]},
+                "source is unresolved",
+            ),
+        ):
+            with self.subTest(name):
+                ok, message = self._prepare_sidecar(sidecar, board_parent, repositories)
+                self.assertFalse(ok)
+                self.assertIn(expected, message or "")
+                self.assertFalse((self.root / "worktrees").exists(), "refused before anything is materialized")
+
+        for name, sidecar, board_parent, namespace in (
+            ("one source by another id", self._sidecar(id="SC-ALIAS"), {**parent, "repository": "odayplus"}, "pantheon"),
+            ("inherited elsewhere", self._sidecar(id="SC-SIDE", repository="side_repo"), {**parent, "artifacts": ["side-repo/diag.md"]}, "side-repo"),
+        ):
+            with self.subTest(name):
+                ok, message = self._prepare_sidecar(sidecar, board_parent, repositories)
+                self.assertTrue(ok, message)
+                self.assertTrue((self.root / "worktrees" / namespace / sidecar["id"].lower()).is_dir())
+
+    def test_artifact_inferred_parent_prepares_its_real_child_in_the_parents_checkout(self) -> None:
+        with_slug = self._side_checkout()
+        without_slug = {**with_slug, "side_repo": {**with_slug["side_repo"], "repo": None}}
+        wave = {
+            "capacity_controller": {
+                "chair_decision": {"valid_until": "2999-01-01T00:00:00Z", "sidecar_wave": {"approved": True}}
+            }
+        }
+        for parent_id, repositories, declared in (
+            ("PARENT-001", with_slug, "org/side-repo"),
+            ("PARENT-002", without_slug, "side_repo"),
+        ):
+            with self.subTest(declared):
+                parent = {
+                    "id": parent_id,
+                    "status": "blocked",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "artifacts": ["side-repo/diag.md"],
+                    "protected_paths": PROTECTED,
+                }
+                [child] = capacity_controller.sidecar_candidates(
+                    self._sidecar_config(repositories), wave, [parent], runnable_tasks=set()
+                )
+                self.assertEqual(child["repository"], declared)
+
+                ok, message = self._prepare_sidecar(child, parent, repositories)
+
+                self.assertTrue(ok, message)
+                metadata = self.prepared_request.metadata
+                self.assertEqual(metadata["repository_id"], "side_repo")
+                self.assertEqual(metadata["protected_paths"], PROTECTED)
+                self.assertTrue(Path(metadata["workspace_path"]).is_relative_to(self.root / "worktrees" / "side-repo"))
+                # The source's own configured branch, not the parent's or the fleet's.
+                self.assertEqual(self.base_resolver.call_args.kwargs["default_branch"], "trunk")
+                self.assertEqual(self.base_resolver.call_args.args[0], self.root / "side")
+
+    def test_archived_parent_remains_the_sidecar_authority(self) -> None:
+        archived = {"id": "PARENT-001", "owner": "Claude", "protected_paths": PROTECTED}
+        with mock.patch.object(supervisor, "load_archived_task", return_value=archived):
+            ok, message = self._prepare_sidecar(self._sidecar(), None)
+            self.assertTrue(ok, message)
+            ok, message = self._prepare_sidecar(self._sidecar(id="SC-002", protected_paths=[]), None)
+            self.assertFalse(ok)
+            self.assertIn("does not carry parent protected_paths", message or "")
+
+    def test_ordinary_sidecar_without_controller_provenance_is_not_gated(self) -> None:
+        ok, message = self._prepare_sidecar(
+            {"id": "SC-OWN-001", "task_class": "sidecar", "owner": "Claude", "helper_parent": "GONE"}, None
+        )
+        self.assertTrue(ok, message)
 
 
 class ProtectedContextSeedingTests(unittest.TestCase):

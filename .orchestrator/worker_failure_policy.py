@@ -34,6 +34,8 @@ from dispatch_policy import is_human_gate_agent
 from dispatch_policy import agent_provider_identity_ids as dispatch_policy_agent_provider_identity_ids
 from provider_runtime import configured_provider_binary, provider_config_entry
 import status_transition
+from capacity_controller import is_capacity_sidecar
+from runtime_state import queue_event_moved_from_worker
 from worktree_cleanliness import ProtectedExecutionUnavailable
 
 
@@ -2070,8 +2072,15 @@ def successful_worker_exit_outcome(
     current_task: dict[str, Any] | None,
     *,
     terminal_statuses: set[str],
+    local_handoff_verified: bool = False,
 ) -> str:
-    """Classify a zero-exit worker by its durable task-board postcondition."""
+    """Classify a zero-exit worker by its durable task-board postcondition.
+
+    Task progress is read from origin, so a sealed unpublished commit is
+    invisible to it; only the caller's ``terminal_local_handoff`` proof can
+    credit one. It sits after the ready-without-submission refusal and never
+    reaches a reviewer or a board status, and the boot path does not pass it.
+    """
     task = current_task if isinstance(current_task, dict) else {}
     status = str(task.get("status") or "").strip().lower()
     terminal_statuses = {str(value).lower() for value in terminal_statuses}
@@ -2090,7 +2099,7 @@ def successful_worker_exit_outcome(
         return "no_progress"
     if task_progress_fingerprint(dispatched) != task_progress_fingerprint(task):
         return "incremental_progress"
-    return "no_progress"
+    return "incremental_progress" if local_handoff_verified else "no_progress"
 
 @_entrypoint
 def worker_retry_settings(config: dict[str, Any], provider: str | None) -> dict[str, Any]:
@@ -2384,6 +2393,15 @@ def agent_can_take_task(
     # would mean one of those paths could still hand review to a lane the
     # policy excludes.
     if role_provider_block_reason(config, name, role=role, task=task):
+        return False
+    # A capacity sidecar works only in the owner lane selected for its parent,
+    # which is the owner it was created with. If that lane is unavailable the
+    # sidecar waits; no repair or failover may move it to an unselected provider.
+    if (
+        role != "reviewer"
+        and is_capacity_sidecar(task)
+        and normalize_agent_id(name) != normalize_agent_id(str(task.get("owner") or ""))
+    ):
         return False
     if task_is_sidecar(task):
         return True
@@ -3486,6 +3504,11 @@ def maybe_reassign_task_after_worker_failure(
     settings = worker_reassignment_settings(config)
     if not settings.get("enabled", True):
         return None
+    # A run that lost its event no longer answers for the task. process_queue's
+    # pre-launch failure record has no lifecycle status: its event is still queued
+    # because it is the attempt being made, not because the attempt moved away.
+    if worker.get("status") and queue_event_moved_from_worker(state, worker):
+        return None
 
     attempt_number = failure_count if failure_count is not None else int(worker.get("retry_count", 0)) + 1
     if not force and (not terminal or respect_threshold) and attempt_number < int(settings.get("after_attempts", 2)):
@@ -4175,10 +4198,7 @@ def requeue_stale_manual_pending_worker(
     state.setdefault("workers", {}).pop(run_id, None)
     if queue_event_id:
         record = queue_event_record(state, queue_event_id)
-        record["status"] = "queued"
-        record.pop("processed_at", None)
-        record.pop("error", None)
-        record.pop("run_id", None)
+        _reset_queue_record_for_redispatch(record, reason=reason)
     write_activity_log(
         config,
         {
@@ -4216,6 +4236,107 @@ def existing_file_inbox_fallback_run_id(state: dict[str, Any], queue_event_id: s
     return None
 
 @_entrypoint
+def supersede_worker_without_queue_event(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any]) -> bool:
+    """End a run whose event was requeued or taken, before it can launch a successor.
+
+    Parking it would not hold: process_queue waits for an active run, so the
+    event would never be dispatched again.
+    """
+    if not queue_event_moved_from_worker(state, worker):
+        return False
+    _mark_parked_worker_superseded(
+        config, worker, "Worker superseded after its queue event was requeued or moved to another run."
+    )
+    return True
+
+
+def _mark_parked_worker_superseded(config: dict[str, Any], worker: dict[str, Any], message: str) -> None:
+    worker["status"] = "superseded"
+    worker["next_retry_at"] = None
+    worker["last_error"] = message
+    worker["last_event_at"] = utc_now()
+    write_activity_log(
+        config,
+        {
+            "type": "worker_superseded",
+            "provider": worker.get("provider"),
+            "task_id": worker.get("task_id"),
+            "message": message,
+            "worker_run_id": worker.get("run_id"),
+            "queue_event_id": worker.get("queue_event_id"),
+        },
+    )
+
+
+def worker_slot_left_logical_pool(config: dict[str, Any], worker: dict[str, Any]) -> bool:
+    """Whether this run's physical slot is outside its logical agent's account pool."""
+    logical_pool = agent_account_pool_id(config, worker_logical_dispatch_agent_id(config, worker))
+    physical = normalize_agent_id(str(worker.get("agent_id") or worker.get("provider") or ""))
+    return not logical_pool or logical_pool != agent_account_pool_id(config, physical)
+
+
+def _execution_authority_refusal(config: dict[str, Any], worker: dict[str, Any]) -> str | None:
+    """Why the board, read now, forbids this run from starting execution again.
+
+    What it relaunches or resumes is the old dispatch's snapshot, and neither a
+    failure nor an answered approval grants anything, so it needs what a new
+    dispatch needs at its own launch: the assignment predicate, the dispatcher's
+    eligibility predicate and the final-launch gate. Queue custody is a separate
+    check and answers none of this.
+
+    The event key stays out of that gate. It records the branch head, which this
+    lineage may have pushed itself, and a retry must keep its budget through that.
+    Every role in the key is still compared, against the snapshot being relaunched.
+    """
+    task_map = task_index_from_status(config, load_status(config))
+    if not worker_matches_current_assignment(config, worker, task_map):
+        return "task responsibility moved to another agent or status"
+    if worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker):
+        return None
+    if worker_slot_left_logical_pool(config, worker):
+        return "the run's physical slot is outside its logical agent's account pool"
+    task_id = str(worker.get("task_id") or "")
+    task = task_map[task_id]
+    snapshot = worker.get("request_snapshot") if isinstance(worker.get("request_snapshot"), dict) else {}
+    reason = snapshot.get("reason") or worker.get("reason")
+    metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+    dispatched = metadata.get("task") if isinstance(metadata.get("task"), dict) else {}
+    schema = config.get("schema") or {}
+    for field in (schema.get("assignee_field", "owner"), schema.get("reviewer_field", "reviewer")):
+        if field in dispatched and normalize_agent_id(str(dispatched[field] or "")) != normalize_agent_id(
+            str(task.get(field) or "")
+        ):
+            return f"task {field} changed since this run was dispatched"
+    target = display_name_for(config, worker_logical_dispatch_agent_id(config, worker))
+    if not agent_can_take_task(config, target, task, role=dispatch_reason_role(reason)):
+        return f"{target} may no longer take this task"
+    return stale_dispatch_skip_message(
+        config,
+        {
+            "task_id": task_id,
+            "reason": reason,
+            "target_agent": target,
+            "target_display_name": target,
+            "metadata": metadata,
+        },
+        task_map,
+    ) or launch_protection_refusal(config, task, metadata)
+
+
+@_entrypoint
+def supersede_worker_without_execution_authority(
+    config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any]
+) -> bool:
+    """End a run the board no longer lets execute; its event is still its own to close."""
+    refusal = _execution_authority_refusal(config, worker)
+    if not refusal:
+        return False
+    _mark_parked_worker_superseded(config, worker, f"Worker superseded instead of starting execution: {refusal}")
+    finalize_queue_event_record(config, state, worker, "completed", worker["last_error"])
+    return True
+
+
+@_entrypoint
 def maybe_trigger_retry_or_fallback(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -4223,6 +4344,8 @@ def maybe_trigger_retry_or_fallback(
     worker: dict[str, Any],
     reason: str,
 ) -> tuple[bool, bool]:
+    if supersede_worker_without_queue_event(config, state, worker):
+        return True, True
     retry = worker_retry_settings(config, worker.get("provider"))
     failure = classify_worker_failure(config, worker, reason)
     max_attempts = int(retry.get("max_attempts", 5))
@@ -4276,6 +4399,8 @@ def maybe_trigger_retry_or_fallback(
             worker["last_event_at"] = utc_now()
             return True, True
         if not worker.get("fallback_run_id"):
+            if supersede_worker_without_execution_authority(config, state, worker):
+                return True, True
             ok, outcome, _ = start_worker_for_request(
                 config,
                 state,
@@ -4316,15 +4441,17 @@ def retry_due_workers(
             continue
         if worker.get("status") != "retry_backoff":
             continue
+        # Ahead of the due check: a run waiting out its backoff would otherwise
+        # hold the reset event back from dispatch until its retry falls due.
+        if supersede_worker_without_queue_event(config, state, worker):
+            changed = True
+            continue
         next_retry_at = _parse_iso_utc(worker.get("next_retry_at"))
         if next_retry_at is None or next_retry_at > now:
             continue
-        if model_rotation.has_dispatch_cooldown_wait(worker):
-            # poll_workers reconciles responsibility only after this call.
-            # Do not launch a due wait from an obsolete assignment first.
-            task_map = task_index_from_status(config, load_status(config))
-            if not worker_matches_current_assignment(config, worker, task_map):
-                continue
+        # poll_workers settles an approval opened on this run only after this call.
+        if any(item.get("worker_run_id") == run_id for item in load_approval_state(config).get("pending", [])):
+            continue
         request = request_for_worker(config, worker)
         if request is None:
             worker["status"] = "failed"
@@ -4339,6 +4466,11 @@ def retry_due_workers(
                     "worker_run_id": worker["run_id"],
                 },
             )
+            changed = True
+            continue
+        # poll_workers reconciles responsibility only after this call, and only
+        # for what its own assignment predicate covers.
+        if supersede_worker_without_execution_authority(config, state, worker):
             changed = True
             continue
         ok, outcome, delivery = start_worker_for_request(

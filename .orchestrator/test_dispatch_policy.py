@@ -1961,10 +1961,10 @@ def test_review_queue_refuses_a_reviewer_from_the_source_authors_pool(tmp_path: 
         )
         return stack
 
-    def dispatch(record: dict, agent_id: str) -> list[dict]:
+    def dispatch(record: dict, agent_id: str, sha: str = head) -> list[dict]:
         queued_events.clear()
         with (
-            probes(),
+            probes(sha),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [record]}),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
@@ -2028,6 +2028,85 @@ def test_review_queue_refuses_a_reviewer_from_the_source_authors_pool(tmp_path: 
         )
         with probes():
             assert dispatch_engine.is_task_review_dispatch_eligible(cfg, legacy, "Codex2") is False
+
+        # A range whose commits carry a declared historical label: the record
+        # and Git keep the label, and the account behind it still cannot review
+        # its own commits. Codex3 is another lane over Codex's account.
+        labels = ["Codex foreground", "Codex-foreground"]
+        cfg["agents"]["codex"]["source_aliases"] = labels
+        cfg["agents"]["codex3"] = {
+            "id": "codex3",
+            "display_name": "Codex3",
+            "provider": "codex",
+            "account_pool": "codex",
+        }
+        for index, label in enumerate(labels):
+            alias_repo = tmp_path / f"alias-source-git-{index}"
+            alias_base, alias_head = _real_source_range(alias_repo, task_id, label, finalizer="Claude")
+            cfg["coordination"]["repositories"]["pantheon"]["local_path"] = str(alias_repo)
+            alias_task = dict(
+                task,
+                review_submission={
+                    **submission,
+                    "remote_sha": alias_head,
+                    "source_head": alias_head,
+                    "source_base": alias_base,
+                    "source_authors": [label],
+                },
+            )
+            for reviewer, agent_id in (("Codex", "codex"), ("Codex3", "codex3")):
+                same_account = dict(alias_task, reviewer=reviewer)
+                with probes(alias_head):
+                    assert dispatch_engine.is_task_review_dispatch_eligible(cfg, same_account, reviewer) is False
+                    assert (
+                        supervisor.dispatch_priority_for_task(cfg, same_account, reviewer, task_map={task_id: same_account})
+                        is None
+                    )
+                assert dispatch(same_account, agent_id, alias_head) == [], reviewer
+
+            alias_independent = dict(alias_task, reviewer="Codex2")
+            with probes(alias_head):
+                assert dispatch_engine.is_task_review_dispatch_eligible(cfg, alias_independent, "Codex2") is True
+            assert [evt.get("target_agent") for evt in dispatch(alias_independent, "codex2", alias_head)] == ["Codex2"]
+            assert alias_independent["review_submission"]["source_authors"] == [label]
+            with probes(alias_head, ci="pending"):
+                assert dispatch_engine.is_task_review_dispatch_eligible(cfg, alias_independent, "Codex2") is False
+            with probes("d" * 40):
+                assert dispatch_engine.is_task_review_dispatch_eligible(cfg, alias_independent, "Codex2") is False
+
+            # A record claiming the resolved name, or the other label, is forged.
+            other_label = labels[1 - index]
+            for forged_authors in (["Codex"], [other_label], ["Antigravity"]):
+                forged = json.loads(json.dumps(alias_independent))
+                forged["review_submission"]["source_authors"] = forged_authors
+                with probes(alias_head):
+                    assert dispatch_engine.is_task_review_dispatch_eligible(cfg, forged, "Codex2") is False, forged_authors
+                assert dispatch(forged, "codex2", alias_head) == [], forged_authors
+
+            # A catalog that cannot say who wrote the range dispatches no one.
+            declared = cfg["agents"]["codex"].pop("source_aliases")
+            slot = {
+                "id": "codex_slot_1",
+                "display_name": "codex_slot_1",
+                "provider": "codex",
+                "dispatch_slot_for_pool": "codex",
+            }
+            for catalog_change in (
+                {},
+                {"codex": {"source_aliases": declared}, "codex2": {"source_aliases": [label]}},
+                {"codex_slot_1": {**slot, "source_aliases": [label]}},
+            ):
+                changed = json.loads(json.dumps(cfg))
+                for agent_id, fields in catalog_change.items():
+                    changed["agents"].setdefault(agent_id, {}).update(fields)
+                assert "is not a registered agent" in str(
+                    dispatch_policy.review_source_block_reason(changed, alias_independent, "Codex2")
+                ), catalog_change
+                with probes(alias_head):
+                    assert (
+                        dispatch_engine.is_task_review_dispatch_eligible(changed, alias_independent, "Codex2") is False
+                    ), catalog_change
+            cfg["agents"]["codex"]["source_aliases"] = declared
 
 
 def test_review_queue_reads_a_full_sha_base_as_that_commit_on_a_cold_cache(tmp_path: Path) -> None:

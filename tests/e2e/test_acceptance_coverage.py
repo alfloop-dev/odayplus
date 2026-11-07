@@ -21,12 +21,14 @@ from delivery_toolchain.e2e.product_e2e_receipt import (
     SCHEMA_VERSION,
     bind_scenarios,
     canonical_json_bytes,
+    git_value,
     parse_playwright_payload,
     parse_pytest_payload,
     seal_normalized,
     sha256_bytes,
     source_identity,
     validate_acceptance_scenarios_and_inventory,
+    validate_evidence_proof_at_generation,
     validate_raw_artifact,
     validate_receipt_packet,
     verify_evidence_relationship,
@@ -127,11 +129,32 @@ def _commit(path: Path, relative: str, content: str, message: str) -> None:
     subprocess.run(["git", "commit", "-qm", message], cwd=path, check=True)
 
 
-def _clone_packet_repo(path: Path) -> None:
+def _clone_packet_repo(path: Path, *, source: Path = ROOT) -> None:
     subprocess.run(
-        ["git", "clone", "-q", "--shared", str(ROOT), str(path)],
+        ["git", "clone", "-q", "--shared", str(source), str(path)],
         check=True,
     )
+
+
+def _filtered_shared_clone(origin: Path, base: Path) -> Path:
+    """Reach ``origin`` the way product CI does: blob:none partial, then --shared."""
+    subprocess.run(["git", "config", "uploadpack.allowFilter", "true"], cwd=origin, check=True)
+    partial = base / "partial"
+    subprocess.run(
+        ["git", "clone", "-q", "--filter=blob:none", f"file://{origin}", str(partial)],
+        check=True,
+    )
+    shared = base / "shared"
+    _clone_packet_repo(shared, source=partial)
+    return shared
+
+
+def _generation_proof(proof: dict[str, Any]) -> dict[str, Any]:
+    """Extend a current-source proof with the raw paths a generation proof records."""
+    return {**proof, "working_tree_paths": sorted({RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH})}
+
+
+_RENAME_BODY = "".join(f"harmless synthetic line {index}\n" for index in range(40))
 
 
 def test_all_qa03_scenarios_are_registered_once_with_exact_refs() -> None:
@@ -637,6 +660,634 @@ def test_stale_or_mismatched_source_tree_is_rejected(tmp_path: Path) -> None:
     source["tree_sha"] = "0" * 40
     _proof, errors = verify_evidence_relationship(tmp_path, source, allow_worktree_evidence=False)
     assert any("tested tree mismatch" in error for error in errors)
+
+
+def _commit_rename(repo: Path, old: str, new: str, message: str) -> None:
+    """Commit a similar-bodied move so default rename detection must read both blobs."""
+    (repo / new).parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "mv", old, new], cwd=repo, check=True)
+    (repo / new).write_text(_RENAME_BODY + "evidence revision\n", encoding="utf-8")
+    subprocess.run(["git", "add", new], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", message], cwd=repo, check=True)
+
+
+def test_evidence_git_reads_are_metadata_only_in_filtered_shared_clone(
+    tmp_path: Path,
+) -> None:
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_repo(origin)
+    _commit(origin, RAW_PLAYWRIGHT_PATH, _RENAME_BODY, "prior evidence")
+    _commit(origin, "old_source.py", _RENAME_BODY, "prior source")
+    old_blob = git_value(origin, "rev-parse", f"HEAD:{RAW_PLAYWRIGHT_PATH}")
+    # The tested commit itself also moves a file, so reading it must stay metadata-only.
+    _commit_rename(origin, "old_source.py", "source.py", "tested source")
+    source = source_identity(origin)
+    _commit_rename(origin, RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH, "evidence-only rename")
+
+    clone = _filtered_shared_clone(origin, tmp_path)
+
+    # The fixture must really be the failing context, not a complete clone.
+    missing_blob = subprocess.run(
+        ["git", "cat-file", "-e", old_blob], cwd=clone, capture_output=True, check=False
+    )
+    assert missing_blob.returncode != 0
+    rename_detecting_log = subprocess.run(
+        ["git", "log", "--format=", "--name-only", f"{source['commit_sha']}..HEAD"],
+        cwd=clone,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rename_detecting_log.returncode == 128
+
+    # Both literal names are read, and both readers agree on the same metadata.
+    proof, errors = verify_evidence_relationship(clone, source, allow_worktree_evidence=False)
+    assert errors == []
+    assert proof["relation"] == "evidence_only_descendant"
+    assert proof["intervening_touched_paths"] == sorted({RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH})
+    generation_proof = _generation_proof(proof)
+    assert validate_evidence_proof_at_generation(clone, source, generation_proof) == []
+
+    # Metadata-only reads keep the literal proof comparison exact.
+    forged = copy.deepcopy(generation_proof)
+    forged["intervening_touched_paths"] = [RAW_PYTEST_PATH]
+    assert any(
+        "does not exactly match recomputed" in error
+        for error in validate_evidence_proof_at_generation(clone, source, forged)
+    )
+
+    # The separate tree and ancestry boundaries still hold in the same clone.
+    wrong_tree = {**source, "tree_sha": "0" * 40}
+    _proof, errors = verify_evidence_relationship(clone, wrong_tree, allow_worktree_evidence=False)
+    assert any("tested tree mismatch" in error for error in errors)
+    assert any(
+        "tested source tree does not match" in error
+        for error in validate_evidence_proof_at_generation(clone, wrong_tree, generation_proof)
+    )
+    head_before_source = {**generation_proof, "evidence_head_sha": source["commit_sha"]}
+    assert any(
+        "not an ancestor of evidence head" in error
+        for error in validate_evidence_proof_at_generation(
+            clone, source_identity(clone), head_before_source
+        )
+    )
+
+
+def test_intervening_non_evidence_change_is_rejected_in_filtered_shared_clone(
+    tmp_path: Path,
+) -> None:
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_repo(origin)
+    _commit(origin, "source.py", _RENAME_BODY, "source")
+    source = source_identity(origin)
+    _commit(origin, "source.py", "changed after test\n", "intervening source change")
+    _commit(origin, "source.py", _RENAME_BODY, "revert source")
+
+    clone = _filtered_shared_clone(origin, tmp_path)
+
+    proof, errors = verify_evidence_relationship(clone, source, allow_worktree_evidence=False)
+    assert any("non-evidence paths: source.py" in error for error in errors)
+    generation_proof = _generation_proof(proof)
+    assert any(
+        "intervening commits touch non-evidence paths: source.py" in error
+        for error in validate_evidence_proof_at_generation(clone, source, generation_proof)
+    )
+
+
+@pytest.mark.parametrize("filtered_shared", [False, True], ids=["complete", "filtered-shared"])
+def test_source_renamed_into_evidence_path_is_rejected_by_both_readers(
+    tmp_path: Path,
+    filtered_shared: bool,
+) -> None:
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_repo(origin)
+    _commit(origin, "source.py", _RENAME_BODY, "source")
+    source = source_identity(origin)
+    _commit_rename(origin, "source.py", RAW_PYTEST_PATH, "hide source as evidence")
+
+    repo = _filtered_shared_clone(origin, tmp_path) if filtered_shared else origin
+
+    proof, errors = verify_evidence_relationship(repo, source, allow_worktree_evidence=False)
+    assert proof["intervening_touched_paths"] == sorted({RAW_PYTEST_PATH, "source.py"})
+    assert any("non-evidence paths: source.py" in error for error in errors)
+    assert any(
+        "intervening commits touch non-evidence paths: source.py" in error
+        for error in validate_evidence_proof_at_generation(repo, source, _generation_proof(proof))
+    )
+
+
+def test_staged_source_rename_into_evidence_path_is_rejected(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _commit(tmp_path, "source.py", _RENAME_BODY, "source")
+    source = source_identity(tmp_path)
+    (tmp_path / RAW_PYTEST_PATH).parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "mv", "source.py", RAW_PYTEST_PATH], cwd=tmp_path, check=True)
+
+    proof, errors = verify_evidence_relationship(tmp_path, source, allow_worktree_evidence=True)
+
+    assert proof["working_tree_paths"] == sorted({RAW_PYTEST_PATH, "source.py"})
+    assert any("working tree contains non-evidence changes: source.py" in e for e in errors)
+
+
+def _create_two_evidence_branches(repo: Path) -> dict[str, str]:
+    _commit(repo, "product.py", _RENAME_BODY, "tested source")
+    source = source_identity(repo)
+    subprocess.run(["git", "checkout", "-qb", "playwright-evidence", source["commit_sha"]], cwd=repo, check=True)
+    _commit(repo, RAW_PLAYWRIGHT_PATH, _RENAME_BODY + "pw\n", "playwright evidence")
+    subprocess.run(["git", "checkout", "-qb", "pytest-evidence", source["commit_sha"]], cwd=repo, check=True)
+    _commit(repo, RAW_PYTEST_PATH, _RENAME_BODY + "py\n", "pytest evidence")
+    return source
+
+
+@pytest.mark.parametrize("filtered_shared", [False, True], ids=["complete", "filtered-shared"])
+@pytest.mark.parametrize(
+    "first_branch,second_branch",
+    [
+        ("playwright-evidence", "pytest-evidence"),
+        ("pytest-evidence", "playwright-evidence"),
+    ],
+)
+def test_ordinary_permitted_evidence_only_merge_is_accepted_by_both_validators(
+    tmp_path: Path,
+    filtered_shared: bool,
+    first_branch: str,
+    second_branch: str,
+) -> None:
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_repo(origin)
+    _commit(
+        origin,
+        RAW_PLAYWRIGHT_PATH,
+        _RENAME_BODY + "prior-only\n",
+        "prior playwright evidence",
+    )
+    old_blob = git_value(origin, "rev-parse", f"HEAD:{RAW_PLAYWRIGHT_PATH}")
+    source = _create_two_evidence_branches(origin)
+    subprocess.run(["git", "checkout", "-q", first_branch], cwd=origin, check=True)
+    subprocess.run(
+        ["git", "merge", "--no-ff", "-qm", "clean evidence merge", second_branch],
+        cwd=origin,
+        check=True,
+    )
+
+    repo = _filtered_shared_clone(origin, tmp_path) if filtered_shared else origin
+    if filtered_shared:
+        missing_blob = subprocess.run(
+            ["git", "cat-file", "-e", old_blob], cwd=repo, capture_output=True, check=False
+        )
+        assert missing_blob.returncode != 0
+
+    proof, errors = verify_evidence_relationship(repo, source, allow_worktree_evidence=False)
+    assert errors == []
+    assert proof["relation"] == "evidence_only_descendant"
+    assert proof["intervening_touched_paths"] == sorted({RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH})
+    assert validate_evidence_proof_at_generation(repo, source, _generation_proof(proof)) == []
+
+
+@pytest.mark.parametrize("filtered_shared", [False, True], ids=["complete", "filtered-shared"])
+@pytest.mark.parametrize(
+    "source_is_second_parent",
+    [False, True],
+    ids=["source-first-parent", "source-second-parent"],
+)
+def test_tested_source_merged_as_either_parent_with_common_base_evidence_branch_is_accepted(
+    tmp_path: Path,
+    filtered_shared: bool,
+    source_is_second_parent: bool,
+) -> None:
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_repo(origin)
+    _commit(origin, "product.py", _RENAME_BODY + "v0\n", "common source")
+    common = source_identity(origin)
+    old_blob = git_value(origin, "rev-parse", "HEAD:product.py")
+
+    subprocess.run(["git", "checkout", "-qb", "tested", common["commit_sha"]], cwd=origin, check=True)
+    _commit(origin, "product.py", _RENAME_BODY + "v1\n", "tested product revision")
+    source = source_identity(origin)
+
+    subprocess.run(
+        ["git", "checkout", "-qb", "evidence", common["commit_sha"]], cwd=origin, check=True
+    )
+    _commit(origin, RAW_PLAYWRIGHT_PATH, _RENAME_BODY + "pw\n", "allowed evidence")
+
+    if source_is_second_parent:
+        subprocess.run(
+            ["git", "merge", "--no-ff", "-qm", "import tested source as second parent", "tested"],
+            cwd=origin,
+            check=True,
+        )
+    else:
+        subprocess.run(["git", "checkout", "-q", "tested"], cwd=origin, check=True)
+        subprocess.run(
+            ["git", "merge", "--no-ff", "-qm", "merge allowed evidence as second parent", "evidence"],
+            cwd=origin,
+            check=True,
+        )
+
+    net_diff = git_value(origin, "diff", "--name-only", source["commit_sha"], "HEAD").splitlines()
+    assert net_diff == [RAW_PLAYWRIGHT_PATH]
+
+    repo = _filtered_shared_clone(origin, tmp_path) if filtered_shared else origin
+    if filtered_shared:
+        missing_blob = subprocess.run(
+            ["git", "cat-file", "-e", old_blob], cwd=repo, capture_output=True, check=False
+        )
+        assert missing_blob.returncode != 0
+
+    proof, errors = verify_evidence_relationship(repo, source, allow_worktree_evidence=False)
+    assert errors == []
+    assert proof["relation"] == "evidence_only_descendant"
+    assert proof["intervening_touched_paths"] == [RAW_PLAYWRIGHT_PATH]
+    assert validate_evidence_proof_at_generation(repo, source, _generation_proof(proof)) == []
+
+
+@pytest.mark.parametrize(
+    "source_is_second_parent",
+    [False, True],
+    ids=["source-first-parent", "source-second-parent"],
+)
+@pytest.mark.parametrize(
+    "mutation_kind",
+    [
+        "non-source-side-edit",
+        "merge-only-edit",
+        "merge-reverts-to-common-base",
+    ],
+)
+def test_common_base_merge_rejects_side_branch_and_merge_product_mutations(
+    tmp_path: Path,
+    source_is_second_parent: bool,
+    mutation_kind: str,
+) -> None:
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_repo(origin)
+    _commit(origin, "product.py", _RENAME_BODY + "v0\n", "common source")
+    common = source_identity(origin)
+
+    subprocess.run(["git", "checkout", "-qb", "tested", common["commit_sha"]], cwd=origin, check=True)
+    _commit(origin, "product.py", _RENAME_BODY + "v1\n", "tested product revision")
+    source = source_identity(origin)
+
+    subprocess.run(
+        ["git", "checkout", "-qb", "evidence", common["commit_sha"]], cwd=origin, check=True
+    )
+    _commit(origin, RAW_PLAYWRIGHT_PATH, _RENAME_BODY + "pw\n", "allowed evidence")
+    if mutation_kind == "non-source-side-edit":
+        _commit(origin, "product.py", "side branch product edit\n", "side branch product edit")
+
+    first_branch = "evidence" if source_is_second_parent else "tested"
+    second_branch = "tested" if source_is_second_parent else "evidence"
+    subprocess.run(["git", "checkout", "-q", first_branch], cwd=origin, check=True)
+    subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", second_branch],
+        cwd=origin,
+        check=mutation_kind != "non-source-side-edit",
+    )
+    if mutation_kind == "non-source-side-edit":
+        # Even if the merge resolves product.py to the exact tested v1 tree,
+        # the non-source side-branch product edit must still be rejected.
+        (origin / "product.py").write_text(_RENAME_BODY + "v1\n", encoding="utf-8")
+    elif mutation_kind == "merge-only-edit":
+        (origin / "product.py").write_text("merge-only product edit\n", encoding="utf-8")
+    else:
+        (origin / "product.py").write_text(_RENAME_BODY + "v0\n", encoding="utf-8")
+    subprocess.run(["git", "add", "product.py"], cwd=origin, check=True)
+    subprocess.run(["git", "commit", "-qm", f"merge ({mutation_kind})"], cwd=origin, check=True)
+
+    if mutation_kind == "non-source-side-edit":
+        net_diff = git_value(
+            origin, "diff", "--name-only", source["commit_sha"], "HEAD"
+        ).splitlines()
+        assert net_diff == [RAW_PLAYWRIGHT_PATH]
+
+    repo = _filtered_shared_clone(origin, tmp_path)
+    proof, errors = verify_evidence_relationship(repo, source, allow_worktree_evidence=False)
+    assert proof["intervening_touched_paths"] == sorted({RAW_PLAYWRIGHT_PATH, "product.py"})
+    assert any(
+        "intervening commits touch non-evidence paths: product.py" in error for error in errors
+    )
+    generation_errors = validate_evidence_proof_at_generation(
+        repo, source, _generation_proof(proof)
+    )
+    assert any(
+        "intervening commits touch non-evidence paths: product.py" in error
+        for error in generation_errors
+    )
+
+
+@pytest.mark.parametrize("filtered_shared", [False, True], ids=["complete", "filtered-shared"])
+@pytest.mark.parametrize(
+    "first_branch,second_branch",
+    [
+        ("playwright-evidence", "pytest-evidence"),
+        ("pytest-evidence", "playwright-evidence"),
+    ],
+)
+def test_merge_only_product_change_is_rejected_by_both_validators(
+    tmp_path: Path,
+    filtered_shared: bool,
+    first_branch: str,
+    second_branch: str,
+) -> None:
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_repo(origin)
+    source = _create_two_evidence_branches(origin)
+    subprocess.run(["git", "checkout", "-q", first_branch], cwd=origin, check=True)
+    subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", second_branch],
+        cwd=origin,
+        check=True,
+    )
+    (origin / "product.py").write_text("mutated only in merge commit\n", encoding="utf-8")
+    subprocess.run(["git", "add", "product.py"], cwd=origin, check=True)
+    subprocess.run(["git", "commit", "-qm", "merge with product mutation"], cwd=origin, check=True)
+
+    repo = _filtered_shared_clone(origin, tmp_path) if filtered_shared else origin
+
+    proof, errors = verify_evidence_relationship(repo, source, allow_worktree_evidence=False)
+    assert proof["intervening_touched_paths"] == sorted(
+        {RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH, "product.py"}
+    )
+    assert any(
+        "intervening commits touch non-evidence paths: product.py" in error for error in errors
+    )
+
+    generation_proof = _generation_proof(proof)
+    generation_errors = validate_evidence_proof_at_generation(repo, source, generation_proof)
+    assert any(
+        "intervening commits touch non-evidence paths: product.py" in error
+        for error in generation_errors
+    )
+
+    # A forged generation proof that omits the merge-only product path is rejected on both counts.
+    forged_generation_proof = {
+        **generation_proof,
+        "intervening_touched_paths": sorted({RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH}),
+    }
+    forged_errors = validate_evidence_proof_at_generation(repo, source, forged_generation_proof)
+    assert any(
+        "intervening commits touch non-evidence paths: product.py" in error
+        for error in forged_errors
+    )
+    assert any(
+        "does not exactly match recomputed Git relationship" in error for error in forged_errors
+    )
+
+
+def test_receipt_packet_rejects_merge_only_product_mutation(tmp_path: Path) -> None:
+    _clone_packet_repo(tmp_path)
+    receipt_path = tmp_path / RECEIPT_PATH
+    pw_bytes = (tmp_path / RAW_PLAYWRIGHT_PATH).read_bytes()
+    py_bytes = (tmp_path / RAW_PYTEST_PATH).read_bytes()
+    baseline = json.loads(receipt_path.read_text(encoding="utf-8"))
+    source_sha = baseline["tested_source"]["commit_sha"]
+
+    subprocess.run(
+        ["git", "config", "user.email", "acceptance@example.invalid"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Acceptance Test"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-qb", "playwright-evidence", source_sha],
+        cwd=tmp_path,
+        check=True,
+    )
+    (tmp_path / RAW_PLAYWRIGHT_PATH).write_bytes(pw_bytes + b"\n")
+    subprocess.run(["git", "add", RAW_PLAYWRIGHT_PATH], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "playwright evidence"], cwd=tmp_path, check=True)
+
+    subprocess.run(
+        ["git", "checkout", "-qb", "pytest-evidence", source_sha],
+        cwd=tmp_path,
+        check=True,
+    )
+    (tmp_path / RAW_PYTEST_PATH).write_bytes(py_bytes + b"\n")
+    subprocess.run(["git", "add", RAW_PYTEST_PATH], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "pytest evidence"], cwd=tmp_path, check=True)
+
+    subprocess.run(["git", "checkout", "-q", "playwright-evidence"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", "pytest-evidence"],
+        cwd=tmp_path,
+        check=True,
+    )
+    (tmp_path / RAW_PLAYWRIGHT_PATH).write_bytes(pw_bytes)
+    (tmp_path / RAW_PYTEST_PATH).write_bytes(py_bytes)
+    (tmp_path / "product.py").write_text("merge-only product change\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH, "product.py"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(["git", "commit", "-qm", "merge adds product.py"], cwd=tmp_path, check=True)
+
+    forged = copy.deepcopy(baseline)
+    forged["evidence_proof_at_generation"] = {
+        **forged["evidence_proof_at_generation"],
+        "evidence_head_sha": git_value(tmp_path, "rev-parse", "HEAD"),
+        "relation": "evidence_only_descendant",
+        "intervening_touched_paths": sorted({RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH}),
+    }
+    seal_normalized(forged, "normalized_receipt_sha256")
+    receipt_path.write_text(json.dumps(forged, indent=2) + "\n", encoding="utf-8")
+
+    errors = validate_receipt_packet(tmp_path, allow_worktree_evidence=True)
+    assert any("intervening commits touch non-evidence paths: product.py" in e for e in errors)
+    assert any(
+        "receipt evidence_proof_at_generation intervening commits touch non-evidence paths: product.py"
+        in e
+        for e in errors
+    )
+
+
+@pytest.mark.parametrize("revert_in_merge", [False, True], ids=["revert-after-merge", "revert-in-merge"])
+def test_merge_product_mutation_reverted_later_remains_rejected(
+    tmp_path: Path,
+    revert_in_merge: bool,
+) -> None:
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_repo(origin)
+    source = _create_two_evidence_branches(origin)
+    if revert_in_merge:
+        _commit(origin, "product.py", "branch product mutation\n", "mutate product on branch")
+        subprocess.run(["git", "checkout", "-q", "playwright-evidence"], cwd=origin, check=True)
+        subprocess.run(
+            ["git", "merge", "--no-commit", "--no-ff", "pytest-evidence"],
+            cwd=origin,
+            check=True,
+        )
+        (origin / "product.py").write_text(_RENAME_BODY, encoding="utf-8")
+        subprocess.run(["git", "add", "product.py"], cwd=origin, check=True)
+        subprocess.run(["git", "commit", "-qm", "merge reverts product.py"], cwd=origin, check=True)
+    else:
+        subprocess.run(["git", "checkout", "-q", "playwright-evidence"], cwd=origin, check=True)
+        subprocess.run(
+            ["git", "merge", "--no-commit", "--no-ff", "pytest-evidence"],
+            cwd=origin,
+            check=True,
+        )
+        (origin / "product.py").write_text("merge product mutation\n", encoding="utf-8")
+        subprocess.run(["git", "add", "product.py"], cwd=origin, check=True)
+        subprocess.run(["git", "commit", "-qm", "merge mutates product.py"], cwd=origin, check=True)
+        _commit(origin, "product.py", _RENAME_BODY, "revert merge product mutation")
+
+    # Net tree difference between tested source and HEAD has only the two evidence files.
+    net_diff = git_value(origin, "diff", "--name-only", source["commit_sha"], "HEAD").splitlines()
+    assert sorted(net_diff) == sorted({RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH})
+
+    clone = _filtered_shared_clone(origin, tmp_path)
+    proof, errors = verify_evidence_relationship(clone, source, allow_worktree_evidence=False)
+    assert "product.py" in proof["intervening_touched_paths"]
+    assert any("intervening commits touch non-evidence paths: product.py" in e for e in errors)
+    generation_errors = validate_evidence_proof_at_generation(
+        clone, source, _generation_proof(proof)
+    )
+    assert any(
+        "intervening commits touch non-evidence paths: product.py" in e
+        for e in generation_errors
+    )
+
+
+def test_non_ancestor_and_invalid_sources_fail_closed_in_both_validators(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    _commit(tmp_path, "product.py", "v1\n", "base")
+    base = source_identity(tmp_path)
+
+    subprocess.run(["git", "checkout", "-qb", "sibling", base["commit_sha"]], cwd=tmp_path, check=True)
+    _commit(tmp_path, RAW_PLAYWRIGHT_PATH, "{}\n", "sibling commit")
+    sibling = source_identity(tmp_path)
+
+    subprocess.run(["git", "checkout", "-qb", "mainline", base["commit_sha"]], cwd=tmp_path, check=True)
+    _commit(tmp_path, RAW_PYTEST_PATH, "{}\n", "mainline commit")
+    head = source_identity(tmp_path)
+
+    # Non-ancestor sibling source
+    sibling_proof, sibling_errors = verify_evidence_relationship(
+        tmp_path, sibling, allow_worktree_evidence=False
+    )
+    assert any("tested source is not an ancestor of evidence HEAD" in e for e in sibling_errors)
+    assert any(
+        "tested source is not an ancestor of evidence head" in e
+        for e in validate_evidence_proof_at_generation(
+            tmp_path, sibling, _generation_proof(sibling_proof)
+        )
+    )
+
+    valid_proof, valid_errors = verify_evidence_relationship(
+        tmp_path, base, allow_worktree_evidence=False
+    )
+    assert valid_errors == []
+    valid_gen_proof = _generation_proof(valid_proof)
+
+    # Malformed source identities (including ref name "HEAD" instead of a 40-hex SHA)
+    for malformed_source in (
+        {"commit_sha": "HEAD", "tree_sha": head["tree_sha"]},
+        {"commit_sha": "not-a-sha", "tree_sha": head["tree_sha"]},
+        {"commit_sha": head["commit_sha"], "tree_sha": "not-a-tree"},
+    ):
+        _p, rel_errors = verify_evidence_relationship(
+            tmp_path, malformed_source, allow_worktree_evidence=False
+        )
+        assert rel_errors == ["tested source SHA/tree is malformed"]
+        gen_errors = validate_evidence_proof_at_generation(
+            tmp_path, malformed_source, valid_gen_proof
+        )
+        assert gen_errors == [
+            "receipt evidence_proof_at_generation tested source SHA/tree is malformed"
+        ]
+
+    # Missing commit SHA and non-commit (tree) SHA passed as commit SHA
+    for unresolvable_commit in ("f" * 40, head["tree_sha"]):
+        unresolvable_source = {
+            "commit_sha": unresolvable_commit,
+            "tree_sha": head["tree_sha"],
+        }
+        _p, rel_errors = verify_evidence_relationship(
+            tmp_path, unresolvable_source, allow_worktree_evidence=False
+        )
+        assert any("tested source commit cannot be resolved" in e for e in rel_errors)
+        gen_errors = validate_evidence_proof_at_generation(
+            tmp_path, unresolvable_source, valid_gen_proof
+        )
+        assert any("commit cannot be resolved" in e for e in gen_errors)
+
+
+def test_dangerous_path_names_preserve_exact_literal_contract_in_merge_and_worktree(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    source = _create_two_evidence_branches(tmp_path)
+    trailing_space_spoof = f"{RAW_PLAYWRIGHT_PATH} "
+    quoted_spoof = f'"{RAW_PYTEST_PATH}"'
+    tab_and_quote_path = 'spaced\tand "quoted" product.py'
+
+    subprocess.run(["git", "checkout", "-q", "playwright-evidence"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", "pytest-evidence"],
+        cwd=tmp_path,
+        check=True,
+    )
+    for dangerous in (trailing_space_spoof, quoted_spoof, tab_and_quote_path):
+        target = tmp_path / dangerous
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("spoof\n", encoding="utf-8")
+        subprocess.run(["git", "add", "--", dangerous], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "merge with dangerous literal paths"],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    proof, errors = verify_evidence_relationship(
+        tmp_path, source, allow_worktree_evidence=False
+    )
+    expected_touched = sorted(
+        {
+            RAW_PLAYWRIGHT_PATH,
+            RAW_PYTEST_PATH,
+            trailing_space_spoof,
+            quoted_spoof,
+            tab_and_quote_path,
+        }
+    )
+    assert proof["intervening_touched_paths"] == expected_touched
+    for dangerous in (trailing_space_spoof, quoted_spoof, tab_and_quote_path):
+        assert any(dangerous in e for e in errors)
+
+    generation_errors = validate_evidence_proof_at_generation(
+        tmp_path, source, _generation_proof(proof)
+    )
+    for dangerous in (trailing_space_spoof, quoted_spoof, tab_and_quote_path):
+        assert any(dangerous in e for e in generation_errors)
+
+    # Also verify working-tree status preserves trailing-space and quoted paths literally.
+    worktree_spoof = f"{RECEIPT_PATH} "
+    worktree_target = tmp_path / worktree_spoof
+    worktree_target.parent.mkdir(parents=True, exist_ok=True)
+    worktree_target.write_text("untracked spoof\n", encoding="utf-8")
+    wt_proof, wt_errors = verify_evidence_relationship(
+        tmp_path, source_identity(tmp_path), allow_worktree_evidence=True
+    )
+    assert wt_proof["working_tree_paths"] == [worktree_spoof]
+    assert any(
+        f"working tree contains non-evidence changes: {worktree_spoof}" in e
+        for e in wt_errors
+    )
 
 
 def test_python_runner_propagates_pytest_failure(

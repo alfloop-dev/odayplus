@@ -11,9 +11,88 @@ jobs:
   boundary:
     runs-on: ubuntu-latest
     steps:
+      # Below this Git, actions/checkout silently falls back to a REST archive
+      # that ignores the sparse deny, so the runner must refuse first.
+      - name: Require sparse-capable Git before checkout
+        run: |
+          set -euo pipefail
+          reported="$(git version)"
+          # The action parses one line only; extra output sends it to the archive.
+          test "$reported" = "${reported%%$'\n'*}"
+          version="$(printf '%s\n' "$reported" | sed -n 's/^git version \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')"
+          test -n "$version"
+          test "$(printf '2.28\n%s\n' "$version" | sort -V | head -n1)" = 2.28
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/tests/sources
+
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
+      # Host Git config is excluded because hosted runners ship a global LFS
+      # filter that is unrelated to this checkout and would always be refused.
+      - name: Prove protected path stayed out of checkout
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          PROTECTED_COMPARE_SHAS: ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 -I - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          sys.path.append(".orchestrator")
+          import worktree_cleanliness as wc
+
+          denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
+
+
+          def git(*args):
+              return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+
+
+          patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
+          failures = [
+              label
+              for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
+                  ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
+                  ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
+                  ("deny patterns changed", patterns != ["/*", f"!/{denied}"]),
+                  ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
+                  ("denied path in index", any(index)),
+                  ("denied path materialized", os.path.lexists(denied)),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
+              )
+              if failed
+          ]
+          if failures:
+              raise SystemExit(f"Protected checkout denial failed: {failures}")
+          PY
 
       - name: Validate EMGI producer / consumer boundary
         env:

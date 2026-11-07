@@ -100,6 +100,10 @@ DISPATCH_REASON_ROLES = {
 UNCLASSIFIED_ALLOW = "allow"
 UNCLASSIFIED_DENY = "deny"
 
+#: What a literal `task_ids` entry may look like. A task id is matched exactly,
+#: so `*` or `ODP-*` could only ever be a rule that silently selects nothing.
+_POLICY_TASK_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
 #: Statuses whose actors are frozen no matter how the fleet is configured.
 #: Entering `review_approved` pins an exact reviewed PR head, and closeout from
 #: there is read-only with respect to the branch.
@@ -186,7 +190,7 @@ class ReviewSourceIdentity(NamedTuple):
         return not self.submitter or normalize_agent_id(self.submitter) == normalize_agent_id(owner or "")
 
 
-def _registered_actor_id(config: dict[str, Any], name: str) -> str:
+def _registered_actor_id(config: dict[str, Any], name: str, *, source_author: bool = False) -> str:
     """The configured agent id a recorded actor name refers to, or empty.
 
     A name is registered when it is an agent id, the configured display name of
@@ -197,24 +201,43 @@ def _registered_actor_id(config: dict[str, Any], name: str) -> str:
     either would drop the other's pool. Such a conflict, and anything else --
     including a label that merely resembles a registered one -- is unknown, not
     guessed.
+
+    `source_author` is for a name just read from immutable Git and nothing else:
+    it also counts the literal `source_aliases` a logical agent declares for
+    labels it once wrote under. They join the same matches without precedence.
+    Only the exact spelling is admitted, and a name that differs from a declared
+    alias by case alone is a conflict rather than a miss. A slot's declaration
+    and any malformed declaration leave the catalog unable to say who wrote the
+    range, so nothing resolves.
     """
     agents = config.get("agents", {}) or {}
-    wanted = str(name or "").strip().casefold()
+    literal = str(name or "").strip()
+    wanted = literal.casefold()
     if not wanted:
         return ""
     agent_id = normalize_agent_id(name)
     matches = {agent_id} if agent_id and isinstance(agents.get(agent_id), dict) else set()
-    matches.update(
-        normalize_agent_id(str(key))
-        for key, agent in agents.items()
-        if isinstance(agent, dict)
-        and not str(agent.get("dispatch_slot_for") or agent.get("dispatch_slot_for_pool") or "").strip()
-        and str(agent.get("display_name") or agent.get("name") or "").strip().casefold() == wanted
-    )
+    for key, agent in agents.items():
+        if not isinstance(agent, dict):
+            continue
+        is_slot = bool(str(agent.get("dispatch_slot_for") or agent.get("dispatch_slot_for_pool") or "").strip())
+        if not is_slot and str(agent.get("display_name") or agent.get("name") or "").strip().casefold() == wanted:
+            matches.add(normalize_agent_id(str(key)))
+        if not source_author or "source_aliases" not in agent:
+            continue
+        aliases = agent["source_aliases"]
+        if not isinstance(aliases, list) or not all(
+            isinstance(alias, str) and alias and alias == alias.strip() for alias in aliases
+        ):
+            return ""
+        if wanted in {alias.casefold() for alias in aliases}:
+            if is_slot or literal not in aliases:
+                return ""
+            matches.add(normalize_agent_id(str(key)))
     return next(iter(matches)) if len(matches) == 1 else ""
 
 
-def _registered_actor_pool(config: dict[str, Any], name: str) -> str:
+def _registered_actor_pool(config: dict[str, Any], name: str, *, source_author: bool = False) -> str:
     """The account pool of a registered agent, or empty for an unknown name.
 
     `agent_account_pool_id` answers for any string -- an unregistered label
@@ -222,7 +245,7 @@ def _registered_actor_pool(config: dict[str, Any], name: str) -> str:
     always "independent" of every real pool. Registration is therefore checked
     first, so an unknown actor is unresolvable rather than conveniently foreign.
     """
-    agent_id = _registered_actor_id(config, name)
+    agent_id = _registered_actor_id(config, name, source_author=source_author)
     return agent_account_pool_id(config, agent_id) if agent_id else ""
 
 
@@ -516,12 +539,15 @@ def task_review_source_identity(
         if role != "source author" and is_human_gate_agent(name):
             agents.add(normalize_agent_id(name))
             continue
-        pool = _registered_actor_pool(config, name)
+        # Only the authors just read from Git may name a declared historical
+        # label. The submitter and owner are live actors and stay strict.
+        source_author = role == "source author"
+        pool = _registered_actor_pool(config, name, source_author=source_author)
         if not pool:
             return identity._replace(
                 error=f"{role} {name!r} is not a registered agent with an account pool"
             )
-        agents.update({normalize_agent_id(name), _registered_actor_id(config, name)})
+        agents.update({normalize_agent_id(name), _registered_actor_id(config, name, source_author=source_author)})
         pools.add(pool)
     return identity._replace(agents=frozenset(agents), pools=frozenset(pools))
 
@@ -731,6 +757,41 @@ def _normalized_id_list(values: Any) -> list[str] | None:
     return normalized
 
 
+def _literal_policy_ids(values: Any) -> list[str] | None:
+    """A rule's literal id list exactly as written, or None when it is malformed.
+
+    Unlike a provider or role list, `task_ids` and `agent_ids` name one exact
+    thing each, so there is no bare-string form and no spelling to normalize.
+    """
+    if not isinstance(values, list) or not values:
+        return None
+    if not all(isinstance(value, str) and value and value == value.strip() for value in values):
+        return None
+    return values
+
+
+def _task_policy_id(task: dict[str, Any] | None) -> str:
+    """The id a task-scoped rule is asked about, or empty when there is none."""
+    value = task.get("id") if isinstance(task, dict) else None
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _policy_agent_id_is_logical(config: dict[str, Any], agent_id: str) -> bool:
+    """Whether `agent_ids` may name this: one registered logical agent, by its id.
+
+    A display name, a provider, an account pool or a source-only alias is not an
+    id, a slot is capacity rather than an actor, and an id or display name that
+    another agent also answers to could not be told apart from it at dispatch.
+    """
+    agent = (config.get("agents", {}) or {}).get(agent_id)
+    if not isinstance(agent, dict) or agent_id != normalize_agent_id(agent_id):
+        return False
+    if str(agent.get("dispatch_slot_for") or agent.get("dispatch_slot_for_pool") or "").strip():
+        return False
+    display = str(agent.get("display_name") or agent.get("name") or agent_id)
+    return _registered_actor_id(config, agent_id) == agent_id == _registered_actor_id(config, display)
+
+
 def role_provider_policy_settings(config: dict[str, Any]) -> dict[str, Any] | None:
     """The configured role/task-class provider policy, or None when unset.
 
@@ -795,6 +856,20 @@ def role_provider_policy_error(config: dict[str, Any]) -> str | None:
             task_classes = _normalized_id_list(rule.get("task_classes"))
             if not task_classes:
                 return f"{where}.task_classes must be a list of non-empty task_class names"
+        if "task_ids" in rule:
+            task_ids = _literal_policy_ids(rule.get("task_ids"))
+            if not task_ids or not all(_POLICY_TASK_ID_RE.fullmatch(value) for value in task_ids):
+                return f"{where}.task_ids must be a non-empty list of literal task ids"
+        if "agent_ids" in rule:
+            agent_ids = _literal_policy_ids(rule.get("agent_ids"))
+            if not agent_ids:
+                return f"{where}.agent_ids must be a non-empty list of registered logical agent ids"
+            unknown_agents = sorted(value for value in agent_ids if not _policy_agent_id_is_logical(config, value))
+            if unknown_agents:
+                return (
+                    f"{where}.agent_ids names what is not one registered logical agent id: "
+                    f"{', '.join(unknown_agents)}"
+                )
         error = provider_list_error(rule.get("providers"), f"{where}.providers")
         if error:
             return error
@@ -816,11 +891,49 @@ def role_provider_policy_error(config: dict[str, Any]) -> str | None:
     return None
 
 
+def _role_rules(settings: dict[str, Any], role: str | None) -> list[dict[str, Any]]:
+    """The configured rules that speak about this role at all."""
+    normalized_role = normalize_agent_id(role or "")
+    return [
+        rule
+        for rule in settings.get("rules") or []
+        if normalized_role in (_normalized_id_list(rule.get("roles")) or [])
+    ]
+
+
+def _matching_role_rules(
+    settings: dict[str, Any],
+    *,
+    role: str | None,
+    task_class: str | None,
+    task_id: str | None,
+) -> list[dict[str, Any]]:
+    """The one reading of which rules reach this role, class and task.
+
+    A selector the caller cannot answer does not match. That is the same for a
+    class and for a task id: a generic question is answered from the rules that
+    need neither, and `role_provider_block_reason` is what refuses to treat a
+    known task with no id as a generic question.
+    """
+    normalized_class = normalize_agent_id(task_class or "")
+    matching: list[dict[str, Any]] = []
+    for rule in _role_rules(settings, role):
+        if "task_classes" in rule and (
+            not normalized_class or normalized_class not in (_normalized_id_list(rule.get("task_classes")) or [])
+        ):
+            continue
+        if "task_ids" in rule and (not task_id or task_id not in (_literal_policy_ids(rule.get("task_ids")) or [])):
+            continue
+        matching.append(rule)
+    return matching
+
+
 def allowed_role_provider_ids(
     config: dict[str, Any],
     *,
     role: str | None,
     task_class: str | None,
+    task_id: str | None = None,
 ) -> set[str] | None:
     """Provider ids allowed to hold `role` on a task of `task_class`.
 
@@ -834,6 +947,10 @@ def allowed_role_provider_ids(
     `unclassified_owned_work` governs; `None` means "the caller cannot show a
     task at all", where only role-wide rules can be applied and the unclassified
     disposition must not be guessed at.
+
+    A rule selecting `task_id` narrows whatever the rest of the policy says about
+    that task, the unclassified disposition included. It never replaces it: naming
+    one task is not how a lane the fleet rules exclude gets let back in.
     """
     settings = role_provider_policy_settings(config)
     if settings is None:
@@ -844,35 +961,50 @@ def allowed_role_provider_ids(
     normalized_class = normalize_agent_id(task_class or "") if task_class is not None else None
 
     allowed: set[str] | None = None
-    matched_class_rule = False
-    for rule in settings.get("rules") or []:
-        roles = _normalized_id_list(rule.get("roles")) or []
-        if normalized_role not in roles:
-            continue
-        if "task_classes" in rule:
-            if not normalized_class:
-                continue
-            if normalized_class not in (_normalized_id_list(rule.get("task_classes")) or []):
-                continue
-            matched_class_rule = True
+    targeted: set[str] | None = None
+    for rule in _matching_role_rules(settings, role=role, task_class=task_class, task_id=task_id):
         providers = set(_normalized_id_list(rule.get("providers")) or [])
         # Two rules reaching the same (role, task_class) both constrain it, so
         # the allowed set is their intersection: a lane must satisfy every rule
         # that speaks about it, not merely one of them.
-        allowed = providers if allowed is None else (allowed & providers)
+        if "task_ids" in rule:
+            targeted = providers if targeted is None else (targeted & providers)
+        else:
+            allowed = providers if allowed is None else (allowed & providers)
 
-    if (
-        allowed is None
-        and not matched_class_rule
-        and normalized_class == ""
-        and normalized_role in {ROLE_OWNER, ROLE_HELPER}
-    ):
+    if allowed is None and normalized_class == "" and normalized_role in {ROLE_OWNER, ROLE_HELPER}:
         unclassified = settings.get("unclassified_owned_work")
-        if isinstance(unclassified, str):
-            if normalize_agent_id(unclassified) == UNCLASSIFIED_DENY:
-                return set()
-            return None
-        return set(_normalized_id_list(unclassified) or [])
+        if not isinstance(unclassified, str):
+            allowed = set(_normalized_id_list(unclassified) or [])
+        elif normalize_agent_id(unclassified) == UNCLASSIFIED_DENY:
+            allowed = set()
+    if targeted is None:
+        return allowed
+    return targeted if allowed is None else (allowed & targeted)
+
+
+def allowed_role_agent_ids(
+    config: dict[str, Any],
+    *,
+    role: str | None,
+    task_class: str | None,
+    task_id: str | None = None,
+) -> set[str] | None:
+    """Logical agent ids allowed to hold `role` here, or None when no rule names any.
+
+    This is a separate fact from `allowed_role_provider_ids`, read from the same
+    rules: `Claude` and `Claude2` run on one provider and one account, so no
+    provider list can tell them apart, and a listed agent whose provider the
+    policy excludes is still excluded. A lane has to satisfy both.
+    """
+    settings = role_provider_policy_settings(config)
+    if settings is None:
+        return None
+    allowed: set[str] | None = None
+    for rule in _matching_role_rules(settings, role=role, task_class=task_class, task_id=task_id):
+        if "agent_ids" in rule:
+            agent_ids = set(_literal_policy_ids(rule.get("agent_ids")) or [])
+            allowed = agent_ids if allowed is None else (allowed & agent_ids)
     return allowed
 
 
@@ -904,8 +1036,15 @@ def role_provider_block_reason(
     be given something it does not have yet": a different agent written onto an
     approved task, or a fresh approval signature. A pinned head is no
     justification for either, so the exemption does not apply to those.
+
+    Rules may also name literal `task_ids` and exact `agent_ids`. A task record
+    without a usable id, or new authority with no task to name, cannot be shown
+    to be some other task, so while a rule for this role selects by task id those
+    two fail closed. Only a question that is not about a task at all -- no task
+    and nothing being granted -- is answered from the rules that need none.
     """
-    if role_provider_policy_settings(config) is None:
+    settings = role_provider_policy_settings(config)
+    if settings is None:
         return None
     error = role_provider_policy_error(config)
     if error:
@@ -923,7 +1062,17 @@ def role_provider_block_reason(
             return None
     if task_class is None and isinstance(task, dict):
         task_class = str(task.get("task_class") or "")
-    allowed = allowed_role_provider_ids(config, role=role, task_class=task_class)
+    task_id = _task_policy_id(task)
+    if (
+        not task_id
+        and (isinstance(task, dict) or grants_new_authority)
+        and any("task_ids" in rule for rule in _role_rules(settings, role))
+    ):
+        return (
+            f"role_provider_policy selects role {normalize_agent_id(role or '')} by task id "
+            "but this request carries no task id, so it fails closed"
+        )
+    allowed = allowed_role_provider_ids(config, role=role, task_class=task_class, task_id=task_id)
     if allowed is None:
         return None
     name = str(agent_name or "").strip()
@@ -955,6 +1104,17 @@ def role_provider_block_reason(
             f"{label} provider {', '.join(sorted(identities))} is not permitted for "
             f"{scope} (allowed: {', '.join(sorted(allowed))})"
         )
+    allowed_agents = allowed_role_agent_ids(config, role=role, task_class=task_class, task_id=task_id)
+    if allowed_agents is not None:
+        # Matched strictly: no source-only alias, and a name two agents answer
+        # to resolves to nobody rather than to whichever is listed.
+        actor_id = _registered_actor_id(config, name)
+        if actor_id not in allowed_agents:
+            target = f"{scope} on task {task_id}" if task_id else scope
+            return (
+                f"{label} (agent id {actor_id or 'unresolved'}) is not a named actor for "
+                f"{target} (allowed: {', '.join(sorted(allowed_agents)) or 'none'})"
+            )
     return None
 
 

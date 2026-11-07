@@ -117,6 +117,165 @@ def load_test_config() -> dict[str, Any]:
     return config
 
 
+class QueueCustodySupervisorOwnerTests(unittest.TestCase):
+    """reconcile, prune and the finalizer read one custody rule, not worker status."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.config = load_test_config()
+        self.config["paths"].update(
+            status_file=str(root / "ai-status.json"),
+            state_file=str(root / "state.json"),
+            event_queue=str(root / "queue.jsonl"),
+            activity_log=str(root / "activity.jsonl"),
+        )
+        self.task = {"id": "T-CUSTODY", "title": "Custody", "owner": "Claude", "reviewer": "Codex", "status": "in_progress"}
+        self._write_board()
+        self.event = runtime_state.enqueue_event(
+            self.config,
+            {
+                "event_id": "evt-1",
+                "target_agent": "claude",
+                "provider": "claude",
+                "task_id": "T-CUSTODY",
+                "reason": "owned_in_progress_dispatch",
+                "message": "go",
+                "created_at": "2020-01-01T00:00:00Z",
+            },
+        )
+        self.record = {
+            "status": "started",
+            "attempt_count": 1,
+            "last_attempt_at": "2026-11-05T00:00:00Z",
+            "run_id": "run-old",
+            "lease_owner": "run-old",
+            "processed_at": "2026-11-05T00:00:00Z",
+        }
+        self.state = {
+            "workers": {"run-old": self._worker("failed", "run-old", last_error="old failure")},
+            "queue": {"events": {"evt-1": self.record}},
+        }
+
+    def _write_board(self) -> None:
+        Path(self.config["paths"]["status_file"]).write_text(json.dumps({"tasks": [self.task]}), encoding="utf-8")
+
+    def _worker(self, status: str, run_id: str, **fields: Any) -> dict[str, Any]:
+        return {
+            "run_id": run_id,
+            "task_id": "T-CUSTODY",
+            "provider": "claude",
+            "agent_id": "claude",
+            "queue_event_id": "evt-1",
+            "status": status,
+            "attempt_count": 1,
+            "last_event_at": "2026-11-05T00:00:01Z",
+            **fields,
+        }
+
+    def _bind_to_new_run(self, status: str = "running") -> dict[str, Any]:
+        self.state["workers"]["run-new"] = self._worker(status, "run-new", attempt_count=2)
+        self.record.update(run_id="run-new", lease_owner="run-new", attempt_count=2)
+        return self.state["workers"]["run-new"]
+
+    def _queue_ids(self) -> list[str]:
+        return [event["event_id"] for event in runtime_state.load_event_queue(self.config)]
+
+    def test_reconcile_does_not_finish_a_reset_event_from_its_old_runs(self) -> None:
+        supervisor._reset_queue_record_for_redispatch(self.record, reason="redispatch")
+        before = dict(self.record)
+        self.assertFalse(supervisor.reconcile_queue_records(self.config, self.state))
+        self.assertEqual(self.record, before)
+
+    def test_reconcile_reads_only_the_run_holding_the_event(self) -> None:
+        self._bind_to_new_run()
+        self.assertFalse(supervisor.reconcile_queue_records(self.config, self.state))
+        self.assertEqual(self.record["status"], "started")
+        self.state["workers"]["run-new"]["status"] = "completed"
+        self.assertTrue(supervisor.reconcile_queue_records(self.config, self.state))
+        self.assertEqual(self.record["status"], "completed", "the old failed run no longer decides it")
+
+    def test_reconcile_still_settles_an_event_its_own_run_finished(self) -> None:
+        self.assertTrue(supervisor.reconcile_queue_records(self.config, self.state))
+        self.assertEqual((self.record["status"], self.record["error"]), ("failed", "old failure"))
+
+    def test_prune_keeps_a_reset_event_even_past_the_orphan_grace(self) -> None:
+        supervisor._reset_queue_record_for_redispatch(self.record, reason="redispatch")
+        before = dict(self.record)
+        self.assertFalse(supervisor.prune_event_queue(self.config, self.state))
+        self.assertEqual(self._queue_ids(), ["evt-1"])
+        self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+
+    def _reset_resume_with_no_run_left(self) -> None:
+        self.task.update(status="blocked", waiting_for="Human/Ops")
+        self._write_board()
+        event = {**self.event, "reason": "github_retry"}
+        runtime_state.replace_event_queue(self.config, original_events=[self.event], retained_events=[event])
+        supervisor._reset_queue_record_for_redispatch(self.record, reason="redispatch")
+        self.state["workers"] = {}
+
+    def test_prune_keeps_a_reset_resume_with_no_run_left_only_while_its_task_supports_it(self) -> None:
+        self._reset_resume_with_no_run_left()
+        before = dict(self.record)
+        self.assertFalse(supervisor.prune_event_queue(self.config, self.state))
+        self.assertEqual(self._queue_ids(), ["evt-1"])
+        self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+
+        self.task["owner"] = "Codex2"
+        self._write_board()
+        self.assertTrue(supervisor.prune_event_queue(self.config, self.state))
+        self.assertEqual(self._queue_ids(), [])
+
+    def test_prune_returns_a_started_event_whose_holder_is_gone_with_real_reset_facts(self) -> None:
+        self.record.update(run_id="run-gone", lease_owner="run-gone")
+        self.assertTrue(supervisor.prune_event_queue(self.config, self.state))
+        self.assertEqual(self._queue_ids(), ["evt-1"])
+        self.assertEqual(self.record["status"], "queued")
+        self.assertIn("requeued_at", self.record)
+        self.assertNotIn("lease_owner", self.record)
+        self.assertTrue(runtime_state.queue_event_moved_from_worker(self.state, self.state["workers"]["run-old"]))
+
+    def test_prune_still_removes_a_settled_event_and_cancels_a_stale_one(self) -> None:
+        self.record["status"] = "completed"
+        self.assertTrue(supervisor.prune_event_queue(self.config, self.state))
+        self.assertEqual(self._queue_ids(), [])
+
+        runtime_state.enqueue_event(self.config, {**self.event, "created_at": supervisor.utc_now()})
+        fresh = dict(self.record, status="queued")
+        self.state["queue"]["events"]["evt-1"] = fresh
+        supervisor._reset_queue_record_for_redispatch(fresh, reason="redispatch")
+        self.task["status"] = "done"
+        self._write_board()
+        self.assertTrue(supervisor.prune_event_queue(self.config, self.state))
+        self.assertEqual(self._queue_ids(), [], "a genuinely stale reset event may still be cancelled")
+
+    def _assert_late_finalize_changes_nothing(self) -> None:
+        before = dict(self.record)
+        supervisor.finalize_queue_event_record(self.config, self.state, self.state["workers"]["run-old"], "failed", "late")
+        self.assertEqual(self.record, before)
+
+    def test_finalizer_leaves_a_reset_event_alone(self) -> None:
+        supervisor._reset_queue_record_for_redispatch(self.record, reason="redispatch")
+        self._assert_late_finalize_changes_nothing()
+
+    def test_finalizer_leaves_an_event_another_run_took(self) -> None:
+        self._bind_to_new_run()
+        self._assert_late_finalize_changes_nothing()
+
+    def test_old_active_run_does_not_hold_up_the_holders_settlement(self) -> None:
+        fresh = self._bind_to_new_run("completed")
+        self.state["workers"]["run-old"]["status"] = "running"
+        supervisor.finalize_queue_event_record(self.config, self.state, fresh, "completed")
+        self.assertEqual(self.record["status"], "completed")
+
+    def test_finalizer_still_waits_for_an_active_successor_of_the_same_lineage(self) -> None:
+        self.state["workers"]["run-old"].update(status="fallback", fallback_run_id="run-child")
+        self.state["workers"]["run-child"] = self._worker("running", "run-child", parent_run_id="run-old", pid=os.getpid())
+        supervisor.finalize_queue_event_record(self.config, self.state, self.state["workers"]["run-old"], "failed", "late")
+        self.assertEqual(self.record["status"], "started")
+
+
 class TestConfigFixtureTests(unittest.TestCase):
     """The fixture must be the committed example, never the machine's config.
 
@@ -3038,6 +3197,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
                 mock.patch.object(supervisor, "build_request", return_value=request),
                 mock.patch.object(supervisor, "prepare_worker_workspace", side_effect=prepare_workspace),
+                # The stubbed preparation names a plain directory, and the subject here is the worker guard.
+                mock.patch.object(supervisor, "launch_protection_refusal", return_value=None),
                 mock.patch.object(supervisor, "start_worker_for_request", return_value=(True, "run-123", {"manual_confirmation_required": False, "auto_delivered": True})),
                 mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
             ):
@@ -6874,6 +7035,380 @@ class OrphanedQueueEventTests(unittest.TestCase):
         self.assertEqual((self.root / "event-queue.jsonl").read_text(encoding="utf-8"), "")
         self.assertEqual(state["queue"]["events"], {})
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "queue_event_pruned")
+
+    RESUME_TASK_ID = "T-RESUME"
+
+    def _resume_task(self, **fields: object) -> dict[str, object]:
+        return {
+            "id": self.RESUME_TASK_ID,
+            "title": "Resume",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "blocked",
+            "waiting_for": "Human/Ops",
+            "task_class": "implementation",
+            "depends_on": [],
+            **fields,
+        }
+
+    def _write_board(self, *tasks: dict[str, object]) -> None:
+        (self.root / "ai-status.json").write_text(json.dumps({"tasks": list(tasks)}), encoding="utf-8")
+
+    def _queue_aged_resume(self, **task_fields: object) -> dict[str, Any]:
+        """Queue through the real producer and age the envelope past the grace."""
+        self.config["paths"]["state_file"] = str(self.root / "state.json")
+        self.config["agents"]["claude"] = {"id": "claude", "display_name": "Claude", "provider": "claude"}
+        task = self._resume_task(**task_fields)
+        self._write_board(task)
+        queue_path = self.root / "event-queue.jsonl"
+        queue_path.write_text("", encoding="utf-8")
+        self.assertTrue(github_bus.queue_resume_for_task(self.config, task))
+        event = json.loads(queue_path.read_text(encoding="utf-8"))
+        event["created_at"] = "2000-01-01T00:00:00Z"
+        self._write_event(event)
+        return event
+
+    def _load_state(self) -> dict[str, Any]:
+        return runtime_state.load_runtime_state(self.config)
+
+    def _activity_types(self) -> list[str]:
+        lines = (self.root / "activity-log.jsonl").read_text(encoding="utf-8").splitlines()
+        return [json.loads(line).get("type") for line in lines]
+
+    def _assert_retained_and_reserved(self, event: dict[str, Any], state: dict[str, Any]) -> None:
+        queue_before = (self.root / "event-queue.jsonl").read_bytes()
+        record = state["queue"]["events"][event["event_id"]]
+        self.assertFalse(supervisor.queue_event_is_orphaned(self.config, event, record, []))
+        self.assertEqual(
+            supervisor.outstanding_delivery_indexes(self.config, state),
+            ({"claude"}, {(self.RESUME_TASK_ID, "claude")}, {event["event_key"]}),
+        )
+        self.assertFalse(supervisor.prune_event_queue(self.config, state))
+        self.assertEqual((self.root / "event-queue.jsonl").read_bytes(), queue_before)
+        self.assertIn(event["event_id"], state["queue"]["events"])
+        self.assertNotIn("queue_event_pruned", self._activity_types())
+
+    def _assert_cancelled_as_orphan(self, event: dict[str, Any], state: dict[str, Any]) -> None:
+        record = state["queue"]["events"][event["event_id"]]
+        self.assertTrue(supervisor.queue_event_is_orphaned(self.config, event, record, []))
+        self.assertEqual(supervisor.outstanding_delivery_indexes(self.config, state), (set(), set(), set()))
+        with mock.patch.object(supervisor, "start_worker_for_request") as start_worker:
+            self.assertFalse(supervisor.process_queue(self.config, state, provider_report={}))
+        start_worker.assert_not_called()
+        self.assertTrue(supervisor.prune_event_queue(self.config, state))
+        self.assertEqual((self.root / "event-queue.jsonl").read_text(encoding="utf-8"), "")
+        self.assertEqual(state["queue"]["events"], {})
+        self.assertIn("queue_event_pruned", self._activity_types())
+
+    def _deliver(self, state: dict[str, Any], *, dispatch_agent: str | None = "claude") -> mock.Mock:
+        """Run the real queue consumer up to the launch call; no process starts."""
+
+        def launch(_config: Any, launch_state: dict[str, Any], _report: Any, _request: Any, **kwargs: Any) -> Any:
+            launch_state["workers"]["run-resume"] = {
+                "run_id": "run-resume",
+                "task_id": self.RESUME_TASK_ID,
+                "agent_id": "claude",
+                "provider": "claude",
+                "queue_event_id": kwargs["queue_event_id"],
+                "status": "running",
+            }
+            return True, "run-resume", {}
+
+        request = supervisor.DeliveryRequest(
+            agent_id="claude",
+            provider="claude",
+            delivery_mode="claude_cli",
+            message="fixture",
+            task_id=self.RESUME_TASK_ID,
+            reason="github_retry",
+        )
+        with (
+            mock.patch.object(supervisor, "build_request", return_value=request),
+            mock.patch.object(supervisor, "current_provider_dispatch_pause", return_value=None),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "select_dispatch_agent_id", return_value=dispatch_agent),
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+            mock.patch.object(supervisor, "launch_protection_refusal", return_value=None),
+            mock.patch.object(supervisor, "start_worker_for_request", side_effect=launch) as start_worker,
+        ):
+            supervisor.process_queue(self.config, state, provider_report={})
+        return start_worker
+
+    def test_resume_past_grace_stays_queued_until_its_owner_receives_it(self) -> None:
+        """evt-20261107T073404Z-d86975fc: queued, attempt 0, no worker, older than the grace."""
+        for status in ("blocked", "todo", "in_progress"):
+            with self.subTest(status=status):
+                (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
+                fields = {"waiting_for": "Human/Ops"} if status == "blocked" else {"waiting_for": None}
+                event = self._queue_aged_resume(status=status, **fields)
+                board_before = (self.root / "ai-status.json").read_bytes()
+                state = self._load_state()
+                self.assertEqual(state["queue"]["events"][event["event_id"]], {"attempt_count": 0, "status": "queued"})
+
+                self._assert_retained_and_reserved(event, state)
+
+                start_worker = self._deliver(state)
+                start_worker.assert_called_once()
+                self.assertEqual(start_worker.call_args.kwargs["queue_event_id"], event["event_id"])
+                self.assertEqual(start_worker.call_args.kwargs["attempt_count"], 1)
+                # Delivery wakes the owner; it is not a lifecycle transition.
+                self.assertEqual((self.root / "ai-status.json").read_bytes(), board_before)
+                self.assertEqual(
+                    [row["created_at"] for row in runtime_state.load_event_queue(self.config)],
+                    ["2000-01-01T00:00:00Z"],
+                )
+
+                self.assertFalse(supervisor.prune_event_queue(self.config, state))
+                worker = state["workers"]["run-resume"]
+                self.assertFalse(
+                    supervisor.queue_event_is_orphaned(
+                        self.config, event, state["queue"]["events"][event["event_id"]], [worker]
+                    )
+                )
+
+                worker["status"] = "completed"
+                supervisor.finalize_queue_event_record(self.config, state, worker, "completed")
+                self.assertTrue(supervisor.prune_event_queue(self.config, state))
+                self.assertEqual(runtime_state.load_event_queue(self.config), [])
+
+    def test_resume_past_grace_survives_a_capacity_wait_and_is_then_delivered(self) -> None:
+        event = self._queue_aged_resume()
+        state = self._load_state()
+
+        self._deliver(state, dispatch_agent=None).assert_not_called()
+
+        record = state["queue"]["events"][event["event_id"]]
+        self.assertEqual((record["status"], record["attempt_count"]), ("pending", 0))
+        self._assert_retained_and_reserved(event, state)
+        self._deliver(state).assert_called_once()
+        self.assertEqual(state["queue"]["events"][event["event_id"]]["attempt_count"], 1)
+
+    def test_resume_past_grace_is_cancelled_when_the_board_no_longer_supports_it(self) -> None:
+        cases: dict[str, dict[str, object] | None] = {
+            "deleted": None,
+            "done": {"status": "done"},
+            "approved": {"status": "review_approved"},
+            "with_independent_reviewer": {"status": "review"},
+            "unknown_status": {"status": "paused"},
+            "owner_moved": {"owner": "Codex2"},
+            "owner_and_reviewer_swapped": {"owner": "Codex", "reviewer": "Claude"},
+            "human_gate_class": {"task_class": "human_gate"},
+            "human_required_roles": {"human_required_roles": ["owner"]},
+            "pending_human_gate": {"gate_status": "pending_human_approval"},
+            "non_dispatchable": {"non_dispatchable": True},
+            "human_owner": {"owner": "Human/Ops"},
+            "approved_head_frozen": {"approved_head": "a" * 40},
+            "routed_to_merge": {"merge_route": {"route": "queued"}},
+            "dependency_incomplete": {"depends_on": ["T-UPSTREAM"]},
+        }
+        for name, change in cases.items():
+            with self.subTest(case=name):
+                (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
+                event = self._queue_aged_resume()
+                upstream = {"id": "T-UPSTREAM", "owner": "Codex2", "reviewer": "Codex", "status": "in_progress"}
+                self._write_board(*([] if change is None else [self._resume_task(**change), upstream]))
+                self._assert_cancelled_as_orphan(event, self._load_state())
+
+    def test_resume_past_grace_is_cancelled_when_its_envelope_no_longer_matches(self) -> None:
+        cases = {
+            "target_agent": {"target_agent": "codex2"},
+            "display_name": {"target_display_name": "Codex2"},
+            "provider": {"provider": "codex"},
+        }
+        for name, change in cases.items():
+            with self.subTest(field=name):
+                (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
+                event = {**self._queue_aged_resume(), **change}
+                self._write_event(event)
+                self._assert_cancelled_as_orphan(event, self._load_state())
+
+    def test_resume_past_grace_is_cancelled_when_role_policy_excludes_the_owner(self) -> None:
+        event = self._queue_aged_resume()
+        with mock.patch.object(supervisor, "role_provider_block_reason", return_value="policy moved"):
+            self._assert_cancelled_as_orphan(event, self._load_state())
+
+    def test_other_queued_envelopes_on_a_current_task_stay_orphans_through_the_real_loader(self) -> None:
+        # The loader writes the same queued record for all of these, and none of
+        # them is a resume its owner would otherwise never receive: the ready
+        # dispatcher rebuilds a dispatch from the board, and a coordination or
+        # planning wake is not addressed by this task's role.
+        for reason in ("owned_in_progress_dispatch", "coordination:ui-done", "discussion_planning_readout_dispatch"):
+            with self.subTest(reason=reason):
+                (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
+                event = {**self._queue_aged_resume(status="in_progress"), "reason": reason}
+                self._write_event(event)
+                self._assert_cancelled_as_orphan(event, self._load_state())
+
+    def test_only_a_never_started_resume_record_is_exempt_from_the_orphan_grace(self) -> None:
+        event = self._queue_aged_resume()
+        for status in ("started", "manual_pending", "retry_backoff", "stalled"):
+            with self.subTest(status=status):
+                self.assertTrue(supervisor.queue_event_is_orphaned(self.config, event, {"status": status}, []))
+        self.assertFalse(supervisor.queue_event_is_orphaned(self.config, event, {}, []))
+
+    def test_orphan_predicate_keeps_its_settled_child_and_cooldown_answers(self) -> None:
+        event = self._queue_aged_resume()
+        self._write_board()
+        queued = {"status": "queued"}
+        self.assertTrue(supervisor.queue_event_is_orphaned(self.config, event, queued, []))
+        self.assertFalse(
+            supervisor.queue_event_is_orphaned(self.config, event, queued, [{"run_id": "child", "status": "fallback"}])
+        )
+        for status in ("completed", "failed"):
+            self.assertFalse(supervisor.queue_event_is_orphaned(self.config, event, {"status": status}, []))
+        cooldown = {
+            "status": "retry_backoff",
+            "next_retry_at": "2999-01-01T00:00:00Z",
+            supervisor.model_rotation.DISPATCH_WAIT_KEY: {
+                "kind": "model_cooldown",
+                "model": "fixture-model",
+                "pool": "claude",
+                "retry_at": "2999-01-01T00:00:00Z",
+            },
+        }
+        self.assertFalse(supervisor.queue_event_is_orphaned(self.config, event, cooldown, []))
+        fresh = {**event, "created_at": supervisor.utc_now()}
+        self.assertFalse(supervisor.queue_event_is_orphaned(self.config, fresh, queued, []))
+
+    def _deliver_with_board_drift(self, state: dict[str, Any], *tasks: dict[str, object]) -> mock.Mock:
+        """Change the board during workspace preparation, as the final launch gate would see it."""
+
+        def change_board(*_args: Any, **_kwargs: Any) -> tuple[bool, None]:
+            self._write_board(*tasks)
+            return True, None
+
+        real_process_queue = supervisor.process_queue
+
+        def process_with_drift(*args: Any, **kwargs: Any) -> bool:
+            supervisor.prepare_worker_workspace.side_effect = change_board
+            return real_process_queue(*args, **kwargs)
+
+        with mock.patch.object(supervisor, "process_queue", side_effect=process_with_drift):
+            return self._deliver(state)
+
+    def test_resume_is_not_launched_when_the_board_stops_supporting_it_during_preparation(self) -> None:
+        upstream = {"id": "T-UPSTREAM", "owner": "Codex2", "reviewer": "Codex", "status": "in_progress"}
+        cases: dict[str, tuple[dict[str, object], ...]] = {
+            "deleted": (),
+            "owner_moved": (self._resume_task(owner="Codex2"),),
+            "dependency_added": (self._resume_task(depends_on=["T-UPSTREAM"]), upstream),
+            "pending_human_gate": (self._resume_task(gate_status="pending_human_approval"),),
+            "non_dispatchable": (self._resume_task(non_dispatchable=True),),
+            "terminal": (self._resume_task(status="done"),),
+            "with_independent_reviewer": (self._resume_task(status="review"),),
+            "approved_head_frozen": (self._resume_task(approved_head="a" * 40),),
+        }
+        for name, board in cases.items():
+            with self.subTest(case=name):
+                (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
+                event = self._queue_aged_resume()
+                state = self._load_state()
+
+                self._deliver_with_board_drift(state, *board).assert_not_called()
+
+                record = state["queue"]["events"][event["event_id"]]
+                self.assertEqual(record["status"], "completed")
+                self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+                self.assertEqual(record["attempt_count"], 0)
+                self.assertEqual(state["workers"], {})
+                self.assertEqual(self._activity_types(), ["github_resume_queued", "wake_skipped"])
+                self.assertTrue(supervisor.prune_event_queue(self.config, state))
+                self.assertEqual(runtime_state.load_event_queue(self.config), [])
+
+    def test_resume_is_still_launched_when_preparation_leaves_the_board_supporting_it(self) -> None:
+        event = self._queue_aged_resume()
+        state = self._load_state()
+
+        start_worker = self._deliver_with_board_drift(state, self._resume_task(next="owner note moved on"))
+
+        start_worker.assert_called_once()
+        self.assertEqual(state["queue"]["events"][event["event_id"]]["attempt_count"], 1)
+
+    def test_fresh_resume_faces_the_same_rule_as_an_aged_one(self) -> None:
+        event = {**self._queue_aged_resume(), "created_at": supervisor.utc_now()}
+        self._write_event(event)
+        self._write_board(self._resume_task(status="done"))
+        state = self._load_state()
+        self.assertFalse(supervisor.queue_event_is_orphaned(self.config, event, {"status": "queued"}, []))
+
+        self._deliver(state).assert_not_called()
+
+        record = state["queue"]["events"][event["event_id"]]
+        self.assertEqual((record["status"], record["skip_reason"]), ("completed", "stale_dispatch_event"))
+
+    def test_final_launch_gate_keeps_answering_for_other_reasons_through_the_original_rule(self) -> None:
+        event = {**self._queue_aged_resume(), "reason": "coordination:ui-done"}
+        task_map = {self.RESUME_TASK_ID: self._resume_task(status="done")}
+        with mock.patch.object(supervisor, "owner_notification_block_reason") as notification_rule:
+            self.assertIsNone(supervisor.stale_dispatch_skip_message(self.config, event, task_map))
+        notification_rule.assert_not_called()
+
+    def test_resume_past_grace_needs_its_envelope_to_name_a_provider(self) -> None:
+        event = self._queue_aged_resume()
+        del event["provider"]
+        self._write_event(event)
+        self._assert_cancelled_as_orphan(event, self._load_state())
+
+    def test_parked_resume_run_keeps_its_authority_only_while_the_board_supports_it(self) -> None:
+        self._queue_aged_resume(status="in_progress", waiting_for=None)
+        worker = {
+            "run_id": "run-resume",
+            "task_id": self.RESUME_TASK_ID,
+            "agent_id": "claude",
+            "provider": "claude",
+            "queue_event_id": "evt-parked",
+            "status": "suspended_approval",
+            "reason": "github_retry",
+            "request_snapshot": {"reason": "github_retry", "metadata": {"task": {"id": self.RESUME_TASK_ID}}},
+        }
+        with mock.patch.object(supervisor, "launch_protection_refusal", return_value=None):
+            state: dict[str, Any] = {"workers": {"run-resume": worker}, "queue": {"events": {}}}
+            self.assertFalse(supervisor.supersede_worker_without_execution_authority(self.config, state, worker))
+
+            # The assignment predicate has no answer for a frozen approval; only this rule does.
+            self._write_board(self._resume_task(status="in_progress", waiting_for=None, approved_head="a" * 40))
+            self.assertTrue(supervisor.supersede_worker_without_execution_authority(self.config, state, worker))
+        self.assertEqual(worker["status"], "superseded")
+        self.assertIn("approval is frozen", worker["last_error"])
+
+    def test_prune_leaves_a_stale_resume_to_its_running_child(self) -> None:
+        event = self._queue_aged_resume()
+        self._write_board(self._resume_task(status="done"))
+        state = self._load_state()
+        state["workers"]["child"] = {
+            "run_id": "child",
+            "task_id": self.RESUME_TASK_ID,
+            "queue_event_id": event["event_id"],
+            "status": "fallback",
+        }
+        state["queue"]["events"][event["event_id"]].update(status="started", run_id="child", lease_owner="child")
+
+        self.assertFalse(supervisor.prune_event_queue(self.config, state))
+
+        self.assertEqual([row["event_id"] for row in runtime_state.load_event_queue(self.config)], [event["event_id"]])
+        self.assertEqual(state["queue"]["events"][event["event_id"]]["status"], "started")
+
+    def test_cooldown_wait_keeps_a_supported_resume_and_cancels_an_unsupported_one(self) -> None:
+        event = self._queue_aged_resume()
+        state = self._load_state()
+        state["queue"]["events"][event["event_id"]].update(
+            {
+                "status": "retry_backoff",
+                "next_retry_at": "2999-01-01T00:00:00Z",
+                supervisor.model_rotation.DISPATCH_WAIT_KEY: {
+                    "kind": "model_cooldown",
+                    "model": "fixture-model",
+                    "pool": "claude",
+                    "retry_at": "2999-01-01T00:00:00Z",
+                },
+            }
+        )
+        self.assertFalse(supervisor.prune_event_queue(self.config, state))
+        self.assertEqual([row["event_id"] for row in runtime_state.load_event_queue(self.config)], [event["event_id"]])
+
+        self._write_board(self._resume_task(owner="Codex2"))
+        self.assertTrue(supervisor.prune_event_queue(self.config, state))
+        self.assertEqual(runtime_state.load_event_queue(self.config), [])
 
 
 class DeferredApprovalCorrelationTests(unittest.TestCase):
@@ -21746,9 +22281,18 @@ class CapacityControllerReconciliationTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.archive_root = archive_root
+        (archive_root / "fleet").mkdir()
+        environment = mock.patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in [name for name in os.environ if name.endswith("_LOCAL_PATHS")]:
+            del os.environ[name]
 
     def _config(self, slot_count: int = 2) -> dict[str, Any]:
         return {
+            # The creator resolves each parent's source. One level down, so the registry's
+            # relative siblings stay inside this root too.
+            "paths": {"status_file": str(self.archive_root / "fleet" / "ai-status.json")},
             "schema": {"tasks_path": "tasks"},
             "agents": {
                 "claude": {"provider": "claude", "slot_id": "slot-0"},

@@ -215,6 +215,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_worktree_task_id",
 "materialize_worker_context_files",
 "observe_worker_worktree_activity",
+    "launch_protection_refusal",
     "prepare_worker_workspace",
     "prune_orphan_worktrees",
     "_dead_owner_continuation_eligible",
@@ -317,6 +318,9 @@ _FAILURE_HELPER_FUNCTIONS = [
 "retry_delay_seconds",
 "retry_due_workers",
 "schedule_queue_event_retry",
+"supersede_worker_without_execution_authority",
+"supersede_worker_without_queue_event",
+"worker_slot_left_logical_pool",
 "should_pause_dispatch_for_failure_kind",
 "sidecar_only_agent_names",
 "successful_worker_exit_outcome",
@@ -564,6 +568,9 @@ from runtime_state import (
     load_approval_state,
     load_event_queue,
     load_runtime_state,
+    _reset_queue_record_for_redispatch,
+    queue_event_holders,
+    queue_event_moved_from_worker,
     queue_event_record,
     replace_event_queue,
     save_runtime_state,
@@ -2358,6 +2365,10 @@ def start_worker_for_request(
     dispatched_at = datetime.now(UTC)
     adapter_name = delivery_mode_override or agent.get("adapter", "file_inbox")
     adapter = build_adapter(adapter_name, config=config, provider_capabilities=provider_report)
+    # A replacement skips preparation and copies its parent's request, whose baseline
+    # says where the parent began; only its own marks what this run goes on to add.
+    if parent_run_id and request.metadata.get("workspace_mode") == "isolated_worktree":
+        worker_workspace.record_workspace_launch_head(state, request)
     result = adapter.deliver(request)
     if not result.ok:
         dispatch_wait = result.metadata.get(model_rotation.DISPATCH_WAIT_KEY) if isinstance(result.metadata, dict) else None
@@ -3509,7 +3520,7 @@ def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bo
         return False
     active_statuses = active_worker_statuses(config)
     for event_id, record in queue_events.items():
-        workers = [worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id]
+        workers = queue_event_holders(state, event_id)
         if not workers:
             continue
         if any(worker.get("status") in active_statuses for worker in workers):
@@ -3523,22 +3534,6 @@ def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bo
                 record["error"] = latest.get("last_error")
             changed = True
     return changed
-
-
-def _reset_queue_record_for_redispatch(record: dict[str, Any], *, reason: str) -> None:
-    record["status"] = "queued"
-    record["requeued_at"] = utc_now()
-    record["requeue_reason"] = reason
-    for key in (
-        "processed_at",
-        "error",
-        "lease_owner",
-        "lease_acquired_at",
-        "lease_expires_at",
-        "lease_released_at",
-        "last_wait_reason",
-    ):
-        record.pop(key, None)
 
 
 def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> bool:
@@ -3638,7 +3633,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         if alive and not expired_lease and worker.get("last_heartbeat_at") and not worker_heartbeat_is_stale(config, worker, now):
             refresh_worker_lease(config, worker, now)
             counts["lease_refreshes"] += 1
-            if worker.get("queue_event_id"):
+            if worker.get("queue_event_id") and not queue_event_moved_from_worker(state, worker):
                 record = queue_event_record(state, worker["queue_event_id"])
                 record["lease_owner"] = worker.get("run_id")
                 record["lease_expires_at"] = queue_lease_expiry(config, now)
@@ -3862,9 +3857,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         if str(record.get("status") or "") not in {"started", "stalled"}:
             continue
         related_active = [
-            worker
-            for worker in workers.values()
-            if worker.get("queue_event_id") == event_id and worker.get("status") in active_statuses
+            worker for worker in queue_event_holders(state, event_id) if worker.get("status") in active_statuses
         ]
         if related_active:
             continue
@@ -5262,6 +5255,79 @@ def queue_event_age_seconds(event: dict[str, Any]) -> float | None:
     return max(0.0, (datetime.now(UTC) - created_at.astimezone(UTC)).total_seconds())
 
 
+# Notifications nothing rebuilds. The ready dispatcher re-derives a dropped execution
+# dispatch from the board, but a dropped resume is simply never delivered.
+OWNER_NOTIFICATION_QUEUE_REASONS = frozenset({"github_retry"})
+
+
+def owner_notification_block_reason(
+    config: dict[str, Any],
+    event: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+) -> str | None:
+    """Why this board no longer supports waking the owner this notification names.
+
+    The caller supplies the board so the answer can be asked again at the final
+    launch boundary. Delivery only wakes the owner: no status moves here, so every
+    transition the owner then attempts still faces its own gate.
+    """
+    task = task_map.get(str(event.get("task_id") or ""))
+    if not task:
+        return "task is not on the board."
+    settings = ready_dispatch_settings(config)
+    task_status = str(task.get("status") or "").lower()
+    owner_held_statuses = normalized_status_set(settings.get("owned_statuses"), ["in_progress", "todo"]) | {"blocked"}
+    if task_status not in owner_held_statuses:
+        return f"task status {task_status} is not held by its owner."
+    if task_is_human_gate(task):
+        return "task is behind a Human gate."
+    if task.get("non_dispatchable"):
+        return "task is non_dispatchable."
+    if task.get("approved_head") or task.get("merge_route") is not None:
+        return "task approval is frozen."
+    owner = str(task.get(config.get("schema", {}).get("assignee_field", "owner")) or "")
+    if not owner or is_human_gate_agent(owner):
+        return "task has no agent owner."
+    agent = agent_config_for(config, owner)
+    # A relaunching run asks through an envelope rebuilt from its snapshot, which
+    # carries no provider; an envelope that names one must name the current one.
+    current_provider = str(agent.get("provider", owner))
+    if (
+        normalize_agent_id(str(event.get("target_agent") or "")) != agent["id"]
+        or str(event.get("target_display_name") or display_name_for(config, agent["id"])) != owner
+        or normalize_agent_id(str(event.get("provider", current_provider))) != normalize_agent_id(current_provider)
+    ):
+        return "notification no longer names the current owner."
+    done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
+    if not dependencies_satisfied(task, task_map, done_statuses):
+        return "dependency gate is not satisfied."
+    policy_reason = role_provider_block_reason(config, owner, role=ROLE_OWNER, task=task)
+    if policy_reason:
+        return f"role/provider policy no longer permits this dispatch: {policy_reason}"
+    return None
+
+
+def queue_event_is_undelivered_owner_notification(
+    config: dict[str, Any],
+    event: dict[str, Any],
+    record: dict[str, Any],
+) -> bool:
+    """Whether a workerless event is a notification its current owner still has to get.
+
+    The loader writes the same queued record for every envelope in the file, so the
+    record only says nothing has started; the board decides whether the message
+    still means anything.
+    """
+    if str(event.get("reason") or "") not in OWNER_NOTIFICATION_QUEUE_REASONS:
+        return False
+    if str(record.get("status") or "queued").lower() not in {"queued", "pending"}:
+        return False
+    if "provider" not in event:
+        return False
+    task_map = task_index_from_status(config, load_status(config))
+    return owner_notification_block_reason(config, event, task_map) is None
+
+
 def queue_event_is_orphaned(
     config: dict[str, Any],
     event: dict[str, Any],
@@ -5278,9 +5344,11 @@ def queue_event_is_orphaned(
         # reset tick so normal dispatch eligibility can decide its next step.
         return False
     age_seconds = queue_event_age_seconds(event)
-    if age_seconds is None:
+    if age_seconds is None or age_seconds <= orphaned_queue_event_grace_seconds(config):
         return False
-    return age_seconds > orphaned_queue_event_grace_seconds(config)
+    # The grace measures how long a worker may be missing, not how long a
+    # notification may wait for its first one.
+    return not queue_event_is_undelivered_owner_notification(config, event, record)
 
 
 def outstanding_delivery_indexes(config: dict[str, Any], state: dict[str, Any]) -> tuple[set[str], set[tuple[str, str]], set[str]]:
@@ -5316,13 +5384,11 @@ def outstanding_delivery_indexes(config: dict[str, Any], state: dict[str, Any]) 
 
 def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any], status: str, error: str | None = None) -> None:
     queue_event_id = worker.get("queue_event_id")
-    if not queue_event_id:
+    if not queue_event_id or queue_event_moved_from_worker(state, worker):
         return
     active_statuses = active_worker_statuses(config)
-    for item in state.get("workers", {}).values():
-        if item.get("run_id") == worker.get("run_id"):
-            continue
-        if item.get("queue_event_id") == queue_event_id and worker_counts_as_active_capacity(config, item, active_statuses):
+    for item in queue_event_holders(state, queue_event_id):
+        if item.get("run_id") != worker.get("run_id") and worker_counts_as_active_capacity(config, item, active_statuses):
             return
     record = queue_event_record(state, queue_event_id)
     record["status"] = status
@@ -5353,8 +5419,11 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
             continue
 
         record = queue_events.get(event_id, {})
+        # A run that lost the event still keeps it from being an orphan, but its
+        # status no longer decides the event.
         related_workers = [worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id]
-        has_active_worker = any(worker.get("status") in active_statuses for worker in related_workers)
+        holders = queue_event_holders(state, event_id)
+        has_active_worker = any(worker.get("status") in active_statuses for worker in holders)
         if queue_event_is_orphaned(config, event, record, related_workers):
             age_seconds = queue_event_age_seconds(event)
             write_activity_log(
@@ -5365,9 +5434,9 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
                     "target_agent": event.get("target_display_name") or event.get("target_agent"),
                     "queue_event_id": event_id,
                     "message": (
-                        f"Pruned orphaned queue event after {age_seconds:.1f}s without a live worker or queue record."
+                        f"Pruned orphaned queue event after {age_seconds:.1f}s without a live worker or a current notification."
                         if age_seconds is not None
-                        else "Pruned orphaned queue event without a live worker or queue record."
+                        else "Pruned orphaned queue event without a live worker or a current notification."
                     ),
                 },
             )
@@ -5384,13 +5453,11 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
             continue
 
         if (
-            not related_workers
+            not holders
             and record.get("status") in {"started", "manual_pending", "retry_backoff", "stalled"}
             and not model_rotation.has_dispatch_cooldown_wait(record)
         ):
-            record["status"] = "queued"
-            record.pop("processed_at", None)
-            record.pop("error", None)
+            _reset_queue_record_for_redispatch(record, reason="queue record had no worker holding it")
             changed = True
             kept.append(event)
             kept_ids.add(event_id)
@@ -5517,7 +5584,7 @@ def is_operator_emergency(config: dict[str, Any], state: dict[str, Any] | None, 
     return False
 
 
-def worker_worktree_is_clean(config: dict[str, Any], worker: dict[str, Any]) -> bool:
+def worker_worktree_is_clean(config: dict[str, Any], worker: dict[str, Any], task: dict[str, Any] | None) -> bool:
     workspace_path_str = str(worker.get("workspace_path") or "").strip()
     if not workspace_path_str:
         return True
@@ -5526,7 +5593,12 @@ def worker_worktree_is_clean(config: dict[str, Any], worker: dict[str, Any]) -> 
         return True
     try:
         from worktree_cleanliness import inspect_worktree
-        inspection = inspect_worktree(workspace_path)
+        protected = worker_workspace._worker_recorded_protected_paths(worker, task)
+        if worker_workspace._protected_commit_refusal(
+            workspace_path, "HEAD", protected, worktree_path=workspace_path, check_index=True
+        ):
+            return False
+        inspection = inspect_worktree(workspace_path, protected_paths=protected)
         return bool(inspection.handoff_clean)
     except Exception:
         return False
@@ -5582,7 +5654,7 @@ def worker_can_be_preempted(
         dispatch_reason in {REASON_REVIEW_READY, REASON_OWNED_FINALIZE}
         or task_status in {"review", "review_approved"}
     ):
-        return worker_worktree_is_clean(config, worker)
+        return worker_worktree_is_clean(config, worker, task)
 
     # Fail closed: healthy active execution workers (owned_ready, owned_in_progress,
     # helper_claim, todo, in_progress) or any other active workers are actively running
@@ -5603,6 +5675,11 @@ def stale_dispatch_skip_message(
     event: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
 ) -> str | None:
+    if str(event.get("reason") or "") in OWNER_NOTIFICATION_QUEUE_REASONS:
+        block_reason = owner_notification_block_reason(config, event, task_map)
+        if block_reason:
+            return f"Skipped stale queued wake event for {event.get('task_id') or 'unknown task'}: {block_reason}"
+        return None
     return dispatch_ops.stale_dispatch_skip_message(config, event, task_map)
 
 

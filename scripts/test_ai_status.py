@@ -2433,6 +2433,10 @@ class SourceAuthorReviewIndependenceTests(unittest.TestCase):
         return self.git("rev-parse", "HEAD")
 
     def setUp(self) -> None:
+        self.write_source_range("Codex")
+
+    def write_source_range(self, author: str) -> None:
+        """A fresh repository and task record whose source commit `author` signed."""
         self.repo = Path(tempfile.mkdtemp(prefix="test-source-author-"))
         self.addCleanup(shutil.rmtree, self.repo, ignore_errors=True)
         self.git("init", "-q", "-b", "dev")
@@ -2442,7 +2446,7 @@ class SourceAuthorReviewIndependenceTests(unittest.TestCase):
         self.git("add", "base.txt")
         self.git("commit", "-q", "-m", "bootstrap")
         self.git("checkout", "-q", "-b", self.BRANCH)
-        self.codex_commit = self.commit("feature.txt", f"{self.TASK_ID}: add feature", "Codex")
+        self.codex_commit = self.commit("feature.txt", f"{self.TASK_ID}: add feature", author)
         # dev advances; the finalizer only merges it back into the branch.
         self.git("checkout", "-q", "dev")
         (self.repo / "other.txt").write_text("other\n", encoding="utf-8")
@@ -2741,6 +2745,169 @@ class SourceAuthorReviewIndependenceTests(unittest.TestCase):
         self.assertEqual(self.task["approved_head"], self.head)
         self.assertEqual(self.task["last_approved_by"], "Codex2")
         self.assertEqual(self.task["owner"], "Claude")
+
+    HISTORICAL_LABELS = ("Codex foreground", "Codex-foreground")
+
+    def historical_alias_environment(self, *changes: Any) -> Any:
+        """Select an owned runtime config through the normal loader for one block.
+
+        It is the tracked example plus the confirmed labels on agent `codex`,
+        plus Codex3 as another logical lane over the same account. `changes`
+        then alter the catalog, so what the rule reads is exactly what
+        `common.load_config` accepted, not a dictionary built for this test.
+        """
+        payload = json.loads(_TEST_CONFIG.read_text(encoding="utf-8"))
+        agents = payload["agents"]
+        agents["codex"]["source_aliases"] = list(self.HISTORICAL_LABELS)
+        agents["codex3"] = dict(agents["codex2"], display_name="Codex3", account_pool="codex_bjoe")
+        for change in changes:
+            change(agents)
+        root = Path(tempfile.mkdtemp(prefix="test-source-alias-config-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        runtime = root / "supervisor-runtime.json"
+        runtime.write_text(json.dumps(payload), encoding="utf-8")
+        ai_status._MERGED_CONFIG_CACHE.clear()
+        self.addCleanup(ai_status._MERGED_CONFIG_CACHE.clear)
+        return mock.patch.dict(
+            os.environ, {"ORCH_CONFIG_PATH": "", "PANTHEON_CONFIG_PATH": str(runtime)}, clear=False
+        )
+
+    def test_a_historical_alias_range_is_submitted_raw_and_judged_by_its_account(self) -> None:
+        for label in self.HISTORICAL_LABELS:
+            with self.subTest(label=label), self.historical_alias_environment():
+                self.write_source_range(label)
+                self.assertEqual(
+                    ai_status.merged_orchestrator_config()["agents"]["codex"]["source_aliases"],
+                    list(self.HISTORICAL_LABELS),
+                )
+                # Declared or not, the label is not somebody who can act.
+                self.assert_refused_without_mutation(
+                    label, ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready"], r"(Invalid|Unknown) AI_NAME"
+                )
+
+                submission = self.submit()
+                self.assertEqual(self.task["status"], "review")
+                self.assertEqual(self.task["owner"], "Claude")
+                self.assertEqual(submission["submitted_by"], "Claude")
+                self.assertEqual(submission["source_authors"], [label])
+                self.assertEqual(submission["source_head"], self.head)
+                self.assertIn(f"LLM-Agent: {label}\n", self.git("show", "-s", "--format=%B", self.codex_commit) + "\n")
+
+                # Same logical agent, then another lane over its account.
+                self.assert_refused_without_mutation(
+                    "Codex", ai_status.command_approve, [self.TASK_ID, "LGTM"], r"reviewer Codex is itself a source author"
+                )
+                self.task["reviewer"] = "Codex3"
+                self.assert_refused_without_mutation(
+                    "Codex3", ai_status.command_approve, [self.TASK_ID, "LGTM"], r"shares account pool codex_bjoe"
+                )
+                self.task["reviewer"] = label
+                self.assert_refused_without_mutation(
+                    label, ai_status.command_approve, [self.TASK_ID, "LGTM"], r"(Invalid|Unknown) AI_NAME"
+                )
+
+                self.task["reviewer"] = "Codex2"
+                # Every original gate still applies to the independent reviewer.
+                self.assert_refused_without_mutation(
+                    "Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], r"required CI status is 'pending'", ci="pending"
+                )
+                self.assert_refused_without_mutation(
+                    "Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], r"does not match current remote task head",
+                    head="d" * 40,
+                )
+                self.task["gate_status"] = "pending_human_review"
+                self.assert_refused_without_mutation(
+                    "Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], r"unresolved human gate status"
+                )
+                self.task.pop("gate_status")
+
+                self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review passed"])
+                self.assertEqual(self.task["status"], "review_approved")
+                self.assertEqual(self.task["approved_head"], self.head)
+                self.assertEqual(self.task["last_approved_by"], "Codex2")
+                self.assertEqual(self.task["owner"], "Claude")
+                self.assertEqual(self.task["review_submission"]["source_authors"], [label])
+
+    def test_a_historical_alias_range_is_restored_only_on_an_independent_signature(self) -> None:
+        for label in self.HISTORICAL_LABELS:
+            with self.subTest(label=label), self.historical_alias_environment():
+                self.write_source_range(label)
+                self.submit()
+                self.task.update(
+                    {
+                        "status": "review_approved",
+                        "last_approved_head": self.head,
+                        "review_notes_zh": ["舊核准"],
+                    }
+                )
+                self.assert_refused_without_mutation(
+                    "Codex",
+                    ai_status.command_restore_approved_head,
+                    [self.TASK_ID, self.head, "attest"],
+                    r"reviewer Codex is itself a source author",
+                )
+                self.task["status"] = "in_progress"
+                self.assert_refused_without_mutation(
+                    "Claude", ai_status.command_restore_approved, [self.TASK_ID, "restore"],
+                    r"does not record which reviewer signed it",
+                )
+                # Neither the account nor the literal label it signed under is
+                # independent, and assigning Codex2 since signs nothing.
+                self.task["reviewer"] = "Codex2"
+                for signer in ("Codex", label):
+                    self.task["last_approved_by"] = signer
+                    self.assert_refused_without_mutation(
+                        "Claude", ai_status.command_restore_approved, [self.TASK_ID, "restore"],
+                        r"is itself a source author",
+                    )
+                self.task["last_approved_by"] = "Codex3"
+                self.assert_refused_without_mutation(
+                    "Claude", ai_status.command_restore_approved, [self.TASK_ID, "restore"],
+                    r"shares account pool codex_bjoe",
+                )
+
+                self.task.pop("last_approved_by")
+                self.task["status"] = "review"
+                self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review passed"])
+                self.run_as("Claude", ai_status.command_reopen, [self.TASK_ID, "spurious downgrade"])
+                self.task["review_notes_zh"] = ["獨立核准"]
+                self.run_as("Claude", ai_status.command_restore_approved, [self.TASK_ID, "restore"])
+                self.assertEqual(self.task["status"], "review_approved")
+                self.assertEqual(self.task["approved_head"], self.head)
+                self.assertEqual(self.task["last_approved_by"], "Codex2")
+
+    def test_an_unresolvable_alias_catalog_refuses_submission_and_approval(self) -> None:
+        def undeclared(agents: dict[str, Any]) -> None:
+            del agents["codex"]["source_aliases"]
+
+        def overlap(agents: dict[str, Any]) -> None:
+            agents["codex2"]["source_aliases"] = list(self.HISTORICAL_LABELS)
+
+        def display_name_collision(agents: dict[str, Any]) -> None:
+            for index, label in enumerate(self.HISTORICAL_LABELS):
+                agents[f"writer{index}"] = dict(agents["codex2"], display_name=label)
+
+        def slot_only(agents: dict[str, Any]) -> None:
+            del agents["codex"]["source_aliases"]
+            agents["codex_lupin_slot_1"]["source_aliases"] = list(self.HISTORICAL_LABELS)
+
+        for label in self.HISTORICAL_LABELS:
+            for change in (undeclared, overlap, display_name_collision, slot_only):
+                pattern = rf"source author '{label}' is not a registered agent"
+                with self.subTest(label=label, catalog=change.__name__):
+                    self.write_source_range(label)
+                    with self.historical_alias_environment(change):
+                        self.assert_refused_without_mutation(
+                            "Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready"], pattern
+                        )
+                    # Submitted under a sound catalog, then asked again after it changed.
+                    with self.historical_alias_environment():
+                        self.submit()
+                    self.task["reviewer"] = "Codex2"
+                    with self.historical_alias_environment(change):
+                        self.assert_refused_without_mutation(
+                            "Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], pattern
+                        )
 
     def assign_as(self, actor: str, metadata: dict[str, Any]) -> None:
         with mock.patch.dict(os.environ, {"TASK_METADATA_JSON": json.dumps(metadata)}, clear=False):
@@ -9994,6 +10161,338 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
         self.assertEqual(["Codex5", "Codex6", "Codex8", "Codex9"], accepted)
         self.assertEqual("Codex5", folded)
 
+    SCOPED_TASK_ID = "ODP-SCOPED-TARGET"
+    UNSCOPED_TASK_ID = "ODP-SCOPED-UNRELATED"
+
+    def _scoped_policy_runtime(self, directory: Path, **target_rule: object) -> Path:
+        """A real runtime config whose only rules name one task and one actor per role."""
+        return self._write_config(
+            directory,
+            {
+                "providers": {
+                    "claude": {"delivery_mode": "claude_cli"},
+                    "codex": {"delivery_mode": "codex"},
+                },
+                "agents": {
+                    "claude": {"display_name": "Claude", "provider": "claude", "account_pool": "claude_main"},
+                    "claude2": {"display_name": "Claude2", "provider": "claude", "account_pool": "claude_main"},
+                    "codex": {"display_name": "Codex", "provider": "codex", "account_pool": "codex_bjoe"},
+                    "codex2": {"display_name": "Codex2", "provider": "codex", "account_pool": "codex_lupin"},
+                },
+                "ready_dispatcher": {
+                    "role_provider_policy": {
+                        "enabled": True,
+                        "rules": [
+                            {
+                                "roles": ["owner"],
+                                "task_ids": [self.SCOPED_TASK_ID],
+                                "agent_ids": ["claude"],
+                                "providers": ["claude"],
+                                **target_rule,
+                            },
+                            {
+                                "roles": ["reviewer"],
+                                "task_ids": [self.SCOPED_TASK_ID],
+                                "agent_ids": ["codex"],
+                                "providers": ["codex"],
+                            },
+                        ],
+                        "unclassified_owned_work": "allow",
+                    }
+                },
+            },
+            name="supervisor-runtime.json",
+        )
+
+    def _assign_with_real_loader(
+        self,
+        runtime: Path,
+        state: dict,
+        args: list[str],
+        *,
+        metadata: dict | None = None,
+    ) -> mock.MagicMock:
+        env = {"ORCH_CONFIG_PATH": "", "PANTHEON_CONFIG_PATH": str(runtime), "AI_NAME": "Claude"}
+        env["TASK_METADATA_JSON"] = json.dumps(metadata or {})
+        with (
+            mock.patch.dict(ai_status.os.environ, env, clear=False),
+            mock.patch.object(ai_status, "append_log") as append_log,
+        ):
+            ai_status._MERGED_CONFIG_CACHE.clear()
+            ai_status.command_assign(state, args)
+        return append_log
+
+    def _assert_assign_refused_untouched(
+        self, runtime: Path, state: dict, args: list[str], fragment: str, *, metadata: dict | None = None
+    ) -> None:
+        before = json.loads(json.dumps(state))
+        roster_before = set(ai_status.KNOWN_AGENTS)
+        env = {"ORCH_CONFIG_PATH": "", "PANTHEON_CONFIG_PATH": str(runtime), "AI_NAME": "Claude"}
+        env["TASK_METADATA_JSON"] = json.dumps(metadata or {})
+        with (
+            mock.patch.dict(ai_status.os.environ, env, clear=False),
+            mock.patch.object(ai_status, "append_log") as append_log,
+        ):
+            ai_status._MERGED_CONFIG_CACHE.clear()
+            with self.assertRaises(SystemExit) as refused:
+                ai_status.command_assign(state, args)
+        self.assertIn(fragment, str(refused.exception))
+        self.assertEqual(before, state)
+        self.assertEqual(roster_before, set(ai_status.KNOWN_AGENTS))
+        append_log.assert_not_called()
+
+    @staticmethod
+    def _empty_board() -> dict:
+        return {"agents": [], "tasks": [], "blockers": [], "handoffs": []}
+
+    def test_scoped_assignment_is_refused_by_the_normal_loader_before_any_mutation(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-scoped-assign-") as temp_dir:
+            runtime = self._scoped_policy_runtime(Path(temp_dir))
+
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._empty_board(),
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "owner Claude2",
+            )
+
+            accepted = self._empty_board()
+            logged = self._assign_with_real_loader(runtime, accepted, [self.SCOPED_TASK_ID, "Claude", "Codex"])
+            self.assertEqual([self.SCOPED_TASK_ID], [task["id"] for task in accepted["tasks"]])
+            self.assertEqual("Claude", accepted["tasks"][0]["owner"])
+            logged.assert_called()
+
+            # The same actor is not refused anywhere else: nothing here is a
+            # fleet-wide Claude-only rule.
+            unrelated = self._empty_board()
+            self._assign_with_real_loader(runtime, unrelated, [self.UNSCOPED_TASK_ID, "Claude2", "Codex"])
+            self.assertEqual("Claude2", unrelated["tasks"][0]["owner"])
+
+            # Reassigning a stored record is judged by that record's real id.
+            stored = {**self._empty_board(), "tasks": [json.loads(json.dumps(accepted["tasks"][0]))]}
+            self._assert_assign_refused_untouched(
+                runtime, stored, [self.SCOPED_TASK_ID, "Claude2", "Codex"], "owner Claude2"
+            )
+
+    def test_metadata_cannot_rename_the_task_a_scoped_rule_is_asked_about(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-scoped-assign-id-") as temp_dir:
+            runtime = self._scoped_policy_runtime(Path(temp_dir))
+
+            # The argument names the target; the metadata tries to name another.
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._empty_board(),
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "TASK_METADATA_JSON",
+                metadata={"id": self.UNSCOPED_TASK_ID},
+            )
+            # The argument names another; the record would be written as the target.
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._empty_board(),
+                [self.UNSCOPED_TASK_ID, "Claude2", "Codex"],
+                "TASK_METADATA_JSON",
+                metadata={"id": self.SCOPED_TASK_ID},
+            )
+            # An existing record cannot be renamed out of the rule either.
+            stored = {
+                **self._empty_board(),
+                "tasks": [
+                    {
+                        "id": self.SCOPED_TASK_ID,
+                        "status": "todo",
+                        "priority": "P2",
+                        "owner": "Claude",
+                        "reviewer": "Codex",
+                    }
+                ],
+            }
+            self._assert_assign_refused_untouched(
+                runtime,
+                stored,
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "TASK_METADATA_JSON",
+                metadata={"id": self.UNSCOPED_TASK_ID},
+            )
+            for value in (None, 7, ""):
+                with self.subTest(value=value):
+                    self._assert_assign_refused_untouched(
+                        runtime,
+                        self._empty_board(),
+                        [self.SCOPED_TASK_ID, "Claude", "Codex"],
+                        "TASK_METADATA_JSON",
+                        metadata={"id": value},
+                    )
+
+            # Restating the real id changes nothing and is still judged.
+            same = self._empty_board()
+            self._assign_with_real_loader(
+                runtime, same, [self.SCOPED_TASK_ID, "Claude", "Codex"], metadata={"id": self.SCOPED_TASK_ID}
+            )
+            self.assertEqual([self.SCOPED_TASK_ID], [task["id"] for task in same["tasks"]])
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._empty_board(),
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "owner Claude2",
+                metadata={"id": self.SCOPED_TASK_ID},
+            )
+
+    def _stored_board(self, owner: str, reviewer: str, **fields: object) -> dict:
+        task = {
+            "id": self.SCOPED_TASK_ID,
+            "status": "todo",
+            "priority": "P2",
+            "owner": owner,
+            "reviewer": reviewer,
+            **fields,
+        }
+        return {**self._empty_board(), "tasks": [task]}
+
+    def _frozen_board(self, owner: str, reviewer: str) -> dict:
+        return self._stored_board(owner, reviewer, status="review_approved", approved_head="a" * 40)
+
+    def test_metadata_cannot_replace_the_actors_the_rule_judged(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-scoped-assign-actors-") as temp_dir:
+            runtime = self._scoped_policy_runtime(Path(temp_dir))
+            boards = {
+                "new": self._empty_board,
+                "existing": lambda: self._stored_board("Claude", "Codex"),
+                "frozen": lambda: self._frozen_board("Claude", "Codex"),
+            }
+            for label, board in boards.items():
+                for metadata in (
+                    {"owner": "Claude2"},
+                    {"reviewer": "Codex2"},
+                    {"owner": "Claude2", "reviewer": "Codex2"},
+                    # A second spelling of the checked actor is not what was checked.
+                    {"owner": "claude"},
+                    {"owner": None},
+                    {"reviewer": ""},
+                    {"reviewer": 7},
+                ):
+                    with self.subTest(board=label, metadata=metadata):
+                        self._assert_assign_refused_untouched(
+                            runtime,
+                            board(),
+                            [self.SCOPED_TASK_ID, "Claude", "Codex"],
+                            "TASK_METADATA_JSON",
+                            metadata=metadata,
+                        )
+
+            # Restating the argument writes exactly what was judged.
+            restated = self._stored_board("Claude", "Codex")
+            self._assign_with_real_loader(
+                runtime,
+                restated,
+                [self.SCOPED_TASK_ID, "Claude", "Codex"],
+                metadata={"owner": "Claude", "reviewer": "Codex"},
+            )
+            self.assertEqual(
+                ("Claude", "Codex"), (restated["tasks"][0]["owner"], restated["tasks"][0]["reviewer"])
+            )
+            # A restated actor the rule does not list is still refused by the rule.
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._empty_board(),
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "owner Claude2",
+                metadata={"owner": "Claude2"},
+            )
+
+    def test_metadata_cannot_install_a_new_actor_beside_recorded_frozen_history(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-scoped-assign-frozen-") as temp_dir:
+            runtime = self._scoped_policy_runtime(Path(temp_dir))
+
+            # Neither recorded actor is listed: they are history, not a new grant.
+            recorded = self._frozen_board("Claude2", "Codex2")
+            self._assign_with_real_loader(runtime, recorded, [self.SCOPED_TASK_ID, "Claude2", "Codex2"])
+            restated = self._frozen_board("Claude2", "Codex2")
+            self._assign_with_real_loader(
+                runtime,
+                restated,
+                [self.SCOPED_TASK_ID, "Claude2", "Codex2"],
+                metadata={"owner": "Claude2", "reviewer": "Codex2"},
+            )
+            for board in (recorded, restated):
+                task = board["tasks"][0]
+                self.assertEqual(("Claude2", "Codex2"), (task["owner"], task["reviewer"]))
+                self.assertEqual(("review_approved", "a" * 40), (task["status"], task["approved_head"]))
+
+            # Unchanged arguments must not lend that exemption to whoever metadata names.
+            for metadata in ({"owner": "Claude"}, {"reviewer": "Codex"}, {"owner": "Codex"}):
+                with self.subTest(metadata=metadata):
+                    self._assert_assign_refused_untouched(
+                        runtime,
+                        self._frozen_board("Claude2", "Codex2"),
+                        [self.SCOPED_TASK_ID, "Claude2", "Codex2"],
+                        "TASK_METADATA_JSON",
+                        metadata=metadata,
+                    )
+
+            # A real new grant is judged as one on the frozen record.
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._frozen_board("Antigravity", "Codex"),
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "owner Claude2",
+            )
+
+    def test_metadata_cannot_replace_a_pair_the_independence_check_judged(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-scoped-assign-pool-") as temp_dir:
+            runtime = self._scoped_policy_runtime(Path(temp_dir))
+            # No rule reaches this task, so nothing but the pair check could refuse.
+            for metadata in ({"reviewer": "Claude2"}, {"reviewer": "Claude"}, {"owner": "Codex"}):
+                with self.subTest(metadata=metadata):
+                    self._assert_assign_refused_untouched(
+                        runtime,
+                        self._empty_board(),
+                        [self.UNSCOPED_TASK_ID, "Claude", "Codex"],
+                        "TASK_METADATA_JSON",
+                        metadata=metadata,
+                    )
+
+    def test_metadata_cannot_claim_or_lift_the_freeze_the_exemption_reads(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-scoped-assign-route-") as temp_dir:
+            runtime = self._scoped_policy_runtime(Path(temp_dir))
+            route = {"head": "a" * 40, "route": "queued"}
+
+            # Not frozen, so this recorded actor answers to the rule...
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._stored_board("Claude2", "Codex"),
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "owner Claude2",
+            )
+            # ...and an assignment cannot make it frozen by saying so.
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._stored_board("Claude2", "Codex"),
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "may not set review provenance",
+                metadata={"merge_route": route},
+            )
+            # Nor can it drop the route a merging record's freeze rests on.
+            self._assert_assign_refused_untouched(
+                runtime,
+                self._stored_board("Claude2", "Codex", merge_route=route),
+                [self.SCOPED_TASK_ID, "Claude2", "Codex"],
+                "may not set review provenance",
+                metadata={"merge_route": None},
+            )
+            # The recorded route still preserves its recorded actor.
+            merging = self._stored_board("Claude2", "Codex", merge_route=route)
+            self._assign_with_real_loader(runtime, merging, [self.SCOPED_TASK_ID, "Claude2", "Codex"])
+            self.assertEqual(route, merging["tasks"][0]["merge_route"])
+
+    def test_an_unregistered_scoped_actor_fails_closed_through_the_real_assignment(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-scoped-assign-unknown-") as temp_dir:
+            runtime = self._scoped_policy_runtime(Path(temp_dir), agent_ids=["claude9"])
+            for task_id in (self.SCOPED_TASK_ID, self.UNSCOPED_TASK_ID):
+                self._assert_assign_refused_untouched(
+                    runtime, self._empty_board(), [task_id, "Claude", "Codex"], "claude9"
+                )
+
     def test_without_the_overlay_the_same_workers_are_not_declared(self) -> None:
         """Proves the overlay — not a static table — is what admits Codex3-Codex9."""
         with tempfile.TemporaryDirectory(prefix="ai-status-base-only-") as temp_dir:
@@ -10250,6 +10749,70 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
 
                 ai_status._MERGED_CONFIG_CACHE.clear()
 
+    def test_source_aliases_in_the_normal_config_are_not_actors(self) -> None:
+        """Real loader, real roster: a source label names history, never a caller or role."""
+        labels = ["Codex foreground", "Codex-foreground"]
+        payload = {
+            "agents": {
+                "claude": {"display_name": "Claude", "provider": "claude", "account_pool": "claude_main"},
+                "codex": {
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "account_pool": "codex_bjoe",
+                    "source_aliases": labels,
+                },
+                "codex2": {"display_name": "Codex2", "provider": "codex", "account_pool": "codex_lupin"},
+            }
+        }
+        with tempfile.TemporaryDirectory(prefix="ai-status-source-alias-") as temp_dir:
+            runtime = self._write_config(Path(temp_dir), payload, name="supervisor-runtime.json")
+            with mock.patch.dict(
+                ai_status.os.environ,
+                {"ORCH_CONFIG_PATH": "", "PANTHEON_CONFIG_PATH": str(runtime), "AI_STATUS_EXTRA_AGENTS": ""},
+                clear=False,
+            ):
+                ai_status._MERGED_CONFIG_CACHE.clear()
+                self.assertEqual(ai_status.merged_orchestrator_config()["agents"]["codex"]["source_aliases"], labels)
+                self.assertEqual({"Claude", "Codex", "Codex2"}, ai_status.configured_agent_names())
+                registered = ai_status.registered_agent_names()
+                self.assertEqual(ai_status.AGENT_ALIASES.get("codex foreground"), None)
+                self.assertEqual(ai_status.AGENT_ALIASES.get("codex-foreground"), None)
+
+                for label in labels:
+                    self.assertNotIn(label, registered)
+                    self.assertEqual(label, ai_status.canonical_agent_name(label))
+                    for field in ("owner", "reviewer", "AI_NAME"):
+                        with self.subTest(label=label, field=field), self.assertRaises(SystemExit):
+                            ai_status.resolve_actor_reference(label, field=field)
+                    for args, ai_name in (
+                        (["ODP-ALIAS-001", label, "Codex2"], "Claude"),
+                        (["ODP-ALIAS-001", "Claude", label], "Claude"),
+                        (["ODP-ALIAS-001", "Claude", "Codex2"], label),
+                    ):
+                        state = {"agents": [], "tasks": [], "blockers": [], "handoffs": []}
+                        roster_before = set(ai_status.KNOWN_AGENTS)
+                        with (
+                            self.subTest(label=label, args=args, ai_name=ai_name),
+                            mock.patch.dict(os.environ, {"AI_NAME": ai_name}),
+                            mock.patch.object(ai_status, "append_log") as append_log,
+                        ):
+                            with self.assertRaises(SystemExit):
+                                ai_status.command_assign(state, args)
+                            self.assertEqual(state, {"agents": [], "tasks": [], "blockers": [], "handoffs": []})
+                            self.assertEqual(roster_before, set(ai_status.KNOWN_AGENTS))
+                            append_log.assert_not_called()
+                    with mock.patch.dict(os.environ, {"AI_NAME": label}), self.assertRaises(SystemExit):
+                        ai_status.current_actor_validated()
+
+                # The canonical actors of the same catalog still work.
+                state = {"agents": [], "tasks": [], "blockers": [], "handoffs": []}
+                with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}):
+                    self.assertEqual("Codex", ai_status.current_actor_validated())
+                    ai_status.command_assign(state, ["ODP-ALIAS-002", "Claude", "Codex"])
+                self.assertEqual(state["tasks"][0]["owner"], "Claude")
+                self.assertEqual(state["tasks"][0]["reviewer"], "Codex")
+                ai_status._MERGED_CONFIG_CACHE.clear()
+
 
 class ActorCommandMutationGuardTests(unittest.TestCase):
     """Every mutating actor command must fail *before* it touches durable state."""
@@ -10259,6 +10822,8 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
         "open at once and both need Codex2/coordinator action, not more owner work."
     )
     TASK_ID = "ODP-ACTOR-REF-001"
+    #: The real roster reader, for the case that must not run on the mocked one.
+    CONFIGURED_AGENT_NAMES = staticmethod(ai_status.configured_agent_names)
 
     def test_execution_lease_allows_helper_without_changing_canonical_owner(self) -> None:
         task = {
@@ -10494,6 +11059,46 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
             for bad_name in (self.PROSE, "Nessie9"):
                 with self.subTest(command=label, ai_name=bad_name[:24]):
                     self._assert_rejected_without_mutation(command, args, {"AI_NAME": bad_name})
+
+    def test_a_declared_source_alias_is_refused_by_every_mutating_command(self) -> None:
+        """The tracked config plus the aliases, read by the real loader and roster.
+
+        The table above runs against a mocked roster, which could not show that
+        source-only data stays out of it.
+        """
+        payload = json.loads(_TEST_CONFIG.read_text(encoding="utf-8"))
+        labels = ["Codex foreground", "Codex-foreground"]
+        payload["agents"]["codex"]["source_aliases"] = labels
+        with (
+            tempfile.TemporaryDirectory(prefix="ai-status-source-alias-guard-") as temp_dir,
+            mock.patch.object(ai_status, "configured_agent_names", self.CONFIGURED_AGENT_NAMES),
+        ):
+            runtime = Path(temp_dir) / "supervisor-runtime.json"
+            runtime.write_text(json.dumps(payload), encoding="utf-8")
+            with mock.patch.dict(
+                os.environ,
+                {"ORCH_CONFIG_PATH": "", "PANTHEON_CONFIG_PATH": str(runtime), "AI_STATUS_EXTRA_AGENTS": ""},
+                clear=False,
+            ):
+                ai_status._MERGED_CONFIG_CACHE.clear()
+                self.addCleanup(ai_status._MERGED_CONFIG_CACHE.clear)
+                self.assertEqual(ai_status.merged_orchestrator_config()["agents"]["codex"]["source_aliases"], labels)
+                self.assertIn("Codex", ai_status.configured_agent_names())
+                for label in labels:
+                    for name, args in self.AI_NAME_CASES.items():
+                        with self.subTest(command=name, ai_name=label):
+                            self._assert_rejected_without_mutation(
+                                ai_status.MUTATING_COMMANDS[name.split()[0]], args, {"AI_NAME": label}
+                            )
+                    for name, command, args in (
+                        ("assign owner", ai_status.command_assign, ["ODP-NEW-001", label, "Codex2"]),
+                        ("assign reviewer", ai_status.command_assign, ["ODP-NEW-001", "Claude", label]),
+                        ("handoff target", ai_status.command_handoff, [self.TASK_ID, label, "please review"]),
+                        ("blocker waiting-for", ai_status.command_blocker, [self.TASK_ID, "blocked", label]),
+                        ("retarget target", ai_status.command_retarget_blocker, [self.TASK_ID, label, "repair"]),
+                    ):
+                        with self.subTest(command=name, actor=label):
+                            self._assert_rejected_without_mutation(command, args, {"AI_NAME": "Claude"})
 
     def test_no_unvalidated_actor_read_remains(self) -> None:
         """The unvalidated `current_actor()` helper must stay deleted.

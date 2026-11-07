@@ -270,6 +270,27 @@ class WorkerSettlementPathTests(unittest.TestCase):
             f"expected one preservation outcome per dead worker, got {preservation_entries}",
         )
 
+    def test_non_isolated_blocked_owner_is_still_superseded_by_the_real_predicate(self) -> None:
+        """No checkout means no local proof, so the strict predicate decides as before."""
+        blocked = {"tasks": [{**TASK, "status": "blocked", "waiting_for": "Codex"}]}
+        worker = self._worker(runner_status="completed", exit_code=0)
+        state = {
+            "workers": {"run-1": copy.deepcopy(worker)},
+            "queue": {"events": {"evt-1": {"status": "started"}}},
+            "provider_guardrails": {"dispatch_pauses": {}, "task_failure_streaks": {}},
+        }
+        config = supervisor.load_config(".orchestrator/config.json")
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=blocked),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "console_log"),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+        ):
+            supervisor.poll_workers(config, state)
+        self.assertEqual(state["workers"]["run-1"]["status"], "superseded")
+        self.assertNotIn("progress_outcome", state["workers"]["run-1"])
+
     def test_boot_does_not_retry_a_transient_failure(self) -> None:
         """Retry/backoff timestamps predate the restart, so boot settles instead."""
         worker = self._worker(log_path=self._log("t", "Error: 429 rate limit exceeded, try again later\n"))
@@ -351,6 +372,9 @@ class WorkerSettlementPathTests(unittest.TestCase):
             "higher_priority_ready_task_exists",
             "worker_supports_approval_resume",
             "resume_claude_worker",
+            # The local-handoff proof routes the steady-state poll only.
+            "terminal_local_handoff",
+            "local_handoff_verified",
         ):
             with self.subTest(branch=absent):
                 # assertNotIn would dump the whole 258-line function into the

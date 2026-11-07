@@ -134,6 +134,8 @@ Task: ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001 · Owner: Claude2 · Reviewer: Cod
 
 結論：manifest 的 `rollback_release` 是一份宣告。runtime 回復永遠以 target 當下的狀態為準，兩個環境都不會去部署 `rollback_release` 指向的版本。
 
+staging 的 `rollback_rehearsal` 在呼叫切換流量指令**之前**啟動還原責任：指令逾時或失敗不代表遠端未切換，因此仍須嘗試還原原先釘選的完整流量比例。切換或健康檢查失敗時，也必須在還原後讀回核對；還原指令失敗、讀回失敗或比例不符都會讓演練失敗，不得產生成功的 rollback proof。即使還原成功，原本的切換／健康檢查錯誤仍保留，verify 仍是 `verification_failed`，交由既有 hold 流程處理。這些失敗路徑由 `tests/ops/test_ephemeral_staging_lifecycle.py` 的 API／Web 故障注入回歸覆蓋，不是 live 演練證據。
+
 **失敗時實際做什麼（兩個環境不同）：**
 
 - production（以及 dev）：`deploy_cloud_run_waji.sh` 的 `initial-release-cleanup`，刪除 candidate、維持零流量。
@@ -331,7 +333,7 @@ Task: ODP-CORE-OPS-STAGING-LIVE-GATE-001 · Owner: Claude2 · Reviewer: Codex2
   - API transport（audience 是 API URI）
   - Web transport（audience 是 Web URI）
 
-  三個 token 只存在記憶體，不寫入檔案、receipt 或 log。
+  三個 token 只存在記憶體，不寫入檔案、receipt 或 log。前段演練的 token cache 只在單一 stage 內共用，每個 stage 開始時清除；worker、scheduler 或 SQL 備份還原耗時超過 token 有效期時，後續 stage 會重新簽發，不沿用舊憑證。最後的完整 live gate 維持自行簽發新的三個 token。
 - **沒有新增**：
   - 沒有密碼。
   - 沒有新 secret（模組的 secret 仍只有 database URL、cursor key、web session 三個）。
