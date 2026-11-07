@@ -1166,13 +1166,16 @@ class QueueCustodySupervisorOwnerTests(unittest.TestCase):
                 self.state = {"workers": {}, "queue": {"events": {}}}
 
                 if case_name != "not_yet_consumed_approval":
-                    with mock.patch.object(
-                        supervisor,
-                        "commit_canonical_task_transition",
-                        side_effect=lambda _cfg, st: Path(self.config["paths"]["status_file"]).write_text(
-                            json.dumps(st), encoding="utf-8"
-                        )
-                        or True,
+                    with (
+                        mock.patch.object(ai_status, "merged_orchestrator_config", return_value=self.config),
+                        mock.patch.object(
+                            supervisor,
+                            "commit_canonical_task_transition",
+                            side_effect=lambda _cfg, st: Path(self.config["paths"]["status_file"]).write_text(
+                                json.dumps(st), encoding="utf-8"
+                            )
+                            or True,
+                        ),
                     ):
                         supervisor.consume_human_continuation_approvals(self.config, self.state)
 
@@ -1208,13 +1211,16 @@ class QueueCustodySupervisorOwnerTests(unittest.TestCase):
         self.task = make_churn_task(human_continuation_approval=make_approval())
         self._write_board()
         self.state = {"workers": {}, "queue": {"events": {}}}
-        with mock.patch.object(
-            supervisor,
-            "commit_canonical_task_transition",
-            side_effect=lambda _cfg, st: Path(self.config["paths"]["status_file"]).write_text(
-                json.dumps(st), encoding="utf-8"
-            )
-            or True,
+        with (
+            mock.patch.object(ai_status, "merged_orchestrator_config", return_value=self.config),
+            mock.patch.object(
+                supervisor,
+                "commit_canonical_task_transition",
+                side_effect=lambda _cfg, st: Path(self.config["paths"]["status_file"]).write_text(
+                    json.dumps(st), encoding="utf-8"
+                )
+                or True,
+            ),
         ):
             self.assertTrue(supervisor.consume_human_continuation_approvals(self.config, self.state))
 

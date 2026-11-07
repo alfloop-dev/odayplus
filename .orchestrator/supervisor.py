@@ -135,6 +135,7 @@ from dispatch_policy import (
     review_is_independent,
     role_provider_block_reason,
     review_source_block_reason,
+    task_closeout_is_frozen,
     task_priority_rank,
     task_review_source_identity,
 )
