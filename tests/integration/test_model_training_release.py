@@ -502,6 +502,20 @@ def test_model_ready_sql_is_real_causal_and_activates_supported_outcomes() -> No
     assert "tenant_id" in lowered
     assert "store_id" in lowered
     assert "forecast-training-view-v2" in lowered
+    assert "authoritative_order_partitions" in lowered
+    assert "proof.partition_key = ingestion.partition_key" in lowered
+    assert "proof.finished_at >= ingestion.finished_at" in lowered
+    assert "source_txn.source_partition_finished_at" in lowered
+    assert "left join data_plane.transaction_authority as authority" in lowered
+    assert "lineage.source_snapshot_id = authority.source_snapshot_id" in lowered
+    assert "from data_plane.quarantined_records as quarantine" in lowered
+    assert "and quarantine.resolved_at is null" in lowered
+    assert "proof.partition_key = transaction_daily.date::text" in lowered
+    assert "prior_complete_day_count_28 = 28" in lowered
+    assert "'prior_source_not_complete'" in lowered
+    assert "split_part(completion.partition_key, '__'" not in lowered
+    assert "chunk.finished_at <= completion.finished_at" not in lowered
+    assert "and chunk.finished_at >= completion.finished_at" in lowered
     assert "from external_data.real_estate_transactions as outcome" in lowered
     assert "external_data.real_estate_ingestion_runs as ingestion" in lowered
     assert "government-open-data-license-v1" in lowered
@@ -594,6 +608,31 @@ def test_model_ready_view_preflight_requires_opening_and_geo_columns() -> None:
         "data_plane.place_geography": ("h3_res_9",),
     }
     assert preflight.prerequisite_counts == {}
+
+
+@pytest.mark.parametrize(
+    ("relation", "column"),
+    (
+        ("data_plane.ingestion_runs", "started_at"),
+        ("data_plane.ingestion_runs", "resumed_from"),
+        ("data_plane.quarantined_records", "run_id"),
+    ),
+)
+def test_model_ready_sql_recovery_prerequisites_fail_closed(
+    relation: str,
+    column: str,
+) -> None:
+    client = FakeInstallationClient()
+    client.columns[relation] = tuple(
+        name for name in client.columns[relation] if name != column
+    )
+    installer = ModelReadyViewInstaller(client)
+    preflight = installer.preflight()
+    assert not preflight.ready
+    assert preflight.missing_columns == {relation: (column,)}
+    with pytest.raises(RuntimeError, match="prerequisites are incomplete"):
+        installer.install()
+    assert client.executions == []
 
 
 def test_model_ready_view_install_rejects_non_active_geo_contract() -> None:
