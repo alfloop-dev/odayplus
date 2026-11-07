@@ -451,10 +451,11 @@ jobs:
       - name: Lint product code
         run: uv run ruff check tests modules apps shared models solver pipelines infra
 
-      # `not performance` deselects exactly one test:
+      # `not performance` leaves wall-clock SLO cases to their isolated owner:
       # tests/performance/test_load_and_soak.py::test_concurrency_and_soak_execution.
-      # It is a wall-clock SLO measurement, so it is enforced by the dedicated
-      # performance-gate job below instead of being measured on a runner that is
+      # tests/integration/test_heatzone_flow.py::test_heatzone_api_scores_batch_and_returns_map_results_within_fixture_target.
+      # Both retain their original assertions in the performance-gate job below
+      # instead of being measured on a runner that is
       # already loaded by ~1900 other tests and a Postgres service container.
       # `-n auto` is what makes this step tolerable. It was 17 of the job's 21
       # minutes, run serially, and with a merge queue every PR pays it at least
@@ -469,8 +470,11 @@ jobs:
       # it is safe: each worker gets its own mkdtemp data directory, so they
       # cannot corrupt one another. Tests that bind fixed ports are excluded by
       # the `requires_live_env` marker already applied above.
+      # Delivery-tooling tests have one owner: the required, unconditional
+      # orchestrator job above. Exclude that same directory here so product
+      # changes do not execute the identical tooling cases a second time.
       - name: Test product code
-        run: uv run pytest -m "not requires_live_env and not performance" tests modules apps shared models -n auto
+        run: uv run pytest -m "not requires_live_env and not performance" --ignore=tests/tooling tests modules apps shared models -n auto
 
   product-db:
     needs: change-scope
@@ -583,11 +587,24 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Install dependencies
-        run: uv sync
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
-      - name: Prepare local config
-        run: make bootstrap
+      # Bootstraps local config, uv sync, npm ci and Playwright Chromium.
+      - name: Install product E2E dependencies
+        run: make product-e2e-bootstrap
+
+      - name: Build production Web for native SQL browser tests
+        env:
+          ODP_PRODUCT_MODE: production
+          NEXT_PUBLIC_ODP_PRODUCT_MODE: production
+          ODP_DATA_BINDING_MODE: live
+          NEXT_PUBLIC_ODP_DATA_BINDING_MODE: live
+          ODP_E2E_MODE: "false"
+          NEXT_PUBLIC_ODP_E2E_MODE: "false"
+        run: npm run build --workspace=@oday-plus/web
 
       - name: Bind native review tests to the owned PostgreSQL service
         run: |
@@ -629,9 +646,6 @@ jobs:
               raise
           PY
 
-      - name: Test official real-estate outcomes on PostgreSQL 16
-        run: uv run pytest tests/integration/test_official_real_estate_postgresql.py
-
       # `requires_live_env` was doing two jobs at once. Some of the tests behind
       # it genuinely need a live multi-repo checkout (.orchestrator's sidecar
       # coordination tests); the rest only need a PostgreSQL, which `pgserver`
@@ -646,35 +660,60 @@ jobs:
       # canonical PostGIS migration supported by the service image above. The
       # multi-repo coordination tests remain outside these selected paths.
       - name: Test database contracts, migrations and schema gates
+        env:
+          PYTEST_ADDOPTS: --junitxml=.odp_data/ci/database-contracts.xml
         run: |
-          uv run pytest -ra --junitxml="$RUNNER_TEMP/product-db-results.xml" \
-            -m "requires_live_env" \
-            tests/contract tests/ops tests/integration
+          # Qualify the original product path; SQL profiling remains opt-in.
+          # Preserve the first failure and JUnit report before the job deadline.
+          # A successful invocation still executes the complete original selection.
+          # Scratch databases isolate file groups. Keep each file on one worker
+          # so its stateful fixtures and browser composition stay serialized.
+          # Overlap real lease waits without shortening root or IO budgets.
+          # Official real-estate outcomes are included here, once per case.
+          uv run pytest -m "requires_live_env" \
+            tests/contract tests/ops tests/integration -x --tb=short -vv \
+            -n2 --dist=loadfile --max-worker-restart=0
 
-      - name: Require the selected database cases to execute
+      - name: Test model admission and delete propagation against PostgreSQL
         run: |
+          uv run pytest -m "requires_live_env and not requires_postgis" \
+            tests/unit/test_current_model_admission.py \
+            --junitxml=.odp_data/ci/current-model-admission.xml
+          uv run pytest -m "requires_live_env and not requires_postgis" \
+            apps/data_platform/tests/test_delete_propagation.py \
+            --junitxml=.odp_data/ci/delete-propagation.xml
           uv run python - <<'PY'
-          import os
-          from pathlib import Path
-          from xml.etree import ElementTree
+          import xml.etree.ElementTree as ET
 
-          cases = ElementTree.parse(Path(os.environ["RUNNER_TEMP"]) / "product-db-results.xml").findall(".//testcase")
-          counts = {name: sum(case.find(name) is not None for case in cases)
-                    for name in ("failure", "error", "skipped")}
-          if not cases or any(counts.values()):
-              raise SystemExit(f"Database gate did not execute every selected case: {len(cases)} cases, {counts}")
-          print(f"Database gate executed {len(cases)} cases with no failures, errors or skips")
+          for path in (
+              ".odp_data/ci/database-contracts.xml",
+              ".odp_data/ci/current-model-admission.xml",
+              ".odp_data/ci/delete-propagation.xml",
+          ):
+              root = ET.parse(path).getroot()
+              cases = list(root.iter("testcase"))
+              if not cases:
+                  raise SystemExit(f"Required native SQL controls did not execute: {path}")
+              for outcome in ("skipped", "failure", "error"):
+                  if next(root.iter(outcome), None) is not None:
+                      raise SystemExit(f"Required native SQL controls contain {outcome}: {path}")
+              print(f"Verified {len(cases)} native SQL controls; zero skips: {path}")
           PY
 
-      - name: Preserve database execution evidence
-        if: ${{ always() }}
+      - name: Retain database, model and deletion PostgreSQL evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: product-db-execution-evidence
+          name: required-native-sql-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/product-db-results.xml
+            .odp_data/ci/database-contracts.xml
+            .odp_data/ci/native-intake-command-profile.jsonl
+            .odp_data/ci/current-model-admission.xml
+            .odp_data/ci/delete-propagation.xml
+            .odp_data/ci/odp-new-report-rounds/
+            .odp_data/ci/odp-native-version/
             ${{ env.ODP_CI_NATIVE_REVIEW_EVIDENCE_DIR }}
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Remove owned native review connection file
         if: ${{ always() }}
@@ -1245,9 +1284,10 @@ jobs:
       - name: Prepare local config
         run: make bootstrap
 
-      # No Node, no Postgres service, no other test module imported into the
-      # process: the runner stays clean so the measurement is reproducible.
-      - name: Enforce load and soak P95 budget
+      # No Node or Postgres service. Each SLO runs in its own pytest process;
+      # the HeatZone fixture does not share the load/soak process or change its
+      # original warmup, 20-row POST, 0.95s budget, or map/list assertions.
+      - name: Enforce load, soak and HeatZone latency budgets
         run: |
           set -uo pipefail
           mkdir -p performance-reports
@@ -1261,6 +1301,9 @@ jobs:
             rm -f /tmp/load_soak_performance_report.json
             status=0
             uv run pytest -m performance tests/performance || status=$?
+            if [[ "${status}" -eq 0 ]]; then
+              uv run pytest -m performance tests/integration/test_heatzone_flow.py::test_heatzone_api_scores_batch_and_returns_map_results_within_fixture_target --junitxml="performance-reports/heatzone_fixture_attempt_${attempt}.xml" || status=$?
+            fi
             capacity_status=0
             uv run python delivery_toolchain/load/assisted_listing_intake/run.py \
               --volume 120 --concurrency 20 --observe-only \
