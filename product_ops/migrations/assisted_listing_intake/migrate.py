@@ -11,10 +11,12 @@ import hashlib
 import json
 import logging
 import re
+import sqlite3
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -3001,6 +3003,49 @@ def _inventory_cli(dsn: str, tenant_id: str, *, source_id: str | None, month: st
         pool_logger.disabled = was_disabled
 
 
+def prove_migration_copy_cleanup(source_path: Path, copy_path: Path, *,
+                                 migration_ref: str, tenant_id: str) -> dict[str, Any]:
+    """The original migration offline-copy proof, used by this CLI and the release drill.
+
+    The source is opened read-only; SQLite backup includes committed WAL data.
+    Never overwrite an old proof or clean the original. This proves isolated
+    staging cleanup only, not live release rollback, writer fencing or restore.
+    """
+    source_path, copy_path = source_path.resolve(strict=True), copy_path.resolve()
+    if source_path == copy_path or copy_path.exists():
+        raise ValueError("MIGRATION_NEW_DISTINCT_COPY_REQUIRED")
+    tenant_id = str(uuid.UUID(tenant_id))
+    source = sqlite3.connect(source_path.as_uri() + "?mode=ro", uri=True)
+    try:
+        before_hash = hashlib.sha256(source.serialize()).hexdigest()
+        original_count = source.execute("SELECT count(*) FROM intakes WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
+        # Exclusive creation preserves prior evidence even if a copy failed.
+        with copy_path.open("xb"):
+            pass
+        copy = sqlite3.connect(copy_path)
+        try:
+            source.backup(copy)
+            before = copy.execute("SELECT count(*) FROM intakes WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
+            other_before = copy.execute("SELECT count(*) FROM intakes WHERE tenant_id<>?", (tenant_id,)).fetchone()[0]
+            deleted = IntakeMigrator(copy, migration_ref=migration_ref).rollback_migration(
+                tenant_id=tenant_id, isolated_copy=True)
+            after = copy.execute("SELECT count(*) FROM intakes WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
+            other_after = copy.execute("SELECT count(*) FROM intakes WHERE tenant_id<>?", (tenant_id,)).fetchone()[0]
+        finally:
+            copy.close()
+        after_hash = hashlib.sha256(source.serialize()).hexdigest()
+        original_after = source.execute("SELECT count(*) FROM intakes WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
+        if before_hash != after_hash or original_count != original_after or other_before != other_after:
+            raise ValueError("MIGRATION_COPY_PROOF_SOURCE_OR_OTHER_TENANT_CHANGED")
+        return {"environment": "isolated-staging-copy", "scoped_to_tenant": tenant_id,
+            "copy_path": str(copy_path), "rows_before": before, "rows_deleted": deleted, "rows_after": after,
+            "other_tenant_rows_untouched": other_after, "staging_record_untouched": original_after,
+            "source_snapshot_sha256_before": before_hash, "source_snapshot_sha256_after": after_hash,
+            "source_unchanged": True, "live_rollback_qualified": False}
+    finally:
+        source.close()
+
+
 def main() -> None:
     """CLI entrypoint for executable staging backfill, verification, and rollback."""
     parser = argparse.ArgumentParser(description="Assisted Listing Intake Migration CLI (ODP-INTAKE-MIGRATION-001)")
@@ -3059,12 +3104,6 @@ def main() -> None:
         if (args.db_dsn or not args.sqlite_path or not args.rollback_copy_path
                 or args.input_file or args.dry_run or args.resume):
             parser.error("Rollback requires a SQLite source and a new --rollback-copy-path; live rollback uses the governed release owner")
-        from pathlib import Path
-
-        from delivery_toolchain.release.assisted_listing_intake.drills import (
-            prove_migration_copy_cleanup,
-        )
-
         try:
             result = prove_migration_copy_cleanup(Path(args.sqlite_path), Path(args.rollback_copy_path),
                 migration_ref=args.migration_ref, tenant_id=args.tenant_id)

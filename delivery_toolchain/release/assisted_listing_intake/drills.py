@@ -175,51 +175,6 @@ def _legacy_fixture(tenant_id: str, count: int) -> dict[str, Any]:
 # Migration reconciliation drill
 # ---------------------------------------------------------------------------
 
-def prove_migration_copy_cleanup(source_path: Path, copy_path: Path, *,
-                                 migration_ref: str, tenant_id: str) -> dict[str, Any]:
-    """The original migration drill's offline-copy proof, also used by its CLI.
-
-    The source is opened read-only; SQLite backup includes committed WAL data.
-    Never overwrite an old proof or clean the original. This proves isolated
-    staging cleanup only, not live release rollback, writer fencing or restore.
-    """
-    from product_ops.migrations.assisted_listing_intake.migrate import IntakeMigrator
-
-    source_path, copy_path = source_path.resolve(strict=True), copy_path.resolve()
-    if source_path == copy_path or copy_path.exists():
-        raise ValueError("MIGRATION_NEW_DISTINCT_COPY_REQUIRED")
-    tenant_id = str(uuid.UUID(tenant_id))
-    source = sqlite3.connect(source_path.as_uri() + "?mode=ro", uri=True)
-    try:
-        before_hash = hashlib.sha256(source.serialize()).hexdigest()
-        original_count = source.execute("SELECT count(*) FROM intakes WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
-        # Exclusive creation preserves prior evidence even if a copy failed.
-        with copy_path.open("xb"):
-            pass
-        copy = sqlite3.connect(copy_path)
-        try:
-            source.backup(copy)
-            before = copy.execute("SELECT count(*) FROM intakes WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
-            other_before = copy.execute("SELECT count(*) FROM intakes WHERE tenant_id<>?", (tenant_id,)).fetchone()[0]
-            deleted = IntakeMigrator(copy, migration_ref=migration_ref).rollback_migration(
-                tenant_id=tenant_id, isolated_copy=True)
-            after = copy.execute("SELECT count(*) FROM intakes WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
-            other_after = copy.execute("SELECT count(*) FROM intakes WHERE tenant_id<>?", (tenant_id,)).fetchone()[0]
-        finally:
-            copy.close()
-        after_hash = hashlib.sha256(source.serialize()).hexdigest()
-        original_after = source.execute("SELECT count(*) FROM intakes WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
-        if before_hash != after_hash or original_count != original_after or other_before != other_after:
-            raise ValueError("MIGRATION_COPY_PROOF_SOURCE_OR_OTHER_TENANT_CHANGED")
-        return {"environment": "isolated-staging-copy", "scoped_to_tenant": tenant_id,
-            "copy_path": str(copy_path), "rows_before": before, "rows_deleted": deleted, "rows_after": after,
-            "other_tenant_rows_untouched": other_after, "staging_record_untouched": original_after,
-            "source_snapshot_sha256_before": before_hash, "source_snapshot_sha256_after": after_hash,
-            "source_unchanged": True, "live_rollback_qualified": False}
-    finally:
-        source.close()
-
-
 def run_migration_reconciliation(workdir: Path, *, rows_per_tenant: int = 8) -> dict[str, Any]:
     """Staging backfill → shadow verification → scoped rollback proof.
 
@@ -229,7 +184,10 @@ def run_migration_reconciliation(workdir: Path, *, rows_per_tenant: int = 8) -> 
     stays intact for the restore drill.
     """
 
-    from product_ops.migrations.assisted_listing_intake.migrate import IntakeMigrator
+    from product_ops.migrations.assisted_listing_intake.migrate import (
+        IntakeMigrator,
+        prove_migration_copy_cleanup,
+    )
 
     workdir.mkdir(parents=True, exist_ok=True)
     staging_db = workdir / "migration-staging.sqlite3"
