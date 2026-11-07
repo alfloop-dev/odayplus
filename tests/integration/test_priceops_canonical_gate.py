@@ -159,6 +159,21 @@ def test_authority_comes_from_actual_approval_and_pickle_shadow_is_ignored(case)
         case.repo.revoke_gate(GATE, TENANT)
 
 
+@pytest.mark.parametrize("tenant", ["tenant-a", "not-a-canonical-uuid"])
+def test_unrepresentable_canonical_tenant_lists_no_other_tenants_gates(case, tenant):
+    response = case.client.get("/priceops/exploration-gates", headers={"x-tenant-id": tenant})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["tenant_id"] == tenant
+    assert body["authorized"] is False and body["active_gate"] is None and body["gates"] == []
+    assert case.canonical.list_gates(tenant) == []
+
+    valid = case.client.get("/priceops/exploration-gates")
+    assert valid.status_code == 200, valid.text
+    assert [gate["gate_id"] for gate in valid.json()["gates"]] == [GATE]
+    assert case.canonical.get_gate(GATE, tenant) is None
+
+
 def test_http_gate_creation_and_revoke_cannot_establish_or_reset_authority(case):
     before = balance(case)
     for path, body in [("/priceops/exploration-gates", {"tenant_id": TENANT, "approved_by": "forged"}),

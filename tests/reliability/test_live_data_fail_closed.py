@@ -19,6 +19,8 @@ from shared.infrastructure.persistence.assisted_listing_intake import (
 )
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
+from shared.infrastructure.persistence.job_queue import DurableJobQueue
+from shared.infrastructure.persistence.outbox import DurableOutboxRepository
 
 
 class _ProductionStubEngine:
@@ -57,6 +59,8 @@ def _production_like_bundle(engine: Any) -> Any:
         mode="postgresql",
         engine=engine,
         audit_log=DurableAuditLog(engine),
+        job_queue=DurableJobQueue(engine),
+        outbox_repository=DurableOutboxRepository(engine),
         assisted_intake_store=DurableAssistedIntakeStore(SimpleNamespace(engine=engine)),
     )
 

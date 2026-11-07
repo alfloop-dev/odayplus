@@ -35,6 +35,7 @@ from models.shared_ml import (
     ProductionModelArtifactError,
     ProductionModelInputError,
     ProductionModelRegistryError,
+    compute_content_digest,
     production_model_execution_required,
 )
 from models.shared_ml.oss_estimators import train_oss_estimator
@@ -55,8 +56,7 @@ from modules.sitescore.application.reporting import SiteScoreReportService
 from modules.sitescore.domain import SITESCORE_FEATURE_VERSION, score_sites
 from product_ops.modeling.contracts import MODEL_SPECS
 
-# 生產端以牆鐘檢查 feature snapshot 不得超過 SITESCORE_FEATURE_MAX_AGE（90 天），
-# 固定日期會在 90 天後讓整批測試變紅，所以改成相對牆鐘的時間點。
+# Keep the shared live fixture fresh while preserving one timestamp per run.
 NOW = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=1)
 SITESCORE_MODEL_NAME = PRODUCTION_MODEL_CONTRACTS["sitescore"].model_name or ""
 
@@ -124,7 +124,8 @@ def _registered_runtime(
         feature_names=MODEL_SPECS["sitescore"].feature_columns,
     )
     artifact_path = tmp_path / "sitescore-lightgbm.zip"
-    artifact_path.write_bytes(trained.estimator.to_artifact_bytes())
+    artifact_bytes = trained.estimator.to_artifact_bytes()
+    artifact_path.write_bytes(artifact_bytes)
     tracking_uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
     adapter = MlflowRegistryAdapter(
         repository if repository is not None else InMemoryLearningHubRepository(),
@@ -147,6 +148,7 @@ def _registered_runtime(
             approved_by="model-risk-reviewer" if approved else None,
             approved_at=NOW if approved else None,
             monitoring_config={
+                "artifact_sha256": compute_content_digest(artifact_bytes),
                 "output_transform": dict(SITESCORE_OUTPUT_TRANSFORM),
             },
         )
@@ -201,7 +203,7 @@ def _registered_governed_runtime(
         artifact_store=DurableArtifactStore(repository._store),
         runtime_mode="test",
     )
-    enable_model_publish(service, tenant_id='tenant-a')
+    enable_model_publish(service, tenant_id="tenant-a")
     model = repository.get_model_version(SITESCORE_MODEL_NAME, "2026.07.24")
     rows = _training_rows()
     service.register_dataset_snapshot(

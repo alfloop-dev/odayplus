@@ -7,6 +7,7 @@ from uuid import UUID
 
 import pytest
 
+from modules.listing.application.intake_authorization import authorize_intake_action
 from modules.listing.infrastructure.repositories import InMemoryListingRepository
 from modules.opsboard.application.network_listings import (
     InMemoryAssistedIntakeRepository,
@@ -14,6 +15,7 @@ from modules.opsboard.application.network_listings import (
     NetworkListingPolicyError,
     NetworkListingService,
 )
+from shared.auth import Principal, Role, Scope
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.infrastructure.persistence.operator_network_listings import (
@@ -48,10 +50,12 @@ def _service(listings=None, intakes=None):
 
 def _create(service, intake, key="manual-create"):
     return service.decide_intake(
+        if_match='W/"{}"'.format(intake["version"]),
         intake_id=intake["id"], action="create", reason="Verified distinct listing",
         risk_summary="Geocode and hard-rule evidence still require verification",
         risk_acknowledged=True, actor_role_id="site_reviewer", actor_name=ACTOR,
         idempotency_key=key, correlation_id="manual-create-correlation",
+        authorize_existing=_authorize_provenance_record,
     )
 
 
@@ -257,10 +261,12 @@ def test_operator_decision_preserves_lineage_and_real_snapshot_after_reload(tmp_
         intakes.save_intake(intake)
         service = _service(listings, intakes)
         service.decide_intake(
+            if_match='W/"{}"'.format(intake["version"]),
             intake_id=intake["id"], action=action, target_listing_id=row["id"],
             reason="Recorded observation confirms new rent", risk_summary="Retain property binding",
             risk_acknowledged=True, actor_role_id="site_reviewer", actor_name=ACTOR,
             idempotency_key="revise-recorded-lineage", correlation_id="revise-recorded-lineage-correlation",
+            authorize_existing=_authorize_provenance_record,
         )
         assert listings.get_listing(row["id"]).rent_amount == (60000.5 if action == "revise" else 58000.75)
         expected = replace(listing, listing_status="watching",
@@ -307,10 +313,11 @@ def test_revise_without_named_or_recorded_target_does_not_pick_first_listing():
     evidence_before = service.get_listing(listing_id)["sourceEvidence"]
     with pytest.raises(NetworkListingConflict, match="no target listing"):
         service.decide_intake(
+            if_match='W/"{}"'.format(unrelated["version"]),
             intake_id=unrelated["id"], action="revise", reason="Unmatched revision",
             risk_summary="Would overwrite an existing listing", risk_acknowledged=True,
             actor_role_id="site_reviewer", actor_name=ACTOR, idempotency_key="unmatched-revise",
-            correlation_id="unmatched-revise-correlation", authorize_existing=lambda _: None,
+            correlation_id="unmatched-revise-correlation", authorize_existing=_authorize_provenance_record,
         )
     assert listings.get_listing(listing_id) == listing_before
     assert listing_before.rent_amount == 58000.75
@@ -413,3 +420,255 @@ def test_archive_keeps_unknown_hard_rules_unknown():
     assert result["listing"]["hardRuleFailures"] is None
     assert result["auditEvent"]["metadata"]["hardRuleFailures"] is None
     assert result["auditEvent"]["metadata"]["sourceEvidenceCount"] is None
+
+
+
+def _authorize_provenance_record(row):
+    # Both Intake and listing facts go through the original shared permission
+    # guard. The synthetic fixture does not represent production credentials.
+    authorize_intake_action(
+        Principal(ACTOR, roles=frozenset({Role.SITE_REVIEWER}), scope=Scope(tenant_id=TENANT)),
+        "decide", resource=row, risk_summary="Retain recorded source evidence",
+        risk_acknowledged=True, operator_role_id="site_reviewer",
+    )
+
+
+def _manual_decision_service(match_result):
+    listings = InMemoryListingRepository()
+    intakes = InMemoryAssistedIntakeRepository()
+    for suffix in ("701", "702"):
+        row = _measured_listing()
+        row.update(id="00000000-0000-0000-0000-000000000" + suffix,
+                   addressId="00000000-0000-0000-0000-000000000" + str(int(suffix) + 100),
+                   tenantId=TENANT, sourceListingId="manual-target-" + suffix,
+                   sourceEvidence=["recorded-before-" + suffix])
+        listings.save_listing(*_service()._dict_to_listing(row))
+        intakes.save_listing_metadata(row["id"], deepcopy(row))
+    intake = _intake(matchResult=deepcopy(match_result), snapshotId="recorded-intake-snapshot")
+    intakes.save_intake(intake)
+    return _service(listings, intakes), listings, intakes, intake
+
+
+def _manual_revise(service, intake, *, target, key="manual-revise"):
+    return service.decide_intake(
+        if_match='W/"{}"'.format(intake["version"]),
+        intake_id=intake["id"], action="revise", target_listing_id=target,
+        reason="Independent operator selects the recorded target",
+        risk_summary="Retain source observations without inventing a score",
+        risk_acknowledged=True, actor_role_id="site_reviewer", actor_name=ACTOR,
+        idempotency_key=key, correlation_id="manual-target-correlation",
+        authorize_existing=_authorize_provenance_record,
+    )
+
+
+def test_manual_create_has_no_invented_match_confidence():
+    service, _, _, intake = _manual_decision_service(None)
+    result = _create(service, intake)
+    assert result["matchResult"]["confidence"] is None
+    assert result["matchResult"]["agreeingSignals"] == []
+    assert result["matchResult"]["contradictingSignals"] == []
+    proof = result["auditEvents"][-1]["metadata"]["beforeAfter"]["matchResult"]
+    assert proof == {"before": None, "after": result["matchResult"]}
+
+
+@pytest.mark.parametrize("recorded_match", [
+    None,
+    {"targetListingId": "00000000-0000-0000-0000-000000000701", "confidence": None,
+     "agreeingSignals": [], "contradictingSignals": []},
+])
+def test_manual_revise_without_measurement_keeps_nullable_confidence(recorded_match):
+    service, _, _, intake = _manual_decision_service(recorded_match)
+    result = _manual_revise(service, intake, target="00000000-0000-0000-0000-000000000701")
+    assert result["matchResult"]["confidence"] is None
+    proof = result["auditEvents"][-1]["metadata"]["beforeAfter"]["matchResult"]
+    assert proof == {"before": recorded_match, "after": result["matchResult"]}
+
+
+@pytest.mark.parametrize("selected_target", [
+    "00000000-0000-0000-0000-000000000701",
+    "00000000-0000-0000-0000-000000000702",
+], ids=["recorded-target", "different-manual-target"])
+def test_manual_target_choice_does_not_reassign_recorded_match_confidence(selected_target):
+    original = {
+        "outcome": "POSSIBLE_MATCH", "targetListingId": "00000000-0000-0000-0000-000000000701",
+        "confidence": 0.63, "agreeingSignals": ["same recorded address"],
+        "contradictingSignals": ["different recorded floor"],
+        "candidates": [{"targetListingId": "00000000-0000-0000-0000-000000000701", "confidence": 0.63}],
+        "evidenceRefs": ["recorded-match-observation"],
+    }
+    service, _, _, intake = _manual_decision_service(original)
+    target_before = deepcopy(service.get_listing(selected_target))
+    result = _manual_revise(service, intake, target=selected_target)
+    match = result["matchResult"]
+    assert match["targetListingId"] == selected_target
+    assert match["candidates"] == original["candidates"]
+    assert match["evidenceRefs"] == original["evidenceRefs"]
+    if selected_target == original["targetListingId"]:
+        assert match["confidence"] == original["confidence"]
+        assert match["agreeingSignals"] == original["agreeingSignals"]
+        assert match["contradictingSignals"] == original["contradictingSignals"]
+    else:
+        assert match["confidence"] is None
+        assert match["agreeingSignals"] == [] and match["contradictingSignals"] == []
+    proof = result["auditEvents"][-1]["metadata"]["beforeAfter"]["matchResult"]
+    assert proof == {"before": original, "after": match}
+    assert service.get_listing(selected_target)["sourceEvidence"] == list(dict.fromkeys(
+        [*target_before["sourceEvidence"], "recorded-intake-snapshot"]
+    ))
+
+
+@pytest.mark.parametrize("action", ["create", "quarantine", "reject"])
+def test_fresh_decisions_without_an_existing_target_do_not_invent_target_authorization(action):
+    service, _, _, intake = _manual_decision_service(None)
+
+    def record_authority(row):
+        if "parsedFields" not in row and "url" not in row:
+            pytest.fail("this fresh decision does not address an existing listing target")
+        _authorize_provenance_record(row)
+
+    result = service.decide_intake(
+        if_match='W/"{}"'.format(intake["version"]),
+        intake_id=intake["id"], action=action, reason="Record non-target decision",
+        risk_summary="No existing listing is being changed", risk_acknowledged=True,
+        actor_role_id="site_reviewer", actor_name=ACTOR,
+        idempotency_key="non-target-" + action, correlation_id="non-target-correlation",
+        authorize_existing=record_authority,
+    )
+    assert result["auditEvents"][-1]["metadata"]["decision"] == action
+
+
+@pytest.mark.parametrize("scope_revoked", [False, True], ids=["authorized", "scope-revoked"])
+def test_cached_create_reauthorizes_its_actual_created_listing(scope_revoked):
+    from fastapi import HTTPException
+
+    service, listings, intakes, intake = _manual_decision_service(None)
+    intake["heatZoneId"] = "HZ-ALLOWED"
+    intakes.save_intake(intake)
+    seen = []
+
+    def record_authority(row):
+        if "parsedFields" not in row and "url" not in row:
+            seen.append(row["id"])
+        authorize_intake_action(
+            Principal(ACTOR, roles=frozenset({Role.SITE_REVIEWER}),
+                      scope=Scope(tenant_id=TENANT, heat_zone_ids=frozenset({"HZ-ALLOWED"}))),
+            "decide", resource=row, risk_summary="Reauthorize actual created listing",
+            risk_acknowledged=True, operator_role_id="site_reviewer",
+        )
+
+    def command():
+        return service.decide_intake(
+            if_match='W/"{}"'.format(intake["version"]),
+            intake_id=intake["id"], action="create", reason="Create one scoped listing",
+            risk_summary="The replay may only return its actual created listing",
+            risk_acknowledged=True, actor_role_id="site_reviewer", actor_name=ACTOR,
+            idempotency_key="create-target-once", correlation_id="create-target-correlation",
+            authorize_existing=record_authority,
+        )
+
+    first = command()
+    assert seen == []  # Fresh create has no preexisting target to authorize.
+    target = first["matchResult"]["targetListingId"]
+    if scope_revoked:
+        metadata = intakes.get_listing_metadata(target)
+        intakes.save_listing_metadata(target, {**metadata, "heatZoneId": "HZ-REVOKED"})
+    before = deepcopy(intakes.get_intake(intake["id"]))
+    receipts = deepcopy(intakes.list_idempotency_records())
+    rows = deepcopy(listings.list_listings())
+    if scope_revoked:
+        with pytest.raises(HTTPException) as denied:
+            command()
+        assert denied.value.status_code == 403
+    else:
+        assert command() == first
+    assert seen == [target]
+    assert intakes.get_intake(intake["id"]) == before
+    assert intakes.list_idempotency_records() == receipts
+    assert listings.list_listings() == rows
+
+
+@pytest.mark.parametrize("action", ["quarantine", "reject"])
+def test_cached_non_listing_decision_still_has_no_target_authorization(action):
+    service, _, _, intake = _manual_decision_service(None)
+
+    def record_authority(row):
+        if "parsedFields" not in row and "url" not in row:
+            pytest.fail("cached quarantine/reject has no created or revised listing")
+        _authorize_provenance_record(row)
+
+    def command():
+        return service.decide_intake(
+            if_match='W/"{}"'.format(intake["version"]),
+            intake_id=intake["id"], action=action, reason="Retain non-listing decision",
+            risk_summary="No listing was changed or created", risk_acknowledged=True,
+            actor_role_id="site_reviewer", actor_name=ACTOR,
+            idempotency_key="non-listing-replay-" + action, correlation_id="non-listing-replay",
+            authorize_existing=record_authority,
+        )
+
+    first = command()
+    before = service.export_state()
+    assert command() == first
+    assert service.export_state() == before
+
+
+@pytest.mark.parametrize("match_kind", ["missing", "null", "empty", "no-target"])
+def test_duplicate_without_recorded_target_is_a_controlled_conflict_without_writes(match_kind):
+    value = {} if match_kind == "empty" else {"targetListingId": None} if match_kind == "no-target" else None
+    service, listings, intakes, intake = _manual_decision_service(value)
+    if match_kind == "missing":
+        intake.pop("matchResult")
+        intakes.save_intake(intake)
+        service.get_intake(intake["id"])
+    before = service.export_state()
+    before_rows = deepcopy(listings.list_listings())
+    with pytest.raises(NetworkListingConflict, match="no target listing"):
+        service.decide_intake(
+            if_match='W/"{}"'.format(intake["version"]),
+            intake_id=intake["id"], action="duplicate", reason="No recorded duplicate target",
+            risk_summary="Never select an unrelated existing listing", risk_acknowledged=True,
+            actor_role_id="site_reviewer", actor_name=ACTOR,
+            idempotency_key="missing-duplicate", correlation_id="missing-duplicate-correlation",
+            authorize_existing=_authorize_provenance_record,
+        )
+    assert service.export_state() == before
+    assert listings.list_listings() == before_rows
+    assert intakes.list_idempotency_records() == []
+
+
+
+def test_nontransaction_intake_save_failure_keeps_service_and_written_repositories_consistent(monkeypatch):
+    listings = InMemoryListingRepository()
+    intakes = InMemoryAssistedIntakeRepository()
+    intake = _intake()
+    intakes.save_intake(intake)
+    service = _service(listings, intakes)
+    assert getattr(intakes, "transaction", None) is None
+    save_intake = intakes.save_intake
+
+    def save_then_fail(record):
+        # The real Listing sync has already run. Preserve the actual Intake
+        # write too, then fail before the decision returns or writes a receipt.
+        save_intake(record)
+        raise RuntimeError("injected after actual nontransaction intake save")
+
+    monkeypatch.setattr(intakes, "save_intake", save_then_fail)
+    with pytest.raises(RuntimeError, match="after actual nontransaction intake save"):
+        _create(service, intake, key="nontransaction-save-failure")
+
+    recorded_listings = listings.list_listings()
+    assert len(recorded_listings) == 1
+    recorded = recorded_listings[0]
+    recorded_intake = intakes.get_intake(intake["id"])
+    assert recorded_intake["stage"] == "READY"
+    assert recorded_intake["version"] == intake["version"] + 1
+    assert recorded_intake["matchResult"]["targetListingId"] == recorded.listing_id
+    # Observe the existing service view without reloading repositories. A
+    # rollback of self alone must not hide writes that actually survived.
+    state = service.export_state()
+    assert {row["id"] for row in state["listings"]} == {recorded.listing_id}
+    visible = next(row for row in state["listings"] if row["id"] == recorded.listing_id)
+    assert visible["rentPerMonth"] == recorded.rent_amount
+    assert visible["areaPing"] == recorded.area_ping
+    assert next(row for row in state["assistedIntakes"] if row["id"] == intake["id"]) == recorded_intake
+    assert intakes.list_idempotency_records() == []

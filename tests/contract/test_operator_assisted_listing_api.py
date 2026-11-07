@@ -152,9 +152,11 @@ def test_exact_duplicate_contract_test() -> None:
         idempotency_key="idem-1",
         correlation_id="corr-1",
     )
-    # Manually overwrite stage to RETRIEVING (non-terminal)
+    # Persist RETRIEVING in the original repository; a command refreshes its
+    # current state instead of trusting a mutation of the service cache alone.
     intake = service._state["assistedIntakes"][0]
     intake["stage"] = "RETRIEVING"
+    service._intakes.save_intake(intake)
 
     # Submitting same URL again should raise NetworkListingConflict
     with pytest.raises(NetworkListingConflict):
@@ -489,6 +491,7 @@ def test_promote_intake_contract_test() -> None:
     # manual creation. This explicitly synthetic fixture supplies those facts.
     listing = Listing(
         listing_id="L-SYNTHETIC-PROMOTION-CONTRACT",
+        tenant_id="tenant-a",
         source_listing_id="synthetic-measured-promotion-record",
         source_id="synthetic-measured-source",
         address_id=str(uuid4()),
@@ -523,6 +526,12 @@ def test_promote_intake_contract_test() -> None:
         ),
     )
     app = create_app(persistence=bundle)
+    # Record the synthetic target's ownership in the existing metadata owner.
+    # Request headers alone cannot supply missing Listing authorization facts.
+    app.state.operator_intake_repository.save_listing_metadata(
+        listing.listing_id,
+        {"tenantId": listing.tenant_id, "heatZoneId": "HZ-01", "hasLegalHold": False},
+    )
     client = TestClient(app)
 
     url = "https://www.synthetic.example/detail-88520242.html"

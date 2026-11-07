@@ -750,6 +750,15 @@ def test_tenants_never_see_or_overwrite_each_others_state(
     assert document_store.state(OTHER_TENANT_ID)["issues"] == []
     assert document_store.state(OTHER_TENANT_ID)["auditEvents"] == []
 
+    with _client(document_store) as replay_client:
+        own_replay = replay_client.post(
+            f"{BASE}/store-ops/issues/ISS-FC-alert-a/triage",
+            headers={**_headers(), "Idempotency-Key": "shared-key"},
+            json={"severity": "high"},
+        )
+    assert own_replay.status_code == 200
+    assert own_replay.json()["idempotentReplay"] is True
+    assert len(document_store.state()["auditEvents"]) == 1
     # Use the actual subject/operation/key receipt namespace, then read the
     # identical storage key in both tenants to verify tenant partitioning.
     receipt_key = binding_hash([
@@ -1134,7 +1143,7 @@ def test_prebound_tenant_and_raw_factory_share_state_versions_and_idempotency_na
             forecastops_repository=FakeForecastOpsRepository(), tenant_id=OTHER_TENANT_ID,
         )
     assert foreign_stores.calls == []
-    with pytest.raises(StoreOpsLiveDataUnavailable, match="tenant scopes differ"):
+    with pytest.raises(StoreOpsLiveDataUnavailable, match="repository and document-store tenant scopes differ"):
         DurableStoreOpsRepository(
             TenantScopedDocumentStore(document_store, TENANT_ID), tenant_id=OTHER_TENANT_ID
         )

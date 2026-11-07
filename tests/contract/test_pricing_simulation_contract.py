@@ -7,7 +7,7 @@ from apps.api.oday_api.main import create_app
 from shared.auth import Role
 from tests.integration._authz import auth_headers
 
-PRICEOPS_HEADERS = auth_headers(Role.PRICING_MANAGER)
+PRICEOPS_HEADERS = {**auth_headers(Role.PRICING_MANAGER), "x-tenant-id": "oday-tw"}
 
 
 def test_simulate_scenario_contract_valid_and_invalid() -> None:

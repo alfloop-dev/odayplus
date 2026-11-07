@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from time import perf_counter
 
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
@@ -180,6 +181,9 @@ def test_heatzone_mapping_coercion_preserves_explicit_zero_quality_values() -> N
     assert by_h3["h3r9_zero_data_quality_alias"].state == HeatZoneState.SUPPRESSED_LOW_CONFIDENCE
 
 
+# The original wall-clock budget belongs to the existing isolated performance
+# gate, which also runs every functional assertion in this same test.
+@pytest.mark.performance
 def test_heatzone_api_scores_batch_and_returns_map_results_within_fixture_target() -> None:
     payload = {
         "prediction_origin_time": PREDICTION_TIME.isoformat(),

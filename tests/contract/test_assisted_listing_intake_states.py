@@ -5,14 +5,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from delivery_toolchain.release.assisted_listing_intake.drills import (
+    InMemoryIntakeRepository,
+    IntakeWorkflowService,
+)
 from modules.listing.application.assignment_sla import (
     AssignmentSlaService,
     InMemoryAssignmentRepository,
     InMemorySlaRepository,
-)
-from modules.listing.application.intake_workflow import (
-    InMemoryIntakeRepository,
-    IntakeWorkflowService,
 )
 from modules.listing.domain.intake_states import (
     Actor,
@@ -110,11 +110,11 @@ def test_intake_legal_transitions_path(base_context: TransitionContext) -> None:
     service.complete_parsing("IN-1", "run-1", parser_context)
     assert intake.stage == IntakeStage.MATCHING
 
-    # 7. resolve match -> READY (requires SVC_MATCHER/DATA_STEWARD/EXPANSION_MANAGER)
-    matcher_context = TransitionContext(
-        actor=Actor(actor_id="matcher", role=PrincipalRole.SVC_MATCHER, tenant_id="tenant-a")
+    # 7. Local human-confirmation fixture; matcher proposals cannot resolve it.
+    reviewer_context = TransitionContext(
+        actor=Actor(actor_id="manager", role=PrincipalRole.EXPANSION_MANAGER, tenant_id="tenant-a")
     )
-    service.resolve_match("IN-1", "NEW", "L-1", matcher_context)
+    service.resolve_match("IN-1", "NEW", "L-1", reviewer_context)
     assert intake.stage == IntakeStage.READY
 
 

@@ -1793,8 +1793,10 @@ def test_staff_transfer_lost_response_replays_after_ownership_changes(
             "due_at": "2026-07-25T12:00:00Z",
             "reason": "Assign the submitted intake to its staff owner",
         },
+        # Initial assignment belongs to the manager; the original staff actor
+        # still performs both transfer attempts below.
         headers={
-            **staff_headers,
+            **HEADERS_A_REVIEWER,
             "Idempotency-Key": f"idem-transfer-replay-assign-{uuid4()}",
             "If-Match": 'W/"1"',
         },
@@ -1969,7 +1971,7 @@ def test_expansion_staff_cannot_assign_an_owned_intake_across_users(
     )
 
     assert assigned.status_code == 403
-    assert assigned.json()["code"] == "ASSIGNMENT_SCOPE_DENIED"
+    assert assigned.json()["code"] == "ROLE_DENIED"
 
 
 def test_cursor_uses_configured_signing_and_keyset_snapshot_pagination(
