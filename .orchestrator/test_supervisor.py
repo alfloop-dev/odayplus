@@ -1288,6 +1288,142 @@ class QueueCustodySupervisorOwnerTests(unittest.TestCase):
             supervisor.worker_failure_policy._execution_authority_refusal(self.config, post_worker)
         )
 
+    def test_consumed_churn_epoch_and_completed_rotation_keep_ordinary_blocked_notification_through_poll(
+        self,
+    ) -> None:
+        # Fields exactly as the original consumer and the rotation policy leave them:
+        # history/escalation timestamps are retained and the reassignment checkpoint
+        # is advanced to the consumed epoch; a past rotation only sets the checkpoint.
+        consumed_epoch = {
+            "review_reopen_count": 6,
+            "review_churn_escalated_at_count": 6,
+            "review_churn_escalated_at": "2026-08-30T00:00:00Z",
+            "review_churn_reassigned_at_count": 6,
+            "review_churn_continuation_consumed_at": "2026-08-30T01:00:00Z",
+            "review_churn_continuation_consumed_by": "Human/Ops",
+            "human_continuation_approval_history": [
+                {
+                    "approval_id": "apr-custody-consumed",
+                    "status": "consumed",
+                    "task_id": "T-CUSTODY",
+                    "nonce": "nonce-custody-consumed",
+                    "issued_by": "Human/Ops",
+                    "consumed_at": "2026-08-30T01:00:00Z",
+                    "consumed_by": "Orchestrator",
+                }
+            ],
+            "next": "Waiting for Human/Ops answer on fixture question; review churn epoch already consumed.",
+        }
+        completed_rotation = {
+            "review_reopen_count": 2,
+            "review_churn_reassigned_at_count": 2,
+            "review_churn_previous_owner": "Antigravity",
+            "review_churn_last_reassigned_at": "2026-11-07T11:45:45Z",
+            "review_churn_epoch_failed_owners": ["Antigravity"],
+            "next": "Auto-reassigned ownership after 2 reviewer reopens; now waiting for an answer.",
+        }
+        for case_name, task_updates in (
+            ("consumed_epoch", consumed_epoch),
+            ("completed_rotation", completed_rotation),
+        ):
+            with self.subTest(case=case_name):
+                worker, record, event_id, launched, provider_report = self._deliver_blocked_owner_notification(
+                    **json.loads(json.dumps(task_updates))
+                )
+                for task_status, heartbeat in (
+                    ("blocked", None),
+                    ("blocked", supervisor.utc_now()),
+                    ("in_progress", None),
+                    ("in_progress", supervisor.utc_now()),
+                ):
+                    self.task["status"] = task_status
+                    if task_status == "in_progress":
+                        self.task.pop("waiting_for", None)
+                    self._write_board()
+                    worker["last_heartbeat_at"] = heartbeat
+                    with (
+                        mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                        mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+                        mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid,
+                    ):
+                        supervisor.poll_workers(self.config, self.state, provider_report=provider_report)
+                    self.assertEqual(worker["status"], "running")
+                    self.assertEqual(record["status"], "started")
+                    self.assertEqual(record["lease_owner"], worker["run_id"])
+                    self.assertEqual(self._queue_ids(), [event_id])
+                    terminate_pid.assert_not_called()
+                    self.assertIsNone(
+                        supervisor.worker_failure_policy._execution_authority_refusal(self.config, worker)
+                    )
+                self.assertEqual(len(launched), 1)
+                # Waking the owner changes no task truth: counters/history are untouched.
+                board_task = supervisor.load_status(self.config)["tasks"][0]
+                for field, value in task_updates.items():
+                    if field != "next":
+                        self.assertEqual(board_task[field], value)
+
+    def test_new_churn_after_consumed_epoch_and_pending_permit_still_refuse_blocked_notification(self) -> None:
+        provider_report = self._provider_report()
+        consumed = {
+            "id": "T-CUSTODY",
+            "title": "Custody",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "blocked",
+            "waiting_for": "Human/Ops",
+            "task_class": "implementation",
+            "depends_on": [],
+            "review_reopen_count": 6,
+            "review_churn_escalated_at_count": 6,
+            "review_churn_escalated_at": "2026-08-30T00:00:00Z",
+            "review_churn_reassigned_at_count": 6,
+            "review_churn_continuation_consumed_at": "2026-08-30T01:00:00Z",
+        }
+        cases = {
+            # A later reopen epoch escalated again and nobody consumed it yet.
+            "new_unconsumed_churn_epoch": {
+                "review_reopen_count": 12,
+                "review_churn_escalated_at_count": 12,
+                "review_churn_escalated_at": "2026-09-30T00:00:00Z",
+            },
+            # A permit is present but the sole consumer has not run (or rejected it).
+            "pending_permit_on_consumed_epoch": {
+                "human_continuation_approval": {
+                    "approval_id": "apr-custody-pending",
+                    "status": "issued",
+                    "task_id": "T-CUSTODY",
+                    "nonce": "nonce-custody-consumed",
+                    "issued_by": "Human/Ops",
+                },
+            },
+            "malformed_epoch_checkpoint": {"review_churn_reassigned_at_count": "six"},
+        }
+        for case_name, overrides in cases.items():
+            with self.subTest(case=case_name):
+                self.task = {**json.loads(json.dumps(consumed)), **overrides}
+                self._write_board()
+                Path(self.config["paths"]["event_queue"]).unlink(missing_ok=True)
+                self.state = {"workers": {}, "queue": {"events": {}}}
+                self.assertTrue(github_bus.queue_resume_for_task(self.config, self.task))
+                events = runtime_state.load_event_queue(self.config)
+                self.assertEqual(len(events), 1)
+                event_id = str(events[0]["event_id"])
+                self.assertIn(
+                    "Human gate",
+                    str(supervisor.owner_notification_block_reason(self.config, events[0], {"T-CUSTODY": self.task})),
+                )
+                with (
+                    mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+                    mock.patch.object(supervisor, "build_adapter") as adapter_mock,
+                ):
+                    self.assertTrue(supervisor.process_queue(self.config, self.state, provider_report))
+                    adapter_mock.assert_not_called()
+                record = self.state["queue"]["events"][event_id]
+                self.assertEqual(record["status"], "completed")
+                self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+                self.assertEqual(record.get("attempt_count", 0), 0)
+                self.assertEqual(self.state["workers"], {})
+
 
 class TestConfigFixtureTests(unittest.TestCase):
     """The fixture must be the committed example, never the machine's config.

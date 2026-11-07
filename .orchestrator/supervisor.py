@@ -5328,19 +5328,22 @@ def owner_notification_block_reason(
     owner_held_statuses = normalized_status_set(settings.get("owned_statuses"), ["in_progress", "todo"]) | {"blocked"}
     if task_status not in owner_held_statuses:
         return f"task status {task_status} is not held by its owner."
-    if task_is_human_gate(task) or (
-        task_status == "blocked"
-        and (
-            task.get("review_churn_escalated_at")
-            or task.get("review_churn_escalated_at_count") not in (None, 0, "0", "", False)
-            or task.get("review_churn_reassigned_at_count") not in (None, 0, "0", "", False)
-            or task.get("human_continuation_approval") is not None
-            or bool(task.get("human_continuation_approval_history"))
-            or bool(task.get("review_churn_continuation_consumed_at"))
-            or "review churn" in blocked_task_prose_context(task, canonical_gate_prose=True)
-        )
-    ):
+    if task_is_human_gate(task):
         return "task is behind a Human gate."
+    if task_status == "blocked":
+        # A review-churn Human/Ops escalation stays open until the sole consumer,
+        # consume_human_continuation_approvals, advances the existing
+        # review_churn_reassigned_at_count checkpoint past the escalated epoch and
+        # moves the task to todo.  Retained history, consumed permits and past
+        # owner-rotation checkpoints are not a gate; an unconsumed epoch or a
+        # pending (not yet consumed) approval record is.
+        try:
+            escalated_epoch = max(0, int(task.get("review_churn_escalated_at_count", 0) or 0))
+            consumed_checkpoint = max(0, int(task.get("review_churn_reassigned_at_count", 0) or 0))
+        except (TypeError, ValueError):
+            return "task is behind a Human gate."
+        if escalated_epoch > consumed_checkpoint or task.get("human_continuation_approval") is not None:
+            return "task is behind a Human gate."
     if task.get("non_dispatchable"):
         return "task is non_dispatchable."
     if task_closeout_is_frozen(config, task):
