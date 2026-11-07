@@ -819,7 +819,12 @@ def test_ordinary_permitted_evidence_only_merge_is_accepted_by_both_validators(
     origin = tmp_path / "origin"
     origin.mkdir()
     _init_repo(origin)
-    _commit(origin, RAW_PLAYWRIGHT_PATH, _RENAME_BODY, "prior playwright evidence")
+    _commit(
+        origin,
+        RAW_PLAYWRIGHT_PATH,
+        _RENAME_BODY + "prior-only\n",
+        "prior playwright evidence",
+    )
     old_blob = git_value(origin, "rev-parse", f"HEAD:{RAW_PLAYWRIGHT_PATH}")
     source = _create_two_evidence_branches(origin)
     subprocess.run(["git", "checkout", "-q", first_branch], cwd=origin, check=True)
@@ -920,7 +925,12 @@ def test_receipt_packet_rejects_merge_only_product_mutation(tmp_path: Path) -> N
     )
     head_before = git_value(tmp_path, "rev-parse", "HEAD")
     subprocess.run(["git", "checkout", "-qb", "side-evidence", head_before], cwd=tmp_path, check=True)
-    _commit(tmp_path, RECEIPT_PATH, json.dumps(baseline, indent=2) + "\n", "side receipt touch")
+    _commit(
+        tmp_path,
+        RECEIPT_PATH,
+        json.dumps({**baseline, "run_id": "side-evidence"}, indent=2) + "\n",
+        "side receipt touch",
+    )
     subprocess.run(["git", "checkout", "-q", head_before], cwd=tmp_path, check=True)
     subprocess.run(
         ["git", "merge", "--no-commit", "--no-ff", "side-evidence"],
