@@ -10,6 +10,8 @@ import hashlib
 import json
 import logging
 import uuid
+from collections.abc import Mapping
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -43,14 +45,14 @@ class SnapshotProvenanceError(RuntimeError):
 
 
 def resolve_existing_object_generation(
-    object_store: Any, tenant_id: str, uri: str, snapshot_id: str
+    object_store: Any, tenant_id: str, uri: str, snapshot_id: str, *,
+    expected_sha256: str | None = None, expected_generation: int | None = None,
 ) -> int:
-    """Read back the generation of an object a previous attempt already uploaded.
+    """Verify an existing object version and, when requested, its actual bytes.
 
-    Reached after a Precondition Failed: the object is there, and what remains
-    is establishing which version it is. That version is persisted as the
-    snapshot's ``object_generation`` and is the anchor downstream consumers
-    resolve to fetch this exact object -- a masked release snapshot binds to it.
+    Native adoption and replay hash a generation-pinned download rather than
+    trust a checksum reported by object metadata. A recorded version is an
+    immutable anchor, so a different current generation cannot replace it.
 
     There is deliberately no fallback value. The previous code substituted a
     literal ``1`` when this read failed, which recorded a provenance claim
@@ -59,11 +61,22 @@ def resolve_existing_object_generation(
     """
     try:
         meta = object_store.head_object(tenant_id, uri)
-        return meta["generation"]
+        generation = meta["generation"]
+        if type(generation) is not int or generation < 1:
+            raise ValueError("A positive object generation is required")
+        if expected_generation is not None and (
+            type(expected_generation) is not int or generation != expected_generation
+        ):
+            raise ValueError("The object generation differs from the recorded evidence")
+        if expected_sha256 is not None:
+            data = object_store.download_object(tenant_id, uri, generation=generation)
+            if hashlib.sha256(data).hexdigest() != expected_sha256:
+                raise ValueError("The object bytes differ from the supplied evidence")
+        return generation
     except Exception as exc:
         raise SnapshotProvenanceError(
-            f"snapshot {snapshot_id}: raw object exists at {uri} but its generation "
-            "could not be read back; refusing to record a provenance claim without "
+            f"snapshot {snapshot_id}: object at {uri}: generation could not be read back or verified, "
+            "or content could not be verified; refusing to record a provenance claim without "
             "a verified object version"
         ) from exc
 
@@ -90,6 +103,8 @@ class SourceSnapshotService:
     def _is_sqlite(self) -> bool:
         if self.db_conn is None:
             return True
+        if getattr(self.db_conn, "dialect", None) in {"sqlite", "postgresql"}:
+            return self.db_conn.dialect == "sqlite"
         conn_str = str(type(self.db_conn)).lower()
         if "psycopg" in conn_str or "postgres" in conn_str:
             return False
@@ -115,25 +130,55 @@ class SourceSnapshotService:
                     columns = [col[0] for col in cur.description]
                     return [dict(zip(columns, row, strict=False)) for row in cur.fetchall()]
                 return []
-        else:
-            # PostgreSQL
-            cur = self.db_conn.cursor()
-            if tenant_id:
-                cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
+        # Native repositories use the runtime engine's public interface. Its
+        # transaction joins a caller-owned root instead of committing it.
+        if getattr(self.db_conn, "dialect", None) == "postgresql":
+            with self.db_conn.transaction():
+                if tenant_id is not None:
+                    current = self.db_conn.query_one("SELECT current_setting('app.tenant_id',true) AS tenant")
+                    tenant = self._native_tenant(tenant_id, current["tenant"])
+                    self.db_conn.query_one("SELECT set_config('app.tenant_id',?,true)", (tenant,))
+                statement = sql.lstrip().split(None, 1)[0].upper()
+                query = sql.replace("%s", "?")
+                if statement == "SELECT":
+                    return self.db_conn.query(query, params)
+                if statement not in {"INSERT", "UPDATE", "DELETE"}:
+                    raise SnapshotProvenanceError("SNAPSHOT_SQL_STATEMENT_UNSUPPORTED")
+                self.db_conn.execute(query, params)
+                return []
+
+        # Autocommit connections need a short transaction so SET LOCAL and
+        # the statement share the tenant. Other raw transactions belong to
+        # their caller: leave commit, rollback and failures with that owner.
+        transaction = nullcontext()
+        if getattr(self.db_conn, "autocommit", False):
+            factory = getattr(self.db_conn, "transaction", None)
+            if not callable(factory):
+                raise SnapshotProvenanceError("SNAPSHOT_TRANSACTION_UNAVAILABLE")
+            transaction = factory()
+        with transaction, self.db_conn.cursor() as cur:
+            if tenant_id is not None:
+                cur.execute("SELECT current_setting('app.tenant_id',true) AS tenant")
+                current = cur.fetchone()
+                tenant = self._native_tenant(tenant_id, current["tenant"] if isinstance(current, Mapping) else current[0])
+                cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant,))
             cur.execute(sql, params)
-            try:
-                if hasattr(self.db_conn, "commit"):
-                    if getattr(self.db_conn, "autocommit", False) is False:
-                        self.db_conn.commit()
-            except Exception:
-                pass
-            try:
-                if cur.description:
-                    columns = [col[0] for col in cur.description]
-                    return [dict(zip(columns, row, strict=False)) for row in cur.fetchall()]
-            except Exception:
-                pass
+            if cur.description:
+                columns = [col[0] for col in cur.description]
+                return [dict(row) if isinstance(row, Mapping) else dict(zip(columns, row, strict=True))
+                        for row in cur.fetchall()]
             return []
+
+    @staticmethod
+    def _native_tenant(tenant_id: str, current: Any) -> str:
+        """Never replace an already-bound foreign native transaction tenant."""
+        try:
+            tenant = str(uuid.UUID(str(tenant_id)))
+            if current and str(uuid.UUID(str(current))) != tenant:
+                raise ValueError
+            return tenant
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise SnapshotProvenanceError("SNAPSHOT_TENANT_CONTEXT_CONFLICT") from exc
 
     def register_source(
         self,
@@ -191,8 +236,60 @@ class SourceSnapshotService:
             ),
         )
 
+    def _native_source_policy(self, source_id: str) -> str:
+        """Use only the current native row; a failed read is never a fixture grant.
+
+        Both the runtime engine and raw PostgreSQL connections are supported.
+        Reading through a caller's connection must not commit its transaction.
+        This gate does not provision policy or claim a processing/job receipt.
+        """
+        sql = (
+            "SELECT retrieval_mode,kill_switch,production_enabled,version,"
+            "policy_owner_subject_id,legal_approval_ref,license_approval_ref,review_expires_at "
+            "FROM intake.source_registry WHERE source_id=%s"
+        )
+        try:
+            if getattr(self.db_conn, "dialect", None) == "postgresql":
+                row = self.db_conn.query_one(sql.replace("%s", "?"), (source_id,))
+            else:
+                with self.db_conn.cursor() as cursor:
+                    cursor.execute(sql, (source_id,))
+                    result = cursor.fetchone()
+                    if result is None:
+                        row = None
+                    elif isinstance(result, Mapping):
+                        row = dict(result)
+                    else:
+                        row = dict(zip((column[0] for column in cursor.description), result, strict=True))
+        except Exception as exc:
+            raise SourcePolicyViolation("POLICY_UNKNOWN") from exc
+
+        if row is None or any(type(row.get(key)) is not bool for key in ("kill_switch", "production_enabled")):
+            return "POLICY_UNKNOWN"
+        if row["kill_switch"] or not row["production_enabled"]:
+            return "SOURCE_BLOCKED"
+        mode = row.get("retrieval_mode")
+        if mode in {"AUTH_REQUIRED", "SOURCE_BLOCKED", "POLICY_UNKNOWN"}:
+            return mode
+        if mode not in {"APPROVED_RETRIEVAL", "ASSISTED_ENTRY_ONLY"}:
+            return "POLICY_UNKNOWN"
+        try:
+            expiry = row.get("review_expires_at")
+            expiry = expiry if isinstance(expiry, datetime) else datetime.fromisoformat(str(expiry))
+            if (type(row.get("version")) is not int or row["version"] < 1
+                    or not uuid.UUID(str(row.get("policy_owner_subject_id"))).int
+                    or any(not isinstance(row.get(key), str) or not row[key].strip()
+                           for key in ("legal_approval_ref", "license_approval_ref"))
+                    or expiry.tzinfo is None or expiry.utcoffset() is None or expiry <= datetime.now(UTC)):
+                return "POLICY_UNKNOWN"
+        except (ValueError, TypeError, OverflowError):
+            return "POLICY_UNKNOWN"
+        return mode
+
     def check_source_policy(self, tenant_id: str, source_id: str) -> str:
         """Enforce access policy rules and return source evaluation policy."""
+        if self.db_conn is not None and not self._is_sqlite():
+            return self._native_source_policy(source_id)
         if self.db_conn is not None:
             sql = """
                 SELECT retrieval_mode, kill_switch, production_enabled
@@ -239,6 +336,40 @@ class SourceSnapshotService:
                 return tenant_meta.get("residency_mode", "TW_ONLY")
         return "TW_ONLY"
 
+    def _compensate_snapshot_objects(self, tenant_id: str, created: list[tuple[str, int]]) -> None:
+        """Remove only versions this attempt created; keep the primary failure."""
+        for uri, generation in created:
+            try:
+                self.object_store.delete_object(tenant_id, uri, if_generation_match=generation)
+            except Exception:
+                # A replacement generation must survive. Other failures need
+                # reconciliation and must remain visible without masking the
+                # upload/SQL exception that caused compensation.
+                logger.exception("Snapshot object compensation failed for generation %s", generation)
+
+    def _verified_native_replay(
+        self, tenant_id: str, snapshot: dict[str, Any] | None, content_sha256: str, redacted_data: bytes | None,
+    ) -> str:
+        """Reuse recorded immutable evidence without creating new objects."""
+        if snapshot is None:
+            raise SnapshotProvenanceError("The recorded snapshot is no longer available")
+        generation = snapshot.get("object_generation")
+        if type(generation) is not int or generation < 1:
+            raise SnapshotProvenanceError("The recorded snapshot has no verified object generation")
+        snapshot_id = str(snapshot["source_snapshot_id"])
+        resolve_existing_object_generation(
+            self.object_store, tenant_id, snapshot["raw_object_uri"], snapshot_id,
+            expected_sha256=content_sha256, expected_generation=generation,
+        )
+        if redacted_data is not None:
+            if not snapshot["redacted_object_uri"]:
+                raise SnapshotProvenanceError("The immutable snapshot has no recorded redacted representation")
+            resolve_existing_object_generation(
+                self.object_store, tenant_id, snapshot["redacted_object_uri"], snapshot_id,
+                expected_sha256=hashlib.sha256(redacted_data).hexdigest(),
+            )
+        return snapshot_id
+
     def create_snapshot(
         self,
         tenant_id: str,
@@ -262,7 +393,14 @@ class SourceSnapshotService:
         """Evaluate policy, validate residency, upload raw/redacted data to GCS, and commit SQL metadata."""
         # 1. Enforce source policy
         policy = self.check_source_policy(tenant_id, source_id)
-        if policy != "APPROVED_RETRIEVAL":
+        native = self.db_conn is not None and not self._is_sqlite()
+        # Supplied evidence is not a server retrieval grant. Native assisted
+        # policy has the same current approval requirements as retrieval.
+        assisted_capture = (
+            native and policy == "ASSISTED_ENTRY_ONLY"
+            and capture_method in ("MANUAL_ENTRY", "OPERATOR_UPLOAD")
+        )
+        if policy != "APPROVED_RETRIEVAL" and not assisted_capture:
             if self.intake_workflow_service and context:
                 # Quarantine the intake if it exists
                 self.intake_workflow_service.quarantine_policy(intake_id, policy, context)
@@ -274,10 +412,28 @@ class SourceSnapshotService:
 
         content_sha256 = hashlib.sha256(raw_data).hexdigest()
 
-        # Derive snapshot_id deterministically from tenant, source, and content_sha256 to be idempotent
+        # Native evidence belongs to one Intake even when its source bytes are
+        # identical. Reuse that exact natural key to preserve older recorded
+        # IDs and object references without adopting another Intake's snapshot.
         namespace = uuid.NAMESPACE_DNS
         name = f"{tenant_id}:{source_id}:{content_sha256}"
-        snapshot_id = str(uuid.uuid5(namespace, name))
+        if native:
+            existing = self._execute(
+                "SELECT source_snapshot_id,raw_object_uri,redacted_object_uri,object_generation "
+                "FROM intake.source_snapshots "
+                "WHERE tenant_id=%s AND intake_id=%s AND source_id=%s AND content_sha256=%s",
+                (tenant_id, intake_id, source_id, content_sha256), tenant_id=tenant_id,
+            )
+            if existing:
+                return self._verified_native_replay(tenant_id, existing[0], content_sha256, redacted_data)
+            # Separate new names from the old tenant-prefixed format: source
+            # IDs are arbitrary text and can contain UUIDs and separators.
+            native_name = "intake-v2:" + json.dumps(
+                [tenant_id, intake_id, source_id, content_sha256], separators=(",", ":"),
+            )
+            snapshot_id = str(uuid.uuid5(namespace, native_name))
+        else:
+            snapshot_id = str(uuid.uuid5(namespace, name))
 
         # Compute purge_after based on retention_class
         purge_after = None
@@ -291,7 +447,7 @@ class SourceSnapshotService:
 
         # 3. Object Store Write Precedes SQL Metadata commit
         raw_key = f"tenants/{tenant_id}/snapshots/{snapshot_id}/raw"
-        raw_created = False
+        created_objects: list[tuple[str, int]] = []
         try:
             raw_uri, raw_gen = self.object_store.upload_object(
                 tenant_id=tenant_id,
@@ -301,36 +457,45 @@ class SourceSnapshotService:
                 content_type=media_type,
                 if_generation_match=0,
             )
-            raw_created = True
+            created_objects.append((raw_uri, raw_gen))
         except ValueError as exc:
             if "Precondition Failed" in str(exc):
                 # Object already uploaded in a previous attempt. Ignore.
                 raw_uri = f"gs://{bucket}/{raw_key}"
                 raw_gen = resolve_existing_object_generation(
-                    self.object_store, tenant_id, raw_uri, snapshot_id
+                    self.object_store, tenant_id, raw_uri, snapshot_id,
+                    expected_sha256=content_sha256 if native else None,
                 )
             else:
                 raise exc
 
-        redacted_created = False
         redacted_uri = None
-        if redacted_data is not None:
-            redacted_key = f"tenants/{tenant_id}/snapshots/{snapshot_id}/redacted"
-            try:
-                redacted_uri, _ = self.object_store.upload_object(
-                    tenant_id=tenant_id,
-                    bucket=bucket,
-                    key=redacted_key,
-                    data=redacted_data,
-                    content_type=media_type,
-                    if_generation_match=0,
-                )
-                redacted_created = True
-            except ValueError as exc:
-                if "Precondition Failed" in str(exc):
-                    redacted_uri = f"gs://{bucket}/{redacted_key}"
-                else:
-                    raise exc
+        try:
+            if redacted_data is not None:
+                redacted_key = f"tenants/{tenant_id}/snapshots/{snapshot_id}/redacted"
+                try:
+                    redacted_uri, redacted_gen = self.object_store.upload_object(
+                        tenant_id=tenant_id,
+                        bucket=bucket,
+                        key=redacted_key,
+                        data=redacted_data,
+                        content_type=media_type,
+                        if_generation_match=0,
+                    )
+                    created_objects.append((redacted_uri, redacted_gen))
+                except ValueError as exc:
+                    if "Precondition Failed" in str(exc):
+                        redacted_uri = f"gs://{bucket}/{redacted_key}"
+                        if native:
+                            resolve_existing_object_generation(
+                                self.object_store, tenant_id, redacted_uri, snapshot_id,
+                                expected_sha256=hashlib.sha256(redacted_data).hexdigest(),
+                            )
+                    else:
+                        raise
+        except Exception:
+            self._compensate_snapshot_objects(tenant_id, created_objects)
+            raise
 
         # 4. SQL Metadata Commit
         if self.db_conn is None:
@@ -361,7 +526,8 @@ class SourceSnapshotService:
             }
             return snapshot_id
 
-        # Make the insert genuinely idempotent: check if it exists first
+        # Lookup and insertion failures share compensation. A failed lookup
+        # cannot become an empty success or skip cleanup of new objects.
         try:
             existing = self._execute(
                 "SELECT source_snapshot_id FROM intake.source_snapshots WHERE source_snapshot_id = %s",
@@ -369,11 +535,20 @@ class SourceSnapshotService:
                 tenant_id=tenant_id,
             )
             if existing:
+                if native:
+                    recorded = self.get_snapshot(tenant_id, snapshot_id)
+                    verified_id = self._verified_native_replay(
+                        tenant_id, recorded, content_sha256, redacted_data,
+                    )
+                    # Another capture may have committed after our preflight.
+                    # Its immutable references win; remove only new versions
+                    # this attempt created that its record does not use.
+                    referenced = {recorded["raw_object_uri"], recorded["redacted_object_uri"]}
+                    self._compensate_snapshot_objects(
+                        tenant_id, [(uri, gen) for uri, gen in created_objects if uri not in referenced],
+                    )
+                    return verified_id
                 return snapshot_id
-        except Exception:
-            pass
-
-        try:
             sql = """
                 INSERT INTO intake.source_snapshots (
                     source_snapshot_id, tenant_id, intake_id, source_id,
@@ -412,7 +587,7 @@ class SourceSnapshotService:
                 tenant_id=tenant_id,
             )
         except Exception as exc:
-            if "no such table" in str(exc).lower() and "source_snapshots" in str(exc).lower():
+            if self._is_sqlite() and "no such table" in str(exc).lower() and "source_snapshots" in str(exc).lower():
                 self._in_memory_snapshots[snapshot_id] = {
                     "source_snapshot_id": snapshot_id,
                     "tenant_id": tenant_id,
@@ -439,19 +614,9 @@ class SourceSnapshotService:
                 }
                 return snapshot_id
 
-            # Only compensate for objects this call actually created
-            if raw_created:
-                try:
-                    self.object_store.delete_object(tenant_id, raw_uri)
-                except Exception:
-                    pass
-            if redacted_uri and redacted_created:
-                try:
-                    self.object_store.delete_object(tenant_id, redacted_uri)
-                except Exception:
-                    pass
+            self._compensate_snapshot_objects(tenant_id, created_objects)
             logger.error(
-                "Compensating delete executed on SQL insertion failure. "
+                "Snapshot object compensation attempted on SQL metadata failure. "
                 "Raw URI: %s, Redacted URI: %s. Error: %s",
                 raw_uri,
                 redacted_uri,
@@ -683,11 +848,9 @@ class SourceSnapshotService:
                 missing_count += 1
 
         # 2. Scan GCS bucket to detect orphans (Objects in GCS but not in SQL)
-        try:
-            gcs_keys = self.object_store.list_objects(tenant_id, bucket)
-        except Exception as exc:
-            logger.error("Failed to list objects in GCS bucket %s: %s", bucket, exc)
-            gcs_keys = []
+        # An unavailable inventory cannot establish that there are no orphans.
+        # Let the caller retain/retry the failed reconciliation attempt.
+        gcs_keys = self.object_store.list_objects(tenant_id, bucket)
 
         for key in gcs_keys:
             uri = f"gs://{bucket}/{key}"

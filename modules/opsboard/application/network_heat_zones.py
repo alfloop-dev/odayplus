@@ -133,11 +133,11 @@ def _zone(row: Any, tenant_id: str) -> dict[str, Any]:
     ):
         raise ValueError("Native HeatZone tenant conflicts with its source")
     lat, lon = h3.cell_to_latlng(cell)
-    label = " ".join(row[k].strip() for k in ("admin_city", "admin_district") if _text(row.get(k)))
+    label = " ".join(row[k].strip() for k in ("admin_city", "admin_district") if _text(row.get(k))) or row["heat_zone_id"]
     return {
         "id": row["heat_zone_id"],
         "tenantId": tenant_id,
-        "label": label or row["heat_zone_id"],
+        "label": label,
         "rank": row["priority_rank"],
         "centroid": [lon, lat],
         "demandGap": None,
@@ -149,16 +149,32 @@ def _zone(row: Any, tenant_id: str) -> dict[str, Any]:
         "reasons": list(row["reasons"]),
         "risks": list(row["warnings"]),
         "nextStep": "",
-        "mapEvidence": {
-            "h3Index": cell,
+        "recordedMap": {
+            "id": row["heat_zone_id"],
+            "district": label,
+            "h3": cell,
+            "centroid": [lon, lat],
             "h3Resolution": resolution,
             # No native geometry in this list DTO. H3 alone does not
             # manufacture a recorded polygon or a precise listing point.
             "geometry": None,
             "score": row["score"],
-            "priorityRank": row["priority_rank"],
+            "rank": row["priority_rank"],
             "state": row["state"],
             "confidence": row["confidence"],
+            "executionMode": "SHADOW" if row.get("is_shadow") is True else (
+                row["execution_mode"] if _text(row.get("execution_mode")) else ""
+            ),
+            "warnings": list(row["warnings"]),
+            "reasons": list(row["reasons"]),
+            "listings": None,
+            "poiCount": None,
+            "competitorCount": None,
+            "competitorCapacity": None,
+            "competitorPressureScore": None,
+            "medianListingRent": None,
+            "existingStoreCount": None,
+            "dataQualityScore": None,
             "unmetDemandScore": row["unmet_demand_score"],
             "formatFitScore": row["format_fit_score"],
             "cannibalizationRisk": row["cannibalization_risk_score"],

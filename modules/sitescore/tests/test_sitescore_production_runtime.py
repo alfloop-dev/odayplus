@@ -119,6 +119,10 @@ def test_production_worker_invokes_model_runtime_and_survives_restart(
         ).run(features=[_feature()], prediction_origin_time=NOW)
         report_id = result.reports[0].report_id
         assert result.reports[0].m12.p50 == 106_531.25
+        assert result.reports[0].payback_period is None
+        assert result.reports[0].payback_p50_months is None
+        assert "financial_inputs_unavailable" in result.reports[0].warnings
+        assert result.reports[0].recommendation.value != "GO"
         assert result.reports[0].model_version == "sitescore:approved-2026.07.24"
         assert runtime.calls[0]["service"] == "sitescore"
         assert set(runtime.calls[0]["rows"][0]) >= {
@@ -138,6 +142,12 @@ def test_production_worker_invokes_model_runtime_and_survives_restart(
         restored = reopened.get_report(report_id)
         assert restored is not None
         assert restored.m12.p50 == 106_531.25
+        assert restored.payback_period is None
+        assert restored.payback_p50_months is None
+        summary = reopened.get_sitescore_run(restored.sitescore_run_id)
+        assert summary is not None and summary.payback_p50_months is None
+        assert restored.to_dict()["payback_period"] is None
+        assert restored.to_summary_dict()["paybackPeriod"] is None
         assert reopened.latest("candidate-live-001") == restored
     finally:
         reopened_engine.close()

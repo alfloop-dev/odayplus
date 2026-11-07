@@ -147,12 +147,15 @@ class CanonicalIntakeAuditSink:
                 actor_role=result.get("actor_role"),
                 result=result["result"],
                 correlation_id=result["correlation_id"],
+                causation_id=result.get("causation_id"),
                 occurred_at=at,
                 retained_until=policy.retained_until,
                 before_value=result.get("before_value"),
                 after_value=after,
                 reason=result.get("reason"),
                 reason_code=result.get("reason_code"),
+                source_snapshot_id=result.get("source_snapshot_id"),
+                parser_run_id=result.get("parser_run_id"),
             )
             persisted = self.writer.append(fact)
             self.delivery.enqueue(persisted)
