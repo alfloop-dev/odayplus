@@ -816,7 +816,7 @@ def validate_raw_artifact(
 
 def _status_paths(root: Path) -> list[str]:
     proc = subprocess.run(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        ["git", "status", "--porcelain=v1", "--untracked-files=all", "--no-renames"],
         cwd=root,
         check=True,
         capture_output=True,
@@ -825,13 +825,34 @@ def _status_paths(root: Path) -> list[str]:
     paths: list[str] = []
     for line in proc.stdout.splitlines():
         value = line[3:].strip()
-        if " -> " in value:
-            value = value.split(" -> ", 1)[1]
         if value in WORKER_CONTEXT_PATHS or value.startswith(".orchestrator/task-briefs/"):
             continue
         if value:
             paths.append(value)
     return sorted(set(paths))
+
+
+def _commit_field(root: Path, field: str, commit_sha: str) -> str:
+    """Read one commit field; ``show -s`` still runs rename detection unless disabled."""
+    return git_value(root, "show", "-s", "--no-renames", f"--format={field}", commit_sha)
+
+
+def _intervening_touched_paths(root: Path, source_sha: str, head_sha: str) -> list[str]:
+    """Return every literal path changed in ``source_sha..head_sha``.
+
+    Only tree metadata is compared. Rename detection would read blob bodies a
+    filtered clone does not hold, and would report only the destination of a
+    rename, hiding the non-evidence path it moved away from.
+    """
+    log_output = git_value(
+        root,
+        "log",
+        "--format=",
+        "--name-only",
+        "--no-renames",
+        f"{source_sha}..{head_sha}",
+    )
+    return sorted({line.strip() for line in log_output.splitlines() if line.strip()})
 
 
 def verify_evidence_relationship(
@@ -846,7 +867,7 @@ def verify_evidence_relationship(
     if not SHA_RE.fullmatch(source_sha) or not SHA_RE.fullmatch(source_tree):
         return {}, ["tested source SHA/tree is malformed"]
     try:
-        recorded_tree = git_value(root, "show", "-s", "--format=%T", source_sha)
+        recorded_tree = _commit_field(root, "%T", source_sha)
         head_sha = git_value(root, "rev-parse", "HEAD")
     except subprocess.CalledProcessError as exc:
         return {}, [f"tested source commit cannot be resolved: {exc}"]
@@ -867,16 +888,7 @@ def verify_evidence_relationship(
             errors.append("tested source is not an ancestor of evidence HEAD")
         else:
             relation = "evidence_only_descendant"
-            log_output = git_value(
-                root,
-                "log",
-                "--format=",
-                "--name-only",
-                f"{source_sha}..{head_sha}",
-            )
-            touched_paths = sorted(
-                {line.strip() for line in log_output.splitlines() if line.strip()}
-            )
+            touched_paths = _intervening_touched_paths(root, source_sha, head_sha)
             disallowed = sorted(set(touched_paths) - EVIDENCE_COMMIT_ALLOWLIST)
             if disallowed:
                 errors.append(
@@ -939,8 +951,8 @@ def validate_evidence_proof_at_generation(
         errors.append(f"{label} does not record both generated raw artifact paths")
 
     try:
-        recorded_tree = git_value(root, "show", "-s", "--format=%T", source_sha)
-        git_value(root, "show", "-s", "--format=%H", evidence_head_sha)
+        recorded_tree = _commit_field(root, "%T", source_sha)
+        _commit_field(root, "%H", evidence_head_sha)
     except subprocess.CalledProcessError as exc:
         return errors + [f"{label} commit cannot be resolved: {exc}"]
     if recorded_tree != source_tree:
@@ -958,16 +970,7 @@ def validate_evidence_proof_at_generation(
             errors.append(f"{label} tested source is not an ancestor of evidence head")
         else:
             relation = "evidence_only_descendant"
-            log_output = git_value(
-                root,
-                "log",
-                "--format=",
-                "--name-only",
-                f"{source_sha}..{evidence_head_sha}",
-            )
-            touched_paths = sorted(
-                {line.strip() for line in log_output.splitlines() if line.strip()}
-            )
+            touched_paths = _intervening_touched_paths(root, source_sha, evidence_head_sha)
             disallowed = sorted(set(touched_paths) - EVIDENCE_COMMIT_ALLOWLIST)
             if disallowed:
                 errors.append(
