@@ -718,7 +718,7 @@ DENY_PATTERNS = ["/*", "!/tests/sources"]
 # `sparse-checkout` is what denies; every other input can widen, redirect or replace it.
 ALLOWED_CHECKOUT_INPUTS = {"fetch-depth", "sparse-checkout", "sparse-checkout-cone-mode"}
 REMATERIALIZING_COMMAND = re.compile(
-    r"\bgit(?:\s+-[cC]\s+\S+|\s+-\S+)*\s+(?:checkout|switch|restore|read-tree|stash|clone|archive|pull|merge|rebase"
+    r"\bgit(?:\s+-[cC]\s+\S+|\s+-\S+)*\s+(?:checkout|switch|restore|read-tree|stash|clone|archive|pull|fetch|merge|rebase"
     r"|sparse-checkout|submodule|lfs|worktree\s+add|reset\s+--hard)\b"
     r"|\bgh\s+repo\s+clone\b|/(?:tarball|zipball)/|\bgit\s+config\b[^\n]*core\.sparse"
 )
@@ -857,6 +857,7 @@ def _mutated(mutate: Any) -> list[str]:
         ("archive fallback", lambda s: s.append({"name": "x", "run": "git archive HEAD | tar -x"})),
         ("rest tarball", lambda s: s.append({"name": "x", "run": "gh api repos/o/r/tarball/main > a.tgz"})),
         ("clone", lambda s: s.append({"name": "x", "run": "git clone https://example.invalid/r.git"})),
+        ("body fetch", lambda s: s.append({"name": "x", "run": "git -c a=b fetch -q --filter=blob:none --stdin origin < oids"})),
         ("worktree", lambda s: s.append({"name": "x", "run": "git worktree add ../w HEAD"})),
         ("config reset", lambda s: s.append({"name": "x", "run": "git config core.sparseCheckout false"})),
         ("rename fetch", lambda s: s.append({"name": "x", "run": "git diff --name-only a b"})),
@@ -909,6 +910,8 @@ class _CheckoutFixture:
 
     `dev` tracks nothing under the deny prefix, as a passing commit must;
     `bodied` is that commit plus a body under it, and `removed` then deletes it.
+    `withdrawn` continues `removed` with a history that leaves HEAD again: one blob
+    tracked under both the prefix and an allowed path, and one permitted body.
     """
 
     PREFIX = "guarded/zone"
@@ -945,10 +948,34 @@ class _CheckoutFixture:
         self.git(self.seed, "add", ".")
         self.git(self.seed, "commit", "-q", "-m", "moved")
         self.removed = self.rev("HEAD")
+        self.git(self.seed, "checkout", "-q", "-b", "withdrawn")
+        (self.seed / self.PREFIX).mkdir(parents=True, exist_ok=True)
+        (self.seed / "open").mkdir()
+        self.history_paths = {
+            f"{self.PREFIX}/body.txt",
+            f"{self.PREFIX}/shared.txt",
+            "open/shared-copy.txt",
+            "open/permitted.txt",
+        }
+        for path, text in (
+            (f"{self.PREFIX}/shared.txt", "shared synthetic body\n"),
+            ("open/shared-copy.txt", "shared synthetic body\n"),
+            ("open/permitted.txt", "permitted history\n"),
+        ):
+            (self.seed / path).write_text(text, encoding="utf-8")
+        self.git(self.seed, "add", ".")
+        self.git(self.seed, "commit", "-q", "-m", "history")
+        self.published = self.rev("HEAD")
+        self.shared_oid = self.rev(f"HEAD:{self.PREFIX}/shared.txt")
+        assert self.shared_oid == self.rev("HEAD:open/shared-copy.txt")
+        self.permitted_oid = self.rev("HEAD:open/permitted.txt")
+        self.git(self.seed, "rm", "-q", "-r", self.PREFIX, "open")
+        self.git(self.seed, "commit", "-q", "-m", "withdrawn")
+        self.withdrawn = self.rev("HEAD")
         self.git(root, "init", "-q", "--bare", str(self.origin))
         self.git(self.origin, "config", "uploadpack.allowFilter", "true")
         self.git(self.origin, "config", "uploadpack.allowAnySHA1InWant", "true")
-        self.git(self.seed, "push", "-q", str(self.origin), "dev", "bodied", "removed")
+        self.git(self.seed, "push", "-q", str(self.origin), "dev", "bodied", "removed", "withdrawn")
 
     @staticmethod
     def git(cwd: Path, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -993,8 +1020,22 @@ class _CheckoutFixture:
             check=False,
         )
 
-    def local_objects(self) -> str:
-        return self.git(self.checkout, "cat-file", "--batch-check", "--batch-all-objects").stdout
+    def local_objects(self, repo: Path | None = None) -> str:
+        return self.git(repo or self.checkout, "cat-file", "--batch-check", "--batch-all-objects").stdout
+
+    def lose_guarded_tree(self) -> None:
+        """Leave the protected ancestor's tree unreadable, here and from any promisor."""
+        tree = self.git(self.checkout, "rev-parse", "HEAD:guarded").stdout.strip()
+        self.git(self.checkout, "remote", "set-url", "origin", str(self.root / "gone.git"))
+        store = self.checkout / ".git" / "objects"
+        for pack in sorted((store / "pack").glob("*.pack")):
+            kept = self.root / pack.name
+            shutil.move(pack, kept)
+            with kept.open("rb") as stream:
+                subprocess.run(["git", "unpack-objects", "-q"], cwd=self.checkout, stdin=stream, check=True)
+        for leftover in (store / "pack").iterdir():
+            leftover.unlink()
+        (store / tree[:2] / tree[2:]).unlink()
 
 
 @pytest.fixture
@@ -1026,18 +1067,57 @@ def test_tracked_body_is_never_materialized_or_downloaded_and_then_refused(
     assert fixture.body_oid not in fixture.local_objects(), "the refusal itself reads metadata only"
 
 
-def test_lint_unit_hydrates_history_blobs_without_the_denied_path() -> None:
-    """Its suites clone this repo locally, which a blob:none source cannot serve."""
-    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))["jobs"]
-    steps = jobs["product-lint-unit"]["steps"]
-    names = [str(step.get("name") or step.get("uses") or "") for step in steps]
-    hydrate = names.index("Hydrate history blobs for local-clone suites")
-    assert names.index("Prove protected path stayed out of checkout") < hydrate
-    assert hydrate < names.index("Install uv")
-    script = steps[hydrate]["run"]
-    assert "tests\\/sources" in script
-    assert "comm -23 -" in script
-    assert "--stdin origin" in script
+def test_local_clone_consumers_read_history_metadata_without_any_body_fetch(
+    checkout_fixture: _CheckoutFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both clone forms the product suites use work from the partial checkout as it stands."""
+    fixture = checkout_fixture
+    fixture.action_checkout(fixture.deny_patterns(), ref="withdrawn")
+    proof = fixture.run_proof()
+    assert proof.returncode == 0, proof.stdout + proof.stderr
+    before = fixture.local_objects()
+    unfetched = (fixture.body_oid, fixture.shared_oid, fixture.permitted_oid)
+    assert not [oid for oid in unfetched if oid in before]
+
+    shared = fixture.root / "shared"
+    fixture.git(fixture.root, "clone", "-q", "--shared", str(fixture.checkout), str(shared))
+    for repo in (fixture.checkout, shared):
+        changed = fixture.git(repo, "log", "--no-renames", "--format=", "--name-only", f"{fixture.clean}..HEAD")
+        assert fixture.history_paths <= set(changed.stdout.split())
+        fixture.git(repo, "show", "-s", "--no-renames", "--format=%H", "HEAD")
+    assert fixture.git(shared, "status", "--porcelain=v1", "--untracked-files=all", "--no-renames").stdout == ""
+    with monkeypatch.context() as served_without_lazy_fetch:
+        served_without_lazy_fetch.setenv("GIT_NO_LAZY_FETCH", "1")
+        shallow = fixture.root / "shallow"
+        fixture.git(fixture.root, "clone", "-q", "--depth", "1", f"file://{fixture.checkout}", str(shallow))
+    assert fixture.git(shallow, "rev-parse", "HEAD").stdout.strip() == fixture.withdrawn
+
+    assert fixture.local_objects() == before
+    for repo in (shared, shallow):
+        assert not (repo / fixture.PREFIX).exists()
+        objects = fixture.local_objects(repo)
+        assert not [oid for oid in unfetched if oid in objects]
+
+
+def test_permitted_history_body_is_on_demand_and_never_brings_a_protected_one(
+    checkout_fixture: _CheckoutFixture,
+) -> None:
+    fixture = checkout_fixture
+    fixture.action_checkout(fixture.deny_patterns(), ref="withdrawn")
+    shared = fixture.root / "shared"
+    fixture.git(fixture.root, "clone", "-q", "--shared", str(fixture.checkout), str(shared))
+    refused = subprocess.run(
+        ["git", "cat-file", "-e", fixture.permitted_oid], cwd=shared, capture_output=True, check=False
+    )
+    assert refused.returncode != 0, "a local clone has no promisor to serve history from"
+
+    read = fixture.git(fixture.checkout, "cat-file", "blob", f"{fixture.published}:open/permitted.txt")
+    assert read.stdout == "permitted history\n"
+    objects = fixture.local_objects()
+    assert fixture.permitted_oid in objects
+    assert fixture.body_oid not in objects
+    assert fixture.shared_oid not in objects, "a blob also tracked under the deny stays out"
+    assert not (fixture.checkout / fixture.PREFIX).exists()
 
 
 def test_full_history_survives_the_deny(checkout_fixture: _CheckoutFixture) -> None:
@@ -1127,6 +1207,7 @@ def test_unresolved_compared_commits_fail_closed(checkout_fixture: _CheckoutFixt
             ),
             id="unsafe-index-ancestor",
         ),
+        pytest.param(lambda f: f.lose_guarded_tree(), id="unreadable-protected-ancestor-tree"),
     ],
 )
 def test_denial_proof_fails_closed(checkout_fixture: _CheckoutFixture, damage: Any) -> None:

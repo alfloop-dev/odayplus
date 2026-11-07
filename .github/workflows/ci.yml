@@ -427,22 +427,6 @@ jobs:
               raise SystemExit(f"Protected checkout denial failed: {failures}")
           PY
 
-      # The sparse deny makes actions/checkout a blob:none partial clone. The
-      # acceptance and release-manifest suites clone this repository locally and
-      # read history, and a local clone cannot lazily fetch what the source lacks.
-      # Only the bodies HEAD's history can reach are fetched, never a denied path.
-      - name: Hydrate history blobs for local-clone suites
-        run: |
-          set -euo pipefail
-          git rev-list --objects --missing=allow-any HEAD \
-            | awk '$2 ~ /^tests\/sources(\/|$)/ {print $1}' | sort -u > "$RUNNER_TEMP/denied-blobs.txt"
-          git rev-list --objects --missing=print HEAD | sed -n 's/^?//p' | sort -u \
-            | comm -23 - "$RUNNER_TEMP/denied-blobs.txt" > "$RUNNER_TEMP/missing-blobs.txt"
-          if [ -s "$RUNNER_TEMP/missing-blobs.txt" ]; then
-            git -c fetch.negotiationAlgorithm=noop fetch -q --no-tags --no-write-fetch-head \
-              --recurse-submodules=no --filter=blob:none --stdin origin < "$RUNNER_TEMP/missing-blobs.txt"
-          fi
-
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
