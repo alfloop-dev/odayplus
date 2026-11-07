@@ -63,6 +63,12 @@ class SchedulerCutoverConfigurationError(RuntimeError):
     code = INVALID_CUTOVER_MODE_REASON_CODE
 
 
+class SchedulerNativeIntakeHandoffError(RuntimeError):
+    """A native phase failed; earlier durable admissions remain valid."""
+
+    code = "native_intake_handoff_incomplete"
+
+
 def scheduler_health() -> dict[str, str]:
     return {"status": "ok", "service": "oday-scheduler"}
 
@@ -89,6 +95,7 @@ class ODayScheduler:
         self.job_queue = self.persistence.job_queue
         self.telemetry = telemetry or Telemetry("oday-scheduler")
         self.env = os.environ if env is None else env
+        self.last_native_handoff: dict[str, Any] = {}
         self.tenant_id = (
             str(tenant_id).strip()
             if tenant_id is not None
@@ -181,6 +188,94 @@ class ODayScheduler:
                 error_code=type(exc).__name__,
             )
 
+    def _run_native_intake(self, tenant_id: str, correlation_id: str) -> None:
+        """Resume existing owners from canonical state, without a second queue.
+
+        A matching-policy reference in the existing parser deployment opts a
+        source into this tick. It selects authority, never creates or approves
+        it. Owners independently verify all current positive permissions.
+        """
+        from modules.external_data.application.native_parser_deployments import (
+            DEPLOYMENTS_ENV,
+            parse_native_parser_deployments,
+        )
+        from modules.listing.application.native_intake_job_runtime import native_intake_uuid
+
+        report: dict[str, Any] = {"configured": False, "partitions": [], "errors": []}
+        self.last_native_handoff = report
+        try:
+            deployments = parse_native_parser_deployments(self.env.get(DEPLOYMENTS_ENV))
+            report["configured"] = bool(deployments.matching_policy_versions)
+            if not report["configured"]:
+                return
+            tenant_id = native_intake_uuid(tenant_id)
+        except Exception as error:
+            report["errors"].append({"phase": "configuration", "error_class": type(error).__name__})
+            raise SchedulerNativeIntakeHandoffError(SchedulerNativeIntakeHandoffError.code) from None
+
+        from apps.api.oday_api.security.dependencies import default_boundary
+        from modules.opsboard.auth import Credentials
+
+        def consume(phase, partition, command):
+            receipts = partition[phase] = []
+            try:
+                for receipt in command():
+                    receipts.append({key: receipt[key] for key in
+                        ("job_id", "intake_id", "match_case_id", "decision_id") if key in receipt})
+            except Exception as error:
+                report["errors"].append({**{key: partition[key] for key in ("tenant_id", "source_id") if key in partition},
+                    "phase": phase, "error_class": type(error).__name__})
+
+        def scan(factory, partition, phase, *, progress_key=None, **selection):
+            owner = factory()
+            try:
+                yield from owner.admit_partition(tenant_id, limit=25, **selection)
+            finally:
+                progress = getattr(owner, "last_partition_progress", None)
+                if progress is not None:
+                    partition[progress_key or phase + "_progress"] = progress
+                    if progress["conflicts"]:
+                        report["errors"].append({**{key: partition[key] for key in ("tenant_id", "source_id") if key in partition},
+                            "phase": phase, "reason": "native_partition_conflicts"})
+
+        # These are tenant-scoped native owners: they consume only the actual
+        # submission/state/request events in their own configured realm. Each
+        # admission retains its current human/source/configuration checks.
+        tenant_progress: dict[str, Any] = {"tenant_id": tenant_id}
+        report["tenant_phases"] = tenant_progress
+        consume("identity_starts", tenant_progress,
+            lambda: scan(self.persistence.canonical_intake_start, tenant_progress, "identity_starts"))
+        consume("identity_checks", tenant_progress,
+            lambda: scan(self.persistence.canonical_intake_identity, tenant_progress, "identity_checks"))
+        consume("source_policy_rechecks", tenant_progress,
+            lambda: scan(self.persistence.canonical_intake_source_policy_recheck, tenant_progress, "source_policy_rechecks"))
+        consume("source_policy_checks", tenant_progress,
+            lambda: scan(self.persistence.canonical_intake_source_policy, tenant_progress, "source_policy_checks"))
+        consume("retrieval_admissions", tenant_progress,
+            lambda: scan(self.persistence.canonical_intake_retrieval, tenant_progress, "retrieval_admissions"))
+        consume("assisted_entry_admissions", tenant_progress,
+            lambda: scan(self.persistence.canonical_intake_assisted_entry, tenant_progress, "assisted_entry_admissions"))
+
+        for source, policy in deployments.matching_policy_versions:
+            partition: dict[str, Any] = {"source_id": source}
+            report["partitions"].append(partition)
+            consume("parser_admissions", partition, lambda source=source, partition=partition: scan(
+                self.persistence.canonical_intake_parser, partition, "parser_admissions", progress_key="parser_progress",
+                source_id=source, release_id=deployments.release_for_source(source)))
+
+            consume("matching_proposals", partition, lambda source=source, policy=policy: self.persistence.canonical_match_cases().match_partition(
+                tenant_id, source_id=source, policy_version_id=policy, boundary=default_boundary(),
+                credentials=Credentials(bearer_token=self.env.get("ODP_NATIVE_INTAKE_MATCHER_BEARER_TOKEN")), limit=25))
+            consume("exact_admissions", partition, lambda source=source, policy=policy: self.persistence.canonical_intake_identity(
+                identity_service_boundary=default_boundary).confirm_exact_partition(
+                tenant_id, source_id=source, policy_version_id=policy,
+                replay_store=self.persistence.assisted_intake_store, limit=25))
+
+        if report["errors"]:
+            raise SchedulerNativeIntakeHandoffError(SchedulerNativeIntakeHandoffError.code) from None
+        self.telemetry.logger.info("Scheduler native Intake handoff completed",
+            correlation_id=correlation_id, actor="scheduler", resource="scheduler/native-intake", result="ok")
+
     def run_once(self) -> None:
         """Orchestrate and enqueue the scheduled tasks.
 
@@ -197,6 +292,7 @@ class ODayScheduler:
         the very next tick without a redeploy.
         """
         correlation_id = new_correlation_id()
+        self.last_native_handoff = {}
         context = TraceContext(
             correlation_id=correlation_id,
             actor_id="scheduler",
@@ -224,6 +320,7 @@ class ODayScheduler:
                     result="ok",
                     error_code=CUTOVER_SKIP_REASON_CODE,
                 )
+                self._run_native_intake(tenant_id, correlation_id)
                 return
             try:
                 self.job_queue.enqueue(
@@ -260,6 +357,7 @@ class ODayScheduler:
                     resource="scheduler/tick",
                     error_code=type(exc).__name__,
                 )
+            self._run_native_intake(tenant_id, correlation_id)
 
     def export_metrics(self) -> dict[str, Any] | None:
         """Export scheduler metrics snapshot via ProductionMetricsExporter if exact 40-char release SHA is present in environment."""
@@ -287,11 +385,11 @@ class ODayScheduler:
             except (
                 SchedulerTenantConfigurationError,
                 SchedulerCutoverConfigurationError,
+                SchedulerNativeIntakeHandoffError,
             ) as exc:
-                # Fail closed and stay loud: nothing was enqueued, and every
-                # tick keeps reporting the misconfiguration until an operator
-                # sets the tenant or fixes the cutover mode. Crashing the process
-                # instead would only trade a visible error for a restart loop.
+                # Keep reporting configuration or phase errors on every tick.
+                # Native failures can follow durable admissions; canonical
+                # state and last_native_handoff retain that partial progress.
                 self.telemetry.logger.error(
                     f"Scheduler tick skipped: {exc}",
                     correlation_id="unknown",

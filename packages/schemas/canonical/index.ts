@@ -329,7 +329,7 @@ export interface SiteScoreRun {
   m12_p10: number;
   m12_p50: number;
   m12_p90: number;
-  payback_p50_months: number;
+  payback_p50_months: number | null;
   decision_recommendation: 'go' | 'wait' | 'reject' | 'investigate';
   report_uri: string;
 }

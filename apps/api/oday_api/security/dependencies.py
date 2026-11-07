@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import date
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -72,6 +72,29 @@ class AuthorizationError(Exception):
     def __init__(self, decision: Decision) -> None:
         super().__init__(decision.reason)
         self.decision = decision
+
+
+def check_captured_principal(
+    request: Request, *, actor: object, tenant: object, error_prefix: str,
+    parse: Callable[[str], object] = str,
+) -> None:
+    """Reject stale captured views without selecting or authorizing a caller.
+
+    Each existing router authenticates and validates its actual principal first.
+    Native UUID identities and Store Ops opaque identities keep their codecs.
+    """
+    for header, current, kind in [("if-actor-match", actor, "ACTOR"), ("if-tenant-match", tenant, "TENANT")]:
+        expected = request.headers.getlist(header)
+        if not expected:
+            continue
+        try:
+            if len(expected) != 1 or not expected[0] or expected[0] != expected[0].strip():
+                raise ValueError
+            captured = parse(expected[0])
+        except (ValueError, TypeError, AttributeError):
+            raise HTTPException(422, f"{error_prefix}_{kind}_PRECONDITION_INVALID") from None
+        if captured != current:
+            raise HTTPException(409, f"{error_prefix}_{kind}_CONTEXT_CHANGED")
 
 
 def build_engine(

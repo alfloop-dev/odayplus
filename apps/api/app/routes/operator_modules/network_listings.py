@@ -21,10 +21,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from apps.api.app.routes._common import reset_allowed_guard
 from apps.api.app.routes.operator_modules.live_service import resolve_service
+from modules.external_data.application.assisted_intake import validate_url
 from modules.external_data.security import contains_sensitive_submission_material
 from modules.listing.application.intake_authorization import (
     authorize_intake_action,
     collection_rows_are_scope_projected,
+    has_recorded_legal_hold,
     intake_resource_in_scope,
     mask_intake,
     mask_listing,
@@ -44,6 +46,7 @@ from modules.opsboard.application.network_read_scope import (
     project_listing_snapshot,
 )
 from modules.opsboard.application.operator_actor import operator_actor
+from shared.api.errors import ErrorResponse
 from shared.audit import InMemoryAuditLog
 from shared.auth import DataClassification, Principal, Role
 from shared.infrastructure.persistence.assisted_listing_intake import (
@@ -230,6 +233,10 @@ def create_network_listings_sub_router(
         payload.update(body.model_extra or {})
         offenders = contains_sensitive_submission_material(payload)
         if offenders:
+            if offenders == ["url"]:
+                # Preserve this route's original 400 URL-validation response.
+                # Other secret fields and token-shaped paths retain 422.
+                validate_url(body.url)
             fields = ", ".join(sorted(offenders))
             raise HTTPException(
                 status_code=422,
@@ -361,7 +368,7 @@ def create_network_listings_sub_router(
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             listing = active_service(request)._listing(listing_id)
-            has_legal_hold = listing.get("hasLegalHold") or listing.get("legalHold") or False
+            has_legal_hold = has_recorded_legal_hold(listing)
             first_actor_id = listing.get("submitter") or listing.get("owner")
             actor = operator_actor(principal)
 
@@ -430,7 +437,7 @@ def create_network_listings_sub_router(
                     risk_acknowledged=body.riskAcknowledged,
                     risk_summary=body.riskSummary,
                     first_actor_id=resource.get("proposer") or resource.get("submitter"),
-                    has_legal_hold=resource.get("hasLegalHold") is True or resource.get("legalHold") is True,
+                    has_legal_hold=has_recorded_legal_hold(resource),
                     operator_role_id=operator_role_id, audit_log=audit_log,
                     correlation_id=x_correlation_id,
                 )
@@ -494,8 +501,8 @@ def create_network_listings_sub_router(
                 # Archive has retention semantics distinct from intake cancel.
                 # Its hold/terminal guards run in the listing write owner.
                 authorize_intake_action(
-                    principal, "cancel", resource=resource,
-                    has_legal_hold=resource.get("hasLegalHold") is True or resource.get("legalHold") is True,
+                    principal, "archive", resource=resource,
+                    has_legal_hold=has_recorded_legal_hold(resource),
                     operator_role_id=operator_role_id, audit_log=audit_log,
                     correlation_id=x_correlation_id,
                 )
@@ -882,6 +889,10 @@ def create_network_listings_sub_router(
     @router.post(
         "/intake/{intake_id}/decide",
         dependencies=[Depends(require_write_permission_fn)],
+        responses={
+            428: {"model": ErrorResponse, "description": "The observed Intake version is required"},
+            503: {"model": ErrorResponse, "description": "The authoritative Intake version is unavailable"},
+        },
     )
     def decide_intake(
         request: Request,
@@ -889,6 +900,7 @@ def create_network_listings_sub_router(
         body: IntakeDecidePayload,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+        if_match: str | None = Header(default=None, alias="If-Match"),
     ) -> dict[str, Any]:
         try:
             principal = get_principal(request)
@@ -903,8 +915,8 @@ def create_network_listings_sub_router(
                     resource=current,
                     risk_acknowledged=body.riskAcknowledged,
                     risk_summary=body.riskSummary,
-                    first_actor_id=current.get("submitter"),
-                    has_legal_hold=bool(current.get("hasLegalHold") or current.get("legalHold")),
+                    first_actor_id=current.get("proposer") or current.get("submitter"),
+                    has_legal_hold=has_recorded_legal_hold(current),
                     operator_role_id=operator_role_id,
                     audit_log=audit_log,
                     correlation_id=x_correlation_id,
@@ -924,6 +936,7 @@ def create_network_listings_sub_router(
                 correlation_id=x_correlation_id,
                 target_listing_id=getattr(body, "targetListingId", None),
                 authorize_existing=authorize_existing,
+                if_match=if_match,
             )
             return mask_intake(principal, result)
         except PermissionError as exc:
@@ -932,6 +945,10 @@ def create_network_listings_sub_router(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except (NetworkListingConflict, AssistedIntakePersistenceConflict) as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except NetworkListingPreconditionRequired as exc:
+            raise HTTPException(status_code=428, detail=str(exc)) from exc
+        except NetworkListingVersionUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except NetworkListingPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

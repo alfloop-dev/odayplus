@@ -18,9 +18,9 @@ from uuid import UUID, uuid4
 
 from modules.external_data.geo import GeoPipeline
 from modules.listing import ListingPipeline
-from modules.listing.application.assignment_sla import AssignmentSlaService
 from modules.listing.application.intake_assignment_commands import (
     authorize_assignment_read,
+    authorize_initial_assignment,
     change_assignment,
     list_assignment_transfer_targets,
 )
@@ -28,15 +28,13 @@ from modules.listing.application.intake_completion import IntakeWorkIncomplete
 from modules.listing.application.intake_correction_lineage import apply_field, correction_values
 from modules.listing.application.intake_sla_commands import change_sla
 from modules.listing.application.intake_workflow_bootstrap import (
-    IntakeWorkflowPlan,
     IntakeWorkflowPolicy,
     IntakeWorkflowUnavailable,
-    enqueue_workflow_event,
     initialize_intake_workflow,
     record_workflow_change,
     schedule_from_record,
 )
-from modules.listing.domain.intake_states import DomainValidationError, PrincipalRole
+from modules.listing.domain.intake_states import DomainValidationError, PrincipalRole, SlaState
 from shared.audit import InMemoryAuditLog
 
 _CURSOR_SIGNING_KEY_ENV = "ODP_INTAKE_CURSOR_SIGNING_KEY"
@@ -235,14 +233,6 @@ else:
     class JobDeliveryState(str, Enum):
         RETRYING = "RETRYING"
         DEAD_LETTER = "DEAD_LETTER"
-
-    class SlaState(str, Enum):
-        ON_TRACK = "ON_TRACK"
-        DUE_SOON = "DUE_SOON"
-        OVERDUE = "OVERDUE"
-        BREACHED = "BREACHED"
-        PAUSED = "PAUSED"
-        COMPLETED = "COMPLETED"
 
     class AssignmentStatus(str, Enum):
         ASSIGNED = "ASSIGNED"
@@ -2039,9 +2029,9 @@ else:
                 check_uuid(tenant_id)
             except ValueError:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED: UUID tenant and subject are required") from None
-            # Production replicas share one PostgreSQL state store. Bind and
-            # refresh only the verified tenant at the request boundary.
-            active.refresh(tenant_id)
+            # Dependencies and synchronous endpoints may use different pool
+            # threads. Each endpoint binds this verified tenant in its own
+            # execution thread before accessing the thread-local state store.
             return tenant_id
 
         def is_record_owner(principal: Principal, record: dict[str, Any]) -> bool:
@@ -2322,6 +2312,7 @@ else:
             q: str | None = Query(None, max_length=200),
             tenant_id: str = Depends(require_actor),
         ) -> IntakePage:
+            active.refresh(tenant_id)
             sort_value = (sort or IntakeSort.SUBMITTED_AT_DESC).value
             query_parameters = {
                 "assigned_area_id": assigned_area_id,
@@ -2499,6 +2490,7 @@ else:
                 pattern=r"^[A-Za-z0-9._:-]+$",
             ),
         ) -> IntakeSubmissionReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
@@ -2616,6 +2608,7 @@ else:
                 pattern=r"^[A-Za-z0-9._:-]+$",
             ),
         ) -> BatchIntakeReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
@@ -2677,7 +2670,11 @@ else:
                                     "version_after": 1,
                                 }
                             ],
-                            "fields": xlsx_intake_fields(row.model_dump()),
+                            "fields": intake_fields({
+                                **row.model_dump(),
+                                "batch_id": body.batch_id,
+                                "row_index": index + 1,
+                            }),
                             "audit": [],
                         }
                         active.intakes[intake_id] = value
@@ -2704,26 +2701,32 @@ else:
             response.status_code = code
             return BatchIntakeReceipt(**val)
 
-        # Field classifications for rows imported from a spreadsheet. Values are
-        # carried into the intake's FieldValue collection so a committed row is
-        # readable through GET /intakes/{id} under the usual masking policy.
-        XLSX_FIELD_CLASSIFICATIONS: dict[str, str] = {
+        # Submitted values and row provenance share the existing FieldValue
+        # collection and read masking. Source IDs here are submitter claims;
+        # they never set the Intake's authoritative source or retrieval policy.
+        INTAKE_FIELD_CLASSIFICATIONS: dict[str, str] = {
             "address_raw": "INTERNAL",
             "normalized_address": "INTERNAL",
             "rent_amount": "INTERNAL",
+            "currency": "INTERNAL",
             "area_ping": "INTERNAL",
             "floor": "INTERNAL",
             "normalized_floor": "INTERNAL",
             "title": "INTERNAL",
             "listing_type": "INTERNAL",
+            "source_id": "INTERNAL",
+            "source_listing_id": "INTERNAL",
+            "batch_id": "INTERNAL",
+            "row_index": "INTERNAL",
+            "source_row_index": "INTERNAL",
         }
 
-        def xlsx_intake_fields(row: dict[str, Any]) -> list[dict[str, Any]]:
+        def intake_fields(row: dict[str, Any]) -> list[dict[str, Any]]:
             fields: list[dict[str, Any]] = []
-            for field_path, classification in XLSX_FIELD_CLASSIFICATIONS.items():
-                value = row.get(field_path)
-                if value in (None, ""):
+            for field_path, classification in INTAKE_FIELD_CLASSIFICATIONS.items():
+                if field_path not in row:
                     continue
+                value = row[field_path]
                 fields.append({
                     "field_path": field_path,
                     "classification": classification,
@@ -2751,6 +2754,7 @@ else:
             request: Request,
             tenant_id: str = Depends(require_actor),
         ) -> XlsxPreviewResponse:
+            active.refresh(tenant_id)
             from modules.external_data.application.xlsx_import import (
                 XlsxImportError,
                 preview_xlsx_import,
@@ -2797,6 +2801,7 @@ else:
                 pattern=r"^[A-Za-z0-9._:-]+$",
             ),
         ) -> XlsxCommitReceipt:
+            active.refresh(tenant_id)
             from modules.external_data.application.xlsx_import import commit_xlsx_import
             validate_idempotency_key(key)
             principal = get_principal(request)
@@ -2856,7 +2861,11 @@ else:
                                 "version_after": 1,
                             }
                         ],
-                        "fields": xlsx_intake_fields(row),
+                        "fields": intake_fields({
+                            **row,
+                            "row_index": row["_submitted_row_index"],
+                            "source_row_index": row["_row_index"],
+                        }),
                         "audit": [],
                     }
                     active.intakes[intake_id] = value
@@ -2893,6 +2902,7 @@ else:
             export_format: str = Query("csv", alias="format"),
             tenant_id: str = Depends(require_actor),
         ) -> Response:
+            active.refresh(tenant_id)
             from modules.external_data.application.xlsx_import import (
                 export_xlsx_import_errors,
                 get_preview_result,
@@ -2946,6 +2956,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> IntakeDetail:
+            active.refresh(tenant_id)
             value = active.intakes.get(intake_id)
             if value is None:
                 raise HTTPException(404, "intake not found")
@@ -3047,6 +3058,7 @@ else:
                 ..., alias="If-Match", pattern=r'^W/"[1-9][0-9]*"$',
             ),
         ) -> CorrectionReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.intakes.get(intake_id)
             if current is None:
@@ -3181,6 +3193,7 @@ else:
                 ..., alias="If-Match", pattern=r'^W/"[1-9][0-9]*"$',
             ),
         ) -> AssignmentReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.intakes.get(intake_id)
             if current is None:
@@ -3189,132 +3202,56 @@ else:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             principal = get_principal(request)
-            operator_role_id = get_operator_role_id(request)
             require_intake_scope(principal, current)
 
-            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
-                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
-            )
-            is_staff = (principal.has_role(Role.EXPANSION_USER) or operator_role_id in (
-                "expansion-staff", "expansionStaff", "expansion-user", "expansion_user"
-            )) and not is_manager
-            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
-
-            if not (is_manager or is_staff or is_steward):
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE)
+            is_steward = principal.has_role(Role.DATA_OWNER)
+            if not (is_manager or is_steward):
                 raise HTTPException(403, "ROLE_DENIED")
-
-            if is_staff:
-                if current.get("submitted_by") != principal.subject_id and current.get("assigned_to") != principal.subject_id:
-                    raise HTTPException(403, "OWNERSHIP_REQUIRED")
-                if body.owner_subject_id != principal.subject_id:
-                    raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED")
-
             actor_id = principal.subject_id
+            target = body.model_dump()
+            bound = [value for value in active.assignments.values()
+                     if value.get("intake_id") == intake_id]
+            if len(bound) != 1:
+                raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
+            # A stored receipt retains its outcome, never revoked actor, target
+            # or policy authority. State/version checks remain fresh-only.
+            try:
+                authorize_initial_assignment(
+                    active, bound[0], workflow_policy, actor_id=actor_id, target=target,
+                )
+            except PermissionError as exc:
+                raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED") from exc
+            except Exception as exc:
+                raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
 
             def make() -> tuple[dict[str, Any], int]:
-                require_version(if_match, current["version"])
-                active_assignment = next(
-                    (
-                        assignment
-                        for assignment in active.assignments.values()
-                        if assignment.get("intake_id") == intake_id
-                        and assignment.get("status") != "COMPLETED"
-                    ),
-                    None,
-                )
-                if active_assignment is not None and active_assignment.get("status") != "UNASSIGNED":
-                    raise HTTPException(409, "OWNER_CONFLICT")
-                active_sla = next((s for s in active.slas.values() if s.get("intake_id") == intake_id), None)
-                if active_assignment is None or active_sla is None or workflow_policy is None:
+                working_intake = active.intakes[intake_id]
+                require_intake_scope(principal, working_intake)
+                require_version(if_match, working_intake["version"])
+                assignments = [value for value in active.assignments.values()
+                               if value.get("intake_id") == intake_id]
+                if len(assignments) != 1:
                     raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
-                if active_sla.get("state") in {"PAUSED", "COMPLETED", "BREACHED"}:
-                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
+                working = assignments[0]
+                if working.get("status") not in {"UNASSIGNED", "COMPLETED"}:
+                    raise HTTPException(409, "OWNER_CONFLICT")
                 try:
-                    schedule = schedule_from_record(active_sla)
-                    authorized_scope = copy.deepcopy(current["scope"])
-                    plan = workflow_policy.resolve_assignment(
-                        authorized_scope, schedule, actor_id=actor_id,
-                        owner_subject_id=body.owner_subject_id, owner_role=body.owner_role,
-                        requested_due_at=datetime.fromisoformat(body.due_at.replace("Z", "+00:00")),
+                    value = change_assignment(
+                        active, working, workflow_policy, action="assign", actor_id=actor_id,
+                        role=PrincipalRole.EXPANSION_MANAGER if is_manager else PrincipalRole.DATA_STEWARD,
                         reason=body.reason,
+                        correlation_id=request.headers.get("x-correlation-id") or str(uuid4()),
+                        current_time=datetime.now(UTC), target=target,
                     )
-                    if (
-                        not isinstance(plan, IntakeWorkflowPlan)
-                        or authorized_scope != current["scope"]
-                        or plan.schedule.tenant_id != tenant_id
-                        or plan.schedule.started_at != schedule.started_at
-                        or plan.schedule.policy_version != schedule.policy_version
-                        or plan.schedule.calendar_version != schedule.calendar_version
-                    ):
-                        raise IntakeWorkflowUnavailable("Assignment changed the workflow binding")
                 except PermissionError as exc:
                     raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED") from exc
-                except Exception as exc:
+                except DomainValidationError as exc:
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
+                except (IntakeWorkflowUnavailable, KeyError, AttributeError) as exc:
                     raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
-                current["version"] += 1
-                aid = active_assignment["assignment_id"]
-                ts = now()
-
-                current["assigned_to"] = body.owner_subject_id
-                resolved_due = plan.schedule.due_at.isoformat().replace("+00:00", "Z")
-                current["due_at"] = resolved_due
-                current["updated_at"] = ts
-
-                current["processing_history"].append({
-                    "transition_id": str(uuid4()),
-                    "from_state": current["state"],
-                    "to_state": current["state"],
-                    "occurred_at": ts,
-                    "actor": actor_id,
-                    "version_after": current["version"],
-                })
-
-                value = {
-                    **active_assignment,
-                    "assignment_id": aid,
-                    "status": "ASSIGNED",
-                    "owner_subject_id": body.owner_subject_id,
-                    "due_at": resolved_due,
-                    "owner_role": body.owner_role,
-                    "queue_key": plan.queue_key,
-                    "updated_at": ts,
-                    "version": active_assignment["version"] + 1,
-                    "tenant_id": tenant_id,
-                    "intake_id": intake_id,
-                }
-                active.assignments[aid] = value
-                prior_sla = copy.deepcopy(active_sla)
-                updated_schedule = plan.schedule
-                active_sla.update({
-                    "state": AssignmentSlaService.get_derived_sla_state(updated_schedule, datetime.now(UTC)).value,
-                    "due_at": resolved_due,
-                    "due_soon_at": updated_schedule.due_soon_at.isoformat().replace("+00:00", "Z"),
-                    "breach_at": updated_schedule.breach_at.isoformat().replace("+00:00", "Z"),
-                    "schedule": {**active_sla["schedule"], "due_at": resolved_due,
-                                 "due_soon_at": updated_schedule.due_soon_at.isoformat().replace("+00:00", "Z"),
-                                 "breach_at": updated_schedule.breach_at.isoformat().replace("+00:00", "Z")},
-                    "version": active_sla["version"] + 1,
-                })
-                record_workflow_change(active, current, resource_type="assignment",
-                                       before=active_assignment, after=value,
-                                       action="assignment.assign", actor_id=actor_id)
-                record_workflow_change(active, current, resource_type="sla_instance",
-                                       before=prior_sla, after=active_sla,
-                                       action="sla.schedule_resolved", actor_id=actor_id)
-                enqueue_workflow_event(
-                    active, current, event_type="assignment.assigned", producer="workflow_service",
-                    aggregate_type="assignment", aggregate_id=aid, aggregate_version=value["version"],
-                    payload={k: value[k] for k in ("assignment_id", "intake_id", "status", "owner_subject_id", "due_at", "version")},
-                )
-                enqueue_workflow_event(
-                    active, current, event_type="sla.state_changed", producer="sla_service",
-                    aggregate_type="sla_instance", aggregate_id=active_sla["sla_instance_id"],
-                    aggregate_version=active_sla["version"],
-                    payload={"sla_instance_id": active_sla["sla_instance_id"], "intake_id": intake_id,
-                             "from_state": prior_sla["state"], "to_state": active_sla["state"],
-                             "due_at": active_sla["due_at"], "version": active_sla["version"],
-                             "occurred_at": ts, "paused_duration_seconds": active_sla["paused_duration_seconds"]},
-                )
+                except ValueError as exc:
+                    raise HTTPException(422, "VALIDATION_FAILED") from exc
                 return value, 200
 
             val, code, was_replayed = replay(
@@ -3358,6 +3295,7 @@ else:
                 ..., alias="If-Match", pattern=r'^W/"[1-9][0-9]*"$',
             ),
         ) -> JobReceipt:
+            active.refresh(tenant_id)
             initial, _ = lookup_job(request, job_id, tenant_id)
             if initial is None:
                 raise HTTPException(404, "job not found")
@@ -3477,6 +3415,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> JobReceipt:
+            active.refresh(tenant_id)
             initial, _ = lookup_job(request, job_id, tenant_id)
             if initial is None:
                 raise HTTPException(404, "job not found")
@@ -3516,6 +3455,7 @@ else:
             request: Request,
             tenant_id: str = Depends(require_actor),
         ) -> list[SavedView]:
+            active.refresh(tenant_id)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
 
@@ -3574,6 +3514,7 @@ else:
                 pattern=r"^[A-Za-z0-9._:-]+$",
             ),
         ) -> SavedView:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
@@ -3655,6 +3596,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> PromotionDecisionReceipt:
+            active.refresh(tenant_id)
             with promotion_unit(tenant_id, intake_id):
                 intake_repository = V1IntakeRepositoryAdapter(active, request.app.state)
                 current = intake_repository.get_listing_intake(intake_id)
@@ -3794,6 +3736,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> PromotionDecisionReceipt:
+            active.refresh(tenant_id)
             intake_repository = V1IntakeRepositoryAdapter(active, request.app.state)
             intake = intake_repository.get_listing_intake(intake_id)
             if intake is None:
@@ -3840,6 +3783,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> PromotionDecisionReceipt:
+            active.refresh(tenant_id)
             val = V1PromotionRepositoryAdapter(active, request.app.state).get_promotion(promotion_decision_id)
             if val is None:
                 raise HTTPException(404, "promotion decision not found")
@@ -3883,6 +3827,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> DecisionReceipt:
+            active.refresh(tenant_id)
             if decision_id not in active.decisions:
                 raise HTTPException(404, "identity decision not found")
             val = active.decisions[decision_id]
@@ -3937,6 +3882,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> DecisionReceipt:
+            active.refresh(tenant_id)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -4000,6 +3946,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> DecisionReceipt:
+            active.refresh(tenant_id)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -4054,6 +4001,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> DecisionReceipt:
+            active.refresh(tenant_id)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -4108,6 +4056,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> DecisionReceipt:
+            active.refresh(tenant_id)
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
@@ -4200,6 +4149,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> TransitionReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.intakes.get(intake_id)
             if current is None:
@@ -4283,6 +4233,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> TransitionReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.intakes.get(intake_id)
             if current is None:
@@ -4358,6 +4309,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> TransitionReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.intakes.get(intake_id)
             if current is None:
@@ -4472,6 +4424,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> AssignmentReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.assignments.get(assignment_id)
             if current is None:
@@ -4550,6 +4503,7 @@ else:
             response: Response,
             tenant_id: str = Depends(require_actor),
         ) -> AssignmentTransferTargetPage:
+            active.refresh(tenant_id)
             current = active.assignments.get(assignment_id)
             if current is None:
                 raise HTTPException(404, "assignment not found")
@@ -4591,6 +4545,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> AssignmentReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.assignments.get(assignment_id)
             if current is None:
@@ -4682,6 +4637,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> AssignmentReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.assignments.get(assignment_id)
             if current is None:
@@ -4771,6 +4727,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> SlaReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.slas.get(sla_instance_id)
             if current is None:
@@ -4849,6 +4806,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> SlaReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.slas.get(sla_instance_id)
             if current is None:
@@ -4931,6 +4889,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> PromotionDecisionReceipt:
+            active.refresh(tenant_id)
             initial = V1PromotionRepositoryAdapter(active, request.app.state).get_promotion(promotion_decision_id)
             if initial is None:
                 raise HTTPException(404, "promotion decision not found")
@@ -5101,6 +5060,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> DecisionReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.decisions.get(decision_id)
             if current is None:
@@ -5250,6 +5210,7 @@ else:
             key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
             if_match: IfMatchValue = IF_MATCH_HEADER,
         ) -> DecisionReceipt:
+            active.refresh(tenant_id)
             validate_idempotency_key(key)
             current = active.decisions.get(decision_id)
             if current is None:
@@ -5297,6 +5258,16 @@ else:
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return DecisionReceipt(**val)
 
+        from apps.api.app.routes.canonical_intakes import create_canonical_intakes_router
+        from apps.api.app.routes.canonical_match_cases import create_canonical_match_case_router
+
+        router.include_router(create_canonical_intakes_router(active))
+        router.include_router(create_canonical_match_case_router(active))
+        from apps.api.app.routes.canonical_identity_decisions import (
+            create_canonical_identity_decisions_router,
+        )
+
+        router.include_router(create_canonical_identity_decisions_router(active))
         return router
 
 
