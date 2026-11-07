@@ -5255,6 +5255,58 @@ def queue_event_age_seconds(event: dict[str, Any]) -> float | None:
     return max(0.0, (datetime.now(UTC) - created_at.astimezone(UTC)).total_seconds())
 
 
+# Notifications nothing rebuilds. The ready dispatcher re-derives a dropped execution
+# dispatch from the board, but a dropped resume is simply never delivered.
+OWNER_NOTIFICATION_QUEUE_REASONS = frozenset({"github_retry"})
+
+
+def queue_event_is_undelivered_owner_notification(
+    config: dict[str, Any],
+    event: dict[str, Any],
+    record: dict[str, Any],
+) -> bool:
+    """Whether a workerless event is a notification its current owner still has to get.
+
+    The loader writes the same queued record for every envelope in the file, so the
+    record only says nothing has started; the board decides whether the message
+    still means anything. Delivery only wakes the owner: no status moves here, so
+    every transition the owner then attempts still faces its own gate.
+    """
+    if str(event.get("reason") or "") not in OWNER_NOTIFICATION_QUEUE_REASONS:
+        return False
+    if str(record.get("status") or "queued").lower() not in {"queued", "pending"}:
+        return False
+    task_map = task_index_from_status(config, load_status(config))
+    task = task_map.get(str(event.get("task_id") or ""))
+    if not task:
+        return False
+    settings = ready_dispatch_settings(config)
+    owner_held_statuses = normalized_status_set(settings.get("owned_statuses"), ["in_progress", "todo"]) | {"blocked"}
+    if str(task.get("status") or "").lower() not in owner_held_statuses:
+        return False
+    if (
+        task_is_human_gate(task)
+        or bool(task.get("non_dispatchable"))
+        or task.get("approved_head")
+        or task.get("merge_route") is not None
+    ):
+        return False
+    owner = str(task.get(config.get("schema", {}).get("assignee_field", "owner")) or "")
+    if not owner or is_human_gate_agent(owner):
+        return False
+    agent = agent_config_for(config, owner)
+    if (
+        normalize_agent_id(str(event.get("target_agent") or "")) != agent["id"]
+        or str(event.get("target_display_name") or display_name_for(config, agent["id"])) != owner
+        or normalize_agent_id(str(event.get("provider") or "")) != normalize_agent_id(str(agent.get("provider", owner)))
+    ):
+        return False
+    done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
+    if not dependencies_satisfied(task, task_map, done_statuses):
+        return False
+    return role_provider_block_reason(config, owner, role=ROLE_OWNER, task=task) is None
+
+
 def queue_event_is_orphaned(
     config: dict[str, Any],
     event: dict[str, Any],
@@ -5271,9 +5323,11 @@ def queue_event_is_orphaned(
         # reset tick so normal dispatch eligibility can decide its next step.
         return False
     age_seconds = queue_event_age_seconds(event)
-    if age_seconds is None:
+    if age_seconds is None or age_seconds <= orphaned_queue_event_grace_seconds(config):
         return False
-    return age_seconds > orphaned_queue_event_grace_seconds(config)
+    # The grace measures how long a worker may be missing, not how long a
+    # notification may wait for its first one.
+    return not queue_event_is_undelivered_owner_notification(config, event, record)
 
 
 def outstanding_delivery_indexes(config: dict[str, Any], state: dict[str, Any]) -> tuple[set[str], set[tuple[str, str]], set[str]]:
@@ -5359,9 +5413,9 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
                     "target_agent": event.get("target_display_name") or event.get("target_agent"),
                     "queue_event_id": event_id,
                     "message": (
-                        f"Pruned orphaned queue event after {age_seconds:.1f}s without a live worker or queue record."
+                        f"Pruned orphaned queue event after {age_seconds:.1f}s without a live worker or a current notification."
                         if age_seconds is not None
-                        else "Pruned orphaned queue event without a live worker or queue record."
+                        else "Pruned orphaned queue event without a live worker or a current notification."
                     ),
                 },
             )
