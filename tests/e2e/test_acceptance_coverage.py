@@ -911,7 +911,10 @@ def test_merge_only_product_change_is_rejected_by_both_validators(
 def test_receipt_packet_rejects_merge_only_product_mutation(tmp_path: Path) -> None:
     _clone_packet_repo(tmp_path)
     receipt_path = tmp_path / RECEIPT_PATH
+    pw_bytes = (tmp_path / RAW_PLAYWRIGHT_PATH).read_bytes()
+    py_bytes = (tmp_path / RAW_PYTEST_PATH).read_bytes()
     baseline = json.loads(receipt_path.read_text(encoding="utf-8"))
+    source_sha = baseline["tested_source"]["commit_sha"]
 
     subprocess.run(
         ["git", "config", "user.email", "acceptance@example.invalid"],
@@ -923,22 +926,38 @@ def test_receipt_packet_rejects_merge_only_product_mutation(tmp_path: Path) -> N
         cwd=tmp_path,
         check=True,
     )
-    head_before = git_value(tmp_path, "rev-parse", "HEAD")
-    subprocess.run(["git", "checkout", "-qb", "side-evidence", head_before], cwd=tmp_path, check=True)
-    _commit(
-        tmp_path,
-        RECEIPT_PATH,
-        json.dumps({**baseline, "run_id": "side-evidence"}, indent=2) + "\n",
-        "side receipt touch",
-    )
-    subprocess.run(["git", "checkout", "-q", head_before], cwd=tmp_path, check=True)
     subprocess.run(
-        ["git", "merge", "--no-commit", "--no-ff", "side-evidence"],
+        ["git", "checkout", "-qb", "playwright-evidence", source_sha],
         cwd=tmp_path,
         check=True,
     )
+    (tmp_path / RAW_PLAYWRIGHT_PATH).write_bytes(pw_bytes + b"\n")
+    subprocess.run(["git", "add", RAW_PLAYWRIGHT_PATH], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "playwright evidence"], cwd=tmp_path, check=True)
+
+    subprocess.run(
+        ["git", "checkout", "-qb", "pytest-evidence", source_sha],
+        cwd=tmp_path,
+        check=True,
+    )
+    (tmp_path / RAW_PYTEST_PATH).write_bytes(py_bytes + b"\n")
+    subprocess.run(["git", "add", RAW_PYTEST_PATH], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "pytest evidence"], cwd=tmp_path, check=True)
+
+    subprocess.run(["git", "checkout", "-q", "playwright-evidence"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", "pytest-evidence"],
+        cwd=tmp_path,
+        check=True,
+    )
+    (tmp_path / RAW_PLAYWRIGHT_PATH).write_bytes(pw_bytes)
+    (tmp_path / RAW_PYTEST_PATH).write_bytes(py_bytes)
     (tmp_path / "product.py").write_text("merge-only product change\n", encoding="utf-8")
-    subprocess.run(["git", "add", "product.py"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "add", RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH, "product.py"],
+        cwd=tmp_path,
+        check=True,
+    )
     subprocess.run(["git", "commit", "-qm", "merge adds product.py"], cwd=tmp_path, check=True)
 
     forged = copy.deepcopy(baseline)
@@ -946,7 +965,7 @@ def test_receipt_packet_rejects_merge_only_product_mutation(tmp_path: Path) -> N
         **forged["evidence_proof_at_generation"],
         "evidence_head_sha": git_value(tmp_path, "rev-parse", "HEAD"),
         "relation": "evidence_only_descendant",
-        "intervening_touched_paths": sorted(EVIDENCE_COMMIT_ALLOWLIST),
+        "intervening_touched_paths": sorted({RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH}),
     }
     seal_normalized(forged, "normalized_receipt_sha256")
     receipt_path.write_text(json.dumps(forged, indent=2) + "\n", encoding="utf-8")
