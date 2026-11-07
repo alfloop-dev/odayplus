@@ -441,12 +441,10 @@ class SiteScoreDecisionWorkflow:
                 raise SiteScoreDecisionError("new review round must retain an original approved decision")
             next_report = retained
 
-    def _validate_existing_round(self, decision: SiteScoreDecision) -> None:
+    def _validate_existing_round(self, decision: SiteScoreDecision) -> SiteScoreReport:
         previous_id = getattr(decision, "previous_decision_id", None)
         if any(getattr(item, "previous_decision_id", None) != previous_id for item in decision.history):
             raise SiteScoreDecisionError("previous review round changed after submission")
-        if previous_id is None:
-            return
         retained = self._store.get_report(decision.decision_id)
         if (type(decision.version) is not int or decision.version < 1
                 or type(decision.report_version) is not int or decision.report_version < 1
@@ -454,6 +452,8 @@ class SiteScoreDecisionWorkflow:
                 or (retained.candidate_site_id, retained.report_id, retained.report_version, retained.model_version)
                 != (decision.candidate_site_id, decision.report_id, decision.report_version, decision.model_version)):
             raise SiteScoreDecisionError("new review round requires its immutable current retained report")
+        if previous_id is None:
+            return retained
         if decision.status is DecisionStatus.PENDING_REVIEW:
             tail = decision.history[-1] if decision.history else None
             approval = (self._approval_store.get(decision.approval_id)
@@ -477,6 +477,7 @@ class SiteScoreDecisionWorkflow:
                     or approval.decision_id != decision.decision_id or approval.approval_status != "pending"):
                 raise SiteScoreDecisionError("new pending review requires its actual current submit transition and approval")
         self._validate_previous_round(retained, previous_id, decision.tenant_id)
+        return retained
 
     def open_decision(
         self,
@@ -609,7 +610,9 @@ class SiteScoreDecisionWorkflow:
                 isinstance(item, str) and item.strip() for item in recorded_required_data
             )):
                 raise SiteScoreDecisionError("RETURN requires its recorded missing-data list")
-        self._validate_existing_round(decision)
+        report = self._validate_existing_round(decision)
+        if explicit_network_action == "GO" and not report.has_financial_result:
+            raise SiteScoreDecisionError("GO requires the retained report's complete financial inputs and payback")
         updated = self._transition(
             decision,
             to_status=target,

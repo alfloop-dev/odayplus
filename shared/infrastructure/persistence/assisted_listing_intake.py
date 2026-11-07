@@ -1,17 +1,15 @@
-"""Ordered production migration loader for the Assisted Listing Intake schema.
+"""Assisted Listing Intake migrations and native snapshot metadata access.
 
 This module is the programmatic surface over the ordered PostgreSQL 16 migration
 under ``infra/db/migrations/assisted_listing_intake/``. That directory holds the
-four approved contract DDL artifacts (baseline + three consistency/state/RLS
-patches) from ODP-SD-INTAKE-001, copied byte-for-byte so the production migration
-never drifts from the reviewed contract, plus a structural downgrade boundary.
+versioned contract DDL artifacts, copied byte-for-byte so the production
+migration never drifts from its declared contract, plus a structural downgrade
+boundary. The original four-artifact receipt is preserved on forward upgrade.
 
-The module is intentionally driver-agnostic: it only reads SQL text and computes
-traceability checksums. Applying the SQL is the caller's responsibility (pass an
-``execute`` callable such as ``psycopg`` cursor ``.execute``). Keeping it free of
-any database driver lets it import cleanly in the minimal CI environment while the
-schema is proven at runtime against real PostgreSQL 16 by the contract and RLS
-security tests.
+Migration metadata helpers read SQL and compute traceability checksums. The
+explicit database upgrade opens its own migration connection. Native snapshot
+metadata access borrows the caller's current engine and transaction; it never
+opens, commits or closes a connection.
 
 Contract references:
 - docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql
@@ -57,6 +55,14 @@ _UPGRADE_STEPS: tuple[tuple[str, str], ...] = (
     (
         "004_tenant_rls_lineage.sql",
         "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql",
+    ),
+    (
+        "005_decision_service_actor.sql",
+        "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0005_DECISION_SERVICE_ACTOR_PATCH.sql",
+    ),
+    (
+        "006_workflow_schedule.sql",
+        "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0006_WORKFLOW_SCHEDULE_PATCH.sql",
     ),
 )
 DOWNGRADE_FILE = "downgrade.sql"
@@ -266,7 +272,7 @@ class MigrationStep:
 
 @dataclass(frozen=True)
 class MigrationApplyResult:
-    """Receipt for applying and validating the complete 001-004 stack."""
+    """Receipt for applying and validating the complete ordered stack."""
 
     manifest_sha256: str
     steps: tuple[str, ...]
@@ -369,6 +375,41 @@ class DurableAssistedIntakeStore:
             for name, values in loaded.items()
         }
         self._local.baseline = deepcopy(loaded)
+
+    @staticmethod
+    def command_replay_key(tenant: str, actor: str, operation: str, key: str,
+                           resource_id: str | None = None) -> str:
+        """Keep the existing native POST namespace for its exact read too."""
+        parts = [tenant, actor, operation]
+        if resource_id is not None:
+            parts.append(resource_id)
+        return ":".join([*parts, key])
+
+    def read_command_replay(self, tenant: str, actor: str, operation: str, key: str,
+                            resource_id: str | None = None) -> tuple | None:
+        """Read one committed receipt from the same store, without refreshing RAM.
+
+        The router supplies the authenticated tenant/actor and fixed operation,
+        and authorizes the actual resource. Corrupt wrappers are not absence.
+        """
+        replay_key = self.command_replay_key(tenant, actor, operation, key, resource_id)
+        try:
+            stored_row = self._store.get_versioned(_STATE_COLLECTIONS["replays"], f"{tenant}:{replay_key}")
+        except (pickle.UnpicklingError, EOFError, ValueError, TypeError) as exc:
+            raise AssistedIntakeSchemaError("Canonical command receipt is unavailable") from exc
+        if stored_row is None:
+            return None
+        stored, _ = stored_row
+        if (not isinstance(stored, dict) or set(stored) != {"_state_key", "_tenant_id", "value"}
+                or stored["_tenant_id"] != tenant or stored["_state_key"] != replay_key):
+            raise AssistedIntakeSchemaError("Canonical command receipt binding differs")
+        receipt = self._unwrap(stored)
+        if (not isinstance(receipt, (tuple, list)) or len(receipt) != 3
+                or not isinstance(receipt[0], str) or len(receipt[0]) != 64
+                or any(c not in "0123456789abcdef" for c in receipt[0])
+                or not isinstance(receipt[1], dict) or type(receipt[2]) is not int):
+            raise AssistedIntakeSchemaError("Canonical command receipt is malformed")
+        return deepcopy(tuple(receipt))
 
     def _current_collections(self) -> dict[str, dict[str, Any]]:
         if not getattr(self._local, "tenant_id", None):
@@ -487,6 +528,7 @@ class DurableAssistedIntakeStore:
             elif name == "intakes":
                 delivery.stage(kind="receipt", value=value)
 
+
     # Operator network-listings repository compatibility. Keeping one state
     # owner avoids dual writes between the operator and approved v1 routers.
     def list_intakes(self) -> list[dict[str, Any]]:
@@ -595,7 +637,7 @@ def apply_upgrade(execute: Callable[[str], object]) -> None:
 
 
 def validate_required_tables(engine: Any) -> None:
-    """Fail closed unless every approved 001-004 relation is installed."""
+    """Fail closed unless every declared Intake relation is installed."""
 
     missing: list[str] = []
     for relation in ALL_TABLES:
@@ -640,7 +682,11 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
     except ImportError as exc:  # pragma: no cover - runtime dependency contract
         raise AssistedIntakeSchemaError("Assisted Intake migration requires psycopg") from exc
 
-    expected_manifest = manifest_checksum()
+    steps = migration_steps()
+    statements = upgrade_statements()
+    prefixes = ((4, "001-004"), (5, "001-005"), (6, "001-006"))
+    expected_manifests = {name: manifest_checksum(steps[:count]) for count, name in prefixes}
+    expected_manifest = expected_manifests["001-006"]
     try:
         with psycopg.connect(
             _psycopg_url(database_url),
@@ -663,21 +709,22 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
                       )
                     """
                 )
-                applied = connection.execute(
+                rows = connection.execute(
                     """
-                    SELECT manifest_sha256
+                    SELECT migration_name, manifest_sha256
                     FROM odp_runtime.assisted_intake_schema_migrations
-                    WHERE migration_name = '001-004'
+                    ORDER BY migration_name
                     FOR UPDATE
                     """
-                ).fetchone()
-                if applied is not None:
-                    if applied["manifest_sha256"] != expected_manifest:
-                        raise AssistedIntakeSchemaError(
-                            "Installed Assisted Intake schema manifest does not "
-                            "match the reviewed 001-004 stack"
-                        )
-                else:
+                ).fetchall()
+                applied = {row["migration_name"]: row["manifest_sha256"] for row in rows}
+                if (any(expected_manifests.get(name) != digest for name, digest in applied.items())
+                        or any(marker in applied and any(prior not in applied for _, prior in prefixes[:index])
+                               for index, (_, marker) in enumerate(prefixes))):
+                    raise AssistedIntakeSchemaError(
+                        "Installed Assisted Intake schema manifest does not match the declared ordered stack"
+                    )
+                if not applied:
                     shared_tables = {
                         relation
                         for relation in _CANONICAL_SHARED_TABLES
@@ -689,7 +736,36 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
                     }
                     if shared_tables:
                         connection.execute(_read(CANONICAL_COMPATIBILITY_PATH))
-                    for _name, sql in upgrade_statements():
+                installed_count = 0
+                for count, marker in prefixes:
+                    if marker in applied:
+                        if marker == "001-005":
+                            present = connection.execute(
+                                "SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid="
+                                "to_regclass('identity.match_decisions') AND attname="
+                                "'proposer_service_principal' AND NOT attisdropped) AS present"
+                            ).fetchone()["present"]
+                            if not present:
+                                raise AssistedIntakeSchemaError(
+                                    "Recorded decision service actor schema is missing; repair is not an upgrade"
+                                )
+                            # The additive migration's own replay validates
+                            # its exact actor constraint/function/trigger.
+                            connection.execute(_without_transaction_control(statements[count - 1][1]))
+                        elif marker == "001-006":
+                            present = connection.execute(
+                                "SELECT count(*) AS present FROM pg_attribute WHERE attrelid="
+                                "to_regclass('workflow.sla_instances') AND NOT attisdropped AND attname "
+                                "IN ('assignment_id','calendar_version','due_soon_at','breach_at')"
+                            ).fetchone()["present"]
+                            if present != 4:
+                                raise AssistedIntakeSchemaError(
+                                    "Recorded workflow schedule is missing; repair is not an upgrade"
+                                )
+                            connection.execute(_without_transaction_control(statements[count - 1][1]))
+                        installed_count = count
+                        continue
+                    for _name, sql in statements[installed_count:count]:
                         connection.execute(_without_transaction_control(sql))
                     connection.execute(
                         """
@@ -698,10 +774,11 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
                             migration_name,
                             manifest_sha256
                           )
-                        VALUES ('001-004', %s)
+                        VALUES (%s, %s)
                         """,
-                        (expected_manifest,),
+                        (marker, expected_manifests[marker]),
                     )
+                    installed_count = count
 
             missing: list[str] = []
             for relation in ALL_TABLES:
@@ -720,7 +797,7 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
         raise
     except Exception as exc:
         raise AssistedIntakeSchemaError(
-            "Unable to apply the Assisted Listing Intake 001-004 schema stack"
+            "Unable to apply the Assisted Listing Intake 001-006 schema stack"
         ) from exc
 
     return MigrationApplyResult(
@@ -780,3 +857,83 @@ def manifest_checksum(steps: Iterable[MigrationStep] | None = None) -> str:
     payload = [asdict(step) for step in (steps if steps is not None else migration_steps())]
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+class NativeIntakeSnapshotMetadataRepository:
+    """Existing snapshot metadata within the caller's authorized SQL root.
+
+    This facade neither stores raw content nor owns a transaction. The native
+    owner retains its current authority, budget and fence checks around each
+    call, including the exact-generation/legacy-NULL reference guard.
+    """
+
+    def __init__(self, graph: Any) -> None:
+        self.graph = graph
+        self.engine = graph.engine
+
+    _COLUMNS = (
+        "source_snapshot_id", "tenant_id", "intake_id", "source_id", "original_url", "canonical_url",
+        "raw_object_uri", "content_sha256", "media_type", "byte_length", "captured_at", "observed_at",
+        "capture_method", "retention_class", "encryption_key_ref", "object_generation", "residency_mode",
+        "version", "stored_at", "purge_after", "legal_hold",
+    )
+    _METADATA_COLUMNS = (
+        "source_snapshot_id", "intake_id", "source_id", "content_sha256", "media_type", "byte_length",
+        "captured_at", "observed_at", "stored_at", "capture_method", "version", "retention_class",
+        "purge_after", "legal_hold", "object_generation", "residency_mode",
+    )
+    _METADATA = (
+        "SELECT source_snapshot_id,intake_id,"
+        "CASE WHEN octet_length(source_id)<=1024 THEN source_id END AS source_id,content_sha256,"
+        "CASE WHEN octet_length(media_type)<=1024 THEN media_type END AS media_type,byte_length,"
+        "captured_at,observed_at,stored_at,capture_method,version,"
+        "CASE WHEN octet_length(retention_class)<=256 THEN retention_class END AS retention_class,purge_after,"
+        "legal_hold,object_generation,residency_mode FROM intake.source_snapshots "
+        "WHERE tenant_id=? AND intake_id=?"
+    )
+
+    def referenced_object(self, tenant: str, uri: str, generation: int) -> dict | None:
+        return self.engine.native_query("SELECT source_snapshot_id FROM intake.source_snapshots "
+            "WHERE tenant_id=? AND raw_object_uri=? AND (object_generation=? OR object_generation IS NULL) LIMIT 1",
+            (tenant, uri, generation), columns=("source_snapshot_id",), one=True)
+
+    def find_content(self, tenant: str, intake: str, source: str, content_sha256: str) -> dict | None:
+        return self.engine.native_query("SELECT " + ",".join(self._COLUMNS) +
+            " FROM intake.source_snapshots WHERE tenant_id=? AND intake_id=? "
+            "AND source_id=? AND content_sha256=? FOR UPDATE", (tenant, intake, source, content_sha256),
+            columns=self._COLUMNS, one=True)
+
+    def insert(self, values: tuple[object, ...]) -> None:
+        self.engine.execute("INSERT INTO intake.source_snapshots (source_snapshot_id,tenant_id,intake_id,source_id,"
+            "original_url,canonical_url,raw_object_uri,content_sha256,media_type,byte_length,captured_at,observed_at,"
+            "capture_method,retention_class,encryption_key_ref,object_generation,residency_mode,version) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values)
+
+    def required_for_intake(self, tenant: str, snapshot: str, intake: str) -> dict:
+        return self.graph.native_one("SELECT " + ",".join(self._COLUMNS) +
+            " FROM intake.source_snapshots WHERE tenant_id=? AND source_snapshot_id=? "
+            "AND intake_id=?", (tenant, snapshot, intake), columns=self._COLUMNS)
+
+    def metadata_for_intake(self, tenant: str, intake: str, snapshot: str, *, before) -> dict | None:
+        """Read only lifecycle metadata, with exact tenant/Intake membership."""
+        before()
+        row = self.engine.native_query(self._METADATA + " AND source_snapshot_id=?", (tenant, intake, snapshot),
+            columns=self._METADATA_COLUMNS, one=True)
+        before.check_in_memory()
+        return row
+
+    def metadata_page_for_intake(self, tenant: str, intake: str, *, through, position, backward, limit, before) -> list[dict]:
+        """Original metadata owner; no raw-object references, bytes or grants."""
+        if type(limit) is not int or not 1 <= limit <= 26 or type(backward) is not bool:
+            raise ValueError("NATIVE_SNAPSHOT_METADATA_READ_BOUND_REQUIRED")
+        comparison, order = ("<", "DESC") if backward else (">", "ASC")
+        sql, params = self._METADATA + " AND stored_at<=?::timestamptz", [tenant, intake, through]
+        if position is not None:
+            sql += f" AND (stored_at,0,source_snapshot_id){comparison}(?::timestamptz,?::int,?::uuid)"
+            params.extend(position)
+        before()
+        rows = self.engine.native_query(sql + f" ORDER BY stored_at {order},source_snapshot_id {order} LIMIT ?",
+            (*params, limit), columns=self._METADATA_COLUMNS,
+            order_by=(("stored_at", backward), ("source_snapshot_id", backward)))
+        before.check_in_memory()
+        return rows

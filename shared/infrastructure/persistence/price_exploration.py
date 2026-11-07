@@ -78,7 +78,10 @@ class CanonicalPriceExplorationStore:
     def list_gates(self, tenant_id: str | None = None) -> list[ExplorationGate]:
         if not tenant_id:
             raise ExplorationNotAuthorizedError("Canonical gate enumeration requires its tenant")
-        UUID(tenant_id)
+        try:
+            UUID(tenant_id)
+        except ValueError:
+            return []
         return [self._gate(row) for row in self.engine.query(
             _GATES + " ORDER BY g.created_at, g.gate_id", (tenant_id,),
         )]

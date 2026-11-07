@@ -24,6 +24,74 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+from shared.jobs.queue import JobFenceRejectedError
+
+# Native proof acquisition is an explicit transport operation. These are new
+# engineering limits on necessary PostgreSQL JSON projections, not schema,
+# source/actor authority, wire-size or Python/server-memory guarantees.
+NATIVE_ACQUISITION_ROW_MAX_BYTES = 4 * 1024 * 1024
+NATIVE_ACQUISITION_ROOT_MAX_BYTES = 32 * 1024 * 1024
+_NATIVE_REMAINING = "_oday_native_acquisition_remaining_bytes"
+_NATIVE_COLUMNS = re.compile(r"[a-z_][a-z_0-9]*\Z")
+_NATIVE_META = (
+    "_odp_native_allowed", "_odp_native_bytes", "_odp_native_rows", "_odp_native_present",
+)
+
+
+def postgresql_root_is_current(engine, connection, root_transaction):
+    """Observe the original engine-owned root; no caller flag creates one."""
+    from psycopg import Transaction
+    from psycopg.pq import TransactionStatus
+
+    local = getattr(engine, "_local", None)
+    return (type(engine) is PostgresEngine and type(root_transaction) is Transaction
+        and root_transaction.connection is connection
+        and getattr(local, "root_transaction", None) is root_transaction
+        and getattr(local, "connection", None) is connection
+        and not connection.closed and root_transaction.status is Transaction.Status.ACTIVE
+        and connection.info.transaction_status is TransactionStatus.INTRANS)
+
+
+def _native_projection_sql(statement, columns, groups, order_by):
+    """Wrap an explicitly selected, typed projection, never intercept SQL.
+
+    Each original owner supplies its fixed SELECT and necessary column groups.
+    JSON is used only to measure each group's UTF-8 text in PostgreSQL. Returned
+    cells retain their original SQL types; an oversized group or whole batch
+    makes every data cell NULL before the driver sees it. The empty sentinel is
+    transport metadata and is removed before any business reader/decoder.
+    """
+    if (type(columns) is not tuple or not columns or len(set(columns)) != len(columns)
+            or any(type(c) is not str or not _NATIVE_COLUMNS.fullmatch(c) or c in _NATIVE_META
+                for c in columns) or type(groups) is not tuple or not groups
+            or any(type(g) is not tuple or not g for g in groups)):
+        raise JobFenceRejectedError("NATIVE_ACQUISITION_PROJECTION_REQUIRED")
+    grouped = tuple(c for group in groups for c in group)
+    if len(grouped) != len(columns) or set(grouped) != set(columns):
+        raise JobFenceRejectedError("NATIVE_ACQUISITION_PROJECTION_REQUIRED")
+    if (type(order_by) is not tuple or any(type(key) is not tuple or len(key) != 2
+            or key[0] not in columns or type(key[1]) is not bool for key in order_by)):
+        raise JobFenceRejectedError("NATIVE_ACQUISITION_ORDER_REQUIRED")
+    sizes = []
+    for index, group in enumerate(groups):
+        selected = ",".join("f." + c for c in group)
+        sizes.append("(SELECT octet_length(row_to_json(p)::text)::bigint FROM (SELECT " +
+            selected + ") p) AS _odp_native_group_" + str(index))
+    names = ["_odp_native_group_" + str(i) for i in range(len(groups))]
+    acceptable = " AND ".join(n + "<=" + str(NATIVE_ACQUISITION_ROW_MAX_BYTES) for n in names)
+    total = "+".join(names)
+    returned = ",".join("CASE WHEN q.allowed THEN s." + c + " END AS " + c for c in columns)
+    ordering = (" ORDER BY " + ",".join("s." + key + (" DESC" if descending else " ASC")
+        for key, descending in order_by)) if order_by else ""
+    return ("WITH facts AS MATERIALIZED (" + statement + "),sized AS MATERIALIZED (SELECT f.*,"
+        "true AS _odp_native_present," + ",".join(sizes) + " FROM facts f),"
+        "totals AS MATERIALIZED (SELECT COALESCE(sum(" + total + "),0) AS bytes,"
+        "COALESCE(bool_and(" + acceptable + "),true) AS groups_ok,count(*)::bigint AS rows FROM sized),"
+        "quota AS MATERIALIZED (SELECT groups_ok AND bytes<=? AS allowed,"
+        "LEAST(bytes,?::bigint+1)::bigint AS bytes,rows FROM totals) SELECT " + returned + ","
+        "q.allowed AS _odp_native_allowed,q.bytes AS _odp_native_bytes,q.rows AS _odp_native_rows,"
+        "COALESCE(s._odp_native_present,false) AS _odp_native_present "
+        "FROM quota q LEFT JOIN sized s ON true" + ordering)
 
 _MIGRATION_PATH = (
     Path(__file__).resolve().parents[3]
@@ -37,6 +105,7 @@ _PRAGMA_TABLE_INFO = re.compile(
     r"^\s*PRAGMA\s+table_info\(\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*\)\s*;?\s*$",
     re.IGNORECASE,
 )
+_QMARK_SQL_TOKEN = re.compile(r"'(?:''|[^'])*(?:'|$)|\"(?:\"\"|[^\"])*(?:\"|$)|\?")
 _REQUIRED_RELATIONS = (
     "odp_runtime.durable_sequences",
     "odp_runtime.durable_audit_events",
@@ -204,15 +273,13 @@ class PostgresEngine:
                 self._local.depth -= 1
             return
 
-        # Reserve the same process lock used by repository ``engine.lock``
-        # before borrowing a connection or acquiring any database locks. Keep
-        # it through the actual outer commit/rollback and pool return. A short
-        # audit-only reservation is insufficient: an earlier row lock or a
-        # later document/queue write can otherwise invert the two lock orders.
+        # Keep process and database locks in the same order for the whole root,
+        # including commit/rollback, while retaining the actual root witness.
         with self._lock._lock:
             with self._pool.connection() as connection:
-                with connection.transaction():
+                with connection.transaction() as root_transaction:
                     self._local.connection = connection
+                    self._local.root_transaction = root_transaction
                     self._local.depth = 1
                     try:
                         connection.execute(
@@ -221,6 +288,7 @@ class PostgresEngine:
                         yield self
                     finally:
                         self._local.connection = None
+                        self._local.root_transaction = None
                         self._local.depth = 0
 
     def execute(
@@ -257,6 +325,83 @@ class PostgresEngine:
             cursor = connection.execute(_convert_qmark_placeholders(sql), params)
             row = cursor.fetchone()
             return None if row is None else _normalize_row(row)
+
+    def enable_native_acquisition(self):
+        """Adopt one pure resource counter on this actual root's lifetime.
+
+        A nested transaction/budget and a savepoint rollback retain the same
+        counter. Ordinary transactions never activate it implicitly. Neither
+        the counter nor this method establishes tenant isolation or grants;
+        the original owners still check their root, timeouts and full proofs.
+        """
+        connection = getattr(self._local, "connection", None)
+        root = getattr(self._local, "root_transaction", None)
+        if not postgresql_root_is_current(self, connection, root):
+            raise JobFenceRejectedError("NATIVE_ACQUISITION_CURRENT_ROOT_REQUIRED")
+        if not hasattr(root, _NATIVE_REMAINING):
+            setattr(root, _NATIVE_REMAINING, NATIVE_ACQUISITION_ROOT_MAX_BYTES)
+        remaining = getattr(root, _NATIVE_REMAINING)
+        if type(remaining) is not int or not 0 <= remaining <= NATIVE_ACQUISITION_ROOT_MAX_BYTES:
+            raise JobFenceRejectedError("NATIVE_ACQUISITION_COUNTER_REJECTED")
+        return connection, root, remaining
+
+    def native_acquisition_active(self):
+        # Presence is intentional: zero and corrupt counters must not fall
+        # back to an ordinary unbounded reader. The native operation validates
+        # the original witness and the counter before doing any SQL.
+        root = getattr(self._local, "root_transaction", None)
+        return root is not None and hasattr(root, _NATIVE_REMAINING)
+
+    def native_query(self, statement, params=(), *, columns, groups=None, one=False, order_by=()):
+        """Acquire fixed native facts with per-group and same-root SQL bounds.
+
+        Delegate through the original query/query_one seam, preserving its
+        refusal and normalization. Reserve the maximum allowed acquisition
+        before it runs; an exception or malformed transport never refunds that
+        reservation. Only a fully checked response refunds unused bytes. Thus
+        driver/normalization failures cannot reuse an uncharged root allowance.
+        Graph and queue decoders run after settlement and retain their codecs.
+        """
+        if type(one) is not bool:
+            raise JobFenceRejectedError("NATIVE_ACQUISITION_READ_MODE_REQUIRED")
+        groups = (columns,) if groups is None else groups
+        sql = _native_projection_sql(statement, columns, groups, order_by)
+        connection, root, remaining = self.enable_native_acquisition()
+        if remaining == 0:
+            raise JobFenceRejectedError("NATIVE_ACQUISITION_ROOT_EXHAUSTED")
+        allowance = min(remaining, NATIVE_ACQUISITION_ROW_MAX_BYTES * len(groups)) if one else remaining
+        setattr(root, _NATIVE_REMAINING, remaining - allowance)
+        parameters = (*params, allowance, allowance)
+        acquired = self.query_one(sql, parameters) if one else self.query(sql, parameters)
+        if not postgresql_root_is_current(self, connection, root):
+            raise JobFenceRejectedError("NATIVE_ACQUISITION_CURRENT_ROOT_REQUIRED")
+        rows = [acquired] if one else acquired
+        keys = set(columns) | set(_NATIVE_META)
+        if (not isinstance(rows, list) or not rows
+                or any(not isinstance(row, dict) or set(row) != keys for row in rows)):
+            raise JobFenceRejectedError("NATIVE_ACQUISITION_TRANSPORT_REJECTED")
+        first = rows[0]
+        allowed, used, count = (first.get(k) for k in _NATIVE_META[:3])
+        if (allowed is not True or type(used) is not int or not 0 <= used <= allowance
+                or type(count) is not int or count < 0 or (one and count > 1)
+                or len(rows) != max(count, 1)
+                or any(row.get(_NATIVE_META[0]) is not True or row.get(_NATIVE_META[1]) != used
+                    or type(row.get(_NATIVE_META[1])) is not int or row.get(_NATIVE_META[2]) != count
+                    or type(row.get(_NATIVE_META[2])) is not int
+                    or row.get(_NATIVE_META[3]) is not (count != 0) for row in rows)
+                or (count > 0 and used == 0)
+                or (count == 0 and (used != 0 or any(first.get(c) is not None for c in columns)))):
+            raise JobFenceRejectedError("NATIVE_ACQUISITION_LIMIT_OR_TRANSPORT_REJECTED")
+        current = getattr(root, _NATIVE_REMAINING)
+        if type(current) is not int or not 0 <= current <= remaining - allowance:
+            raise JobFenceRejectedError("NATIVE_ACQUISITION_COUNTER_REJECTED")
+        setattr(root, _NATIVE_REMAINING, current + allowance - used)
+        if count == 0:
+            return None if one else []
+        for row in rows:
+            for name in _NATIVE_META:
+                row.pop(name)
+        return rows[0] if one else rows
 
     def next_ordinal(self, name: str) -> int:
         """Atomically allocate a monotonic document ordinal."""
@@ -382,15 +527,6 @@ def _build_pool(
         ) from exc
 
     try:
-        # A pooled connection the server already closed (Cloud SQL restart or
-        # failover, VPC connector rebuild) still looks idle and healthy to the
-        # client, so lending it unchecked fails the caller's first statement
-        # with "server closed the connection unexpectedly" -- and keeps doing
-        # so for every such connection left in the pool. ``check`` runs one
-        # empty round trip before each loan and replaces a dead connection
-        # with a fresh one. The default ``max_idle`` / ``max_lifetime`` stay:
-        # recycling sooner would only narrow the window, at the cost of extra
-        # reconnects, while the check closes it on every borrow.
         return ConnectionPool(
             conninfo=database_url,
             min_size=min_pool_size,
@@ -399,6 +535,9 @@ def _build_pool(
                 "autocommit": False,
                 "row_factory": dict_row,
             },
+            # An idle socket may have been closed by the server without the
+            # client observing it. Reject it before application work begins;
+            # never reconnect or replay a transaction that has already started.
             check=ConnectionPool.check_connection,
             open=True,
         )
@@ -427,30 +566,10 @@ def _validate_database_url(database_url: str) -> str:
 
 
 def _convert_qmark_placeholders(sql: str) -> str:
-    """Convert SQLite qmark parameters without touching quoted SQL text."""
-
-    converted: list[str] = []
-    quote: str | None = None
-    index = 0
-    while index < len(sql):
-        char = sql[index]
-        if quote is not None:
-            converted.append(char)
-            if char == quote:
-                if index + 1 < len(sql) and sql[index + 1] == quote:
-                    converted.append(sql[index + 1])
-                    index += 1
-                else:
-                    quote = None
-        elif char in {"'", '"'}:
-            quote = char
-            converted.append(char)
-        elif char == "?":
-            converted.append("%s")
-        else:
-            converted.append(char)
-        index += 1
-    return "".join(converted)
+    """Convert qmark parameters while preserving quoted SQL, including escapes."""
+    return _QMARK_SQL_TOKEN.sub(
+        lambda token: "%s" if token[0] == "?" else token[0], sql,
+    )
 
 
 def _normalize_row(row: Any) -> dict[str, Any]:
