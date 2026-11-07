@@ -10,10 +10,13 @@ from typing import Any
 
 import pytest
 
+from delivery_toolchain.e2e.generate_product_e2e_receipt import generate_receipt
 from delivery_toolchain.e2e.product_e2e_receipt import (
+    CANONICAL_SPEC_INVENTORY,
     DELETED_SPEC_REFERENCES,
     E2E_SCENARIOS,
     EVIDENCE_COMMIT_ALLOWLIST,
+    EXPECTED_PLAYWRIGHT_TEST_COUNT,
     PYTEST_NODE_IDS,
     RAW_PLAYWRIGHT_PATH,
     RAW_PYTEST_PATH,
@@ -36,6 +39,7 @@ from delivery_toolchain.e2e.product_e2e_receipt import (
 from delivery_toolchain.e2e.run_python_e2e_tests import run_python_tests
 
 ROOT = Path(__file__).resolve().parents[2]
+_RENAME_BODY = "".join(f"harmless synthetic line {index}\n" for index in range(40))
 
 
 def _counts(results: list[dict[str, Any]], runner: str) -> dict[str, int]:
@@ -73,10 +77,11 @@ def _artifact(
     results: list[dict[str, Any]],
     *,
     source: dict[str, str] | None = None,
+    payload: dict[str, Any] | None = None,
     exit_code: int = 0,
     integrity_errors: list[str] | None = None,
 ) -> dict[str, Any]:
-    payload = {"raw": runner}
+    raw_payload = {"raw": runner} if payload is None else payload
     artifact: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "runner": runner,
@@ -89,8 +94,8 @@ def _artifact(
             "exit_code": exit_code,
             "environment": {"name": "mutation"},
         },
-        "payload": payload,
-        "payload_sha256": sha256_bytes(canonical_json_bytes(payload)),
+        "payload": raw_payload,
+        "payload_sha256": sha256_bytes(canonical_json_bytes(raw_payload)),
         "counts": _counts(results, runner),
         "results": results,
         "integrity_errors": integrity_errors or [],
@@ -129,11 +134,133 @@ def _commit(path: Path, relative: str, content: str, message: str) -> None:
     subprocess.run(["git", "commit", "-qm", message], cwd=path, check=True)
 
 
-def _clone_packet_repo(path: Path, *, source: Path = ROOT) -> None:
-    subprocess.run(
-        ["git", "clone", "-q", "--shared", str(source), str(path)],
-        check=True,
+def _clone_packet_repo(
+    path: Path,
+    *,
+    source: Path | None = None,
+    filtered_shared: bool = False,
+) -> Path:
+    if source is not None:
+        subprocess.run(
+            ["git", "clone", "-q", "--shared", str(source), str(path)],
+            check=True,
+        )
+        return path
+
+    origin = path / "origin" if filtered_shared else path
+    origin.mkdir(parents=True, exist_ok=True)
+    _init_repo(origin)
+    _commit(origin, "product.py", _RENAME_BODY + "prior-only\n", "prior product revision")
+    _commit(origin, "product.py", _RENAME_BODY, "tested source")
+    repo = _filtered_shared_clone(origin, path) if filtered_shared else origin
+    if filtered_shared:
+        subprocess.run(
+            ["git", "config", "user.email", "acceptance@example.invalid"],
+            cwd=repo,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Acceptance Test"],
+            cwd=repo,
+            check=True,
+        )
+
+    tested_source = source_identity(repo)
+    specs_by_file: dict[str, list[str]] = {
+        spec_file: [] for spec_file in CANONICAL_SPEC_INVENTORY
+    }
+    for scenario in E2E_SCENARIOS:
+        if scenario.is_manual:
+            continue
+        for ref in scenario.automation_refs:
+            if ".spec.ts::" not in ref:
+                continue
+            spec_file, title = ref.split("::", 1)
+            if title not in specs_by_file[spec_file]:
+                specs_by_file[spec_file].append(title)
+    for spec_file, titles in specs_by_file.items():
+        if not titles:
+            titles.append(f"canonical pass for {spec_file}")
+    seeded = sum(len(titles) for titles in specs_by_file.values())
+    first_file = CANONICAL_SPEC_INVENTORY[0]
+    for index in range(EXPECTED_PLAYWRIGHT_TEST_COUNT - seeded):
+        specs_by_file[first_file].append(f"synthetic pass {index}")
+    pw_payload: dict[str, Any] = {
+        "suites": [
+            {
+                "file": spec_file,
+                "specs": [
+                    {
+                        "file": spec_file,
+                        "title": title,
+                        "tests": [
+                            {
+                                "status": "expected",
+                                "expectedStatus": "passed",
+                                "projectName": "chromium",
+                                "results": [
+                                    {
+                                        "status": "passed",
+                                        "duration": 1,
+                                        "retry": 0,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                    for title in titles
+                ],
+                "suites": [],
+            }
+            for spec_file, titles in specs_by_file.items()
+        ],
+        "stats": {
+            "expected": EXPECTED_PLAYWRIGHT_TEST_COUNT,
+            "skipped": 0,
+            "unexpected": 0,
+            "flaky": 0,
+        },
+    }
+    pw_results, _pw_counts, pw_errors = parse_playwright_payload(pw_payload)
+    _write_packet_artifact(
+        repo,
+        "playwright",
+        _artifact(
+            "playwright",
+            pw_results,
+            source=tested_source,
+            payload=pw_payload,
+            integrity_errors=pw_errors,
+        ),
     )
+    py_payload: dict[str, Any] = {
+        "requested_node_ids": list(PYTEST_NODE_IDS),
+        "phase_reports": {
+            nodeid: [
+                {"phase": phase, "outcome": "passed", "duration_seconds": 0.001}
+                for phase in ("setup", "call", "teardown")
+            ]
+            for nodeid in PYTEST_NODE_IDS
+        },
+        "collection_errors": [],
+        "runner_start_source": tested_source,
+    }
+    py_results, _py_counts, py_errors = parse_pytest_payload(
+        py_payload, expected_source=tested_source
+    )
+    _write_packet_artifact(
+        repo,
+        "pytest",
+        _artifact(
+            "pytest",
+            py_results,
+            source=tested_source,
+            payload=py_payload,
+            integrity_errors=py_errors,
+        ),
+    )
+    generate_receipt(repo)
+    return repo
 
 
 def _filtered_shared_clone(origin: Path, base: Path) -> Path:
@@ -152,9 +279,6 @@ def _filtered_shared_clone(origin: Path, base: Path) -> Path:
 def _generation_proof(proof: dict[str, Any]) -> dict[str, Any]:
     """Extend a current-source proof with the raw paths a generation proof records."""
     return {**proof, "working_tree_paths": sorted({RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH})}
-
-
-_RENAME_BODY = "".join(f"harmless synthetic line {index}\n" for index in range(40))
 
 
 def test_all_qa03_scenarios_are_registered_once_with_exact_refs() -> None:
@@ -563,6 +687,7 @@ def test_receipt_recomputes_aggregate_counts_and_generation_proof(
     tmp_path: Path,
 ) -> None:
     _clone_packet_repo(tmp_path)
+    assert validate_receipt_packet(tmp_path, allow_worktree_evidence=True) == []
     receipt_path = tmp_path / RECEIPT_PATH
     baseline = json.loads(receipt_path.read_text(encoding="utf-8"))
 
@@ -597,6 +722,7 @@ def test_receipt_rejects_duplicate_extra_and_mispathed_reconciliations(
     tmp_path: Path,
 ) -> None:
     _clone_packet_repo(tmp_path)
+    assert validate_receipt_packet(tmp_path, allow_worktree_evidence=True) == []
     receipt_path = tmp_path / RECEIPT_PATH
     baseline = json.loads(receipt_path.read_text(encoding="utf-8"))
 
@@ -792,9 +918,12 @@ def test_staged_source_rename_into_evidence_path_is_rejected(tmp_path: Path) -> 
     assert any("working tree contains non-evidence changes: source.py" in e for e in errors)
 
 
-def _create_two_evidence_branches(repo: Path) -> dict[str, str]:
-    _commit(repo, "product.py", _RENAME_BODY, "tested source")
-    source = source_identity(repo)
+def _create_two_evidence_branches(
+    repo: Path, *, source: dict[str, str] | None = None
+) -> dict[str, str]:
+    if source is None:
+        _commit(repo, "product.py", _RENAME_BODY, "tested source")
+        source = source_identity(repo)
     subprocess.run(["git", "checkout", "-qb", "playwright-evidence", source["commit_sha"]], cwd=repo, check=True)
     _commit(repo, RAW_PLAYWRIGHT_PATH, _RENAME_BODY + "pw\n", "playwright evidence")
     subprocess.run(["git", "checkout", "-qb", "pytest-evidence", source["commit_sha"]], cwd=repo, check=True)
@@ -1041,72 +1170,62 @@ def test_merge_only_product_change_is_rejected_by_both_validators(
     )
 
 
-def test_receipt_packet_rejects_merge_only_product_mutation(tmp_path: Path) -> None:
-    _clone_packet_repo(tmp_path)
-    receipt_path = tmp_path / RECEIPT_PATH
-    pw_bytes = (tmp_path / RAW_PLAYWRIGHT_PATH).read_bytes()
-    py_bytes = (tmp_path / RAW_PYTEST_PATH).read_bytes()
+@pytest.mark.parametrize("filtered_shared", [False, True], ids=["complete", "filtered-shared"])
+def test_receipt_packet_rejects_merge_only_product_mutation(
+    tmp_path: Path,
+    filtered_shared: bool,
+) -> None:
+    repo = _clone_packet_repo(tmp_path, filtered_shared=filtered_shared)
+    if filtered_shared:
+        old_blob = git_value(tmp_path / "origin", "rev-parse", "HEAD~1:product.py")
+        missing_blob = subprocess.run(
+            ["git", "cat-file", "-e", old_blob], cwd=repo, capture_output=True, check=False
+        )
+        assert missing_blob.returncode != 0
+    assert validate_receipt_packet(repo, allow_worktree_evidence=True) == []
+
+    receipt_path = repo / RECEIPT_PATH
+    pw_bytes = (repo / RAW_PLAYWRIGHT_PATH).read_bytes()
+    py_bytes = (repo / RAW_PYTEST_PATH).read_bytes()
     baseline = json.loads(receipt_path.read_text(encoding="utf-8"))
-    source_sha = baseline["tested_source"]["commit_sha"]
 
-    subprocess.run(
-        ["git", "config", "user.email", "acceptance@example.invalid"],
-        cwd=tmp_path,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Acceptance Test"],
-        cwd=tmp_path,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "checkout", "-qb", "playwright-evidence", source_sha],
-        cwd=tmp_path,
-        check=True,
-    )
-    (tmp_path / RAW_PLAYWRIGHT_PATH).write_bytes(pw_bytes + b"\n")
-    subprocess.run(["git", "add", RAW_PLAYWRIGHT_PATH], cwd=tmp_path, check=True)
-    subprocess.run(["git", "commit", "-qm", "playwright evidence"], cwd=tmp_path, check=True)
+    _create_two_evidence_branches(repo, source=baseline["tested_source"])
 
-    subprocess.run(
-        ["git", "checkout", "-qb", "pytest-evidence", source_sha],
-        cwd=tmp_path,
-        check=True,
-    )
-    (tmp_path / RAW_PYTEST_PATH).write_bytes(py_bytes + b"\n")
-    subprocess.run(["git", "add", RAW_PYTEST_PATH], cwd=tmp_path, check=True)
-    subprocess.run(["git", "commit", "-qm", "pytest evidence"], cwd=tmp_path, check=True)
-
-    subprocess.run(["git", "checkout", "-q", "playwright-evidence"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "checkout", "-q", "playwright-evidence"], cwd=repo, check=True)
     subprocess.run(
         ["git", "merge", "--no-commit", "--no-ff", "pytest-evidence"],
-        cwd=tmp_path,
+        cwd=repo,
         check=True,
     )
-    (tmp_path / RAW_PLAYWRIGHT_PATH).write_bytes(pw_bytes)
-    (tmp_path / RAW_PYTEST_PATH).write_bytes(py_bytes)
-    (tmp_path / "product.py").write_text("merge-only product change\n", encoding="utf-8")
+    (repo / RAW_PLAYWRIGHT_PATH).write_bytes(pw_bytes)
+    (repo / RAW_PYTEST_PATH).write_bytes(py_bytes)
+    (repo / "product.py").write_text("merge-only product change\n", encoding="utf-8")
     subprocess.run(
         ["git", "add", RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH, "product.py"],
-        cwd=tmp_path,
+        cwd=repo,
         check=True,
     )
-    subprocess.run(["git", "commit", "-qm", "merge adds product.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "merge adds product.py"], cwd=repo, check=True)
 
     forged = copy.deepcopy(baseline)
     forged["evidence_proof_at_generation"] = {
         **forged["evidence_proof_at_generation"],
-        "evidence_head_sha": git_value(tmp_path, "rev-parse", "HEAD"),
+        "evidence_head_sha": git_value(repo, "rev-parse", "HEAD"),
         "relation": "evidence_only_descendant",
         "intervening_touched_paths": sorted({RAW_PLAYWRIGHT_PATH, RAW_PYTEST_PATH}),
     }
     seal_normalized(forged, "normalized_receipt_sha256")
     receipt_path.write_text(json.dumps(forged, indent=2) + "\n", encoding="utf-8")
 
-    errors = validate_receipt_packet(tmp_path, allow_worktree_evidence=True)
+    errors = validate_receipt_packet(repo, allow_worktree_evidence=True)
     assert any("intervening commits touch non-evidence paths: product.py" in e for e in errors)
     assert any(
         "receipt evidence_proof_at_generation intervening commits touch non-evidence paths: product.py"
+        in e
+        for e in errors
+    )
+    assert any(
+        "receipt evidence_proof_at_generation does not exactly match recomputed Git relationship"
         in e
         for e in errors
     )
@@ -1304,6 +1423,7 @@ def test_receipt_rejects_insufficient_or_mismatched_pytest_counts(
     tmp_path: Path,
 ) -> None:
     _clone_packet_repo(tmp_path)
+    assert validate_receipt_packet(tmp_path, allow_worktree_evidence=True) == []
     py_path = tmp_path / RAW_PYTEST_PATH
     py_artifact = json.loads(py_path.read_text(encoding="utf-8"))
     # Forge pytest counts to not prove exact passes
