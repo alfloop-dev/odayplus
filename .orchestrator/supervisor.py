@@ -5260,6 +5260,53 @@ def queue_event_age_seconds(event: dict[str, Any]) -> float | None:
 OWNER_NOTIFICATION_QUEUE_REASONS = frozenset({"github_retry"})
 
 
+def owner_notification_block_reason(
+    config: dict[str, Any],
+    event: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+) -> str | None:
+    """Why this board no longer supports waking the owner this notification names.
+
+    The caller supplies the board so the answer can be asked again at the final
+    launch boundary. Delivery only wakes the owner: no status moves here, so every
+    transition the owner then attempts still faces its own gate.
+    """
+    task = task_map.get(str(event.get("task_id") or ""))
+    if not task:
+        return "task is not on the board."
+    settings = ready_dispatch_settings(config)
+    task_status = str(task.get("status") or "").lower()
+    owner_held_statuses = normalized_status_set(settings.get("owned_statuses"), ["in_progress", "todo"]) | {"blocked"}
+    if task_status not in owner_held_statuses:
+        return f"task status {task_status} is not held by its owner."
+    if task_is_human_gate(task):
+        return "task is behind a Human gate."
+    if task.get("non_dispatchable"):
+        return "task is non_dispatchable."
+    if task.get("approved_head") or task.get("merge_route") is not None:
+        return "task approval is frozen."
+    owner = str(task.get(config.get("schema", {}).get("assignee_field", "owner")) or "")
+    if not owner or is_human_gate_agent(owner):
+        return "task has no agent owner."
+    agent = agent_config_for(config, owner)
+    # A relaunching run asks through an envelope rebuilt from its snapshot, which
+    # carries no provider; an envelope that names one must name the current one.
+    current_provider = str(agent.get("provider", owner))
+    if (
+        normalize_agent_id(str(event.get("target_agent") or "")) != agent["id"]
+        or str(event.get("target_display_name") or display_name_for(config, agent["id"])) != owner
+        or normalize_agent_id(str(event.get("provider", current_provider))) != normalize_agent_id(current_provider)
+    ):
+        return "notification no longer names the current owner."
+    done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
+    if not dependencies_satisfied(task, task_map, done_statuses):
+        return "dependency gate is not satisfied."
+    policy_reason = role_provider_block_reason(config, owner, role=ROLE_OWNER, task=task)
+    if policy_reason:
+        return f"role/provider policy no longer permits this dispatch: {policy_reason}"
+    return None
+
+
 def queue_event_is_undelivered_owner_notification(
     config: dict[str, Any],
     event: dict[str, Any],
@@ -5269,42 +5316,16 @@ def queue_event_is_undelivered_owner_notification(
 
     The loader writes the same queued record for every envelope in the file, so the
     record only says nothing has started; the board decides whether the message
-    still means anything. Delivery only wakes the owner: no status moves here, so
-    every transition the owner then attempts still faces its own gate.
+    still means anything.
     """
     if str(event.get("reason") or "") not in OWNER_NOTIFICATION_QUEUE_REASONS:
         return False
     if str(record.get("status") or "queued").lower() not in {"queued", "pending"}:
         return False
+    if "provider" not in event:
+        return False
     task_map = task_index_from_status(config, load_status(config))
-    task = task_map.get(str(event.get("task_id") or ""))
-    if not task:
-        return False
-    settings = ready_dispatch_settings(config)
-    owner_held_statuses = normalized_status_set(settings.get("owned_statuses"), ["in_progress", "todo"]) | {"blocked"}
-    if str(task.get("status") or "").lower() not in owner_held_statuses:
-        return False
-    if (
-        task_is_human_gate(task)
-        or bool(task.get("non_dispatchable"))
-        or task.get("approved_head")
-        or task.get("merge_route") is not None
-    ):
-        return False
-    owner = str(task.get(config.get("schema", {}).get("assignee_field", "owner")) or "")
-    if not owner or is_human_gate_agent(owner):
-        return False
-    agent = agent_config_for(config, owner)
-    if (
-        normalize_agent_id(str(event.get("target_agent") or "")) != agent["id"]
-        or str(event.get("target_display_name") or display_name_for(config, agent["id"])) != owner
-        or normalize_agent_id(str(event.get("provider") or "")) != normalize_agent_id(str(agent.get("provider", owner)))
-    ):
-        return False
-    done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
-    if not dependencies_satisfied(task, task_map, done_statuses):
-        return False
-    return role_provider_block_reason(config, owner, role=ROLE_OWNER, task=task) is None
+    return owner_notification_block_reason(config, event, task_map) is None
 
 
 def queue_event_is_orphaned(
@@ -5654,6 +5675,11 @@ def stale_dispatch_skip_message(
     event: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
 ) -> str | None:
+    if str(event.get("reason") or "") in OWNER_NOTIFICATION_QUEUE_REASONS:
+        block_reason = owner_notification_block_reason(config, event, task_map)
+        if block_reason:
+            return f"Skipped stale queued wake event for {event.get('task_id') or 'unknown task'}: {block_reason}"
+        return None
     return dispatch_ops.stale_dispatch_skip_message(config, event, task_map)
 
 
