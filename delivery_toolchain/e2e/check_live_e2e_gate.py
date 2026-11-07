@@ -2256,6 +2256,20 @@ def _check_dev_admin_session(
             "tenant-isolation",
         )
         return
+    if pure_admin and not invited and session_bound:
+        # The shared account binding does not establish tenant or grants.
+        # Keep the bootstrap principal inside the same authoritative scope;
+        # unknown own scope remains the existing no-probe refusal above.
+        bound = (
+            principal.payload.get("tenant_id") == own_tenant
+            and principal.payload.get("roles") == ["platform_admin"]
+        )
+        _check(
+            checks, bound, "admin:bootstrap_principal_bound",
+            f"status={principal.status} accountTenantRolesBound={bound}", "auth",
+        )
+        if not bound:
+            return
     foreign_tenant = _foreign_tenant_for(own_tenant)
     probe_scope = dict(own_snapshot["scope"])
     probe_scope["tenant_id"] = foreign_tenant

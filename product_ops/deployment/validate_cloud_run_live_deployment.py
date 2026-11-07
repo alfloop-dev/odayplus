@@ -37,6 +37,8 @@ if str(ROOT) not in sys.path:
 # The auth-mode decision is shared with the running API boundary rather than
 # re-derived here; see shared/auth/mode.py for why the two must not drift
 # (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+from product_ops.deployment.cloud_scheduler_trigger import validate_trigger_state
+from product_ops.deployment.release_redaction import redact_text
 from shared.audit.gcs_identity import validate_audit_service_accounts
 from shared.audit.worm import is_gcs_worm_sink_uri
 from shared.auth.mode import (
@@ -766,6 +768,8 @@ def _production_like_bundle(persistence_module: Any, engine: Any) -> Any:
     audit_module = importlib.import_module(
         "shared.infrastructure.persistence.audit_log"
     )
+    queue_module = importlib.import_module("shared.infrastructure.persistence.job_queue")
+    outbox_module = importlib.import_module("shared.infrastructure.persistence.outbox")
     # Offline composition only: construct the actual same-engine audit adapter
     # from declared schema metadata. No audit write or live readiness is proven.
     return replace(
@@ -773,6 +777,8 @@ def _production_like_bundle(persistence_module: Any, engine: Any) -> Any:
         mode="postgresql",
         engine=engine,
         audit_log=audit_module.DurableAuditLog(engine),
+        job_queue=queue_module.DurableJobQueue(engine),
+        outbox_repository=outbox_module.DurableOutboxRepository(engine),
         assisted_intake_store=intake_module.DurableAssistedIntakeStore(
             SimpleNamespace(engine=engine)
         ),
@@ -1404,6 +1410,14 @@ def preflight_checks(
     root: Path = ROOT,
 ) -> list[CheckResult]:
     checks: list[CheckResult] = []
+
+    try:
+        validate_trigger_state(env.get("ODP_NEW_SCHEDULER_STATE") or "PAUSED")
+        first_create_ok = True
+    except ValueError:
+        first_create_ok = False
+    checks.append(CheckResult(first_create_ok, "config:ODP_NEW_SCHEDULER_STATE",
+                              "explicit ENABLED or PAUSED" if first_create_ok else "expected ENABLED or PAUSED"))
 
     if expected_environment.strip().lower() in {"prod", "production"}:
         configured_gcs = is_gcs_worm_sink_uri(env.get("ODP_AUDIT_WORM_SINK_URI", "").strip())
@@ -2511,25 +2525,6 @@ def _redact_known_secrets(
     return _redact_secret_values(checks, spellings), _redact_secret_values(report, spellings)
 
 
-# Operator section messages are raw repository errors (``str(exc)``), so a DSN
-# or a ``password=`` fragment from a driver can ride along. The known-token
-# scrub at the end of ``smoke_checks`` cannot know those values; these patterns
-# mask what merely looks like a credential before the message is recorded. The
-# key may be bare (``password=x``) or quoted as in JSON / a dict repr
-# (``{"password": "x"}``, ``{'api_key': 'x'}``, ``{\"token\": \"x\"}``).
-_SUSPECTED_SECRET_PATTERNS = (
-    (re.compile(r"\b([A-Za-z][A-Za-z0-9+.-]*://)[^\s/?#]*@"), rf"\1{REDACTED_SECRET}@"),
-    (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+"), rf"\1 {REDACTED_SECRET}"),
-    (
-        re.compile(
-            r"(?i)\b([A-Za-z0-9_-]*(?:password|passwd|pwd|secret|token|api[_-]?key"
-            r"|access[_-]?key|private[_-]?key|credential)[A-Za-z0-9_-]*(?:\\?[\"'])?)"
-            r"(\s*[=:]\s*)"
-            r"(\\\"(?:(?!\\\").)*\\\"|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\s,;&]+)"
-        ),
-        rf"\1\2{REDACTED_SECRET}",
-    ),
-)
 OPERATOR_SECTION_MESSAGE_MAX_CHARS = 240
 OPERATOR_SECTION_FIELD_MAX_CHARS = 120
 OPERATOR_SECTION_REPORT_LIMIT = 32
@@ -2545,9 +2540,7 @@ def _bounded_diagnostic(value: Any, limit: int, spellings: list[str]) -> str | N
 
     if value is None:
         return None
-    text = _redact_secret_values(str(value), spellings)
-    for pattern, replacement in _SUSPECTED_SECRET_PATTERNS:
-        text = pattern.sub(replacement, text)
+    text = redact_text(str(value), spellings, replacement=REDACTED_SECRET, diagnostic=True)
     return text if len(text) <= limit else f"{text[: limit - 3]}..."
 
 
@@ -2812,6 +2805,30 @@ def smoke_checks(
         }
         bootstrap_meta = bootstrap.get("meta")
         bootstrap_meta = bootstrap_meta if isinstance(bootstrap_meta, Mapping) else {}
+        # This is the verified tenant used by this very bootstrap read. Compare
+        # exact namespace text, trimming whitespace only; no identity headers or
+        # second request may substitute for the response's actual read scope.
+        expected_tenant = operator_tenant.strip() if isinstance(operator_tenant, str) else ""
+        actual_tenant = bootstrap_meta.get("tenantId")
+        actual_tenant = actual_tenant.strip() if isinstance(actual_tenant, str) else ""
+        tenant_matches = bool(expected_tenant and actual_tenant and expected_tenant == actual_tenant)
+        report["operator_bootstrap"]["tenant_scope"] = {
+            "expected_tenant_present": bool(expected_tenant),
+            "actual_tenant_present": bool(actual_tenant),
+            "matches_deployment": tenant_matches,
+            "source": "bootstrap.meta.tenantId",
+        }
+        checks.append(
+            CheckResult(
+                ok=tenant_matches,
+                name="smoke:/api/v1/operator/bootstrap:tenant_scope",
+                detail=(
+                    "bootstrap read tenant matches deployment tenant"
+                    if tenant_matches
+                    else "bootstrap read tenant is missing, invalid or differs from deployment tenant"
+                ),
+            )
+        )
         section_diagnostics = _operator_section_diagnostics(
             bootstrap_meta,
             _secret_spellings((bearer_token, web_invoker_token, api_invoker_token)),
@@ -3656,6 +3673,8 @@ def _iter_containers_key_paths(payload: Any, prefix: tuple[Any, ...] = ()) -> It
 
 def _authoritative_job_containers(
     job_description: Mapping[str, Any],
+    *,
+    execution: bool = False,
 ) -> tuple[_JobApiSchema, list[Mapping[str, Any]]]:
     """Return the dialect and task containers of a Job description, or fail closed.
 
@@ -3671,9 +3690,15 @@ def _authoritative_job_containers(
     the proof will accept.
     """
 
+    schemas = _JOB_API_SCHEMAS
+    if execution:
+        schemas = (
+            replace(schemas[0], container_path=("spec", "template", "spec", "containers")),
+            replace(schemas[1], container_path=("template", "containers")),
+        )
     present = [
         (schema, _resolve_path(job_description, schema.container_path))
-        for schema in _JOB_API_SCHEMAS
+        for schema in schemas
         if _resolve_path(job_description, schema.container_path) is not None
     ]
     if not present:
@@ -4472,6 +4497,8 @@ def cloud_run_job_checks(
     job_description: Mapping[str, Any],
     execution: Mapping[str, Any],
     expected_sha: str,
+    expected_image: str | None = None,
+    expected_job: str | None = None,
     release_provider_ids: str | None = None,
     root: Path = ROOT,
 ) -> tuple[list[CheckResult], dict[str, Any]]:
@@ -4525,7 +4552,62 @@ def cloud_run_job_checks(
         ),
     }
     report.update(secret_report)
+    if expected_image is not None:
+        try:
+            binding = cloud_run_job_binding(
+                job_description, expected_job=expected_job or str(report["job_name"]),
+                expected_sha=expected_sha, expected_image=expected_image,
+                execution=execution,
+            )
+            report.update(binding)
+            checks.append(CheckResult(True, f"jobs-smoke:{kind}:immutable_binding", "job and completed execution bind the exact immutable image and release"))
+        except ValueError as exc:
+            checks.append(CheckResult(False, f"jobs-smoke:{kind}:immutable_binding", str(exc)))
     return checks, report
+
+
+def cloud_run_job_binding(
+    description: Mapping[str, Any], *, expected_job: str, expected_sha: str,
+    expected_image: str, execution: Mapping[str, Any] | None = None, record: bool = False,
+    expected_execution: str | None = None,
+) -> dict[str, str]:
+    """Bind fresh Job readback and, for jobs-smoke, its completed execution."""
+    metadata = description.get("metadata", {})
+    name = metadata.get("name") if isinstance(metadata, Mapping) else None
+    name = name or description.get("name")
+    allowed_names = {expected_job, expected_job.rsplit("/", 1)[-1]}
+    if name not in allowed_names:
+        raise ValueError("Cloud Run Job name does not match the intended job")
+    _, container = _authoritative_task_container(description)
+    labels = metadata.get("labels", {}) if isinstance(metadata, Mapping) else {}
+    labels = labels or description.get("labels", {})
+    if record:
+        expected_image = str(container.get("image", ""))
+        expected_sha = str(labels.get("oday-release-sha", "")) if isinstance(labels, Mapping) else ""
+    if not SHA_PATTERN.fullmatch(expected_sha) or not re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", expected_image):
+        raise ValueError("release SHA and exact immutable image are required")
+    if not isinstance(labels, Mapping) or labels.get("oday-release-sha") != expected_sha:
+        raise ValueError("Cloud Run Job release label does not match")
+    if container.get("image") != expected_image:
+        raise ValueError("Cloud Run Job immutable image does not match")
+    binding = {"job_name": str(name), "job_image": expected_image, "release_sha": expected_sha}
+    if execution is not None:
+        _, containers = _authoritative_job_containers(execution, execution=True)
+        if len(containers) != 1 or containers[0].get("image") != expected_image:
+            raise ValueError("Cloud Run execution immutable image does not match")
+        meta = execution.get("metadata", {})
+        execution_name = meta.get("name") if isinstance(meta, Mapping) else None
+        execution_name = execution_name or execution.get("name")
+        if not execution_name or (expected_execution is not None and execution_name not in
+                                  (expected_execution, expected_execution.rsplit("/", 1)[-1])):
+            raise ValueError("Cloud Run execution name does not match the verification receipt")
+        execution_job = meta.get("labels", {}).get("run.googleapis.com/job") if isinstance(meta, Mapping) else None
+        execution_job = execution_job or execution.get("job")
+        if execution_job not in allowed_names or not _execution_completed(execution):
+            raise ValueError("completed execution does not belong to the intended job")
+        binding["execution_job_name"] = str(execution_job)
+        binding["execution_image"] = expected_image
+    return binding
 
 
 def _finalize(
@@ -4575,6 +4657,7 @@ def main() -> int:
     smoke.add_argument("--api-url", required=True)
     smoke.add_argument("--web-url", required=True)
     smoke.add_argument("--expected-sha", required=True)
+    smoke.add_argument("--runtime-env-file", required=True, type=Path)
     smoke.add_argument("--correlation-id", default=f"corr-cloud-run-{int(time.time())}")
     smoke.add_argument("--timeout", type=float, default=15.0)
     smoke.add_argument("--smoke-retry-attempts", type=int, default=SMOKE_PROBE_ATTEMPTS)
@@ -4630,7 +4713,17 @@ def main() -> int:
     jobs_smoke.add_argument("--job-description", required=True, type=Path)
     jobs_smoke.add_argument("--execution", required=True, type=Path)
     jobs_smoke.add_argument("--expected-sha", required=True)
+    jobs_smoke.add_argument("--expected-image")
+    jobs_smoke.add_argument("--expected-job")
     jobs_smoke.add_argument("--output", type=Path)
+    job_binding = subparsers.add_parser("job-binding")
+    job_binding.add_argument("--job-description", required=True, type=Path)
+    job_binding.add_argument("--expected-sha", default="")
+    job_binding.add_argument("--expected-image", default="")
+    job_binding.add_argument("--expected-job", required=True)
+    job_binding.add_argument("--record", action="store_true")
+    job_binding.add_argument("--execution", type=Path)
+    job_binding.add_argument("--expected-execution")
 
     resolve_execution = subparsers.add_parser("resolve-latest-execution")
     resolve_execution.add_argument("--executions", required=True, type=Path)
@@ -4695,6 +4788,19 @@ def main() -> int:
             label="Cloud Run bootstrap compatibility",
         )
 
+    if args.command == "job-binding":
+        try:
+            binding = cloud_run_job_binding(_read_json_object(args.job_description), expected_job=args.expected_job,
+                                           expected_sha=args.expected_sha, expected_image=args.expected_image, record=args.record,
+                                           execution=_read_json_object(args.execution) if args.execution else None,
+                                           expected_execution=args.expected_execution)
+        except (OSError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        if args.record:
+            print(json.dumps(binding))
+        return 0
+
     if args.command == "jobs-smoke":
         try:
             job_description = _read_json_object(args.job_description)
@@ -4704,6 +4810,8 @@ def main() -> int:
                 job_description=job_description,
                 execution=execution,
                 expected_sha=args.expected_sha,
+                expected_image=args.expected_image,
+                expected_job=args.expected_job,
                 release_provider_ids=os.environ.get(PRODUCTION_PROVIDER_IDS_ENV),
             )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -4771,6 +4879,27 @@ def main() -> int:
                 output=args.output,
                 label="Cloud Run live deployment smoke",
             )
+        try:
+            # The deploy script already resolved aliases once and deployed this
+            # exact manifest to API/scheduler/worker. Do not resolve them again
+            # from process env or the historical smoke-tenant input.
+            runtime_tenant = _read_json_object(args.runtime_env_file).get(
+                "ODP_SCHEDULED_INGESTION_TENANT_ID"
+            )
+            if not isinstance(runtime_tenant, str) or not runtime_tenant.strip():
+                raise ValueError("invalid deployment tenant")
+            runtime_tenant = runtime_tenant.strip()
+        except (OSError, ValueError):
+            return _finalize(
+                checks=[CheckResult(
+                    False,
+                    "smoke:runtime_tenant",
+                    "runtime env file must contain a nonblank canonical deployment tenant",
+                )],
+                report={"secret_values_redacted": True},
+                output=args.output,
+                label="Cloud Run live deployment smoke",
+            )
         token = os.environ.get("ODP_OPERATOR_SMOKE_BEARER_TOKEN", "")
         api_invoker_token = os.environ.get(API_INVOKER_TOKEN_ENV, "")
         checks = []
@@ -4794,7 +4923,7 @@ def main() -> int:
                 bearer_token=token,
                 operator_role=os.environ.get("ODP_OPERATOR_SMOKE_ROLE", ""),
                 operator_subject=os.environ.get("ODP_OPERATOR_SMOKE_SUBJECT", ""),
-                operator_tenant=os.environ.get("ODP_OPERATOR_SMOKE_TENANT", ""),
+                operator_tenant=runtime_tenant,
                 correlation_id=args.correlation_id,
                 timeout=args.timeout,
                 web_invoker_token=os.environ.get("ODP_WEB_CANDIDATE_INVOKER_TOKEN", ""),
