@@ -135,6 +135,7 @@ from dispatch_policy import (
     review_is_independent,
     role_provider_block_reason,
     review_source_block_reason,
+    task_closeout_is_frozen,
     task_priority_rank,
     task_review_source_identity,
 )
@@ -5260,6 +5261,51 @@ def queue_event_age_seconds(event: dict[str, Any]) -> float | None:
 OWNER_NOTIFICATION_QUEUE_REASONS = frozenset({"github_retry"})
 
 
+def worker_dispatch_event(config: dict[str, Any], worker: dict[str, Any]) -> dict[str, Any]:
+    """Rebuild the dispatch event envelope for a worker from its record and snapshot."""
+    snapshot = worker.get("request_snapshot") if isinstance(worker.get("request_snapshot"), dict) else {}
+    metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+    raw_reason = worker.get("reason")
+    snapshot_reason = snapshot.get("reason")
+    worker_reason_str = str(raw_reason or "").strip()
+    snapshot_reason_str = str(snapshot_reason or "").strip()
+    if (
+        raw_reason is not None
+        and snapshot_reason is not None
+        and worker_reason_str != snapshot_reason_str
+        and (
+            worker_reason_str in OWNER_NOTIFICATION_QUEUE_REASONS
+            or snapshot_reason_str in OWNER_NOTIFICATION_QUEUE_REASONS
+        )
+    ):
+        reason = ""
+    else:
+        reason = snapshot_reason_str if snapshot_reason is not None else worker_reason_str
+    logical_id = worker_logical_dispatch_agent_id(config, worker)
+    target = str(metadata.get("target_display_name") or display_name_for(config, logical_id))
+    has_provider = "provider" in worker or "provider" in snapshot
+    raw_provider = worker.get("provider")
+    snapshot_provider = snapshot.get("provider")
+    if (
+        raw_provider is not None
+        and snapshot_provider is not None
+        and normalize_agent_id(str(raw_provider)) != normalize_agent_id(str(snapshot_provider))
+    ):
+        provider = "__conflicting_provider__"
+    elif has_provider:
+        provider = str((raw_provider if raw_provider is not None else snapshot_provider) or "")
+    else:
+        provider = ""
+    return {
+        "task_id": str(worker.get("task_id") or snapshot.get("task_id") or ""),
+        "reason": reason,
+        "target_agent": logical_id,
+        "target_display_name": target,
+        "provider": provider,
+        "metadata": metadata,
+    }
+
+
 def owner_notification_block_reason(
     config: dict[str, Any],
     event: dict[str, Any],
@@ -5271,7 +5317,10 @@ def owner_notification_block_reason(
     launch boundary. Delivery only wakes the owner: no status moves here, so every
     transition the owner then attempts still faces its own gate.
     """
-    task = task_map.get(str(event.get("task_id") or ""))
+    if str(event.get("reason") or "") not in OWNER_NOTIFICATION_QUEUE_REASONS:
+        return "event is not an owner notification."
+    task_id = str(event.get("task_id") or "")
+    task = task_map.get(task_id)
     if not task:
         return "task is not on the board."
     settings = ready_dispatch_settings(config)
@@ -5281,29 +5330,75 @@ def owner_notification_block_reason(
         return f"task status {task_status} is not held by its owner."
     if task_is_human_gate(task):
         return "task is behind a Human gate."
+    owner = str(task.get(config.get("schema", {}).get("assignee_field", "owner")) or "")
+    if task_status == "blocked":
+        # Both review-churn Human/Ops producers stay open until the sole consumer,
+        # consume_human_continuation_approvals, records its checkpoint and moves
+        # the task to todo.  Retained history, consumed permits and past
+        # owner-rotation checkpoints are not a gate; an unconsumed epoch or a
+        # pending (not yet consumed) approval record is.
+        #
+        # Threshold escalation records review_churn_escalated_at_count, which the
+        # consumer passes by advancing review_churn_reassigned_at_count.
+        try:
+            escalated_epoch = max(0, int(task.get("review_churn_escalated_at_count", 0) or 0))
+            consumed_checkpoint = max(0, int(task.get("review_churn_reassigned_at_count", 0) or 0))
+        except (TypeError, ValueError):
+            return "task is behind a Human gate."
+        if escalated_epoch > consumed_checkpoint or task.get("human_continuation_approval") is not None:
+            return "task is behind a Human gate."
+        # The no-viable-alternative fail-closed branch keeps the owner and records
+        # it as review_churn_previous_owner at review_churn_last_reassigned_at (a
+        # completed rotation always names a different previous owner).  The
+        # consumer cannot advance a count past it, so the epoch is open until its
+        # review_churn_continuation_consumed_at is not older than that block.
+        previous_owner = str(task.get("review_churn_previous_owner") or "")
+        if previous_owner and owner and normalize_agent_id(previous_owner) == normalize_agent_id(owner):
+            raw_blocked_at = task.get("review_churn_last_reassigned_at")
+            raw_consumed_at = task.get("review_churn_continuation_consumed_at")
+            blocked_at = _parse_iso_utc(str(raw_blocked_at)) if raw_blocked_at else None
+            consumed_at = _parse_iso_utc(str(raw_consumed_at)) if raw_consumed_at else None
+            if (
+                consumed_at is None
+                or (raw_blocked_at and blocked_at is None)
+                or (blocked_at is not None and consumed_at.astimezone(UTC) < blocked_at.astimezone(UTC))
+            ):
+                return "task is behind a Human gate."
     if task.get("non_dispatchable"):
         return "task is non_dispatchable."
-    if task.get("approved_head") or task.get("merge_route") is not None:
+    if task_closeout_is_frozen(config, task):
         return "task approval is frozen."
-    owner = str(task.get(config.get("schema", {}).get("assignee_field", "owner")) or "")
     if not owner or is_human_gate_agent(owner):
         return "task has no agent owner."
     agent = agent_config_for(config, owner)
-    # A relaunching run asks through an envelope rebuilt from its snapshot, which
-    # carries no provider; an envelope that names one must name the current one.
     current_provider = str(agent.get("provider", owner))
     if (
         normalize_agent_id(str(event.get("target_agent") or "")) != agent["id"]
         or str(event.get("target_display_name") or display_name_for(config, agent["id"])) != owner
-        or normalize_agent_id(str(event.get("provider", current_provider))) != normalize_agent_id(current_provider)
+        or normalize_agent_id(str(event.get("provider") or "")) != normalize_agent_id(current_provider)
     ):
         return "notification no longer names the current owner."
+    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+    dispatched = metadata.get("task") if isinstance(metadata.get("task"), dict) else {}
+    schema = config.get("schema") or {}
+    task_id_field = schema.get("task_id_field", "id")
+    if (task_id_field in dispatched or "id" in dispatched) and str(
+        dispatched.get(task_id_field) or dispatched.get("id") or ""
+    ) != task_id:
+        return "notification snapshot task id does not match."
+    for field in (schema.get("assignee_field", "owner"), schema.get("reviewer_field", "reviewer")):
+        if field in dispatched and normalize_agent_id(str(dispatched[field] or "")) != normalize_agent_id(
+            str(task.get(field) or "")
+        ):
+            return f"task {field} changed since this run was dispatched."
     done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
     if not dependencies_satisfied(task, task_map, done_statuses):
         return "dependency gate is not satisfied."
     policy_reason = role_provider_block_reason(config, owner, role=ROLE_OWNER, task=task)
     if policy_reason:
         return f"role/provider policy no longer permits this dispatch: {policy_reason}"
+    if not agent_can_take_task(config, owner, task, role=ROLE_OWNER):
+        return f"{owner} may no longer take this task."
     return None
 
 
@@ -5318,11 +5413,7 @@ def queue_event_is_undelivered_owner_notification(
     record only says nothing has started; the board decides whether the message
     still means anything.
     """
-    if str(event.get("reason") or "") not in OWNER_NOTIFICATION_QUEUE_REASONS:
-        return False
     if str(record.get("status") or "queued").lower() not in {"queued", "pending"}:
-        return False
-    if "provider" not in event:
         return False
     task_map = task_index_from_status(config, load_status(config))
     return owner_notification_block_reason(config, event, task_map) is None
@@ -5667,6 +5758,24 @@ def worker_matches_current_assignment(
     worker: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
 ) -> bool:
+    event = worker_dispatch_event(config, worker)
+    snapshot = worker.get("request_snapshot") if isinstance(worker.get("request_snapshot"), dict) else {}
+    has_explicit_reason = "reason" in worker or "reason" in snapshot or "delivery_mode" in snapshot
+    reason = event["reason"]
+    if reason in OWNER_NOTIFICATION_QUEUE_REASONS:
+        # The generic matcher rejects a blocked task, so a notification run is held
+        # here instead; it keeps the registered slot/pool binding it was launched on.
+        return (
+            not worker_slot_left_logical_pool(config, worker)
+            and owner_notification_block_reason(config, event, task_map) is None
+            and launch_protection_refusal(config, task_map.get(event["task_id"]) or {}, event["metadata"]) is None
+        )
+    if has_explicit_reason and not (
+        dispatch_reason_role(reason) is not None
+        or worker_is_discussion_planning(worker)
+        or worker_is_coordination_dispatch(worker)
+    ):
+        return False
     return dispatch_ops.worker_matches_current_assignment(config, worker, task_map)
 
 
@@ -5675,12 +5784,26 @@ def stale_dispatch_skip_message(
     event: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
 ) -> str | None:
-    if str(event.get("reason") or "") in OWNER_NOTIFICATION_QUEUE_REASONS:
+    reason = str(event.get("reason") or "")
+    if reason in OWNER_NOTIFICATION_QUEUE_REASONS:
         block_reason = owner_notification_block_reason(config, event, task_map)
         if block_reason:
             return f"Skipped stale queued wake event for {event.get('task_id') or 'unknown task'}: {block_reason}"
         return None
-    return dispatch_ops.stale_dispatch_skip_message(config, event, task_map)
+    skip_message = dispatch_ops.stale_dispatch_skip_message(config, event, task_map)
+    if skip_message:
+        return skip_message
+    role = dispatch_reason_role(reason)
+    if role is not None:
+        task_id = str(event.get("task_id") or "")
+        task = task_map.get(task_id)
+        target_agent = str(event.get("target_display_name") or event.get("target_agent") or "")
+        if not agent_can_take_task(config, target_agent, task, role=role):
+            return (
+                f"Skipped stale queued wake event for {task_id or 'unknown task'}: "
+                f"{target_agent or 'Target agent'} may no longer take this task."
+            )
+    return None
 
 
 def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[str, dict[str, Any]]) -> str:
