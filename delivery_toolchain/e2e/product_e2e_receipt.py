@@ -816,15 +816,15 @@ def validate_raw_artifact(
 
 def _status_paths(root: Path) -> list[str]:
     proc = subprocess.run(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all", "--no-renames"],
+        ["git", "status", "-z", "--porcelain=v1", "--untracked-files=all", "--no-renames"],
         cwd=root,
         check=True,
         capture_output=True,
         text=True,
     )
     paths: list[str] = []
-    for line in proc.stdout.splitlines():
-        value = line[3:].strip()
+    for entry in proc.stdout.split("\0"):
+        value = entry[3:]
         if value in WORKER_CONTEXT_PATHS or value.startswith(".orchestrator/task-briefs/"):
             continue
         if value:
@@ -834,7 +834,9 @@ def _status_paths(root: Path) -> list[str]:
 
 def _commit_field(root: Path, field: str, commit_sha: str) -> str:
     """Read one commit field; ``show -s`` still runs rename detection unless disabled."""
-    return git_value(root, "show", "-s", "--no-renames", f"--format={field}", commit_sha)
+    return git_value(
+        root, "show", "-s", "--no-renames", f"--format={field}", f"{commit_sha}^{{commit}}"
+    )
 
 
 def _intervening_touched_paths(root: Path, source_sha: str, head_sha: str) -> list[str]:
@@ -842,17 +844,27 @@ def _intervening_touched_paths(root: Path, source_sha: str, head_sha: str) -> li
 
     Only tree metadata is compared. Rename detection would read blob bodies a
     filtered clone does not hold, and would report only the destination of a
-    rename, hiding the non-evidence path it moved away from.
+    rename, hiding the non-evidence path it moved away from. ``-m`` diffs each
+    merge commit against every parent so merge-only changes cannot bypass the
+    intervening-commit allowlist, and ``-z`` preserves exact literal paths.
     """
-    log_output = git_value(
-        root,
-        "log",
-        "--format=",
-        "--name-only",
-        "--no-renames",
-        f"{source_sha}..{head_sha}",
+    proc = subprocess.run(
+        [
+            "git",
+            "log",
+            "-z",
+            "-m",
+            "--format=",
+            "--name-only",
+            "--no-renames",
+            f"{source_sha}..{head_sha}",
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
     )
-    return sorted({line.strip() for line in log_output.splitlines() if line.strip()})
+    return sorted({path for path in proc.stdout.split("\0") if path})
 
 
 def verify_evidence_relationship(
@@ -862,6 +874,8 @@ def verify_evidence_relationship(
     allow_worktree_evidence: bool,
 ) -> tuple[dict[str, Any], list[str]]:
     errors: list[str] = []
+    if not isinstance(source, dict):
+        return {}, ["tested source SHA/tree is malformed"]
     source_sha = str(source.get("commit_sha") or "")
     source_tree = str(source.get("tree_sha") or "")
     if not SHA_RE.fullmatch(source_sha) or not SHA_RE.fullmatch(source_tree):
@@ -888,13 +902,19 @@ def verify_evidence_relationship(
             errors.append("tested source is not an ancestor of evidence HEAD")
         else:
             relation = "evidence_only_descendant"
-            touched_paths = _intervening_touched_paths(root, source_sha, head_sha)
+            try:
+                touched_paths = _intervening_touched_paths(root, source_sha, head_sha)
+            except subprocess.CalledProcessError as exc:
+                return {}, [f"intervening git history cannot be resolved: {exc}"]
             disallowed = sorted(set(touched_paths) - EVIDENCE_COMMIT_ALLOWLIST)
             if disallowed:
                 errors.append(
                     "intervening commits touch non-evidence paths: " + ", ".join(disallowed)
                 )
-    worktree_paths = _status_paths(root)
+    try:
+        worktree_paths = _status_paths(root)
+    except subprocess.CalledProcessError as exc:
+        return {}, [f"working tree status cannot be resolved: {exc}"]
     if worktree_paths:
         disallowed_worktree = sorted(set(worktree_paths) - EVIDENCE_COMMIT_ALLOWLIST)
         if disallowed_worktree:
@@ -926,12 +946,16 @@ def validate_evidence_proof_at_generation(
     label = "receipt evidence_proof_at_generation"
     if not isinstance(proof, dict):
         return [f"{label} must be an object"]
+    if not isinstance(source, dict):
+        return [f"{label} tested source SHA/tree is malformed"]
 
     source_sha = str(source.get("commit_sha") or "")
     source_tree = str(source.get("tree_sha") or "")
     evidence_head_sha = str(proof.get("evidence_head_sha") or "")
     working_tree_paths = proof.get("working_tree_paths")
     errors: list[str] = []
+    if not SHA_RE.fullmatch(source_sha) or not SHA_RE.fullmatch(source_tree):
+        return [f"{label} tested source SHA/tree is malformed"]
     if not SHA_RE.fullmatch(evidence_head_sha):
         return [f"{label} evidence_head_sha is invalid"]
     if not isinstance(working_tree_paths, list) or any(
@@ -970,7 +994,10 @@ def validate_evidence_proof_at_generation(
             errors.append(f"{label} tested source is not an ancestor of evidence head")
         else:
             relation = "evidence_only_descendant"
-            touched_paths = _intervening_touched_paths(root, source_sha, evidence_head_sha)
+            try:
+                touched_paths = _intervening_touched_paths(root, source_sha, evidence_head_sha)
+            except subprocess.CalledProcessError as exc:
+                return errors + [f"{label} intervening git history cannot be resolved: {exc}"]
             disallowed = sorted(set(touched_paths) - EVIDENCE_COMMIT_ALLOWLIST)
             if disallowed:
                 errors.append(
