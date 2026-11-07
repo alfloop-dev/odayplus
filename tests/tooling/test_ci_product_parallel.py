@@ -158,6 +158,71 @@ def pytest_addopts_reporting_errors(workflow: dict[str, Any]) -> list[str]:
     return errors
 
 
+TOOLING_COMMAND = (
+    'uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling infra'
+    " tests/e2e/test_acceptance_coverage.py"
+)
+PRODUCT_UNIT_COMMAND = (
+    'uv run pytest -m "not requires_live_env and not performance" --ignore=tests/tooling'
+    " --ignore=tests/e2e/test_acceptance_coverage.py tests modules apps shared models -n auto"
+)
+RECEIPT_UNIT_FILE = "tests/e2e/test_acceptance_coverage.py"
+# A synthetic stand-in for every selection root either lane names. Each file
+# holds one trivial case; no repository test or source body is collected.
+SYNTHETIC_SELECTION_TREE = (
+    ".orchestrator/test_orchestrator_unit.py",
+    "delivery_toolchain/test_toolchain_unit.py",
+    "scripts/test_script_unit.py",
+    "tests/tooling/test_tooling_unit.py",
+    "infra/test_infra_unit.py",
+    RECEIPT_UNIT_FILE,
+    "tests/e2e/test_other_e2e_unit.py",
+    "tests/unit/test_product_unit.py",
+    "modules/test_module_unit.py",
+    "apps/test_app_unit.py",
+    "shared/test_shared_unit.py",
+    "models/test_model_unit.py",
+)
+
+
+def lane_pytest_argv(jobs: dict[str, Any], lane: str, step_name: str) -> list[str]:
+    """Return the one `uv run pytest` argv a lane step really executes."""
+    step, = [step for step in jobs[lane]["steps"] if step.get("name") == step_name]
+    commands = [command for command in parse_executable_commands_from_script(step["run"])
+                if command[:3] == ["uv", "run", "pytest"]]
+    assert len(commands) == 1, f"{lane}/{step_name}: expected one pytest invocation, found {commands}"
+    return commands[0][3:]
+
+
+def synthetic_collected_files(tree: Path, pytest_args: list[str]) -> list[str]:
+    """Collect the actual lane argv against the synthetic tree and report selected files."""
+    if not (tree / "pytest.ini").exists():
+        (tree / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+        for relative in SYNTHETIC_SELECTION_TREE:
+            target = tree / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("def test_selected():\n    pass\n", encoding="utf-8")
+    args = list(pytest_args)
+    if "-n" in args:  # worker fan-out does not change which files are selected
+        index = args.index("-n")
+        del args[index:index + 2]
+    env = {key: value for key, value in os.environ.items() if key != "PYTEST_ADDOPTS"}
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", *args],
+        cwd=tree, env=env, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return sorted({line.split("::", 1)[0] for line in result.stdout.splitlines() if "::" in line})
+
+
+def receipt_unit_lane_owners(jobs: dict[str, Any], tree: Path) -> dict[str, list[str]]:
+    lanes = {
+        "orchestrator": lane_pytest_argv(jobs, "orchestrator", "Test orchestrator and infrastructure code"),
+        "product-lint-unit": lane_pytest_argv(jobs, "product-lint-unit", "Test product code"),
+    }
+    return {lane: synthetic_collected_files(tree, args) for lane, args in lanes.items()}
+
+
 @pytest.fixture(scope="module")
 def ci_workflow() -> dict[str, Any]:
     assert CI_WORKFLOW_PATH.exists(), f"{CI_WORKFLOW_PATH} does not exist."
@@ -231,7 +296,7 @@ def test_ci_workflow_command_exact_single_ownership(ci_workflow: dict[str, Any])
     # real-estate PostgreSQL cases belong to the complete database selection.
     expected_command_lanes = {
         "uv run ruff check tests modules apps shared models solver pipelines infra": "product-lint-unit",
-        'uv run pytest -m "not requires_live_env and not performance" --ignore=tests/tooling tests modules apps shared models -n auto': "product-lint-unit",
+        PRODUCT_UNIT_COMMAND: "product-lint-unit",
         'uv run pytest -m "requires_live_env" tests/contract tests/ops tests/integration -x --tb=short -vv -n2 --dist=loadfile --max-worker-restart=0': "product-db",
         "make api-contract": "product-api-contract",
         "make security": "product-security",
@@ -282,13 +347,45 @@ def test_delivery_tooling_keeps_a_required_unconditional_owner(ci_workflow: dict
     owner = jobs["orchestrator"]
     assert owner.get("if") is None
     assert owner.get("continue-on-error", False) is False
-    command = 'uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling infra'
-    assert count_exact_command_occurrences(jobs, command) == {"orchestrator": 1}
+    assert count_exact_command_occurrences(jobs, TOOLING_COMMAND) == {"orchestrator": 1}
     step, = [step for step in owner["steps"] if step.get("name") == "Test orchestrator and infrastructure code"]
     assert step.get("if") is None
     assert step.get("continue-on-error", False) is False
     policy = json.loads((ROOT / ".github/branch-protection/policy.json").read_text())
     assert "orchestrator" in policy["required_status_checks"]
+
+
+def test_receipt_unit_file_has_one_owner_in_tooling_and_mixed_scope(
+    ci_workflow: dict[str, Any], tmp_path: Path,
+) -> None:
+    """The unconditional tooling lane owns the receipt unit file; product never repeats it."""
+    selected = receipt_unit_lane_owners(ci_workflow["jobs"], tmp_path)
+    # Tooling-only scope runs just the orchestrator lane, which must select it.
+    assert RECEIPT_UNIT_FILE in selected["orchestrator"]
+    assert "tests/e2e/test_other_e2e_unit.py" not in selected["orchestrator"]
+    # Mixed scope runs both lanes; every selected file still has one owner.
+    assert RECEIPT_UNIT_FILE not in selected["product-lint-unit"]
+    assert "tests/e2e/test_other_e2e_unit.py" in selected["product-lint-unit"]
+    assert not any(path.startswith("tests/tooling/") for path in selected["product-lint-unit"])
+    assert not set(selected["orchestrator"]) & set(selected["product-lint-unit"])
+    assert set(selected["orchestrator"]) | set(selected["product-lint-unit"]) == set(SYNTHETIC_SELECTION_TREE)
+
+
+@pytest.mark.parametrize("damage", ["tooling-omits", "product-repeats"])
+def test_receipt_unit_selection_rejects_omission_or_duplicate_run(
+    ci_workflow: dict[str, Any], tmp_path: Path, damage: str,
+) -> None:
+    workflow = deepcopy(ci_workflow)
+    jobs = workflow["jobs"]
+    if damage == "tooling-omits":
+        step, = [step for step in jobs["orchestrator"]["steps"]
+                 if step.get("name") == "Test orchestrator and infrastructure code"]
+        step["run"] = step["run"].replace(" " + RECEIPT_UNIT_FILE, "")
+    else:
+        step, = [step for step in jobs["product-lint-unit"]["steps"] if step.get("name") == "Test product code"]
+        step["run"] = step["run"].replace(" --ignore=" + RECEIPT_UNIT_FILE, "")
+    with pytest.raises(AssertionError):
+        test_receipt_unit_file_has_one_owner_in_tooling_and_mixed_scope(workflow, tmp_path)
 
 
 def test_ci_workflow_pytest_addopts_are_reporting_only(ci_workflow: dict[str, Any]) -> None:

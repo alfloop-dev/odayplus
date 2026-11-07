@@ -313,9 +313,12 @@ jobs:
       # tests/tooling covers the delivery scripts themselves and infra covers
       # ephemeral staging Terraform/harness tests. They must run here: the `product`
       # job is skipped for development_tooling scope, so a tooling/infra-only change
-      # would otherwise land on dev with these tests never run.
+      # would otherwise land on dev with these tests never run. The pure
+      # receipt-module unit file tests/e2e/test_acceptance_coverage.py exercises
+      # delivery_toolchain/e2e, which that same scope admits, so it is owned here
+      # too; product-lint-unit ignores the exact file so it runs once.
       - name: Test orchestrator and infrastructure code
-        run: uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling infra
+        run: uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling infra tests/e2e/test_acceptance_coverage.py
 
   product-lint-unit:
     needs: change-scope
@@ -471,10 +474,11 @@ jobs:
       # cannot corrupt one another. Tests that bind fixed ports are excluded by
       # the `requires_live_env` marker already applied above.
       # Delivery-tooling tests have one owner: the required, unconditional
-      # orchestrator job above. Exclude that same directory here so product
-      # changes do not execute the identical tooling cases a second time.
+      # orchestrator job above. Exclude that same directory and the exact
+      # receipt-module file it also owns, so product changes do not execute the
+      # identical tooling cases a second time.
       - name: Test product code
-        run: uv run pytest -m "not requires_live_env and not performance" --ignore=tests/tooling tests modules apps shared models -n auto
+        run: uv run pytest -m "not requires_live_env and not performance" --ignore=tests/tooling --ignore=tests/e2e/test_acceptance_coverage.py tests modules apps shared models -n auto
 
   product-db:
     needs: change-scope
