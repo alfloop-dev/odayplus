@@ -41,6 +41,7 @@ from delivery_toolchain.release.release_manifest import (
     compute_sources_off_binding_digest,
     compute_sources_off_egress_contract_digest,
     compute_sources_off_probe_receipt_content_digest,
+    ensure_candidate_commit,
     env_var_belongs_to_source,
     extract_rollback_release_binding,
     initial_release_recovery_errors,
@@ -1068,7 +1069,7 @@ FIRST_RELEASE_COMPONENTS = {
 }
 
 
-def empty_target_readback(**overrides) -> dict:
+def empty_target_readback(*, candidate_sha: str = FIRST_RELEASE_SHA, **overrides) -> dict:
     readback = {
         "kind": INITIAL_RELEASE_READBACK_KIND,
         "target_environment": "dev",
@@ -1081,7 +1082,7 @@ def empty_target_readback(**overrides) -> dict:
                 "resource_kind": resource_kind,
                 "resource_name": (
                     release_candidate_job_name(
-                        f"oday-plus-{component}", FIRST_RELEASE_SHA
+                        f"oday-plus-{component}", candidate_sha
                     )
                     if resource_kind == "cloud-run-job"
                     else f"oday-plus-{component}"
@@ -1434,6 +1435,17 @@ def test_sources_off_egress_contract_evaluates_real_candidate_content() -> None:
     assert evidence["contract_digest"] == expected_digest
 
 
+def _commit_egress_fixture(repo: Path, message: str) -> str:
+    """Commit every fixture change and return the new candidate SHA."""
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.name=ODP Test Fixture", "-c", "user.email=fixture@example.invalid",
+         "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", message],
+        cwd=repo, check=True, capture_output=True,
+    )
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
+
 def _create_egress_candidate(tmp_path: Path, *, missing_file: str | None = None) -> tuple[Path, str]:
     """Create a real candidate commit with controlled contract contents."""
     repo = tmp_path / "candidate"
@@ -1451,14 +1463,7 @@ def _create_egress_candidate(tmp_path: Path, *, missing_file: str | None = None)
             dest = repo / "infra/terraform/modules/runtime_foundation" / f.name
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(f.read_bytes())
-    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-c", "user.name=ODP Test Fixture", "-c", "user.email=fixture@example.invalid",
-         "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Contract fixture"],
-        cwd=repo, check=True, capture_output=True,
-    )
-    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
-    return repo, sha
+    return repo, _commit_egress_fixture(repo, "Contract fixture")
 
 
 def test_sources_off_egress_contract_fails_explicitly_on_missing_candidate_blob_or_object(tmp_path: Path) -> None:
@@ -1541,92 +1546,147 @@ def test_sources_off_egress_contract_differs_between_candidate_and_worktree(tmp_
     ) == []
 
 
+DEPLOY_WORKFLOW = ".github/workflows/deploy-dev.yml"
+PREDECESSOR_SBOM_REF = f"registry.example.invalid/odayplus/sbom@sha256:{'5' * 64}"
+PREDECESSOR_SIGNATURE_REF = f"registry.example.invalid/odayplus/sig@sha256:{'6' * 64}"
+
+
+def _create_predecessor_origin(tmp_path: Path) -> tuple[Path, str, str]:
+    """Create a complete origin whose newer HEAD no longer holds the pinned bytes."""
+    origin, predecessor_sha = _create_egress_candidate(tmp_path)
+    workflow = origin / DEPLOY_WORKFLOW
+    workflow.write_bytes(workflow.read_bytes() + b"# synthetic newer candidate\n")
+    return origin, predecessor_sha, _commit_egress_fixture(origin, "Newer candidate")
+
+
+def _predecessor_manifest(candidate_sha: str, *, root: Path) -> dict:
+    """Build a valid previous sources-off manifest for one pinned candidate."""
+    return build_release_manifest(
+        release_id="odp-test-prev-shallow-001",
+        candidate_sha=candidate_sha,
+        components=SOURCES_OFF_COMPONENTS,
+        sbom_refs=[PREDECESSOR_SBOM_REF],
+        signature_refs=[PREDECESSOR_SIGNATURE_REF],
+        created_at="2026-09-07T15:29:32Z",
+        created_by_workflow=f"github://alfloop-dev/odayplus/{DEPLOY_WORKFLOW}@{candidate_sha}",
+        sources_off_attestation=build_sources_off_attestation(
+            candidate_sha=candidate_sha,
+            components=SOURCES_OFF_COMPONENTS,
+            source_policy_digest=compute_source_policy_digest(root=root),
+            provider_mode=SOURCES_OFF_PROVIDER_MODE,
+            sources_inventory=clean_sources_inventory(),
+            root=root,
+        ),
+        initial_release_recovery=first_release_recovery(
+            candidate_sha=candidate_sha,
+            components=SOURCES_OFF_COMPONENTS,
+            readback=empty_target_readback(candidate_sha=candidate_sha),
+        ),
+        release_status="ready",
+        root=root,
+    )
+
+
+def _commit_is_present(repo: Path, sha: str) -> bool:
+    return subprocess.run(
+        ["git", "cat-file", "-e", f"{sha}^{{commit}}"],
+        cwd=repo,
+        capture_output=True,
+    ).returncode == 0
+
+
+def _git_output(repo: Path, *args: str) -> str:
+    return subprocess.check_output(["git", *args], cwd=repo, text=True).strip()
+
+
 def test_shallow_checkout_predecessor_sources_off_manifest_resolution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """In a shallow checkout (depth 1), missing predecessor commit is acquired automatically."""
+    """In a shallow checkout (depth 1), missing predecessor commit is acquired automatically.
+
+    The origin is a complete synthetic candidate repository, as the release
+    checkout's real remote is. The product CI checkout is a blob:none partial
+    clone and cannot serve historical bodies; that origin stays refused below.
+    """
     monkeypatch.setenv("ODP_CLOUD_RUN_VPC_EGRESS", "ALL_TRAFFIC")
+    origin, predecessor_sha, current_sha = _create_predecessor_origin(tmp_path)
+
+    # A real candidate without the required workflow, off the cloned branch.
+    subprocess.run(
+        ["git", "checkout", "--quiet", "-b", "incomplete", predecessor_sha],
+        cwd=origin, check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "rm", "--quiet", DEPLOY_WORKFLOW], cwd=origin, check=True, capture_output=True,
+    )
+    incomplete_sha = _commit_egress_fixture(origin, "Candidate without workflow")
+    subprocess.run(
+        ["git", "checkout", "--quiet", "-"], cwd=origin, check=True, capture_output=True,
+    )
+
     shallow_repo = tmp_path / "shallow_repo"
     subprocess.run(
-        ["git", "clone", "--depth", "1", f"file://{ROOT}", str(shallow_repo)],
+        ["git", "clone", "--depth", "1", f"file://{origin}", str(shallow_repo)],
         check=True,
         capture_output=True,
     )
 
     # Initial state: predecessor commit is absent in depth-1 clone
-    res_before = subprocess.run(
-        ["git", "cat-file", "-e", f"{REAL_CANDIDATE_SHA}^{{commit}}"],
-        cwd=shallow_repo,
-        capture_output=True,
-    )
-    assert res_before.returncode != 0
+    assert _git_output(shallow_repo, "rev-parse", "HEAD") == current_sha
+    assert not _commit_is_present(shallow_repo, predecessor_sha)
 
-    sbom_ref = f"registry.example.invalid/odayplus/sbom@sha256:{'5' * 64}"
-    sig_ref = f"registry.example.invalid/odayplus/sig@sha256:{'6' * 64}"
-
-    # Build a valid previous sources-off manifest for REAL_CANDIDATE_SHA
-    prev_manifest = build_release_manifest(
-        release_id="odp-test-prev-shallow-001",
-        candidate_sha=REAL_CANDIDATE_SHA,
-        components=SOURCES_OFF_COMPONENTS,
-        sbom_refs=[sbom_ref],
-        signature_refs=[sig_ref],
-        created_at="2026-09-07T15:29:32Z",
-        created_by_workflow=f"github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@{REAL_CANDIDATE_SHA}",
-        sources_off_attestation=build_sources_off_attestation(
-            candidate_sha=REAL_CANDIDATE_SHA,
-            components=SOURCES_OFF_COMPONENTS,
-            source_policy_digest=compute_source_policy_digest(root=ROOT),
-            provider_mode=SOURCES_OFF_PROVIDER_MODE,
-            sources_inventory=clean_sources_inventory(),
-            root=ROOT,
-        ),
-        initial_release_recovery=first_release_recovery(
-            candidate_sha=REAL_CANDIDATE_SHA,
-            components=SOURCES_OFF_COMPONENTS,
-        ),
-        release_status="ready",
-        root=ROOT,
-    )
-
+    prev_manifest = _predecessor_manifest(predecessor_sha, root=origin)
     prev_manifest_path = shallow_repo / "previous_manifest.json"
     prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
 
-    # validate_rollback_manifest in shallow_repo triggers automated fetch of REAL_CANDIDATE_SHA
+    # validate_rollback_manifest in shallow_repo triggers automated fetch of the predecessor
     rb_errors = validate_rollback_manifest(
         prev_manifest,
-        current_candidate_sha=SECOND_REAL_CANDIDATE_SHA,
+        current_candidate_sha=current_sha,
         current_release_id="odp-test-current-shallow-002",
         root=shallow_repo,
     )
     assert rb_errors == []
 
     # Verify that predecessor commit is now present in shallow_repo
-    res_after = subprocess.run(
-        ["git", "cat-file", "-e", f"{REAL_CANDIDATE_SHA}^{{commit}}"],
-        cwd=shallow_repo,
-        capture_output=True,
+    assert _commit_is_present(shallow_repo, predecessor_sha)
+
+    # The manifest stays bound to the pinned tree and bytes, not the newer checkout.
+    for tree_read in (
+        ("rev-parse", f"{predecessor_sha}^{{tree}}"),
+        ("rev-parse", f"{predecessor_sha}:{DEPLOY_WORKFLOW}"),
+    ):
+        assert _git_output(shallow_repo, *tree_read) == _git_output(origin, *tree_read)
+    pinned_digest = compute_sources_off_egress_contract_digest(
+        root=origin, candidate_sha=predecessor_sha,
     )
-    assert res_after.returncode == 0
+    assert prev_manifest["sources_off_attestation"]["egress_evidence"]["contract_digest"] == pinned_digest
+    assert compute_sources_off_egress_contract_digest(
+        root=shallow_repo, candidate_sha=predecessor_sha,
+    ) == pinned_digest
+    assert compute_sources_off_egress_contract_digest(root=shallow_repo) != pinned_digest
+    assert compute_sources_off_egress_contract_digest(
+        root=shallow_repo, candidate_sha=current_sha,
+    ) != pinned_digest
 
     # Test build_handoff under shallow checkout
     from delivery_toolchain.release.build_release_handoff import build_handoff
 
     images, current_manifest = build_handoff(
-        release_sha=SECOND_REAL_CANDIDATE_SHA,
+        release_sha=current_sha,
         components={
             "api": "registry.example.invalid/odayplus/api@sha256:" + "1" * 64,
             "web": "registry.example.invalid/odayplus/web@sha256:" + "2" * 64,
             "worker": "registry.example.invalid/odayplus/worker@sha256:" + "3" * 64,
             "scheduler": "registry.example.invalid/odayplus/scheduler@sha256:" + "4" * 64,
         },
-        sbom_refs=[sbom_ref],
-        signature_refs=[sig_ref],
+        sbom_refs=[PREDECESSOR_SBOM_REF],
+        signature_refs=[PREDECESSOR_SIGNATURE_REF],
         rollback_manifest=prev_manifest_path,
         root=shallow_repo,
     )
     assert current_manifest is not None
-    assert current_manifest["rollback_release"]["candidate_sha"] == REAL_CANDIDATE_SHA
+    assert current_manifest["rollback_release"]["candidate_sha"] == predecessor_sha
 
     # Truly missing candidate SHA remains fail-closed in shallow repo
     missing_prev_manifest = copy.deepcopy(prev_manifest)
@@ -1634,7 +1694,7 @@ def test_shallow_checkout_predecessor_sources_off_manifest_resolution(
     missing_prev_manifest["manifest_digest"] = compute_manifest_digest(missing_prev_manifest)
     missing_errors = validate_rollback_manifest(
         missing_prev_manifest,
-        current_candidate_sha=SECOND_REAL_CANDIDATE_SHA,
+        current_candidate_sha=current_sha,
         root=shallow_repo,
     )
     assert missing_errors
@@ -1643,16 +1703,56 @@ def test_shallow_checkout_predecessor_sources_off_manifest_resolution(
         for err in missing_errors
     )
 
-    # Missing blob candidate SHA remains fail-closed in shallow repo
-    missing_blob_sha = "ccb7c34d9659f81640a3dd9ec2b100cb595f87b3"
+    # A fetched candidate lacking the workflow stays fail-closed despite the
+    # same path existing in the newer checkout.
+    assert (shallow_repo / DEPLOY_WORKFLOW).is_file()
     missing_blob_manifest = copy.deepcopy(prev_manifest)
-    missing_blob_manifest["candidate_sha"] = missing_blob_sha
+    missing_blob_manifest["candidate_sha"] = incomplete_sha
     missing_blob_manifest["manifest_digest"] = compute_manifest_digest(missing_blob_manifest)
     blob_errors = validate_rollback_manifest(
         missing_blob_manifest,
-        current_candidate_sha=SECOND_REAL_CANDIDATE_SHA,
+        current_candidate_sha=current_sha,
         root=shallow_repo,
     )
-    assert blob_errors
-    assert any(".github/workflows/deploy-dev.yml" in err for err in blob_errors)
+    assert _commit_is_present(shallow_repo, incomplete_sha)
+    assert any(DEPLOY_WORKFLOW in err and incomplete_sha in err for err in blob_errors)
 
+
+def test_shallow_predecessor_stays_refused_when_origin_cannot_serve_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A filtered origin's unservable history never falls back to current bytes."""
+    monkeypatch.setenv("ODP_CLOUD_RUN_VPC_EGRESS", "ALL_TRAFFIC")
+    origin, predecessor_sha, current_sha = _create_predecessor_origin(tmp_path)
+    prev_manifest = _predecessor_manifest(predecessor_sha, root=origin)
+
+    subprocess.run(
+        ["git", "config", "uploadpack.allowFilter", "true"],
+        cwd=origin, check=True, capture_output=True,
+    )
+    partial_source = tmp_path / "partial_source"
+    subprocess.run(
+        ["git", "clone", "--filter=blob:none", f"file://{origin}", str(partial_source)],
+        check=True, capture_output=True,
+    )
+    # Current Git already serves this way; older Git needs it stated explicitly.
+    monkeypatch.setenv("GIT_NO_LAZY_FETCH", "1")
+    child = tmp_path / "child"
+    subprocess.run(
+        ["git", "clone", "--depth", "1", f"file://{partial_source}", str(child)],
+        check=True, capture_output=True,
+    )
+
+    assert _git_output(child, "rev-parse", "HEAD") == current_sha
+    assert (child / DEPLOY_WORKFLOW).is_file()
+    assert ensure_candidate_commit(predecessor_sha, root=child) is False
+
+    errors = validate_rollback_manifest(
+        prev_manifest,
+        current_candidate_sha=current_sha,
+        root=child,
+    )
+    assert any(DEPLOY_WORKFLOW in err and predecessor_sha in err for err in errors)
+    assert not _commit_is_present(child, predecessor_sha)
+    with pytest.raises(RuntimeError, match=predecessor_sha):
+        compute_sources_off_egress_contract_digest(root=child, candidate_sha=predecessor_sha)
