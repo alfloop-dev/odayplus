@@ -5327,11 +5327,22 @@ def owner_notification_block_reason(
     owner_held_statuses = normalized_status_set(settings.get("owned_statuses"), ["in_progress", "todo"]) | {"blocked"}
     if task_status not in owner_held_statuses:
         return f"task status {task_status} is not held by its owner."
-    if task_is_human_gate(task):
+    if task_is_human_gate(task) or (
+        task_status == "blocked"
+        and (
+            task.get("review_churn_escalated_at")
+            or task.get("review_churn_escalated_at_count") not in (None, 0, "0", "", False)
+            or task.get("review_churn_reassigned_at_count") not in (None, 0, "0", "", False)
+            or task.get("human_continuation_approval") is not None
+            or bool(task.get("human_continuation_approval_history"))
+            or bool(task.get("review_churn_continuation_consumed_at"))
+            or "review churn" in blocked_task_prose_context(task, canonical_gate_prose=True)
+        )
+    ):
         return "task is behind a Human gate."
     if task.get("non_dispatchable"):
         return "task is non_dispatchable."
-    if task.get("approved_head") or task.get("merge_route") is not None or task.get("frozen_evidence_base_sha"):
+    if task_closeout_is_frozen(config, task):
         return "task approval is frozen."
     owner = str(task.get(config.get("schema", {}).get("assignee_field", "owner")) or "")
     if not owner or is_human_gate_agent(owner):
@@ -5731,7 +5742,10 @@ def worker_matches_current_assignment(
     has_explicit_reason = "reason" in worker or "reason" in snapshot or "delivery_mode" in snapshot
     reason = event["reason"]
     if reason in OWNER_NOTIFICATION_QUEUE_REASONS:
-        return owner_notification_block_reason(config, event, task_map) is None
+        return (
+            owner_notification_block_reason(config, event, task_map) is None
+            and launch_protection_refusal(config, task_map.get(event["task_id"]) or {}, event["metadata"]) is None
+        )
     if has_explicit_reason and not (
         dispatch_reason_role(reason) is not None
         or worker_is_discussion_planning(worker)

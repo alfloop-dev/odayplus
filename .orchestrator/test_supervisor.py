@@ -293,6 +293,7 @@ class QueueCustodySupervisorOwnerTests(unittest.TestCase):
 
     def _deliver_blocked_owner_notification(
         self,
+        **task_updates: Any,
     ) -> tuple[dict[str, Any], dict[str, Any], str, list[Any], dict[str, Any]]:
         self.task = {
             "id": "T-CUSTODY",
@@ -303,6 +304,7 @@ class QueueCustodySupervisorOwnerTests(unittest.TestCase):
             "waiting_for": "Human/Ops",
             "task_class": "implementation",
             "depends_on": [],
+            **task_updates,
         }
         self._write_board()
         Path(self.config["paths"]["event_queue"]).unlink(missing_ok=True)
@@ -401,6 +403,7 @@ class QueueCustodySupervisorOwnerTests(unittest.TestCase):
             self.assertNotIn("supersede_deferred_since", worker)
             self.assertEqual(record["status"], "started")
             self.assertEqual(record["lease_owner"], worker["run_id"])
+            self.assertEqual(self._queue_ids(), [event_id])
             terminate_pid.assert_not_called()
             self.assertFalse(supervisor.reconcile_queue_records(self.config, self.state))
             self.assertFalse(supervisor.prune_event_queue(self.config, self.state))
@@ -570,8 +573,14 @@ class QueueCustodySupervisorOwnerTests(unittest.TestCase):
                 task["approved_head"] = "b" * 40
             elif case_name == "frozen_merge_route":
                 task["merge_route"] = {"head": "b" * 40, "route": "queued"}
-            elif case_name == "frozen_evidence_base_sha":
-                task["frozen_evidence_base_sha"] = "b" * 40
+            elif case_name == "protected_paths_drift":
+                task["protected_paths"] = ["docs/protected_fixture"]
+            elif case_name == "isolated_worktree_source_drift":
+                snap["metadata"]["workspace_mode"] = "isolated_worktree"
+                snap["metadata"]["workspace_path"] = str(Path(self.tmp.name) / "foreign-worktree")
+            elif case_name == "review_churn_escalated":
+                task["review_churn_escalated_at"] = "2026-11-07T00:00:00Z"
+                task["review_churn_escalated_at_count"] = 6
             elif case_name == "role_provider_policy_drift":
                 cfg.setdefault("ready_dispatcher", {})["role_provider_policy"] = {
                     "implementation": {"owner": ["codex"]}
@@ -634,7 +643,9 @@ class QueueCustodySupervisorOwnerTests(unittest.TestCase):
             "status_done",
             "frozen_approved_head",
             "frozen_merge_route",
-            "frozen_evidence_base_sha",
+            "protected_paths_drift",
+            "isolated_worktree_source_drift",
+            "review_churn_escalated",
             "role_provider_policy_drift",
             "disabled_agent_policy_drift",
             "provider_drift",
@@ -924,6 +935,352 @@ class QueueCustodySupervisorOwnerTests(unittest.TestCase):
         self.assertEqual(pos_state["queue"]["events"][pos_event_id]["status"], "started")
         self.assertEqual(pos_state["queue"]["events"][pos_event_id]["attempt_count"], 1)
         self.assertIn("run-pos-1", pos_state["workers"])
+
+    def test_pinned_evidence_base_owner_notification_retains_poll_and_parked_authority_and_base_ancestry_gate(
+        self,
+    ) -> None:
+        from adapters.base import DeliveryResult
+
+        pinned_sha = "a" * 40
+        worker, record, event_id, launched, provider_report = self._deliver_blocked_owner_notification(
+            frozen_evidence_base_sha=pinned_sha,
+        )
+        self.assertFalse(supervisor.task_closeout_is_frozen(self.config, self.task))
+        self.assertEqual(self.task["frozen_evidence_base_sha"], pinned_sha)
+
+        for task_status, heartbeat in (
+            ("blocked", None),
+            ("blocked", supervisor.utc_now()),
+            ("in_progress", None),
+            ("in_progress", supervisor.utc_now()),
+        ):
+            self.task["status"] = task_status
+            if task_status == "in_progress":
+                self.task.pop("waiting_for", None)
+            else:
+                self.task["waiting_for"] = "Human/Ops"
+            self._write_board()
+            worker["last_heartbeat_at"] = heartbeat
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+                mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid,
+            ):
+                supervisor.poll_workers(self.config, self.state, provider_report=provider_report)
+            self.assertEqual(worker["status"], "running")
+            self.assertNotIn("supersede_deferred_since", worker)
+            self.assertEqual(record["status"], "started")
+            self.assertEqual(record["lease_owner"], worker["run_id"])
+            self.assertEqual(self._queue_ids(), [event_id])
+            terminate_pid.assert_not_called()
+
+        self.task["status"] = "blocked"
+        self.task["waiting_for"] = "Human/Ops"
+        self._write_board()
+        self.assertIsNone(supervisor.worker_failure_policy._execution_authority_refusal(self.config, worker))
+        self.assertFalse(supervisor.supersede_worker_without_execution_authority(self.config, self.state, worker))
+
+        worker["status"] = "retry_backoff"
+        worker["next_retry_at"] = "2020-01-01T00:00:00Z"
+        tmp_root = Path(self.tmp.name)
+
+        class PinnedRetryAdapter:
+            def deliver(self, req: Any) -> DeliveryResult:
+                launched.append(req)
+                idx = len(launched)
+                return DeliveryResult(
+                    ok=True,
+                    target=req.agent_id,
+                    adapter="claude_cli",
+                    mode="claude_cli",
+                    auto_delivered=True,
+                    manual_confirmation_required=False,
+                    run_id=f"run-notif-{idx}",
+                    session_id=f"sess-notif-{idx}",
+                    resume_token=f"sess-notif-{idx}",
+                    pid=41000 + idx,
+                    command=["claude", "-p", req.message],
+                    log_path=str(tmp_root / f"run-notif-{idx}.log"),
+                    notes="delivered",
+                    metadata={},
+                )
+
+        with mock.patch.object(supervisor, "build_adapter", return_value=PinnedRetryAdapter()):
+            self.assertTrue(
+                supervisor.retry_due_workers(self.config, self.state, provider_report, datetime.now(UTC))
+            )
+        self.assertEqual(worker["status"], "retried")
+        self.assertEqual(self.state["workers"]["run-notif-2"]["status"], "running")
+
+        # Base ancestry remains enforced by resolve_frozen_evidence_base: ancestor succeeds, non-ancestor fails.
+        repo_dir = tmp_root / "ancestry-repo"
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        for git_args in (
+            ["init", "-q", "-b", "dev"],
+            ["config", "user.name", "Test"],
+            ["config", "user.email", "test@example.invalid"],
+        ):
+            subprocess.run(["git", *git_args], cwd=repo_dir, check=True, capture_output=True, text=True)
+        (repo_dir / "a.txt").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "a.txt"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "commit", "-qm", "base"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        ancestor_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo_dir, check=True, capture_output=True, text=True
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "switch", "-q", "-c", "task/T-CUSTODY"],
+            cwd=repo_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        (repo_dir / "b.txt").write_text("task\n", encoding="utf-8")
+        subprocess.run(["git", "add", "b.txt"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "commit", "-qm", "task"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "switch", "-q", "dev"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        (repo_dir / "c.txt").write_text("diverged\n", encoding="utf-8")
+        subprocess.run(["git", "add", "c.txt"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "commit", "-qm", "diverged"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        non_ancestor_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo_dir, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+        resolved_ok, err_ok = supervisor.resolve_frozen_evidence_base(
+            repo_dir,
+            repository_id="pantheon",
+            default_branch="dev",
+            branch="task/T-CUSTODY",
+            sha=ancestor_sha,
+        )
+        self.assertIsNotNone(resolved_ok)
+        self.assertIsNone(err_ok)
+
+        resolved_bad, err_bad = supervisor.resolve_frozen_evidence_base(
+            repo_dir,
+            repository_id="pantheon",
+            default_branch="dev",
+            branch="task/T-CUSTODY",
+            sha=non_ancestor_sha,
+        )
+        self.assertIsNone(resolved_bad)
+        self.assertIn("frozen_evidence_base_not_task_ancestor", str(err_bad))
+
+    def test_review_churn_blocked_escalation_refuses_until_continuation_approval_is_consumed_to_todo(
+        self,
+    ) -> None:
+        from adapters.base import DeliveryResult
+
+        provider_report = self._provider_report()
+        tmp_root = Path(self.tmp.name)
+
+        def make_churn_task(**overrides: Any) -> dict[str, Any]:
+            task: dict[str, Any] = {
+                "id": "T-CUSTODY",
+                "title": "Custody",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "status": "blocked",
+                "waiting_for": "Human/Ops",
+                "task_class": "implementation",
+                "depends_on": [],
+                "review_reopen_count": 6,
+                "review_churn_escalated_at_count": 6,
+                "review_churn_escalated_at": "2026-08-30T00:00:00Z",
+                "next": "Escalated to Human/Ops after 6 reviewer reopens.",
+            }
+            task.update(overrides)
+            return task
+
+        def make_approval(**overrides: Any) -> dict[str, Any]:
+            approval: dict[str, Any] = {
+                "approval_id": "apr-custody-1",
+                "approval_type": "human_ops_continuation",
+                "status": "issued",
+                "task_id": "T-CUSTODY",
+                "task_scope": "T-CUSTODY",
+                "scope": {"task_id": "T-CUSTODY"},
+                "reason": "Human reviewed the churn evidence and authorized one continuation.",
+                "issued_by": "Human/Ops",
+                "issued_at": "2026-08-30T00:00:00Z",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "nonce": "nonce-custody-valid-1",
+                "review_reopen_count": 6,
+                "review_churn_escalated_at_count": 6,
+                "review_churn_escalated_at": "2026-08-30T00:00:00Z",
+                "consumed_at": None,
+                "consumed_by": None,
+                "consumption_reason": None,
+            }
+            approval.update(overrides)
+            return approval
+
+        negative_cases = (
+            "missing_approval",
+            "invalid_issuer",
+            "invalid_scope",
+            "invalid_epoch",
+            "expired_approval",
+            "not_yet_consumed_approval",
+            "replayed_consumed_permit",
+        )
+
+        for case_name in negative_cases:
+            with self.subTest(case=case_name):
+                if case_name == "missing_approval":
+                    self.task = make_churn_task()
+                elif case_name == "invalid_issuer":
+                    self.task = make_churn_task(human_continuation_approval=make_approval(issued_by="Claude"))
+                elif case_name == "invalid_scope":
+                    self.task = make_churn_task(
+                        human_continuation_approval=make_approval(
+                            task_id="OTHER-TASK",
+                            task_scope="OTHER-TASK",
+                            scope={"task_id": "OTHER-TASK"},
+                        )
+                    )
+                elif case_name == "invalid_epoch":
+                    self.task = make_churn_task(
+                        human_continuation_approval=make_approval(review_churn_escalated_at_count=5)
+                    )
+                elif case_name == "expired_approval":
+                    self.task = make_churn_task(
+                        human_continuation_approval=make_approval(expires_at="2020-01-01T00:00:00Z")
+                    )
+                elif case_name == "not_yet_consumed_approval":
+                    self.task = make_churn_task(human_continuation_approval=make_approval())
+                elif case_name == "replayed_consumed_permit":
+                    self.task = make_churn_task(
+                        human_continuation_approval=make_approval(
+                            approval_id="apr-custody-replay",
+                            nonce="nonce-custody-reused",
+                        ),
+                        human_continuation_approval_history=[
+                            make_approval(
+                                approval_id="apr-custody-old",
+                                nonce="nonce-custody-reused",
+                                status="consumed",
+                            )
+                        ],
+                    )
+                self._write_board()
+                self.state = {"workers": {}, "queue": {"events": {}}}
+
+                if case_name != "not_yet_consumed_approval":
+                    with mock.patch.object(
+                        supervisor,
+                        "commit_canonical_task_transition",
+                        side_effect=lambda _cfg, st: Path(self.config["paths"]["status_file"]).write_text(
+                            json.dumps(st), encoding="utf-8"
+                        )
+                        or True,
+                    ):
+                        supervisor.consume_human_continuation_approvals(self.config, self.state)
+
+                current_task = supervisor.load_status(self.config)["tasks"][0]
+                self.assertEqual(current_task["status"], "blocked")
+
+                Path(self.config["paths"]["event_queue"]).unlink(missing_ok=True)
+                self.assertTrue(github_bus.queue_resume_for_task(self.config, current_task))
+                events = runtime_state.load_event_queue(self.config)
+                self.assertEqual(len(events), 1)
+                event_id = str(events[0]["event_id"])
+                self.assertIn(
+                    "Human gate",
+                    str(
+                        supervisor.owner_notification_block_reason(
+                            self.config, events[0], {current_task["id"]: current_task}
+                        )
+                    ),
+                )
+                with (
+                    mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+                    mock.patch.object(supervisor, "build_adapter") as adapter_mock,
+                ):
+                    self.assertTrue(supervisor.process_queue(self.config, self.state, provider_report))
+                    adapter_mock.assert_not_called()
+                record = self.state["queue"]["events"][event_id]
+                self.assertEqual(record["status"], "completed")
+                self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+                self.assertEqual(record.get("attempt_count", 0), 0)
+                self.assertEqual(self.state["workers"], {})
+
+        # Legitimately consumed original approval completes transition to todo and remains eligible under normal gates.
+        self.task = make_churn_task(human_continuation_approval=make_approval())
+        self._write_board()
+        self.state = {"workers": {}, "queue": {"events": {}}}
+        with mock.patch.object(
+            supervisor,
+            "commit_canonical_task_transition",
+            side_effect=lambda _cfg, st: Path(self.config["paths"]["status_file"]).write_text(
+                json.dumps(st), encoding="utf-8"
+            )
+            or True,
+        ):
+            self.assertTrue(supervisor.consume_human_continuation_approvals(self.config, self.state))
+
+        resumed_task = supervisor.load_status(self.config)["tasks"][0]
+        self.assertEqual(resumed_task["status"], "todo")
+        self.assertNotIn("waiting_for", resumed_task)
+        self.assertNotIn("human_continuation_approval", resumed_task)
+        self.assertEqual(resumed_task["human_continuation_approval_history"][-1]["status"], "consumed")
+        self.assertEqual(resumed_task["review_churn_reassigned_at_count"], 6)
+
+        Path(self.config["paths"]["event_queue"]).unlink(missing_ok=True)
+        self.assertTrue(github_bus.queue_resume_for_task(self.config, resumed_task))
+        post_events = runtime_state.load_event_queue(self.config)
+        self.assertEqual(len(post_events), 1)
+        post_event_id = str(post_events[0]["event_id"])
+        self.assertIsNone(
+            supervisor.owner_notification_block_reason(
+                self.config, post_events[0], {resumed_task["id"]: resumed_task}
+            )
+        )
+
+        post_launched: list[Any] = []
+
+        class PostConsumeAdapter:
+            def deliver(self, req: Any) -> DeliveryResult:
+                post_launched.append(req)
+                return DeliveryResult(
+                    ok=True,
+                    target=req.agent_id,
+                    adapter="claude_cli",
+                    mode="claude_cli",
+                    auto_delivered=True,
+                    manual_confirmation_required=False,
+                    run_id="run-post-consume-1",
+                    session_id="sess-post-consume-1",
+                    resume_token="sess-post-consume-1",
+                    pid=43001,
+                    command=["claude", "-p", req.message],
+                    log_path=str(tmp_root / "run-post-consume-1.log"),
+                    notes="delivered",
+                    metadata={},
+                )
+
+        with (
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+            mock.patch.object(supervisor, "build_adapter", return_value=PostConsumeAdapter()),
+        ):
+            self.assertTrue(supervisor.process_queue(self.config, self.state, provider_report))
+
+        self.assertEqual(len(post_launched), 1)
+        post_worker = self.state["workers"]["run-post-consume-1"]
+        post_record = self.state["queue"]["events"][post_event_id]
+        self.assertEqual(post_worker["status"], "running")
+        self.assertEqual(post_record["status"], "started")
+        self.assertEqual(post_record["attempt_count"], 1)
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid,
+        ):
+            supervisor.poll_workers(self.config, self.state, provider_report=provider_report)
+        self.assertEqual(post_worker["status"], "running")
+        terminate_pid.assert_not_called()
+        self.assertIsNone(
+            supervisor.worker_failure_policy._execution_authority_refusal(self.config, post_worker)
+        )
 
 
 class TestConfigFixtureTests(unittest.TestCase):
