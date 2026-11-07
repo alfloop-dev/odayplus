@@ -40,7 +40,7 @@ _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _TERMINAL = {("SUCCEEDED", "succeeded", None), ("FAILED", "failed", "dead_letter"),
     ("DEAD_LETTER", "failed", "dead_letter"), ("CANCELLED", "cancelled", None)}
 PROOF_BATCH_SIZE = 64
-_WITHDRAWAL_ROWS = ("SELECT " + ",".join(NATIVE_OUTBOX_PROOF_COLUMNS) +
+_WITHDRAWAL_ROWS = ("SELECT " + ",".join(NATIVE_OUTBOX_PROOF_COLUMNS) +  # nosec B608 -- fixed NATIVE_*_PROOF_COLUMNS identifiers; values bound as ?.
     " FROM workflow.outbox_events WHERE tenant_id=? "
     "AND aggregate_type=? AND aggregate_id=? AND event_type=? LIMIT 2")
 _WITHDRAWAL_AUDIT = ("SELECT after_value,reason,actor_role FROM audit.audit_events "
@@ -326,7 +326,7 @@ class NativeIntakePendingCommands:
         cursor_time, cursor_id = None, None
         while True:
             before()
-            rows = self.engine.native_query("WITH candidates AS ("
+            rows = self.engine.native_query("WITH candidates AS ("  # nosec B608 -- fixed NATIVE_*_PROOF_COLUMNS identifiers; values bound as ?.
                 "SELECT e.event_id::text AS request_id,e.occurred_at FROM workflow.outbox_events e WHERE e.tenant_id=? "
                 "AND ((e.event_type='intake.assisted_entry_requested' AND e.aggregate_type='intake_assisted_entry') "
                 "OR (e.event_type='intake.source_policy_recheck_requested' AND e.aggregate_type='intake_policy_recheck')) "

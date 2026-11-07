@@ -58,7 +58,7 @@ class CanonicalIntakeRepository:
         comparison, order = ("<", "DESC") if backward else (">", "ASC")
         with self.graph.transaction(tenant):
             return self.engine.query(
-                "SELECT transition_id,sequence_no,from_state,to_state,actor_subject_id,service_principal,"
+                "SELECT transition_id,sequence_no,from_state,to_state,actor_subject_id,service_principal,"  # nosec B608 -- operator/order picked from two literals by bool; values bound as ?.
                 "permission,reason_code,expected_version,resulting_version,job_id,source_policy_version,"
                 "parser_release_id,source_snapshot_id,match_case_id,correlation_id,causation_id,occurred_at "
                 "FROM intake.intake_stage_transitions WHERE tenant_id=? AND intake_id=? "

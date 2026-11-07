@@ -122,7 +122,7 @@ class NativeIntakeRetrievalOwner:
         # The bounded read-only view covers recursive original identity OR
         # bounded recheck proof, including every SQL/queue read it performs.
         parent = NativeIntakeSourcePolicyOwner(self.source._producer_reads(before))
-        row = parent.graph.native_one("SELECT " + ",".join(NATIVE_OUTBOX_PROOF_COLUMNS) +
+        row = parent.graph.native_one("SELECT " + ",".join(NATIVE_OUTBOX_PROOF_COLUMNS) +  # nosec B608 -- fixed NATIVE_*_PROOF_COLUMNS identifiers; values bound as ?.
             " FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, event_id),
             columns=NATIVE_OUTBOX_PROOF_COLUMNS)
         event = _object(row["payload"])

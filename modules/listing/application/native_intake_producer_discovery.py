@@ -33,7 +33,7 @@ _EVENT_COLUMNS = (
     "aggregate_id", "aggregate_version", "correlation_id", "partition_key", "payload",
 )
 _DISCOVERY_SQL = (
-    "SELECT " + ",".join("e." + name for name in _EVENT_COLUMNS) + ","
+    "SELECT " + ",".join("e." + name for name in _EVENT_COLUMNS) + ","  # nosec B608 -- fixed _EVENT_COLUMNS identifiers; values bound as ?.
     "t.tenant_id AS discovery_transition_tenant_id,"
     "t.transition_id AS discovery_transition_transition_id,t.intake_id AS discovery_transition_intake_id,"
     "t.job_id AS discovery_transition_job_id,w.tenant_id AS discovery_business_tenant_id,"

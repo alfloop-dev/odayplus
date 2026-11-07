@@ -27,7 +27,7 @@ _OUTPUT_SELECT = ",".join(
 _OUTPUT_WITHIN_BOUND = " AND ".join(
     f"COALESCE(octet_length({name}::text),0)<={MAX_DOCUMENT_BYTES}" for name in _OUTPUT_COLUMNS)
 _READ = (
-    "SELECT parser_run_id,tenant_id,intake_id,source_snapshot_id,parser_release_id,status,"
+    "SELECT parser_run_id,tenant_id,intake_id,source_snapshot_id,parser_release_id,status,"  # nosec B608 -- fixed _OUTPUT_COLUMNS and int MAX_DOCUMENT_BYTES; values bound as ?.
     "started_at,completed_at,correlation_id,version,created_at," + _OUTPUT_SELECT + ",(" +
     _OUTPUT_WITHIN_BOUND + ") AS _native_output_within_bound "
     "FROM intake.parser_runs WHERE tenant_id=? AND parser_run_id=?"

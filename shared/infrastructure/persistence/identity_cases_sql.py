@@ -364,7 +364,7 @@ class CanonicalMatchCaseRepository:
         transition_columns = ("actor_subject_id", "service_principal", "occurred_at", "from_state",
             "to_state", "expected_version", "permission", "reason_code", "correlation_id", "job_id",
             "source_snapshot_id", "reason_text", "transition_id", "sequence_no")
-        rows = self.engine.native_query("SELECT " + ",".join(transition_columns) +
+        rows = self.engine.native_query("SELECT " + ",".join(transition_columns) +  # nosec B608 -- fixed local column-name tuple; values bound as ?.
             " FROM intake.intake_stage_transitions WHERE tenant_id=? "
             "AND intake_id=? AND match_case_id=? AND resulting_version=? LIMIT 2",
             (tenant, intake["intake_id"], case["match_case_id"], intake["version"]), columns=transition_columns)
@@ -397,7 +397,7 @@ class CanonicalMatchCaseRepository:
             reject()
         before()
         event_columns = ("event_id", "event_version", "partition_key", "correlation_id", "occurred_at", "payload")
-        events = self.engine.native_query("SELECT " + ",".join(event_columns) +
+        events = self.engine.native_query("SELECT " + ",".join(event_columns) +  # nosec B608 -- fixed local column-name tuple; values bound as ?.
             " FROM workflow.outbox_events WHERE tenant_id=? "
             "AND aggregate_type='intake' AND aggregate_id=? AND aggregate_version=? "
             "AND event_type='intake.state_changed' LIMIT 2", (tenant, intake["intake_id"], intake["version"]),

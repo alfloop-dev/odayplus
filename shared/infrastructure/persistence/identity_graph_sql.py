@@ -45,7 +45,7 @@ NATIVE_AUDIT_PROOF_COLUMNS = (
     "after_value", "before_value", "occurred_at", "reason",
 )
 _NATIVE_HISTORY_JOB_READS = tuple(
-    "SELECT " + ",".join(NATIVE_JOB_COLUMNS) + " FROM workflow.jobs WHERE tenant_id=? AND job_id=?" + lock
+    "SELECT " + ",".join(NATIVE_JOB_COLUMNS) + " FROM workflow.jobs WHERE tenant_id=? AND job_id=?" + lock  # nosec B608 -- fixed NATIVE_JOB_COLUMNS and literal lock suffix; values bound as ?.
     for lock in ("", " FOR SHARE")
 )
 

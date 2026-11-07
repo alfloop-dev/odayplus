@@ -140,7 +140,7 @@ class NativeIntakeIdentityOwner:
     def _event(self, tenant: str, event_id: str) -> tuple[dict, dict, str]:
         discovery = native_producer_discovery(self.graph, tenant, _uuid(event_id))
         row = (discovery.event() if discovery is not None else self.graph.native_one(
-            "SELECT " + ",".join(NATIVE_OUTBOX_PROOF_COLUMNS) +
+            "SELECT " + ",".join(NATIVE_OUTBOX_PROOF_COLUMNS) +  # nosec B608 -- fixed NATIVE_*_PROOF_COLUMNS identifiers; values bound as ?.
             " FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, _uuid(event_id)),
             columns=NATIVE_OUTBOX_PROOF_COLUMNS))
         event = _object(row["payload"])

@@ -200,7 +200,7 @@ class NativeIntakeSourcePolicyOwner:
         view = self._producer_reads(before if before is not None else _native_producer_noop)
         discovery = native_producer_discovery(view, tenant, _uuid(event_id))
         row = (discovery.event() if discovery is not None else view.native_one(
-            "SELECT " + ",".join(NATIVE_OUTBOX_PROOF_COLUMNS) +
+            "SELECT " + ",".join(NATIVE_OUTBOX_PROOF_COLUMNS) +  # nosec B608 -- fixed NATIVE_*_PROOF_COLUMNS identifiers; values bound as ?.
             " FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, _uuid(event_id)),
             columns=NATIVE_OUTBOX_PROOF_COLUMNS))
         event = _object(row["payload"])

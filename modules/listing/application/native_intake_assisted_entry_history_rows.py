@@ -120,10 +120,10 @@ class _SuccessHistoryRows:
         self._check()
         if self.settings != {"isolation": "serializable", "tenant": self.tenant}:
             _reject()
-        self.events = self._load("SELECT " + ",".join(NATIVE_OUTBOX_PROOF_COLUMNS) +
+        self.events = self._load("SELECT " + ",".join(NATIVE_OUTBOX_PROOF_COLUMNS) +  # nosec B608 -- fixed NATIVE_*_PROOF_COLUMNS identifiers; values bound as ?.
             " FROM workflow.outbox_events WHERE tenant_id=? AND event_id=ANY(?::uuid[])",
             "event_id", self.event_ids, NATIVE_OUTBOX_PROOF_COLUMNS)
-        self.audits = self._load("SELECT " + ",".join(NATIVE_AUDIT_PROOF_COLUMNS) +
+        self.audits = self._load("SELECT " + ",".join(NATIVE_AUDIT_PROOF_COLUMNS) +  # nosec B608 -- fixed NATIVE_*_PROOF_COLUMNS identifiers; values bound as ?.
             " FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=ANY(?::uuid[])",
             "audit_event_id", self.audit_ids, NATIVE_AUDIT_PROOF_COLUMNS)
         self.consumed = set()

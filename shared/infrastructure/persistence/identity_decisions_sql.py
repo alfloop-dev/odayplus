@@ -271,7 +271,7 @@ class CanonicalIdentityDecisionRepository:
             # native budget adopts it without changing either time contract.
             self.engine.enable_native_acquisition()
             event_columns = ("event_id", "event_version", "partition_key", "correlation_id", "occurred_at", "payload")
-            rows = self.engine.native_query("SELECT " + ",".join(event_columns) +
+            rows = self.engine.native_query("SELECT " + ",".join(event_columns) +  # nosec B608 -- fixed local column-name tuple; values bound as ?.
                 " FROM workflow.outbox_events WHERE tenant_id=? "
                 "AND aggregate_type='match_case' AND aggregate_id=? AND aggregate_version=? "
                 "AND event_type='match.decided' LIMIT 2", (tenant, case["match_case_id"], case["version"]),
@@ -283,7 +283,7 @@ class CanonicalIdentityDecisionRepository:
             decision_columns = ("tenant_id", "match_decision_id", "match_case_id", "decision_type", "status",
                 "proposer_subject_id", "reviewer_subject_id", "proposer_service_principal", "risk_acknowledged",
                 "reviewed_at", "after_graph", "executed_at", "version", "reason")
-            decision = self.graph.native_one("SELECT " + ",".join(decision_columns) +
+            decision = self.graph.native_one("SELECT " + ",".join(decision_columns) +  # nosec B608 -- fixed local column-name tuple; values bound as ?.
                 " FROM identity.match_decisions WHERE tenant_id=? AND match_decision_id=? FOR UPDATE",
                 (tenant, _uuid(event["payload"]["match_decision_id"])), columns=decision_columns)
             expected = {"tenant_id": tenant, "event_id": row["event_id"], "event_type": "match.decided",
@@ -301,7 +301,7 @@ class CanonicalIdentityDecisionRepository:
                     or event["occurred_at"] != decision["executed_at"] or row["occurred_at"] != decision["executed_at"]):
                 reject()
             self.require_approval(tenant, decision)
-            job = self.graph.native_one("SELECT " + ",".join(NATIVE_JOB_COLUMNS) +
+            job = self.graph.native_one("SELECT " + ",".join(NATIVE_JOB_COLUMNS) +  # nosec B608 -- fixed NATIVE_JOB_COLUMNS identifiers; values bound as ?.
                 " FROM workflow.jobs WHERE tenant_id=? AND job_type=? "
                 "AND aggregate_type='identity_decision' AND aggregate_id=? FOR UPDATE",
                 (tenant, self.graph.job_type, decision["match_decision_id"]), columns=NATIVE_JOB_COLUMNS)

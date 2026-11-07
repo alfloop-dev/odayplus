@@ -898,7 +898,7 @@ class NativeIntakeSnapshotMetadataRepository:
             (tenant, uri, generation), columns=("source_snapshot_id",), one=True)
 
     def find_content(self, tenant: str, intake: str, source: str, content_sha256: str) -> dict | None:
-        return self.engine.native_query("SELECT " + ",".join(self._COLUMNS) +
+        return self.engine.native_query("SELECT " + ",".join(self._COLUMNS) +  # nosec B608 -- fixed class _COLUMNS identifiers; values bound as ?.
             " FROM intake.source_snapshots WHERE tenant_id=? AND intake_id=? "
             "AND source_id=? AND content_sha256=? FOR UPDATE", (tenant, intake, source, content_sha256),
             columns=self._COLUMNS, one=True)
@@ -910,7 +910,7 @@ class NativeIntakeSnapshotMetadataRepository:
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values)
 
     def required_for_intake(self, tenant: str, snapshot: str, intake: str) -> dict:
-        return self.graph.native_one("SELECT " + ",".join(self._COLUMNS) +
+        return self.graph.native_one("SELECT " + ",".join(self._COLUMNS) +  # nosec B608 -- fixed class _COLUMNS identifiers; values bound as ?.
             " FROM intake.source_snapshots WHERE tenant_id=? AND source_snapshot_id=? "
             "AND intake_id=?", (tenant, snapshot, intake), columns=self._COLUMNS)
 

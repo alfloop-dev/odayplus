@@ -75,7 +75,7 @@ def _native_projection_sql(statement, columns, groups, order_by):
     sizes = []
     for index, group in enumerate(groups):
         selected = ",".join("f." + c for c in group)
-        sizes.append("(SELECT octet_length(row_to_json(p)::text)::bigint FROM (SELECT " +
+        sizes.append("(SELECT octet_length(row_to_json(p)::text)::bigint FROM (SELECT " +  # nosec B608 -- columns regex-checked above; index is an int.
             selected + ") p) AS _odp_native_group_" + str(index))
     names = ["_odp_native_group_" + str(i) for i in range(len(groups))]
     acceptable = " AND ".join(n + "<=" + str(NATIVE_ACQUISITION_ROW_MAX_BYTES) for n in names)
@@ -83,10 +83,10 @@ def _native_projection_sql(statement, columns, groups, order_by):
     returned = ",".join("CASE WHEN q.allowed THEN s." + c + " END AS " + c for c in columns)
     ordering = (" ORDER BY " + ",".join("s." + key + (" DESC" if descending else " ASC")
         for key, descending in order_by)) if order_by else ""
-    return ("WITH facts AS MATERIALIZED (" + statement + "),sized AS MATERIALIZED (SELECT f.*,"
-        "true AS _odp_native_present," + ",".join(sizes) + " FROM facts f),"
-        "totals AS MATERIALIZED (SELECT COALESCE(sum(" + total + "),0) AS bytes,"
-        "COALESCE(bool_and(" + acceptable + "),true) AS groups_ok,count(*)::bigint AS rows FROM sized),"
+    return ("WITH facts AS MATERIALIZED (" + statement + "),sized AS MATERIALIZED (SELECT f.*,"  # nosec B608 -- owner SELECT wrapped; identifiers regex-checked, limits bound as ?.
+        "true AS _odp_native_present," + ",".join(sizes) + " FROM facts f),"  # nosec B608 -- generated group aliases and int limits only.
+        "totals AS MATERIALIZED (SELECT COALESCE(sum(" + total + "),0) AS bytes,"  # nosec B608 -- generated group aliases and int limits only.
+        "COALESCE(bool_and(" + acceptable + "),true) AS groups_ok,count(*)::bigint AS rows FROM sized),"  # nosec B608 -- regex-checked columns; quota limits bound as ?.
         "quota AS MATERIALIZED (SELECT groups_ok AND bytes<=? AS allowed,"
         "LEAST(bytes,?::bigint+1)::bigint AS bytes,rows FROM totals) SELECT " + returned + ","
         "q.allowed AS _odp_native_allowed,q.bytes AS _odp_native_bytes,q.rows AS _odp_native_rows,"
