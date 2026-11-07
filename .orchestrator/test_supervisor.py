@@ -1424,6 +1424,192 @@ class QueueCustodySupervisorOwnerTests(unittest.TestCase):
                 self.assertEqual(record.get("attempt_count", 0), 0)
                 self.assertEqual(self.state["workers"], {})
 
+    def _assert_blocked_notification_refused_before_launch(self, task: dict[str, Any]) -> None:
+        self.task = json.loads(json.dumps(task))
+        self._write_board()
+        Path(self.config["paths"]["event_queue"]).unlink(missing_ok=True)
+        self.state = {"workers": {}, "queue": {"events": {}}}
+        self.assertTrue(github_bus.queue_resume_for_task(self.config, self.task))
+        events = runtime_state.load_event_queue(self.config)
+        self.assertEqual(len(events), 1)
+        event_id = str(events[0]["event_id"])
+        self.assertEqual(events[0]["reason"], "github_retry")
+        self.assertIn(
+            "Human gate",
+            str(supervisor.owner_notification_block_reason(self.config, events[0], {"T-CUSTODY": self.task})),
+        )
+        with (
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+            mock.patch.object(supervisor, "build_adapter") as adapter_mock,
+        ):
+            self.assertTrue(supervisor.process_queue(self.config, self.state, self._provider_report()))
+            adapter_mock.assert_not_called()
+        record = self.state["queue"]["events"][event_id]
+        self.assertEqual(record["status"], "completed")
+        self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+        self.assertEqual(record.get("attempt_count", 0), 0)
+        self.assertEqual(self.state["workers"], {})
+        self.assertEqual(supervisor.load_status(self.config)["tasks"][0]["status"], "blocked")
+
+    def test_no_viable_alternative_owner_churn_block_refuses_notification_until_consumed_then_resumes(
+        self,
+    ) -> None:
+        # Produce the Human/Ops block with the original review-churn policy itself:
+        # Antigravity already failed this epoch, so Claude has no viable alternative.
+        producer_config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {"enabled": True, "reassign_after_reopens": 2, "require_different_account_pool": True},
+                "owner_fallbacks": {"Claude": ["Antigravity"], "Antigravity": ["Claude"]},
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity", "account_pool": "agy"},
+                "claude": {"display_name": "Claude", "provider": "claude", "account_pool": "claude_main"},
+                "codex": {"display_name": "Codex", "provider": "codex", "account_pool": "codex_main"},
+            },
+        }
+        before = {
+            "id": "T-CUSTODY",
+            "title": "Custody",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "in_progress",
+            "task_class": "implementation",
+            "depends_on": [],
+            "review_reopen_count": 4,
+            "review_churn_reassigned_at_count": 2,
+            "review_churn_previous_owner": "Antigravity",
+            "review_churn_last_reassigned_at": "2026-11-07T09:00:00Z",
+            "review_churn_epoch_failed_owners": ["Antigravity"],
+        }
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            self.assertTrue(
+                supervisor.reassign_tasks_after_review_churn(
+                    producer_config, {}, {"tasks": [json.loads(json.dumps(before))]}
+                )
+            )
+        produced = persist.call_args.kwargs
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "review_churn_blocked")
+        self.assertEqual(produced["new_owner"], "Claude")
+        self.assertEqual(produced["new_status"], "blocked")
+        self.assertEqual(produced["new_waiting_for"], "Human/Ops")
+        self.assertNotIn("review_churn_escalated_at_count", produced["task_updates"])
+        self.assertEqual(produced["task_updates"]["review_churn_previous_owner"], "Claude")
+        self.assertEqual(produced["task_updates"]["review_churn_reassigned_at_count"], 4)
+        blocked_task = {
+            **before,
+            **produced["task_updates"],
+            "owner": produced["new_owner"],
+            "reviewer": produced["new_reviewer"],
+            "status": produced["new_status"],
+            "waiting_for": produced["new_waiting_for"],
+            "next": produced["message"],
+        }
+        # The original continuation gate treats this shape as review-churn recovery,
+        # so only its sole consumer may release it.
+        self.assertIsNone(ai_status.continuation_approval_gate_error(blocked_task))
+        blocked_at = blocked_task["review_churn_last_reassigned_at"]
+
+        approval = {
+            "approval_id": "apr-custody-exhausted",
+            "approval_type": "human_ops_continuation",
+            "status": "issued",
+            "task_id": "T-CUSTODY",
+            "task_scope": "T-CUSTODY",
+            "scope": {"task_id": "T-CUSTODY"},
+            "reason": "Human reviewed the exhausted-owner churn and authorized one continuation.",
+            "issued_by": "Human/Ops",
+            "issued_at": "2026-08-30T00:00:00Z",
+            "expires_at": "2099-01-01T00:00:00Z",
+            "nonce": "nonce-custody-exhausted-1",
+            "review_reopen_count": 4,
+            "consumed_at": None,
+            "consumed_by": None,
+            "consumption_reason": None,
+        }
+        refused_cases = {
+            "unconsumed_no_alternative_block": {},
+            "pending_permit_not_yet_consumed": {"human_continuation_approval": dict(approval)},
+            # An earlier epoch was consumed, then the producer fail-closed again later.
+            "consumed_before_a_later_block": {"review_churn_continuation_consumed_at": "2026-11-07T08:00:00Z"},
+            "malformed_block_timestamp": {
+                "review_churn_last_reassigned_at": "not-a-time",
+                "review_churn_continuation_consumed_at": "2099-01-01T00:00:00Z",
+            },
+            "malformed_consumed_timestamp": {"review_churn_continuation_consumed_at": "not-a-time"},
+        }
+        for case_name, overrides in refused_cases.items():
+            with self.subTest(case=case_name):
+                self._assert_blocked_notification_refused_before_launch({**blocked_task, **overrides})
+
+        # The sole existing consumer releases it through its normal transition.
+        self.task = {**json.loads(json.dumps(blocked_task)), "human_continuation_approval": dict(approval)}
+        self._write_board()
+        self.state = {"workers": {}, "queue": {"events": {}}}
+        with (
+            mock.patch.object(ai_status, "merged_orchestrator_config", return_value=self.config),
+            mock.patch.object(
+                supervisor,
+                "commit_canonical_task_transition",
+                side_effect=lambda _cfg, st: Path(self.config["paths"]["status_file"]).write_text(
+                    json.dumps(st), encoding="utf-8"
+                )
+                or True,
+            ),
+        ):
+            self.assertTrue(supervisor.consume_human_continuation_approvals(self.config, self.state))
+        resumed = supervisor.load_status(self.config)["tasks"][0]
+        self.assertEqual(resumed["status"], "todo")
+        self.assertEqual(resumed["human_continuation_approval_history"][-1]["status"], "consumed")
+        self.assertEqual(resumed["review_churn_previous_owner"], "Claude")
+        self.assertEqual(resumed["review_churn_last_reassigned_at"], blocked_at)
+        self.assertGreaterEqual(
+            supervisor._parse_iso_utc(resumed["review_churn_continuation_consumed_at"]),
+            supervisor._parse_iso_utc(blocked_at),
+        )
+
+        # A later ordinary question on the consumed epoch still wakes the owner
+        # through real poll custody, without changing any churn counter/history.
+        churn_fields = {
+            key: value
+            for key, value in resumed.items()
+            if key.startswith("review_") or key.startswith("human_continuation_approval")
+        }
+        worker, record, event_id, launched, provider_report = self._deliver_blocked_owner_notification(
+            **json.loads(json.dumps(churn_fields)),
+            next="Waiting for Human/Ops answer on fixture question after consumed continuation.",
+        )
+        for task_status, heartbeat in (
+            ("blocked", None),
+            ("blocked", supervisor.utc_now()),
+            ("in_progress", None),
+            ("in_progress", supervisor.utc_now()),
+        ):
+            self.task["status"] = task_status
+            if task_status == "in_progress":
+                self.task.pop("waiting_for", None)
+            self._write_board()
+            worker["last_heartbeat_at"] = heartbeat
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+                mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid,
+            ):
+                supervisor.poll_workers(self.config, self.state, provider_report=provider_report)
+            self.assertEqual(worker["status"], "running")
+            self.assertEqual(record["status"], "started")
+            self.assertEqual(record["lease_owner"], worker["run_id"])
+            self.assertEqual(self._queue_ids(), [event_id])
+            terminate_pid.assert_not_called()
+            self.assertIsNone(supervisor.worker_failure_policy._execution_authority_refusal(self.config, worker))
+        self.assertEqual(len(launched), 1)
+        board_task = supervisor.load_status(self.config)["tasks"][0]
+        for field, value in churn_fields.items():
+            self.assertEqual(board_task[field], value)
+
 
 class TestConfigFixtureTests(unittest.TestCase):
     """The fixture must be the committed example, never the machine's config.

@@ -5330,13 +5330,16 @@ def owner_notification_block_reason(
         return f"task status {task_status} is not held by its owner."
     if task_is_human_gate(task):
         return "task is behind a Human gate."
+    owner = str(task.get(config.get("schema", {}).get("assignee_field", "owner")) or "")
     if task_status == "blocked":
-        # A review-churn Human/Ops escalation stays open until the sole consumer,
-        # consume_human_continuation_approvals, advances the existing
-        # review_churn_reassigned_at_count checkpoint past the escalated epoch and
-        # moves the task to todo.  Retained history, consumed permits and past
+        # Both review-churn Human/Ops producers stay open until the sole consumer,
+        # consume_human_continuation_approvals, records its checkpoint and moves
+        # the task to todo.  Retained history, consumed permits and past
         # owner-rotation checkpoints are not a gate; an unconsumed epoch or a
         # pending (not yet consumed) approval record is.
+        #
+        # Threshold escalation records review_churn_escalated_at_count, which the
+        # consumer passes by advancing review_churn_reassigned_at_count.
         try:
             escalated_epoch = max(0, int(task.get("review_churn_escalated_at_count", 0) or 0))
             consumed_checkpoint = max(0, int(task.get("review_churn_reassigned_at_count", 0) or 0))
@@ -5344,11 +5347,27 @@ def owner_notification_block_reason(
             return "task is behind a Human gate."
         if escalated_epoch > consumed_checkpoint or task.get("human_continuation_approval") is not None:
             return "task is behind a Human gate."
+        # The no-viable-alternative fail-closed branch keeps the owner and records
+        # it as review_churn_previous_owner at review_churn_last_reassigned_at (a
+        # completed rotation always names a different previous owner).  The
+        # consumer cannot advance a count past it, so the epoch is open until its
+        # review_churn_continuation_consumed_at is not older than that block.
+        previous_owner = str(task.get("review_churn_previous_owner") or "")
+        if previous_owner and owner and normalize_agent_id(previous_owner) == normalize_agent_id(owner):
+            raw_blocked_at = task.get("review_churn_last_reassigned_at")
+            raw_consumed_at = task.get("review_churn_continuation_consumed_at")
+            blocked_at = _parse_iso_utc(str(raw_blocked_at)) if raw_blocked_at else None
+            consumed_at = _parse_iso_utc(str(raw_consumed_at)) if raw_consumed_at else None
+            if (
+                consumed_at is None
+                or (raw_blocked_at and blocked_at is None)
+                or (blocked_at is not None and consumed_at.astimezone(UTC) < blocked_at.astimezone(UTC))
+            ):
+                return "task is behind a Human gate."
     if task.get("non_dispatchable"):
         return "task is non_dispatchable."
     if task_closeout_is_frozen(config, task):
         return "task approval is frozen."
-    owner = str(task.get(config.get("schema", {}).get("assignee_field", "owner")) or "")
     if not owner or is_human_gate_agent(owner):
         return "task has no agent owner."
     agent = agent_config_for(config, owner)
