@@ -910,6 +910,24 @@
                       "minLength": 1
                     }
                   },
+                  "task_ids": {
+                    "description": "Restrict the rule to these literal task ids. There is no wildcard or prefix form. A matching rule narrows what the other rules allow for that task and never widens it; every other task keeps its existing answer. Omit the key to leave the rule unselected by task.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+                    }
+                  },
+                  "agent_ids": {
+                    "description": "Restrict the role to these exact registered logical agent ids wherever the rule matches; an unlisted agent is denied even on an allowed provider. Not a display name, provider, account pool, physical dispatch slot or source alias. Applies in addition to providers, not instead of them.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9]+(?:_[a-z0-9]+)*$"
+                    }
+                  },
                   "providers": {
                     "description": "Provider or adapter ids, not agent display names. Every id must resolve in this configuration. Two rules matching the same role and task_class intersect, so a lane must satisfy both.",
                     "type": "array",

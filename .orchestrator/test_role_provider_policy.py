@@ -3242,3 +3242,728 @@ class HistoricalSourceAliasTests(unittest.TestCase):
         assert config["paths"]["status_file"] == str(_OWNED_PATHS["status_file"])
         assert queue.read_text(encoding="utf-8") == ""
         assert queue.parent == _SOURCE_GIT["root"].parent
+
+
+# --------------------------------------------------------------------------- #
+# Rules scoped to named tasks and exact logical actors
+# --------------------------------------------------------------------------- #
+
+TARGET_TASK_ID = "ODP-SCOPED-TARGET"
+UNRELATED_TASK_ID = "ODP-SCOPED-UNRELATED"
+
+#: The class-free fleet rules that must keep their meaning beside targeted ones.
+_FLEET_RULES: list[dict[str, Any]] = [
+    {"roles": ["reviewer"], "providers": ["codex"]},
+    {"roles": ["owner", "helper"], "providers": ["antigravity", "claude", "pi"]},
+]
+_TARGET_CLAUDE_AND_CODEX: list[dict[str, Any]] = [
+    {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["claude"], "providers": ["claude"]},
+    {"roles": ["reviewer"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["codex"], "providers": ["codex"]},
+]
+
+
+def _scoped_config(*rules: dict[str, Any], unclassified: Any = "allow") -> dict[str, Any]:
+    """The fleet with previously authorized Pi and a third Antigravity lane."""
+    config = build_config(
+        policy={
+            "enabled": True,
+            "rules": [*_FLEET_RULES, *rules],
+            "unclassified_owned_work": unclassified,
+        }
+    )
+    config["providers"]["pi"] = {"delivery_mode": "pi"}
+    config["account_pools"]["pi_main"] = {"enabled": True, "max_concurrent": 1}
+    config["agents"]["pi"] = {
+        "display_name": "Pi",
+        "provider": "pi",
+        "adapter": "pi",
+        "account_pool": "pi_main",
+    }
+    config["agents"]["antigravity3"] = {
+        "display_name": "Antigravity3",
+        "provider": "antigravity",
+        "adapter": "antigravity",
+        "account_pool": "agy_main",
+    }
+    return config
+
+
+def _scoped_task(task_id: str = TARGET_TASK_ID, **fields: Any) -> dict[str, Any]:
+    task: dict[str, Any] = {
+        "id": task_id,
+        "status": "todo",
+        "task_class": "implementation",
+        "priority": "P2",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [],
+    }
+    task.update(fields)
+    return task
+
+
+def _scoped_cli_patches(ai_status: Any, config: dict[str, Any]) -> list[Any]:
+    """The canonical CLI's patches with every actor of `_scoped_config` on the roster."""
+    return [
+        mock.patch.dict("os.environ", {"AI_NAME": "Codex"}, clear=False),
+        mock.patch.object(
+            ai_status,
+            "configured_agent_names",
+            return_value={"Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Pi"},
+        ),
+        mock.patch.object(ai_status, "merged_orchestrator_config", return_value=config),
+        mock.patch.object(ai_status, "append_log"),
+    ]
+
+
+class TaskScopedRoleProviderTests(unittest.TestCase):
+    """`task_ids` selects literal tasks and `agent_ids` restricts their exact actors.
+
+    The contact points are the original ones: the shared predicate, the queue
+    and its pre-launch recheck, owner failure, review churn, reviewer failover
+    and the canonical CLI. Nothing here asks a matcher in isolation whether a
+    rule applies; the evidence for a scoped rule is what those paths then do.
+    """
+
+    def test_the_selected_claude_is_not_interchangeable_with_claude2(self) -> None:
+        config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+        target = _scoped_task()
+
+        assert worker_failure_policy.agent_can_take_task(config, "Claude", target, role=ROLE_OWNER)
+        assert not worker_failure_policy.agent_can_take_task(config, "Claude2", target, role=ROLE_OWNER)
+        reason = str(role_provider_block_reason(config, "Claude2", role=ROLE_OWNER, task=target))
+        assert TARGET_TASK_ID in reason and "claude2" in reason
+        # The two share provider and pool, so only the actor constraint can tell
+        # them apart; the same fact also has to survive the common display name.
+        assert worker_failure_policy.agent_provider_identity_ids(
+            config, "Claude"
+        ) == worker_failure_policy.agent_provider_identity_ids(config, "Claude2")
+        assert role_provider_block_reason(config, "claude", role=ROLE_OWNER, task=target) is None
+
+        unrelated = _scoped_task(UNRELATED_TASK_ID)
+        assert worker_failure_policy.agent_can_take_task(config, "Claude2", unrelated, role=ROLE_OWNER)
+
+    def test_the_selected_codex_is_not_interchangeable_with_codex2(self) -> None:
+        for selected, refused in (("Codex", "Codex2"), ("Codex2", "Codex")):
+            with self.subTest(selected=selected):
+                config = _scoped_config(
+                    {
+                        "roles": ["reviewer"],
+                        "task_ids": [TARGET_TASK_ID],
+                        "agent_ids": [selected.lower()],
+                        "providers": ["codex"],
+                    }
+                )
+                target = _scoped_task(status="review")
+                assert worker_failure_policy.agent_can_take_task(config, selected, target, role=ROLE_REVIEWER)
+                assert not worker_failure_policy.agent_can_take_task(config, refused, target, role=ROLE_REVIEWER)
+                assert worker_failure_policy.agent_can_take_task(
+                    config, refused, _scoped_task(UNRELATED_TASK_ID, status="review"), role=ROLE_REVIEWER
+                )
+
+        # The same provider and the same pool: an alias of one account is still
+        # a different logical actor when the rule names the actor.
+        config = _pool_alias_config()
+        config["ready_dispatcher"]["role_provider_policy"] = {
+            "enabled": True,
+            "rules": [
+                {
+                    "roles": ["reviewer"],
+                    "task_ids": [TARGET_TASK_ID],
+                    "agent_ids": ["codex"],
+                    "providers": ["codex"],
+                }
+            ],
+            "unclassified_owned_work": "allow",
+        }
+        assert supervisor.agent_account_pool_id(config, "Codex") == supervisor.agent_account_pool_id(config, "Codex3")
+        target = _scoped_task(status="review")
+        assert worker_failure_policy.agent_can_take_task(config, "Codex", target, role=ROLE_REVIEWER)
+        assert not worker_failure_policy.agent_can_take_task(config, "Codex3", target, role=ROLE_REVIEWER)
+
+    def test_actor_and_provider_restrictions_are_both_kept(self) -> None:
+        """Being listed does not excuse the provider, nor the provider the listing."""
+        config = _scoped_config(
+            {
+                "roles": ["owner"],
+                "task_ids": [TARGET_TASK_ID],
+                "agent_ids": ["claude", "antigravity"],
+                "providers": ["claude"],
+            }
+        )
+        target = _scoped_task()
+        assert worker_failure_policy.agent_can_take_task(config, "Claude", target, role=ROLE_OWNER)
+        # Listed, but its provider is outside the targeted intersection.
+        assert "is not permitted" in str(role_provider_block_reason(config, "Antigravity", role=ROLE_OWNER, task=target))
+        # Its provider is inside, but the actor is not listed.
+        assert not worker_failure_policy.agent_can_take_task(config, "Claude2", target, role=ROLE_OWNER)
+
+        narrowed = _scoped_config(
+            {
+                "roles": ["owner"],
+                "task_ids": [TARGET_TASK_ID],
+                "agent_ids": ["claude", "claude2"],
+                "providers": ["claude"],
+            },
+            {
+                "roles": ["owner"],
+                "task_ids": [TARGET_TASK_ID],
+                "agent_ids": ["claude2"],
+                "providers": ["claude", "antigravity"],
+            },
+        )
+        assert not worker_failure_policy.agent_can_take_task(narrowed, "Claude", target, role=ROLE_OWNER)
+        assert worker_failure_policy.agent_can_take_task(narrowed, "Claude2", target, role=ROLE_OWNER)
+
+        # A targeted rule narrows the fleet rule; it cannot widen it to a provider
+        # the role is otherwise closed to.
+        widening = _scoped_config(
+            {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["codex"], "providers": ["codex"]}
+        )
+        assert not worker_failure_policy.agent_can_take_task(widening, "Codex", target, role=ROLE_OWNER)
+
+        # Disjoint listings are a rule nobody can satisfy, and it stays one.
+        disjoint = _scoped_config(
+            {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["claude"], "providers": ["claude"]},
+            {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["claude2"], "providers": ["claude"]},
+        )
+        for agent in ("Claude", "Claude2"):
+            assert not worker_failure_policy.agent_can_take_task(disjoint, agent, target, role=ROLE_OWNER)
+
+    def test_task_and_class_selectors_must_both_match(self) -> None:
+        config = _scoped_config(
+            {
+                "roles": ["owner"],
+                "task_ids": [TARGET_TASK_ID],
+                "task_classes": ["remediation"],
+                "agent_ids": ["claude"],
+                "providers": ["claude"],
+            }
+        )
+        assert worker_failure_policy.agent_can_take_task(config, "Pi", _scoped_task(), role=ROLE_OWNER)
+        assert not worker_failure_policy.agent_can_take_task(
+            config, "Pi", _scoped_task(task_class="remediation"), role=ROLE_OWNER
+        )
+        assert worker_failure_policy.agent_can_take_task(
+            config, "Pi", _scoped_task(UNRELATED_TASK_ID, task_class="remediation"), role=ROLE_OWNER
+        )
+
+    def test_a_rule_without_task_ids_can_constrain_actors_on_its_own_scope(self) -> None:
+        """The two fields are independent: `agent_ids` needs no `task_ids`."""
+        config = _scoped_config(
+            {"roles": ["owner"], "task_classes": ["remediation"], "agent_ids": ["claude"], "providers": ["claude"]}
+        )
+        remediation = _scoped_task(UNRELATED_TASK_ID, task_class="remediation")
+        assert worker_failure_policy.agent_can_take_task(config, "Claude", remediation, role=ROLE_OWNER)
+        assert not worker_failure_policy.agent_can_take_task(config, "Claude2", remediation, role=ROLE_OWNER)
+        assert worker_failure_policy.agent_can_take_task(
+            config, "Claude2", _scoped_task(UNRELATED_TASK_ID), role=ROLE_OWNER
+        )
+
+    def test_unrelated_previously_authorized_work_keeps_its_exact_answer(self) -> None:
+        """No implicit Claude-only rule: only the named task's eligibility moves."""
+        fleet = _scoped_config()
+        scoped = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+        unrelated = [
+            _scoped_task(UNRELATED_TASK_ID),
+            _scoped_task(UNRELATED_TASK_ID, task_class="remediation"),
+            _scoped_task(UNRELATED_TASK_ID, task_class=""),
+            _scoped_task(f"{TARGET_TASK_ID}-2"),
+            _scoped_task(TARGET_TASK_ID.lower()),
+        ]
+        agents = ("Pi", "Antigravity", "Antigravity2", "Antigravity3", "Claude", "Claude2", "Codex", "Codex2")
+        for task in unrelated:
+            for agent in agents:
+                for role in (ROLE_OWNER, ROLE_REVIEWER, ROLE_HELPER):
+                    with self.subTest(task=task["id"], agent=agent, role=role):
+                        assert role_provider_block_reason(scoped, agent, role=role, task=task) == (
+                            role_provider_block_reason(fleet, agent, role=role, task=task)
+                        )
+        for agent in ("Pi", "Antigravity", "Antigravity3", "Claude2"):
+            assert worker_failure_policy.agent_can_take_task(scoped, agent, unrelated[0], role=ROLE_OWNER)
+        # The role the rule does not name is not narrowed either.
+        target = _scoped_task()
+        assert worker_failure_policy.agent_can_take_task(scoped, "Pi", target, role=ROLE_HELPER)
+
+    def test_malformed_or_unregistered_selectors_fail_closed(self) -> None:
+        def targeted(**fields: Any) -> dict[str, Any]:
+            return {"roles": ["owner"], "providers": ["claude"], "task_ids": [TARGET_TASK_ID], **fields}
+
+        cases: dict[str, tuple[dict[str, Any], str]] = {
+            "empty task_ids": (targeted(task_ids=[]), "task_ids"),
+            "null task_ids": (targeted(task_ids=None), "task_ids"),
+            "bare string task_ids": (targeted(task_ids=TARGET_TASK_ID), "task_ids"),
+            "non-string task id": (targeted(task_ids=[TARGET_TASK_ID, 7]), "task_ids"),
+            "blank task id": (targeted(task_ids=["  "]), "task_ids"),
+            "padded task id": (targeted(task_ids=[f" {TARGET_TASK_ID}"]), "task_ids"),
+            "wildcard task id": (targeted(task_ids=["*"]), "task_ids"),
+            "prefix task id": (targeted(task_ids=["ODP-*"]), "task_ids"),
+            "regex task id": (targeted(task_ids=["ODP-.+"]), "task_ids"),
+            "empty agent_ids": (targeted(agent_ids=[]), "agent_ids"),
+            "null agent_ids": (targeted(agent_ids=None), "agent_ids"),
+            "bare string agent_ids": (targeted(agent_ids="claude"), "agent_ids"),
+            "non-string agent id": (targeted(agent_ids=["claude", 7]), "agent_ids"),
+            "blank agent id": (targeted(agent_ids=[" "]), "agent_ids"),
+            "unknown agent id": (targeted(agent_ids=["claude9"]), "claude9"),
+            "display name, not id": (targeted(agent_ids=["Claude"]), "Claude"),
+            "non-canonical spelling": (targeted(agent_ids=["CLAUDE"]), "CLAUDE"),
+            "padded agent id": (targeted(agent_ids=[" claude"]), "agent_ids"),
+            "inferred family": (targeted(agent_ids=["claude*"]), "claude*"),
+            "provider, not agent": (targeted(agent_ids=["claude_cli"]), "claude_cli"),
+            "account pool, not agent": (targeted(agent_ids=["claude_main"]), "claude_main"),
+            "physical slot": (targeted(agent_ids=["codex_bjoe_slot_1"]), "codex_bjoe_slot_1"),
+            "source alias": (targeted(agent_ids=["Codex foreground"]), "Codex foreground"),
+            "normalized source alias": (targeted(agent_ids=["codex_foreground"]), "codex_foreground"),
+        }
+        for name, (rule, fragment) in cases.items():
+            with self.subTest(name):
+                config = _scoped_config(rule)
+                config["agents"]["codex"]["source_aliases"] = ["Codex foreground"]
+                error = str(role_provider_policy_error(config))
+                assert fragment in error, error
+                # An unreadable rule denies every lane, on every task.
+                for task in (_scoped_task(), _scoped_task(UNRELATED_TASK_ID)):
+                    for agent in ("Claude", "Pi"):
+                        assert "malformed" in str(role_provider_block_reason(config, agent, role=ROLE_OWNER, task=task))
+                        assert not worker_failure_policy.agent_can_take_task(config, agent, task, role=ROLE_OWNER)
+
+    def test_an_actor_whose_id_or_display_name_collides_is_not_nameable(self) -> None:
+        rule = {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["claude"], "providers": ["claude"]}
+
+        id_collides = _scoped_config(rule)
+        id_collides["agents"]["writer"] = {
+            "display_name": "claude",
+            "provider": "claude",
+            "adapter": "claude_cli",
+            "account_pool": "claude_main",
+        }
+        assert "claude" in str(role_provider_policy_error(id_collides))
+
+        display_collides = _scoped_config(rule)
+        display_collides["agents"]["claude2"]["display_name"] = "Claude"
+        assert "claude" in str(role_provider_policy_error(display_collides))
+
+        for config in (id_collides, display_collides):
+            assert not worker_failure_policy.agent_can_take_task(config, "Claude", _scoped_task(), role=ROLE_OWNER)
+
+        # An unrelated lane may use its own id even with that collision elsewhere.
+        elsewhere = _scoped_config(
+            {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["pi"], "providers": ["pi"]}
+        )
+        elsewhere["agents"]["writer"] = dict(id_collides["agents"]["writer"])
+        assert role_provider_policy_error(elsewhere) is None
+        assert worker_failure_policy.agent_can_take_task(elsewhere, "Pi", _scoped_task(), role=ROLE_OWNER)
+
+    def test_the_normal_loader_refuses_a_malformed_shape_and_accepts_the_declared_one(self) -> None:
+        import common
+
+        def load(rule: dict[str, Any]) -> dict[str, Any]:
+            path = _OWNED_PATHS["status_file"].parent / "scoped-config.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "ready_dispatcher": {
+                            "role_provider_policy": {
+                                "enabled": True,
+                                "rules": [rule],
+                                "unclassified_owned_work": "allow",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return common.load_config(path)
+
+        valid = {"roles": ["owner"], "providers": ["claude"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["claude"]}
+        loaded = load(valid)["ready_dispatcher"]["role_provider_policy"]["rules"][0]
+        assert loaded["task_ids"] == [TARGET_TASK_ID]
+        assert loaded["agent_ids"] == ["claude"]
+
+        for name, change in {
+            "empty task_ids": {"task_ids": []},
+            "bare task_ids": {"task_ids": TARGET_TASK_ID},
+            "wildcard task id": {"task_ids": ["ODP-*"]},
+            "empty agent_ids": {"agent_ids": []},
+            "bare agent_ids": {"agent_ids": "claude"},
+            "display-shaped agent id": {"agent_ids": ["Claude"]},
+            "misspelled field": {"task_id": [TARGET_TASK_ID]},
+        }.items():
+            with self.subTest(name), pytest.raises(common.ConfigError):
+                load({**valid, **change})
+
+    def test_no_task_context_is_not_a_grant_for_a_known_task(self) -> None:
+        config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+
+        # A generic question about a role cannot evaluate a named task, so it is
+        # answered from the role-wide rules exactly as a class-scoped one is.
+        assert worker_failure_policy.agent_can_take_task(config, "Claude2", None, role=ROLE_OWNER)
+        assert not worker_failure_policy.agent_can_take_task(config, "Codex", None, role=ROLE_OWNER)
+        assert role_provider_block_reason(config, "Claude2", role=ROLE_OWNER, task_class="implementation") is None
+
+        # ...while a role-wide actor constraint has no task to wait for.
+        role_wide = _scoped_config({"roles": ["owner"], "agent_ids": ["claude"], "providers": ["claude"]})
+        assert not worker_failure_policy.agent_can_take_task(role_wide, "Claude2", None, role=ROLE_OWNER)
+
+        # A real task record without its id is not "some other task", and handing
+        # out new authority with no task at all is not a generic question.
+        for agent in ("Claude", "Claude2", "Pi"):
+            idless = {"status": "todo", "task_class": "implementation"}
+            for task in (idless, {**idless, "id": ""}, {**idless, "id": 7}):
+                reason = str(role_provider_block_reason(config, agent, role=ROLE_OWNER, task=task))
+                assert "no task id" in reason
+                assert not worker_failure_policy.agent_can_take_task(config, agent, task, role=ROLE_OWNER)
+            assert "no task id" in str(
+                role_provider_block_reason(config, agent, role=ROLE_OWNER, grants_new_authority=True)
+            )
+
+        # Only a rule selecting by task makes the id matter: the fleet with none
+        # reads an id-less record, and a grant with no task, exactly as before.
+        legacy = _scoped_config()
+        idless = {"status": "todo", "task_class": "implementation"}
+        assert role_provider_policy_error(legacy) is None
+        assert role_provider_block_reason(legacy, "Claude", role=ROLE_OWNER, task=idless) is None
+        assert role_provider_block_reason(legacy, "Claude2", role=ROLE_OWNER, grants_new_authority=True) is None
+        # A rule for another role does not reach this one.
+        assert role_provider_block_reason(
+            _scoped_config(_TARGET_CLAUDE_AND_CODEX[1]), "Claude2", role=ROLE_OWNER, task=idless
+        ) is None
+
+    def test_the_unclassified_disposition_is_not_lifted_by_a_targeted_rule(self) -> None:
+        rule = {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["claude"], "providers": ["claude"]}
+        unclassified_target = _scoped_task(task_class="")
+
+        def class_scoped(disposition: Any) -> dict[str, Any]:
+            config = _scoped_config(rule, unclassified=disposition)
+            config["ready_dispatcher"]["role_provider_policy"]["rules"] = [
+                {"roles": ["reviewer"], "providers": ["codex"]},
+                {"roles": ["owner"], "task_classes": ["implementation"], "providers": ["claude"]},
+                rule,
+            ]
+            return config
+
+        assert role_provider_block_reason(class_scoped("allow"), "Claude", role=ROLE_OWNER, task=unclassified_target) is None
+        assert role_provider_block_reason(class_scoped("allow"), "Pi", role=ROLE_OWNER, task=unclassified_target)
+        assert role_provider_block_reason(class_scoped("deny"), "Claude", role=ROLE_OWNER, task=unclassified_target)
+        assert role_provider_block_reason(class_scoped(["pi"]), "Claude", role=ROLE_OWNER, task=unclassified_target)
+        assert role_provider_block_reason(class_scoped(["claude"]), "Claude", role=ROLE_OWNER, task=unclassified_target) is None
+        # The disposition still answers the same question for unrelated work.
+        unrelated = _scoped_task(UNRELATED_TASK_ID, task_class="")
+        assert role_provider_block_reason(class_scoped("allow"), "Pi", role=ROLE_OWNER, task=unrelated) is None
+        assert role_provider_block_reason(class_scoped("deny"), "Pi", role=ROLE_OWNER, task=unrelated)
+        assert role_provider_block_reason(class_scoped(["pi"]), "Pi", role=ROLE_OWNER, task=unrelated) is None
+
+    def test_a_frozen_closeout_keeps_its_recorded_actors_and_grants_nothing_new(self) -> None:
+        config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+        frozen = _scoped_task(
+            status="review_approved", owner="Claude2", reviewer="Codex2", approved_head="a" * 40
+        )
+        before = json.loads(json.dumps(frozen))
+
+        # What the record already says is history, whoever the rule names today.
+        assert role_provider_block_reason(config, "Claude2", role=ROLE_OWNER, task=frozen) is None
+        assert role_provider_block_reason(config, "Codex2", role=ROLE_REVIEWER, task=frozen) is None
+        assert worker_failure_policy.agent_can_take_task(config, "Claude2", frozen, role=ROLE_OWNER)
+        event = {
+            "event_id": "evt-finalize",
+            "task_id": TARGET_TASK_ID,
+            "target_agent": "claude2",
+            "target_display_name": "Claude2",
+            "reason": "owned_finalize_dispatch",
+        }
+        message = dispatch_engine.stale_dispatch_skip_message(config, event, {TARGET_TASK_ID: frozen})
+        assert message is None or "role/provider policy" not in message
+
+        # Anything it would newly hand out is the rule's to answer.
+        for agent, role in (("Claude2", ROLE_OWNER), ("Codex2", ROLE_REVIEWER)):
+            assert role_provider_block_reason(config, agent, role=role, task=frozen, grants_new_authority=True)
+        assert role_provider_block_reason(config, "Pi", role=ROLE_OWNER, task=frozen)
+        assert role_provider_block_reason(config, "Claude", role=ROLE_OWNER, task=frozen, grants_new_authority=True) is None
+        assert frozen == before
+
+    def _ready_events(self, config: dict[str, Any], tasks: list[dict[str, Any]], agents: list[str]) -> list[dict[str, Any]]:
+        queued: list[dict[str, Any]] = []
+        config.setdefault("worker_runtime", {"heartbeat_stale_seconds": 300, "heartbeat_grace_seconds": 60})
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(
+                supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued.append(evt) or True
+            ),
+        ):
+            supervisor.dispatch_ready_tasks(config, {"workers": {}, "queue": {"events": {}}}, agent_ids_override=agents)
+        return queued
+
+    def test_the_ready_queue_dispatches_only_the_named_actor(self) -> None:
+        config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+
+        refused = self._ready_events(config, [_scoped_task(owner="Claude2")], ["claude2"])
+        assert not refused
+
+        queued = self._ready_events(config, [_scoped_task(owner="Claude")], ["claude"])
+        assert [(event["task_id"], event["target_agent"]) for event in queued] == [(TARGET_TASK_ID, "Claude")]
+
+        unrelated = self._ready_events(
+            _scoped_config(*_TARGET_CLAUDE_AND_CODEX), [_scoped_task(UNRELATED_TASK_ID, owner="Claude2")], ["claude2"]
+        )
+        assert [(event["task_id"], event["target_agent"]) for event in unrelated] == [(UNRELATED_TASK_ID, "Claude2")]
+
+    def test_a_queued_wake_is_rechecked_before_launch(self) -> None:
+        config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+
+        def wake(task_id: str, target: str) -> dict[str, Any]:
+            return {
+                "event_id": "evt-scoped",
+                "task_id": task_id,
+                "target_agent": target.lower(),
+                "target_display_name": target,
+                "reason": REASON_OWNED_READY,
+            }
+
+        def policy_message(task: dict[str, Any], target: str) -> str:
+            event = wake(task["id"], target)
+            return str(dispatch_engine.stale_dispatch_skip_message(config, event, {task["id"]: task}))
+
+        assert "role/provider policy no longer permits" in policy_message(_scoped_task(owner="Claude2"), "Claude2")
+        assert "role/provider policy" not in policy_message(_scoped_task(owner="Claude"), "Claude")
+        assert "role/provider policy" not in policy_message(_scoped_task(UNRELATED_TASK_ID, owner="Claude2"), "Claude2")
+
+    def test_a_scoped_helper_role_narrows_helper_claims(self) -> None:
+        config = _scoped_config(
+            {"roles": ["helper"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["antigravity"], "providers": ["antigravity"]}
+        )
+        assert worker_failure_policy.agent_can_take_task(config, "Antigravity", _scoped_task(), role=ROLE_HELPER)
+        assert not worker_failure_policy.agent_can_take_task(config, "Antigravity2", _scoped_task(), role=ROLE_HELPER)
+        assert worker_failure_policy.agent_can_take_task(
+            config, "Antigravity2", _scoped_task(UNRELATED_TASK_ID), role=ROLE_HELPER
+        )
+
+    def _owner_failure(
+        self, config: dict[str, Any], task: dict[str, Any], agent_id: str = "claude"
+    ) -> tuple[str | None, Any]:
+        worker = {"task_id": task["id"], "agent_id": agent_id, "retry_count": 2}
+        with (
+            mock.patch("supervisor.load_status", return_value={"tasks": [task]}),
+            mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+            mock.patch("supervisor.write_activity_log"),
+        ):
+            reassigned = worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                config, {}, worker, "terminal error", terminal=True
+            )
+        return reassigned, persist
+
+    def test_owner_failure_cannot_escape_the_named_actor(self) -> None:
+        restricted = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+        reassigned, persist = self._owner_failure(restricted, _scoped_task())
+        assert reassigned is None
+        persist.assert_not_called()
+
+        # The per-actor mapping knows nothing about tasks, and an empty entry
+        # falls back to the whole fleet; neither may reach past the rule.
+        for mapping in ({"Claude": []}, {"Claude": ["Claude2", "Pi", "Antigravity"]}):
+            config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+            config["worker_reassignment"] = {"owner_fallbacks": mapping}
+            reassigned, persist = self._owner_failure(config, _scoped_task())
+            assert reassigned is None, mapping
+            persist.assert_not_called()
+
+        # With a second named actor the same failure moves there, not to the
+        # same-family lane the unscoped search would have preferred.
+        moved = _scoped_config(
+            {
+                "roles": ["owner"],
+                "task_ids": [TARGET_TASK_ID],
+                "agent_ids": ["claude", "antigravity3"],
+                "providers": ["claude", "antigravity"],
+            }
+        )
+        reassigned, persist = self._owner_failure(moved, _scoped_task())
+        assert reassigned == "Antigravity3"
+        assert persist.call_args.kwargs["new_owner"] == "Antigravity3"
+        assert persist.call_args.kwargs["new_reviewer"] == "Codex"
+
+        # The candidates still come from the per-actor mapping, which the policy
+        # filters and does not extend: a named actor outside it is simply not
+        # reached, so the task stays put instead of moving to anyone else.
+        unmapped = _scoped_config(
+            {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["claude", "pi"], "providers": ["claude", "pi"]}
+        )
+        assert "Pi" not in supervisor.get_agent_reassignment_candidates(
+            unmapped, "Claude", role=ROLE_OWNER, task=_scoped_task()
+        )
+        reassigned, persist = self._owner_failure(unmapped, _scoped_task())
+        assert reassigned is None
+        persist.assert_not_called()
+        unmapped["worker_reassignment"] = {"owner_fallbacks": {"Claude": ["Claude2", "Pi"]}}
+        reassigned, _persist = self._owner_failure(unmapped, _scoped_task())
+        assert reassigned == "Pi"
+
+        # Unrelated work still reassigns through the unchanged search.
+        reassigned, _persist = self._owner_failure(
+            _scoped_config(*_TARGET_CLAUDE_AND_CODEX), _scoped_task(UNRELATED_TASK_ID)
+        )
+        assert reassigned == "Claude2"
+
+    def test_reviewer_failure_and_failover_cannot_escape_the_named_actor(self) -> None:
+        def submitted(config: dict[str, Any], task_id: str) -> dict[str, Any]:
+            return _scoped_task(
+                task_id,
+                status="review",
+                review_submission=_source_submission(config, task_id, "Claude", submitted_by="Claude"),
+            )
+
+        config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+        reassigned, persist = self._owner_failure(config, submitted(config, TARGET_TASK_ID), agent_id="codex")
+        assert reassigned is None
+        persist.assert_not_called()
+        reassigned, persist = self._owner_failure(config, submitted(config, UNRELATED_TASK_ID), agent_id="codex")
+        assert reassigned == "Codex2"
+        assert persist.call_args.kwargs["new_reviewer"] == "Codex2"
+
+        config["account_pools"]["codex_bjoe"]["state"] = "paused"
+        state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+        with mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist:
+            assert dispatch_engine.reassign_unavailable_reviewers(
+                config, state, {"tasks": [submitted(config, TARGET_TASK_ID)]}
+            ) is False
+        persist.assert_not_called()
+        with (
+            mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+            mock.patch("supervisor.write_activity_log"),
+        ):
+            assert dispatch_engine.reassign_unavailable_reviewers(
+                config, state, {"tasks": [submitted(config, UNRELATED_TASK_ID)]}
+            ) is True
+        assert persist.call_args.kwargs["new_reviewer"] == "Codex2"
+
+    def test_review_churn_rotates_only_inside_the_named_actors(self) -> None:
+        def churn(config: dict[str, Any], task: dict[str, Any]) -> Any:
+            with (
+                mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                supervisor.reassign_tasks_after_review_churn(config, {}, {"tasks": [task]})
+            return persist
+
+        churning = {"status": "in_progress", "review_reopen_count": 2}
+        persist = churn(_scoped_config(*_TARGET_CLAUDE_AND_CODEX), _scoped_task(**churning))
+        # Nobody else is named, so the rotation holds the owner and fails closed.
+        assert persist.call_args.kwargs["new_owner"] == "Claude"
+        assert persist.call_args.kwargs["new_status"] == "blocked"
+
+        persist = churn(
+            _scoped_config(
+                {
+                    "roles": ["owner"],
+                    "task_ids": [TARGET_TASK_ID],
+                    "agent_ids": ["claude", "antigravity3"],
+                    "providers": ["claude", "antigravity"],
+                }
+            ),
+            _scoped_task(**churning),
+        )
+        assert persist.call_args.kwargs["new_owner"] == "Antigravity3"
+        assert persist.call_args.kwargs.get("new_status") != "blocked"
+
+        persist = churn(_scoped_config(*_TARGET_CLAUDE_AND_CODEX), _scoped_task(UNRELATED_TASK_ID, **churning))
+        assert persist.call_args.kwargs["new_owner"] not in {"Claude", "Claude2"}
+        assert persist.call_args.kwargs.get("new_status") != "blocked"
+
+    def test_the_repair_pass_replaces_an_unnamed_actor_on_the_target_only(self) -> None:
+        config = _scoped_config(
+            {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["antigravity3"], "providers": ["antigravity"]}
+        )
+        target = _scoped_task()
+        assert "not eligible" in str(
+            supervisor.task_actor_assignment_block_reason(config, {}, target, "Claude", role=ROLE_OWNER)
+        )
+        assert (
+            supervisor.task_actor_assignment_block_reason(
+                config, {}, _scoped_task(UNRELATED_TASK_ID), "Claude", role=ROLE_OWNER
+            )
+            is None
+        )
+        assert worker_failure_policy.first_viable_agent(
+            config,
+            supervisor.get_agent_reassignment_candidates(config, "Claude", role=ROLE_OWNER, task=target),
+            {"Claude", "Codex"},
+            task=target,
+            balance_load=False,
+            role=ROLE_OWNER,
+        ) == "Antigravity3"
+
+    def test_assign_binds_the_rule_to_its_actual_task_argument(self) -> None:
+        import ai_status
+
+        def assign(task_id: str, owner: str, reviewer: str, **env: str) -> dict[str, Any]:
+            state = _cli_state()
+            config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+            with mock.patch.dict("os.environ", {"TASK_CLASS": "implementation", **env}, clear=False):
+                for patch in _scoped_cli_patches(ai_status, config):
+                    patch.start()
+                try:
+                    ai_status.command_assign(state, [task_id, owner, reviewer, "scoped"])
+                finally:
+                    mock.patch.stopall()
+            return state
+
+        # A brand-new task has no stored record to read an id from.
+        with pytest.raises(SystemExit) as excinfo:
+            assign(TARGET_TASK_ID, "Claude2", "Codex")
+        assert "owner Claude2" in str(excinfo.value)
+        with pytest.raises(SystemExit) as excinfo:
+            assign(TARGET_TASK_ID, "Claude", "Codex2")
+        assert "reviewer Codex2" in str(excinfo.value)
+
+        state = assign(TARGET_TASK_ID, "Claude", "Codex")
+        assert [task["id"] for task in state["tasks"]] == [TARGET_TASK_ID]
+        state = assign(UNRELATED_TASK_ID, "Claude2", "Codex2")
+        assert [task["id"] for task in state["tasks"]] == [UNRELATED_TASK_ID]
+
+    def test_assign_on_a_frozen_target_keeps_history_and_judges_new_grants(self) -> None:
+        import ai_status
+
+        config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+        frozen = _scoped_task(status="review_approved", owner="Antigravity", reviewer="Codex2", approved_head="a" * 40)
+
+        def assign(owner: str, reviewer: str) -> dict[str, Any]:
+            state = _cli_state()
+            state["tasks"] = [dict(frozen)]
+            for patch in _scoped_cli_patches(ai_status, config):
+                patch.start()
+            try:
+                ai_status.command_assign(state, [TARGET_TASK_ID, owner, reviewer])
+            finally:
+                mock.patch.stopall()
+            return state
+
+        recorded = assign("Antigravity", "Codex2")
+        assert recorded["tasks"][0]["owner"] == "Antigravity"
+        assert recorded["tasks"][0]["reviewer"] == "Codex2"
+        # The provider would be fine; it is the named actor this grant is not.
+        with pytest.raises(SystemExit) as excinfo:
+            assign("Claude2", "Codex2")
+        assert "owner Claude2" in str(excinfo.value)
+        assert assign("Claude", "Codex2")["tasks"][0]["owner"] == "Claude"
+
+    def test_approve_is_a_new_signature_the_scoped_rule_answers(self) -> None:
+        import ai_status
+
+        config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+        state = _cli_state()
+        state["tasks"] = [_scoped_task(status="review", reviewer="Codex2", approved_head="a" * 40)]
+        with (
+            mock.patch.dict("os.environ", {"AI_NAME": "Codex2"}, clear=False),
+            mock.patch.object(ai_status, "configured_agent_names", return_value={"Claude", "Codex2"}),
+            mock.patch.object(ai_status, "merged_orchestrator_config", return_value=config),
+            mock.patch.object(
+                ai_status, "resolve_task_sha", side_effect=AssertionError("must refuse before reading the head")
+            ),
+            pytest.raises(SystemExit) as excinfo,
+        ):
+            ai_status.command_approve(state, [TARGET_TASK_ID, "looks good"])
+        assert "role/provider" in str(excinfo.value)
+        assert state["tasks"][0]["status"] == "review"
