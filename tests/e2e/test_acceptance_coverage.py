@@ -947,7 +947,7 @@ def test_common_base_merge_rejects_side_branch_and_merge_product_mutations(
     subprocess.run(
         ["git", "merge", "--no-commit", "--no-ff", second_branch],
         cwd=origin,
-        check=True,
+        check=mutation_kind != "non-source-side-edit",
     )
     if mutation_kind == "non-source-side-edit":
         # Even if the merge resolves product.py to the exact tested v1 tree,
