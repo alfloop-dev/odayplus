@@ -832,6 +832,11 @@ def _status_paths(root: Path) -> list[str]:
     return sorted(set(paths))
 
 
+def _commit_field(root: Path, field: str, commit_sha: str) -> str:
+    """Read one commit field; ``show -s`` still runs rename detection unless disabled."""
+    return git_value(root, "show", "-s", "--no-renames", f"--format={field}", commit_sha)
+
+
 def _intervening_touched_paths(root: Path, source_sha: str, head_sha: str) -> list[str]:
     """Return every literal path changed in ``source_sha..head_sha``.
 
@@ -862,7 +867,7 @@ def verify_evidence_relationship(
     if not SHA_RE.fullmatch(source_sha) or not SHA_RE.fullmatch(source_tree):
         return {}, ["tested source SHA/tree is malformed"]
     try:
-        recorded_tree = git_value(root, "show", "-s", "--no-renames", "--format=%T", source_sha)
+        recorded_tree = _commit_field(root, "%T", source_sha)
         head_sha = git_value(root, "rev-parse", "HEAD")
     except subprocess.CalledProcessError as exc:
         return {}, [f"tested source commit cannot be resolved: {exc}"]
@@ -946,8 +951,8 @@ def validate_evidence_proof_at_generation(
         errors.append(f"{label} does not record both generated raw artifact paths")
 
     try:
-        recorded_tree = git_value(root, "show", "-s", "--no-renames", "--format=%T", source_sha)
-        git_value(root, "show", "-s", "--no-renames", "--format=%H", evidence_head_sha)
+        recorded_tree = _commit_field(root, "%T", source_sha)
+        _commit_field(root, "%H", evidence_head_sha)
     except subprocess.CalledProcessError as exc:
         return errors + [f"{label} commit cannot be resolved: {exc}"]
     if recorded_tree != source_tree:
