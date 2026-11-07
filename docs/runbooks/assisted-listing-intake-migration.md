@@ -29,14 +29,17 @@ Before executing any migration in staging or production:
 
 1. **Verify Database State & Tests**:
    ```bash
-   uv run pytest tests/ops/test_assisted_listing_intake_migration.py -v
-   uv run ruff check product_ops/migrations/assisted_listing_intake tests/ops/test_assisted_listing_intake_migration.py
+   UV_PYTHON=3.12 uv run --frozen pytest tests/ops/test_assisted_listing_intake_migration.py tests/ops/test_assisted_listing_intake_release.py -v
+   UV_PYTHON=3.12 uv run --frozen ruff check product_ops/migrations/assisted_listing_intake tests/ops/test_assisted_listing_intake_migration.py
    ```
 
-2. **Verify Auto Worker & Environment**:
+2. **Read the existing task in the canonical Supervisor checkout**:
    ```bash
-   AI_NAME=Antigravity3 python3 scripts/ai_status.py
+   ./scripts/ai-status.sh show ODP-SYS-ACCEPT-261011
    ```
+   This is a read-only task lookup. Keep the task's real owner/reviewer and use
+   the existing Supervisor workflow for execution; a status check does not
+   require declaring another worker's identity.
 
 ---
 
@@ -78,7 +81,50 @@ python3 -m product_ops.migrations.assisted_listing_intake.migrate \
 
 ## 4. Reconciliation Findings & Shadow Verification
 
-Every backfill execution automatically computes durable proof metrics, persists them to `workflow.reconciliation_findings`, and records findings.
+### Input scope and ownership
+
+- The tenant selector supplies the explicit partition for legacy DTOs whose
+  tenant field is absent or empty. It never overrides a recorded foreign,
+  malformed or conflicting tenant. Unambiguously foreign rows are excluded;
+  conflicting ownership is a blocking finding before it contributes to any
+  address/source lookup. Nested Listing, Candidate and Address declarations
+  participate in the same check.
+- A Listing must record its own registered source. Missing source is not
+  `SRC-591`, and an Intake's proposed match target does not make that Intake's
+  source the Listing's origin. Candidate source can be read from the actual
+  same-tenant Listing owner; nonempty `listing_source` and source aliases must
+  agree with that owner.
+- A valid out-of-source Listing and its source-less Candidate are both
+  documented exclusions. The supplied owner's facts remain available for
+  classification even though its business writes are excluded. Contradictory
+  primary records assigning one Listing ID to different sources are rejected
+  before business backfill; a selector cannot choose which origin is true.
+- Intake and resources share the same source-exclusion rule. A proven
+  out-of-source record's unrelated domain/history defects are excluded with
+  that source. Tenant, source-alias and parent Listing identity conflicts
+  remain blocking. An excluded resource never supplies business address facts.
+  A same-tenant saved Listing's actual source is checked before exclusion,
+  including for a source-less Candidate without month evidence; a conflicting
+  supplied source cannot conceal the saved owner.
+- Conflicting explicit Address IDs on duplicate primary Listing records are
+  rejected. Missing IDs do not establish a contradiction, and this check does
+  not infer revision order, merge historical addresses or deduplicate rows.
+- Candidate Listing/address references must agree with their supplied owners,
+  including any address ID recorded by the original Listing. A historical
+  draft cannot silently replace that owner's address with a different ID.
+- Resume verifies saved Listing source and Candidate/Promotion Listing
+  bindings before counting an existing row in the selected partition. A
+  conflict leaves existing business rows unchanged and records reconciliation;
+  it is not a reason to relabel or overwrite them.
+- Candidate's current Property can legitimately differ from the Listing's or
+  Promotion's historical Property after an approved identity reassignment.
+  Resume does not infer corruption or reverse that history from inequality.
+  These checks do not attest Property/field/evidence parity.
+
+Each successful non-dry-run backfill persists count/ID proof metrics and
+findings to `workflow.reconciliation_findings`. Dry runs roll back their
+writes. An aborted backfill rolls back metadata registration, findings and
+business writes through the same transaction boundary.
 
 ### 4.1 Shadow Verification CLI Command
 
@@ -101,18 +147,25 @@ Expected output:
 }
 ```
 
-> **Note**: `open_findings` may be > 0 if WARNING-severity findings exist (e.g., missing `rawObjectUri`
-> or no `parser_release` provided). These are non-blocking and do not prevent cutover. Only
-> `blocking_findings: 0` and `shadow_comparison_success: true` are required to proceed.
-> A backfill run without `--parser-release` correctly leaves 2 open WARNING findings per partition
-> (`MISSING_EVIDENCE` for snapshot URI and parser release). Provide `--parser-release` to suppress these.
+> **Scope of this result**: `proof_scope` is
+> `counts_and_ids_only_not_field_or_evidence_parity`. Zero blocking findings
+> and a successful comparison complete this count/ID check; they do not
+> authorize cutover. Field/evidence parity, the real shadow/canary window,
+> tenant/source authority, rollback readiness and all release approvals remain
+> governed by the [original migration rollout runbook](../operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md).
+> Missing parser/snapshot provenance can leave warnings. Supplying an actual
+> parser release does not establish missing snapshot evidence; do not invent
+> provenance or treat a particular warning count as evidence completeness.
 
 ### 4.2 Handling Findings
 
 - **BLOCKING Findings** (`STATE_MAPPING_CONFLICT`, `ORPHAN_REFERENCE`, `COUNT_MISMATCH`, `CHECKSUM_MISMATCH`):
   - **Action**: Must be resolved by a Data Steward or assigned a waived approval before cutover.
-- **WARNING Findings** (`MISSING_EVIDENCE`, `INVALID_SCOPE`, `DUPLICATE_CANDIDATE`):
-  - **Action**: Candidate is quarantined with status `REJECTED`, preserving historical lineage without creating active candidate conflicts.
+- **WARNING Findings** (including some missing provenance or duplicate-candidate findings):
+  - **Action**: Follow the actual recorded severity and disposition. A missing
+    or contradictory resource owner/source is blocking even when its finding
+    type is `MISSING_EVIDENCE` or `INVALID_SCOPE`; do not downgrade it based on
+    the type label. Preserve historical lineage and the original review flow.
 
 ---
 
@@ -140,6 +193,13 @@ python3 -m product_ops.migrations.assisted_listing_intake.migrate \
 This safely deletes all records across `intake`, `identity`, `expansion`, and `workflow` written under `ODP-INTAKE-MIGRATION-001` for the specified tenant, leaving zero leftover state rows while preserving immutable WORM audit logs.
 
 ### 5.3 Forward Recovery Procedure
+
+An invalid-input exception (for example contradictory primary Listing
+owners) aborts the entire backfill transaction, including source/parser
+registration and findings prepared before the error. Read the CLI error/log,
+correct the input and rerun; that aborted attempt does not create a durable
+finding or count proof. Previously committed rows and schema remain intact.
+Do not interpret the absence of an aborted attempt's finding as a pass.
 
 If blocking findings occur during backfill:
 

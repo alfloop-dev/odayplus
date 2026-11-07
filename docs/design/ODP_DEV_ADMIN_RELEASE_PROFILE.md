@@ -140,6 +140,25 @@ data origin, the provider posture, worker enqueue/idempotent replay/drain and
 terminal state, the durable audit receipt and its integrity, and ingestion
 receipts.
 
+The JSON `POST /login` response names the display username; `GET /auth/session`
+names the server-side account UUID. The original verifier reads the session and
+`GET /api/v1/auth/principal` with the same cookie, then binds both to the canonical
+UUID in the unique matching `identity.accounts` user-list record. Bootstrap,
+read-enabled and invited administrators share that single principal read; a
+username, unresolved/noncanonical account or contradictory principal account
+UUID cannot satisfy `session:session_resolves_account`.
+
+Account equality alone does not establish tenant or grants. Read-enabled and
+invited modes retain their original tenant, exact role and provenance checks.
+For a pure bootstrap administrator with a valid common account binding,
+`admin:bootstrap_principal_bound` additionally requires the same principal's
+tenant to match the known canonical own tenant and its roles to be exactly
+`["platform_admin"]`. It refuses before the tenant mutation probe. An incomplete
+own account/scope retains the original `session:cross_tenant_denied` no-probe
+refusal; neither tenant is inferred from the other. The separate HTML form-cookie
+session/page/logout checks remain separate observations and do not borrow the
+first cookie's API principal as proof of the second cookie's grants.
+
 The passwords come only from secrets. The report redacts them, and they never
 appear in a check detail.
 
