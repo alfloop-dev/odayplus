@@ -1026,6 +1026,20 @@ def test_tracked_body_is_never_materialized_or_downloaded_and_then_refused(
     assert fixture.body_oid not in fixture.local_objects(), "the refusal itself reads metadata only"
 
 
+def test_lint_unit_hydrates_history_blobs_without_the_denied_path() -> None:
+    """Its suites clone this repo locally, which a blob:none source cannot serve."""
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))["jobs"]
+    steps = jobs["product-lint-unit"]["steps"]
+    names = [str(step.get("name") or step.get("uses") or "") for step in steps]
+    hydrate = names.index("Hydrate history blobs for local-clone suites")
+    assert names.index("Prove protected path stayed out of checkout") < hydrate
+    assert hydrate < names.index("Install uv")
+    script = steps[hydrate]["run"]
+    assert "tests\\/sources" in script
+    assert "comm -23 -" in script
+    assert "--stdin origin" in script
+
+
 def test_full_history_survives_the_deny(checkout_fixture: _CheckoutFixture) -> None:
     fixture = checkout_fixture
     fixture.action_checkout(fixture.deny_patterns(), ref="removed")
