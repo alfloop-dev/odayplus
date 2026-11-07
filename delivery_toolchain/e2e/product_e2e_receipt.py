@@ -844,22 +844,57 @@ def _intervening_touched_paths(root: Path, source_sha: str, head_sha: str) -> li
 
     Only tree metadata is compared. Rename detection would read blob bodies a
     filtered clone does not hold, and would report only the destination of a
-    rename, hiding the non-evidence path it moved away from. ``-m`` diffs each
-    merge commit against every parent so merge-only changes cannot bypass the
-    intervening-commit allowlist, and ``-z`` preserves exact literal paths.
+    rename, hiding the non-evidence path it moved away from. Each commit in
+    ``source_sha..head_sha`` is diffed against its parents, except merges that
+    join a ``source_sha``-descendant parent with an older pre-source branch are
+    diffed against their ``source_sha``-descendant parent(s) so already-tested
+    source changes are not misreported while merge-only changes still are.
     """
-    proc = subprocess.run(
+    rev_list = subprocess.run(
         [
             "git",
-            "log",
-            "-z",
-            "-m",
-            "--format=",
-            "--name-only",
-            "--no-renames",
+            "rev-list",
+            "--topo-order",
+            "--reverse",
+            "--parents",
             f"{source_sha}..{head_sha}",
         ],
         cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    source_descendants = {source_sha}
+    diff_lines: list[str] = []
+    for raw_line in rev_list.stdout.splitlines():
+        parts = raw_line.split()
+        if not parts:
+            continue
+        commit_sha, parents = parts[0], parts[1:]
+        source_parents = [parent for parent in parents if parent in source_descendants]
+        if source_parents:
+            source_descendants.add(commit_sha)
+            compare_parents = source_parents
+        else:
+            compare_parents = parents
+        diff_lines.append(" ".join([commit_sha, *compare_parents]))
+    if not diff_lines:
+        return []
+    proc = subprocess.run(
+        [
+            "git",
+            "diff-tree",
+            "--stdin",
+            "-r",
+            "-z",
+            "-m",
+            "--root",
+            "--name-only",
+            "--no-commit-id",
+            "--no-renames",
+        ],
+        cwd=root,
+        input="\n".join(diff_lines) + "\n",
         check=True,
         capture_output=True,
         text=True,
