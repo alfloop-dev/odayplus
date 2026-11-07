@@ -4268,11 +4268,61 @@ def _mark_parked_worker_superseded(config: dict[str, Any], worker: dict[str, Any
     )
 
 
+@_entrypoint
 def worker_slot_left_logical_pool(config: dict[str, Any], worker: dict[str, Any]) -> bool:
     """Whether this run's physical slot is outside its logical agent's account pool."""
-    logical_pool = agent_account_pool_id(config, worker_logical_dispatch_agent_id(config, worker))
+    logical_id = worker_logical_dispatch_agent_id(config, worker)
+    logical_pool = agent_account_pool_id(config, logical_id)
     physical = normalize_agent_id(str(worker.get("agent_id") or worker.get("provider") or ""))
-    return not logical_pool or logical_pool != agent_account_pool_id(config, physical)
+    if not logical_id or not physical or not logical_pool:
+        return True
+    if logical_pool != agent_account_pool_id(config, physical):
+        return True
+    agents = config.get("agents") if isinstance(config.get("agents"), dict) else {}
+    if agents:
+        if logical_id not in agents or physical not in agents:
+            return True
+        if agent_is_dispatch_slot(agents.get(logical_id)):
+            return True
+        if physical != logical_id and physical not in set(logical_worker_slot_ids(config, logical_id)):
+            return True
+    snapshot = worker.get("request_snapshot") if isinstance(worker.get("request_snapshot"), dict) else {}
+    metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+    pools = config.get("account_pools") if isinstance(config.get("account_pools"), dict) else {}
+    if pools and (
+        (agents.get(logical_id) or {}).get("account_pool") is not None
+        or worker.get("account_pool") is not None
+        or metadata.get("account_pool") is not None
+    ):
+        pool_cfg = pools.get(logical_pool)
+        if not isinstance(pool_cfg, dict) or pool_cfg.get("enabled") is False or str(
+            pool_cfg.get("state") or ""
+        ).lower() == "disabled":
+            return True
+    for raw_pool in (worker.get("account_pool"), metadata.get("account_pool")):
+        if raw_pool is not None and normalize_agent_id(str(raw_pool)) != logical_pool:
+            return True
+    for raw_slot in (
+        worker.get("dispatch_slot_id"),
+        worker.get("slot_id"),
+        metadata.get("dispatch_slot_id"),
+        metadata.get("slot_id"),
+    ):
+        if raw_slot is not None:
+            norm_slot = normalize_agent_id(str(raw_slot))
+            if (
+                norm_slot != physical
+                or (agents and norm_slot not in agents)
+                or (norm_slot != logical_id and norm_slot not in set(logical_worker_slot_ids(config, logical_id)))
+            ):
+                return True
+    snapshot_agent = normalize_agent_id(str(snapshot.get("agent_id") or ""))
+    if snapshot_agent and snapshot_agent != physical:
+        return True
+    for raw_logical in (worker.get("logical_agent_id"), metadata.get("logical_agent_id")):
+        if raw_logical is not None and normalize_agent_id(str(raw_logical)) != logical_id:
+            return True
+    return False
 
 
 def _execution_authority_refusal(config: dict[str, Any], worker: dict[str, Any]) -> str | None:
@@ -4289,17 +4339,21 @@ def _execution_authority_refusal(config: dict[str, Any], worker: dict[str, Any])
     Every role in the key is still compared, against the snapshot being relaunched.
     """
     task_map = task_index_from_status(config, load_status(config))
-    if not worker_matches_current_assignment(config, worker, task_map):
-        return "task responsibility moved to another agent or status"
     if worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker):
         return None
     if worker_slot_left_logical_pool(config, worker):
         return "the run's physical slot is outside its logical agent's account pool"
-    task_id = str(worker.get("task_id") or "")
+    event = worker_dispatch_event(config, worker)
+    reason = event["reason"]
+    if reason in OWNER_NOTIFICATION_QUEUE_REASONS:
+        return stale_dispatch_skip_message(config, event, task_map) or launch_protection_refusal(
+            config, task_map.get(event["task_id"]) or {}, event["metadata"]
+        )
+    if not worker_matches_current_assignment(config, worker, task_map):
+        return "task responsibility moved to another agent or status"
+    task_id = event["task_id"]
     task = task_map[task_id]
-    snapshot = worker.get("request_snapshot") if isinstance(worker.get("request_snapshot"), dict) else {}
-    reason = snapshot.get("reason") or worker.get("reason")
-    metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+    metadata = event["metadata"]
     dispatched = metadata.get("task") if isinstance(metadata.get("task"), dict) else {}
     schema = config.get("schema") or {}
     for field in (schema.get("assignee_field", "owner"), schema.get("reviewer_field", "reviewer")):
@@ -4312,13 +4366,7 @@ def _execution_authority_refusal(config: dict[str, Any], worker: dict[str, Any])
         return f"{target} may no longer take this task"
     return stale_dispatch_skip_message(
         config,
-        {
-            "task_id": task_id,
-            "reason": reason,
-            "target_agent": target,
-            "target_display_name": target,
-            "metadata": metadata,
-        },
+        event,
         task_map,
     ) or launch_protection_refusal(config, task, metadata)
 
