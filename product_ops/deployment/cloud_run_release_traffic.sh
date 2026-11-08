@@ -450,7 +450,10 @@ capture_scheduler_trigger() {
     --filter="name=projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/${trigger}" \
     --format='value(name)')" || return 1
   if [ -n "${existing}" ]; then
-    if [ "${existing}" != "projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/${trigger}" ]; then
+    # value(name) renders the job ID, not the full resource name, on the gcloud
+    # releases in use; accept either form, but only as one exact line.
+    if [ "${existing}" != "${trigger}" ] \
+      && [ "${existing}" != "projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/${trigger}" ]; then
       echo "Error: ambiguous scheduler lookup for ${trigger}." >&2
       return 1
     fi
