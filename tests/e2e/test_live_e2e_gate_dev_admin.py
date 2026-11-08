@@ -407,6 +407,31 @@ def blockers(report: dict[str, Any]) -> dict[str, str]:
     return {b["check"]: b["dependency"] for b in report["blockers"]}
 
 
+@pytest.mark.parametrize("phase", ["json", "html"])
+@pytest.mark.parametrize("wrong_subject", [USERNAME, "22222222-2222-4222-8222-222222222222", None])
+def test_session_actor_must_match_the_authoritative_account_in_each_login_path(
+    phase: str, wrong_subject: Any,
+) -> None:
+    reads = 0
+
+    def session_response(body: Any, headers: dict[str, str]) -> Any:
+        nonlocal reads
+        reads += 1
+        rejected_read = 1 if phase == "json" else 2
+        subject = wrong_subject if reads == rejected_read else ADMIN_ACCOUNT_ID
+        return base.response(200, {"subject": subject, "expiresAt": 1})
+
+    routes = web_routes(**{"GET /auth/session [session]": session_response})
+    checks, report, _ = run_dev_admin(web=AdminWeb(routes))
+
+    assert report["ok"] is False
+    name = "session:session_resolves_account" if phase == "json" else "session:html_form_session_resolves_account"
+    assert blockers(report)[name] == "session"
+    if phase == "html":
+        assert next(c for c in checks if c.name == "session:session_resolves_account").ok is True
+        assert reads == 2
+
+
 # ---------------------------------------------------------------------------
 # Positive: healthy administration, models absent and refused
 # ---------------------------------------------------------------------------
@@ -1777,6 +1802,31 @@ def test_invited_admin_session_must_match_the_principal_account_uuid(principal: 
     assert found["session:session_resolves_account"] == "session"
     assert found["admin:invitation_principal_bound"] == "auth"
     assert web.calls.count("GET /api/v1/auth/principal [session]") == 1
+
+
+@pytest.mark.parametrize("field,value,absent", [
+    ("tenant_id", gate.FOREIGN_TENANT_PROBE_ID, False),
+    ("tenant_id", None, False), ("tenant_id", None, True),
+    ("roles", None, False), ("roles", None, True), ("roles", [], False),
+    ("roles", ["platform_admin", "auditor"], False),
+    ("roles", ["platform_admin", "platform_admin"], False),
+    ("roles", "platform_admin", False), ("roles", {"platform_admin": True}, False),
+])
+def test_bootstrap_principal_requires_the_same_tenant_and_exact_pure_roles(
+    field: str, value: Any, absent: bool,
+) -> None:
+    routes = web_routes()
+    principal = routes["GET /api/v1/auth/principal [session]"].payload
+    if absent:
+        principal.pop(field)
+    else:
+        principal[field] = value
+    checks, report, web = run_dev_admin(web=RecordingAdminWeb(routes))
+    assert report["ok"] is False
+    assert blockers(report) == {"admin:bootstrap_principal_bound": "auth"}
+    assert next(check for check in checks if check.name == "session:session_resolves_account").ok
+    assert web.calls.count("GET /api/v1/auth/principal [session]") == 1
+    assert web.post_bodies == []  # Refuse before the tenant mutation probe.
 
 
 def test_html_form_session_must_name_the_account_uuid() -> None:

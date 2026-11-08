@@ -8,30 +8,25 @@ production release, as specified in §8 of
 Responsibilities
 ~~~~~~~~~~~~~~~~
 - Green 0% tag smoke → atomic 100% traffic switch
-- Scheduler pause / resume with job digest switching
+- Scheduler pause / verified resume with immutable release-scoped Job targets
 - Data platform selector / snapshot pointer recovery
 - Full rollback sequence
 
-Design rules
-~~~~~~~~~~~~
-- Every operation is **idempotent**: calling it twice with the same inputs
-  produces the same result without side effects.
-- Every operation has a **dry-run** mode that logs what *would* happen
-  without executing any mutations.
-- All failures are **fail-closed**: partial states are never committed,
-  and callers always receive explicit error reports.
-- This module **does not modify the deploy workflow entrypoint**
-  (``deploy_cloud_run_waji.sh`` / Runtime Release workflow).
+Deploy and manual recovery call the same shell mutation owner. Switch leaves
+triggers paused; a separate resume requires the existing jobs-smoke receipt
+and fresh Job/execution/trigger readback. Technical failures compensate from
+captured snapshots; SLO rollback remains a Human/Ops decision.
 """
 
 from __future__ import annotations
 
 import argparse
-import base64
 import copy
 import importlib.util
 import json
 import logging
+import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -64,11 +59,18 @@ class ServiceTarget:
 
 @dataclass(frozen=True)
 class SchedulerTarget:
-    """Identifies a Cloud Scheduler job for pause / resume / digest switch."""
+    """Identifies a trigger and, for switch/resume, its immutable Job binding."""
 
     job_name: str
     project: str
     location: str
+    job: str = ""
+    image: str = ""
+    kind: str = ""
+    cron: str = ""
+    time_zone: str = ""
+    service_account: str = ""
+    first_create_state: str = "PAUSED"
 
     def gcloud_args(self) -> list[str]:
         return [
@@ -102,7 +104,11 @@ class ReleaseState:
     api_traffic_snapshot_path: str = ""
     web_traffic_snapshot_path: str = ""
     scheduler_states: dict[str, str] = field(default_factory=dict)
-    scheduler_digests: dict[str, str] = field(default_factory=dict)
+    scheduler_snapshots: dict[str, str] = field(default_factory=dict)
+    scheduler_bindings: dict[str, dict[str, str]] = field(default_factory=dict)
+    release_sha: str = ""
+    project: str = ""
+    region: str = ""
     data_platform_pointer: dict[str, str] = field(default_factory=dict)
     data_platform_pointer_snapshot_path: str = ""
     switch_completed_at: str = ""
@@ -119,7 +125,11 @@ class ReleaseState:
                 "api_traffic_snapshot_path": self.api_traffic_snapshot_path,
                 "web_traffic_snapshot_path": self.web_traffic_snapshot_path,
                 "scheduler_states": self.scheduler_states,
-                "scheduler_digests": self.scheduler_digests,
+                "scheduler_snapshots": self.scheduler_snapshots,
+                "scheduler_bindings": self.scheduler_bindings,
+                "release_sha": self.release_sha,
+                "project": self.project,
+                "region": self.region,
                 "data_platform_pointer": self.data_platform_pointer,
                 "data_platform_pointer_snapshot_path": self.data_platform_pointer_snapshot_path,
                 "switch_completed_at": self.switch_completed_at,
@@ -143,7 +153,11 @@ class ReleaseState:
             api_traffic_snapshot_path=data.get("api_traffic_snapshot_path", ""),
             web_traffic_snapshot_path=data.get("web_traffic_snapshot_path", ""),
             scheduler_states=data.get("scheduler_states", {}),
-            scheduler_digests=data.get("scheduler_digests", {}),
+            scheduler_snapshots=data.get("scheduler_snapshots", {}),
+            scheduler_bindings=data.get("scheduler_bindings", {}),
+            release_sha=data.get("release_sha", ""),
+            project=data.get("project", ""),
+            region=data.get("region", ""),
             data_platform_pointer=data.get("data_platform_pointer", {}),
             data_platform_pointer_snapshot_path=data.get("data_platform_pointer_snapshot_path", ""),
             switch_completed_at=data.get("switch_completed_at", ""),
@@ -211,25 +225,7 @@ def get_tagged_target_from_description(description: dict[str, Any], tag: str) ->
 
     Raises ValueError if tag is missing or malformed.
     """
-    status = description.get("status")
-    traffic = status.get("traffic") if isinstance(status, dict) else None
-    if not isinstance(traffic, list):
-        raise ValueError("Cloud Run service description is missing status.traffic")
-
-    matches = [
-        item for item in traffic if isinstance(item, dict) and str(item.get("tag") or "") == tag
-    ]
-    if len(matches) != 1:
-        raise ValueError(f"expected exactly one Cloud Run traffic target for tag {tag!r}")
-
-    target = matches[0]
-    revision = str(target.get("revisionName") or "").strip()
-    url = str(target.get("url") or "").strip()
-    if not revision:
-        raise ValueError(f"tag {tag!r} has no immutable revisionName")
-    if not url.startswith("https://"):
-        raise ValueError(f"tag {tag!r} has no HTTPS URL")
-    return revision, url
+    return _snapshot_contract().tagged_target(description, tag)
 
 
 def resolve_tagged_target(
@@ -305,14 +301,14 @@ def resolve_tagged_target(
 # ---------------------------------------------------------------------------
 
 
-def _traffic_snapshot_contract() -> Any:
+def _snapshot_contract(filename: str = "cloud_run_traffic.py") -> Any:
     """Load ``cloud_run_traffic.py``, the one owner of the snapshot shape.
 
     The deploy script and this module must agree on what an absent service
     looks like, so the marker is not restated here.
     """
-    path = Path(__file__).resolve().with_name("cloud_run_traffic.py")
-    spec = importlib.util.spec_from_file_location("odp_cloud_run_traffic", path)
+    path = Path(__file__).resolve().with_name(filename)
+    spec = importlib.util.spec_from_file_location("odp_" + path.stem, path)
     if spec is None or spec.loader is None:  # pragma: no cover - packaging error
         raise RuntimeError(f"cannot load the Cloud Run traffic contract from {path}")
     module = importlib.util.module_from_spec(spec)
@@ -364,7 +360,7 @@ def capture_traffic_snapshot(
     if not existing:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(
-            json.dumps(_traffic_snapshot_contract().absent_snapshot(target.service), indent=2),
+            json.dumps(_snapshot_contract().absent_snapshot(target.service), indent=2),
             encoding="utf-8",
         )
         return OperationResult(
@@ -434,391 +430,90 @@ def capture_traffic_snapshot(
     )
 
 
-def atomic_traffic_switch(
-    target: ServiceTarget,
-    green_revision: str,
-    *,
+def _run_release_helper(
+    target: ServiceTarget | SchedulerTarget, function: str, arguments: list[str], *,
     dry_run: bool = False,
 ) -> OperationResult:
-    """Atomically switch a Cloud Run service to 100% on ``green_revision``.
-
-    This is a single ``gcloud run services update-traffic`` call that
-    moves **all** traffic in one operation. There is no 10/90 canary
-    step — the rollout plan §8.3 explicitly avoids long mixed-runs.
-    """
-    if not green_revision:
-        return OperationResult(
-            success=False,
-            operation="atomic_traffic_switch",
-            message="green_revision must be a non-empty string",
-        )
-
-    result = _run_gcloud(
-        [
-            "run",
-            "services",
-            "update-traffic",
-            target.service,
-            *target.gcloud_args(),
-            f"--to-revisions={green_revision}=100",
-            "--quiet",
-        ],
-        dry_run=dry_run,
-    )
+    """Call the existing shell mutation owner with positional, unexpanded arguments."""
     if dry_run:
-        return OperationResult(
-            success=True,
-            operation="atomic_traffic_switch",
-            message=f"[DRY-RUN] Would switch {target.service} to {green_revision}=100%",
-            dry_run=True,
-            details={"revision": green_revision},
-        )
-
-    if result.returncode != 0:
-        return OperationResult(
-            success=False,
-            operation="atomic_traffic_switch",
-            message=f"Traffic switch failed for {target.service}: {result.stderr.strip()}",
-            details={"returncode": result.returncode},
-        )
-
-    return OperationResult(
-        success=True,
-        operation="atomic_traffic_switch",
-        message=f"Switched {target.service} to {green_revision}=100%",
-        details={"revision": green_revision},
+        return OperationResult(True, function, f"[DRY-RUN] Would call {function}", True)
+    directory = Path(__file__).resolve().parent
+    environment = {
+        **os.environ, "GCP_PROJECT": target.project,
+        "GCP_REGION": target.region if isinstance(target, ServiceTarget) else target.location,
+        "ODP_TRAFFIC_HELPER": str(directory / "cloud_run_traffic.py"),
+        "ODP_SCHEDULER_HELPER": str(directory / "cloud_scheduler_trigger.py"),
+        "ODP_JOB_VALIDATOR": str(directory / "validate_cloud_run_live_deployment.py"),
+    }
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", 'source "$1"; shift; "$@"',
+         "bluegreen-release", str(directory / "cloud_run_release_traffic.sh"), function, *arguments],
+        env=environment, capture_output=True, text=True, check=False,
     )
+    return OperationResult(
+        result.returncode == 0, function,
+        result.stdout.strip() if result.returncode == 0 else result.stderr.strip(),
+        details={"returncode": result.returncode},
+    )
+
+
+def atomic_traffic_switch(
+    target: ServiceTarget, green_revision: str, *, dry_run: bool = False,
+) -> OperationResult:
+    if not green_revision:
+        return OperationResult(False, "atomic_traffic_switch", "green_revision must be non-empty")
+    return _run_release_helper(target, "promote_service_traffic",
+                               [target.service, green_revision], dry_run=dry_run)
 
 
 def restore_traffic_from_snapshot(
-    target: ServiceTarget,
-    snapshot_path: Path,
-    *,
-    dry_run: bool = False,
-    traffic_helper: str = "product_ops/deployment/cloud_run_traffic.py",
+    target: ServiceTarget, snapshot_path: Path, *, dry_run: bool = False,
 ) -> OperationResult:
-    """Restore traffic allocation from a previously captured snapshot.
-
-    Uses ``cloud_run_traffic.py restore-arg`` to compute the gcloud
-    ``--to-revisions`` argument from the snapshot.
-    """
-    if not snapshot_path.exists():
-        return OperationResult(
-            success=False,
-            operation="restore_traffic_from_snapshot",
-            message=f"Snapshot file not found: {snapshot_path}",
-        )
-    try:
-        recorded = json.loads(snapshot_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return OperationResult(
-            success=False,
-            operation="restore_traffic_from_snapshot",
-            message=f"Snapshot file is unreadable: {exc}",
-        )
-    if isinstance(recorded, dict) and not _traffic_snapshot_contract().is_present(recorded):
-        return OperationResult(
-            success=False,
-            operation="restore_traffic_from_snapshot",
-            message=(
-                f"{target.service} did not exist before this release (initial release); "
-                "there is no previous revision to roll back to"
-            ),
-        )
-
-    try:
-        helper_result = subprocess.run(
-            [sys.executable, traffic_helper, "restore-arg", f"--description={snapshot_path}"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if helper_result.returncode != 0:
-            return OperationResult(
-                success=False,
-                operation="restore_traffic_from_snapshot",
-                message=f"Failed to compute restore-arg: {helper_result.stderr.strip()}",
-            )
-        traffic_arg = helper_result.stdout.strip()
-    except Exception as exc:
-        return OperationResult(
-            success=False,
-            operation="restore_traffic_from_snapshot",
-            message=f"Exception computing restore-arg: {exc}",
-        )
-
-    if not traffic_arg:
-        return OperationResult(
-            success=False,
-            operation="restore_traffic_from_snapshot",
-            message="Empty traffic restore argument from snapshot",
-        )
-
-    result = _run_gcloud(
-        [
-            "run",
-            "services",
-            "update-traffic",
-            target.service,
-            *target.gcloud_args(),
-            f"--to-revisions={traffic_arg}",
-            "--quiet",
-        ],
-        dry_run=dry_run,
-    )
-    if dry_run:
-        return OperationResult(
-            success=True,
-            operation="restore_traffic_from_snapshot",
-            message=f"[DRY-RUN] Would restore {target.service} traffic to {traffic_arg}",
-            dry_run=True,
-            details={"traffic_arg": traffic_arg},
-        )
-
-    if result.returncode != 0:
-        return OperationResult(
-            success=False,
-            operation="restore_traffic_from_snapshot",
-            message=f"Traffic restore failed for {target.service}: {result.stderr.strip()}",
-            details={"returncode": result.returncode, "traffic_arg": traffic_arg},
-        )
-
-    return OperationResult(
-        success=True,
-        operation="restore_traffic_from_snapshot",
-        message=f"Restored {target.service} traffic to {traffic_arg}",
-        details={"traffic_arg": traffic_arg},
-    )
+    if not snapshot_path.is_file():
+        return OperationResult(False, "restore_traffic_from_snapshot", f"Snapshot file not found: {snapshot_path}")
+    return _run_release_helper(target, "restore_service_traffic",
+                               [target.service, str(snapshot_path.resolve())], dry_run=dry_run)
 
 
-# ---------------------------------------------------------------------------
-# Scheduler operations
-# ---------------------------------------------------------------------------
+def pause_all_schedulers(targets: list[SchedulerTarget], *, dry_run: bool = False) -> OperationResult:
+    results = [_run_release_helper(target, "pause_scheduler_trigger", [target.job_name], dry_run=dry_run)
+               for target in targets]
+    return OperationResult(all(result.success for result in results), "pause_all_schedulers",
+                           "; ".join(result.message for result in results), dry_run)
 
 
-def pause_all_schedulers(
-    targets: list[SchedulerTarget],
-    *,
-    dry_run: bool = False,
-) -> OperationResult:
-    """Pause all Cloud Scheduler triggers.
-
-    Per rollout plan §8.2, schedulers start paused during green
-    deployment. This is also the first rollback step (§8.4 step 1).
-    """
-    if not targets:
-        return OperationResult(
-            success=True,
-            operation="pause_all_schedulers",
-            message="No scheduler targets to pause",
-        )
-
-    failed: list[str] = []
-    for t in targets:
-        result = _run_gcloud(
-            ["scheduler", "jobs", "pause", t.job_name, *t.gcloud_args(), "--quiet"],
-            dry_run=dry_run,
-        )
-        if not dry_run and result.returncode != 0:
-            failed.append(f"{t.job_name}: {result.stderr.strip()}")
-
-    if failed:
-        return OperationResult(
-            success=False,
-            operation="pause_all_schedulers",
-            message=f"Failed to pause {len(failed)}/{len(targets)} scheduler(s)",
-            details={"failures": failed},
-        )
-
-    return OperationResult(
-        success=True,
-        operation="pause_all_schedulers",
-        message=f"{'[DRY-RUN] Would pause' if dry_run else 'Paused'} {len(targets)} scheduler(s)",
-        dry_run=dry_run,
-    )
+def _scheduler_arguments(target: SchedulerTarget, state: ReleaseState, state_dir: Path) -> list[str]:
+    return [target.job_name, target.job, target.image, target.cron, target.time_zone,
+            target.service_account, str((state_dir / state.scheduler_snapshots[target.job_name]).resolve()),
+            state.release_sha]
 
 
 def resume_schedulers(
-    targets: list[SchedulerTarget],
-    *,
-    dry_run: bool = False,
+    targets: list[SchedulerTarget], *, release_state: ReleaseState, state_dir: Path,
+    receipts: dict[str, Path], dry_run: bool = False,
 ) -> OperationResult:
-    """Resume Cloud Scheduler triggers after successful switch.
-
-    Per rollout plan §8.3 step 5, schedulers are resumed only after
-    one-shot verification succeeds.
-    """
-    if not targets:
-        return OperationResult(
-            success=True,
-            operation="resume_schedulers",
-            message="No scheduler targets to resume",
-        )
-
-    failed: list[str] = []
-    for t in targets:
-        result = _run_gcloud(
-            ["scheduler", "jobs", "resume", t.job_name, *t.gcloud_args(), "--quiet"],
-            dry_run=dry_run,
-        )
-        if not dry_run and result.returncode != 0:
-            failed.append(f"{t.job_name}: {result.stderr.strip()}")
-
-    if failed:
-        return OperationResult(
-            success=False,
-            operation="resume_schedulers",
-            message=f"Failed to resume {len(failed)}/{len(targets)} scheduler(s)",
-            details={"failures": failed},
-        )
-
-    return OperationResult(
-        success=True,
-        operation="resume_schedulers",
-        message=f"{'[DRY-RUN] Would resume' if dry_run else 'Resumed'} {len(targets)} scheduler(s)",
-        dry_run=dry_run,
-    )
-
-
-def _decode_scheduler_body(raw_body: Any) -> dict[str, Any]:
-    """Decode a Cloud Scheduler HTTP body and require a JSON object."""
-    if isinstance(raw_body, dict):
-        body_json = copy.deepcopy(raw_body)
-    elif isinstance(raw_body, str) and raw_body:
-        try:
-            body_json = json.loads(base64.b64decode(raw_body, validate=True).decode("utf-8"))
-        except Exception as encoded_exc:
-            try:
-                body_json = json.loads(raw_body)
-            except Exception as raw_exc:
-                raise ValueError("scheduler HTTP body is not valid base64 or JSON") from raw_exc
-            if not isinstance(body_json, dict):
-                raise ValueError("scheduler HTTP body JSON must be an object") from encoded_exc
-    else:
-        raise ValueError("scheduler HTTP body is missing or empty")
-
-    if not isinstance(body_json, dict):
-        raise ValueError("scheduler HTTP body JSON must be an object")
-    return body_json
-
-
-def switch_job_digests(
-    targets: list[SchedulerTarget],
-    green_digest: str,
-    *,
-    dry_run: bool = False,
-    body_key: str = "image_digest",
-) -> OperationResult:
-    """Update Cloud Scheduler job HTTP bodies to reference the green digest.
-
-    Per rollout plan §8.3 step 4, worker/scheduler job targets are
-    updated to the green digest. The job's HTTP POST body is updated
-    with the new digest, preserving all other fields.
-
-    ``body_key`` controls which JSON field within the HTTP body holds
-    the digest (defaults to ``image_digest``).
-
-    This operation is idempotent: if the body already contains the
-    target digest, no mutation is performed.
-    """
-    if not green_digest:
-        return OperationResult(
-            success=False,
-            operation="switch_job_digests",
-            message="green_digest must be a non-empty string",
-        )
-
-    if not targets:
-        return OperationResult(
-            success=True,
-            operation="switch_job_digests",
-            message="No scheduler targets for digest switch",
-        )
-
-    failed: list[str] = []
-    skipped: list[str] = []
-    switched: list[str] = []
-
-    for t in targets:
-        # Read current job description
-        describe_result = _run_gcloud(
-            [
-                "scheduler",
-                "jobs",
-                "describe",
-                t.job_name,
-                *t.gcloud_args(),
-                "--format=json",
-            ],
-            dry_run=dry_run,
-            capture_json=True,
-        )
-
-        if dry_run:
-            switched.append(t.job_name)
-            continue
-
-        if describe_result.returncode != 0:
-            failed.append(f"{t.job_name}: describe failed: {describe_result.stderr.strip()}")
-            continue
-
-        try:
-            job_data = json.loads(describe_result.stdout)
-            if not isinstance(job_data, dict):
-                raise ValueError("scheduler job description must be a JSON object")
-            http_target = job_data.get("httpTarget")
-            if not isinstance(http_target, dict):
-                raise ValueError("scheduler job description is missing httpTarget")
-            body_json = _decode_scheduler_body(http_target.get("body"))
-        except (json.JSONDecodeError, ValueError) as exc:
-            failed.append(f"{t.job_name}: body parse failed: {exc}")
-            continue
-
-        # Check idempotency
-        if body_json.get(body_key) == green_digest:
-            skipped.append(t.job_name)
-            continue
-
-        # Update body
-        body_json[body_key] = green_digest
-
-        update_result = _run_gcloud(
-            [
-                "scheduler",
-                "jobs",
-                "update",
-                "http",
-                t.job_name,
-                *t.gcloud_args(),
-                f"--message-body={json.dumps(body_json)}",
-                "--quiet",
-            ],
-            dry_run=dry_run,
-        )
-
-        if update_result.returncode != 0:
-            failed.append(f"{t.job_name}: update failed: {update_result.stderr.strip()}")
-        else:
-            switched.append(t.job_name)
-
-    if failed:
-        return OperationResult(
-            success=False,
-            operation="switch_job_digests",
-            message=f"Failed to switch {len(failed)}/{len(targets)} job digest(s)",
-            details={"failures": failed, "switched": switched, "skipped": skipped},
-        )
-
-    return OperationResult(
-        success=True,
-        operation="switch_job_digests",
-        message=(
-            f"{'[DRY-RUN] Would switch' if dry_run else 'Switched'} "
-            f"{len(switched)} job digest(s), skipped {len(skipped)} (already current)"
-        ),
-        dry_run=dry_run,
-        details={"switched": switched, "skipped": skipped, "digest": green_digest},
-    )
+    """Resume only captured ENABLED triggers after the existing jobs-smoke proof."""
+    if not release_state.switch_completed_at:
+        return OperationResult(False, "resume_schedulers", "a completed paused switch is required")
+    if (len(targets) != 2 or {target.kind for target in targets} != {"worker", "scheduler"}
+            or {target.job_name for target in targets} != set(release_state.scheduler_bindings)):
+        return OperationResult(False, "resume_schedulers", "both captured immutable scheduler bindings are required")
+    if set(receipts) != {target.job_name for target in targets}:
+        return OperationResult(False, "resume_schedulers", "a jobs-smoke receipt for every captured binding is required")
+    for mode in ("verify-only", "resume"):
+        for target in targets:
+            result = _run_release_helper(
+                target, "resume_scheduler_trigger",
+                _scheduler_arguments(target, release_state, state_dir) +
+                [target.kind, str(receipts[target.job_name].resolve()), target.first_create_state, mode],
+                dry_run=dry_run,
+            )
+            if not result.success:
+                compensation = pause_all_schedulers(targets, dry_run=dry_run)
+                result.details["pause_compensation"] = compensation.to_dict()
+                result.details["mutation_started"] = mode == "resume" or not compensation.success
+                return result
+    return OperationResult(True, "resume_schedulers", "verified intended triggers resumed; prior PAUSED preserved", dry_run)
 
 
 # ---------------------------------------------------------------------------
@@ -927,137 +622,125 @@ def restore_data_platform_pointer(
 # ---------------------------------------------------------------------------
 
 
+def _validate_release_snapshots(
+    state: ReleaseState, state_dir: Path, api: ServiceTarget, web: ServiceTarget,
+    schedulers: list[SchedulerTarget],
+) -> None:
+    """Validate recovery material before any mutation can need compensation."""
+    if (state.project != api.project or state.region != api.region
+            or (web.project, web.region) != (api.project, api.region)
+            or not re.fullmatch(r"[0-9a-f]{40}", state.release_sha)):
+        raise ValueError("release state must bind this exact project/region and release SHA")
+    if (not state.scheduler_snapshots or len(schedulers) != len(state.scheduler_snapshots)
+            or {target.job_name for target in schedulers} != set(state.scheduler_snapshots)
+            or any((target.project, target.location) != (api.project, api.region) for target in schedulers)):
+        raise ValueError("scheduler snapshot inventory/scope does not match")
+    for target, relative in ((api, state.api_traffic_snapshot_path), (web, state.web_traffic_snapshot_path)):
+        if not relative:
+            raise ValueError("release state records no API/Web traffic snapshot")
+        payload = json.loads((state_dir / relative).read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("traffic snapshot must be an object")
+        if payload.get("service") != target.service:
+            raise ValueError("traffic snapshot belongs to another service")
+        if _snapshot_contract().is_present(payload):
+            _snapshot_contract().restore_traffic_argument(payload)
+            _snapshot_contract().service_url(payload)
+    for name, relative in state.scheduler_snapshots.items():
+        payload = json.loads((state_dir / relative).read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("scheduler snapshot must be an object")
+        _snapshot_contract("cloud_scheduler_trigger.py").validate_snapshot(
+            payload, trigger=name, project=api.project, location=api.region,
+        )
+        if payload.get("exists") is not False and not payload.get("jobBinding"):
+            raise ValueError("scheduler snapshot is missing its captured immutable job binding")
+
+
 def execute_bluegreen_switch(
-    *,
-    api_target: ServiceTarget,
-    web_target: ServiceTarget,
-    green_api_revision: str,
-    green_web_revision: str,
-    scheduler_targets: list[SchedulerTarget],
-    green_job_digest: str,
-    release_state: ReleaseState,
-    dry_run: bool = False,
+    *, api_target: ServiceTarget, web_target: ServiceTarget,
+    green_api_revision: str, green_web_revision: str,
+    scheduler_targets: list[SchedulerTarget], release_state: ReleaseState,
+    state_dir: Path, dry_run: bool = False,
 ) -> list[OperationResult]:
-    """Execute the complete blue→green 100% switch sequence.
-
-    Per rollout plan §8.3, the sequence is:
-
-    1. Confirm API contract backward compatible (caller responsibility).
-    2. API: blue 100% → green 100%, then authenticated smoke.
-    3. Web: blue 100% → green 100%, then E2E.
-    4. Worker/scheduler job targets → green digest.
-    5. One-shot verify, then resume scheduler triggers.
-    6. Start watch window.
-
-    Steps 2–5 are implemented here. Steps 1 and 6 are the caller's
-    responsibility.
-    """
+    """Switch using the deployment owner, leaving all triggers PAUSED."""
+    try:
+        _validate_release_snapshots(release_state, state_dir, api_target, web_target, scheduler_targets)
+        for target in scheduler_targets:
+            _snapshot_contract("cloud_scheduler_trigger.py").validate_trigger_state(target.first_create_state)
+    except (OSError, ValueError) as exc:
+        return [OperationResult(False, "switch", str(exc))]
+    names = {target.job_name for target in scheduler_targets}
+    if (not names or len(names) != len(scheduler_targets)
+            or names != set(release_state.scheduler_snapshots)
+            or {target.kind for target in scheduler_targets} != {"worker", "scheduler"}
+            or not release_state.api_traffic_snapshot_path or not release_state.web_traffic_snapshot_path):
+        return [OperationResult(False, "switch", "captured traffic and both scheduler snapshots/bindings are required")]
     results: list[OperationResult] = []
-
-    # Step 2: API atomic switch
-    r = atomic_traffic_switch(api_target, green_api_revision, dry_run=dry_run)
-    results.append(r)
-    if not r.success and not dry_run:
-        return results
-
-    # Step 3: Web atomic switch
-    r = atomic_traffic_switch(web_target, green_web_revision, dry_run=dry_run)
-    results.append(r)
-    if not r.success and not dry_run:
-        return results
-
-    # Step 4: Switch job digests
-    if green_job_digest and scheduler_targets:
-        r = switch_job_digests(scheduler_targets, green_job_digest, dry_run=dry_run)
-        results.append(r)
-        if not r.success and not dry_run:
+    for target in scheduler_targets:
+        result = _run_release_helper(target, "verify_release_job",
+                                     [target.job, target.image, release_state.release_sha], dry_run=dry_run)
+        results.append(result)
+        if not result.success:
             return results
-
-    # Step 5: Resume schedulers (caller should one-shot verify first)
-    if scheduler_targets:
-        r = resume_schedulers(scheduler_targets, dry_run=dry_run)
-        results.append(r)
-
-    # Record completion time
-    if not dry_run and all(op.success for op in results):
+    steps = [(pause_all_schedulers, (scheduler_targets,))]
+    for target in scheduler_targets:
+        steps.append((_run_release_helper, (target, "upsert_scheduler_trigger",
+                                           _scheduler_arguments(target, release_state, state_dir))))
+    steps.extend([
+        (atomic_traffic_switch, (api_target, green_api_revision)),
+        (atomic_traffic_switch, (web_target, green_web_revision)),
+    ])
+    for operation, arguments in steps:
+        result = operation(*arguments, dry_run=dry_run)
+        results.append(result)
+        if not result.success:
+            results.extend(execute_rollback(
+                api_target=api_target, web_target=web_target,
+                api_snapshot_path=state_dir / release_state.api_traffic_snapshot_path,
+                web_snapshot_path=state_dir / release_state.web_traffic_snapshot_path,
+                scheduler_targets=scheduler_targets, release_state=release_state,
+                state_dir=state_dir, dry_run=dry_run,
+            ))
+            return results
+    if not dry_run:
+        release_state.green_api_revision = green_api_revision
+        release_state.green_web_revision = green_web_revision
+        release_state.scheduler_bindings = {
+            target.job_name: {key: getattr(target, key) for key in
+                              ("job", "image", "kind", "cron", "time_zone", "service_account", "first_create_state")}
+            for target in scheduler_targets
+        }
         release_state.switch_completed_at = datetime.now(UTC).isoformat()
-
     return results
 
 
 def execute_rollback(
-    *,
-    api_target: ServiceTarget,
-    web_target: ServiceTarget,
-    api_snapshot_path: Path,
-    web_snapshot_path: Path,
-    scheduler_targets: list[SchedulerTarget],
-    blue_job_digest: str,
-    data_platform_pointer_path: Path | None = None,
-    release_state: ReleaseState,
+    *, api_target: ServiceTarget, web_target: ServiceTarget,
+    api_snapshot_path: Path, web_snapshot_path: Path,
+    scheduler_targets: list[SchedulerTarget], release_state: ReleaseState,
+    state_dir: Path, data_platform_pointer_path: Path | None = None,
     dry_run: bool = False,
-    traffic_helper: str = "product_ops/deployment/cloud_run_traffic.py",
 ) -> list[OperationResult]:
-    """Execute the complete rollback sequence.
-
-    Per rollout plan §8.4:
-
-    1. Pause scheduler triggers.
-    2. Web & API traffic → blue 100%.
-    3. Worker/scheduler target → blue digest.
-    4. Data platform selector/snapshot pointer → previous approved version.
-    5. Verify old version can read expand-migrated schema.
-    6. Rollback smoke & data consistency check.
-    7. Preserve staging & failed green evidence, create incident task.
-
-    Steps 1–4 are automated here. Steps 5–7 require caller validation.
-    """
-    results: list[OperationResult] = []
-
-    # Step 1: Pause all schedulers
-    if scheduler_targets:
-        r = pause_all_schedulers(scheduler_targets, dry_run=dry_run)
-        results.append(r)
-        if not r.success and not dry_run:
-            return results
-
-    # Step 2: Restore Web traffic first (reverse order of switch)
-    r = restore_traffic_from_snapshot(
-        web_target,
-        web_snapshot_path,
-        dry_run=dry_run,
-        traffic_helper=traffic_helper,
-    )
-    results.append(r)
-
-    # Step 2 (cont): Restore API traffic
-    r = restore_traffic_from_snapshot(
-        api_target,
-        api_snapshot_path,
-        dry_run=dry_run,
-        traffic_helper=traffic_helper,
-    )
-    results.append(r)
-
-    # Step 3: Switch job digests back to blue
-    if blue_job_digest and scheduler_targets:
-        r = switch_job_digests(scheduler_targets, blue_job_digest, dry_run=dry_run)
-        results.append(r)
-
-    # Step 4: Restore data platform pointer
-    effective_pointer_path = data_platform_pointer_path or (
-        Path(release_state.data_platform_pointer_snapshot_path)
-        if release_state.data_platform_pointer_snapshot_path
-        else None
-    )
-    if effective_pointer_path:
-        r = restore_data_platform_pointer(effective_pointer_path, dry_run=dry_run)
-        results.append(r)
-
-    # Record completion time
-    if not dry_run and all(op.success for op in results):
+    """Human/Ops rollback and technical compensation restore the same snapshots."""
+    try:
+        _validate_release_snapshots(release_state, state_dir, api_target, web_target, scheduler_targets)
+    except (OSError, ValueError) as exc:
+        return [OperationResult(False, "rollback", str(exc))]
+    results = [pause_all_schedulers(scheduler_targets, dry_run=dry_run)]
+    results.append(restore_traffic_from_snapshot(web_target, web_snapshot_path, dry_run=dry_run))
+    results.append(restore_traffic_from_snapshot(api_target, api_snapshot_path, dry_run=dry_run))
+    for target in scheduler_targets:
+        results.append(_run_release_helper(
+            target, "restore_scheduler_trigger",
+            [target.job_name, str((state_dir / release_state.scheduler_snapshots[target.job_name]).resolve())],
+            dry_run=dry_run,
+        ))
+    if data_platform_pointer_path:
+        results.append(restore_data_platform_pointer(data_platform_pointer_path, dry_run=dry_run))
+    if not dry_run and all(result.success for result in results):
         release_state.rollback_completed_at = datetime.now(UTC).isoformat()
-
+        release_state.switch_completed_at = ""
     return results
 
 
@@ -1083,6 +766,8 @@ def _build_parser() -> argparse.ArgumentParser:
     cap.add_argument("--web-service", required=True)
     cap.add_argument("--output-dir", required=True, type=Path)
     cap.add_argument("--release-id", required=True)
+    cap.add_argument("--release-sha", required=True)
+    cap.add_argument("--scheduler-jobs", nargs="+", required=True)
     cap.add_argument("--selector-label", default="")
     cap.add_argument("--snapshot-id", default="")
     cap.add_argument("--namespace", default="")
@@ -1093,8 +778,14 @@ def _build_parser() -> argparse.ArgumentParser:
     sw.add_argument("--web-service", required=True)
     sw.add_argument("--green-api-revision", required=True)
     sw.add_argument("--green-web-revision", required=True)
-    sw.add_argument("--green-job-digest", default="")
-    sw.add_argument("--scheduler-jobs", nargs="*", default=[])
+    for kind in ("worker", "scheduler"):
+        sw.add_argument(f"--{kind}-trigger", required=True)
+        sw.add_argument(f"--{kind}-job", required=True)
+        sw.add_argument(f"--{kind}-image", required=True)
+        sw.add_argument(f"--{kind}-cron", required=True)
+    sw.add_argument("--time-zone", required=True)
+    sw.add_argument("--service-account", required=True)
+    sw.add_argument("--new-trigger-state", choices=("ENABLED", "PAUSED"), required=True)
     sw.add_argument("--state-file", required=True, type=Path)
 
     # rollback
@@ -1102,8 +793,6 @@ def _build_parser() -> argparse.ArgumentParser:
     rb.add_argument("--api-service", required=True)
     rb.add_argument("--web-service", required=True)
     rb.add_argument("--state-file", required=True, type=Path)
-    rb.add_argument("--blue-job-digest", default="")
-    rb.add_argument("--scheduler-jobs", nargs="*", default=[])
     rb.add_argument("--data-platform-pointer", type=Path, default=None)
 
     # resolve-tag
@@ -1117,13 +806,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # resume-schedulers
     rs = sub.add_parser("resume-schedulers", help="Resume Cloud Scheduler triggers")
-    rs.add_argument("--jobs", nargs="+", required=True)
-
-    # switch-digests
-    sd = sub.add_parser("switch-digests", help="Update job digests for Cloud Scheduler triggers")
-    sd.add_argument("--jobs", nargs="+", required=True)
-    sd.add_argument("--digest", required=True)
-    sd.add_argument("--body-key", default="image_digest")
+    rs.add_argument("--state-file", required=True, type=Path)
+    rs.add_argument("--api-service", required=True)
+    rs.add_argument("--web-service", required=True)
+    rs.add_argument("--worker-receipt", required=True, type=Path)
+    rs.add_argument("--scheduler-receipt", required=True, type=Path)
 
     # capture-pointer
     cp = sub.add_parser("capture-pointer", help="Capture data platform selector / snapshot pointer")
@@ -1161,10 +848,13 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if args.command == "capture-state":
+        if not re.fullmatch(r"[0-9a-f]{40}", args.release_sha) or len(set(args.scheduler_jobs)) != len(args.scheduler_jobs):
+            parser.error("capture-state requires an exact release SHA and unique scheduler names")
         output_dir: Path = args.output_dir
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        state = ReleaseState(release_id=args.release_id)
+        state = ReleaseState(release_id=args.release_id, release_sha=args.release_sha,
+                             project=args.project, region=args.region)
 
         # Capture API traffic
         r = capture_traffic_snapshot(
@@ -1187,6 +877,20 @@ def main(argv: list[str] | None = None) -> int:
         if not r.success:
             return 1
         state.web_traffic_snapshot_path = "web-traffic.json"
+
+        # Same capture owner as the deploy rollback trap; paths remain portable.
+        for index, name in enumerate(args.scheduler_jobs):
+            path = output_dir / f"scheduler-{index}.json"
+            target = SchedulerTarget(name, args.project, args.region)
+            result = _run_release_helper(target, "capture_scheduler_trigger", [name, str(path.resolve()), "with-job-binding"],
+                                         dry_run=args.dry_run)
+            print(json.dumps(result.to_dict(), indent=2))
+            if not result.success:
+                return 1
+            state.scheduler_snapshots[name] = path.name
+            if not args.dry_run:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                state.scheduler_states[name] = payload.get("state", "ENABLED") if payload.get("exists") is not False else "ABSENT"
 
         # Optional data platform pointer capture
         if getattr(args, "selector_label", "") and getattr(args, "snapshot_id", ""):
@@ -1216,60 +920,62 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Release state written to {state_path}")
         return 0
 
-    if args.command == "switch":
+    if args.command in ("switch", "rollback", "resume-schedulers"):
         state = ReleaseState.from_json(args.state_file.read_text(encoding="utf-8"))
-        schedulers = [
-            SchedulerTarget(job_name=j, project=args.project, location=args.region)
-            for j in getattr(args, "scheduler_jobs", [])
-        ]
-        results = execute_bluegreen_switch(
-            api_target=api_target,
-            web_target=web_target,
-            green_api_revision=args.green_api_revision,
-            green_web_revision=args.green_web_revision,
-            scheduler_targets=schedulers,
-            green_job_digest=args.green_job_digest,
-            release_state=state,
-            dry_run=args.dry_run,
-        )
-        for r in results:
-            print(json.dumps(r.to_dict(), indent=2))
-        if not args.dry_run:
-            args.state_file.write_text(state.to_json(), encoding="utf-8")
-        return 0 if all(r.success for r in results) else 1
-
-    if args.command == "rollback":
-        state = ReleaseState.from_json(args.state_file.read_text(encoding="utf-8"))
-        # capture-state records snapshot paths relative to the state file, so
-        # the directory downloaded from the release run's artifact is usable
-        # as-is on any machine. Older absolute paths still resolve unchanged.
         state_dir = args.state_file.resolve().parent
-        if not state.api_traffic_snapshot_path or not state.web_traffic_snapshot_path:
-            print("Error: release state records no API/Web traffic snapshot", file=sys.stderr)
+        if (state.project != args.project or state.region != args.region
+                or not state.scheduler_snapshots):
+            print("Error: recapture a complete release state for this project/region, including scheduler snapshots", file=sys.stderr)
             return 1
-        pointer_path = getattr(args, "data_platform_pointer", None)
-        if pointer_path is None and state.data_platform_pointer_snapshot_path:
-            pointer_path = state_dir / state.data_platform_pointer_snapshot_path
-        schedulers = [
-            SchedulerTarget(job_name=j, project=args.project, location=args.region)
-            for j in getattr(args, "scheduler_jobs", [])
-        ]
-        results = execute_rollback(
-            api_target=api_target,
-            web_target=web_target,
-            api_snapshot_path=state_dir / state.api_traffic_snapshot_path,
-            web_snapshot_path=state_dir / state.web_traffic_snapshot_path,
-            scheduler_targets=schedulers,
-            blue_job_digest=args.blue_job_digest,
-            data_platform_pointer_path=pointer_path,
-            release_state=state,
-            dry_run=args.dry_run,
-        )
-        for r in results:
-            print(json.dumps(r.to_dict(), indent=2))
+        if args.command == "switch":
+            schedulers = [
+                SchedulerTarget(
+                    job_name=getattr(args, f"{kind}_trigger"), project=args.project, location=args.region,
+                    job=getattr(args, f"{kind}_job"), image=getattr(args, f"{kind}_image"), kind=kind,
+                    cron=getattr(args, f"{kind}_cron"), time_zone=args.time_zone,
+                    service_account=args.service_account, first_create_state=args.new_trigger_state,
+                ) for kind in ("worker", "scheduler")
+            ]
+            results = execute_bluegreen_switch(
+                api_target=api_target, web_target=web_target,
+                green_api_revision=args.green_api_revision, green_web_revision=args.green_web_revision,
+                scheduler_targets=schedulers, release_state=state, state_dir=state_dir, dry_run=args.dry_run,
+            )
+        else:
+            schedulers = [SchedulerTarget(
+                job_name=name, project=args.project, location=args.region,
+                **state.scheduler_bindings.get(name, {}),
+            ) for name in state.scheduler_snapshots]
+            if args.command == "rollback":
+                pointer = args.data_platform_pointer
+                if pointer is None and state.data_platform_pointer_snapshot_path:
+                    pointer = state_dir / state.data_platform_pointer_snapshot_path
+                results = execute_rollback(
+                    api_target=api_target, web_target=web_target,
+                    api_snapshot_path=state_dir / state.api_traffic_snapshot_path,
+                    web_snapshot_path=state_dir / state.web_traffic_snapshot_path,
+                    scheduler_targets=schedulers, release_state=state, state_dir=state_dir,
+                    data_platform_pointer_path=pointer, dry_run=args.dry_run,
+                )
+            else:
+                receipts = {target.job_name: getattr(args, f"{target.kind}_receipt")
+                            for target in schedulers if target.kind in ("worker", "scheduler")}
+                result = resume_schedulers(schedulers, release_state=state, state_dir=state_dir,
+                                           receipts=receipts, dry_run=args.dry_run)
+                results = [result]
+                if not result.success and result.details.get("mutation_started"):
+                    results.extend(execute_rollback(
+                        api_target=api_target, web_target=web_target,
+                        api_snapshot_path=state_dir / state.api_traffic_snapshot_path,
+                        web_snapshot_path=state_dir / state.web_traffic_snapshot_path,
+                        scheduler_targets=schedulers, release_state=state, state_dir=state_dir,
+                        dry_run=args.dry_run,
+                    ))
+        for result in results:
+            print(json.dumps(result.to_dict(), indent=2))
         if not args.dry_run:
             args.state_file.write_text(state.to_json(), encoding="utf-8")
-        return 0 if all(r.success for r in results) else 1
+        return 0 if all(result.success for result in results) else 1
 
     if args.command == "resolve-tag":
         svc_target = ServiceTarget(service=args.service, project=args.project, region=args.region)
@@ -1283,29 +989,6 @@ def main(argv: list[str] | None = None) -> int:
             for j in args.jobs
         ]
         r = pause_all_schedulers(targets, dry_run=args.dry_run)
-        print(json.dumps(r.to_dict(), indent=2))
-        return 0 if r.success else 1
-
-    if args.command == "resume-schedulers":
-        targets = [
-            SchedulerTarget(job_name=j, project=args.project, location=args.region)
-            for j in args.jobs
-        ]
-        r = resume_schedulers(targets, dry_run=args.dry_run)
-        print(json.dumps(r.to_dict(), indent=2))
-        return 0 if r.success else 1
-
-    if args.command == "switch-digests":
-        targets = [
-            SchedulerTarget(job_name=j, project=args.project, location=args.region)
-            for j in args.jobs
-        ]
-        r = switch_job_digests(
-            targets,
-            args.digest,
-            dry_run=args.dry_run,
-            body_key=args.body_key,
-        )
         print(json.dumps(r.to_dict(), indent=2))
         return 0 if r.success else 1
 

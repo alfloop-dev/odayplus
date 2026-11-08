@@ -333,13 +333,35 @@
           "name": "ADJUST",
           "status": "satisfied",
           "evidence": "modules/intervention/application/workflow.py::InterventionWorkflow.adjust_case",
-          "note": "Adjusts an active intervention via stop-plus-recreate: stops the predecessor case and opens a replacement case with durable predecessor_id/replacement_id lineage, preserving original intervention parameters, reason, actor, policy version, and rollback plan. Candidate technical readiness implemented; formal business/operational practice confirmation remains open.",
+          "note": "Adjusts an active intervention via stop-plus-recreate: stops the predecessor case and opens a replacement case with durable predecessor_id/replacement_id lineage, preserving original intervention parameters, reason, actor, policy version, and rollback plan. On 2026-10-09, 蔡尚志 (Operations Lead / Product Lead) confirmed this operational practice for all stores and intervention types in issue #1446, including recording the relationship and rejecting direct in-place modification. This closes the Item 16 practice-confirmation gap; it does not establish live business acceptance or release, model, or staging admission.",
           "disposition": {
-            "state": "BLOCKED_BY_EVIDENCE",
-            "evidence_needed": "A traceable operational confirmation or business decision clarifying whether store operators adjust in-flight interventions via stop-plus-recreate or via direct in-place parameter adjustment, with designated business owner, decision date, and applicable store scope (ODP_OPEN_DECISIONS_2026-09-03.md Item 16).",
-            "evidence_owner": "Operations Lead / Product Lead",
-            "next_review_date": "2026-10-01",
-            "rationale": "Engineering technical readiness for stop-plus-recreate replacement with durable lineage is implemented and tested across API, In-Memory, SQLite and PostgreSQL. However, formal business/operational decision confirming this workflow remains absent (ODP_OPEN_DECISIONS_2026-09-03.md Item 16). The disposition state remains BLOCKED_BY_EVIDENCE pending traceable operational confirmation, preserving open decision gap without self-signed waiver or fabricated business decider."
+            "state": "VERIFIED",
+            "previous_state": "IMPLEMENTATION_READY",
+            "history": [
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-10-15",
+                "observed_source": "269433a6a71409967dc174ab1a5134b2f01f4751",
+                "note": "Pre-reconciliation observation, not a backdated transition. Adjusts an active intervention via stop-plus-recreate: stops the predecessor case and opens a replacement case with durable predecessor_id/replacement_id lineage, preserving original intervention parameters, reason, actor, policy version, and rollback plan. Candidate technical readiness implemented; formal business/operational practice confirmation remains open.",
+                "evidence_needed": "A traceable operational confirmation or business decision clarifying whether store operators adjust in-flight interventions via stop-plus-recreate or via direct in-place parameter adjustment, with designated business owner, decision date, and applicable store scope (ODP_OPEN_DECISIONS_2026-09-03.md Item 16).",
+                "evidence_owner": "Operations Lead / Product Lead",
+                "next_review_date": "2026-10-01",
+                "rationale": "Engineering technical readiness for stop-plus-recreate replacement with durable lineage is implemented and tested across API, In-Memory, SQLite and PostgreSQL. However, formal business/operational decision confirming this workflow remains absent (ODP_OPEN_DECISIONS_2026-09-03.md Item 16). The disposition state remains BLOCKED_BY_EVIDENCE pending traceable operational confirmation, preserving open decision gap without self-signed waiver or fabricated business decider."
+              },
+              {
+                "state": "IMPLEMENTATION_READY",
+                "date": "2026-10-15",
+                "assigned_to": "Intervention module maintainers (existing delivered implementation; no new task assignment)",
+                "acceptance_criteria": "Resolve InterventionWorkflow.adjust_case; exercise stop-plus-recreate, durable bidirectional lineage, atomicity and conflict refusal via tests/integration/test_intervention_workflow.py and tests/integration/test_official_real_estate_postgresql.py; pass current-commit CI.",
+                "note": "Evidence reconciled on 2026-10-15 against the existing 2026-10-09 human operational confirmation (#1446). Existing implementation matches stop-plus-recreate; no implementation waiver or new dispatch."
+              }
+            ],
+            "operational_confirmation_ref": {
+              "issue": "https://github.com/alfloop-dev/odayplus/issues/1446",
+              "receipt": "github://alfloop-dev/odayplus@c0c8c8226acaab3cbe8bb76e79f01e5e6694abb3/docs/evidence/human-decisions/HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001/requirement-disposition-approval-receipt.json",
+              "sha256": "cecb881659ba0f3542a99af63fcce48317cdbabe4756cc9109b6349b2c4e5be0"
+            },
+            "rationale": "The previously missing Item 16 operational answer is present: 蔡尚志, acting as Operations Lead and Product Lead, confirmed on 2026-10-09 that all stores and intervention types stop the predecessor, create a replacement and record their relationship, without direct in-place modification (#1446; receipt cecb881659ba0f3542a99af63fcce48317cdbabe4756cc9109b6349b2c4e5be0). InterventionWorkflow.adjust_case and the durable lineage implement that practice. VERIFIED records implementation, resolvable evidence and automated verification under §2; it is not a waiver, production UAT, or authorization to merge, deploy, admit models, or close independent release gates."
           }
         }
       ]
@@ -752,7 +774,7 @@
         {
           "name": "DEPRECIATION",
           "status": "satisfied",
-          "note": "Program delivered: PR #1295 (merge 898c192d59b0e39d51844b8596d952104771b6d8, ODP-AVM-DEPRECIATION-INTEGRATION-001) added modules/avm/domain/valuation.py::calculate_depreciation and applies it in modules/avm/application/production.py::AVMProductionExecutor; the eight xfail(strict=True) contract specs in modules/avm/tests/test_avm_depreciation_contract.py were removed because they pass. The contract stays docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md, the earlier disposition evidence stays docs/evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md, and the registry entry is docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md section 4.9. Production v1 activation refuses to run without DepreciationCutoverEvidence (Finance approved_by/approved_at, thresholds_reference and the three R-4 thresholds); no such Finance evidence exists, so the v1 depreciation path is not active in production.",
+          "note": "Program delivered: PR #1295 (merge 898c192d59b0e39d51844b8596d952104771b6d8, ODP-AVM-DEPRECIATION-INTEGRATION-001) added modules/avm/domain/valuation.py::calculate_depreciation and applies it in modules/avm/application/production.py::AVMProductionExecutor; the eight xfail(strict=True) contract specs in modules/avm/tests/test_avm_depreciation_contract.py were removed because they pass. The contract stays docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md, the earlier disposition evidence stays docs/evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md, and the registry entry is docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md section 4.9. Production v1 activation refuses to run without DepreciationCutoverEvidence (Finance approved_by/approved_at, thresholds_reference and the three R-4 thresholds); the Finance Owner, Product Owner and ML Risk Owner (蔡尚志 / ajoe734 / github:169176954) recorded conditional approval on 2026-10-09 at https://github.com/alfloop-dev/odayplus/issues/1446 (HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001/adjust-and-avm-finance-20261009; review_by 2027-10-09). The approved R-4 limits are asset delta >15% with unexplained cohort >5%, any incomplete depreciation evidence card, and P10-P90 coverage degradation >5 percentage points, with R-1 v0 pin rollback. This human approval explicitly preserves technical gates. Policy-bound runtime cutover evidence, registry/promotion/rollback target readback and a production execution receipt have not been established by this record.",
           "disposition": {
             "state": "BLOCKED_BY_EVIDENCE",
             "previous_state": "IMPLEMENTATION_READY",
@@ -772,11 +794,11 @@
                 "note": "Implementation merged in PR #1295; reclassified satisfied in code, blocked on Finance activation evidence."
               }
             ],
-            "evidence_needed": "Finance-owned DepreciationCutoverEvidence for the active depreciation policy: named approver and approval time, thresholds_reference, and the three R-4 rollback thresholds (asset delta ratio, unexplained cohort ratio, calibration coverage degradation), followed by a production AVM run read back with depreciation_applied=true.",
+            "evidence_needed": "Bind the existing Finance approval from issue #1446 to Finance-owned DepreciationCutoverEvidence for the active depreciation policy: approved_by/approved_at, thresholds_reference, the approved R-4 thresholds and the policy version. The human approver and thresholds are already recorded; runtime binding, model registry/promotion/rollback target readback, production admission and an actual production AVM readback with depreciation_applied=true remain unverified.",
             "evidence_owner": "Finance Analytics Lead / AVM Domain Lead",
             "next_review_date": "2026-10-17",
             "evidence_ref": "docs/evidence/completion/ODP-REMEDIATION-TRUTH-RECONCILIATION-001/README.md",
-            "rationale": "calculate_depreciation and the production cutover gate are merged and tested offline, so the member is satisfied as code. The gate exists precisely because activation needs Finance thresholds nobody has signed; until they exist the v1 path is refused at run time, and the member cannot be VERIFIED."
+            "rationale": "calculate_depreciation and the production cutover gate are merged and tested offline, so the member is satisfied as code. Human conditional Finance approval and R-4 thresholds are recorded at issue #1446; that approval does not replace policy-bound runtime evidence or technical admission. Keep BLOCKED_BY_EVIDENCE until the binding, model registry/promotion/rollback target and actual production execution readbacks are verified; this reconciliation does not activate v1 or sign any gate."
           },
           "evidence": "modules/avm/domain/valuation.py::calculate_depreciation"
         },
