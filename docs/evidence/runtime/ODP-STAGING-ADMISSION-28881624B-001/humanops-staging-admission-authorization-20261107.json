@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "record_kind": "humanops-runtime-release-staging-admission-authorization",
+  "status": "approved",
+  "is_approval": true,
+  "task_id": "ODP-STAGING-ADMISSION-28881624B-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-STAGING-ADMISSION-20261107G",
+  "candidate_sha": "28881624b834fd711e98b29726497107485b0961",
+  "manifest_digest": "sha256:40d946512f6321fd3a5b52fcafea08129afdb6614401aaad54783bc4b8e2b167",
+  "manifest_run_id": "42423504694",
+  "target_environment": "staging",
+  "release_profile": "core-ops",
+  "approved_at": "2026-11-07T23:24:05Z",
+  "decisions": {
+    "HD-08g": {
+      "decision": "approve",
+      "subject": "gate-2 Data Gate passed-with-deviation for this candidate's staging admission only, review_by 2026-11-20",
+      "accepted_deviations": [
+        "source contract and sample data reviewed: not applicable — the core-ops profile keeps every external source disabled (sources-off attestation in the build manifest: 16 sources audited, all disabled, zero credentials present).",
+        "point-in-time correctness checked for model-ready data: not applicable — core-ops serves no model (release_profile.model_readiness=not_claimed).",
+        "freshness and lineage evidence captured: check_live_production_data.py has never run against this candidate; deferred to the staging verify run and the production gates, not claimed as passed."
+      ]
+    },
+    "HD-09g": {
+      "decision": "approve",
+      "subject": "release.stage=dev-verified, admission_target=staging, decision=go for this exact candidate and staging manifest"
+    }
+  },
+  "authorization_basis": {
+    "user_reply": "同意此處置 / 同意 staging go",
+    "context": "Answers to an exact-tuple question naming candidate 28881624b (dev tip, PR #1666), staging build run 42423504694, manifest sha256:40d94651…, the three deviations above, the scope limits below, and this evidence: push CI 42372983710 and merge group CI 42372195272 succeeded but skipped all 7 product lanes by change scope; the lanes last ran on dev at 5eb7cba6c (push CI 42356697819, merge group CI 42354651502) and all succeeded; 5eb7cba6c..28881624b changes six development-tooling paths and no product path; the receipt module and its test have not run in CI since, and a local partial-clone run passed 156 of 157 with the one failure being @playwright/test missing locally; dev deploy 42373586318 passed on its first attempt with live E2E 77/77 (including worker:idempotent_replay), smoke, migration, worker, scheduler and egress probe ok; npm audit 0 findings; the registry PR's CI re-runs the 7 lanes on this candidate plus evidence and is checked per job before approval.",
+    "interpretation": "Owner 蔡尚志 replied in the Claude Code conversation at 2026-11-07T23:24:05Z. Transcribed by Claude; not an external identity-system signature."
+  },
+  "authorized_scope": {
+    "max_release_requests": 1,
+    "max_short_lived_supervisor_leases": 1,
+    "runtime_release_deploy_phases": 1,
+    "allowed_environment": "staging",
+    "external_sources_enabled": false,
+    "production_changes": false,
+    "github_staging_environment_approval_still_required": true,
+    "supervisor_lease_still_required": true
+  },
+  "recorded_by": "Claude (interactive owner-response transcription; no external identity signature claimed)",
+  "evidence": {
+    "exact_ci": "docs/evidence/runtime/ODP-STAGING-ADMISSION-28881624B-001/candidate-ci-28881624b.json",
+    "staging_build_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/42423504694",
+    "dev_deploy_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/42373586318",
+    "last_product_lanes_workflow_urls": [
+      "https://github.com/alfloop-dev/odayplus/actions/runs/42356697819",
+      "https://github.com/alfloop-dev/odayplus/actions/runs/42354651502"
+    ]
+  }
+}
