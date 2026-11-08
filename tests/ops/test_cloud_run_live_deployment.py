@@ -3310,6 +3310,77 @@ fi
     assert all("--headers=" not in line for line in call.splitlines() if "scheduler jobs update" in line)
 
 
+@pytest.mark.parametrize(
+    ("listed", "admitted"),
+    [
+        ("worker-trigger", True),
+        ("projects/test-project/locations/test-region/jobs/worker-trigger", True),
+        ("worker-trigger\nworker-trigger-old", False),
+        ("other-trigger", False),
+    ],
+)
+def test_scheduler_trigger_capture_accepts_one_exact_job_name(
+    tmp_path: Path, listed: str, admitted: bool
+) -> None:
+    """gcloud prints the job ID for value(name); only one exact match is admitted."""
+    snapshot = tmp_path / "scheduler.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "name": "projects/test-project/locations/test-region/jobs/worker-trigger",
+                "schedule": "0 * * * *",
+                "timeZone": "Asia/Taipei",
+                "state": "ENABLED",
+                "httpTarget": {
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/worker-job:run",
+                    "httpMethod": "POST",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    listing = tmp_path / "listing.txt"
+    listing.write_text(listed + "\n", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(
+        f"""#!/usr/bin/env bash
+if [[ "$*" == *"scheduler jobs list"* ]]; then cat "{listing}"; fi
+if [[ "$*" == *"scheduler jobs describe"* ]]; then cat "{snapshot}"; fi
+""",
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+    output = tmp_path / "captured.json"
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{TRAFFIC_SHELL_HELPER}"\n'
+            f'capture_scheduler_trigger "worker-trigger" "{output}" identity-only\n',
+        ],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "GCP_PROJECT": "test-project",
+            "GCP_REGION": "test-region",
+            "ODP_SCHEDULER_HELPER": str(SCHEDULER_HELPER_PATH),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    if admitted:
+        assert result.returncode == 0, result.stderr
+        assert json.loads(output.read_text(encoding="utf-8"))["name"].endswith("/jobs/worker-trigger")
+    else:
+        assert result.returncode != 0
+        assert "ambiguous scheduler lookup for worker-trigger" in result.stderr
+
+
 def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
     snapshot = tmp_path / "scheduler.json"
     snapshot.write_text(
