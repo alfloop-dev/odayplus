@@ -2019,6 +2019,7 @@ class JourneyRunner:
 
     def sign_in(self, actor: str) -> bool:
         credential = self.credentials[actor]
+        expected_account_id = self.scope.account_ids[actor]
         login = self.http.request(
             "POST",
             "/login",
@@ -2051,12 +2052,10 @@ class JourneyRunner:
             headers={"accept": "application/json", "cookie": _cookie_header(cookies)},
         )
         # /auth/session names the server-side account UUID, never the username.
-        account = self.scope.account_ids.get(actor)
         if not self.result.check(
             not session.failed
             and session.status == 200
-            and bool(account)
-            and session.payload.get("subject") == account,
+            and session.payload.get("subject") == expected_account_id,
             f"session:{actor}_resolves_account",
             f"status={session.status}",
             "business-credential",
@@ -2076,7 +2075,7 @@ class JourneyRunner:
         if not self.result.check(
             not principal.failed
             and principal.status == 200
-            and principal.payload.get("account_id") == self.scope.account_ids.get(actor)
+            and principal.payload.get("account_id") == expected_account_id
             and _canonical_uuid(principal.payload.get("tenant_id")) == self.scope.tenant_id
             and bool(role_values & self.spec.actor_roles.get(actor, frozenset()))
             and "platform_admin" not in role_values,

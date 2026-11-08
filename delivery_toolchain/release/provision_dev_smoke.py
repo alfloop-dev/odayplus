@@ -821,10 +821,9 @@ class WebInvitationExecutor:
             raise ProvisioningRefused("PROVISIONING_SESSION_INVALID")
         return cookie
 
-    def _session(self, cookie: str, account: str) -> None:
-        # /auth/session names the server-side account UUID, never the username.
+    def _session(self, cookie: str, account_id: str) -> None:
         current = self._request("GET", "/auth/session", cookie=cookie).payload
-        if current.get("subject") != account:
+        if current.get("subject") != account_id:
             raise ProvisioningRefused("PROVISIONING_SESSION_INVALID")
 
     def _users(self, cookie: str) -> list[dict[str, Any]]:
