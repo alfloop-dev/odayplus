@@ -21,7 +21,11 @@ from modules.listing.application.native_intake_source_policy_budget import (
 )
 from modules.listing.application.native_intake_terminal_evidence import native_terminal_evidence
 from shared.infrastructure.persistence.postgresql import PostgresEngine
-from tests.integration.test_native_intake_parent_terminal_rows_postgresql import _source_delivery
+from tests.integration.test_native_intake_parent_terminal_rows_postgresql import (
+    _WORKFLOW_READ_SQL,
+    _native_parameters,
+    _source_delivery,
+)
 from tests.integration.test_native_intake_parser_admission_postgresql import authority as authority
 from tests.integration.test_native_intake_parser_admission_postgresql import (
     canonical_graph as canonical_graph,
@@ -157,13 +161,17 @@ def test_original_source_budget_enables_native_terminal_reads_and_matches_legacy
     source = NativeIntakeSourcePolicyOwner(owner.graph)
     delivery = _source_delivery(case)
     original_rows, calls = _persisted(case), _observe(case, monkeypatch)
-    workflow_read = ("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
-        (ids["tenant"], delivery.job_id))
+    # The original fixed workflow SELECT, recognized only inside its bounded
+    # native envelope (a bare SELECT fails in _native_parameters).
+    workflow_read = ids["tenant"], delivery.job_id
+
+    def workflow_reads(observed):
+        return [_native_parameters(statement, params, _WORKFLOW_READ_SQL) for statement, params in observed]
     batch_params = ids["tenant"], delivery.job_id, delivery.job_id
     with owner.graph.transaction(ids["tenant"]):
         legacy = source._committed_result(delivery, ids["tenant"], 1)
         assert legacy is not None and legacy["processing_state"] == "AWAITING_ASSISTED_ENTRY"
-        assert _batch_calls(calls) == [] and workflow_read in calls
+        assert _batch_calls(calls) == [] and workflow_reads(calls).count(workflow_read) == 1
 
     # A deliberately separate differential root over the same genuine facts.
     # Any failed read propagates; there is no retry or replacement budget.
@@ -194,7 +202,7 @@ def test_original_source_budget_enables_native_terminal_reads_and_matches_legacy
         # invocation. Its nested producer checks retain their original reads.
         assert _batch_calls(calls[closed_at:]).count(batch_params) == 1
         assert _batch_calls(calls[begin:]).count(batch_params) == 2
-        assert workflow_read not in calls[begin:]
+        assert workflow_read not in workflow_reads(calls[begin:])
         assert (_PAIR_SQL, batch_params) not in calls[begin:]
         guarded = [params for statement, params in calls[begin:]
             if statement.startswith("WITH observed AS MATERIALIZED (")]

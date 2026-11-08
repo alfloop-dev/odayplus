@@ -69,6 +69,7 @@ def test_actual_withdrawal_route_uses_its_command_family_error_codes(monkeypatch
     from uuid import UUID
 
     from fastapi import Response
+    from starlette.datastructures import Headers
 
     from apps.api.app.routes import canonical_intakes as routes
 
@@ -80,7 +81,7 @@ def test_actual_withdrawal_route_uses_its_command_family_error_codes(monkeypatch
     store = SimpleNamespace(_engine=engine)
     bundle = SimpleNamespace(engine=engine, assisted_intake_store=store,
         canonical_intakes=lambda: SimpleNamespace(graph=object()))
-    request = SimpleNamespace(headers={}, app=SimpleNamespace(state=SimpleNamespace(persistence_bundle=bundle)))
+    request = SimpleNamespace(headers=Headers(), app=SimpleNamespace(state=SimpleNamespace(persistence_bundle=bundle)))
     calls = []
 
     def cancel(*_, **kwargs):
