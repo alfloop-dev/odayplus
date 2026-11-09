@@ -978,7 +978,11 @@ export class OdpApiClient {
           .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
           .join("&")
       : "";
-    const url = `${this.baseUrl}${path}${query ? `?${query}` : ""}`;
+    const normalizedPath =
+      this.baseUrl.endsWith("/api/v1") && path.startsWith("/api/v1/")
+        ? path.slice("/api/v1".length)
+        : path;
+    const url = `${this.baseUrl}${normalizedPath}${query ? `?${query}` : ""}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {

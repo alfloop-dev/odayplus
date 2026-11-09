@@ -47,7 +47,8 @@ def _promotion_client(bundle):
 
 def _reviewer_headers(key="synthetic-promotion-review"):
     return {**_headers(APPROVER, key=key), "x-roles": "site_reviewer,expansion_user",
-            "x-operator-role": "expansion-manager"}
+            "x-operator-role": "expansion-manager",
+            **({"If-Match": 'W/"2"'} if str(key).endswith("-decide") else {})}
 
 
 def _ready_intake(db, bundle, client):

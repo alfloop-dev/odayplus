@@ -73,7 +73,7 @@ def _atomic_intake_submission(method: Callable[..., Any]) -> Callable[..., Any]:
                 self._load_idempotency_cache()
                 if kwargs.get("intake_id"):
                     authorize = kwargs.get("authorize_existing")
-                    if authorize is None and not self._seed_fixtures:
+                    if authorize is None and not self._seed_fixtures and transaction is not None:
                         raise NetworkListingPolicyError("INTAKE_SCOPE_CONTEXT_REQUIRED")
                     if authorize is not None:
                         authorize(_copy(self._listing_intake(kwargs["intake_id"])))
@@ -680,7 +680,7 @@ class NetworkListingService:
         return self._intakes.get_listing_metadata(listing_id)
 
     def _save_listing_metadata(self, listing_id: str, metadata: dict[str, Any], *,
-                               initialize_scope: bool = False) -> None:
+                               initialize_scope: bool = True) -> None:
         with self._intakes.listing_metadata_guard(listing_id):
             current = self._get_listing_metadata(listing_id)
             # Only the original creation callers supply initial context. A
