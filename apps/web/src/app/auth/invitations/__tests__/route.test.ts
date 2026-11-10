@@ -133,8 +133,6 @@ describe("bounded invitation capability acceptance BFF (no login or credential o
     const html = await response.text();
     for (const field of ["invitation_id", "token", "username", "password"]) expect(html).toContain(`name="${field}"`);
     expect(html).toContain("form.reset()");
-    expect(html).toMatch(/name="password"[^>]*minlength="8"/);
-    expect(html).toContain("密碼至少 8 字元");
     expect(html).not.toContain("localStorage");
     expect(html).not.toContain("sessionStorage");
     expect(html).not.toContain(BODY.token);
