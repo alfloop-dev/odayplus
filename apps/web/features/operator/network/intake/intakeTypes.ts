@@ -23,6 +23,22 @@ import {
 
 export type IntakeTone = "good" | "watch" | "risk" | "info" | "neutral";
 
+export const INTAKE_LINEAGE_GROUPS = ["identity", "location", "commercial", "property", "provenance"] as const;
+export type IntakeLineageGroup = typeof INTAKE_LINEAGE_GROUPS[number];
+
+export const hasLowLineageConfidence = (confidence: number | null | undefined) =>
+  confidence !== undefined && confidence !== null && confidence < 0.5;
+
+/** Display grouping only; classification and masking come from the server. */
+export function intakeLineageGroup(key: string, identity: boolean): IntakeLineageGroup {
+  const normalized = key.toLowerCase();
+  if (identity) return "identity";
+  if (normalized.includes("address") || normalized.includes("district") || normalized.includes("city")) return "location";
+  if (normalized.includes("rent") || normalized.includes("price") || normalized.includes("deposit")) return "commercial";
+  if (normalized.includes("area") || normalized.includes("floor") || normalized.includes("type")) return "property";
+  return "provenance";
+}
+
 /**
  * Which dialog the queue has open. The detail dialog is the deep-link target
  * (`#intake/<id>`); fix/decide stack above it and return to it on close.

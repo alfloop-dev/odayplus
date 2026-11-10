@@ -2,14 +2,19 @@
 
 import type {
   AssistedIntake,
+  CanonicalIntakeDetail,
+  CanonicalIntakeHistoryPage,
   JobReceipt,
   SlaReceipt,
   TransitionReceipt,
 } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import { stageLabel, stageSteps, stageTone } from "./intakeTypes";
+import { CANONICAL_INTAKE_STAGE_LABEL, readCanonicalIntakeHistory, type CanonicalIntakeReadContext } from "./canonicalIntakeReadClient";
+import { CanonicalIntakeFailure } from "./CanonicalIdentityDecisionPanel";
+import { useCanonicalIntakeReadPage, type CanonicalIntakePageLoader } from "./useCanonicalIntakeReadPage";
 
-export type IntakeStageTimelineProps = {
+type AssistedTimelineProps = {
   record: AssistedIntake;
   history?: TransitionReceipt[];
   jobs?: JobReceipt[];
@@ -21,7 +26,60 @@ export type IntakeStageTimelineProps = {
   mode?: "stages" | "audit";
 };
 
-export function IntakeStageTimeline({
+type NativeTimelineProps = { canonical: CanonicalIntakeDetail; context: CanonicalIntakeReadContext };
+export type IntakeStageTimelineProps = AssistedTimelineProps | NativeTimelineProps;
+
+export function IntakeStageTimeline(props: IntakeStageTimelineProps) {
+  return "canonical" in props ? <NativeTimeline {...props} /> : <AssistedTimeline {...props} />;
+}
+
+const loadHistoryPage: CanonicalIntakePageLoader<CanonicalIntakeHistoryPage> = (context, parent, cursor, signal, initial) =>
+  readCanonicalIntakeHistory(context, parent, cursor, initial.through_sequence, signal);
+
+function NativeTimeline({ canonical, context }: NativeTimelineProps) {
+  const { page, busy, error, selectCursor } = useCanonicalIntakeReadPage(context, canonical,
+    canonical.processing_history ?? null, loadHistoryPage);
+  return <div className={styles.sectionBox} data-testid="native-intake-stage-timeline">
+    <div className={styles.timelineHeader}>
+      <h4>階段時序與執行歷程 STAGE TIMELINE</h4>
+      <span className={styles.chip}>{CANONICAL_INTAKE_STAGE_LABEL[canonical.processing_state]}</span>
+    </div>
+    <p>目前版本 {canonical.version} · 歷程只顯示實際記錄的轉移。</p>
+    {busy ? <p role="status">正在讀取階段歷程…</p>
+      : error ? <CanonicalIntakeFailure error={error} />
+      : page ? <>
+        <p>歷程截點：序號 {page.through_sequence} · 收件版本 {page.intake_version}</p>
+        {page.items.length ? <div style={{ overflowX: "auto" }}>
+          <table className={styles.compareGrid} aria-label="原生收件實際階段歷程">
+            <thead><tr><th>次序／時間</th><th>實際轉移</th><th>執行者</th><th>版本／原因</th><th>記錄參考</th></tr></thead>
+            <tbody>{page.items.map((row) => <tr key={row.transition_id}>
+              <td>#{row.sequence_no}<p>{row.occurred_at}</p></td>
+              <td>{row.from_state === null ? "建立" : CANONICAL_INTAKE_STAGE_LABEL[row.from_state]} → {CANONICAL_INTAKE_STAGE_LABEL[row.to_state]}</td>
+              <td className={styles.summaryValue}>{row.actor_subject_id ? "人員 " + row.actor_subject_id
+                : row.service_principal ? "服務 " + row.service_principal : "未記錄執行者"}</td>
+              <td>{row.expected_version ?? "未記錄"} → {row.resulting_version}<p>{row.reason_code ?? "未記錄原因代碼"}</p><p>{row.permission}</p></td>
+              <td className={styles.summaryValue}>
+                <p>轉移 {row.transition_id}</p><p>查詢 {row.correlation_id}</p>
+                {row.job_id ? <p>工作 {row.job_id}</p> : null}
+                {row.source_policy_version !== null ? <p>來源政策版本 {row.source_policy_version}</p> : null}
+                {row.source_snapshot_id ? <p>快照 {row.source_snapshot_id}</p> : null}
+                {row.parser_release_id ? <p>解析版本 {row.parser_release_id}</p> : null}
+                {row.match_case_id ? <p>案件 {row.match_case_id}</p> : null}
+              </td>
+            </tr>)}</tbody>
+          </table>
+        </div> : <p>尚無已記錄的階段轉移；目前狀態以詳情讀取為準。</p>}
+        <div className={styles.timelineActions}>
+          <button className={styles.secondaryButton} disabled={!page.previous_cursor} type="button"
+            onClick={() => selectCursor(page.previous_cursor)}>較早的階段歷程</button>
+          <button className={styles.secondaryButton} disabled={!page.next_cursor} type="button"
+            onClick={() => selectCursor(page.next_cursor)}>較後的階段歷程</button>
+        </div>
+      </> : <p>尚未取得處理歷程，請重新整理詳情。</p>}
+  </div>;
+}
+
+function AssistedTimeline({
   record,
   history = [],
   jobs = [],
@@ -31,7 +89,7 @@ export function IntakeStageTimeline({
   onCancel,
   testId = "intake-stage-timeline",
   mode = "stages",
-}: IntakeStageTimelineProps) {
+}: AssistedTimelineProps) {
   const steps = stageSteps(record);
   const activeJob = jobs.find((j) => j.status === "RUNNING" || j.delivery_state === "RETRYING" || j.delivery_state === "DEAD_LETTER") ?? jobs[0];
   const isDlq = activeJob?.delivery_state === "DEAD_LETTER" || record.stage === "FAILED";

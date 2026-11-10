@@ -11,13 +11,13 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import dynamic from "next/dynamic";
+import { usePathname, useSearchParams } from "next/navigation";
 import type { Tone } from "./components";
 import type { GovernanceWorkspaceProps } from "./GovernanceWorkspace";
 import { readGovernanceViewState, serializeGovernanceViewState, type GovernanceViewState } from "./governance/governanceUrlState";
 import type { NetworkFindAreasWorkspaceProps } from "./NetworkFindAreasWorkspace";
 import type { ColdIntakeDetailProps } from "./network/intake/ColdIntakeDetail";
 import type { InterventionWorkspaceProps } from "./interventions/InterventionWorkspace";
-import { ISSUE_FIXTURES } from "./issueFixtures";
 import {
   DEFAULT_OPERATOR_ROLE_ID,
   DEFAULT_WORKSPACE_ID,
@@ -31,7 +31,6 @@ import {
 } from "./navigation";
 import { HEAT_ZONE_SELECTION_PARAM } from "./network/heatZoneNavigation";
 import type { NetworkFindAreasBindings } from "./network/networkFindAreasLoader";
-import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   classifyLoadFailure,
   operatorFixturesAllowed,
@@ -49,7 +48,8 @@ import {
 } from "./shellEnvelope";
 import type { Issue } from "./types";
 import { hasCanonicalScoreSession } from "./operatorSessionValidation";
-import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
+import { operatorSecurityHeaders, readOperatorBrowserHints, type OperatorStorageFailureHandler } from "./operatorSecurityHeaders";
+import { clearIntakeSelection, intakePathSelection, intakeNavigationHash } from "./network/intake/intakeNavigation";
 import {
   PASSWORD_CHANGE_PATH,
   classifyAccessDenial,
@@ -58,6 +58,14 @@ import {
 
 
 // Presentation loads at the original open/admitted branch; header and workspace state stay here.
+const OperatorDataUnavailableGate = dynamic<ComponentProps<typeof import("./OperatorDataUnavailableGate").OperatorDataUnavailableGate>>(
+  () => import("./OperatorDataUnavailableGate").then((mod) => mod.OperatorDataUnavailableGate),
+  { ssr: false, loading: () => <div aria-live="polite" role="status">正在核對操作狀態…</div> },
+);
+const CanonicalIntakeCommandProvider = dynamic<ComponentProps<typeof import("./network/intake/useCanonicalIntakeCommand").CanonicalIntakeCommandProvider>>(
+  () => import("./network/intake/useCanonicalIntakeCommand").then((mod) => mod.CanonicalIntakeCommandProvider),
+  { ssr: false },
+);
 const OperatorShellCommandPalette = dynamic<ComponentProps<typeof import("./OperatorShellCommandPalette").OperatorShellCommandPalette>>(
   () => import("./OperatorShellCommandPalette").then((mod) => mod.OperatorShellCommandPalette),
   { ssr: false },
@@ -68,6 +76,10 @@ const OperatorTaskPopover = dynamic<ComponentProps<typeof import("./OperatorShel
 );
 const OperatorRoleMenu = dynamic<ComponentProps<typeof import("./OperatorShellHeaderPanels").OperatorRoleMenu>>(
   () => import("./OperatorShellHeaderPanels").then((mod) => mod.OperatorRoleMenu),
+  { ssr: false },
+);
+const OperatorSearchResults = dynamic<ComponentProps<typeof import("./OperatorShellHeaderPanels").OperatorSearchResults>>(
+  () => import("./OperatorShellHeaderPanels").then((mod) => mod.OperatorSearchResults),
   { ssr: false },
 );
 const OperatorWorkspaceFallback = dynamic<ComponentProps<typeof import("./OperatorWorkspaceFallback").OperatorWorkspaceFallback>>(
@@ -339,7 +351,18 @@ export function OperatorConsole({
   notificationReportId?: string;
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
-  const intakeDetailOpen = isIntakeDetailOpen(searchParams);
+  const pathname = usePathname();
+  const locationParams = useSearchParams();
+  // The current router location owns same-Console history navigation. Server
+  // props are the initial premise only when no router location is available.
+  const intakeParams = locationParams ? Object.fromEntries(Array.from(locationParams.keys(), (key) => {
+    const values = locationParams.getAll(key);
+    return [key, values.length === 1 ? values[0] : values];
+  })) : searchParams;
+  const intakePathId = intakePathSelection(pathname);
+  const intakeDetailOpen = intakePathId !== undefined || isIntakeDetailOpen(intakeParams);
+  const coldIntakeId = intakePathId !== undefined ? intakePathId
+    : typeof intakeParams.selected === "string" ? intakeParams.selected : null;
   const fixturesAllowed = operatorFixturesAllowed();
   const environment = resolveOperatorEnvironment(
     deploymentEnvironment ?? process.env.NEXT_PUBLIC_ODP_DEPLOY_ENV,
@@ -401,15 +424,54 @@ export function OperatorConsole({
   const [shellReloadToken, setShellReloadToken] = useState(0);
   const [liveNotifications, setLiveNotifications] = useState<any[]>(fixturesAllowed ? notifications : []);
   const [confirmedNotificationCount, setConfirmedNotificationCount] = useState<number | null>(null);
-  const [liveIssues, setLiveIssues] = useState<Issue[]>(fixturesAllowed ? ISSUE_FIXTURES : []);
+  const [liveIssues, setLiveIssues] = useState<Issue[]>([]);
   const [liveNetworkBindings, setLiveNetworkBindings] = useState<NetworkFindAreasBindings | null>(null);
   const [liveApprovals, setLiveApprovals] = useState<any[]>([]);
   const [liveGovernanceDecisions, setLiveGovernanceDecisions] = useState<any[]>([]);
   const [liveGovernanceAuditRows, setLiveGovernanceAuditRows] = useState<any[]>([]);
 
-  const getSecurityHeaders = (roleId: OperatorRoleId) => {
-    return operatorSecurityHeaders(roleId);
-  };
+  const clearAuthenticatedRows = useCallback(() => {
+    setShellEnvelope(normalizeShellEnvelope(undefined, { allowFixtureFallback: false }));
+    setLiveNotifications([]); setConfirmedNotificationCount(null); setLiveIssues([]); setLiveNetworkBindings(null);
+    setLiveApprovals([]); setLiveGovernanceDecisions([]); setLiveGovernanceAuditRows([]);
+    setLiveTasks([]); setConfirmedTaskCount(null); setTaskCenterLoadState("idle");
+  }, []);
+
+  // One Console availability latch shares the original epoch/error gate.
+  // Its retry contains only a failed browser read/preference operation, never
+  // a business packet or a POST. Existing workflow owners retain their intent.
+  const storageFailure = useRef<{ retry: () => void; failure: OperatorLoadFailure } | null>(null);
+  const onStorageFailure = useCallback<OperatorStorageFailureHandler>((retry) => {
+    if (storageFailure.current) return;
+    const failure: OperatorLoadFailure = { kind: "storage", occurredAt: new Date().toISOString(),
+      correlationId: newCorrelationId("operator-browser-storage"), technicalDetail: "Browser storage access failed" };
+    storageFailure.current = { retry, failure };
+    ++bootstrapSequence.current;
+    // A descendant may detect a failed hint during render. Revoke its lease
+    // synchronously, then publish through the original Console after render.
+    queueMicrotask(() => {
+      clearAuthenticatedRows(); setShellWarmingUp(false); setShellDataStatus("error"); setShellLoadFailure(failure);
+      setIsCommandPaletteOpen(false); setIsSearchOpen(false); setIsRoleMenuOpen(false);
+      setIsNotificationOpen(false); setIsTaskCenterOpen(false);
+    });
+  }, [clearAuthenticatedRows]);
+  const withBrowserPreferences = useCallback(<T,>(operation: (storage: Storage) => T): { ok: true; value: T } | { ok: false } => {
+    if (storageFailure.current) return { ok: false };
+    const perform = () => {
+      const storage = window.sessionStorage;
+      readOperatorBrowserHints(storage);
+      return operation(storage);
+    };
+    try { return { ok: true, value: perform() }; }
+    catch { onStorageFailure(() => { perform(); }); return { ok: false }; }
+  }, [onStorageFailure]);
+
+  // Preflight also covers a later Console rerender, before descendants can
+  // touch their own hints. Missing hints remain distinct from failed reads.
+  if (typeof window !== "undefined" && !storageFailure.current) {
+    try { readOperatorBrowserHints(); }
+    catch { onStorageFailure(() => { readOperatorBrowserHints(); }); }
+  }
 
   const applyOperatorEnvelope = (payload: unknown, allowFixtureFallback: boolean,
     admission: typeof import("./operatorBootstrapPayload")) => {
@@ -423,34 +485,16 @@ export function OperatorConsole({
         ? nextEnvelope.notifications
         : notifications,
     );
-    // `nextEnvelope.approvals` is an alias of the Today decision cards, not a
-    // governance approval feed: it carries no module / requestor / submittedAt.
-    // The Govern workspace binds to /api/v1/operator/governance/snapshot, so
-    // only explicitly governance-shaped bootstrap side channels are forwarded,
-    // and always through the governance normalizers. Each envelope replaces the
-    // previous one, so a side channel the new envelope does not carry is
-    // cleared: rows from a superseded envelope are stale governance state.
-    setLiveApprovals(
-      Array.isArray(record?.governanceApprovals)
-        ? admission.normalizeGovernanceApprovals(record.governanceApprovals)
-        : [],
-    );
+    const governance = admission.normalizeBootstrapGovernance(record);
+    setLiveApprovals(governance.approvals);
 
     if (Array.isArray(record?.issues)) {
       setLiveIssues(record.issues as Issue[]);
     } else if (!allowFixtureFallback) {
       setLiveIssues([]);
     }
-    setLiveGovernanceDecisions(
-      Array.isArray(record?.governanceDecisions)
-        ? admission.normalizeGovernanceDecisionRows(record.governanceDecisions)
-        : [],
-    );
-    setLiveGovernanceAuditRows(
-      Array.isArray(record?.governanceAuditRows)
-        ? admission.normalizeGovernanceAuditRows(record.governanceAuditRows)
-        : [],
-    );
+    setLiveGovernanceDecisions(governance.decisions);
+    setLiveGovernanceAuditRows(governance.auditRows);
   };
 
   const rolesForShell = useMemo(() => {
@@ -494,16 +538,24 @@ export function OperatorConsole({
     const workspaceId = isWorkspaceAllowed(activeRole, activeWorkspaceId)
       ? activeWorkspaceId
       : DEFAULT_WORKSPACE_ID;
+    if (!withBrowserPreferences((storage) => storage.setItem(workspaceStorageKey, workspaceId)).ok) return;
     setActiveWorkspaceId(workspaceId);
-    window.sessionStorage.setItem(workspaceStorageKey, workspaceId);
-  }, [activeRole, activeWorkspaceId, bootstrapAuthMode, fixturesAllowed, hasHydratedPreferences, shellDataStatus]);
+  }, [activeRole, activeWorkspaceId, bootstrapAuthMode, fixturesAllowed, hasHydratedPreferences, shellDataStatus, withBrowserPreferences]);
 
   const activeWorkspace = getWorkspace(activeWorkspaceId);
   const liveWorkQueue = shellEnvelope.workQueue;
   const liveDecisions = shellEnvelope.decisions;
-  const canRenderWorkspace = (shellDataStatus === "ready" || fixturesAllowed && bootstrapAuthMode === "fixture")
+  const canRenderWorkspace = !storageFailure.current && (shellDataStatus === "ready" || fixturesAllowed && bootstrapAuthMode === "fixture")
     && isWorkspaceAllowed(activeRole, activeWorkspaceId);
-  const canReadColdIntake = intakeDetailOpen && bootstrapAuthMode === "authenticated" && !canRenderWorkspace;
+  // Retain the original Govern/Evidence owner while the Console reauthenticates.
+  // Only closed verified identity metadata is kept; a new principal remounts it.
+  const governanceOwner = useRef<{ key: string; subject: string | null } | null>(null);
+  if (activeWorkspaceId !== "govern") governanceOwner.current = null;
+  else if (governanceOwner.current && bootstrapHasAuthenticatedSession.current
+    && governanceOwner.current.subject !== bootstrapAccount.current) governanceOwner.current = null;
+  if (activeWorkspaceId === "govern" && canRenderWorkspace) governanceOwner.current = {
+    key: JSON.stringify([bootstrapAccount.current, shellEnvelope.meta.tenantId, activeRoleId]), subject: bootstrapAccount.current };
+  const canReadColdIntake = !storageFailure.current && intakeDetailOpen && bootstrapAuthMode === "authenticated" && !canRenderWorkspace && !("intakeKind" in intakeParams);
   const isTodayContent = canRenderWorkspace && activeWorkspaceId === "today";
   const isGovernContent = canRenderWorkspace && activeWorkspaceId === "govern";
   const dataModeBanner = dataModeBannerCopy(shellDataStatus, fixturesAllowed);
@@ -530,12 +582,15 @@ export function OperatorConsole({
     };
   }, []);
 
-  useEffect(() => {
+  const hydratePreferences = useCallback(() => {
     // Browser preferences are presentation only. Once a server persona or an
     // explicit subject-bound selection exists, URL hydration cannot restore a
     // stale preference as an authenticated caller constraint.
     const currentPersona = bootstrapRoleIntent.current?.roleId ?? bootstrapPersona.current?.roleId;
-    const storedRole = getOperatorRole(currentPersona ?? window.sessionStorage.getItem(roleStorageKey));
+    const read = withBrowserPreferences((storage) => ({ role: currentPersona ?? storage.getItem(roleStorageKey),
+      workspace: typeof searchParams.ws === "string" ? null : storage.getItem(workspaceStorageKey) }));
+    if (!read.ok) { setHasHydratedPreferences(false); return false; }
+    const storedRole = getOperatorRole(read.value.role);
     setActiveRoleId(storedRole.id);
 
     let targetWorkspaceId = DEFAULT_WORKSPACE_ID;
@@ -545,7 +600,7 @@ export function OperatorConsole({
         targetWorkspaceId = ws;
       }
     } else {
-      const storedWorkspace = getWorkspace(window.sessionStorage.getItem(workspaceStorageKey));
+      const storedWorkspace = getWorkspace(read.value.workspace);
       targetWorkspaceId = storedWorkspace.id;
     }
 
@@ -559,36 +614,46 @@ export function OperatorConsole({
     setActiveTabId(tab);
     setGovernanceView(readGovernanceViewState(searchParams));
     setHasHydratedPreferences(true);
-  }, [searchParams]);
+    return true;
+  }, [searchParams, withBrowserPreferences]);
+  useEffect(() => { hydratePreferences(); }, [hydratePreferences]);
+
+  function retryShell() {
+    const failed = storageFailure.current;
+    if (failed) {
+      try { failed.retry(); readOperatorBrowserHints(); }
+      catch { return; }
+      storageFailure.current = null;
+      if (!hasHydratedPreferences && !hydratePreferences()) return;
+      bootstrapPersona.current = null; bootstrapRoleIntent.current = null; bootstrapAdoptedRole.current = null;
+      clearAuthenticatedRows(); setShellDataStatus("loading"); setShellLoadFailure(null);
+    }
+    setShellReloadToken((token) => token + 1);
+  }
 
   useEffect(() => {
     function restoreLocation() {
       const params = new URLSearchParams(window.location.search);
-      const requested = params.get("ws") ?? DEFAULT_WORKSPACE_ID;
+      const intakeRoute = intakePathSelection(window.location.pathname) !== undefined;
+      const requested = intakeRoute ? "network" : params.get("ws") ?? DEFAULT_WORKSPACE_ID;
       const intendedWorkspace = isWorkspaceId(requested) ? requested : DEFAULT_WORKSPACE_ID;
       const workspace = !fixturesAllowed && shellDataStatus !== "ready"
         ? intendedWorkspace
         : isWorkspaceAllowed(activeRole, intendedWorkspace) ? intendedWorkspace : DEFAULT_WORKSPACE_ID;
+      if (!withBrowserPreferences((storage) => storage.setItem(workspaceStorageKey, workspace)).ok) return;
       setActiveWorkspaceId(workspace);
       setSelectedEntityId(params.get("entity"));
-      setActiveTabId(params.get("tab") ?? "overview");
+      setActiveTabId(intakeRoute ? "radar" : params.get("tab") ?? "overview");
       setGovernanceView(readGovernanceViewState(params));
-      window.sessionStorage.setItem(workspaceStorageKey, workspace);
     }
     window.addEventListener("popstate", restoreLocation);
     return () => window.removeEventListener("popstate", restoreLocation);
-  }, [activeRole, fixturesAllowed, shellDataStatus]);
-
-  const clearAuthenticatedRows = useCallback(() => {
-    setShellEnvelope(normalizeShellEnvelope(undefined, { allowFixtureFallback: false }));
-    setLiveNotifications([]); setConfirmedNotificationCount(null); setLiveIssues([]); setLiveNetworkBindings(null);
-    setLiveApprovals([]); setLiveGovernanceDecisions([]); setLiveGovernanceAuditRows([]);
-    setLiveTasks([]); setConfirmedTaskCount(null); setTaskCenterLoadState("idle");
-  }, []);
+  }, [activeRole, fixturesAllowed, shellDataStatus, withBrowserPreferences]);
 
   // A mounted read must recheck the server session even when no UI event
   // changes the local account refs. Cookies can rotate during HTTP or JSON.
-  const pinAuthenticatedRead = useCallback(async (expected: string | null, current: () => boolean): Promise<boolean> => {
+  const pinAuthenticatedRead = useCallback(async (expected: string | null, readCurrent: () => boolean): Promise<boolean> => {
+    const current = () => readCurrent() && withBrowserPreferences(() => undefined).ok;
     if (!current()) return false;
     let actual: string | null = null;
     let response: Response | null = null;
@@ -629,10 +694,38 @@ export function OperatorConsole({
     setTaskCenterSource("api"); setTaskCenterLoadState("loading");
     setShellReloadToken((token) => token + 1);
     return false;
-  }, [clearAuthenticatedRows, fixturesAllowed]);
+  }, [clearAuthenticatedRows, fixturesAllowed, withBrowserPreferences]);
+
+  // All mounted workspace reads share the current Console account/persona lease.
+  const createAuthenticatedReadGuard = useCallback((readCurrent: () => boolean) => {
+    const sequence = bootstrapSequence.current;
+    const subject = bootstrapAccount.current;
+    const persona = bootstrapPersona.current;
+    const current = () => !storageFailure.current && readCurrent() && sequence === bootstrapSequence.current
+      && subject === bootstrapAccount.current && persona === bootstrapPersona.current
+      && (bootstrapAuthMode !== "authenticated" || persona?.roleId === activeRoleId)
+      && (shellDataStatus === "ready" || bootstrapAuthMode === "fixture")
+      && !(bootstrapRoleIntent.current?.subject === subject && bootstrapRoleIntent.current.roleId !== persona?.roleId);
+    return () => pinAuthenticatedRead(subject, current);
+  }, [activeRoleId, bootstrapAuthMode, shellDataStatus, pinAuthenticatedRead]);
+
+  // One captured native command survives workspace presentation changes.
+  // This key follows verified account/persona/grants, never the current view.
+  // Browser scope hints only invalidate; the API remains the authority.
+  const canonicalCommandScope = !storageFailure.current && !fixturesAllowed && bootstrapAuthMode === "authenticated" && shellDataStatus === "ready"
+    && bootstrapAccount.current !== null && bootstrapPersona.current?.roleId === activeRoleId
+    && shellEnvelope.navigation.allowedWorkspaces.includes("network")
+    && shellEnvelope.navigation.allowedTabs?.network?.some((tab) => tab === "areas" || tab === "radar")
+    ? JSON.stringify([bootstrapSequence.current, bootstrapPersona.current, shellEnvelope.meta.tenantId, shellEnvelope.navigation.allowedTabs.network]) : null;
+  const canonicalIntakeReadContext = useMemo(() => canonicalCommandScope === null ? null : {
+    contextKey: canonicalCommandScope, headers: operatorSecurityHeaders(activeRoleId), fetchImpl: fetch,
+    ...(bootstrapAccount.current && shellEnvelope.meta.tenantId ? { receiptOwner: {
+      subject: bootstrapAccount.current, tenantId: shellEnvelope.meta.tenantId, roleId: activeRoleId,
+    } } : {}),
+  }, [activeRoleId, canonicalCommandScope]);
 
   useEffect(() => {
-    if (!hasHydratedPreferences) return;
+    if (!hasHydratedPreferences || storageFailure.current) return;
     const adopted = bootstrapAdoptedRole.current;
     if (adopted?.roleId === activeRoleId && adopted.subject === bootstrapAccount.current && adopted.reloadToken === shellReloadToken) {
       bootstrapAdoptedRole.current = null;
@@ -642,7 +735,8 @@ export function OperatorConsole({
     let cancelled = false;
     const sequence = ++bootstrapSequence.current;
     const accountChanged = Symbol("superseded bootstrap account");
-    const current = () => !cancelled && sequence === bootstrapSequence.current;
+    const current = () => !cancelled && !storageFailure.current && sequence === bootstrapSequence.current
+      && withBrowserPreferences(() => undefined).ok;
     async function loadShellEnvelope() {
       if (!fixturesAllowed || bootstrapAuthMode === "authenticated") {
         setShellDataStatus("loading");
@@ -734,9 +828,18 @@ export function OperatorConsole({
           bootstrapAccount.current = subject;
           setBootstrapAuthMode("authenticated"); setShellDataStatus("loading"); clearAuthenticatedRows();
         } else {
+          // Local issue examples are not a production shell dependency. Use
+          // only the original anonymous fixture premise, and re-pin it after
+          // the deferred import before exposing those same existing rows.
+          if (fixturesAllowed) {
+            const { ISSUE_FIXTURES } = await import("./issueFixtures");
+            await pinAccount(subject);
+            if (!current()) throw accountChanged;
+            setLiveIssues(ISSUE_FIXTURES);
+          }
           setBootstrapAuthMode("fixture");
         }
-        headers = { ...getSecurityHeaders(activeRoleId), "X-Correlation-Id": correlationId };
+        headers = { ...operatorSecurityHeaders(activeRoleId), "X-Correlation-Id": correlationId };
         const roleIntent = bootstrapRoleIntent.current;
         const persona = bootstrapPersona.current;
         if (subject !== null && !(roleIntent?.subject === subject || persona?.subject === subject)) delete headers["X-Operator-Role"];
@@ -819,9 +922,9 @@ export function OperatorConsole({
           if (resolvedRoleId !== activeRoleId) bootstrapAdoptedRole.current = { subject, roleId: resolvedRoleId, reloadToken: shellReloadToken };
           setActiveRoleId(resolvedRoleId);
           const requestedWorkspace = workspaceIntent.current;
-          const actualRole = getRecord(getRecord(getRecord(payload)?.meta)?.role);
-          if (isWorkspaceId(requestedWorkspace) && Array.isArray(actualRole?.allowedWorkspaces)
-            && actualRole.allowedWorkspaces.includes(requestedWorkspace)) setActiveWorkspaceId(requestedWorkspace);
+          const actualNavigation = getRecord(getRecord(payload)?.navigation);
+          if (isWorkspaceId(requestedWorkspace) && Array.isArray(actualNavigation?.allowedWorkspaces)
+            && actualNavigation.allowedWorkspaces.includes(requestedWorkspace)) setActiveWorkspaceId(requestedWorkspace);
           else setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
         }
         // Explicit isolated POC may read a real admitted API envelope without
@@ -859,7 +962,7 @@ export function OperatorConsole({
       try {
         if (!await pinAuthenticatedRead(subject, current)) return;
         const res = await fetch("/api/v1/operator/shell/tasks", {
-          headers: getSecurityHeaders(activeRoleId),
+          headers: operatorSecurityHeaders(activeRoleId),
         });
         if (!await pinAuthenticatedRead(subject, current)) return;
         if (!res.ok) throw new Error(`Task center API returned ${res.status}`);
@@ -924,8 +1027,8 @@ export function OperatorConsole({
       .then(([{ createOdpApiClient }, { loadNetworkFindAreasBindings }]) => {
         if (!current()) throw superseded();
         const client = createOdpApiClient({
-          baseUrl: `${window.location.origin}/api/v1`,
-          defaultHeaders: getSecurityHeaders(activeRoleId),
+          baseUrl: window.location.origin,
+          defaultHeaders: operatorSecurityHeaders(activeRoleId),
           fetchImpl: async (input, init) => {
             if (!await pinAuthenticatedRead(subject, current)) throw superseded();
             const response = await fetch(input, init);
@@ -1026,6 +1129,10 @@ export function OperatorConsole({
   function updateDeepLink(target: ShellTarget, historyMode: "push" | "replace" = "replace") {
     if (typeof window === "undefined") return;
     const nextUrl = new URL(window.location.href);
+    if (intakeDetailOpen || intakePathSelection(nextUrl.pathname) !== undefined || nextUrl.searchParams.has("intakeKind")) {
+      nextUrl.pathname = "/operator"; clearIntakeSelection(nextUrl.searchParams);
+      nextUrl.hash = intakeNavigationHash(nextUrl.hash);
+    }
     nextUrl.searchParams.set("ws", target.workspace);
     nextUrl.searchParams.delete("evidence");
     nextUrl.searchParams.delete("auditCategory");
@@ -1072,10 +1179,10 @@ export function OperatorConsole({
       return;
     }
 
+    if (!withBrowserPreferences((storage) => storage.setItem(workspaceStorageKey, workspaceId)).ok) return;
     setActiveWorkspaceId(workspaceId);
     setSelectedEntityId(target.entityId ?? null);
     setActiveTabId(target.tab ?? "overview");
-    window.sessionStorage.setItem(workspaceStorageKey, workspaceId);
     setGovernanceView(readGovernanceViewState({ tab:target.tab, entity:target.entityId }));
     updateDeepLink({ ...target, workspace: workspaceId }, "push");
     setIsSearchOpen(false);
@@ -1109,15 +1216,18 @@ export function OperatorConsole({
   function handleRoleSelect(roleId: OperatorRoleId) {
     const nextRole = rolesForShell.find((role) => role.id === roleId);
     if (!nextRole) return;
+    const resetWorkspace = !isWorkspaceAllowed(nextRole, activeWorkspaceId);
+    if (!withBrowserPreferences((storage) => {
+      storage.setItem(roleStorageKey, nextRole.id);
+      if (resetWorkspace) storage.setItem(workspaceStorageKey, DEFAULT_WORKSPACE_ID);
+    }).ok) return;
     if (!fixturesAllowed && nextRole.id !== activeRoleId) setShellDataStatus("loading");
     if (bootstrapAccount.current) bootstrapRoleIntent.current = { subject: bootstrapAccount.current, roleId: nextRole.id };
     setActiveRoleId(nextRole.id);
-    window.sessionStorage.setItem(roleStorageKey, nextRole.id);
     setIsRoleMenuOpen(false);
 
-    if (!isWorkspaceAllowed(nextRole, activeWorkspaceId)) {
+    if (resetWorkspace) {
       setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
-      window.sessionStorage.setItem(workspaceStorageKey, DEFAULT_WORKSPACE_ID);
       updateDeepLink({ workspace: DEFAULT_WORKSPACE_ID, tab: "overview" });
     } else {
       updateDeepLink({ workspace:activeWorkspaceId, tab:"overview" });
@@ -1130,8 +1240,9 @@ export function OperatorConsole({
   }
 
   function handleReset() {
-    window.sessionStorage.removeItem(roleStorageKey);
-    window.sessionStorage.removeItem(workspaceStorageKey);
+    if (!withBrowserPreferences((storage) => {
+      storage.removeItem(roleStorageKey); storage.removeItem(workspaceStorageKey);
+    }).ok) return;
     bootstrapPersona.current = null; bootstrapRoleIntent.current = null; bootstrapAdoptedRole.current = null;
     setShellReloadToken((token) => token + 1);
     setActiveRoleId(DEFAULT_OPERATOR_ROLE_ID);
@@ -1146,6 +1257,8 @@ export function OperatorConsole({
   }
 
   function openStoreOpsWorkflow(dialog: StoreOpsWorkflowDialogType, issue: Issue) {
+    if (!canRenderWorkspace || !withBrowserPreferences(() => undefined).ok
+      || !fixturesAllowed && (!bootstrapAccount.current || !shellEnvelope.meta.tenantId)) return;
     setSelectedStoreOpsIssue(issue);
     setActiveStoreOpsDialog(dialog);
   }
@@ -1229,12 +1342,12 @@ export function OperatorConsole({
     const sequence = bootstrapSequence.current;
     const subject = bootstrapAccount.current;
     const persona = bootstrapPersona.current;
-    const current = () => sequence === bootstrapSequence.current && subject === bootstrapAccount.current
+    const current = () => !storageFailure.current && sequence === bootstrapSequence.current && subject === bootstrapAccount.current
       && persona === bootstrapPersona.current;
     try {
       if (!await pinAuthenticatedRead(subject, current)) return;
       const freshRes = await fetch("/api/v1/operator/bootstrap", {
-        headers: getSecurityHeaders(activeRoleId),
+        headers: operatorSecurityHeaders(activeRoleId),
       });
       if (!await pinAuthenticatedRead(subject, current)) return;
       if (!freshRes.ok) {
@@ -1344,33 +1457,7 @@ export function OperatorConsole({
                 </button>
               </div>
               {isSearchOpen && !isCommandPaletteOpen && searchValue.trim() ? (
-                <div className={styles.searchPanel} data-testid="operator-search-results" role="listbox">
-                  <div className={styles.popoverTitle}>Search</div>
-                  {searchMatches.length ? (
-                    searchMatches.map((item, index) => (
-                      <button
-                        aria-selected={index === searchActiveIndex}
-                        className={styles.searchResult}
-                        data-target-entity={item.target.entityId}
-                        data-target-tab={item.target.tab}
-                        data-target-workspace={item.target.workspace}
-                        key={item.id}
-                        onMouseDown={(event) => {
-                          event.preventDefault();
-                          handleTargetSelect(item.target, item.entityId);
-                        }}
-                        role="option"
-                        type="button"
-                      >
-                        <span>{item.entityId}</span>
-                        <strong>{item.label}</strong>
-                        <small>{item.description}</small>
-                      </button>
-                    ))
-                  ) : (
-                    <div className={styles.searchEmpty}>No matching operator work</div>
-                  )}
-                </div>
+                <OperatorSearchResults matches={searchMatches} activeIndex={searchActiveIndex} onSelect={handleTargetSelect} />
               ) : null}
             </div>
 
@@ -1405,15 +1492,8 @@ export function OperatorConsole({
               {shellView !== "notifications" && isNotificationOpen && canRenderWorkspace ? (
                 <ShellNotificationCenter
                   scopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current?.roleId, activeRoleId])}
-                  headers={getSecurityHeaders(activeRoleId)}
-                  createAuthenticatedReadGuard={(readCurrent) => {
-                    const sequence = bootstrapSequence.current;
-                    const subject = bootstrapAccount.current;
-                    const persona = bootstrapPersona.current;
-                    const current = () => readCurrent() && sequence === bootstrapSequence.current
-                      && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
-                    return () => pinAuthenticatedRead(subject, current);
-                  }}
+                  headers={operatorSecurityHeaders(activeRoleId)}
+                  createAuthenticatedReadGuard={createAuthenticatedReadGuard}
                   allowFixtureFallback={fixturesAllowed && bootstrapAuthMode === "fixture" && bootstrapAccount.current === null}
                   fixtureRows={liveNotifications}
                   onConfirmedUnreadCount={setConfirmedNotificationCount}
@@ -1505,6 +1585,8 @@ export function OperatorConsole({
         </button>
       </div>
 
+      <CanonicalIntakeCommandProvider context={canonicalIntakeReadContext} createAuthenticatedReadGuard={createAuthenticatedReadGuard}>
+      {(boundCanonicalReadContext) => (
       <main
         className={[
           styles.shell,
@@ -1513,28 +1595,21 @@ export function OperatorConsole({
         ].filter(Boolean).join(" ")}
       >
         {canReadColdIntake ? (
-          <ColdIntakeDetail intakeId={typeof searchParams.selected === "string" ? searchParams.selected : ""}
+          <ColdIntakeDetail intakeId={coldIntakeId ?? ""}
             onClose={() => window.location.assign("/operator?ws=network&tab=radar")} />
         ) : !canRenderWorkspace ? (
           <OperatorDataUnavailableGate
-            failure={shellLoadFailure}
+            failure={storageFailure.current?.failure ?? shellLoadFailure}
             loadingDetail={shellWarmingUp ? operatorBootstrapWarmingUpDetail : undefined}
-            onRetry={() => setShellReloadToken((token) => token + 1)}
-            status={toUnavailableOperatorStatus(shellDataStatus)}
+            onRetry={retryShell}
+            status={storageFailure.current ? "error" : toUnavailableOperatorStatus(shellDataStatus)}
           />
         ) : shellView === "notifications" ? (
           <ShellNotificationPage preferencesPage={notificationPreferences} reportId={notificationReportId}
             scopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current?.roleId, activeRoleId])}
             expectedSubjectId={bootstrapAccount.current}
-            headers={getSecurityHeaders(activeRoleId)}
-            createAuthenticatedReadGuard={(readCurrent) => {
-              const sequence = bootstrapSequence.current;
-              const subject = bootstrapAccount.current;
-              const persona = bootstrapPersona.current;
-              const current = () => readCurrent() && sequence === bootstrapSequence.current
-                && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
-              return () => pinAuthenticatedRead(subject, current);
-            }}
+            headers={operatorSecurityHeaders(activeRoleId)}
+            createAuthenticatedReadGuard={createAuthenticatedReadGuard}
             allowFixtureFallback={fixturesAllowed && bootstrapAuthMode === "fixture" && bootstrapAccount.current === null}
             fixtureRows={liveNotifications}
             onConfirmedUnreadCount={setConfirmedNotificationCount}
@@ -1546,14 +1621,7 @@ export function OperatorConsole({
           <ShellTaskCenter
             scopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current, activeRoleId])}
             headers={operatorSecurityHeaders(activeRoleId)}
-            createAuthenticatedReadGuard={(readCurrent) => {
-              const sequence = bootstrapSequence.current;
-              const subject = bootstrapAccount.current;
-              const persona = bootstrapPersona.current;
-              const current = () => readCurrent() && sequence === bootstrapSequence.current
-                && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
-              return () => pinAuthenticatedRead(subject, current);
-            }}
+            createAuthenticatedReadGuard={createAuthenticatedReadGuard}
             onConfirmedActiveCount={setConfirmedTaskCount}
             allowFixtureData={fixturesAllowed && bootstrapAuthMode === "fixture"}
           />
@@ -1573,14 +1641,7 @@ export function OperatorConsole({
           <DesignStoreOpsWorkspace
             activeRoleId={activeRoleId}
             forecastScopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current, activeRoleId])}
-            createAuthenticatedReadGuard={(readCurrent) => {
-              const sequence = bootstrapSequence.current;
-              const subject = bootstrapAccount.current;
-              const persona = bootstrapPersona.current;
-              const current = () => readCurrent() && sequence === bootstrapSequence.current
-                && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
-              return () => pinAuthenticatedRead(subject, current);
-            }}
+            createAuthenticatedReadGuard={createAuthenticatedReadGuard}
             initialIssueId={selectedEntityId ?? undefined}
             initialTabId={activeTabId}
             issues={liveIssues}
@@ -1589,16 +1650,9 @@ export function OperatorConsole({
         ) : activeWorkspaceId === "network" ? (
           <NetworkFindAreasWorkspace
             activeRoleId={activeRoleId}
-            createAuthenticatedReadGuard={(readCurrent) => {
-              // Capture the owner before HTTP starts; never adopt a later cookie
-              // subject, persona, or A→B→A epoch for an older Network response.
-              const sequence = bootstrapSequence.current;
-              const subject = bootstrapAccount.current;
-              const persona = bootstrapPersona.current;
-              const current = () => readCurrent() && sequence === bootstrapSequence.current
-                && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
-              return () => pinAuthenticatedRead(subject, current);
-            }}
+            createAuthenticatedReadGuard={createAuthenticatedReadGuard}
+            canonicalIntakeReadContext={boundCanonicalReadContext}
+            onStorageFailure={onStorageFailure}
             allowedTabIds={fixturesAllowed ? undefined : shellEnvelope.navigation.allowedTabs?.network ?? []}
             onReviewDecisionConfirmed={async () => {
               try { await refreshOperatorEnvelope(); }
@@ -1616,16 +1670,19 @@ export function OperatorConsole({
               onToggleTracked: (heatZone, tracked) => showToast(`${heatZone.id} ${tracked ? "tracked" : "untracked"}`),
             }}
           />
-        ) : activeWorkspaceId === "govern" ? (
-          // GovernanceWorkspace renders its own Package 10 page header.
+        ) : activeWorkspaceId === "govern" ? null : activeWorkspaceId === "growth" ? (
+          <GrowthWorkspace searchParams={searchParams} basePath="/operator" />
+        ) : (
+          <OperatorWorkspaceFallback activeRoleLabel={activeRole.label} workspace={activeWorkspace} workspaceId={activeWorkspaceId} />
+        )}
+        {governanceOwner.current ? (
+          <div hidden={!canRenderWorkspace || activeWorkspaceId !== "govern"}>
           <GovernanceWorkspace
+            key={governanceOwner.current.key}
+            browserStorageBlocked={!canRenderWorkspace}
+            onStorageFailure={onStorageFailure}
             canonicalMonitoringScopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current, activeRoleId])}
-            createCanonicalMonitoringReadGuard={(readCurrent) => {
-              const sequence = bootstrapSequence.current, subject = bootstrapAccount.current, persona = bootstrapPersona.current;
-              const current = () => readCurrent() && sequence === bootstrapSequence.current
-                && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
-              return () => pinAuthenticatedRead(subject, current);
-            }}
+            createCanonicalMonitoringReadGuard={createAuthenticatedReadGuard}
             onDecisionConfirmed={async () => {
               try { await refreshOperatorEnvelope(); }
               catch { showToast("核決已保存；Today 資料尚未重新核對，請重新整理。"); }
@@ -1643,22 +1700,29 @@ export function OperatorConsole({
             role={activeRole.label}
             roleId={activeRoleId}
           />
-        ) : activeWorkspaceId === "growth" ? (
-          <GrowthWorkspace searchParams={searchParams} basePath="/operator" />
-        ) : (
-          <OperatorWorkspaceFallback activeRoleLabel={activeRole.label} workspace={activeWorkspace} workspaceId={activeWorkspaceId} />
-        )}
+          </div>
+        ) : null}
       </main>
+      )}
+      </CanonicalIntakeCommandProvider>
 
       {activeStoreOpsDialog ? (
       <StoreOpsWorkflowDialogs
         activeDialog={activeStoreOpsDialog}
         issue={selectedStoreOpsIssue}
         onClose={() => setActiveStoreOpsDialog(null)}
+        onStorageFailure={onStorageFailure}
+        browserStorageBlocked={Boolean(storageFailure.current) || !canRenderWorkspace
+          || !fixturesAllowed && (!bootstrapAccount.current || !shellEnvelope.meta.tenantId)}
+        commandScope={bootstrapAccount.current && shellEnvelope.meta.tenantId
+          ? JSON.stringify([bootstrapAccount.current, shellEnvelope.meta.tenantId, activeRoleId]) : undefined}
+        commandPrincipal={bootstrapAccount.current && shellEnvelope.meta.tenantId
+          ? { subject: bootstrapAccount.current, tenantId: shellEnvelope.meta.tenantId } : undefined}
+        createAuthenticatedReadGuard={createAuthenticatedReadGuard}
       />
       ) : null}
 
-      {isCommandPaletteOpen ? (
+      {isCommandPaletteOpen && !storageFailure.current ? (
         <OperatorShellCommandPalette
           activeRole={activeRole} rolesForShell={rolesForShell} shellEnvelope={shellEnvelope}
           fixturesAllowed={fixturesAllowed} liveTasks={liveTasks} liveIssues={liveIssues}

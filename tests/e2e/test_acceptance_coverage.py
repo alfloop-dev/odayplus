@@ -141,6 +141,8 @@ def _clone_packet_repo(
     filtered_shared: bool = False,
 ) -> Path:
     if source is not None:
+        # Local clones share immutable Git objects; each test still owns its refs,
+        # index and mutable packet files without copying the full object database.
         subprocess.run(
             ["git", "clone", "-q", "--shared", str(source), str(path)],
             check=True,

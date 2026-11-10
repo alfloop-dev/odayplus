@@ -4,17 +4,17 @@ import { resolve } from "node:path";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NetworkFindAreasWorkspace as GrantedReadNetworkWorkspace } from "../../NetworkFindAreasWorkspace";
+
+// Explicit synthetic bootstrap tabs for these component controls. Backend
+// scope/role denials and read revalidation assertions remain authoritative.
+function NetworkFindAreasWorkspace(props: Parameters<typeof GrantedReadNetworkWorkspace>[0]) {
+  return <GrantedReadNetworkWorkspace allowedTabIds={["areas", "radar", "candidates", "score", "compare", "review"]} {...props} />;
+}
 import { projectCandidateNativeWorkflow, resolveCandidateReviewTarget } from "../candidateNativeWorkflowProjection";
+import { CandidatePanel } from "../CandidatePanel";
+import { CandidateWorkflowFacts } from "../CandidateWorkflowFacts";
 import { candidateMatchesPipeline, candidatePipelineControls } from "../candidateDesignControls";
 import { inspectReviewsReadProjection } from "../networkReviewProjection";
-
-// Explicit read-grant fixture: shell projects listing and SiteScore read families.
-// This is a renderer premise, not a real Principal/production permission grant.
-const NETWORK_READ_FIXTURE_TABS = ["areas", "radar", "candidates", "score", "compare", "review"] as const;
-function NetworkFindAreasWorkspace(props: import("../../NetworkFindAreasWorkspace").NetworkFindAreasWorkspaceProps) {
-  return <GrantedReadNetworkWorkspace allowedTabIds={NETWORK_READ_FIXTURE_TABS} {...props} />;
-}
-
 
 const nav = vi.hoisted(() => ({ search: "", push: vi.fn() }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/operator", useSearchParams: () => new URLSearchParams(nav.search),
@@ -26,7 +26,7 @@ vi.mock("../intake/AssistedIntakeSection", async (original) => ({
 // subprocess owns only explicit offline fixtures; it never loads or infers.
 const root = resolve(process.cwd(), "../..");
 const producer = resolve(root, "tests/integration/test_candidate_native_workflow_readback.py");
-const facts = JSON.parse(execFileSync(resolve(root, ".venv/bin/python"), [producer], { cwd: root,
+const facts = JSON.parse(execFileSync(process.env.ODP_TEST_PYTHON ?? resolve(root, ".venv/bin/python"), [producer], { cwd: root,
   env: { ...process.env, PYTHONPATH: root, ODP_REQUIRE_LIVE_DATA: "false", ODP_PRODUCT_MODE: "poc", ODAY_ENV: "test" }, encoding: "utf8" }));
 function json(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } }); }
 function mount(name: string, reviewStatus = 200) {
@@ -55,6 +55,7 @@ describe("canonical candidate stages from actual durable producers", () => {
       expect(within(screen.getByTestId("candidate-pipeline-evaluated")).getByText("0")).toBeVisible();
       expect(screen.getByTestId("candidate-pipeline-shortlisted")).toBeDisabled();
       expect(screen.getByTestId("candidate-pipeline-scoring")).toBeDisabled();
+      if (stage === "pendingreview") expect(screen.getByTestId("network-step-review")).toHaveAttribute("data-state", "current");
     });
   it.each(["GO_V2", "OPENED_V3"])("%s retains own human state without approving a newer report", async (name) => {
     const { value, fetch } = mount(name);
@@ -69,6 +70,7 @@ describe("canonical candidate stages from actual durable producers", () => {
     const { value } = mount("UNKNOWN_APPROVED");
     await screen.findByTestId(`candidate-row-${value.candidateId}`);
     expect(screen.getByTestId("candidate-pipeline-approved")).toBeDisabled();
+    expect(screen.getByTestId("network-step-review")).not.toHaveAttribute("data-state", "completed");
   });
   it("review denial keeps the stage relation unknown and preserves masked candidate reads", async () => {
     const { value } = mount("GO", 403);
@@ -98,6 +100,63 @@ function readFacts(name = "GO") {
     reviews: { snapshot: value.reviews, status: "ready", generation: 4 } } };
 }
 describe("strict candidate read joins, with actual producer envelopes", () => {
+  it("retains independently authorized data/report reads when review access is denied", async () => {
+    const { value } = mount("GO", 403);
+    await screen.findByTestId("candidate-workflow-facts");
+    expect(screen.getAllByTestId(`candidate-state-data-${value.candidateId}`)).toHaveLength(1);
+    await waitFor(() => expect(screen.getByTestId(`candidate-state-report-${value.candidateId}`))
+      .toHaveTextContent(value.scoring.scorecards[0].reportId));
+    expect(screen.getByTestId(`candidate-state-data-${value.candidateId}`)).toHaveTextContent(
+      value.scoring.candidates[0].gate.passed ? "資料齊備" : "需補資料");
+    expect(screen.getByTestId(`candidate-state-review-${value.candidateId}`)).toHaveTextContent("尚未核驗");
+    expect(screen.queryByTestId(`candidate-view-review-${value.candidateId}`)).not.toBeInTheDocument();
+  });
+
+  it.each(["FAILED", "SUCCEEDED"] as const)("keeps a failed candidate, %s job and retained report independent", (status) => {
+    const { value, input } = readFacts("PENDING");
+    for (const key of ["reviews", "approvals", "decisions", "candidates"]) value.reviews[key] = [];
+    input.reviews.status = "empty";
+    const candidate = value.scoring.candidates[0];
+    value.network.candidates[0].canonicalSiteStatus = value.network.candidates[0].status = "SCORING_FAILED";
+    candidate.canonicalSiteStatus = "SCORING_FAILED";
+    const job = { candidateId: value.candidateId, listingId: candidate.listingId, availability: "recorded" as const,
+      jobId: "authorized-failed-job", executionRequestId: null, status, deliveryState: null,
+      version: 3, attempt: 2, reportId: null, reportVersion: null, reason: "Actual authorized failure receipt" };
+    const reads = projectCandidateNativeWorkflow({ ...input, jobs: { status: "ready", generation: 4,
+      snapshot: { source: "canonical", jobs: [job] } } });
+    const read = reads[value.candidateId];
+    expect(read.lifecycle).toBe("SCORING_FAILED");
+    expect(read.stage).toBeNull();
+    expect(read.availability).toBe(status === "SUCCEEDED" ? "conflict" : "unavailable");
+    expect(read.scoreJob).toMatchObject({ availability: "recorded", jobId: job.jobId, status });
+    expect(read.scoreReport).toMatchObject({ availability: "recorded", reportId: value.scoring.scorecards[0].reportId });
+    expect(read.reviewDecision).toMatchObject({ availability: "absent", decisionId: null });
+    render(<><CandidateWorkflowFacts read={read} /><CandidatePanel candidates={value.scoring.candidates} fallbackRows={[]} nativeWorkflow={reads} selectedCandidateId={value.candidateId} /></>);
+    expect(within(screen.getByTestId(`candidate-row-${value.candidateId}`)).getByText(status === "FAILED" ? "評分工作失敗" : "候選點評分失敗")).toBeVisible();
+    expect(screen.getByTestId(`candidate-state-job-${value.candidateId}`)).toHaveTextContent(status);
+    expect(screen.getByTestId(`candidate-state-report-${value.candidateId}`)).toHaveTextContent(value.scoring.scorecards[0].reportId);
+  });
+
+  it("refuses inconsistent persisted lifecycle reads while retaining independent historical report identity", () => {
+    const { value, input } = readFacts("GO");
+    value.scoring.candidates[0].canonicalSiteStatus = "SCORING_FAILED";
+    const read = projectCandidateNativeWorkflow(input)[value.candidateId];
+    expect(read.availability).toBe("conflict");
+    expect(read.stage).toBeNull();
+    expect(read.scoreReport).toMatchObject({ availability: "recorded", reportId: value.scoring.scorecards[0].reportId });
+    expect(read.reviewDecision).toMatchObject({ availability: "unavailable", decisionId: null });
+  });
+
+  it("clears all independent identities when the access generation changes", () => {
+    const { value, input } = readFacts("GO");
+    input.network.generation = 3;
+    const read = projectCandidateNativeWorkflow(input)[value.candidateId];
+    expect(read.dataReadiness).toMatchObject({ availability: "unavailable", state: null });
+    expect(read.scoreReport).toMatchObject({ availability: "unavailable", reportId: null });
+    expect(read.reviewDecision).toMatchObject({ availability: "unavailable", decisionId: null });
+    expect(read.scoreJob).toBeUndefined();
+  });
+
   it.each(["hard", "geo", "needdata", "missing"])("%s contradicting passed=true does not certify data ready", (change) => {
     const { value, input } = readFacts("UNSCORED");
     const gate = value.scoring.candidates[0].gate;

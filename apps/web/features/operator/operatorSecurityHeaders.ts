@@ -3,6 +3,17 @@ const OPERATOR_SUBJECT_STORAGE_KEY = "oday.operator.subject";
 const OPERATOR_TENANT_STORAGE_KEY = "oday.operator.tenant";
 const DEFAULT_OPERATOR_ROLE_ID = "ops-lead";
 
+/** Browser hints can invalidate a lease; they never authenticate its owner.
+ * Callers must report unavailable storage rather than treating it as absence. */
+export function readOperatorBrowserHints(storage?: Storage): { subject: string; tenant: string | null } {
+  if (typeof window === "undefined") return { subject: "", tenant: null };
+  const current = storage ?? window.sessionStorage;
+  return { subject: current.getItem(OPERATOR_SUBJECT_STORAGE_KEY)?.trim() || "",
+    tenant: current.getItem(OPERATOR_TENANT_STORAGE_KEY) };
+}
+
+export type OperatorStorageFailureHandler = (retryReadOrPreference: () => void) => void;
+
 const OPERATOR_API_ROLES: Record<string, string> = {
   "platform-admin": "platform_admin",
   platformAdmin: "platform_admin",
@@ -44,7 +55,7 @@ export function operatorSubjectId(
 ): string {
   if (subjectId?.trim()) return subjectId.trim();
   if (typeof window !== "undefined") {
-    const subject = window.sessionStorage.getItem(OPERATOR_SUBJECT_STORAGE_KEY)?.trim();
+    const subject = readOperatorBrowserHints().subject;
     if (subject) return subject;
   }
   return "";
@@ -61,12 +72,9 @@ export function operatorSecurityHeaders(
   if (!isOperatorProductionMode()) {
     headers["X-Roles"] =
       OPERATOR_API_ROLES[resolvedRoleId] ?? "operations_manager";
-    const subject = operatorSubjectId(resolvedRoleId, subjectId);
-    const tenant =
-      typeof window === "undefined"
-        ? ""
-        : window.sessionStorage.getItem(OPERATOR_TENANT_STORAGE_KEY)?.trim() ||
-          "";
+    const hints = readOperatorBrowserHints();
+    const subject = subjectId?.trim() || hints.subject;
+    const tenant = hints.tenant?.trim() || "";
     if (subject) headers["X-Subject-Id"] = subject;
     if (tenant) headers["X-Tenant-Id"] = tenant;
   }
