@@ -287,7 +287,7 @@ Domain 元件的**必備欄位來自 `ODP-UX-02 §6` 與 `ODP-UX-04`，不得刪
 
 ### 5.3 SiteScoreReportSummary
 
-必備欄位：`recommendation`（`GO|WAIT|REJECT|INVESTIGATE`）、`m1/m3/m6/m12` 各自 `Interval`（P10/P50/P90）、`paybackPeriod: Interval`、`rentReasonableness`、`cannibalizationRisk`、`comparableStores`、`keyPositiveFactors`、`keyNegativeFactors`、`modelVersion`、`featureSnapshotTime`。
+必備欄位：`recommendation`（`GO|WAIT|REJECT|INVESTIGATE`）、`m1/m3/m6/m12` 各自 `Interval`（P10/P50/P90）、`paybackPeriod: Interval | null`、`rentReasonableness: number | null`、`cannibalizationRisk`、`comparableStores`、`keyPositiveFactors`、`keyNegativeFactors`、`modelVersion`、`featureSnapshotTime`。財務輸入未完整時，回本期保留 `null`；沒有可信租金分數時，租金合理性保留 `null`。回本期未知時顯示「—」，租金合理性未知時顯示「未評估」；不得補成零、預設區間或推定已完成財務評估。
 Rules：不可只顯示 P50；低 confidence 顯 warning；過期顯 stale。內嵌 EvidencePanel + ApprovalPanel（送審/核准/退回/補件）。
 
 ### 5.4 ForecastBandChart

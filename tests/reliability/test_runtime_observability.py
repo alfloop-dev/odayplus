@@ -1902,6 +1902,8 @@ def test_platform_observability_endpoints_fail_closed_without_full_sha(
     from shared.infrastructure.persistence.assisted_listing_intake import DurableAssistedIntakeStore
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
     from shared.infrastructure.persistence.factory import _memory_bundle
+    from shared.infrastructure.persistence.job_queue import DurableJobQueue
+    from shared.infrastructure.persistence.outbox import DurableOutboxRepository
 
     class ProbeEngine:
         is_production = True
@@ -1924,6 +1926,8 @@ def test_platform_observability_endpoints_fail_closed_without_full_sha(
         mode="postgresql",
         engine=engine,
         audit_log=DurableAuditLog(engine),
+        job_queue=DurableJobQueue(engine),
+        outbox_repository=DurableOutboxRepository(engine),
         assisted_intake_store=DurableAssistedIntakeStore(SimpleNamespace(engine=engine)),
     )
 

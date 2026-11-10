@@ -212,27 +212,32 @@ def test_generic_and_operator_retry_recheck_fresh_ownership_and_scope_before_wri
     from modules.opsboard.application.network_listings import NetworkListingService
 
     bundle = _bundle(bridge_database, monkeypatch)
+    revocation_bundle = _bundle(bridge_database, monkeypatch)
     try:
         record = _failed_submission(bundle, monkeypatch)
         generic = TestClient(create_app(persistence=bundle))
         operator = _client(bundle)
         iid, job_id = record["id"], record["jobId"]
         store = bundle.assisted_intake_store
+        revocation_store = revocation_bundle.assisted_intake_store
+        assert revocation_store._engine is not store._engine
         original = NetworkListingService.retry_intake
         revoked = {}
 
         def revoke_after_route_authorization(service, *args, **kwargs):
-            store.refresh(TENANT)
-            with store.transaction():
-                canonical = store.intakes[iid]
+            # A distinct writer commits the revocation. Putting it inside the
+            # request's SQL transaction would undo it when that request denies.
+            revocation_store.refresh(TENANT)
+            with revocation_store.transaction():
+                canonical = revocation_store.intakes[iid]
                 if revoked["axis"] == "owner":
-                    assignment = store.assignments[canonical["assignment_id"]]
+                    assignment = revocation_store.assignments[canonical["assignment_id"]]
                     assignment["owner_subject_id"] = MANAGER
                     assignment["version"] += 1
                 else:
                     canonical["scope"]["heat_zone_id"] = "revoked-zone"
                 canonical["version"] += 1
-                store.flush()
+                revocation_store.flush()
             revoked["snapshot"] = _snapshot(bundle)
             return original(service, *args, **kwargs)
 
@@ -259,4 +264,5 @@ def test_generic_and_operator_retry_recheck_fresh_ownership_and_scope_before_wri
                 assert _snapshot(bundle) == revoked["snapshot"]
                 assert bundle.job_queue.get(job_id).to_dict() == job_before
     finally:
+        revocation_bundle.engine.close()
         bundle.engine.close()

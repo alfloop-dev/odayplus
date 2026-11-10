@@ -79,10 +79,22 @@ class DurableTenantServiceResolver:
                         "message": f"{type(exc).__name__}: {exc}",
                     },
                 ) from exc
-            service = self._factory(persisted_state, partition_tenant_id)
-            mutation = method_name in self._mutating_methods
-            scope = (service.transaction_scope(self._repository.engine, partition_tenant_id)
-                     if mutation and self._transactional_mutations else nullcontext())
+            try:
+                service = self._factory(persisted_state, partition_tenant_id)
+                mutation = method_name in self._mutating_methods
+                scope = (service.transaction_scope(self._repository.engine, partition_tenant_id)
+                         if mutation and self._transactional_mutations else nullcontext())
+            except HTTPException:
+                raise
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "OPERATOR_DOMAIN_PERSISTENCE_UNAVAILABLE",
+                        "operation": f"{method_name}.bind",
+                        "message": f"{type(exc).__name__}: {exc}",
+                    },
+                ) from exc
             with scope:
                 return self._invoke_service(service, partition_tenant_id, method_name, args, kwargs)
 
@@ -92,6 +104,15 @@ class DurableTenantServiceResolver:
             yield
             return
         engine = self._repository.engine
+        if engine is None or not callable(getattr(engine, "transaction", None)):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "OPERATOR_DOMAIN_PERSISTENCE_UNAVAILABLE",
+                    "operation": f"{method_name}.transaction",
+                    "message": "Operator mutation requires a transaction engine",
+                },
+            )
         with engine.transaction():
             if getattr(engine, "dialect", None) == "postgresql":
                 engine.query_one("SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",

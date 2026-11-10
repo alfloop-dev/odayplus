@@ -87,6 +87,10 @@ def read_current_candidate_inputs(
                 from modules.listing.application.intake_score_delivery import ScoreDeliveryDenied
 
                 raise ScoreDeliveryDenied("SITESCORE_CURRENT_INPUT_UNAVAILABLE") from exc
+        if attribute != "hard_rule_failures":
+            recorded = getattr(listing, attribute, None)
+            if recorded is not None and recorded != value:
+                _denied("SITESCORE_CURRENT_INPUT_EVIDENCE_CONFLICT")
         current[attribute] = value
     return CurrentCandidateInputs(listing, address, current)
 

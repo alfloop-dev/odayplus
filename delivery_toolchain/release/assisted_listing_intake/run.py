@@ -44,8 +44,10 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
-from delivery_toolchain.release.assisted_listing_intake.config import (  # noqa: E402
+from modules.listing.application.intake_release_governance import (  # noqa: E402
     ReleaseConfigError,
+    check_live_runtime_evidence,
+    check_release_authority,
     load_release_config,
 )
 
@@ -83,7 +85,6 @@ def run_readiness(config, output_dir: Path) -> dict[str, Any]:
     from delivery_toolchain.release.assisted_listing_intake.gates import (
         check_feature_flags,
         check_production_readiness,
-        check_release_authority,
     )
 
     authority = check_release_authority(config)
@@ -113,8 +114,6 @@ def run_cutover_gate(
 ) -> dict[str, Any]:
     from delivery_toolchain.release.assisted_listing_intake.gates import (
         check_feature_flags,
-        check_live_runtime_evidence,
-        check_release_authority,
     )
 
     authority = check_release_authority(config)
@@ -325,10 +324,6 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 _write(output_dir, "restore", results["restore"])
             elif phase == "canary":
-                from delivery_toolchain.release.assisted_listing_intake.gates import (
-                    check_live_runtime_evidence,
-                    check_release_authority,
-                )
 
                 shadow = results.get("shadow") or _load_existing(output_dir, "shadow") or {}
                 migration = results.get("migration") or _load_existing(output_dir, "migration") or {}
@@ -361,8 +356,6 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if scratch_ctx is not None:
             scratch_ctx.cleanup()
-
-    from delivery_toolchain.release.assisted_listing_intake.gates import check_live_runtime_evidence
 
     live = check_live_runtime_evidence(config)
     failed = [name for name, result in results.items() if not result.get("passed")]

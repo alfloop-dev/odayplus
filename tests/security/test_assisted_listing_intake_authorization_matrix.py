@@ -313,6 +313,25 @@ def test_residency_compliance() -> None:
     assert "RESIDENCY_DENIED" in str(excinfo.value)
 
 
+@pytest.mark.parametrize("classification", [None, "UNRECOGNIZED", "CREDENTIAL", "RESTRICTED"])
+def test_canonical_field_mask_requires_known_classification_even_at_highest_clearance(classification):
+    from modules.listing.application.intake_authorization import mask_intake
+    from shared.auth import Principal, Scope
+
+    principal = Principal(subject_id="synthetic-high-clearance",
+        scope=Scope(tenant_id="tenant-a", clearance=DataClassification.HIGHLY_RESTRICTED))
+    original = {"fields": [{"field_path": "synthetic", "classification": classification,
+        "parsed": "private-parser-value", "normalized": "private-normalized-value",
+        "corrected": "private-correction-value", "effective": "actual-saved-value"}]}
+    field = mask_intake(principal, original)["fields"][0]
+    if classification == "RESTRICTED":
+        assert field["effective"] == "actual-saved-value"
+    else:
+        assert all(field[key] is None for key in ("parsed", "normalized", "corrected", "effective"))
+        assert field["masked"] and field["mask_reason_code"] == "FIELD_MASKED"
+    assert original["fields"][0]["effective"] == "actual-saved-value"
+
+
 def test_data_classification_masking() -> None:
     from modules.listing.application.intake_authorization import mask_intake
     from shared.auth import Principal, Scope
@@ -421,3 +440,135 @@ def test_staff_view_own_only_filtering() -> None:
     list_ids_a = [i["id"] for i in list_intakes_a.json()["items"]]
     assert intake_a_id in list_ids_a
     assert intake_b_id not in list_ids_a
+
+
+
+@pytest.mark.parametrize("clearance", [
+    DataClassification.PUBLIC, DataClassification.INTERNAL,
+    DataClassification.CONFIDENTIAL, DataClassification.RESTRICTED,
+    DataClassification.HIGHLY_RESTRICTED,
+])
+@pytest.mark.parametrize("historical_scope", ["own", "foreign-tenant", "excluded-heat-zone"])
+def test_http_intake_projection_omits_internal_match_history_at_every_clearance_and_scope(
+    clearance, historical_scope,
+):
+    import json
+    from copy import deepcopy
+
+    from modules.listing.application.intake_authorization import mask_intake
+    from modules.opsboard.application.network_listings import InMemoryAssistedIntakeRepository
+    from shared.auth import Principal, Role, Scope
+
+    target = {
+        "targetListingId": "history-only-listing-identifier",
+        "tenantId": "tenant-b" if historical_scope == "foreign-tenant" else "tenant-a",
+        "heatZoneId": "HZ-EXCLUDED" if historical_scope == "excluded-heat-zone" else "HZ-01",
+        "confidence": 0.63,
+        "agreeingSignals": ["history-only-private-address"],
+        "contradictingSignals": ["history-only-broker-phone"],
+        "candidates": [{"targetListingId": "history-only-other-candidate"}],
+    }
+    original = {
+        "id": "intake-history-projection", "tenantId": "tenant-a", "heatZoneId": "HZ-01",
+        "matchResult": {"targetListingId": "current-visible-listing", "confidence": None},
+        "parsedFields": {},
+        "auditEvents": [
+            {"id": "decision-history", "action": "intake.decide.revise", "metadata": {
+                "reason": "Preserve existing audit reason",
+                "beforeAfter": {
+                    "stage": {"before": "NEEDS_REVIEW", "after": "READY"},
+                    "target_rent": {"before": 60000, "after": 55000},
+                    "matchResult": {"before": deepcopy(target), "after": deepcopy(target)},
+                },
+            }},
+            {"id": "unrelated-history", "metadata": {"beforeAfter": {"version": {"before": 1, "after": 2}}}},
+            {"id": "without-metadata", "action": "intake.submitted"},
+        ],
+    }
+    repository = InMemoryAssistedIntakeRepository()
+    repository.save_intake(original)
+    stored_before = deepcopy(repository.get_intake(original["id"]))
+    input_record = repository.get_intake(original["id"])
+    principal = Principal(
+        "scoped-history-reader", roles=frozenset({Role.SITE_REVIEWER}),
+        scope=Scope(tenant_id="tenant-a", heat_zone_ids=frozenset({"HZ-01"}), clearance=clearance),
+    )
+    projected = mask_intake(principal, input_record)
+    expected_events = deepcopy(stored_before["auditEvents"])
+    del expected_events[0]["metadata"]["beforeAfter"]["matchResult"]
+    assert projected["auditEvents"] == expected_events
+    assert projected["matchResult"] == stored_before["matchResult"]
+    serialized = json.dumps(projected)
+    for marker in ("history-only-listing-identifier", "history-only-private-address",
+                   "history-only-broker-phone", "history-only-other-candidate"):
+        assert marker not in serialized
+    assert input_record == stored_before
+    assert repository.get_intake(original["id"]) == stored_before
+
+
+@pytest.mark.parametrize("layout", ["fields", "parsedFields"])
+@pytest.mark.parametrize("upstream_masked", [False, True])
+def test_masked_field_values_and_correction_reasons_share_the_original_policy(layout, upstream_masked):
+    from copy import deepcopy
+
+    from modules.listing.application.intake_authorization import mask_intake
+    from shared.auth import Principal, Scope
+
+    principal = Principal(subject_id="synthetic-mask-reader", scope=Scope(tenant_id="tenant-a",
+        clearance=DataClassification.HIGHLY_RESTRICTED if upstream_masked else DataClassification.PUBLIC))
+    reasons = {"correction_reason": "PRIVATE_SNAKE_REASON", "correctionReason": "PRIVATE_CAMEL_REASON"}
+    if layout == "fields":
+        values = {key: "PRIVATE_FIELD_VALUE" for key in ("parsed", "normalized", "corrected", "effective")}
+        original = {"fields": [{"field_path": "contactPhone", "classification": "RESTRICTED", "masked": upstream_masked, **values, **reasons}]}
+    else:
+        values = {key: "PRIVATE_FIELD_VALUE" for key in ("sourceValue", "normalizedValue", "correctedValue")}
+        original = {"parsedFields": {"contactPhone": {"masked": upstream_masked, **values, **reasons}}}
+    retained = deepcopy(original)
+    masked = mask_intake(principal, original)
+    field = masked["fields"][0] if layout == "fields" else masked["parsedFields"]["contactPhone"]
+    assert field["masked"] is True and field["mask_reason_code"] == "FIELD_MASKED"
+    assert all(field[key] is None for key in (*values, *reasons))
+    assert original == retained  # Read projection never erases the retained evidence.
+
+
+@pytest.mark.parametrize("layout", ["fields", "parsedFields"])
+def test_authorized_unmasked_correction_reason_is_retained(layout):
+    from modules.listing.application.intake_authorization import mask_intake
+    from shared.auth import Principal, Scope
+
+    principal = Principal(subject_id="synthetic-allowed-reader", scope=Scope(tenant_id="tenant-a", clearance=DataClassification.HIGHLY_RESTRICTED))
+    field = {"field_path": "contactPhone", "classification": "RESTRICTED", "effective": "saved-value",
+        "correctedValue": "saved-value", "masked": False, "correction_reason": "Authorized reason", "correctionReason": "Authorized reason"}
+    original = {"fields": [field]} if layout == "fields" else {"parsedFields": {"contactPhone": field}}
+    projected = mask_intake(principal, original)
+    actual = projected["fields"][0] if layout == "fields" else projected["parsedFields"]["contactPhone"]
+    assert actual["correction_reason"] == actual["correctionReason"] == "Authorized reason"
+
+
+@pytest.mark.parametrize("classification,clearance,upstream_masked,denied", [
+    (None, DataClassification.HIGHLY_RESTRICTED, False, True),
+    ("FUTURE_CLASS", DataClassification.HIGHLY_RESTRICTED, False, True),
+    ("INTERNAL", DataClassification.PUBLIC, False, True),
+    ("INTERNAL", DataClassification.HIGHLY_RESTRICTED, True, True),
+    ("INTERNAL", DataClassification.HIGHLY_RESTRICTED, False, False),
+])
+def test_native_parser_confidence_and_reason_follow_original_field_mask(
+        classification, clearance, upstream_masked, denied):
+    from copy import deepcopy
+
+    from modules.listing.application.intake_authorization import mask_intake
+    from shared.auth import Principal, Scope
+
+    principal = Principal(subject_id="synthetic-history-reader", scope=Scope(tenant_id="tenant-a", clearance=clearance))
+    field = {"field_path": "address", "classification": classification, "parsed": "PRIVATE_PARSER_VALUE",
+        "normalized": "PRIVATE_NORMALIZED", "corrected": "PRIVATE_PROPOSAL", "confidence": .875,
+        "correction_reason": "PRIVATE_PROPOSAL_REASON", "masked": upstream_masked}
+    original = {"fields": [field]}
+    before = deepcopy(original)
+    actual = mask_intake(principal, original)["fields"][0]
+    if denied:
+        assert actual["masked"] is True and actual["mask_reason_code"] == "FIELD_MASKED"
+        assert all(actual[key] is None for key in ("parsed", "normalized", "corrected", "confidence", "correction_reason"))
+    else:
+        assert all(actual[key] == field[key] for key in field)
+    assert original == before

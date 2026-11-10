@@ -273,11 +273,15 @@ def test_local_account_session_and_current_roles_control_cached_receipt():
         # Controlled server scope change; not an admitted real business write.
         record=service._listing_intake(first.json()["id"])
         record["heatZoneId"]="HZ-02"
+        repository.save_intake(record)
+        service.get_intake(record["id"])
         shifted=deepcopy((service._state,repository.idempotency))
         scoped_denial=client.post(BASE+"/intake/submit",headers=headers,json=payload)
         assert scoped_denial.status_code==403
         assert (service._state,repository.idempotency)==shifted
         record["heatZoneId"]="HZ-01"
+        repository.save_intake(record)
+        service.get_intake(record["id"])
         identities.set_account_roles(OWNER,{Role.FRANCHISEE})
         denied=client.post(BASE+"/intake/submit",headers=headers,json=payload)
         assert denied.status_code==403

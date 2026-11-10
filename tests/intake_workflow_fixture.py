@@ -11,6 +11,30 @@ from modules.listing.domain.intake_states import SlaSchedule
 from shared.audit.integrity import sha256_hex
 
 
+def seed_synthetic_intake_read_flag(owner, tenant_id):
+    """Explicit isolated fixture facts, not runtime or human release approval.
+
+    Callers already own their SQL database and initialized global flag record.
+    Reopening readers must read that record, not seed it a second time.
+    Production activation still requires its actual governed release records.
+    """
+    from shared.auth.feature_flags import FeatureFlag, FlagScope, FlagScopeBinding
+    from shared.infrastructure.persistence.feature_flags import (
+        COLLECTION,
+        DOCUMENT,
+        DurableFeatureFlagRegistry,
+    )
+
+    assert isinstance(owner, DurableFeatureFlagRegistry)
+    flags, version = owner.read_versioned()
+    key = "assisted_intake_v1_read"
+    assert key not in flags
+    flags[key] = FeatureFlag(key=key, owner="isolated-synthetic-read-fixture", scope=FlagScope.TENANT,
+        bindings=(FlagScopeBinding(tenant_id),), high_risk=True, enabled=True,
+        approved_by=frozenset({"synthetic-read-approver-a", "synthetic-read-approver-b"}))
+    assert owner.store.compare_and_put(COLLECTION, DOCUMENT, owner._encode(flags), expected_version=version) is not None
+
+
 class SyntheticIntakeAuditRetention:
     """Explicit synthetic policy override; application code never installs it."""
 

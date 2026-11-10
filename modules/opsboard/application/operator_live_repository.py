@@ -16,6 +16,12 @@ from typing import Any, Protocol
 
 from modules.opsboard.application.today_metrics import build_today_metrics
 
+# Exception-derived public messages share stable wording. Static dependency
+# explanations and internal exception causes remain available for triage.
+OPERATOR_DATA_UNAVAILABLE_MESSAGE = (
+    "Operator data is temporarily unavailable. Please try again later."
+)
+
 
 class OperatorLiveRepositoryError(RuntimeError):
     """Raised when one of the authoritative repositories cannot be read."""
@@ -51,7 +57,7 @@ class OperatorRepositoryProbe:
             "checkedAt": self.checked_at,
             "repository": self.repository,
             "persistenceMode": self.persistence_mode,
-            "errors": list(self.errors),
+            "errors": [OPERATOR_DATA_UNAVAILABLE_MESSAGE for _ in self.errors],
         }
 
 
@@ -298,11 +304,11 @@ class OperatorLiveRepository:
                     **kwargs,
                 )
             )
-        except OperatorLiveRepositoryError as exc:
+        except OperatorLiveRepositoryError:
             return [], self._unavailable(
                 source,
                 reason_code=f"OPERATOR_{section.upper()}_UNAVAILABLE",
-                message=str(exc),
+                message=OPERATOR_DATA_UNAVAILABLE_MESSAGE,
             )
         return records, self._available(source, records)
 
@@ -328,8 +334,8 @@ class OperatorLiveRepository:
                 repo = provider(tenant_id)
                 if repo is not None:
                     return repo, None
-            except Exception as exc:
-                return None, f"{type(exc).__name__}: {exc}"
+            except Exception:
+                return None, OPERATOR_DATA_UNAVAILABLE_MESSAGE
 
         repository = getattr(self._persistence, attribute, None)
         if repository is not None:
@@ -353,8 +359,8 @@ class OperatorLiveRepository:
                         scoped_store = TenantScopedDocumentStore(base_store, tenant_id)
                         scoped_repo = type(repository)(scoped_store)
                         return scoped_repo, None
-                    except Exception as exc:
-                        return None, f"Failed to scope {attribute} for tenant: {exc}"
+                    except Exception:
+                        return None, OPERATOR_DATA_UNAVAILABLE_MESSAGE
 
         return None, f"tenant-aware repository for {attribute} is not configured"
 
@@ -422,7 +428,7 @@ class OperatorLiveRepository:
                     "intervention_repository.list_by_store",
                     interventions,
                     reason_code="OPERATOR_INTERVENTIONS_PARTIAL",
-                    message="; ".join(intervention_errors),
+                    message=OPERATOR_DATA_UNAVAILABLE_MESSAGE,
                 )
                 if intervention_errors
                 else self._available(
@@ -435,7 +441,7 @@ class OperatorLiveRepository:
                     "forecastops_repository.list_alerts_by_store",
                     alerts,
                     reason_code="OPERATOR_FORECAST_ALERTS_PARTIAL",
-                    message="; ".join(alert_errors),
+                    message=OPERATOR_DATA_UNAVAILABLE_MESSAGE,
                 )
                 if alert_errors
                 else self._available(
@@ -568,11 +574,11 @@ class OperatorLiveRepository:
                     deepcopy(issue) for issue in issue_rows
                     if issue["storeId"] in visible_store_ids
                 ]
-            except Exception as exc:
+            except Exception:
                 sections["storeOpsIssues"] = self._unavailable(
                     issue_source,
                     reason_code="OPERATOR_STORE_OPS_ISSUES_UNAVAILABLE",
-                    message=f"{type(exc).__name__}: {exc}",
+                    message=OPERATOR_DATA_UNAVAILABLE_MESSAGE,
                 )
             else:
                 sections["storeOpsIssues"] = self._available(issue_source, store_ops_issues)
@@ -607,12 +613,12 @@ class OperatorLiveRepository:
                     tenant_id=scope.tenant_id,
                 )
             )
-        except OperatorLiveRepositoryError as exc:
+        except OperatorLiveRepositoryError:
             active_jobs = 0
             sections["activeJobs"] = self._unavailable(
                 "job_queue.count_active_jobs",
                 reason_code="OPERATOR_ACTIVE_JOBS_UNAVAILABLE",
-                message=str(exc),
+                message=OPERATOR_DATA_UNAVAILABLE_MESSAGE,
             )
         else:
             sections["activeJobs"] = self._available(
@@ -1303,6 +1309,7 @@ class OperatorLiveRepository:
 
 
 __all__ = [
+    "OPERATOR_DATA_UNAVAILABLE_MESSAGE",
     "OperatorLiveRepository",
     "OperatorLiveRepositoryError",
     "OperatorLiveRepositoryProtocol",

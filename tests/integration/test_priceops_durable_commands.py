@@ -15,6 +15,7 @@ from apps.api.app.routes.priceops import create_priceops_router
 from modules.priceops.application import PriceOpsService
 from modules.priceops.domain.pricing import PlanAlreadyExistsError
 from shared.api.errors import install_error_handlers
+from shared.audit.worm import LocalAppendOnlyWormSink
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.engine import SqliteEngine
@@ -26,9 +27,10 @@ from tests.integration.test_priceops_command_authority import proposal
 HEADERS = {"x-subject-id": "durable-pricer", "x-roles": "pricing_manager", "x-tenant-id": "tenant-a", "x-correlation-id": "corr-durable-command"}
 
 
-def http_context(engine, *, store_repository=None, brand_repository=None, feature_flag_registry=None):
+def http_context(engine, *, store_repository=None, brand_repository=None,
+                 require_durable_commands=True, worm_sink=None, feature_flag_registry=None):
     repository = DurablePriceOpsRepository(SqliteDocumentStore(engine))
-    audit = DurableAuditLog(engine)
+    audit = DurableAuditLog(engine, worm_sink=worm_sink)
     app = FastAPI()
     if feature_flag_registry is not None:
         app.state.feature_flag_registry = feature_flag_registry
@@ -43,8 +45,52 @@ def http_context(engine, *, store_repository=None, brand_repository=None, featur
                                              store_repository=store_repository,
                                              brand_repository=brand_repository,
                                              job_queue=DurableJobQueue(engine, flags=feature_flag_registry),
-                                             require_durable_commands=True, runtime_mode="poc"))
+                                             require_durable_commands=require_durable_commands, runtime_mode="poc"))
     return TestClient(app, headers=HEADERS), repository, audit
+
+
+@pytest.mark.parametrize("required", [False, True])
+def test_external_delivery_requires_verified_tenant_before_business_writes(database, tmp_path, required):
+    open_engine, _env = database
+    engine = open_engine()
+    try:
+        client, repository, audit = http_context(
+            engine, require_durable_commands=required,
+            worm_sink=LocalAppendOnlyWormSink(tmp_path / "tenant-bound-worm"),
+        )
+        with client:
+            client.headers.pop("x-tenant-id")
+            headers = {"Idempotency-Key": "tenant-bound-create"}
+            body = proposal("tenant-bound-plan")
+            denied = client.post("/priceops/plans", headers=headers, json=body)
+            assert denied.status_code == 403, denied.text
+            assert denied.json()["detail"]["code"] == "TENANT_SCOPE_REQUIRED"
+            assert repository.list_plans() == []
+            assert not [event for event in audit.list_events() if event.event_type.startswith("priceops.")]
+
+            client.headers["x-tenant-id"] = HEADERS["x-tenant-id"]
+            accepted = client.post("/priceops/plans", headers=headers, json=body)
+            assert accepted.status_code == 201, accepted.text
+            assert accepted.json()["created"] is True
+            assert [plan.plan_id for plan in repository.list_plans()] == ["tenant-bound-plan"]
+            assert len([event for event in audit.list_events() if event.event_type == "priceops.plan_created.v1"]) == 1
+    finally:
+        engine.close()
+
+
+def test_unbound_poc_without_external_delivery_retains_local_receipt_scope(database):
+    open_engine, _env = database
+    engine = open_engine()
+    try:
+        client, repository, _audit = http_context(engine, require_durable_commands=False)
+        with client:
+            client.headers.pop("x-tenant-id")
+            response = client.post("/priceops/plans", headers={"Idempotency-Key": "local-poc-create"},
+                                   json=proposal("local-poc-plan"))
+            assert response.status_code == 201, response.text
+            assert repository.get_plan("local-poc-plan").tenant_id == "tenant-a"
+    finally:
+        engine.close()
 
 
 @pytest.fixture(params=["sqlite", "postgresql"])
@@ -243,3 +289,103 @@ def test_canonical_ownership_and_creator_survive_reopen(database, request):
         assert len(repository.list_approvals("durable-plan")) == 1
     finally:
         reopened.close()
+
+
+@pytest.fixture
+def listing_ownership(database, request):
+    from shared.domain.models import AddressLocation, Brand, Store, Tenant
+    from shared.infrastructure.persistence.repositories import (
+        DurableAddressLocationRepository,
+        DurableBrandRepository,
+        DurableStoreRepository,
+        DurableTenantRepository,
+    )
+
+    open_engine, env = database
+    if env["PRICEOPS_TEST_BACKEND"] == "postgresql":
+        from tests.integration.test_postgresql_persistence import _provision_canonical_schema
+        _provision_canonical_schema(request.getfixturevalue("intake_blank_db"))
+    engine = open_engine()
+    tenant = "11111111-1111-4111-8111-111111111111"
+    brand = "22222222-2222-4222-8222-222222222222"
+    store = "33333333-3333-4333-8333-333333333333"
+    address = "44444444-4444-4444-8444-444444444444"
+    try:
+        DurableTenantRepository(engine).save_tenant(Tenant(tenant_id=tenant, tenant_name="Synthetic read tenant"))
+        brands = DurableBrandRepository(engine)
+        stores = DurableStoreRepository(engine)
+        brands.save_brand(Brand(brand_id=brand, tenant_id=tenant, brand_code="read-scope", brand_name="Synthetic read brand"))
+        DurableAddressLocationRepository(engine).save_address(AddressLocation(address_id=address, tenant_id=tenant,
+            raw_address="Synthetic read address", normalized_address="Synthetic read address"))
+        stores.save_store(Store(store_id=store, tenant_id=tenant, brand_id=brand, address_id=address,
+            store_name="Synthetic read store", region_code="north"))
+        client, repository, _ = http_context(engine, store_repository=stores, brand_repository=brands)
+        client.headers.update({"x-tenant-id": tenant})
+        service = PriceOpsService(repository=repository, runtime_mode="poc")
+        from modules.priceops.domain.pricing import (
+            PriceConstraints,
+            PriceElasticityEstimate,
+            PricingPlanItem,
+        )
+        item = PricingPlanItem.create(item_id="read-item", store_id=store, brand_id=brand, machine_type="dryer",
+            baseline_demand=40,
+            elasticity=PriceElasticityEstimate(elasticity_value=-1, confidence=0.8,
+                applicable_min_price=60, applicable_max_price=100),
+            constraints=PriceConstraints(unit_cost=30, current_price=80))
+        yield engine, client, service, stores, brands, tenant, store, item
+    finally:
+        engine.close()
+
+
+def test_plan_list_master_reads_do_not_grow_with_repeated_plan_history(listing_ownership, monkeypatch):
+    engine, client, service, _, _, tenant, _, item = listing_ownership
+    reads = []
+
+    def track(original):
+        def query(sql, *args, **kwargs):
+            normalized = " ".join(sql.lower().split())
+            if normalized.startswith("select") and any(table in normalized for table in (
+                "from stores", "from brands", "from core.stores", "from core.brands",
+            )):
+                reads.append(normalized)
+            return original(sql, *args, **kwargs)
+        return query
+
+    for name in ("query", "query_one"):
+        monkeypatch.setattr(engine, name, track(getattr(engine, name)))
+
+    def observe(start, end):
+        for index in range(start, end):
+            service.create_plan(tenant_id=tenant, items=(item,), correlation_id="synthetic-history",
+                plan_id=f"read-history-{index:03}", created_by="synthetic-author")
+        reads.clear()
+        response = client.get("/priceops/plans", params={"limit": 2, "sort": "plan_id"})
+        assert response.status_code == 200, response.text
+        page = response.json()
+        assert page["total"] == end and page["count"] == 2 and page["has_more"] is True
+        assert [plan["plan_id"] for plan in page["items"]] == ["read-history-000", "read-history-001"]
+        return len(reads)
+
+    small = observe(0, 3)
+    grown = observe(3, 30)
+    assert small > 0
+    assert grown <= small, (small, grown)
+
+
+def test_plan_list_rechecks_canonical_ownership_on_each_request(listing_ownership):
+    from dataclasses import replace
+
+    from shared.domain.models import Brand
+
+    _, client, service, stores, brands, tenant, store, item = listing_ownership
+    service.create_plan(tenant_id=tenant, items=(item,), correlation_id="synthetic-revalidation",
+        plan_id="ownership-read", created_by="synthetic-author")
+    assert client.get("/priceops/plans").json()["total"] == 1
+    original = stores.get_store(store)
+    new_brand = "55555555-5555-4555-8555-555555555555"
+    brands.save_brand(Brand(brand_id=new_brand, tenant_id=tenant, brand_code="read-new-brand", brand_name="Synthetic new brand"))
+    stores.save_store(replace(original, brand_id=new_brand))
+    assert client.get("/priceops/plans").json()["items"] == []
+    assert client.get("/priceops/plans/ownership-read").status_code == 404
+    stores.save_store(original)
+    assert client.get("/priceops/plans").json()["total"] == 1

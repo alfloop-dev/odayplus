@@ -180,6 +180,7 @@ def _synthetic_measured_listing_app():
         address_id="ADDR-SYNTHETIC-MEASURED-77120345", rent_amount=45000,
         area_ping=16, floor="1F", frontage_m=5.5,
         snapshot_id="SNAP-SYNTHETIC-MEASURED-77120345", confidence=0.92,
+        tenant_id="tenant-a",
     )
     object.__setattr__(listing, "property_id", "00000000-0000-0000-0000-000000009001")
     object.__setattr__(listing, "hard_rule_failures", [])
@@ -194,7 +195,12 @@ def _synthetic_measured_listing_app():
         normalized_address=address.normalized_address, rent_amount=listing.rent_amount,
         area_ping=listing.area_ping,
     ))
-    return create_app(persistence=bundle), listing, address
+    app = create_app(persistence=bundle)
+    app.state.operator_intake_repository.save_listing_metadata(
+        listing.listing_id,
+        {"tenantId": listing.tenant_id, "heatZoneId": "HZ-01", "hasLegalHold": False},
+    )
+    return app, listing, address
 
 
 def test_poc_promotion_retains_review_until_canonical_delivery_is_available() -> None:
@@ -231,6 +237,7 @@ def test_poc_promotion_retains_review_until_canonical_delivery_is_available() ->
         headers={
             **MANAGER_HEADERS,
             "Idempotency-Key": f"idem-decide-{uuid4()}",
+            "If-Match": f'W/"{intake["version"]}"',
             "X-Correlation-Id": f"corr-decide-{uuid4()}",
         },
     )
@@ -348,6 +355,7 @@ def test_promotion_saga_segregation_of_duties() -> None:
         headers={
             **MANAGER_HEADERS,
             "Idempotency-Key": f"idem-decide-{uuid4()}",
+            "If-Match": f'W/"{intake["version"]}"',
             "X-Correlation-Id": f"corr-decide-{uuid4()}",
         },
     )

@@ -16,7 +16,13 @@ from apps.api.app.routes.operator_modules.network_scoring import create_network_
 from modules.listing.domain.models import CandidateSiteDraft
 from modules.listing.infrastructure.repositories import InMemoryListingRepository
 from modules.opsboard.application.network_scoring import NetworkScoringService
-from modules.sitescore.domain.scoring import Interval, SiteScoreRecommendation, SiteScoreReport
+from modules.sitescore.domain.scoring import (
+    Interval,
+    SiteScoreFeatureInput,
+    SiteScoreRecommendation,
+    SiteScoreReport,
+    score_site,
+)
 from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
 from shared.auth import Principal, Role, Scope
 from shared.domain import AddressLocation, CandidateSite, Listing
@@ -85,6 +91,43 @@ def _listing_repo(*drafts):
     return repo
 
 
+def test_canonical_http_preserves_partial_payback_and_text_financial_contract():
+    candidate_id = "candidate-partial-finance"
+    reports = InMemorySiteScoreRepository()
+    # Exercise the real financial coercion/report producer; a hand-built int
+    # report concealed the original float repr reaching this HTTP projection.
+    saved = reports.save_report(score_site(SiteScoreFeatureInput(
+        candidate_site_id=candidate_id, target_format_code="synthetic-format",
+        feature_snapshot_time=AT, monthly_rent=40000,
+    ), prediction_origin_time=AT, scored_at=AT))
+    assert saved.monthly_rent == 40000.0 and type(saved.monthly_rent) is float
+    assert saved.payback_period is None and saved.payback_p50_months is None
+    service = _service(_listing_repo(_draft(candidate_id)), reports, ReadOnlyRuntime())
+    with _client(lambda: service) as client:
+        response = client.get("/network-scoring")
+    assert response.status_code == 200
+    card = response.json()["scorecards"][0]
+    assert card["reportId"] == saved.report_id
+    assert card["payback"] is None and card["capex"] is None
+    assert card["rentAssumption"] == "月租 NT$40,000"
+    assert card["revenuePath"]["m12"] == saved.m12.to_dict()
+    assert "financial_inputs_unavailable" in card["conditions"]
+
+
+@pytest.mark.parametrize("capex,expected", [(5546000, "NT$5,546,000"), (0, "NT$0")])
+def test_recorded_complete_financial_numbers_keep_existing_text_dto(capex, expected):
+    saved = score_site(SiteScoreFeatureInput(
+        candidate_site_id="candidate-complete-finance", target_format_code="synthetic-format",
+        feature_snapshot_time=AT, buildout_capex=capex, gross_margin_ratio=0.6,
+        monthly_rent=40000, comparable_monthly_revenue_p50=200000,
+        average_confidence=0.9, data_quality_score=0.9,
+    ), prediction_origin_time=AT, scored_at=AT)
+    assert type(saved.buildout_capex) is float and type(saved.monthly_rent) is float
+    card = NetworkScoringService._scorecard_from_report(saved)
+    assert card["capex"] == expected and card["rentAssumption"] == "月租 NT$40,000"
+    assert card["payback"] == saved.payback_p50_months
+
+
 def _service(listings, reports, runtime=None, *, tenant=TENANT):
     return NetworkScoringService(
         seed_fixtures=False, require_canonical=True, tenant_id=tenant,
@@ -140,6 +183,39 @@ def test_each_candidate_uses_own_latest_committed_model_without_inference_or_sco
     assert runtime.calls == 0
     assert (listings.list_candidates(), reports.history("candidate-B")) == before
     assert service.snapshot()["auditEvents"] == []
+
+
+@pytest.mark.parametrize(("site_status", "recommendation"), [
+    ("SCORING_FAILED", SiteScoreRecommendation.GO),
+    ("SCORING_QUEUED", SiteScoreRecommendation.REJECT),
+    ("approved", SiteScoreRecommendation.REJECT),
+    ("opened", SiteScoreRecommendation.GO),
+    (None, SiteScoreRecommendation.GO),
+])
+def test_canonical_http_preserves_persisted_lifecycle_independently_of_model_outcome(tmp_path, site_status, recommendation):
+    engine = SqliteEngine(tmp_path / "synthetic-candidate-state.sqlite3")
+    try:
+        scoped = TenantScopedDocumentStore(SqliteDocumentStore(engine), TENANT)
+        listings, reports = DurableListingRepository(scoped), DurableSiteScoreRepository(scoped)
+        draft = _draft("candidate-state")
+        listings.save_candidate(replace(draft, candidate_site=replace(draft.candidate_site, site_status=site_status)))
+        report = reports.save_report(replace(_report("candidate-state", "actual-committed-model"), recommendation=recommendation))
+        before = engine.query("SELECT collection,doc_id,seq,data FROM durable_documents ORDER BY collection,doc_id")
+        runtime = ReadOnlyRuntime()
+        service = _service(listings, reports, runtime)
+        with _client(lambda: service) as client:
+            response = client.get("/network-scoring")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["source"] == "canonical"
+        assert body["candidates"][0]["canonicalSiteStatus"] == site_status
+        assert body["candidates"][0]["stage"] == (site_status or "unknown")
+        assert body["scorecards"][0]["reportId"] == report.report_id
+        assert body["scorecards"][0]["recommendation"] == recommendation.value
+        assert runtime.calls == 0
+        assert engine.query("SELECT collection,doc_id,seq,data FROM durable_documents ORDER BY collection,doc_id") == before
+    finally:
+        engine.close()
 
 
 def test_template_is_exact_registry_allowlist_preserving_unknowns_and_v1_history():

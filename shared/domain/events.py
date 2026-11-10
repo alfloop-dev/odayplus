@@ -86,9 +86,21 @@ CONSUMER_MODE = "consumer"
 class EventContractValidator:
     def __init__(self) -> None:
         self.catalog: dict[str, dict[str, Any]] = {}
+        self.catalog_versions: dict[tuple[str, int], dict[str, Any]] = {}
         self.payloads: dict[str, dict[str, Any]] = {}
         self.definitions: dict[str, dict[str, Any]] = {}
         self._load_contracts()
+
+    def _register_catalog_entry(self, entry: dict[str, Any]) -> None:
+        event_type, version = entry["event_type"], entry["event_version"]
+        if type(version) is not int or version < 1:
+            raise ValueError("A catalog event version must be a positive integer")
+        self.catalog_versions[event_type, version] = entry
+        # Preserve the original public metadata view for existing callers.
+        # Validation always selects an explicitly declared version below.
+        previous = self.catalog.get(event_type)
+        if previous is None or version <= previous["event_version"]:
+            self.catalog[event_type] = entry
 
     def _load_contracts(self) -> None:
         root_dir = Path(__file__).resolve().parents[2]
@@ -101,7 +113,7 @@ class EventContractValidator:
             with open(events_v1_path, encoding="utf-8") as f:
                 v1_data = yaml.safe_load(f) or {}
                 for entry in v1_data.get("catalog", []):
-                    self.catalog[entry["event_type"]] = entry
+                    self._register_catalog_entry(entry)
                 self.payloads = deep_merge(self.payloads, v1_data.get("payloads", {}))
 
         # Load addendum yaml to extend catalog and payloads
@@ -109,7 +121,7 @@ class EventContractValidator:
             with open(addendum_path, encoding="utf-8") as f:
                 addendum_data = yaml.safe_load(f) or {}
                 for entry in addendum_data.get("catalog_additions", []):
-                    self.catalog[entry["event_type"]] = entry
+                    self._register_catalog_entry(entry)
                 self.payloads = deep_merge(self.payloads, addendum_data.get("payloads", {}))
 
         # Load schemas last to get definitions and detailed payloads
@@ -146,8 +158,15 @@ class EventContractValidator:
             except ValueError:
                 return False
         if fmt == "date-time":
-            pattern = r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$"
-            return bool(re.match(pattern, val))
+            pattern = (r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?"
+                       r"(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)")
+            if re.fullmatch(pattern, val) is None:
+                return False
+            try:
+                datetime.fromisoformat(val.replace("t", "T").replace("z", "Z"))
+            except ValueError:
+                return False
+            return True
         if fmt == "uri":
             return val.startswith("http://") or val.startswith("https://") or val.startswith("gs://") or val.startswith("odp-artifact://")
         return True
@@ -225,6 +244,11 @@ class EventContractValidator:
             if data not in enum_values:
                 errors.append(f"Value '{data}' is not in enum {enum_values}")
 
+        if "pattern" in schema and isinstance(data, str):
+            # JSON Schema patterns are searches; anchors belong to the schema.
+            if re.search(schema["pattern"], data) is None:
+                errors.append(f"Value '{data}' does not match pattern {schema['pattern']}")
+
         if "format" in schema and isinstance(data, str):
             fmt = schema["format"]
             if not self.validate_format(data, fmt):
@@ -269,7 +293,7 @@ class EventContractValidator:
 
         for int_field in ["event_version", "aggregate_version"]:
             val = event_dict.get(int_field)
-            if val is not None and (not isinstance(val, int) or val < 1):
+            if val is not None and (type(val) is not int or val < 1):
                 errors.append(f"Field '{int_field}' must be an integer >= 1, got: {val}")
 
         for str_field in ["event_type", "producer", "aggregate_type", "partition_key"]:
@@ -300,7 +324,18 @@ class EventContractValidator:
             errors.append(f"Event type '{event_type}' not found in catalog")
             return errors
 
-        entry = self.catalog[event_type]
+        entry = self.catalog_versions.get((event_type, event_dict["event_version"]))
+        if entry is None:
+            return [f"Event version {event_dict['event_version']} for '{event_type}' is not declared in catalog"]
+        for catalog_field in ("producer", "aggregate_type", "schema_ref"):
+            # v1 declares schema_ref as optional. Resolve the payload from the
+            # exact catalog version; a supplied reference must still agree.
+            if catalog_field == "schema_ref" and catalog_field not in event_dict:
+                continue
+            if event_dict.get(catalog_field) != entry[catalog_field]:
+                errors.append(f"Envelope {catalog_field} does not match declared event version")
+        if errors:
+            return errors
         schema_ref = entry["schema_ref"]
         # Resolve schema_ref
         schema_name = schema_ref.split("/")[-1]

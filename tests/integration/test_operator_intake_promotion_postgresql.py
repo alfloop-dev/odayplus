@@ -47,7 +47,8 @@ def _promotion_client(bundle):
 
 def _reviewer_headers(key="synthetic-promotion-review"):
     return {**_headers(APPROVER, key=key), "x-roles": "site_reviewer,expansion_user",
-            "x-operator-role": "expansion-manager"}
+            "x-operator-role": "expansion-manager",
+            **({"If-Match": 'W/"2"'} if str(key).endswith("-decide") else {})}
 
 
 def _ready_intake(db, bundle, client):
@@ -89,7 +90,8 @@ def _ready_intake(db, bundle, client):
                           json={"action": "revise", "targetListingId": listing_id,
                                 "reason": "Revise the synthetic measured listing",
                                 "riskSummary": "Synthetic local acceptance", "riskAcknowledged": True},
-                          headers=_reviewer_headers("synthetic-promotion-decide"))
+                          headers={**_reviewer_headers("synthetic-promotion-decide"),
+                                   "If-Match": f'W/"{corrected.json()["version"]}"'})
     assert decided.status_code == 200, decided.text
     record = decided.json()
     assert record["matchResult"]["targetListingId"] == listing_id

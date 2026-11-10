@@ -56,17 +56,28 @@ class DurableAuditLog:
     def record(self, event: AuditEvent) -> AuditEvent:
         with self._engine.transaction():
             if getattr(self._engine, "dialect", "") == "postgresql":
-                # PostgresEngine reserves its process lock for the entire
-                # outer transaction, before any database lock. The chain lock
-                # still serializes audits across independent engines/processes;
-                # nested appends reuse this transaction and process reservation.
+                # The outer engine root reserves its process lock first.
+                # The chain lock also serializes independent engine/process roots.
                 self._engine.query_one(
                     "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
                     ("durable-audit-chain",),
                 )
             elif not self._engine._conn.in_transaction:
                 self._engine.execute("BEGIN IMMEDIATE")
-            return self._append(event)
+            try:
+                return self._append(event)
+            except Exception as exc:
+                if (getattr(self._engine, "dialect", "") == "postgresql"
+                        and getattr(exc, "sqlstate", None) == "23505"
+                        and getattr(getattr(exc, "diag", None), "constraint_name", None) == "uq_runtime_audit_sequence"):
+                    # An outer SERIALIZABLE snapshot may predate the writer
+                    # that held the chain lock. It cannot be refreshed here.
+                    # Preserve rollback and the caller's existing conflict
+                    # handling; never retry or append outside that transaction.
+                    from psycopg.errors import SerializationFailure
+
+                    raise SerializationFailure("AUDIT_CHAIN_CONCURRENT_CHANGE") from exc
+                raise
 
     def _append(self, event: AuditEvent) -> AuditEvent:
         override = _TRANSACTIONAL_WORM.get()

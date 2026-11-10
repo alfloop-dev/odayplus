@@ -193,6 +193,7 @@ classification:
         - "modules/external_data/application/assisted_intake.py"
         - "modules/external_data/application/xlsx_import.py"
         - "modules/external_data/security/**"
+        - "modules/listing/application/native_intake_parser_runs.py"
       rationale: >-
         Source-facing half of human-assisted intake plus governed XLSX intake.
         No crawling, no scheduling, fixture replay only outside production.
@@ -330,6 +331,7 @@ classification:
       include:
         - "config/**"
         - "README.md"
+        - "AGENTS.md"
         - "pyproject.toml"
         - "package.json"
         - "package-lock.json"
@@ -497,6 +499,7 @@ allowed_surfaces:
       - "delivery_toolchain/release/assisted_listing_intake/**"
       - "infra/assisted-listing-intake/**"
       - "shared/infrastructure/persistence/assisted_listing_intake.py"
+      - "modules/listing/application/native_intake_parser_runs.py"
     capability_exemptions:
       - new_provider_connector
       - new_raw_evidence_store

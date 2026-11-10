@@ -29,6 +29,11 @@ from shared.jobs.queue import (
 )
 
 _LEGACY_RETRYING_STATUS_VALUES = (JobDeliveryState.RETRYING.value, "RETRYING")
+DURABLE_JOB_COLUMNS = (
+    "job_id", "job_type", "status", "delivery_state", "correlation_id", "idempotency_key",
+    "payload_json", "created_at", "fence_token", "version", "locked_by", "heartbeat_at",
+    "lease_expires_at", "attempts", "error_message", "leased_until", "available_at", "max_retries",
+)
 
 # Polling must not query tenant-protected business tables before the signed
 # reference is authenticated. The bridge mirrors canonical eligibility into
@@ -134,7 +139,13 @@ class DurableJobQueue:
         raise RuntimeError("durable job reservation conflicted without a replay record")
 
     def get(self, job_id: str) -> JobRecord | None:
-        row = self._engine.query_one("SELECT * FROM durable_jobs WHERE job_id = ?", (job_id,))
+        from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+        if isinstance(self._engine, PostgresEngine) and self._engine.native_acquisition_active():
+            row = self._engine.native_query("SELECT * FROM durable_jobs WHERE job_id = ?",
+                (job_id,), columns=DURABLE_JOB_COLUMNS, one=True)
+        else:
+            row = self._engine.query_one("SELECT * FROM durable_jobs WHERE job_id = ?", (job_id,))
         return None if row is None else self._row_to_record(row)
 
     def lease(self, lease_duration_seconds: float) -> JobRecord | None:

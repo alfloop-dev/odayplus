@@ -73,14 +73,23 @@ else:
 
     def canonical_priceops_store(item: Any, expected_tenant: str | None, *,
                                  store_repository: Any, brand_repository: Any,
-                                 production_required: bool = False) -> Any:
+                                 production_required: bool = False,
+                                 read_cache: dict[tuple[str, str], Any] | None = None) -> Any:
         if store_repository is None and brand_repository is None and not production_required:
             return None
         try:
-            store = store_repository.get_store(item.store_id)
+            def read_master(kind: str, key: str, load: Any) -> Any:
+                if read_cache is None:
+                    return load(key)
+                identity = (kind, key)
+                if identity not in read_cache:
+                    read_cache[identity] = load(key)
+                return read_cache[identity]
+
+            store = read_master("store", item.store_id, store_repository.get_store)
             if store is None or not store.is_current or store.tenant_id != expected_tenant:
                 return None
-            brand = brand_repository.get_brand(store.brand_id)
+            brand = read_master("brand", store.brand_id, brand_repository.get_brand)
             if brand is None or brand.tenant_id != expected_tenant:
                 return None
             return store
@@ -94,7 +103,8 @@ else:
     def priceops_items_in_scope(items: Any, principal: Any, expected_tenant: str | None, *,
                                 store_repository: Any = None, brand_repository: Any = None,
                                 production_required: bool = False,
-                                scope_module: str = "priceops") -> bool:
+                                scope_module: str = "priceops",
+                                read_cache: dict[tuple[str, str], Any] | None = None) -> bool:
         """Share object axes while retaining the caller's existing module guard.
 
         Native routes use priceops. Operator projections use operator_console,
@@ -114,7 +124,7 @@ else:
         for item in items:
             store = canonical_priceops_store(item, expected_tenant, store_repository=store_repository,
                                              brand_repository=brand_repository,
-                                             production_required=production_required)
+                                             production_required=production_required, read_cache=read_cache)
             canonical_required = store_repository is not None or brand_repository is not None or production_required
             if canonical_required and (store is None or item.brand_id != store.brand_id):
                 return False
@@ -129,7 +139,8 @@ else:
 
     def priceops_plan_in_scope(plan: Any, principal: Any, *, store_repository: Any = None,
                                brand_repository: Any = None, production_required: bool = False,
-                               require_tenant: bool = False, scope_module: str = "priceops") -> bool:
+                               require_tenant: bool = False, scope_module: str = "priceops",
+                                read_cache: dict[tuple[str, str], Any] | None = None) -> bool:
         scope = principal.scope
         if scope.tenant_id and plan.tenant_id != scope.tenant_id:
             return False
@@ -137,7 +148,7 @@ else:
             return False
         return priceops_items_in_scope(plan.items, principal, plan.tenant_id,
                                        store_repository=store_repository, brand_repository=brand_repository,
-                                       production_required=production_required, scope_module=scope_module)
+                                       production_required=production_required, scope_module=scope_module, read_cache=read_cache)
 
 
     class PriceOpsPlanItemPayload(BaseModel):
@@ -303,6 +314,11 @@ else:
             else repository or InMemoryPriceOpsRepository()
         )
         active_audit_log = audit_log or InMemoryAuditLog()
+        tenant_scope_required = (
+            durable_commands_required
+            or production_required
+            or getattr(active_audit_log, "_worm_sink", None) is not None
+        )
         authz_engine = build_engine(audit_log=active_audit_log)
         local_job_queue = None if durable_commands_required else InMemoryJobQueue()
         composition_error: ProductionExecutionConfigurationError | None = None
@@ -430,30 +446,30 @@ else:
                         },
                     )
                 return str(value)
-            if durable_commands_required or production_required:
+            if tenant_scope_required:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail={
                         "code": "TENANT_SCOPE_REQUIRED",
-                        "message": "PriceOps production commands require tenant scope",
+                        "message": "PriceOps commands require verified tenant scope",
                     },
                 )
             return "__local__"
 
-        def canonical_store(item: Any, expected_tenant: str | None) -> Any:
+        def canonical_store(item: Any, expected_tenant: str | None, *, read_cache: dict[tuple[str, str], Any] | None = None) -> Any:
             return canonical_priceops_store(item, expected_tenant, store_repository=store_repository,
                                              brand_repository=brand_repository,
-                                             production_required=production_required)
+                                             production_required=production_required, read_cache=read_cache)
 
-        def items_in_scope(items: Any, principal: Any, expected_tenant: str | None) -> bool:
+        def items_in_scope(items: Any, principal: Any, expected_tenant: str | None, *, read_cache: dict[tuple[str, str], Any] | None = None) -> bool:
             return priceops_items_in_scope(items, principal, expected_tenant,
                                            store_repository=store_repository, brand_repository=brand_repository,
-                                           production_required=production_required)
+                                           production_required=production_required, read_cache=read_cache)
 
-        def plan_in_scope(plan: Any, principal: Any) -> bool:
+        def plan_in_scope(plan: Any, principal: Any, *, read_cache: dict[tuple[str, str], Any] | None = None) -> bool:
             return priceops_plan_in_scope(plan, principal, store_repository=store_repository,
                                           brand_repository=brand_repository, production_required=production_required,
-                                          require_tenant=durable_commands_required or production_required)
+                                          require_tenant=tenant_scope_required, read_cache=read_cache)
 
         def require_proposal_scope(body: PriceOpsPlanPayload, request: Request) -> None:
             principal = request.state.operator_principal
@@ -700,9 +716,12 @@ else:
             `has_more`, so a caller that ignores the new fields and passes no
             query parameters sees what it saw before.
             """
+            # Master rows are reused only within this response; every plan
+            # retains scope checks and command boundaries remain uncached.
+            read_cache: dict[tuple[str, str], Any] = {}
             rows = [
                 plan.to_dict() for plan in service.repository.list_plans()
-                if plan_in_scope(plan, request.state.operator_principal)
+                if plan_in_scope(plan, request.state.operator_principal, read_cache=read_cache)
             ]
             if tenant_id is not None:
                 rows = [row for row in rows if row.get("tenant_id") == tenant_id]

@@ -75,9 +75,29 @@ Use the recorded commands/results in the candidate's evidence package. Test
 names or mocked DTO fields alone do not satisfy these observations. Intermediate
 failures, skipped tests and incomplete proof remain visible in that package.
 
+The three native password-session PostgreSQL browser cases require the Web
+production build from the same checkout. The existing `product-db` preparation
+step builds it once before SQL tests; local runs use the same command:
+
+```sh
+ODP_PRODUCT_MODE=production NEXT_PUBLIC_ODP_PRODUCT_MODE=production \
+ODP_DATA_BINDING_MODE=live NEXT_PUBLIC_ODP_DATA_BINDING_MODE=live \
+ODP_E2E_MODE=false NEXT_PUBLIC_ODP_E2E_MODE=false \
+npm run build --workspace=@oday-plus/web
+```
+
+Rebuild after source or public build settings change. Per-case database URLs,
+session secrets and identity signing material belong to the running fixture,
+not this build step. The existing helper starts `next start`; its 90-second
+server-readiness limit and the browser's original action/navigation limits
+remain unchanged. This avoids counting development compilation after login as
+browser navigation. The isolated synthetic records, real session and worker
+checks, and existing service-identity requirement still apply; this is not
+human UAT or production data admission.
+
 ## Remaining release limits
 
-The loopback browser uses the explicit POC/synthetic path. It does not prove
+The ordinary loopback packet uses the explicit POC/synthetic path. It does not prove
 production source retrieval, authenticated real-role browser actions, live
 publisher delivery or formal business UAT. A fixture retrieval method is not an
 admitted production adapter; the existing source/security policy gate must not
@@ -244,6 +264,11 @@ version, checkpoint, policy/parser admission and reason, renews the signed
 generation, and reuses the job and candidate IDs. Retry-budget overrides are
 refused because the current request contract has no incident/change reference.
 The UI does not offer ordinary replay for an exhausted dead-letter receipt.
+For a fresh score execution, the failed request also remains the candidate's
+head: a new idempotency key or a larger configured budget cannot reopen it or
+admit another execution for that candidate. The dead-letter event reports this
+state; it does not authorize recovery or reset. Recovery of this existing job
+still requires the separately reviewed fenced procedure described above.
 Manual replay cannot skip a pending automatic retry delay.
 Repeated expired attempts settle in dead letter at the recorded limit. An old
 attempt whose input changed cannot commit; a fresh delivery claim settles that

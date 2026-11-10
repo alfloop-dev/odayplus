@@ -15,6 +15,7 @@ in-memory lookup/versioning semantics with real SQL queries.
 from __future__ import annotations
 
 import pickle
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
 
@@ -140,6 +141,7 @@ class SqliteDocumentStore:
                 (pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL), collection, doc_id, row["data"]),
             )
             return cursor.rowcount == 1
+
     def compare_and_put(
         self,
         collection: str,
@@ -236,12 +238,31 @@ class SqliteDocumentStore:
         )
         return None if row is None else pickle.loads(row["data"])
 
-    def get_versioned(self, collection: str, doc_id: str) -> tuple[Any, int] | None:
-        """``(obj, version)`` for :meth:`compare_and_put`, or ``None`` if absent."""
-        row = self._engine.query_one(
-            "SELECT data, seq FROM durable_documents WHERE collection = ? AND doc_id = ?",
-            (collection, doc_id),
-        )
+    def get_versioned(self, collection: str, doc_id: str, *,
+                      lock_in_transaction: bool = False) -> tuple[Any, int] | None:
+        """Read a CAS version, optionally protecting an enclosing transaction.
+
+        A protected read retains its lock until the caller's existing business
+        transaction ends. Without that transaction this remains a preflight
+        read; it does not create a short-lived lock and claim later atomicity.
+        Ordinary CAS readers retain their existing optimistic behavior.
+        """
+        postgres = getattr(self._engine, "dialect", None) == "postgresql"
+        # SQLite's depth belongs to the thread holding its raw connection lock.
+        # PostgreSQL's lock would create a transaction, so do not enter it just
+        # to decide whether this caller already owns one.
+        with self._engine.lock if lock_in_transaction and not postgres else nullcontext():
+            sql = "SELECT data, seq FROM durable_documents WHERE collection = ? AND doc_id = ?"
+            if lock_in_transaction:
+                if postgres:
+                    if getattr(self._engine._local, "connection", None) is not None:
+                        # KEY SHARE would still allow a non-key CAS UPDATE.
+                        sql += " FOR SHARE"
+                elif self._engine._tx_depth > 0 and not self._engine._conn.in_transaction:
+                    # The SQLite engine defers BEGIN until its first write.
+                    # Reserve that same outer transaction before the decision.
+                    self._engine.execute("BEGIN IMMEDIATE")
+            row = self._engine.query_one(sql, (collection, doc_id))
         if row is None:
             return None
         return pickle.loads(row["data"]), int(row["seq"] or 0)
@@ -252,6 +273,14 @@ class SqliteDocumentStore:
             (collection,),
         )
         return [pickle.loads(r["data"]) for r in rows]
+
+    def list_items(self, collection: str) -> list[tuple[str, Any]]:
+        """Read persisted keys with their aggregates in the same observation."""
+        rows = self._engine.query(
+            "SELECT doc_id, data FROM durable_documents WHERE collection = ? ORDER BY ordinal",
+            (collection,),
+        )
+        return [(row["doc_id"], pickle.loads(row["data"])) for row in rows]
 
     def list_by_group(self, collection: str, group_key: str) -> list[Any]:
         rows = self._engine.query(

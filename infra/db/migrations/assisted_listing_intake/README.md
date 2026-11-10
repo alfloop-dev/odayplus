@@ -13,6 +13,16 @@ rollout runbook).
 | 2 | `002_consistency.sql`         | `..._SCHEMA_0002_CONSISTENCY_PATCH.sql` |
 | 3 | `003_promotion_state.sql`     | `..._SCHEMA_0003_PROMOTION_STATE_PATCH.sql` |
 | 4 | `004_tenant_rls_lineage.sql`  | `..._SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql` |
+| 5 | `005_decision_service_actor.sql` | `..._SCHEMA_0005_DECISION_SERVICE_ACTOR_PATCH.sql` |
+| 6 | `006_workflow_schedule.sql` | `..._SCHEMA_0006_WORKFLOW_SCHEDULE_PATCH.sql` |
+
+The original four-artifact receipt remains immutable. The existing loader
+records the five- and six-step prefixes separately and retains prior checksums
+and application timestamps. Engineering extensions do not approve production
+activation. Step 006 adds the original Assignment/SLA binding and recorded
+calendar/warning/breach checkpoints without supplying values for historical
+rows. Its replay rejects partial or changed columns/constraints; a recorded
+upgrade cannot authorize silent recreation of removed fields.
 
 Each file is a byte-for-byte copy of the reviewed contract artifact so the
 production migration cannot silently drop or alter an approved type, enum,
@@ -30,13 +40,14 @@ tenant/source flags and keeps target data read-only).
 
 ## Why a dedicated directory (not the `versions/` alembic chain)
 
-The canonical platform baseline (`infra/db/migrations/000001*`, `000002*`) already
-owns `expansion.listings`, `expansion.candidate_sites`, and `audit.audit_events`
-with a different shape. The intake contract redefines those names for its own
-bounded context. Chaining this migration onto the linear canonical alembic chain
-would make `CREATE TABLE IF NOT EXISTS` silently skip and break every downstream
-`ALTER`. This migration therefore targets the intake service's own database and is
-applied through the programmatic loader rather than the shared alembic chain.
+The canonical platform baseline already owns shared Listing, CandidateSite and
+audit tables. The existing `apply_upgrade_to_database` loader uses
+`000_canonical_compatibility.sql` before the ordered stack when those original
+tables are present. This composes the Intake tables with the same PostgreSQL
+database used by the runtime factory. Applying only `CREATE TABLE IF NOT EXISTS`
+against the older shapes would silently skip required expansion. Use the
+existing loader and its original receipt/checksum checks rather than a second
+migration runner or an assumed separate production database.
 
 ## Applying it
 
