@@ -117,12 +117,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const hash = createHash("sha256").update(ACCEPT_SCRIPT).digest("base64");
   return new NextResponse(`<!doctype html><html lang="zh-Hant"><meta charset="utf-8">
 <title>接受帳號邀請</title><h1>接受帳號邀請</h1>
-<p>使用管理員私下交付的憑證；請勿將 token 放入網址。密碼至少 12 字元，不得包含登入名稱或 email。</p>
+<p>使用管理員私下交付的憑證；請勿將 token 放入網址。密碼至少 8 字元，不得包含登入名稱或 email。</p>
 <form id="accept-invitation" autocomplete="off">
 <label>邀請 ID <input name="invitation_id" required maxlength="36"></label><br>
 <label>邀請 token <input name="token" type="password" required maxlength="43" autocomplete="off"></label><br>
 <label>登入名稱 <input name="username" required minlength="3" maxlength="64"></label><br>
-<label>密碼 <input name="password" type="password" required minlength="12" maxlength="1024" autocomplete="new-password"></label><br>
+<label>密碼 <input name="password" type="password" required minlength="8" maxlength="1024" autocomplete="new-password"></label><br>
 <button type="submit">接受邀請並建立帳號</button></form>
 <p id="result" role="status"></p><a href="/login">前往登入</a>
 <script>${ACCEPT_SCRIPT}</script></html>`, { headers: {

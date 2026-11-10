@@ -169,18 +169,23 @@ class TestT03PasswordPolicy:
         self.policy = PasswordPolicy()
 
     def test_too_short(self) -> None:
-        """短於 12 字元的密碼被拒絕。"""
-        result = self.policy.validate("short")
+        """短於 8 字元的密碼被拒絕。"""
+        result = self.policy.validate("abc1234")
         assert not result.valid
         codes = {v.code for v in result.violations}
         assert PasswordPolicyError.TOO_SHORT in codes
 
-    def test_exactly_12_chars_accepted(self) -> None:
-        """恰好 12 字元的密碼通過長度檢查。"""
-        result = self.policy.validate("abcdefg12345")
+    def test_exactly_8_chars_accepted(self) -> None:
+        """恰好 8 字元的密碼通過長度檢查。"""
+        result = self.policy.validate("abcd1234")
         # 可能因弱密碼或其他原因失敗，但不應因長度失敗
         codes = {v.code for v in result.violations}
         assert PasswordPolicyError.TOO_SHORT not in codes
+
+    def test_owner_requested_8_char_password_valid(self) -> None:
+        """負責人指定的 8 字元密碼對其帳號完整通過政策。"""
+        result = self.policy.validate("fdsa1234", username="operator01", email="operator01@example.com")
+        assert result.valid, result.violations
 
     def test_too_long(self) -> None:
         """超過 1024 字元的密碼被拒絕。"""
