@@ -122,7 +122,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 <label>邀請 ID <input name="invitation_id" required maxlength="36"></label><br>
 <label>邀請 token <input name="token" type="password" required maxlength="43" autocomplete="off"></label><br>
 <label>登入名稱 <input name="username" required minlength="3" maxlength="64"></label><br>
-<label>密碼 <input name="password" type="password" required minlength="12" maxlength="1024" autocomplete="new-password"></label><br>
+<label>密碼 <input name="password" type="password" required minlength="8" maxlength="1024" autocomplete="new-password"></label><br>
 <button type="submit">接受邀請並建立帳號</button></form>
 <p id="result" role="status"></p><a href="/login">前往登入</a>
 <script>${ACCEPT_SCRIPT}</script></html>`, { headers: {
