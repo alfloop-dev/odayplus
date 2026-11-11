@@ -330,9 +330,10 @@ jobs:
     # startup, lint, the pytest step and post-job cleanup, not pytest alone.
     # Run 40555469879 finished the full selection (2357.64s) yet the job was
     # cancelled at the old 40m limit. Run 42840699007 then hit 45m the same
-    # way: "Test product code" succeeded at 15:50:38 (job start 15:05:38) and
-    # the job was cancelled 4s later, before post-job cleanup could finish.
-    # 50 keeps that cleanup inside the budget and still stays below the
+    # way: "Test product code" succeeded at 15:50:38, the 45m boundary after
+    # job start 15:05:38, and the whole job was then cancelled at 15:50:42
+    # for exceeding the 45m maximum execution time. 50 adds whole-job
+    # completion margin past that boundary and still stays below the
     # 60-minute merge queue check response timeout (branch-protection
     # policy.json); it is a margin, not a performance promise.
     timeout-minutes: 50
