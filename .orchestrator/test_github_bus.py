@@ -2206,6 +2206,7 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
             "autoMergeRequest",
             "baseRefName",
             "headRefName",
+            "headRefOid",
             "url",
             "mergeStateStatus",
         }
@@ -2634,7 +2635,9 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
                 run_gh_side_effect=github_bus.GitHubBusOffline("no such host"),
             )
 
-    def _sync_and_capture_armed(self, tasks: list[dict], *, auto_merge: bool = True) -> list[str]:
+    def _sync_and_capture_armed(
+        self, tasks: list[dict], *, auto_merge: bool = True, bus_state: dict | None = None
+    ) -> list[str]:
         armed: list[str] = []
         config = self._config(auto_merge=auto_merge)
         config["github_bus"]["repo"] = self.REPO
@@ -2651,22 +2654,103 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
                 "sync_archive_housekeeping_auto_merge",
                 return_value=False,
             ),
+            mock.patch.object(github_bus, "run_gh") as run_gh,
+            mock.patch.object(github_bus, "gh_json") as gh_json,
             mock.patch.object(github_bus, "write_activity_log"),
         ):
-            github_bus.sync_outbound(config, {"tasks": {}}, {"tasks": tasks, "blockers": []}, {}, self.REPO)
+            github_bus.sync_outbound(
+                config,
+                bus_state if bus_state is not None else {"tasks": {}},
+                {"tasks": tasks, "blockers": []},
+                {},
+                self.REPO,
+            )
+        # Projection is read-only toward GitHub: not even a readback.
+        run_gh.assert_not_called()
+        gh_json.assert_not_called()
         return armed
 
-    def test_sync_outbound_arms_approved_tasks_only(self) -> None:
+    def test_sync_outbound_never_arms_canonical_tasks(self) -> None:
+        """Admission of an approved task belongs to the dispatcher route, which
+        keeps the exact-head window and attempt cap under canonical CAS. A bus
+        mutation beside it is a second owner with no counter."""
         in_review = self._task("review")
         in_review["id"] = "ODP-STILL-IN-REVIEW-001"
 
+        for auto_merge in (True, False):
+            with self.subTest(auto_merge=auto_merge):
+                self.assertEqual(
+                    self._sync_and_capture_armed(
+                        [self._task("review_approved"), in_review], auto_merge=auto_merge
+                    ),
+                    [],
+                )
+
+    def test_sync_outbound_projects_the_dispatcher_record_for_approved_tasks(self) -> None:
+        approved = self._task("review_approved")
+        approved.update(
+            {
+                "pr_number": 700,
+                "approved_head": "a" * 40,
+                "merge_route": {
+                    "head": "a" * 40,
+                    "route": "queued",
+                    "pr_number": 700,
+                    "at": "2026-11-11T00:00:00Z",
+                    "attempts": 2,
+                },
+            }
+        )
+        in_review = self._task("review")
+        in_review["id"] = "ODP-STILL-IN-REVIEW-001"
+        bus_state = self._bus_state()
+
+        self._sync_and_capture_armed([approved, in_review], bus_state=bus_state)
+
+        projected = bus_state["tasks"][self.TASK_ID]["auto_merge"]
+        self.assertEqual(projected["state"], "queued")
+        self.assertEqual(projected["attempts"], 2)
+        self.assertEqual(projected["head"], "a" * 40)
+        self.assertEqual(projected["owner"], "dispatch_engine.route_approved_pr_to_merge")
+        self.assertNotIn("ODP-STILL-IN-REVIEW-001", bus_state["tasks"])
+
+        # Unchanged record: no rewrite, so no churn in bus state.
+        before = dict(projected)
+        self.assertFalse(github_bus.project_task_merge_admission(bus_state, approved))
+        self.assertEqual(bus_state["tasks"][self.TASK_ID]["auto_merge"], before)
+
+    def test_an_unrouted_approved_task_is_projected_as_awaiting_the_dispatcher(self) -> None:
+        bus_state = self._bus_state()
+        approved = self._task("review_approved")
+
+        self.assertTrue(github_bus.project_task_merge_admission(bus_state, approved))
         self.assertEqual(
-            self._sync_and_capture_armed([self._task("review_approved"), in_review]),
-            [self.TASK_ID],
+            bus_state["tasks"][self.TASK_ID]["auto_merge"]["state"], "awaiting_dispatcher"
         )
 
-    def test_sync_outbound_respects_the_config_switch(self) -> None:
-        self.assertEqual(self._sync_and_capture_armed([self._task()], auto_merge=False), [])
+    def test_unknown_queue_enrollment_is_not_rearmed(self) -> None:
+        """None from GraphQL is unknown, not "not queued"."""
+
+        def run_gh_side_effect(args, **kwargs):
+            return subprocess.CompletedProcess(["gh"], 0, "", "")
+
+        pr = self._pr(isDraft=False)
+        bus_state = self._bus_state()
+        with (
+            mock.patch.object(
+                github_bus,
+                "gh_json",
+                side_effect=lambda args, **_k: dict(pr) if args[:2] == ["pr", "view"] else None,
+            ),
+            mock.patch.object(github_bus, "run_gh", side_effect=run_gh_side_effect) as run_gh,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            github_bus.enable_review_pr_auto_merge(self._config(), bus_state, self.REPO, self._task())
+
+        run_gh.assert_not_called()
+        self.assertEqual(
+            bus_state["tasks"][self.TASK_ID]["auto_merge"]["state"], "skipped_queue_unreadable"
+        )
 
     def test_auto_merge_statuses_track_the_finalize_gate(self) -> None:
         config = {"ready_dispatcher": {"finalize_statuses": ["approved"]}}

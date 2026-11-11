@@ -1075,10 +1075,11 @@ def advance_approved_prs_to_merge(
                 "must look at the merge queue."
             )
             log_type = "merge_route_stalled"
-        elif route == "waiting":
+        elif route == "waiting" and ci_status == "success":
             # Nothing to route - recently admitted, or no PR to admit. This lane
             # still owns the explanation, because the finalize lane below
-            # deliberately no longer re-routes and so has nothing to say.
+            # deliberately no longer re-routes and so has nothing to say. While
+            # checks are still running there is nothing new to explain.
             msg = (
                 f"PR for task {task_id} {checks} and awaiting merge queue; "
                 "approved branch head remains immutable and finalize dispatch is deferred."

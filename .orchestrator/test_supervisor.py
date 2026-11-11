@@ -22013,35 +22013,159 @@ class ClaudeResumeModelSelectionTests(unittest.TestCase):
         self.assertNotIn("--effort", command)
 
 
+class _FakeAdmissionGitHub:
+    """GitHub as merge admission sees it: one PR, its queue entry, and mutations.
+
+    Answers through `github_bus.run_gh`, which is the only `gh` entry both the
+    dispatcher and the bus use, so the real readback parsing and the real
+    mutation helpers run. `admission` is what GitHub currently holds for the
+    PR (`none`, `armed`, `queued`, `merged`); a `pr merge` moves it to `after`.
+    Any `--admin` mutation fails the test outright.
+    """
+
+    def __init__(
+        self,
+        *,
+        number: int,
+        branch: str,
+        head: str,
+        base: str = "dev",
+        state: str = "OPEN",
+        admission: str = "none",
+        merge_state: str = "CLEAN",
+        draft: bool = False,
+        after: str = "queued",
+        refuse: BaseException | None = None,
+        queue_readable: bool = True,
+        view_readable: bool = True,
+        has_queue: bool | None = True,
+        on_first_view=None,
+    ) -> None:
+        self.number = number
+        self.branch = branch
+        self.head = head
+        self.base = base
+        self.state = state
+        self.admission = admission
+        self.merge_state = merge_state
+        self.draft = draft
+        self.after = after
+        self.refuse = refuse
+        self.queue_readable = queue_readable
+        self.view_readable = view_readable
+        self.has_queue = has_queue
+        self.on_first_view = on_first_view
+        self.mutations: list[list[str]] = []
+        self.reads: list[list[str]] = []
+
+    def _out(self, payload) -> unittest.mock.Mock:
+        return unittest.mock.Mock(stdout=json.dumps(payload), returncode=0)
+
+    def run_gh(self, args, **kwargs):
+        args = list(args)
+        if args[:2] in (["pr", "merge"], ["pr", "ready"]):
+            assert "--admin" not in args, f"admission must never bypass protection: {args}"
+            self.mutations.append(args)
+            if self.refuse is not None:
+                raise self.refuse
+            if args[:2] == ["pr", "ready"]:
+                self.draft = False
+            else:
+                self.admission = self.after
+            return self._out({})
+        self.reads.append(args)
+        if args[:2] == ["pr", "view"]:
+            if self.on_first_view is not None:
+                hook, self.on_first_view = self.on_first_view, None
+                hook()
+            if not self.view_readable:
+                return self._out({})
+            return self._out(
+                {
+                    "number": self.number,
+                    "state": "MERGED" if self.admission == "merged" else self.state,
+                    "isDraft": self.draft,
+                    "autoMergeRequest": (
+                        {"enabledAt": "2026-11-11T00:00:00Z"} if self.admission == "armed" else None
+                    ),
+                    "baseRefName": self.base,
+                    "headRefName": self.branch,
+                    "headRefOid": self.head,
+                    "url": f"https://github.com/o/r/pull/{self.number}",
+                    "mergeStateStatus": self.merge_state,
+                }
+            )
+        if args[:2] == ["api", "graphql"]:
+            query = " ".join(args)
+            if "mergeQueue(branch" in query:
+                present = {"id": "MQ_x"} if self.has_queue else None
+                return self._out({"data": {"repository": {"mergeQueue": present}}})
+            if not self.queue_readable:
+                import github_bus
+
+                raise github_bus.GitHubBusError("GraphQL: something went wrong")
+            queued = self.admission == "queued"
+            return self._out(
+                {
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "number": self.number,
+                                "state": "MERGED" if self.admission == "merged" else self.state,
+                                "merged": self.admission == "merged",
+                                "headRefOid": self.head,
+                                "isInMergeQueue": queued,
+                                "mergeQueueEntry": (
+                                    {"position": 1, "state": "AWAITING_CHECKS"} if queued else None
+                                ),
+                            }
+                        }
+                    }
+                }
+            )
+        return self._out({})
+
+
 class ApprovedPrMergeRoutingTests(unittest.TestCase):
-    """A reviewed, CI-green PR must be enqueued for merge.
+    """A reviewed, CI-green PR must be admitted to merge, once per window.
 
     GitHub's merge queue only holds what is explicitly enqueued, so approved
     work used to stall indefinitely with nothing driving it to a merge.
     """
 
     HEAD = "1111111122222222333333334444444455555555"
+    SLUG = "alfloop-dev/odayplus"
+    CONFIG = {"github_bus": {"repo": "alfloop-dev/odayplus"},
+              "branch_workflow": {"enabled": True, "dev_branch": "dev",
+                                  "task_pr": {"target_branch": "dev", "auto_merge": True}}}
 
-    def _route(self, task, *, scope, merge_state="CLEAN", gh_side_effect=None):
+    def _gh(self, task, **overrides) -> _FakeAdmissionGitHub:
+        fields = {
+            "number": int(task.get("pr_number") or 0),
+            "branch": f"task/{task['id']}",
+            "head": self.HEAD,
+        }
+        fields.update(overrides)
+        return _FakeAdmissionGitHub(**fields)
+
+    def _route(self, task, *, scope, merge_state="CLEAN", gh_side_effect=None,
+               gh=None, ci_status="success", reserve=None):
         import dispatch_engine
 
-        calls: list[list[str]] = []
-
-        def fake_run_gh(args, **kwargs):
-            calls.append(list(args))
-            if gh_side_effect is not None:
-                raise gh_side_effect
-            return unittest.mock.Mock(stdout="{}")
-
+        gh = gh or self._gh(task, merge_state=merge_state, refuse=gh_side_effect)
         with unittest.mock.patch.object(
             dispatch_engine, "approved_pr_change_scope", return_value=scope
         ), unittest.mock.patch.object(
-            dispatch_engine, "_pr_merge_state", return_value=merge_state
-        ), unittest.mock.patch("github_bus.run_gh", side_effect=fake_run_gh), \
-                unittest.mock.patch.object(dispatch_engine, "write_activity_log", create=True), \
-                unittest.mock.patch.object(dispatch_engine, "utc_now", create=True, return_value="T"):
-            route, detail = dispatch_engine.route_approved_pr_to_merge({}, task)
-        return route, detail, calls
+            dispatch_engine, "repository_has_merge_queue", return_value=gh.has_queue
+        ), unittest.mock.patch("github_bus.run_gh", side_effect=gh.run_gh):
+            route, detail = dispatch_engine.route_approved_pr_to_merge(
+                self.CONFIG, task, ci_status=ci_status, reserve=reserve
+            )
+        self._last_gh = gh
+        return route, detail, gh.mutations
+
+    def _enqueue(self, number: int) -> list[str]:
+        return ["pr", "merge", str(number), "--repo", self.SLUG, "--auto", "--merge"]
 
     def test_every_scope_takes_the_same_queue_path(self) -> None:
         """`dev` requires the merge queue, so scope cannot select a route.
@@ -22056,7 +22180,7 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
                 route, _, calls = self._route(task, scope=scope)
 
                 self.assertEqual(route, "queued")
-                self.assertEqual(calls, [["pr", "merge", "42"]])
+                self.assertEqual(calls, [self._enqueue(42)])
 
     def test_scope_is_recorded_but_never_gates_the_enqueue(self) -> None:
         task = {"id": "T-1b", "pr_number": 46, "approved_head": self.HEAD}
@@ -22065,7 +22189,7 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
 
         self.assertEqual(route, "queued")
         self.assertEqual(task["merge_route"]["scope"], "development_tooling")
-        self.assertEqual(calls, [["pr", "merge", "46"]])
+        self.assertEqual(calls, [self._enqueue(46)])
 
     def test_unclassifiable_diff_is_still_enqueued(self) -> None:
         """An unreadable diff is a reason to say so, not to strand a reviewed
@@ -22076,7 +22200,7 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
 
         self.assertEqual(route, "queued")
         self.assertEqual(task["merge_route"]["scope"], "unknown")
-        self.assertEqual(calls, [["pr", "merge", "43"]])
+        self.assertEqual(calls, [self._enqueue(43)])
 
     def _routed_at(self, seconds_ago: float) -> str:
         stamp = datetime.now(UTC) - timedelta(seconds=seconds_ago)
@@ -22122,7 +22246,7 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
         route, _, calls = self._route(task, scope="product_or_mixed")
 
         self.assertEqual(route, "queued")
-        self.assertEqual(calls, [["pr", "merge", "46"]])
+        self.assertEqual(calls, [self._enqueue(46)])
         self.assertEqual(task["merge_route"]["attempts"], 2)
 
     def test_repeated_enqueues_stop_and_report_rather_than_continue(self) -> None:
@@ -22159,7 +22283,7 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
         route, _, calls = self._route(task, scope="product_or_mixed")
 
         self.assertEqual(route, "queued")
-        self.assertEqual(calls, [["pr", "merge", "48"]])
+        self.assertEqual(calls, [self._enqueue(48)])
         self.assertTrue(task["merge_route"]["at"])
 
     def test_queue_ejection_is_reported_rather_than_waited_on(self) -> None:
@@ -22197,7 +22321,7 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
 
         self.assertEqual(route, "blocked")
         self.assertIn("rule violations", detail)
-        self.assertEqual(calls, [["pr", "merge", "45"]])
+        self.assertEqual(calls, [self._enqueue(45)])
         self.assertNotIn("merge_route", task)
 
     def test_task_without_pr_number_is_left_alone(self) -> None:
@@ -22207,6 +22331,189 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
 
         self.assertEqual(route, "waiting")
         self.assertEqual(calls, [])
+        self.assertEqual(self._last_gh.reads, [], "nothing to read without a PR")
+
+
+    # -- Admission guards carried over from the bus's arming path ----------
+
+    def test_a_pr_github_already_holds_is_not_admitted_again(self) -> None:
+        """Armed and queued are GitHub's own answer for this head. Re-issuing
+        the mutation every poll was the bus's second admission path; it is
+        recorded as an observation, not as an attempt."""
+        for held in ("armed", "queued"):
+            with self.subTest(held=held):
+                task = {"id": "T-10", "pr_number": 50, "approved_head": self.HEAD}
+                gh = self._gh(task, admission=held)
+
+                route, _d, calls = self._route(task, scope="product_or_mixed", gh=gh)
+
+                self.assertEqual(route, held)
+                self.assertEqual(calls, [])
+                self.assertEqual(task["merge_route"]["route"], held)
+                self.assertEqual(task["merge_route"]["attempts"], 0)
+                self.assertEqual(task["merge_route"]["head"], self.HEAD)
+
+    def test_an_observed_admission_keeps_the_issued_counter(self) -> None:
+        task = {
+            "id": "T-11",
+            "pr_number": 51,
+            "approved_head": self.HEAD,
+            "merge_route": {"head": self.HEAD, "route": "unconfirmed",
+                            "at": self._routed_at(7200), "attempts": 3},
+        }
+        gh = self._gh(task, admission="queued")
+
+        route, _d, calls = self._route(task, scope="product_or_mixed", gh=gh)
+
+        self.assertEqual(route, "queued")
+        self.assertEqual(calls, [])
+        self.assertEqual(task["merge_route"]["attempts"], 3)
+        self.assertEqual(task["merge_route"]["route"], "queued")
+
+    def test_unreadable_pr_or_queue_is_unknown_not_unqueued(self) -> None:
+        """An offline or garbled readback must not look like an empty queue:
+        that is exactly the state in which a re-issue duplicates an entry."""
+        import github_bus
+
+        cases = {
+            "view": {"view_readable": False},
+            "queue": {"queue_readable": False},
+        }
+        for name, overrides in cases.items():
+            with self.subTest(unreadable=name):
+                task = {"id": "T-12", "pr_number": 52, "approved_head": self.HEAD}
+                gh = self._gh(task, **overrides)
+
+                route, detail, calls = self._route(task, scope="product_or_mixed", gh=gh)
+
+                self.assertEqual(route, "unknown")
+                self.assertIn("nothing was issued", detail)
+                self.assertEqual(calls, [])
+                self.assertNotIn("merge_route", task)
+
+        task = {"id": "T-12", "pr_number": 52, "approved_head": self.HEAD}
+        gh = self._gh(task)
+        gh.run_gh = unittest.mock.Mock(side_effect=github_bus.GitHubBusOffline("offline"))
+        route, _d, _calls = self._route(task, scope="product_or_mixed", gh=gh)
+        self.assertEqual(route, "unknown")
+        self.assertNotIn("merge_route", task)
+
+    def test_identity_guards_fail_closed_before_any_mutation(self) -> None:
+        """Repository, base, branch, exact approved head and PR state are all
+        checked on GitHub's answer, not on bus state. A moved head is new work
+        that nobody reviewed, so it is never admitted."""
+        cases = {
+            "wrong base": ({"base": "main"}, "not the task base"),
+            "foreign branch": ({"branch": "task/SOMEONE-ELSE"}, "does not name"),
+            "moved head": ({"head": "9" * 40}, "needs its own review"),
+            "closed": ({"state": "CLOSED"}, "closed"),
+        }
+        for name, (overrides, expected) in cases.items():
+            with self.subTest(guard=name):
+                task = {"id": "T-13", "pr_number": 53, "approved_head": self.HEAD}
+                gh = self._gh(task, **overrides)
+
+                route, detail, calls = self._route(task, scope="product_or_mixed", gh=gh)
+
+                self.assertEqual(route, "blocked")
+                self.assertIn(expected, detail)
+                self.assertEqual(calls, [])
+                self.assertNotIn("merge_route", task)
+
+    def test_unresolved_repository_is_not_read_or_admitted(self) -> None:
+        import dispatch_engine
+
+        task = {"id": "T-14", "pr_number": 54, "approved_head": self.HEAD}
+        gh = self._gh(task)
+        with unittest.mock.patch.object(dispatch_engine, "_task_repository_slug", return_value=""), \
+                unittest.mock.patch("github_bus.run_gh", side_effect=gh.run_gh):
+            route, _detail = dispatch_engine.route_approved_pr_to_merge({}, task)
+
+        self.assertEqual(route, "blocked")
+        self.assertEqual(gh.mutations, [])
+        self.assertEqual(gh.reads, [])
+
+    def test_a_conflicting_pr_that_was_never_routed_is_blocked_not_ejected(self) -> None:
+        task = {"id": "T-15", "pr_number": 55, "approved_head": self.HEAD}
+
+        route, detail, calls = self._route(task, scope="product_or_mixed", merge_state="CONFLICTING")
+
+        self.assertEqual(route, "blocked")
+        self.assertIn("advance the base", detail)
+        self.assertEqual(calls, [])
+
+    def test_mutation_ack_without_readback_is_counted_but_not_claimed(self) -> None:
+        """A zero exit is the CLI's acknowledgement, not an enqueue. The attempt
+        is counted, so the window and the cap still apply, but nothing says
+        queued."""
+        task = {"id": "T-16", "pr_number": 56, "approved_head": self.HEAD}
+        gh = self._gh(task, after="none")
+
+        route, _d, calls = self._route(task, scope="product_or_mixed", gh=gh)
+
+        self.assertEqual(route, "unconfirmed")
+        self.assertEqual(calls, [self._enqueue(56)])
+        self.assertEqual(task["merge_route"]["route"], "unconfirmed")
+        self.assertEqual(task["merge_route"]["attempts"], 1)
+
+        again, _d, calls = self._route(task, scope="product_or_mixed", gh=self._gh(task, after="none"))
+        self.assertEqual(again, "waiting")
+        self.assertEqual(calls, [])
+
+    def test_offline_during_the_mutation_keeps_the_attempt(self) -> None:
+        import github_bus
+
+        task = {"id": "T-17", "pr_number": 57, "approved_head": self.HEAD}
+        gh = self._gh(task, refuse=github_bus.GitHubBusOffline("connection reset"))
+
+        route, _d, calls = self._route(task, scope="product_or_mixed", gh=gh)
+
+        self.assertEqual(route, "unconfirmed")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(task["merge_route"]["attempts"], 1)
+
+    def test_a_rejected_reservation_issues_nothing(self) -> None:
+        """The attempt is committed before the mutation. If canonical status
+        refuses that write, nothing may reach GitHub: an admission the counter
+        does not know about is how the cap gets bypassed."""
+        task = {"id": "T-18", "pr_number": 58, "approved_head": self.HEAD}
+        seen: list[dict] = []
+
+        def reserve() -> bool:
+            seen.append(dict(task["merge_route"]))
+            return False
+
+        route, _d, calls = self._route(task, scope="product_or_mixed", reserve=reserve)
+
+        self.assertEqual(route, "deferred")
+        self.assertEqual(calls, [])
+        self.assertEqual(seen[0]["attempts"], 1)
+        self.assertEqual(seen[0]["route"], "issuing")
+
+    def test_a_draft_is_undrafted_before_it_is_armed(self) -> None:
+        task = {"id": "T-19", "pr_number": 59, "approved_head": self.HEAD}
+        gh = self._gh(task, draft=True)
+
+        route, _d, calls = self._route(task, scope="product_or_mixed", gh=gh)
+
+        self.assertEqual(route, "queued")
+        self.assertEqual(calls, [["pr", "ready", "59", "--repo", self.SLUG], self._enqueue(59)])
+
+    def test_pending_checks_are_armed_never_merged_directly(self) -> None:
+        """Arming while checks run is what the bus did; GitHub still waits for
+        every required check. Even without a queue it must not be `--merge`
+        alone, which would try to merge before the checks finish."""
+        for has_queue in (True, False):
+            with self.subTest(has_queue=has_queue):
+                task = {"id": "T-20", "pr_number": 60, "approved_head": self.HEAD}
+                gh = self._gh(task, has_queue=has_queue, after="armed")
+
+                route, _d, calls = self._route(
+                    task, scope="product_or_mixed", gh=gh, ci_status="pending"
+                )
+
+                self.assertEqual(route, "armed")
+                self.assertEqual(calls, [self._enqueue(60)])
 
 
 class ApprovedPrMergeAdvanceTests(unittest.TestCase):
@@ -22307,8 +22614,124 @@ class ApprovedPrMergeAdvanceTests(unittest.TestCase):
 
         import dispatch_engine
 
-        source = inspect.getsource(dispatch_engine)
-        self.assertEqual(source.count("route_approved_pr_to_merge(config, task)"), 1)
+        tree = ast.parse(inspect.getsource(dispatch_engine))
+        callers = [
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            for call in ast.walk(node)
+            if isinstance(call, ast.Call)
+            and getattr(call.func, "id", None) == "route_approved_pr_to_merge"
+        ]
+        self.assertEqual(callers, ["advance_approved_prs_to_merge"])
+
+    def _advance_with(self, task, route_impl, *, ci="success", config=None, commit=True):
+        import dispatch_engine
+
+        status = {"tasks": [task]}
+        routed: list[dict] = []
+        commits: list[dict] = []
+
+        def fake_route(cfg, t, **kwargs):
+            routed.append(kwargs)
+            return route_impl(t, **kwargs)
+
+        def fake_commit(cfg, st):
+            commits.append(deepcopy(st))
+            return commit
+
+        with unittest.mock.patch.object(
+            dispatch_engine.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", ci)
+        ), unittest.mock.patch.object(
+            dispatch_engine, "route_approved_pr_to_merge", side_effect=fake_route
+        ), unittest.mock.patch.object(
+            dispatch_engine, "commit_canonical_task_transition", side_effect=fake_commit
+        ), unittest.mock.patch.object(
+            dispatch_engine, "load_status", create=True, return_value={"tasks": [dict(task)]}
+        ), unittest.mock.patch.object(dispatch_engine, "write_activity_log", create=True):
+            changed = dispatch_engine.advance_approved_prs_to_merge(
+                config or {}, status, self.FINALIZE
+            )
+        return changed, routed, commits
+
+    def test_a_changed_counter_is_persisted_even_when_next_is_unchanged(self) -> None:
+        """The record is the window and the cap. Writing it only when the
+        explanation text changed lost it whenever the text happened to match."""
+        task = self._task()
+        task["next"] = (
+            "PR for task T-9 is CI-green and awaiting merge queue; "
+            "approved branch head remains immutable and finalize dispatch is deferred."
+        )
+
+        def route(t, **_kw):
+            t["merge_route"] = {"head": self.HEAD, "route": "unconfirmed", "attempts": 2, "at": "T"}
+            return "waiting", "unconfirmed"
+
+        changed, _routed, commits = self._advance_with(task, route)
+
+        self.assertTrue(changed)
+        self.assertEqual(commits[-1]["tasks"][0]["merge_route"]["attempts"], 2)
+
+    def test_a_refusal_after_a_committed_reservation_is_written_back(self) -> None:
+        """The reservation reached disk; a refused mutation restores the old
+        record in memory, which must be written back too or the refused
+        attempt would still count."""
+        task = self._task()
+
+        def route(t, *, reserve, **_kw):
+            t["merge_route"] = {"head": self.HEAD, "route": "issuing", "attempts": 1, "at": "T"}
+            self.assertTrue(reserve())
+            t.pop("merge_route")
+            return "blocked", "rule violations"
+
+        changed, _routed, commits = self._advance_with(task, route)
+
+        self.assertTrue(changed)
+        self.assertEqual(len(commits), 2)
+        self.assertEqual(commits[0]["tasks"][0]["merge_route"]["route"], "issuing")
+        self.assertNotIn("merge_route", commits[1]["tasks"][0])
+
+    def test_ci_gates_which_prs_are_routed_at_all(self) -> None:
+        def route(_t, **_kw):
+            return "waiting", ""
+
+        armed_config = {"branch_workflow": {"enabled": True, "task_pr": {"auto_merge": True}}}
+        cases = [
+            ("failure", armed_config, []),
+            ("none", armed_config, []),
+            ("unknown", armed_config, []),
+            ("pending", {}, []),
+            ("pending", armed_config, ["pending"]),
+            ("success", {}, ["success"]),
+        ]
+        for ci, config, expected in cases:
+            with self.subTest(ci=ci, auto_merge=bool(config)):
+                _changed, routed, _commits = self._advance_with(
+                    self._task(), route, ci=ci, config=config
+                )
+                self.assertEqual([kw["ci_status"] for kw in routed], expected)
+
+    def test_admission_outcomes_are_explained_once(self) -> None:
+        cases = {
+            "armed": "auto-merge armed",
+            "unconfirmed": "did not confirm",
+            "unknown": "could not be read",
+        }
+        for route_name, expected in cases.items():
+            with self.subTest(route=route_name):
+                task = self._task()
+
+                changed, _r, commits = self._advance_with(
+                    task, lambda _t, _n=route_name, **_kw: (_n, "detail")
+                )
+                self.assertTrue(changed)
+                self.assertIn(expected, task["next"])
+
+                repeat, _r, repeat_commits = self._advance_with(
+                    task, lambda _t, _n=route_name, **_kw: (_n, "detail")
+                )
+                self.assertFalse(repeat)
+                self.assertEqual(repeat_commits, [])
 
 
 class FleetDispatchLivelockTests(unittest.TestCase):
@@ -23061,25 +23484,23 @@ class MergeRouteWithoutQueueTests(unittest.TestCase):
 
     HEAD = "1111111122222222333333334444444455555555"
 
-    def _route(self, *, has_queue, repository="alfloop-dev/oday-data-platform"):
+    def _route(self, *, has_queue, repository="alfloop-dev/oday-data-platform",
+               ci_status="success", after=None):
         import dispatch_engine
-
-        calls = []
-
-        def fake_run_gh(args, **kwargs):
-            calls.append(list(args))
-            return unittest.mock.Mock(stdout="{}")
 
         task = {"id": "T-1", "pr_number": 42, "approved_head": self.HEAD,
                 "repository": repository, "base_branch": "dev"}
+        if after is None:
+            after = "merged" if has_queue is False and ci_status == "success" else "queued"
+        gh = _FakeAdmissionGitHub(number=42, branch="task/T-1", head=self.HEAD,
+                                  has_queue=has_queue, after=after)
         with unittest.mock.patch.object(dispatch_engine, "repository_has_merge_queue", return_value=has_queue), \
                 unittest.mock.patch.object(dispatch_engine, "approved_pr_change_scope", return_value="product_or_mixed"), \
-                unittest.mock.patch.object(dispatch_engine, "_pr_merge_state", return_value="CLEAN"), \
-                unittest.mock.patch("github_bus.run_gh", side_effect=fake_run_gh), \
-                unittest.mock.patch.object(dispatch_engine, "write_activity_log", create=True), \
-                unittest.mock.patch.object(dispatch_engine, "utc_now", create=True, return_value="T"):
-            route, detail = dispatch_engine.route_approved_pr_to_merge({}, task)
-        return route, detail, calls, task
+                unittest.mock.patch("github_bus.run_gh", side_effect=gh.run_gh):
+            route, detail = dispatch_engine.route_approved_pr_to_merge(
+                {}, task, ci_status=ci_status
+            )
+        return route, detail, gh.mutations, task
 
     def test_a_repository_without_a_queue_is_merged_directly(self) -> None:
         route, _d, calls, task = self._route(has_queue=False)
@@ -23091,11 +23512,21 @@ class MergeRouteWithoutQueueTests(unittest.TestCase):
         )
         self.assertEqual(task["merge_route"]["route"], "merged")
 
+    def test_a_direct_merge_github_did_not_confirm_is_not_called_merged(self) -> None:
+        route, _d, calls, task = self._route(has_queue=False, after="none")
+
+        self.assertEqual(route, "unconfirmed")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(task["merge_route"]["route"], "unconfirmed")
+        self.assertEqual(task["merge_route"]["attempts"], 1)
+
     def test_a_repository_with_a_queue_is_still_enqueued(self) -> None:
         route, _d, calls, task = self._route(has_queue=True, repository="alfloop-dev/odayplus")
 
         self.assertEqual(route, "queued")
-        self.assertEqual(calls, [["pr", "merge", "42", "--repo", "alfloop-dev/odayplus"]])
+        self.assertEqual(
+            calls, [["pr", "merge", "42", "--repo", "alfloop-dev/odayplus", "--auto", "--merge"]]
+        )
         self.assertEqual(task["merge_route"]["route"], "queued")
 
     def test_an_unreadable_answer_enqueues_rather_than_merging(self) -> None:
@@ -23104,7 +23535,21 @@ class MergeRouteWithoutQueueTests(unittest.TestCase):
         route, _d, calls, _task = self._route(has_queue=None)
 
         self.assertEqual(route, "queued")
-        self.assertNotIn("--merge", calls[0])
+        self.assertIn("--auto", calls[0])
+
+    def test_no_queue_protected_auto_merge_arms_while_checks_run(self) -> None:
+        """The rollback contract: with the queue deleted, the same `--auto
+        --merge` is GitHub's protected auto-merge, and it still waits for the
+        required checks rather than merging early."""
+        route, _d, calls, task = self._route(
+            has_queue=False, repository="alfloop-dev/odayplus", ci_status="pending", after="armed"
+        )
+
+        self.assertEqual(route, "armed")
+        self.assertEqual(
+            calls, [["pr", "merge", "42", "--repo", "alfloop-dev/odayplus", "--auto", "--merge"]]
+        )
+        self.assertEqual(task["merge_route"]["route"], "armed")
 
     def test_detection_is_cached_per_repository(self) -> None:
         import dispatch_engine
@@ -23165,12 +23610,7 @@ class MergeRouteRepositorySlugTests(unittest.TestCase):
     def _route(self, repository, *, config=None):
         import dispatch_engine
 
-        calls = []
         queue_probes = []
-
-        def fake_run_gh(args, **kwargs):
-            calls.append(list(args))
-            return unittest.mock.Mock(stdout="{}")
 
         def fake_has_queue(slug, base):
             queue_probes.append(slug)
@@ -23178,43 +23618,44 @@ class MergeRouteRepositorySlugTests(unittest.TestCase):
 
         task = {"id": "T-1", "pr_number": 7, "approved_head": self.HEAD,
                 "repository": repository, "base_branch": "dev"}
+        gh = _FakeAdmissionGitHub(number=7, branch="task/T-1", head=self.HEAD)
         with unittest.mock.patch.object(dispatch_engine, "repository_has_merge_queue", fake_has_queue), \
                 unittest.mock.patch.object(dispatch_engine, "approved_pr_change_scope", return_value="tooling"), \
-                unittest.mock.patch.object(dispatch_engine, "_pr_merge_state", return_value="CLEAN"), \
-                unittest.mock.patch("github_bus.run_gh", side_effect=fake_run_gh), \
-                unittest.mock.patch.object(dispatch_engine, "write_activity_log", create=True), \
-                unittest.mock.patch.object(dispatch_engine, "utc_now", create=True, return_value="T"):
+                unittest.mock.patch("github_bus.run_gh", side_effect=gh.run_gh):
             route, detail = dispatch_engine.route_approved_pr_to_merge(
                 self.CONFIG if config is None else config, task
             )
-        return route, detail, calls, queue_probes, task
+        self._reads = gh.reads
+        return route, detail, gh.mutations, queue_probes, task
+
+    @staticmethod
+    def _enqueue(slug: str) -> list[list[str]]:
+        return [["pr", "merge", "7", "--repo", slug, "--auto", "--merge"]]
 
     def test_a_declared_registry_id_is_resolved_to_its_slug(self) -> None:
         """The regression: `--repo pantheon` is not a repository `gh` can reach."""
         route, _d, calls, _probes, task = self._route("pantheon")
 
         self.assertEqual(route, "queued")
-        self.assertEqual(calls, [["pr", "merge", "7", "--repo", "alfloop-dev/odayplus"]])
+        self.assertEqual(calls, self._enqueue("alfloop-dev/odayplus"))
         self.assertEqual(task["merge_route"]["route"], "queued")
 
     def test_a_declared_alias_is_resolved_to_its_slug(self) -> None:
         """Display names and aliases route through the same registry lookup."""
         _r, _d, calls, _probes, _task = self._route("ODay Plus")
 
-        self.assertEqual(calls, [["pr", "merge", "7", "--repo", "alfloop-dev/odayplus"]])
+        self.assertEqual(calls, self._enqueue("alfloop-dev/odayplus"))
 
     def test_a_declared_owner_name_slug_is_preserved(self) -> None:
         _r, _d, calls, _probes, _task = self._route("alfloop-dev/oday-data-platform")
 
-        self.assertEqual(
-            calls, [["pr", "merge", "7", "--repo", "alfloop-dev/oday-data-platform"]]
-        )
+        self.assertEqual(calls, self._enqueue("alfloop-dev/oday-data-platform"))
 
     def test_a_slug_the_registry_does_not_carry_is_still_routed(self) -> None:
         """Direct addressing survives: only a name needs the registry."""
         _r, _d, calls, _probes, _task = self._route("some-org/some-repo")
 
-        self.assertEqual(calls, [["pr", "merge", "7", "--repo", "some-org/some-repo"]])
+        self.assertEqual(calls, self._enqueue("some-org/some-repo"))
 
     def test_the_merge_queue_probe_sees_the_resolved_slug(self) -> None:
         """The probe silently answers None for anything without a `/`, which is
@@ -23232,6 +23673,7 @@ class MergeRouteRepositorySlugTests(unittest.TestCase):
         self.assertEqual(route, "blocked")
         self.assertIn("not-a-registered-repo", detail)
         self.assertEqual(calls, [])
+        self.assertEqual(self._reads, [], "an unplaced repository is not even read")
         self.assertNotIn("merge_route", task)
 
     def test_a_registry_entry_without_a_slug_blocks_too(self) -> None:
@@ -23247,7 +23689,7 @@ class MergeRouteRepositorySlugTests(unittest.TestCase):
         route, _d, calls, _probes, _task = self._route("")
 
         self.assertEqual(route, "queued")
-        self.assertEqual(calls, [["pr", "merge", "7", "--repo", "alfloop-dev/odayplus"]])
+        self.assertEqual(calls, self._enqueue("alfloop-dev/odayplus"))
 
     def test_only_owner_name_counts_as_a_slug(self) -> None:
         import dispatch_engine
@@ -23255,6 +23697,233 @@ class MergeRouteRepositorySlugTests(unittest.TestCase):
         self.assertTrue(dispatch_engine._is_repository_slug("owner/name"))
         for bad in ["", None, "pantheon", "owner/", "/name", "https://github.com/o/n"]:
             self.assertFalse(dispatch_engine._is_repository_slug(bad), bad)
+
+
+class MergeAdmissionSingleOwnerTests(unittest.TestCase):
+    """Both tick entries, one admission owner, one counter on canonical disk.
+
+    The supervisor reaches approved PRs from two places each tick:
+    `dispatch_ready_tasks` -> `advance_approved_prs_to_merge` ->
+    `route_approved_pr_to_merge`, and `sync_github_bus` -> `sync_outbound`.
+    The second used to issue its own `gh pr merge --auto --merge` every poll
+    with no window and no cap, so the dispatcher's 30-minute window and
+    four-attempt cap bounded nothing. These run the real callers against one
+    fake GitHub and a real revisioned status file, and read the counter back
+    from disk between ticks.
+    """
+
+    HEAD = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+    TASK_ID = "ODP-ADMIT-001"
+    PR = 4242
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        self.config = {
+            "paths": {
+                "status_file": str(root / "ai-status.json"),
+                "activity_log": str(root / "activity.jsonl"),
+                "event_queue": str(root / "events.jsonl"),
+                "github_bus_state": str(root / "github-bus.json"),
+            },
+            "agents": {
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+            },
+            "ready_dispatcher": {
+                "enabled": True,
+                "finalize_statuses": ["review_approved"],
+                "helper_execution_lease": {"enabled": False},
+            },
+            "github_bus": {"enabled": True, "repo": "alfloop-dev/odayplus", "poll_interval_seconds": 0},
+            "branch_workflow": {
+                "enabled": True,
+                "dev_branch": "dev",
+                "task_pr": {"target_branch": "dev", "auto_merge": True},
+            },
+        }
+        self.status_path = Path(self.config["paths"]["status_file"])
+        self.status_path.write_text(json.dumps({
+            "_status_write_revision": "rev-0",
+            "tasks": [{
+                "id": self.TASK_ID,
+                "status": "review_approved",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "approved_head": self.HEAD,
+                "pr_number": self.PR,
+                "repository": "alfloop-dev/odayplus",
+                "base_branch": "dev",
+                "depends_on": [],
+                "next": "approved",
+            }],
+            "handoffs": [],
+            "blockers": [],
+        }))
+        # The bus already published this PR (its publishing pass is stubbed).
+        Path(self.config["paths"]["github_bus_state"]).write_text(json.dumps({
+            "tasks": {self.TASK_ID: {"review_pr": {
+                "number": self.PR, "branch": f"task/{self.TASK_ID}", "state": "open",
+                "url": f"https://github.com/alfloop-dev/odayplus/pull/{self.PR}",
+            }}},
+        }))
+        self.gh = _FakeAdmissionGitHub(number=self.PR, branch=f"task/{self.TASK_ID}", head=self.HEAD)
+        self.ci = "success"
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _disk_task(self) -> dict:
+        return json.loads(self.status_path.read_text())["tasks"][0]
+
+    def _edit_disk(self, mutate) -> None:
+        disk = json.loads(self.status_path.read_text())
+        mutate(disk["tasks"][0])
+        disk["_status_write_revision"] = uuid.uuid4().hex
+        self.status_path.write_text(json.dumps(disk))
+
+    def _patches(self) -> contextlib.ExitStack:
+        import dispatch_engine
+
+        stack = contextlib.ExitStack()
+        for name in [
+            "repair_open_task_metadata",
+            "repair_unsubmitted_review_tasks",
+            "reassign_tasks_after_review_churn",
+            "normalize_task_assignment_integrity",
+            "normalize_mainline_task_assignment",
+            "reassign_unavailable_reviewers",
+        ]:
+            stack.enter_context(mock.patch.object(supervisor, name, return_value=False))
+        for name in ["recover_conflicted_review_prs", "recover_failed_ci_review_prs", "task_reality_reconcile_is_due"]:
+            stack.enter_context(mock.patch.object(dispatch_engine, name, return_value=False))
+        stack.enter_context(mock.patch.object(supervisor, "load_event_queue", return_value=[]))
+        stack.enter_context(mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None))
+        stack.enter_context(mock.patch.object(supervisor, "agent_dispatch_capacity", return_value=0))
+        stack.enter_context(mock.patch.object(supervisor, "sync_status_pipeline", return_value=True))
+        stack.enter_context(mock.patch.object(supervisor, "queue_delivery_event", return_value=True))
+        stack.enter_context(mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=self.HEAD))
+        stack.enter_context(mock.patch.object(
+            supervisor.runtime_ai_status, "task_pr_ci_status", side_effect=lambda *_a, **_k: ("OPEN", self.ci)
+        ))
+        stack.enter_context(mock.patch.object(dispatch_engine, "repository_has_merge_queue", return_value=True))
+        stack.enter_context(mock.patch.object(dispatch_engine, "approved_pr_change_scope", return_value="development_tooling"))
+        stack.enter_context(mock.patch("github_bus.run_gh", side_effect=self.gh.run_gh))
+        # The bus's own PR publishing and pollers are not under test here.
+        for name in [
+            "upsert_review_pr", "upsert_ops_issue", "poll_pr_reviews", "poll_merge_group_runs",
+            "poll_issue_comments", "poll_coordination_issue_comments",
+            "consume_cloud_relay_commands", "sync_coordination_outbound",
+        ]:
+            stack.enter_context(mock.patch.object(github_bus, name, return_value=False))
+        stack.enter_context(mock.patch.object(github_bus, "push_cloud_relay_digest", return_value=None))
+        return stack
+
+    def _tick(self, *, bus_polls: int = 2) -> None:
+        """One supervisor cycle: the dispatcher stage, then the bus stage polled
+        repeatedly, as a 30-second bus inside a longer tick would be."""
+        with self._patches():
+            supervisor.dispatch_ready_tasks(self.config, {"workers": {}, "queue": {"events": {}}})
+            for _ in range(bus_polls):
+                github_bus.sync_github_bus(self.config, {})
+
+    def _merges(self) -> list[list[str]]:
+        return [m for m in self.gh.mutations if m[:2] == ["pr", "merge"]]
+
+    def test_two_entries_admit_once_and_the_counter_lives_on_disk(self) -> None:
+        self._tick()
+
+        self.assertEqual(len(self._merges()), 1)
+        self.assertIn("--auto", self._merges()[0])
+        route = self._disk_task()["merge_route"]
+        self.assertEqual((route["head"], route["route"], route["attempts"]), (self.HEAD, "queued", 1))
+
+        bus = json.loads(Path(self.config["paths"]["github_bus_state"]).read_text())
+        projection = bus["tasks"][self.TASK_ID]["auto_merge"]
+        self.assertEqual(projection["state"], "queued")
+        self.assertEqual(projection["attempts"], 1)
+        self.assertEqual(projection["owner"], "dispatch_engine.route_approved_pr_to_merge")
+
+        # Still queued: neither entry re-issues, however often it polls.
+        for _ in range(3):
+            self._tick(bus_polls=3)
+        self.assertEqual(len(self._merges()), 1)
+        self.assertEqual(self._disk_task()["merge_route"]["attempts"], 1)
+
+    def test_window_and_cap_are_read_back_from_canonical_status(self) -> None:
+        self._tick()
+        self.gh.admission = "none"  # dropped from the queue without merging
+
+        self._tick()
+        self.assertEqual(len(self._merges()), 1, "inside the window nothing is re-issued")
+
+        stale = (datetime.now(UTC) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._edit_disk(lambda t: t["merge_route"].update({"at": stale}))
+        self._tick()
+        self.assertEqual(len(self._merges()), 2)
+        self.assertEqual(self._disk_task()["merge_route"]["attempts"], 2)
+
+        self.gh.admission = "none"
+        self._edit_disk(lambda t: t["merge_route"].update({"at": stale, "attempts": 4}))
+        self._tick()
+        self.assertEqual(len(self._merges()), 2, "no fifth admission past the cap")
+        self.assertIn("has not merged after being enqueued repeatedly", self._disk_task()["next"])
+
+    def test_a_concurrent_canonical_write_defers_the_admission(self) -> None:
+        """A writer that advances the revision while the route reads GitHub
+        makes the reservation stale. Nothing is issued from the stale snapshot,
+        the other writer's change survives, and the next tick admits once."""
+        self.gh.on_first_view = lambda: self._edit_disk(lambda t: t.update({"next": "operator note"}))
+
+        self._tick(bus_polls=1)
+
+        self.assertEqual(self._merges(), [])
+        disk = self._disk_task()
+        self.assertNotIn("merge_route", disk)
+        self.assertEqual(disk["next"], "operator note")
+
+        self._tick(bus_polls=1)
+        self.assertEqual(len(self._merges()), 1)
+        self.assertEqual(self._disk_task()["merge_route"]["attempts"], 1)
+
+    def test_an_unconfirmed_ack_is_counted_on_disk(self) -> None:
+        self.gh.after = "none"
+
+        self._tick()
+
+        route = self._disk_task()["merge_route"]
+        self.assertEqual((route["route"], route["attempts"]), ("unconfirmed", 1))
+        self._tick()
+        self.assertEqual(len(self._merges()), 1)
+
+    def test_unknown_readback_admits_nothing_from_either_entry(self) -> None:
+        self.gh.queue_readable = False
+
+        self._tick(bus_polls=3)
+
+        self.assertEqual(self.gh.mutations, [])
+        self.assertNotIn("merge_route", self._disk_task())
+
+    def test_failed_ci_and_moved_head_are_admitted_by_neither_entry(self) -> None:
+        self.ci = "failure"
+        self._tick(bus_polls=3)
+        self.assertEqual(self.gh.mutations, [])
+
+        self.ci = "success"
+        self.gh.head = "f" * 40
+        self._tick(bus_polls=3)
+        self.assertEqual(self.gh.mutations, [])
+        self.assertIn("needs its own review", self._disk_task()["next"])
+
+    def test_pending_checks_are_armed_once_by_the_dispatcher(self) -> None:
+        self.ci = "pending"
+        self.gh.after = "armed"
+
+        self._tick(bus_polls=3)
+        self._tick(bus_polls=3)
+
+        self.assertEqual(len(self._merges()), 1)
+        self.assertEqual(self._disk_task()["merge_route"]["route"], "armed")
 
 
 class QuarantineCrossRepositoryTests(unittest.TestCase):
