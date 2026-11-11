@@ -91,10 +91,15 @@ afterEach(() => {
 
 describe("password policy & change route", () => {
   it("enforces NIST 800-63B password policy constraints", () => {
-    // Too short (< 12 chars)
+    // Too short (< 8 chars)
     expect(validatePasswordPolicy("Short1!")).toMatchObject({
       valid: false,
       code: "AUTH_PASSWORD_POLICY_VIOLATION",
+    });
+
+    // Exactly 8 chars is the minimum accepted length
+    expect(validatePasswordPolicy("fdsa1234", "operator01", "operator01@example.com")).toMatchObject({
+      valid: true,
     });
 
     // Common weak password
