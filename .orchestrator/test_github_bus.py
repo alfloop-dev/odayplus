@@ -2881,7 +2881,7 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         for name, mangle in broken.items():
             with self.subTest(name):
                 calls, record = self._housekeeping_round(
-                    [self._housekeeping_pr()], lambda listed: mangle(self._graphql_node(listed))
+                    [self._housekeeping_pr()], lambda listed, mangle=mangle: mangle(self._graphql_node(listed))
                 )
                 self.assertEqual(calls, [])
                 self.assertEqual(record["state"], "skipped_queue_unreadable")
