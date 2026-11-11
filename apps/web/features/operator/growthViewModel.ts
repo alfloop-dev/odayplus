@@ -39,7 +39,10 @@ import { meetsCausalThreshold } from "@oday-plus/domain-types";
 import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 import {
   operatorFixturesAllowed,
+  operatorLoadFailureFromError,
+  operatorLoadFailureFromResponse,
   payloadContainsSeedData,
+  type OperatorLoadFailure,
 } from "./operatorDataMode";
 
 export type ConfidenceLevel = Confidence["level"];
@@ -439,13 +442,26 @@ function newCorrelationId(): string {
   return `corr-web-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-async function apiFetch<T>(
+/**
+ * One Growth transport for reads and writes. A reply keeps its Response so a
+ * refused read can report the real status and canonical error envelope; a
+ * request that never received a reply keeps its error. A local abort after
+ * `timeoutMs` is reported as a timeout rather than a generic abort.
+ */
+type GrowthTransportResult =
+  | { kind: "reply"; response: Response; body: unknown; parsed: boolean }
+  | { kind: "failed"; error: unknown };
+
+async function growthRequest(
   path: string,
   options: RequestInit & { correlationId?: string; timeoutMs?: number } = {},
-): Promise<T | null> {
+): Promise<GrowthTransportResult> {
   const { correlationId, timeoutMs, ...fetchOptions } = options;
   const controller = timeoutMs ? new AbortController() : undefined;
-  const timeout = timeoutMs ? setTimeout(() => controller?.abort(), timeoutMs) : undefined;
+  let timedOut = false;
+  const timeout = timeoutMs
+    ? setTimeout(() => { timedOut = true; controller?.abort(); }, timeoutMs)
+    : undefined;
   try {
     const res = await fetch(`${GROWTH_API_BASE}${path}`, {
       ...fetchOptions,
@@ -457,13 +473,31 @@ async function apiFetch<T>(
         ...(fetchOptions.headers ?? {}),
       },
     });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch {
-    return null;
+    if (!res.ok) return { kind: "reply", response: res, body: undefined, parsed: false };
+    try {
+      return { kind: "reply", response: res, body: await res.json(), parsed: true };
+    } catch (error) {
+      if (timedOut) throw error;
+      return { kind: "reply", response: res, body: undefined, parsed: false };
+    }
+  } catch (error) {
+    if (!timedOut) return { kind: "failed", error };
+    const timeoutError = new Error(`Growth ${path} timed out after ${timeoutMs}ms`);
+    timeoutError.name = "TimeoutError";
+    return { kind: "failed", error: timeoutError };
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
   }
+}
+
+/** Write contract: anything but a parsed 2xx body is an unconfirmed result (null). */
+async function apiFetch<T>(
+  path: string,
+  options: RequestInit & { correlationId?: string; timeoutMs?: number } = {},
+): Promise<T | null> {
+  const result = await growthRequest(path, options);
+  if (result.kind !== "reply" || !result.response.ok || !result.parsed) return null;
+  return result.body as T;
 }
 
 /** Create a Growth Action draft from one of the three entry cards. */
@@ -830,6 +864,9 @@ export const conflictLevelTone: Record<ConflictCheck["level"], StatusTone> = {
 // Runtime data fetch with local/test fixture support
 // ---------------------------------------------------------------------------
 
+/** Growth read sections that can fail on their own without hiding verified data. */
+export type GrowthSectionKey = "recommendations" | "actions";
+
 export type GrowthApiData = {
   freshness: GrowthFreshness | null;
   segments: GrowthSegment[];
@@ -839,12 +876,98 @@ export type GrowthApiData = {
   fromApi: boolean;
   availability: "ready" | "fixture" | "seed" | "empty" | "error";
   error?: string;
+  /** Actual read failure (status, correlation, time) behind an `error` result. */
+  failure?: OperatorLoadFailure;
+  /**
+   * Sections whose own read failed while the required reads succeeded. Their
+   * arrays are empty because they are unread, not because the API said so.
+   */
+  sectionFailures?: Partial<Record<GrowthSectionKey, OperatorLoadFailure>>;
 };
+
+type GrowthRead<T> = { ok: true; body: T } | { ok: false; failure: OperatorLoadFailure };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasId(value: unknown, field: string): boolean {
+  return isRecord(value) && typeof value[field] === "string" && (value[field] as string).trim().length > 0;
+}
+
+function isFreshnessBody(body: unknown): body is GrowthFreshness {
+  return isRecord(body) && typeof body.status === "string" && body.status.trim().length > 0;
+}
+
+function listBodyGuard(scopedRows: boolean) {
+  return (body: unknown): body is { items: unknown[] } =>
+    isRecord(body) && Array.isArray(body.items) &&
+    body.items.every((row) => hasId(row, "id") && (!scopedRows || hasId(row, "segmentId")));
+}
+
+/**
+ * Read one Growth endpoint through the shared transport. A refused reply keeps
+ * its actual status and envelope; a 2xx reply without the expected shape is a
+ * malformed read, never an empty one.
+ */
+async function readGrowth<T>(
+  label: string,
+  path: string,
+  correlationId: string,
+  accepts: (body: unknown) => body is T,
+): Promise<GrowthRead<T>> {
+  const result = await growthRequest(path, {
+    correlationId,
+    headers: { "X-Correlation-Id": correlationId },
+  });
+  if (result.kind === "failed") {
+    return { ok: false, failure: operatorLoadFailureFromError(result.error, label, correlationId) };
+  }
+  if (!result.response.ok) {
+    return { ok: false, failure: await operatorLoadFailureFromResponse(result.response, label, correlationId) };
+  }
+  if (!result.parsed || !accepts(result.body)) {
+    return {
+      ok: false,
+      failure: {
+        correlationId: result.response.headers?.get?.("x-correlation-id") ?? correlationId,
+        httpStatus: result.response.status,
+        kind: "unknown",
+        occurredAt: new Date().toISOString(),
+        technicalDetail: `${label} returned ${result.response.status} without a valid Growth payload`,
+      },
+    };
+  }
+  return { ok: true, body: result.body };
+}
+
+function unavailableGrowthData(
+  availability: "seed" | "empty" | "error",
+  error: string,
+  failure?: OperatorLoadFailure,
+): GrowthApiData {
+  return {
+    freshness: null,
+    segments: [],
+    recommendations: [],
+    items: [],
+    fromApi: false,
+    availability,
+    error,
+    ...(failure ? { failure } : {}),
+  };
+}
 
 /**
  * Fetch all Growth workspace data from /api/v1/operator/growth/*.
- * Production returns an explicit error result on incomplete reads. Local and
- * test callers may retain the embedded fixture fallback.
+ *
+ * Production classifies each read: an authentication or permission refusal
+ * on any read, or a failed freshness/segment read, closes the whole workspace
+ * with that read's actual failure. Seed/fixture payloads are rejected. Empty
+ * recommendation or action lists are verified data (a canonical plan without
+ * an optimization has no recommendation yet); a failed recommendation or
+ * action read is isolated to that section. Local and test callers may retain
+ * the embedded fixture fallback whenever a read is incomplete.
  *
  * Called from server components (Next.js server-side fetch) or from
  * client-side hooks when live refresh is needed.
@@ -857,84 +980,72 @@ export async function fetchGrowthApiData(params: {
   const allowFixtureFallback =
     options.allowFixtureFallback ?? operatorFixturesAllowed();
   const correlationId = newCorrelationId();
-  const baseHeaders = { "X-Correlation-Id": correlationId };
+  const segmentQuery = params.segmentId
+    ? `?segment_id=${encodeURIComponent(params.segmentId)}`
+    : "";
 
   try {
     const [freshnessRes, segmentsRes, recommendationsRes, actionsRes] = await Promise.all([
-      apiFetch<GrowthFreshness>("/freshness", { headers: baseHeaders }),
-      apiFetch<{ items: GrowthSegment[] }>("/segments", { headers: baseHeaders }),
-      apiFetch<{ items: PriceOpsRecommendation[] }>(
-        params.segmentId
-          ? `/recommendations?segment_id=${encodeURIComponent(params.segmentId)}`
-          : "/recommendations",
-        { headers: baseHeaders },
-      ),
-      apiFetch<{ items: GrowthItem[] }>(
-        params.segmentId
-          ? `/actions?segment_id=${encodeURIComponent(params.segmentId)}`
-          : "/actions",
-        { headers: baseHeaders },
-      ),
+      readGrowth("growth freshness", "/freshness", correlationId, isFreshnessBody),
+      readGrowth("growth segments", "/segments", correlationId, listBodyGuard(false)),
+      readGrowth("growth recommendations", `/recommendations${segmentQuery}`, correlationId, listBodyGuard(true)),
+      readGrowth("growth actions", `/actions${segmentQuery}`, correlationId, listBodyGuard(true)),
     ]);
+    const reads = [freshnessRes, segmentsRes, recommendationsRes, actionsRes];
+    const failures = reads.flatMap((read) => (read.ok ? [] : [read.failure]));
+    const verified = reads.flatMap((read) => (read.ok ? [read.body] : []));
 
-    if (freshnessRes && segmentsRes && recommendationsRes && actionsRes) {
-      const containsSeedData = payloadContainsSeedData([
-        freshnessRes,
-        segmentsRes,
-        recommendationsRes,
-        actionsRes,
-      ]);
-      const hasCompleteWorkspaceData =
-        segmentsRes.items.length > 0 &&
-        recommendationsRes.items.length > 0 &&
-        actionsRes.items.length > 0;
-      if (containsSeedData && !allowFixtureFallback) {
-        return {
-          freshness: null,
-          segments: [],
-          recommendations: [],
-          items: [],
-          fromApi: false,
-          availability: "seed",
-          error: "Growth API returned seed, fixture, or mock data.",
-        };
+    if (!allowFixtureFallback) {
+      // Identity and permission refusals are authoritative for the whole workspace.
+      const authFailure =
+        failures.find((failure) => failure.kind === "unauthenticated") ??
+        failures.find((failure) => failure.kind === "forbidden");
+      if (authFailure) {
+        return unavailableGrowthData("error", authFailure.technicalDetail ?? authFailure.kind, authFailure);
       }
-      if (!hasCompleteWorkspaceData && !allowFixtureFallback) {
-        return {
-          freshness: null,
-          segments: [],
-          recommendations: [],
-          items: [],
-          fromApi: false,
-          availability: "empty",
-          error: "Growth API returned an incomplete or empty workspace payload.",
-        };
+      // Freshness and segments define the source and every draft target.
+      const requiredFailure = !freshnessRes.ok ? freshnessRes.failure : !segmentsRes.ok ? segmentsRes.failure : null;
+      if (requiredFailure) {
+        return unavailableGrowthData("error", requiredFailure.technicalDetail ?? requiredFailure.kind, requiredFailure);
       }
-      if (!containsSeedData && hasCompleteWorkspaceData) {
+    }
+
+    if (payloadContainsSeedData(verified)) {
+      if (!allowFixtureFallback) {
+        return unavailableGrowthData("seed", "Growth API returned seed, fixture, or mock data.");
+      }
+    } else if (freshnessRes.ok && segmentsRes.ok && (!allowFixtureFallback || failures.length === 0)) {
+      const segments = segmentsRes.body.items as GrowthSegment[];
+      const recommendations = recommendationsRes.ok
+        ? (recommendationsRes.body.items as PriceOpsRecommendation[]).map(normalizePriceRecommendation)
+        : [];
+      const items = actionsRes.ok ? actionsRes.body.items as GrowthItem[] : [];
+      const sectionFailures: Partial<Record<GrowthSectionKey, OperatorLoadFailure>> = {
+        ...(recommendationsRes.ok ? {} : { recommendations: recommendationsRes.failure }),
+        ...(actionsRes.ok ? {} : { actions: actionsRes.failure }),
+      };
+      const verifiedAllEmpty = failures.length === 0 &&
+        segments.length === 0 && recommendations.length === 0 && items.length === 0;
+      if (verifiedAllEmpty && !allowFixtureFallback) {
+        return unavailableGrowthData("empty", "Growth API returned no visible segment, recommendation, or action in the current scope.");
+      }
+      if (!verifiedAllEmpty) {
         return {
-          freshness: freshnessRes,
-          segments: segmentsRes.items,
-          recommendations: recommendationsRes.items.map(normalizePriceRecommendation),
-          items: actionsRes.items,
+          freshness: freshnessRes.body,
+          segments,
+          recommendations,
+          items,
           fromApi: true,
           availability: "ready",
+          ...(failures.length > 0 ? { sectionFailures } : {}),
         };
       }
     }
-  } catch {
-    // Classified below; production callers fail closed.
-  }
-
-  if (!allowFixtureFallback) {
-    return {
-      freshness: null,
-      segments: [],
-      recommendations: [],
-      items: [],
-      fromApi: false,
-      availability: "error",
-      error: "Growth API did not return a complete response.",
-    };
+  } catch (error) {
+    if (!allowFixtureFallback) {
+      const failure = operatorLoadFailureFromError(error, "growth workspace", correlationId);
+      return unavailableGrowthData("error", failure.technicalDetail ?? failure.kind, failure);
+    }
   }
 
   const recommendations = params.segmentId

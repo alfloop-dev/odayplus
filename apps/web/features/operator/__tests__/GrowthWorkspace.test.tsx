@@ -352,6 +352,216 @@ describe("GrowthWorkspace API loading", () => {
     expect(screen.queryByText(/mock/i)).not.toBeInTheDocument();
   });
 
+  type GrowthReadReply = Response | Error;
+  const canonicalFreshness = { status: "LIVE", updatedAt: "2026-10-15T05:00:00+00:00", modelVersion: null,
+    policyVersion: [], featureSnapshotTime: "2026-10-15T05:00:00+00:00",
+    sourceSnapshotId: ["current-plan"], solverVersions: [], planCount: 1 };
+  const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
+    new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...headers } });
+
+  /** Production transport for the four existing Growth reads; writes are recorded separately. */
+  function mockGrowthReads(replies: Partial<Record<"freshness" | "segments" | "recommendations" | "actions", () => GrowthReadReply>>) {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const writes: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method && init.method !== "GET") {
+        writes.push(url);
+        return json({ error: { code: "unexpected_write" } }, 500);
+      }
+      const key = url.endsWith("/freshness") ? "freshness" : url.endsWith("/segments") ? "segments"
+        : url.includes("/recommendations") ? "recommendations" : "actions";
+      const fallback: Record<typeof key, () => GrowthReadReply> = {
+        freshness: () => json(canonicalFreshness),
+        segments: () => json({ items: [canonicalSegment], count: 1 }),
+        recommendations: () => json({ items: [], count: 0 }),
+        actions: () => json({ items: [], count: 0 }),
+      };
+      const reply = (replies[key] ?? fallback[key])();
+      if (reply instanceof Error) throw reply;
+      return reply;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return { fetchMock, writes };
+  }
+
+  it("opens the first direct draft for a canonical segment with verified empty recommendations and actions", async () => {
+    const { writes } = mockGrowthReads({});
+    render(<GrowthWorkspace searchParams={{ gtab: "segments" }} />);
+    const segments = await screen.findByTestId("growth-segment-table");
+    expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
+    expect(screen.getByTestId("growth-data-status")).toHaveTextContent("LIVE");
+    expect(screen.getByText(/模型版本未提供/)).toBeInTheDocument();
+    expect(within(screen.getByTestId("growth-entry-cards")).getAllByRole("link")).toHaveLength(3);
+    const draftLink = within(segments).getByRole("link", { name: "建立活動草稿" });
+    const target = new URL(draftLink.getAttribute("href")!, "http://localhost");
+    expect(target.searchParams.get("segment")).toBe(canonicalSegment.id);
+    expect(target.searchParams.get("builder")).toBe("offpeak");
+    expect(target.searchParams.has("draft")).toBe(false);
+    cleanup();
+
+    render(<GrowthWorkspace searchParams={{ builder: "offpeak", segment: canonicalSegment.id }} />);
+    const dialog = await screen.findByRole("dialog", { name: "建立 Growth Action 草稿" });
+    expect(within(dialog).getByLabelText("門市")).toHaveValue(canonicalSegment.storeId);
+    fireEvent.click(within(dialog).getByRole("button", { name: "下一步 →" }));
+    expect(within(dialog).getByLabelText("客群")).toHaveValue(canonicalSegment.id);
+    expect(writes).toEqual([]);
+  });
+
+  it("shows verified empty recommendation and action lists as empty, not unavailable", async () => {
+    mockGrowthReads({});
+    render(<GrowthWorkspace searchParams={{}} />);
+    expect(await screen.findByTestId("growth-item-table")).toHaveTextContent("沒有符合條件的機會或活動");
+    expect(screen.getByTestId("growth-action-unavailable")).toHaveTextContent("沒有符合目前條件的活動");
+    expect(screen.getByTestId("growth-new-action")).toBeInTheDocument();
+    cleanup();
+    render(<GrowthWorkspace searchParams={{ gtab: "priceops" }} />);
+    const table = await screen.findByTestId("growth-recommendation-table");
+    expect(within(table).queryAllByText("建立定價草稿")).toHaveLength(0);
+    expect(screen.queryByTestId("growth-section-recommendations-unavailable")).not.toBeInTheDocument();
+  });
+
+  it("shows a genuine all-empty scope as empty without any create entry", async () => {
+    const { writes } = mockGrowthReads({
+      freshness: () => json({ ...canonicalFreshness, status: "EMPTY", updatedAt: null, sourceSnapshotId: [], planCount: 0 }),
+      segments: () => json({ items: [], count: 0 }),
+    });
+    render(<GrowthWorkspace searchParams={{ builder: "offpeak" }} />);
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-status", "empty"));
+    expect(screen.queryByTestId("growth-workspace")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("growth-entry-cards")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(writes).toEqual([]);
+  });
+
+  it("offers no draft entry when a scoped read has no visible segment", async () => {
+    mockGrowthReads({
+      segments: () => json({ items: [], count: 0 }),
+      actions: () => new Error("Synthetic offline actions read"),
+    });
+    render(<GrowthWorkspace searchParams={{ builder: "offpeak" }} />);
+    expect(await screen.findByTestId("growth-builder-unavailable")).toHaveTextContent("沒有可用分群");
+    expect(screen.queryByTestId("growth-entry-cards")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { name: "missing items", reply: () => json({ count: 0 }) },
+    { name: "non-JSON body", reply: () => new Response("<html>gateway</html>", { status: 200 }) },
+    { name: "row without identity", reply: () => json({ items: [{ name: "no id" }] }) },
+  ])("rejects a malformed segment reply ($name) instead of treating it as empty", async ({ reply }) => {
+    mockGrowthReads({ segments: reply });
+    render(<GrowthWorkspace searchParams={{}} />);
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-status", "error"));
+    expect(gate).toHaveTextContent("growth segments returned 200 without a valid Growth payload");
+    expect(screen.queryByTestId("growth-workspace")).not.toBeInTheDocument();
+  });
+
+  it("rejects seed data even when the lists are otherwise legitimately empty", async () => {
+    mockGrowthReads({ segments: () => json({ items: [{ ...canonicalSegment, source: "fixture-growth" }] }) });
+    render(<GrowthWorkspace searchParams={{}} />);
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-status", "seed"));
+    expect(screen.queryByTestId("growth-workspace")).not.toBeInTheDocument();
+  });
+
+  it("keeps the unavailable source failure and its envelope correlation", async () => {
+    const unavailable = () => json({ error: { code: "PRICEOPS_STORE_BINDING_UNAVAILABLE", message: "Canonical pricing ownership is unavailable", correlation_id: "corr-source-503" } }, 503);
+    mockGrowthReads({ freshness: unavailable, segments: unavailable, recommendations: unavailable, actions: unavailable });
+    render(<GrowthWorkspace searchParams={{}} />);
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "server"));
+    expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-source-503");
+    expect(gate).toHaveTextContent("PRICEOPS_STORE_BINDING_UNAVAILABLE");
+    expect(screen.queryByTestId("growth-entry-cards")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { status: 401, code: "unauthorized", kind: "unauthenticated", action: "operator-data-unavailable-login-link" },
+    { status: 403, code: "forbidden", kind: "forbidden", action: "operator-data-unavailable-admin-link" },
+  ])("closes the workspace on a $status from any read and keeps its distinct action", async ({ status, code, kind, action }) => {
+    mockGrowthReads({ actions: () => json({ error: { code, message: "refused", correlation_id: `corr-${status}` } }, status) });
+    render(<GrowthWorkspace searchParams={{}} />);
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", kind));
+    expect(screen.getByTestId(action)).toBeInTheDocument();
+    expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent(`corr-${status}`);
+    const technical = screen.getByTestId("operator-data-unavailable-technical");
+    expect(technical).toHaveTextContent(String(status));
+    expect(technical).toHaveTextContent(`growth actions returned ${status} ${code}`);
+    expect(technical).toHaveTextContent(/發生時間\d{4}-\d{2}-\d{2}T/);
+    expect(screen.queryByTestId("growth-workspace")).not.toBeInTheDocument();
+  });
+
+  it("isolates a failed action read while keeping verified segments and recommendations", async () => {
+    const { writes } = mockGrowthReads({
+      recommendations: () => json({ items: [{ id: "priceops-rec:current-plan:current-item", segmentId: canonicalSegment.id,
+        planId: "current-plan", itemId: "current-item", storeId: "current-store", currentPrice: 100, recommendedPrice: 105,
+        constraintStatus: "SAFE", bindingConstraints: [], riskLevel: "low", source: "priceops" }] }),
+      actions: () => json({ error: { code: "internal_error", correlation_id: "corr-actions-500" } }, 500),
+    });
+    render(<GrowthWorkspace searchParams={{}} />);
+    const section = await screen.findByTestId("growth-section-actions-unavailable");
+    expect(within(section).getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "server");
+    expect(within(section).getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-actions-500");
+    expect(screen.queryByTestId("growth-item-table")).not.toBeInTheDocument();
+    expect(screen.queryByText("沒有符合條件的機會或活動。")).not.toBeInTheDocument();
+    expect(screen.getByTestId("growth-workspace")).toBeInTheDocument();
+    expect(screen.getByTestId("growth-entry-cards")).toBeInTheDocument();
+    cleanup();
+    render(<GrowthWorkspace searchParams={{ gtab: "priceops" }} />);
+    expect(await screen.findByTestId("growth-draft-priceops-rec:current-plan:current-item")).toBeInTheDocument();
+    expect(writes).toEqual([]);
+  });
+
+  it("isolates a failed recommendation read and marks linked forecasts unread", async () => {
+    mockGrowthReads({
+      recommendations: () => new Error("Synthetic network failure"),
+      actions: () => json({ items: [{ ...GROWTH_ITEMS[0], id: "current-action", segmentId: canonicalSegment.id, sourceRecommendationId: "priceops-rec:current-plan:current-item" }] }),
+    });
+    render(<GrowthWorkspace searchParams={{}} />);
+    const card = await screen.findByTestId("growth-item-current-action");
+    expect(within(card).getByText("預估增額營收").parentElement).toHaveTextContent("無法取得");
+    expect(within(card).getByText("預估增額營收").parentElement).not.toHaveTextContent("未提供百分比");
+    cleanup();
+    render(<GrowthWorkspace searchParams={{ gtab: "priceops", draft: "priceops-rec:current-plan:current-item" }} />);
+    const section = await screen.findByTestId("growth-section-recommendations-unavailable");
+    expect(within(section).getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "network");
+    expect(screen.queryByTestId("growth-recommendation-table")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("keeps a timeout and its actual status, then retries through the same loader", async () => {
+    let freshnessReads = 0;
+    const { fetchMock } = mockGrowthReads({
+      freshness: () => (++freshnessReads === 1
+        ? json({ error: { code: "gateway_timeout" } }, 504, { "X-Correlation-Id": "corr-gateway-504" })
+        : json(canonicalFreshness)),
+    });
+    render(<GrowthWorkspace searchParams={{}} />);
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "timeout"));
+    expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-gateway-504");
+    expect(screen.getByTestId("operator-data-unavailable-technical")).toHaveTextContent("504");
+    fireEvent.click(screen.getByRole("button", { name: "重新載入" }));
+    expect(await screen.findByTestId("growth-workspace")).toBeInTheDocument();
+    const reads = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(reads.filter((url) => url.endsWith("/freshness"))).toHaveLength(2);
+    expect(new Set(fetchMock.mock.calls.slice(0, 4).map(([, init]) => new Headers(init?.headers).get("X-Correlation-Id"))).size).toBe(1);
+  });
+
+  it("reports a network failure as a network failure with the request correlation", async () => {
+    const { fetchMock } = mockGrowthReads({ segments: () => new TypeError("Failed to fetch") });
+    render(<GrowthWorkspace searchParams={{}} />);
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "network"));
+    const requestCorrelation = new Headers(fetchMock.mock.calls[0][1]?.headers).get("X-Correlation-Id");
+    expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent(requestCorrelation!);
+    expect(screen.getByRole("button", { name: "重新載入" })).toBeInTheDocument();
+  });
+
   it("fails closed when a Growth read is unavailable", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));

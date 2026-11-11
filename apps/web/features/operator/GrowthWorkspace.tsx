@@ -41,7 +41,9 @@ import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   operatorFixturesAllowed,
   toUnavailableOperatorStatus,
+  unreadCountLabel,
   type OperatorDataAvailability,
+  type OperatorLoadFailure,
 } from "./operatorDataMode";
 import g from "./growth.module.css";
 import { useModalDialogBehavior } from "./network/useModalDialogBehavior";
@@ -67,7 +69,8 @@ function storeCountLabel(value: number | null | undefined): string {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? `${value} 店` : "門市數未提供";
 }
 
-function forecastLiftLabel(value: number | null | undefined): string {
+function forecastLiftLabel(value: number | null | undefined, unread?: OperatorLoadFailure): string {
+  if (unread) return unreadCountLabel(unread.kind);
   return typeof value === "number" && Number.isFinite(value) ? formatLift(value) : "未提供百分比";
 }
 
@@ -206,7 +209,10 @@ export function GrowthWorkspace({
     return apiData.fromApi ? "ready" : "fixture";
   });
   const [growthLoadError, setGrowthLoadError] = useState<string | null>(null);
+  const [growthLoadFailure, setGrowthLoadFailure] = useState<OperatorLoadFailure | null>(null);
   const [growthReloadToken, setGrowthReloadToken] = useState(0);
+
+  const retryGrowthLoad = () => setGrowthReloadToken((token) => token + 1);
 
   useEffect(() => {
     if (apiData) {
@@ -218,6 +224,7 @@ export function GrowthWorkspace({
     let cancelled = false;
     if (!fixturesAllowed) setGrowthLoadState("loading");
     setGrowthLoadError(null);
+    setGrowthLoadFailure(null);
 
     void fetchGrowthApiData(
       { segmentId },
@@ -227,6 +234,7 @@ export function GrowthWorkspace({
       setResolvedApiData(result);
       setGrowthLoadState(result.availability);
       setGrowthLoadError(result.error ?? null);
+      setGrowthLoadFailure(result.failure ?? null);
     });
 
     return () => {
@@ -240,8 +248,9 @@ export function GrowthWorkspace({
   ) {
     return (
       <OperatorDataUnavailableGate
-        detail={growthLoadError}
-        onRetry={() => setGrowthReloadToken((token) => token + 1)}
+        detail={growthLoadError ?? apiData?.error}
+        failure={growthLoadFailure ?? apiData?.failure}
+        onRetry={retryGrowthLoad}
         status={toUnavailableOperatorStatus(growthLoadState)}
       />
     );
@@ -255,6 +264,10 @@ export function GrowthWorkspace({
   };
   const modelVersionAvailable = typeof freshnessData.modelVersion === "string" && freshnessData.modelVersion.trim().length > 0;
   const fixtureHint = DATA_SOURCE_HINT[vm.dataSource];
+  const sectionFailures = resolvedApiData?.sectionFailures ?? {};
+  // A draft targets a currently visible segment; with none in scope the API
+  // would refuse the write, so no create entry is offered.
+  const canCreateDraft = vm.dataSource === "fixture" || vm.segments.length > 0;
 
   // Build an href that keeps the Growth workspace active and preserves the
   // current tab, selection, and unrelated URL state unless explicitly overridden.
@@ -315,7 +328,7 @@ export function GrowthWorkspace({
           </div>
         </header>
 
-        <EntryCardsSection href={href} />
+        {canCreateDraft ? <EntryCardsSection href={href} /> : null}
 
         <nav className={g.tabBar} data-testid="growth-tabs" aria-label="Growth 分頁">
           {GROWTH_TABS.map((tab) => (
@@ -336,6 +349,11 @@ export function GrowthWorkspace({
             指定分群未取得，請選取目前範圍可用的分群。
           </div>
         ) : null}
+        {builderKind && !canCreateDraft ? (
+          <div className={g.selectionUnavailable} role="status" data-testid="growth-builder-unavailable">
+            目前範圍沒有可用分群，無法建立草稿。
+          </div>
+        ) : null}
         {draftId && !builderKind && !vm.draftRecommendation ? (
           <div className={g.selectionUnavailable} role="status" data-testid="growth-draft-unavailable">
             指定建議未取得，請從建議清單重新選取。
@@ -350,6 +368,10 @@ export function GrowthWorkspace({
             segments={vm.segments}
             selected={vm.selectedSegment}
           />
+        ) : activeTab === "priceops" && sectionFailures.recommendations ? (
+          <section aria-label="PriceOps recommendations" data-screen-label="Growth PriceOps" data-testid="growth-section-recommendations-unavailable">
+            <OperatorDataUnavailableGate failure={sectionFailures.recommendations} onRetry={retryGrowthLoad} status="error" />
+          </section>
         ) : activeTab === "priceops" ? (
           <RecommendationSection
             recommendations={vm.recommendations}
@@ -357,8 +379,13 @@ export function GrowthWorkspace({
             segments={vm.segments}
             href={href}
           />
+        ) : sectionFailures.actions ? (
+          <section aria-label="Growth actions" data-testid="growth-section-actions-unavailable">
+            <OperatorDataUnavailableGate failure={sectionFailures.actions} onRetry={retryGrowthLoad} status="error" />
+          </section>
         ) : (
           <CampaignWorkbench
+            canCreateDraft={canCreateDraft}
             items={vm.items}
             selected={vm.selectedItem}
             requestedItemId={itemId}
@@ -366,13 +393,14 @@ export function GrowthWorkspace({
             kindFilter={kindFilter}
             statusFilter={statusFilter}
             recommendations={vm.recommendations}
+            recommendationsFailure={sectionFailures.recommendations}
             href={href}
             governHref={governHref}
           />
         )}
       </div>
 
-      {builderKind ? (
+      {!canCreateDraft ? null : builderKind ? (
         <GrowthBuilderModal
           key={JSON.stringify([
             vm.dataSource,
@@ -626,6 +654,7 @@ function RecommendationSection({
  * lifecycle detail panel for the selected action.
  */
 function CampaignWorkbench({
+  canCreateDraft,
   items,
   selected,
   requestedItemId,
@@ -633,9 +662,11 @@ function CampaignWorkbench({
   kindFilter,
   statusFilter,
   recommendations,
+  recommendationsFailure,
   href,
   governHref,
 }: {
+  canCreateDraft: boolean;
   items: GrowthItem[];
   selected: GrowthItem | null;
   requestedItemId?: string;
@@ -643,6 +674,8 @@ function CampaignWorkbench({
   kindFilter?: string;
   statusFilter?: string;
   recommendations: PriceOpsRecommendation[];
+  /** Set when the recommendation read failed; forecasts are then unread, not absent. */
+  recommendationsFailure?: OperatorLoadFailure;
   href: (o: Record<string, string | undefined>) => string;
   governHref: string;
 }) {
@@ -658,9 +691,11 @@ function CampaignWorkbench({
     <section className={g.campaign} aria-label="Growth actions">
       {/* Filter rail */}
       <aside className={g.rail}>
-        <Link className={g.railBtn} href={href({ builder: "offpeak" })} data-testid="growth-new-action">
-          ＋ 新增 Growth Action
-        </Link>
+        {canCreateDraft ? (
+          <Link className={g.railBtn} href={href({ builder: "offpeak" })} data-testid="growth-new-action">
+            ＋ 新增 Growth Action
+          </Link>
+        ) : null}
         <div className={g.railCard}>
           <div className={g.railLabel}>類型</div>
           <div className={g.chipCol}>
@@ -744,13 +779,13 @@ function CampaignWorkbench({
                   <div>
                     <div className={g.metricK}>預估增額營收</div>
                     <div className={[g.metricV, g.metricVpos].join(" ")}>
-                      {forecastLiftLabel(recommendation?.expectedRevenueLift)}
+                      {forecastLiftLabel(recommendation?.expectedRevenueLift, item.sourceRecommendationId ? recommendationsFailure : undefined)}
                     </div>
                   </div>
                   <div>
                     <div className={g.metricK}>毛利影響</div>
                     <div className={g.metricV}>
-                      {forecastLiftLabel(recommendation?.expectedMarginLift)}
+                      {forecastLiftLabel(recommendation?.expectedMarginLift, item.sourceRecommendationId ? recommendationsFailure : undefined)}
                     </div>
                   </div>
                   <div>
