@@ -1504,6 +1504,8 @@ def _record_auto_merge(
 # The PR identity an admission is bound to. A readback taken after the initial
 # check must still show all three; a PR whose head, base or source branch moved
 # in between is a different thing from the one that was checked and admitted.
+# Branch refs are matched exactly (git refs are case-sensitive); only the hex
+# head SHA is compared case-insensitively.
 PR_ADMISSION_IDENTITY_FIELDS = ("headRefOid", "baseRefName", "headRefName")
 
 
@@ -1531,8 +1533,14 @@ def read_pr_merge_admission(
         return None
     if expected is not None:
         for field in PR_ADMISSION_IDENTITY_FIELDS:
-            want = str(expected.get(field) or "").strip().lower()
-            if not want or str(pr.get(field) or "").strip().lower() != want:
+            want = str(expected.get(field) or "").strip()
+            got = str(pr.get(field) or "").strip()
+            if field == "headRefOid":
+                # A commit SHA is hex: its case carries no identity.
+                want, got = want.lower(), got.lower()
+            # Base and source branch names are case-sensitive git refs, so they
+            # are compared exactly: `dev` -> `DEV` is a different base.
+            if not want or got != want:
                 return None
     return pr
 

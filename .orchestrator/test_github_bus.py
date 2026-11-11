@@ -2063,6 +2063,39 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         self.assertFalse((root / ".orchestrator/auto_merge_green_prs.py").exists())
         self.assertFalse((root / ".orchestrator/auto-merge-guard.sh").exists())
 
+    def test_admission_readback_matches_branch_refs_exactly(self) -> None:
+        """The readback identity is the PR as checked: the head SHA is hex and
+        compares case-insensitively, but base and source branch are git refs
+        and a case-only change names another ref."""
+
+        checked = {
+            "number": 77,
+            "state": "OPEN",
+            "baseRefName": "dev",
+            "headRefName": self.BRANCH,
+            "headRefOid": self.HEAD_SHA,
+        }
+        cases = {
+            "same": ({}, True),
+            "head sha case": ({"headRefOid": self.HEAD_SHA.upper()}, True),
+            "base case": ({"baseRefName": "DEV"}, False),
+            "branch case": ({"headRefName": "Task/ODP-ORCH-REVIEWBUS-AUTOMERGE-001"}, False),
+            "branch lowered": ({"headRefName": self.BRANCH.lower()}, False),
+            "other base": ({"baseRefName": "main"}, False),
+            "other branch": ({"headRefName": "task/ODP-OTHER-001"}, False),
+            "other head": ({"headRefOid": "b" * 40}, False),
+            "missing base": ({"baseRefName": None}, False),
+        }
+        for name, (overrides, admitted) in cases.items():
+            with self.subTest(name):
+                answer = {**checked, **overrides}
+                with mock.patch.object(github_bus, "gh_json", return_value=answer):
+                    readback = github_bus.read_pr_merge_admission(self.REPO, 77, expected=checked)
+                if admitted:
+                    self.assertEqual(readback, answer)
+                else:
+                    self.assertIsNone(readback)
+
     def _config(self, *, auto_merge: bool = True) -> dict:
         return {
             "github_bus": {"default_branch": "main"},
@@ -2892,6 +2925,8 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
             "head": {"headRefOid": "c" * 40},
             "base": {"baseRefName": "main"},
             "branch": {"headRefName": "task/OPS-ARCHIVE-AUTO-COMMIT-20260815T000000Z"},
+            "base case": {"baseRefName": "DEV"},
+            "branch case": {"headRefName": "task/ops-archive-auto-commit-20260814t120000z"},
         }.items():
             with self.subTest(name):
                 calls, record = self._housekeeping_round(

@@ -190,8 +190,11 @@ when `branch_workflow.task_pr.auto_merge` is on - the route:
    bound to the head, base and branch checked in step 1: if any of them moved
    in between, the answer belongs to another PR state and is recorded as
    `unconfirmed`, never as the approved head's `queued`/`armed`/`merged`; the
-   next tick's step 1 then refuses the moved PR. Archive housekeeping PRs go
-   through the same readers and the same binding.
+   next tick's step 1 then refuses a moved head or base, and anything still
+   passing step 1 stays under the same window and cap. Base and branch are
+   compared exactly, because git refs are case-sensitive (`dev` -> `DEV` is
+   another base); only the hex head SHA is compared without case. Archive
+   housekeeping PRs go through the same readers and the same binding.
 
 Bounded recovery: a task reported `stalled` or `unconfirmed` is not retried
 past the cap - look at the PR's queue entry and required checks. Clearing

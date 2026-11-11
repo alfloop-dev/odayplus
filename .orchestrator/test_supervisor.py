@@ -23532,7 +23532,10 @@ class MergeRouteWithoutQueueTests(unittest.TestCase):
         self.assertEqual(task["merge_route"]["attempts"], 1)
 
     def test_a_direct_merge_readback_on_a_moved_pr_is_not_called_merged(self) -> None:
-        for drift in ({"head": "f" * 40}, {"base": "main"}, {"branch": "task/OTHER"}):
+        # Branch refs are case-sensitive: `dev` -> `DEV` or `task/T-1` ->
+        # `TASK/t-1` is another base or branch, not this one in other letters.
+        for drift in ({"head": "f" * 40}, {"base": "main"}, {"branch": "task/OTHER"},
+                      {"base": "DEV"}, {"branch": "TASK/t-1"}):
             with self.subTest(drift=drift):
                 route, _d, calls, task = self._route(has_queue=False, drift=drift)
 
@@ -24001,6 +24004,10 @@ class MergeAdmissionSingleOwnerTests(unittest.TestCase):
         "head": {"head": "f" * 40},
         "base": {"base": "main"},
         "branch": {"branch": "task/SOMEONE-ELSE"},
+        # Case-only moves: git refs are case-sensitive, so these are another
+        # base and another source branch, never the approved PR's.
+        "base case": {"base": "DEV"},
+        "branch case": {"branch": "Task/ODP-ADMIT-001"},
         "queue node head": {"graphql_head": "f" * 40},
     }
 
