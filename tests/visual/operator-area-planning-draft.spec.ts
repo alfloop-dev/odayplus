@@ -73,6 +73,39 @@ for (const width of [1440, 1024, 390]) {
       expect(reloadedSnapshot.selectedHeatZoneId).toBe(scenario.zone_id);
       expect(reloadedSnapshot.heatZones.map((zone: { id: string }) => zone.id)).toContain(scenario.zone_id);
       await expect(page.locator(`[data-zone-id="${scenario.zone_id}"]`)).toBeVisible();
+      // This owning read comes from the normal signed API and persisted HeatZone,
+      // independently of the seven-row local fixture geometry qualification.
+      expect(reloadedSnapshot.heatZoneAvailability).toMatchObject({ state: "available", source: "canonical-heatzone" });
+      const recordedZone = reloadedSnapshot.heatZones.find((zone: { id: string }) => zone.id === scenario.zone_id);
+      expect(recordedZone).toMatchObject({ id: scenario.zone_id, confidence: 0.6, recordedMap: {
+        id: scenario.zone_id, score: 60, confidence: 0.6,
+        modelVersion: "declared-area-browser-only", featureVersion: "declared-area-browser-only",
+        sourceSnapshotIds: ["declared-area-browser-source"], competitorPressureScore: null, executionMode: "",
+      } });
+      await expect(page.getByTestId("find-areas-tray").locator('button[aria-current="true"]'))
+        .toHaveAttribute("data-zone-id", scenario.zone_id);
+      const facts = page.getByTestId("find-areas-zone-facts");
+      await expect(facts.locator("dt")).toHaveText([
+        "未滿足需求", "店型適配", "競爭壓力", "自家稀釋風險", "租金可行性", "物件供給", "資料信心", "評估模式",
+      ]);
+      for (const [label, value] of [["資料信心", "60%"], ["競爭壓力", "未評估"], ["評估模式", "未知"]] as const) {
+        await expect(facts.locator("div").filter({ has: page.getByText(label, { exact: true }) }).locator("dd"))
+          .toHaveText(value);
+      }
+      const recordedFacts = await facts.locator("div").evaluateAll(rows => rows.map(row => ({
+        label: row.querySelector("dt")?.textContent, value: row.querySelector("dd")?.textContent,
+      })));
+      const nativeGeometry = await page.getByTestId("network-panel-find-areas").evaluate(panel => ({
+        columns: Array.from(panel.children, child => Math.round(child.getBoundingClientRect().width)),
+        mapHeight: Math.round(document.querySelector('[data-testid="find-areas-map-frame"]')!.getBoundingClientRect().height),
+        documentClient: document.documentElement.clientWidth, documentScroll: document.documentElement.scrollWidth,
+      }));
+      expect(nativeGeometry.documentScroll).toBeLessThanOrEqual(nativeGeometry.documentClient);
+      if (width === 1440) {
+        expect(nativeGeometry.columns).toEqual([206, 836, 330]);
+        expect(nativeGeometry.mapHeight).toBe(426);
+      }
+      await page.screenshot({ path: testInfo.outputPath(`actual-find-areas-recorded-${width}px.png`), fullPage: true });
       await expect(launch).toBeEnabled();await launch.click();
       dialog = page.getByRole("dialog", { name: "季度展店：區域規劃草稿", exact: true });
       await dialog.getByRole("button", { name: `${name} · v1`, exact: true }).click();
@@ -113,7 +146,10 @@ for (const width of [1440, 1024, 390]) {
       expect(geometry.documentScroll).toBeLessThanOrEqual(geometry.documentClient + 1);
       expect(geometry.fields.every(field => field.width > 0 && field.left >= geometry.left - 1 && field.right <= geometry.right + 1)).toBe(true);
       await testInfo.attach(`actual-area-password-${width}-receipt-and-geometry.json`, { body: JSON.stringify({ scope: scenario.scope,
-        actual, geometry, staleStatus: stale.status, nativeDeniedStatus: native.status, foreignStatus: foreign.status }, null, 2), contentType: "application/json" });
+        actual, geometry, nativeGeometry, recordedProjection: { source: reloadedSnapshot.source,
+          selectedHeatZoneId: reloadedSnapshot.selectedHeatZoneId, availability: reloadedSnapshot.heatZoneAvailability,
+          recordedMap: recordedZone.recordedMap, facts: recordedFacts },
+        staleStatus: stale.status, nativeDeniedStatus: native.status, foreignStatus: foreign.status }, null, 2), contentType: "application/json" });
       await page.screenshot({ path: testInfo.outputPath(`actual-area-draft-${width}px.png`), fullPage: true });
       await dialog.screenshot({ path: testInfo.outputPath(`actual-area-draft-dialog-${width}px.png`) });
       await page.keyboard.press("Escape");await expect(dialog).toHaveCount(0);await expect(launch).toBeFocused();

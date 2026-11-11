@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import styles from "../governance.module.css";
-import { operatorSubjectId } from "../operatorSecurityHeaders";
+import { readOperatorBrowserHints, type OperatorStorageFailureHandler } from "../operatorSecurityHeaders";
+import { OperatorDataUnavailableGate } from "../OperatorDataUnavailableGate";
+import type { ForecastReadGuardFactory } from "../storeOpsForecastClient";
 import {
   createCanonicalEvidence, downloadCanonicalEvidence, fetchCanonicalEvidenceHistory,
   fetchCanonicalEvidenceSources, previewCanonicalEvidence,
@@ -23,14 +25,30 @@ function decisionLabel(value: unknown): string {
   return typeof value === "string" ? labels[value] ?? value : "未提供";
 }
 
-export function CanonicalEvidencePanel({ roleId, canExport, requestedDecisionId }: { roleId?: string; canExport: boolean; requestedDecisionId?: string }) {
-  const subject = operatorSubjectId();
-  const tenant = typeof window === "undefined" ? "" : window.sessionStorage.getItem("oday.operator.tenant") ?? "";
+export function CanonicalEvidencePanel({ roleId, canExport, requestedDecisionId, onStorageFailure, suspended = false, createAuthenticatedReadGuard }: {
+  roleId?: string; canExport: boolean; requestedDecisionId?: string; onStorageFailure?: OperatorStorageFailureHandler;
+  suspended?: boolean; createAuthenticatedReadGuard?: ForecastReadGuardFactory;
+}) {
+  const paused = useRef(suspended); paused.current = suspended;
+  const allowed = useRef(canExport); allowed.current = canExport;
+  const guardFactory = useRef(createAuthenticatedReadGuard); guardFactory.current = createAuthenticatedReadGuard;
+  const readHints = useCallback(() => {
+    try { return readOperatorBrowserHints(); }
+    catch { onStorageFailure?.(() => { readOperatorBrowserHints(); }); return null; }
+  }, [onStorageFailure]);
+  const hints = readHints();
+  const subject = hints?.subject;
+  const tenant = hints ? hints.tenant ?? "" : undefined;
   const context = useRef({ roleId, subject, tenant, canExport, requestedDecisionId, mounted: true });
-  if (context.current.roleId !== roleId || context.current.subject !== subject || context.current.tenant !== tenant
-      || context.current.canExport !== canExport || context.current.requestedDecisionId !== requestedDecisionId) context.current = { roleId, subject, tenant, canExport, requestedDecisionId, mounted: true };
+  if (!suspended && hints && (context.current.roleId !== roleId || context.current.subject !== subject || context.current.tenant !== tenant
+      || context.current.requestedDecisionId !== requestedDecisionId)) context.current = { roleId, subject, tenant, canExport, requestedDecisionId, mounted: true };
   const current = context.current;
-  const active = useCallback(() => context.current === current && current.mounted, [current]);
+  const owned = useCallback(() => context.current === current && current.mounted, [current]);
+  const active = useCallback(() => {
+    const fresh = readHints();
+    return !paused.current && allowed.current && fresh !== null && owned()
+      && fresh.subject === current.subject && (fresh.tenant ?? "") === current.tenant;
+  }, [current, owned, readHints]);
   const sequence = useRef(0);
   const busy = useRef(false);
   const intent = useRef<{ signature: string; key: string } | null>(null);
@@ -54,27 +72,45 @@ export function CanonicalEvidencePanel({ roleId, canExport, requestedDecisionId 
 
   useEffect(() => {
     current.mounted = true;
-    const n = ++sequence.current;
+    sequence.current += 1;
     busy.current = false; intent.current = null; completed.current.clear(); setCreated({});
     setReadContext(current); setLoading(true); setSources([]); setHistory([]); setSelected("");
     setFrom(""); setTo(""); setReason(""); setPreview(null); setError(""); setNotice(""); setRunning(false);
-    if (!canExport) { setLoading(false); return () => { current.mounted = false; sequence.current += 1; }; }
-    void Promise.all([fetchCanonicalEvidenceSources(roleId), fetchCanonicalEvidenceHistory(roleId)]).then(([rows, records]) => {
-      if (!active() || sequence.current !== n) return;
+    return () => { current.mounted = false; sequence.current += 1; };
+    // Permission suspension does not dispose of a captured command.
+  }, [current]);
+
+  useEffect(() => {
+    const n = sequence.current;
+    let cancelled = false;
+    const currentRead = () => !cancelled && active() && sequence.current === n;
+    if (!canExport || suspended || !currentRead()) { setLoading(false); return; }
+    setLoading(true);
+    const verified = guardFactory.current?.(currentRead);
+    void (async () => {
+      if (verified && !await verified()) return null;
+      const rows = await Promise.all([fetchCanonicalEvidenceSources(roleId), fetchCanonicalEvidenceHistory(roleId)]);
+      if (verified && !await verified()) return null;
+      return rows;
+    })().then((result) => {
+      if (!result) return;
+      const [rows, records] = result;
+      if (!currentRead()) return;
       setSources(rows); setHistory(records); setLoading(false);
       const requested = rows.find((row) => row.decision_id === current.requestedDecisionId);
       if (requested) {
-        setSelected(requested.decision_id); setFrom(new Date(requested.period_start).toISOString().slice(0, 10)); setTo(new Date(requested.period_end).toISOString().slice(0, 10));
+        setSelected((value) => value || requested.decision_id);
+        setFrom((value) => value || new Date(requested.period_start).toISOString().slice(0, 10));
+        setTo((value) => value || new Date(requested.period_end).toISOString().slice(0, 10));
       }
     }).catch((err: unknown) => {
-      if (!active() || sequence.current !== n) return;
+      if (!currentRead()) return;
       setError(err instanceof Error ? err.message : "正式證據來源讀取失敗。"); setLoading(false);
-    });
-    return () => { current.mounted = false; sequence.current += 1; };
-    // Each identity/role/authority transition captures a new object, including A→B→A.
-  }, [active, canExport, current, roleId]);
+    }).finally(() => { if (!cancelled && owned() && sequence.current === n) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [active, current, roleId, canExport, suspended, owned]);
 
-  const ready = readContext === current && !loading && canExport;
+  const ready = readContext === current && !loading && canExport && !suspended;
   const source = sources.find((row) => row.decision_id === selected);
   const sections: Array<"decision_log" | "audit"> = [...(decision ? ["decision_log" as const] : []), ...(audit ? ["audit" as const] : [])];
   const selection: CanonicalEvidenceSelection | null = source && from && to && reason.trim() && sections.length
@@ -88,14 +124,17 @@ export function CanonicalEvidencePanel({ roleId, canExport, requestedDecisionId 
   async function perform(command: "preview" | "create") {
     if (!ready || !active() || busy.current || !selection || !source || (command === "create" && !shownPreview)) return;
     const n = sequence.current;
+    const verified = guardFactory.current?.(() => active() && sequence.current === n);
     if (command === "create" && completed.current.has(previewKey)) {
       setNotice(`已建立 ${completed.current.get(previewKey)}；請重新讀取投遞狀態，不會再次產生。`);
       return;
     }
     busy.current = true; setRunning(true); setError(""); setNotice("");
     try {
+      if (verified && !await verified()) return;
       if (command === "preview") {
         const value = await previewCanonicalEvidence(selection, roleId);
+        if (verified && !await verified()) return;
         if (!active() || sequence.current !== n) return;
         if (value.document.source_digest !== source.source_digest) throw new Error("決策來源已變更，請重新讀取來源後預覽。");
         setPreview({ signature, value });
@@ -104,6 +143,7 @@ export function CanonicalEvidencePanel({ roleId, canExport, requestedDecisionId 
         const capturedPreview = `${signature}:${shownPreview.artifact_sha256}`;
         if (intent.current?.signature !== capturedPreview) intent.current = { signature: capturedPreview, key: `ik-evidence-${crypto.randomUUID()}` };
         const id = await createCanonicalEvidence(selection, intent.current.key, shownPreview.artifact_sha256, roleId);
+        if (verified && !await verified()) return;
         if (!active() || sequence.current !== n) return;
         completed.current.set(capturedPreview, id);
         setCreated(Object.fromEntries(completed.current));
@@ -111,6 +151,7 @@ export function CanonicalEvidencePanel({ roleId, canExport, requestedDecisionId 
         setNotice(`已建立 ${id}；投遞狀態待確認。`);
         try {
           const rows = await fetchCanonicalEvidenceHistory(roleId);
+          if (verified && !await verified()) return;
           if (!active() || sequence.current !== n) return;
           setHistory(rows);
           const actual = rows.find((row) => row.export_id === id);
@@ -123,16 +164,19 @@ export function CanonicalEvidencePanel({ roleId, canExport, requestedDecisionId 
       if (!active() || sequence.current !== n) return;
       setError(err instanceof Error ? err.message : "正式證據作業失敗。");
     } finally {
-      if (active() && sequence.current === n) { busy.current = false; setRunning(false); }
+      if (owned() && sequence.current === n) { busy.current = false; setRunning(false); }
     }
   }
 
   async function reload() {
     if (!active() || busy.current || loading || !canExport) return;
     const n = sequence.current;
+    const verified = guardFactory.current?.(() => active() && sequence.current === n);
     busy.current = true; setRunning(true); setError("");
     try {
+      if (verified && !await verified()) return;
       const [rows, records] = await Promise.all([fetchCanonicalEvidenceSources(roleId), fetchCanonicalEvidenceHistory(roleId)]);
+      if (verified && !await verified()) return;
       if (!active() || sequence.current !== n) return;
       setSources(rows); setHistory(records);
       const actual = rows.find((row) => row.decision_id === selected);
@@ -156,16 +200,19 @@ export function CanonicalEvidencePanel({ roleId, canExport, requestedDecisionId 
         ? `證據包 ${knownCreatedId} 已建立；投遞狀態重讀失敗，請重新讀取，不需再次產生。`
         : "正式來源與投遞狀態重讀失敗；未再次產生證據包。");
     } finally {
-      if (active() && sequence.current === n) { busy.current = false; setRunning(false); }
+      if (owned() && sequence.current === n) { busy.current = false; setRunning(false); }
     }
   }
 
   async function download(row: CanonicalEvidenceHistory) {
     if (!ready || !active() || busy.current || !row.download_ready || !row.external_acknowledged) return;
     const n = sequence.current;
+    const verified = guardFactory.current?.(() => active() && sequence.current === n);
     busy.current = true; setRunning(true); setError("");
     try {
+      if (verified && !await verified()) return;
       const file = await downloadCanonicalEvidence(row.export_id, format, roleId);
+      if (verified && !await verified()) return;
       if (!active() || sequence.current !== n) return;
       const url = URL.createObjectURL(file.blob);
       try {
@@ -176,7 +223,7 @@ export function CanonicalEvidencePanel({ roleId, canExport, requestedDecisionId 
     } catch (err: unknown) {
       if (active() && sequence.current === n) setError(err instanceof Error ? err.message : "證據檔案尚不可下載。");
     } finally {
-      if (active() && sequence.current === n) { busy.current = false; setRunning(false); }
+      if (owned() && sequence.current === n) { busy.current = false; setRunning(false); }
     }
   }
 
@@ -197,6 +244,7 @@ export function CanonicalEvidencePanel({ roleId, canExport, requestedDecisionId 
   const missingLabels: Record<string, string> = { outcome: "成效", execution: "候選實現", input_snapshot_references: "輸入快照參照" };
   const missing = Array.isArray(coverage.missing) ? coverage.missing.map((item) => typeof item === "string" ? missingLabels[item] ?? "未提供" : "未提供").join("、") : "未提供";
 
+  if (!hints && !suspended) return <OperatorDataUnavailableGate status="error" failure={{ kind: "storage" }} />;
   return <section className={styles.evidencePackageGrid} aria-label="Evidence Package export">
     <div className={styles.exportPanel} style={{ minWidth: 0 }}>
       <div className={styles.exportPanelTitle}>產生 Evidence Package</div>

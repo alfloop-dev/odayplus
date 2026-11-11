@@ -697,7 +697,7 @@ export function DesignStoreOpsWorkspace({
 }: DesignStoreOpsWorkspaceProps) {
   const fixturesAllowed = operatorFixturesAllowed();
   // 1. Get current operator role from sessionStorage if available
-  const [roleId, setRoleId] = useState<OperatorRoleId>("opsLead");
+  const [roleId, setRoleId] = useState<OperatorRoleId>((activeRoleId as OperatorRoleId | undefined) ?? "opsLead");
   const [apiState, setApiState] = useState<StoreOpsApiState | null>(null);
   const [hasSuccessfulStoreOpsResponse, setHasSuccessfulStoreOpsResponse] = useState(false);
   const [storeOpsRefreshToken, setStoreOpsRefreshToken] = useState(0);
@@ -707,13 +707,16 @@ export function DesignStoreOpsWorkspace({
   );
   const [storeOpsLoadError, setStoreOpsLoadError] = useState<string | null>(null);
   useEffect(() => {
+    // The production Console already supplies its verified persona. A stale
+    // browser preference cannot replace it or make this mount touch storage.
+    if (activeRoleId) { setRoleId(activeRoleId as OperatorRoleId); return; }
     if (typeof window !== "undefined") {
       const storedRole = window.sessionStorage.getItem("oday.operator.role") as OperatorRoleId;
       if (storedRole) {
         setRoleId(storedRole);
       }
     }
-  }, []);
+  }, [activeRoleId]);
 
   // 2. Search & filter states
   const [searchQuery, setSearchQuery] = useState("");

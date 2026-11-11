@@ -186,7 +186,7 @@ export function SiteScorePanel({
                       <td>{card.score ?? "未提供"}</td>
                       <td><ToneBadge tone={recommendationTone(card.recommendation)}>{card.recommendation}</ToneBadge></td>
                       <td>{card.band.p50}</td>
-                      <td>{card.payback}</td>
+                      <td>{card.payback ?? "—"}</td>
                       <td>{card.datasetSnapshotId}</td>
                     </tr>
                   ))}

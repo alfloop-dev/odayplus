@@ -91,6 +91,11 @@ vi.mock("../network/networkFindAreasLoader", () => {
   return { loadNetworkFindAreasBindings: vi.fn() };
 });
 
+vi.mock("../issueFixtures", async (importOriginal) => {
+  trace.loaded.push("issue-fixtures");
+  return importOriginal<typeof import("../issueFixtures")>();
+});
+
 vi.mock("../TodayWorkspace", () => {
   trace.loaded.push("today");
   return { TodayWorkspace: (props: ComponentProps<typeof import("../TodayWorkspace").TodayWorkspace>) => {
@@ -119,7 +124,8 @@ function envelope(allowed: WorkspaceId[] = ["today", "store", "growth", "network
   const role = { id: "ops-lead", label: "Controlled operator", subtitle: "Controlled scope", allowedWorkspaces: allowed };
   const counts = { approvals: 0, critical: 0, notifications: 1, search: 0, taskCenter: 1 };
   return {
-    meta: { source: "operator-shell-production", dataMode: "live", role, counts },
+    // The Store workflow opener requires the admitted subject and tenant scope.
+    meta: { source: "operator-shell-production", dataMode: "live", tenantId: "00000000-0000-0000-0000-000000000116", role, counts },
     navigation: { roles: [role], allowedWorkspaces: allowed,
       workspaces: allowed.map((id) => ({ id, label: id, shortLabel: id, description: id, allowed: true })) },
     header: { counts },
@@ -162,12 +168,12 @@ describe("Console conditional owner import boundary", () => {
     render(<OperatorConsole shellView={shellView} searchParams={{ ws: "growth", view: "approvals" }} />);
     await waitFor(() => expect(control.paths).toContain("/api/v1/operator/bootstrap"));
     expect(trace.rendered).toEqual([]);
-    expect(trace.loaded.filter((name) => ["store", "growth", "dialog", "network", "network-bindings", "governance", "notification-popover", "today", "openapi-client"].includes(name))).toEqual([]);
+    expect(trace.loaded.filter((name) => ["store", "growth", "dialog", "network", "network-bindings", "governance", "notification-popover", "today", "openapi-client", "issue-fixtures"].includes(name))).toEqual([]);
     await act(async () => { control.release(json(envelope())); });
     const child = await screen.findByTestId("deferred-" + (shellView === "tasks" ? "tasks" : "notification-page"));
     expect(child.getAttribute("data-scope")).toContain("controlled-current-subject");
     expect(trace.rendered.every((name) => name === (shellView === "tasks" ? "tasks" : "notification-page"))).toBe(true);
-    expect(trace.loaded.filter((name) => ["store", "growth", "dialog", "network", "network-bindings", "governance", "notification-popover", "today", "openapi-client"].includes(name))).toEqual([]);
+    expect(trace.loaded.filter((name) => ["store", "growth", "dialog", "network", "network-bindings", "governance", "notification-popover", "today", "openapi-client", "issue-fixtures"].includes(name))).toEqual([]);
     if (shellView === "tasks") {
       expect(child).toHaveAttribute("data-role", "ops-lead"); expect(child).toHaveAttribute("data-fixtures", "false");
     } else expect(child).toHaveAttribute("data-subject", "controlled-current-subject");

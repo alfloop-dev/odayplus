@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GovernanceWorkspace, inspectGovernanceSnapshot } from "../GovernanceWorkspace";
 import { OperatorConsole } from "../OperatorConsole";
@@ -9,9 +9,9 @@ import { catalog, previewValue, reply, selection, source } from "./fixtures/cano
 
 // Preserve the existing protected-read premise while the shell now rechecks
 // the canonical session. This is unit transport data, not a grant/principal.
-function stubAuthenticatedFetch(read: typeof fetch) {
+function stubAuthenticatedFetch(read: typeof fetch, session?: () => { subject: string; expiresAt: number }) {
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input) === "/auth/session"
-    ? Promise.resolve(new Response(JSON.stringify({ subject: "unit-shell-account", expiresAt: Math.floor(Date.now() / 1000) + 3600 }), {
+    ? Promise.resolve(new Response(JSON.stringify(session?.() ?? { subject: "unit-shell-account", expiresAt: Math.floor(Date.now() / 1000) + 3600 }), {
       status: 200, headers: { "Content-Type": "application/json" },
     })) : read(input, init)));
 }
@@ -497,11 +497,15 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(nav.search),
 }));
 
-function stubConsoleGovernance(governanceSnapshot: unknown, canonicalEvidence = false) {
+function stubConsoleGovernance(governanceSnapshot: unknown, canonicalEvidence = false,
+  intercept?: (url: URL, init?: RequestInit) => Response | Promise<Response> | undefined,
+  session?: () => { subject: string; expiresAt: number }) {
   const writes: string[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input instanceof Request ? input.url : input), "http://localhost");
     if ((init?.method ?? "GET") !== "GET") writes.push(url.pathname);
+    const override = intercept?.(url, init);
+    if (override) return override;
     // Explicit HTTP read fixtures for the new production preview prerequisite;
     // no authority is granted by a selected persona or a generated UI record.
     if (canonicalEvidence && url.pathname === "/api/v1/audit/evidence/sources") return reply(catalog());
@@ -515,7 +519,7 @@ function stubConsoleGovernance(governanceSnapshot: unknown, canonicalEvidence = 
     }
     return new Response(JSON.stringify({ detail: "not routed" }), { status: 503, headers: { "Content-Type": "application/json" } });
   });
-  stubAuthenticatedFetch( fetchMock);
+  stubAuthenticatedFetch(fetchMock, session);
   return { fetchMock, writes };
 }
 
@@ -533,6 +537,88 @@ describe("Governance decision authority in the production Operator Console mount
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+  });
+
+  it("retains the actual Evidence owner and unknown key through the Console gate and a fresh Governance snapshot", async () => {
+    nav.search = "ws=govern&tab=evidencePackage";
+    let finishExport!: (response: Response) => void;
+    let finishSnapshot!: (response: Response) => void;
+    let recovering = false;
+    const { fetchMock } = stubConsoleGovernance(decidingSnapshot, true, (url) => {
+      if (url.pathname.endsWith("/export")) return new Promise<Response>((resolve) => { finishExport = resolve; });
+      if (recovering && url.pathname.endsWith("/snapshot")) return new Promise<Response>((resolve) => { finishSnapshot = resolve; });
+    });
+    render(<OperatorConsole searchParams={{ ws: "govern", tab: "evidencePackage" }} />);
+    await screen.findByRole("option", { name: /candidate-engineering/ });
+    const reason = screen.getByLabelText("匯出理由");
+    fireEvent.change(screen.getByLabelText("決策來源（SiteScore）"), { target: { value: source.decision_id } });
+    fireEvent.change(reason, { target: { value: selection.reason } });
+    fireEvent.click(screen.getByRole("button", { name: "預覽實際欄位與遮罩" }));
+    await screen.findByTestId("canonical-evidence-preview");
+    fireEvent.click(screen.getByTestId("governance-export-button"));
+    await waitFor(() => expect(finishExport).toBeTypeOf("function"));
+    const exportWrites = () => fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/export"));
+    const first = exportWrites()[0][1]!;
+    const denied = vi.spyOn(window.sessionStorage, "getItem").mockImplementation(() => {
+      throw new DOMException("Denied", "SecurityError");
+    });
+    try {
+      fireEvent.click(screen.getByTestId("operator-command-trigger"));
+      await screen.findByRole("heading", { name: "瀏覽器無法保存或核對操作狀態" });
+      expect(reason).toBeInTheDocument(); expect(reason).not.toBeVisible();
+      await act(async () => { finishExport(reply({ export_id: "engineering-export", artifact_sha256: previewValue().artifact_sha256,
+        delivery_status: "pending", download_ready: false, external_acknowledged: false }, 201)); });
+      fireEvent.click(screen.getByRole("button", { name: "重新載入" }));
+      expect(exportWrites()).toHaveLength(1);
+      denied.mockRestore(); recovering = true;
+      fireEvent.click(screen.getByRole("button", { name: "重新載入" }));
+      await waitFor(() => expect(finishSnapshot).toBeTypeOf("function"));
+      expect(reason).toBeInTheDocument(); expect(reason).not.toBeVisible();
+      expect(screen.getByTestId("governance-export-button")).toBeDisabled();
+      expect(exportWrites()).toHaveLength(1);
+      await act(async () => { finishSnapshot(reply(decidingSnapshot)); });
+      await waitFor(() => expect(screen.getByTestId("governance-export-button")).toBeEnabled());
+      expect(screen.getByLabelText("匯出理由")).toBe(reason);
+      expect(reason).toHaveValue(selection.reason); expect(reason).toBeVisible();
+      fireEvent.click(screen.getByTestId("governance-export-button"));
+      await waitFor(() => expect(exportWrites()).toHaveLength(2));
+      const second = exportWrites()[1][1]!;
+      expect(second.body).toBe(first.body);
+      expect(new Headers(second.headers).get("Idempotency-Key")).toBe(new Headers(first.headers).get("Idempotency-Key"));
+      await act(async () => { finishExport(reply({ export_id: "engineering-export", artifact_sha256: previewValue().artifact_sha256,
+        delivery_status: "pending", download_ready: false, external_acknowledged: false }, 201)); });
+      await screen.findByTestId("canonical-evidence-created");
+    } finally { denied.mockRestore(); }
+  });
+
+  it("disposes of the old Evidence owner as soon as session B is verified, before B bootstrap can settle", async () => {
+    nav.search = "ws=govern&tab=evidencePackage";
+    let actor = "unit-shell-account";
+    let finishExport!: (response: Response) => void, finishBootstrap!: (response: Response) => void;
+    const { fetchMock } = stubConsoleGovernance(decidingSnapshot, true, (url) => {
+      if (url.pathname.endsWith("/export")) return new Promise<Response>((resolve) => { finishExport = resolve; });
+      if (actor === "unit-account-B" && url.pathname.endsWith("/bootstrap"))
+        return new Promise<Response>((resolve) => { finishBootstrap = resolve; });
+    }, () => ({ subject: actor, expiresAt: Math.floor(Date.now() / 1000) + 3600 }));
+    render(<OperatorConsole searchParams={{ ws: "govern", tab: "evidencePackage" }} />);
+    await screen.findByRole("option", { name: /candidate-engineering/ });
+    fireEvent.change(screen.getByLabelText("決策來源（SiteScore）"), { target: { value: source.decision_id } });
+    const oldReason = screen.getByLabelText("匯出理由");
+    fireEvent.change(oldReason, { target: { value: selection.reason } });
+    fireEvent.click(screen.getByRole("button", { name: "預覽實際欄位與遮罩" }));
+    await screen.findByTestId("canonical-evidence-preview");
+    fireEvent.click(screen.getByTestId("governance-export-button"));
+    await waitFor(() => expect(finishExport).toBeTypeOf("function"));
+    actor = "unit-account-B";
+    await act(async () => { finishExport(reply({ export_id: "engineering-export", artifact_sha256: previewValue().artifact_sha256,
+      delivery_status: "pending", download_ready: false, external_acknowledged: false }, 201)); });
+    await waitFor(() => expect(finishBootstrap).toBeTypeOf("function"));
+    expect(oldReason).not.toBeInTheDocument();
+    expect(screen.queryByTestId("canonical-evidence-preview")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/export"))).toHaveLength(1);
+    await act(async () => { finishBootstrap(reply({ detail: "B denied" }, 403)); });
+    await screen.findByText("此帳號沒有營運資料讀取權限");
+    expect(oldReason).not.toBeInTheDocument();
   });
 
   it("defers the dormant workspace until navigation, then preserves read-admin authority and config access", async () => {

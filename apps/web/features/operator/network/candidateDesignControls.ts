@@ -1,4 +1,5 @@
 import type { CandidateNativeWorkflowReads, CandidateReadField, CandidateWorkflowStage, ScoringCandidate } from "./networkScoringTypes";
+import { pendingScoreJob } from "./candidateScoreJobs";
 
 // R7 Package10: the binding standalone artifact (1aefb806...) and canonical
 // source (cc4e6ae9...) share this original order. Supplemental reads do not
@@ -41,7 +42,8 @@ function workflowUnavailableReason(candidate: ScoringCandidate, stage: Candidate
 export function candidateMatchesPipeline(candidate: ScoringCandidate, filter: CandidatePipelineFilter, native?: CandidateNativeWorkflowReads) {
   if (filter === "all") return true;
   if (filter === "compare") return candidate.inCompare;
-  if (native) return native[candidate.id]?.availability === "recorded" && native[candidate.id].stage === filter;
+  if (native) return filter === "scoring" ? Boolean(native[candidate.id]?.scoreJob && pendingScoreJob(native[candidate.id].scoreJob!))
+    : native[candidate.id]?.availability === "recorded" && native[candidate.id].stage === filter;
   if (filter === "needdata") return !candidate.gate.passed;
   if (filter === "ready") return !candidate.scored && candidate.gate.passed;
   if (filter === "evaluated") return candidate.scored;
@@ -51,8 +53,9 @@ export function candidateMatchesPipeline(candidate: ScoringCandidate, filter: Ca
 export function candidatePipelineControls(candidates: ScoringCandidate[], native?: CandidateNativeWorkflowReads) {
   return CANDIDATE_PIPELINE.map((stage) => {
     if (native) {
-      const unsupported = stage.id === "scoring" || stage.id === "shortlisted";
-      const unknown = stage.id !== "all" && (unsupported || candidates.some((candidate) => native[candidate.id]?.availability !== "recorded"));
+      const unsupported = stage.id === "shortlisted";
+      const unknown = stage.id !== "all" && (unsupported || candidates.some((candidate) => stage.id === "scoring"
+        ? native[candidate.id]?.scoreJob?.availability !== "recorded" : native[candidate.id]?.availability !== "recorded"));
       return { ...stage, count: unknown ? null : candidates.filter((candidate) => candidateMatchesPipeline(candidate, stage.id, native)).length,
         available: !unknown, reason: unsupported ? PRODUCER_REASONS[stage.id as CandidateWorkflowStage]
           : unknown ? [...new Set(candidates.map((candidate) => native[candidate.id]?.reason ?? "流程關聯尚未核驗。"))].join(" ")

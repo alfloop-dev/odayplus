@@ -33,6 +33,8 @@ for (const width of [1440, 1024, 390]) {
     });
     await page.goto("/operator?ws=govern&entity=ap-store-1042");
     const detail = page.getByRole("article", { name: "Approval detail" });
+    // Act only after the routed server snapshot (actionAuthority) is admitted, not on offline fixtures.
+    await expect(page.getByTestId("governance-decision-authority")).toHaveAttribute("title", /operations_manager/, { timeout: 30_000 });
     await detail.getByRole("button", { name: "核准", exact: true }).click();
     await expect(detail).toContainText("尚未確認決策結果");
     await expect(detail.getByRole("button", { name: "核准", exact: true })).toBeEnabled();
@@ -45,6 +47,7 @@ for (const width of [1440, 1024, 390]) {
     await expect(detail).toContainText("Approved submitted for ap-store-1042");
     await page.goto("/operator?ws=govern&tab=evidencePackage&entity=ap-store-1042");
     await page.getByTestId("governance-tab-evidencePackage").click();
+    await expect(page.getByTestId("governance-decision-authority")).toHaveAttribute("title", /operations_manager/, { timeout: 30_000 });
     const exportPanel = page.getByRole("region", { name: "Evidence Package export" });
     await exportPanel.getByTestId("governance-export-button").click();
     await expect(exportPanel.getByLabel("起始日")).toBeDisabled();

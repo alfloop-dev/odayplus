@@ -5,6 +5,16 @@
   color: #172033;
 }
 
+.candidateWorkflowFacts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 8px 16px;
+  margin: 0 0 12px;
+  font-size: 12px;
+}
+.candidateWorkflowFacts dt { font-weight: 700; }
+.candidateWorkflowFacts dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+
 /* Package 10 S05 page header: title, summary and KPI chips on one row. */
 .header {
   display: flex;
