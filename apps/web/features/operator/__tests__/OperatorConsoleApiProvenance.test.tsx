@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole, operatorBootstrapRetryPolicy } from "../OperatorConsole";
 
@@ -154,5 +154,134 @@ describe("Operator API banner accurately labels the permitted data lane", () => 
     await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"));
     expect(screen.queryByText("目前顯示的是經驗證的正式營運資料。")).not.toBeInTheDocument();
     expect(screen.queryByText("Live unresolved")).not.toBeInTheDocument();
+  });
+});
+
+// Header counts are business facts only after the admitted shell envelope or a
+// validated current-scope read; cleared emptyEnvelope zeros stay unknown.
+const headerCount = (testId: string) => screen.getByTestId(testId).querySelector("[data-count-state]") as HTMLElement;
+const headerTestIds = ["operator-notification-button", "operator-task-center-count", "operator-approval-count"];
+function expectUnknownHeader() {
+  for (const testId of headerTestIds) {
+    expect(headerCount(testId)).toHaveAttribute("data-count-state", "unknown");
+    expect(headerCount(testId)).toHaveTextContent("—");
+    expect(headerCount(testId)).not.toHaveTextContent("0");
+  }
+}
+function controlledProductionReads(subject = { current: "unit-shell-account" }, rejectedBootstrap?: () => Response) {
+  const bootstraps: Array<(response: Response) => void> = [];
+  const taskReads: string[] = [];
+  let taskResponse = () => new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/auth/session") return Promise.resolve(new Response(JSON.stringify({ subject: subject.current, expiresAt: Math.floor(Date.now() / 1000) + 3600 }), {
+      status: 200, headers: { "Content-Type": "application/json" } }));
+    if (url === "/api/v1/operator/bootstrap" && rejectedBootstrap) return Promise.resolve(rejectedBootstrap());
+    if (url === "/api/v1/operator/bootstrap") return new Promise<Response>((resolve) => { bootstraps.push(resolve); });
+    if (url === "/api/v1/operator/shell/tasks") { taskReads.push(subject.current); return Promise.resolve(taskResponse()); }
+    return Promise.resolve(new Response(null, { status: 404 }));
+  }));
+  const release = async (body: unknown, status = 200) => {
+    await waitFor(() => expect(bootstraps.length).toBeGreaterThan(0));
+    await act(async () => { bootstraps.shift()!(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })); });
+  };
+  return { release, taskReads, pendingBootstraps: () => bootstraps.length, setTaskResponse: (next: () => Response) => { taskResponse = next; } };
+}
+const taskSourceChip = (popover: HTMLElement) => within(popover.querySelector("[class*='taskCenterHeader']") as HTMLElement);
+const withCounts = (counts: Partial<typeof liveEnvelope.header.counts>) => ({ ...liveEnvelope,
+  meta: { ...liveEnvelope.meta, counts: { ...liveEnvelope.meta.counts, ...counts } },
+  header: { counts: { ...liveEnvelope.header.counts, ...counts } } });
+
+describe("Operator header counts never present unverified shells as zero", () => {
+  beforeEach(() => { vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true"); });
+
+  it("keeps notification, task and approval counts unknown while production bootstrap is loading", async () => {
+    const control = controlledProductionReads();
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    await waitFor(() => expect(control.pendingBootstraps()).toBe(1));
+    expectUnknownHeader();
+    await control.release(withCounts({ notifications: 3, taskCenter: 2, approvals: 4 }));
+    await screen.findByText("Live unresolved");
+    expect(headerCount("operator-notification-button")).toHaveTextContent("3");
+    expect(headerCount("operator-task-center-count")).toHaveTextContent("2");
+    expect(headerCount("operator-approval-count")).toHaveTextContent("4");
+  });
+
+  it.each([
+    ["error", { detail: "unit refusal" }, 503],
+    ["seed", seedEnvelope, 200],
+  ] as const)("keeps header counts unknown after a rejected %s bootstrap", async (_kind, body, status) => {
+    controlledProductionReads(undefined, () => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).not.toHaveAttribute("data-status", "loading"));
+    expect(screen.queryByText("Live unresolved")).not.toBeInTheDocument();
+    expectUnknownHeader();
+  });
+
+  it("does not claim API status or zero counts in a task popover whose read is blocked", async () => {
+    const control = controlledProductionReads();
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    await waitFor(() => expect(control.pendingBootstraps()).toBe(1));
+    fireEvent.click(screen.getByTestId("operator-task-center-button"));
+    const popover = await screen.findByTestId("operator-task-center");
+    expect(within(popover).getByTestId("operator-task-center-not-loaded")).toBeVisible();
+    expect(taskSourceChip(popover).queryByText("API", { exact: true })).not.toBeInTheDocument();
+    expect(taskSourceChip(popover).getByText("NOT LOADED", { exact: true })).toBeVisible();
+    const summary = within(popover).getByLabelText("Task center summary");
+    expect(summary).not.toHaveTextContent(/0\s*(API|Urgent|Visible)/);
+    expect(summary).toHaveTextContent(/—\s*API/);
+    expect(summary).toHaveTextContent(/—\s*Visible/);
+    expect(control.taskReads).toEqual([]);
+  });
+
+  it("does not claim an API task total after the task read fails", async () => {
+    const control = controlledProductionReads();
+    control.setTaskResponse(() => new Response(JSON.stringify({ detail: "unit task refusal" }), { status: 503, headers: { "Content-Type": "application/json" } }));
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    await control.release(withCounts({ taskCenter: 5 }));
+    await screen.findByText("Live unresolved");
+    fireEvent.click(screen.getByTestId("operator-task-center-button"));
+    const popover = await screen.findByTestId("operator-task-center");
+    await within(popover).findByTestId("operator-task-center-unavailable");
+    expect(taskSourceChip(popover).getByText("UNAVAILABLE", { exact: true })).toBeVisible();
+    const summary = within(popover).getByLabelText("Task center summary");
+    expect(summary).toHaveTextContent(/—\s*API/);
+    expect(summary).not.toHaveTextContent(/5\s*API/);
+    expect(summary).toHaveTextContent(/0\s*Visible/);
+  });
+
+  it("keeps a genuine zero from the validated current API envelope and task read", async () => {
+    const control = controlledProductionReads();
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    await control.release(withCounts({ notifications: 0, taskCenter: 0, approvals: 0 }));
+    await screen.findByText("Live unresolved");
+    for (const testId of headerTestIds) {
+      expect(headerCount(testId)).toHaveAttribute("data-count-state", "known");
+      expect(headerCount(testId)).toHaveTextContent("0");
+    }
+    fireEvent.click(screen.getByTestId("operator-task-center-button"));
+    const popover = await screen.findByTestId("operator-task-center");
+    await within(popover).findByText("Task API 已回應，但目前沒有可用任務。");
+    expect(taskSourceChip(popover).getByText("API", { exact: true })).toBeVisible();
+    expect(within(popover).getByLabelText("Task center summary")).toHaveTextContent(/0\s*API/);
+    expect(control.taskReads).toEqual(["unit-shell-account"]);
+  });
+
+  it("clears the prior identity's counts and keeps them unknown until the new identity is admitted", async () => {
+    const subject = { current: "unit-shell-account" };
+    const control = controlledProductionReads(subject);
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    await control.release(withCounts({ notifications: 3, taskCenter: 2, approvals: 4 }));
+    await screen.findByText("Live unresolved");
+    expect(headerCount("operator-task-center-count")).toHaveTextContent("2");
+    subject.current = "unit-other-account";
+    fireEvent.click(screen.getByTestId("operator-task-center-button"));
+    await waitFor(() => expect(control.pendingBootstraps()).toBe(1));
+    expectUnknownHeader();
+    expect(control.taskReads).toEqual([]);
+    await control.release(withCounts({ notifications: 0, taskCenter: 7, approvals: 1 }));
+    await waitFor(() => expect(headerCount("operator-task-center-count")).toHaveTextContent("7"));
+    expect(headerCount("operator-notification-button")).toHaveTextContent("0");
+    expect(headerCount("operator-approval-count")).toHaveTextContent("1");
   });
 });

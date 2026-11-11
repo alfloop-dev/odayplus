@@ -434,7 +434,7 @@ export function OperatorConsole({
     setShellEnvelope(normalizeShellEnvelope(undefined, { allowFixtureFallback: false }));
     setLiveNotifications([]); setConfirmedNotificationCount(null); setLiveIssues([]); setLiveNetworkBindings(null);
     setLiveApprovals([]); setLiveGovernanceDecisions([]); setLiveGovernanceAuditRows([]);
-    setLiveTasks([]); setConfirmedTaskCount(null); setTaskCenterLoadState("idle");
+    setLiveTasks([]); setConfirmedTaskCount(null); setTaskCenterSource("api"); setTaskCenterLoadState("idle");
   }, []);
 
   // One Console availability latch shares the original epoch/error gate.
@@ -545,8 +545,14 @@ export function OperatorConsole({
   const activeWorkspace = getWorkspace(activeWorkspaceId);
   const liveWorkQueue = shellEnvelope.workQueue;
   const liveDecisions = shellEnvelope.decisions;
-  const canRenderWorkspace = !storageFailure.current && (shellDataStatus === "ready" || fixturesAllowed && bootstrapAuthMode === "fixture")
-    && isWorkspaceAllowed(activeRole, activeWorkspaceId);
+  const shellReadAvailable = !storageFailure.current && (shellDataStatus === "ready" || fixturesAllowed && bootstrapAuthMode === "fixture");
+  const canRenderWorkspace = shellReadAvailable && isWorkspaceAllowed(activeRole, activeWorkspaceId);
+  // Header counts come only from the admitted envelope or a validated
+  // current-scope callback. Loading/error/seed/empty shells keep the cleared
+  // emptyEnvelope zeros, which are unknown rather than a business count.
+  const notificationHeaderCount = shellReadAvailable ? confirmedNotificationCount ?? shellEnvelope.header.counts.notifications : null;
+  const taskHeaderCount = shellReadAvailable ? confirmedTaskCount ?? shellEnvelope.header.counts.taskCenter : null;
+  const approvalHeaderCount = shellReadAvailable ? shellEnvelope.header.counts.approvals : null;
   // Retain the original Govern/Evidence owner while the Console reauthenticates.
   // Only closed verified identity metadata is kept; a new principal remounts it.
   const governanceOwner = useRef<{ key: string; subject: string | null } | null>(null);
@@ -1483,10 +1489,12 @@ export function OperatorConsole({
                 <span
                   className={[
                     styles.headerCount,
-                    (confirmedNotificationCount ?? shellEnvelope.header.counts.notifications) > 0 ? styles.headerCount_alert : "",
+                    (notificationHeaderCount ?? 0) > 0 ? styles.headerCount_alert : "",
                   ].join(" ")}
+                  data-count-state={notificationHeaderCount === null ? "unknown" : "known"}
+                  title={notificationHeaderCount === null ? "通知數尚未確認" : undefined}
                 >
-                  {confirmedNotificationCount ?? shellEnvelope.header.counts.notifications}
+                  {notificationHeaderCount ?? "—"}
                 </span>
               </button>
               {shellView !== "notifications" && isNotificationOpen && canRenderWorkspace ? (
@@ -1518,15 +1526,17 @@ export function OperatorConsole({
                   <strong
                     className={[
                       styles.headerCount,
-                      taskSummary.urgent > 0 && shellEnvelope.header.counts.taskCenter > 0 ? styles.headerCount_alert : "",
+                      taskSummary.urgent > 0 && (taskHeaderCount ?? 0) > 0 ? styles.headerCount_alert : "",
                     ].join(" ")}
+                    data-count-state={taskHeaderCount === null ? "unknown" : "known"}
+                    title={taskHeaderCount === null ? "任務數尚未確認" : undefined}
                   >
-                    {confirmedTaskCount ?? shellEnvelope.header.counts.taskCenter}
+                    {taskHeaderCount ?? "—"}
                   </strong>
                 </span>
               </button>
               {isTaskCenterOpen ? (
-                <OperatorTaskPopover shellEnvelope={shellEnvelope} taskCenterSource={taskCenterSource}
+                <OperatorTaskPopover taskCenterCount={taskHeaderCount} taskCenterSource={taskCenterSource}
                   taskCenterLoadState={taskCenterLoadState} taskSummary={taskSummary}
                   liveTasks={liveTasks} handleTaskSelect={handleTaskSelect} />
               ) : null}
@@ -1542,10 +1552,12 @@ export function OperatorConsole({
               <strong
                 className={[
                   styles.headerCount,
-                  shellEnvelope.header.counts.approvals > 0 ? styles.headerCount_pending : "",
+                  (approvalHeaderCount ?? 0) > 0 ? styles.headerCount_pending : "",
                 ].join(" ")}
+                data-count-state={approvalHeaderCount === null ? "unknown" : "known"}
+                title={approvalHeaderCount === null ? "待核准數尚未確認" : undefined}
               >
-                {shellEnvelope.header.counts.approvals}
+                {approvalHeaderCount ?? "—"}
               </strong>
             </button>
 
