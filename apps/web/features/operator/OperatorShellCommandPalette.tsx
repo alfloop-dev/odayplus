@@ -4,7 +4,7 @@ import { useLayoutEffect, type Dispatch, type KeyboardEvent as ReactKeyboardEven
 import { Button, StatusBadge, type Tone } from "./components";
 import { WORKSPACES, isWorkspaceAllowed, type OperatorRole, type OperatorRoleId, type WorkspaceId } from "./navigation";
 import { NETWORK_TAB_IDS, parseNetworkTabIndex } from "./network/networkUrlState";
-import type { OperatorShellEnvelope, ShellTarget } from "./shellEnvelope";
+import type { OperatorShellEnvelope, ShellCounts, ShellTarget } from "./shellEnvelope";
 import type { Issue } from "./types";
 import type { OperatorTask } from "./OperatorConsole";
 import styles from "./operator.module.css";
@@ -51,10 +51,10 @@ function toDomSafeId(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]+/g, "-");
 }
 
-export function OperatorShellCommandPalette({ activeRole, rolesForShell, shellEnvelope, fixturesAllowed, liveTasks, liveIssues, liveWorkQueue, liveDecisions, liveNotifications, taskSummary, confirmedNotificationCount, commandQuery, isCommandPaletteOpen, activeCommandIndex, setActiveCommandIndex, setCommandQuery, setSearchValue, setIsNotificationOpen, setIsTaskCenterOpen, commandInputRef, closeCommandPalette, handleWorkspaceClick, handleTargetSelect, handleTaskSelect, openTaskCenter, handleReset, handleRoleSelect }: {
+export function OperatorShellCommandPalette({ activeRole, rolesForShell, shellEnvelope, fixturesAllowed, liveTasks, liveIssues, liveWorkQueue, liveDecisions, liveNotifications, taskSummary, headerCounts, commandQuery, isCommandPaletteOpen, activeCommandIndex, setActiveCommandIndex, setCommandQuery, setSearchValue, setIsNotificationOpen, setIsTaskCenterOpen, commandInputRef, closeCommandPalette, handleWorkspaceClick, handleTargetSelect, handleTaskSelect, openTaskCenter, handleReset, handleRoleSelect }: {
   activeRole: OperatorRole; rolesForShell: OperatorRole[]; shellEnvelope: OperatorShellEnvelope; fixturesAllowed: boolean;
   liveTasks: OperatorTask[]; liveIssues: Issue[]; liveWorkQueue: OperatorShellEnvelope["workQueue"]; liveDecisions: OperatorShellEnvelope["decisions"]; liveNotifications: OperatorShellEnvelope["notifications"];
-  taskSummary: { urgent: number }; confirmedNotificationCount: number | null;
+  taskSummary: { urgent: number }; headerCounts: Pick<ShellCounts, "taskCenter" | "notifications" | "critical">;
   commandQuery: string; isCommandPaletteOpen: boolean; activeCommandIndex: number;
   setActiveCommandIndex: Dispatch<SetStateAction<number>>; setCommandQuery: Dispatch<SetStateAction<string>>; setSearchValue: Dispatch<SetStateAction<string>>;
   setIsNotificationOpen: Dispatch<SetStateAction<boolean>>; setIsTaskCenterOpen: Dispatch<SetStateAction<boolean>>;
@@ -144,16 +144,16 @@ const actionCommands: CommandPaletteItem[] = [
       id: "action-task-center",
       group: "actions",
       title: "開啟任務中心",
-      subtitle: `${shellEnvelope.header.counts.taskCenter} API tasks · ${taskSummary.urgent} urgent local`,
+      subtitle: `${headerCounts.taskCenter ?? "—"} API tasks · ${taskSummary.urgent} urgent local`,
       keywords: ["task center", "tasks", "todo", "inbox"],
-      tone: shellEnvelope.header.counts.critical > 0 ? "danger" : "info",
+      tone: (headerCounts.critical ?? 0) > 0 ? "danger" : "info",
       execute: () => openTaskCenter(),
     },
     {
       id: "action-notifications",
       group: "actions",
       title: "開啟通知",
-      subtitle: `${confirmedNotificationCount ?? shellEnvelope.header.counts.notifications} notifications`,
+      subtitle: `${headerCounts.notifications ?? "—"} notifications`,
       keywords: ["notifications", "alerts"],
       tone: liveNotifications.some((notification) => notification.tone === "danger") ? "danger" : "info",
       execute: () => {

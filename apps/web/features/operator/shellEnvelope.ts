@@ -89,12 +89,14 @@ export type ShellSearchItem = {
   target: ShellTarget;
 };
 
+// null means the API did not provide a valid count: render it as unknown,
+// never as 0 and never as a local row total.
 export type ShellCounts = {
-  notifications: number;
-  approvals: number;
-  taskCenter: number;
-  critical: number;
-  search: number;
+  notifications: number | null;
+  approvals: number | null;
+  taskCenter: number | null;
+  critical: number | null;
+  search: number | null;
 };
 
 export type OperatorShellEnvelope = {
@@ -114,7 +116,7 @@ export type OperatorShellEnvelope = {
   };
   header: {
     counts: ShellCounts;
-    taskCenter?: { label: string; count: number };
+    taskCenter?: { label: string; count: number | null };
   };
   today: {
     hero: {
@@ -206,11 +208,11 @@ const emptyEnvelope: OperatorShellEnvelope = {
       allowedWorkspaces: [],
     },
     counts: {
-      approvals: 0,
-      critical: 0,
-      notifications: 0,
-      search: 0,
-      taskCenter: 0,
+      approvals: null,
+      critical: null,
+      notifications: null,
+      search: null,
+      taskCenter: null,
     },
   },
   navigation: {
@@ -220,11 +222,11 @@ const emptyEnvelope: OperatorShellEnvelope = {
   },
   header: {
     counts: {
-      approvals: 0,
-      critical: 0,
-      notifications: 0,
-      search: 0,
-      taskCenter: 0,
+      approvals: null,
+      critical: null,
+      notifications: null,
+      search: null,
+      taskCenter: null,
     },
   },
   today: {
@@ -367,6 +369,16 @@ function normalizeSearch(value: unknown): ShellSearchItem | null {
   };
 }
 
+function readShellCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+// A header field, when present, is authoritative; only an absent header field
+// may use the legitimate meta count. Nothing is derived from row lengths.
+function readHeaderCount(header: Record<string, unknown>, meta: Record<string, unknown>, field: keyof ShellCounts): number | null {
+  return readShellCount(header[field] !== undefined ? header[field] : meta[field]);
+}
+
 function normalizeList<T>(value: unknown, normalizer: (item: unknown) => T | null): T[] {
   if (!Array.isArray(value)) return [];
   return value.map(normalizer).filter((item): item is T => item !== null);
@@ -395,12 +407,12 @@ export function normalizeShellEnvelope(
   const auditFeed = normalizeList(today.auditFeed ?? payload.auditFeed, normalizeAudit);
   const notifications = normalizeList(payload.notifications, normalizeNotification);
   const searchItems = normalizeList(isObject(payload.search) ? payload.search.items : [], normalizeSearch);
-  const normalizedCounts = {
-    approvals: Number(headerCounts.approvals ?? counts.approvals ?? decisions.length),
-    critical: Number(headerCounts.critical ?? counts.critical ?? queue.filter((item) => item.tone === "danger").length),
-    notifications: Number(headerCounts.notifications ?? counts.notifications ?? notifications.length),
-    search: Number(headerCounts.search ?? counts.search ?? searchItems.length),
-    taskCenter: Number(headerCounts.taskCenter ?? counts.taskCenter ?? queue.length),
+  const normalizedCounts: ShellCounts = {
+    approvals: readHeaderCount(headerCounts, counts, "approvals"),
+    critical: readHeaderCount(headerCounts, counts, "critical"),
+    notifications: readHeaderCount(headerCounts, counts, "notifications"),
+    search: readHeaderCount(headerCounts, counts, "search"),
+    taskCenter: readHeaderCount(headerCounts, counts, "taskCenter"),
   };
 
   return {
@@ -410,7 +422,7 @@ export function normalizeShellEnvelope(
     header: {
       counts: normalizedCounts,
       taskCenter: isObject(header.taskCenter)
-        ? { count: Number(header.taskCenter.count ?? normalizedCounts.taskCenter), label: String(header.taskCenter.label ?? "Task Center") }
+        ? { count: header.taskCenter.count !== undefined ? readShellCount(header.taskCenter.count) : normalizedCounts.taskCenter, label: String(header.taskCenter.label ?? "Task Center") }
         : { count: normalizedCounts.taskCenter, label: "Task Center" },
     },
     kpis,

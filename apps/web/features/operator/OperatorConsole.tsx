@@ -547,12 +547,14 @@ export function OperatorConsole({
   const liveDecisions = shellEnvelope.decisions;
   const shellReadAvailable = !storageFailure.current && (shellDataStatus === "ready" || fixturesAllowed && bootstrapAuthMode === "fixture");
   const canRenderWorkspace = shellReadAvailable && isWorkspaceAllowed(activeRole, activeWorkspaceId);
-  // Header counts come only from the admitted envelope or a validated
-  // current-scope callback. Loading/error/seed/empty shells keep the cleared
-  // emptyEnvelope zeros, which are unknown rather than a business count.
+  // Header and command palette counts come only from the admitted envelope or
+  // a validated current-scope callback. A loading/error/seed/empty shell, or a
+  // count the API did not provide, is unknown (null), never a business 0.
   const notificationHeaderCount = shellReadAvailable ? confirmedNotificationCount ?? shellEnvelope.header.counts.notifications : null;
   const taskHeaderCount = shellReadAvailable ? confirmedTaskCount ?? shellEnvelope.header.counts.taskCenter : null;
   const approvalHeaderCount = shellReadAvailable ? shellEnvelope.header.counts.approvals : null;
+  const paletteHeaderCounts = { taskCenter: taskHeaderCount, notifications: notificationHeaderCount,
+    critical: shellReadAvailable ? shellEnvelope.header.counts.critical : null };
   // Retain the original Govern/Evidence owner while the Console reauthenticates.
   // Only closed verified identity metadata is kept; a new principal remounts it.
   const governanceOwner = useRef<{ key: string; subject: string | null } | null>(null);
@@ -1739,7 +1741,7 @@ export function OperatorConsole({
           activeRole={activeRole} rolesForShell={rolesForShell} shellEnvelope={shellEnvelope}
           fixturesAllowed={fixturesAllowed} liveTasks={liveTasks} liveIssues={liveIssues}
           liveWorkQueue={liveWorkQueue} liveDecisions={liveDecisions} liveNotifications={liveNotifications}
-          taskSummary={taskSummary} confirmedNotificationCount={confirmedNotificationCount}
+          taskSummary={taskSummary} headerCounts={paletteHeaderCounts}
           commandQuery={commandQuery} isCommandPaletteOpen={isCommandPaletteOpen} activeCommandIndex={activeCommandIndex}
           setActiveCommandIndex={setActiveCommandIndex} setCommandQuery={setCommandQuery}
           setSearchValue={setSearchValue} setIsNotificationOpen={setIsNotificationOpen}

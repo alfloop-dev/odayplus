@@ -285,3 +285,80 @@ describe("Operator header counts never present unverified shells as zero", () =>
     expect(headerCount("operator-approval-count")).toHaveTextContent("1");
   });
 });
+
+describe("Operator ready payload counts are known only when the API provides a valid count", () => {
+  beforeEach(() => { vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true"); });
+  const withRawCounts = (value: unknown) => {
+    const raw = { notifications: value, taskCenter: value, approvals: value, critical: value, search: value };
+    return { ...liveEnvelope, meta: { ...liveEnvelope.meta, counts: raw }, header: { counts: raw } };
+  };
+  const withoutCounts = () => {
+    const { counts: _metaCounts, ...meta } = liveEnvelope.meta;
+    const { header: _header, ...rest } = liveEnvelope;
+    return { ...rest, meta };
+  };
+  // The original palette lists actions only for a matching query.
+  async function paletteCaptions() {
+    fireEvent.click(screen.getByRole("button", { name: "Open command palette" }));
+    const palette = await screen.findByTestId("operator-command-palette");
+    const query = await within(palette).findByRole("combobox", { name: /Command palette search/ });
+    const caption = async (keyword: string, title: string) => {
+      fireEvent.change(query, { target: { value: keyword } });
+      return (await within(palette).findByRole("option", { name: new RegExp(title) })).textContent ?? "";
+    };
+    const captions = { tasks: await caption("inbox", "開啟任務中心"), notifications: await caption("alerts", "開啟通知") };
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("operator-command-palette")).toBeNull());
+    return captions;
+  }
+
+  it.each([
+    ["missing", undefined],
+    ["null", null],
+    ["numeric string", "3"],
+    ["empty string", ""],
+    ["false", false],
+    ["empty array", []],
+    ["negative", -1],
+    ["fractional", 1.5],
+    ["non-numeric string", "abc"],
+  ])("renders a ready payload's %s count as unknown, not 0, NaN or a row total", async (_kind, value) => {
+    const control = controlledProductionReads();
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    await control.release(value === undefined ? withoutCounts() : withRawCounts(value));
+    await screen.findByText("Live unresolved");
+    expectUnknownHeader();
+    for (const testId of headerTestIds) expect(headerCount(testId)).not.toHaveTextContent(/NaN|1/);
+    const palette = await paletteCaptions();
+    expect(palette.tasks).toContain("— API tasks");
+    expect(palette.notifications).toContain("— notifications");
+    expect(palette.tasks).not.toMatch(/(0|1|NaN) API tasks/);
+  });
+
+  it("keeps valid numeric meta counts when the header omits them, including 0", async () => {
+    const control = controlledProductionReads();
+    const { header: _header, ...rest } = liveEnvelope;
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    await control.release({ ...rest, meta: { ...liveEnvelope.meta, counts: { notifications: 0, taskCenter: 4, approvals: 0, critical: 0, search: 0 } } });
+    await screen.findByText("Live unresolved");
+    expect(headerCount("operator-notification-button")).toHaveTextContent("0");
+    expect(headerCount("operator-task-center-count")).toHaveTextContent("4");
+    expect(headerCount("operator-approval-count")).toHaveTextContent("0");
+    for (const testId of headerTestIds) expect(headerCount(testId)).toHaveAttribute("data-count-state", "known");
+  });
+
+  it("keeps command palette counts unknown while loading and shows the admitted counts once ready", async () => {
+    const control = controlledProductionReads();
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    await waitFor(() => expect(control.pendingBootstraps()).toBe(1));
+    const loadingPalette = await paletteCaptions();
+    expect(loadingPalette.tasks).toContain("— API tasks");
+    expect(loadingPalette.notifications).toContain("— notifications");
+    expect(`${loadingPalette.tasks} ${loadingPalette.notifications}`).not.toMatch(/0 (API tasks|notifications)/);
+    await control.release(withCounts({ notifications: 3, taskCenter: 2 }));
+    await screen.findByText("Live unresolved");
+    const readyPalette = await paletteCaptions();
+    expect(readyPalette.tasks).toContain("2 API tasks");
+    expect(readyPalette.notifications).toContain("3 notifications");
+  });
+});
