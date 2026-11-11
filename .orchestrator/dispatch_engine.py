@@ -808,10 +808,13 @@ def route_approved_pr_to_merge(
                 f"{approved_head[:12]}; the new head needs its own review"
             )
         admission, _queue = pr_merge_admission(slug, pr_number, pr)
-    except GitHubBusOffline as exc:
-        return "unknown", f"PR #{pr_number} readback is offline ({exc}); nothing was issued"
-    except GitHubBusError as exc:
-        return "unknown", f"PR #{pr_number} readback failed ({exc}); nothing was issued"
+    except GitHubBusOffline:
+        # Kept free of the exception text: the explanation is written to the
+        # task only when it changes, and a varying error string would rewrite
+        # canonical status on every tick of an outage.
+        return "unknown", f"PR #{pr_number} readback is offline; nothing was issued"
+    except GitHubBusError:
+        return "unknown", f"PR #{pr_number} readback failed; nothing was issued"
 
     if admission == "merged":
         return "merged", f"PR #{pr_number} is already merged"
