@@ -1,9 +1,9 @@
 {
   "schema_version": "2.0.0",
   "registry_id": "ODP-RELEASE-GATE-REGISTRY",
-  "task_id": "ODP-STAGING-ADMISSION-28881624B-001",
-  "generated_at": "2026-11-07",
-  "description": "Candidate 28881624b834fd711e98b29726497107485b0961 (Runtime Release staging build 42423504694, core-ops manifest sha256:40d946512f6321fd3a5b52fcafea08129afdb6614401aaad54783bc4b8e2b167) is dev-verified by the live dev deploy 42373586318, and admitted to staging only under HUMANOPS-STAGING-ADMISSION-20261107G (HD-08g, HD-09g). Exact push CI 42372983710 and merge group CI 42372195272 on 28881624b concluded success, but change scope skipped all 7 product lanes on both. The product lanes last ran on dev at 5eb7cba6c (PR #1661 merged): push CI 42356697819 and merge group CI 42354651502, where product-lint-unit, product-node, product-api-contract, product-db, product-e2e-gate, product-security and performance-gate all succeeded. 28881624b differs from 5eb7cba6c in six paths, all classified as development tooling: .orchestrator/supervisor.py, .orchestrator/test_supervisor.py, .orchestrator/worker_failure_policy.py, delivery_toolchain/e2e/product_e2e_receipt.py, tests/e2e/test_acceptance_coverage.py and tests/tooling/test_ci_product_parallel.py; no product path changed. The receipt module and its test are exercised by product-lint-unit and have not run in CI since those lanes; a local blob:none sparse-clone run of tests/e2e/test_acceptance_coverage.py and tests/release/test_release_manifest.py at 916d1457f (identical content for those files) passed 156 of 157, the one failure being @playwright/test not installed locally. The lanes are not claimed to have run on 28881624b itself in this record. Gate 2 is passed-with-deviation for staging; gates 1 and 4 stay blocked pending owner decision HD-07; gates 3, 5 and 6 block production. A Supervisor lease and the GitHub staging environment approval are still required before any deploy.",
+  "task_id": "ODP-STAGING-ADMISSION-751439BAC-001",
+  "generated_at": "2026-11-10",
+  "description": "Candidate 751439bacac1ac7396bf0300c39eaaae87f21bd7 (Runtime Release staging build 42757249880, core-ops manifest sha256:955b2eba7234ef9db199f8ee456026b56235eda3556a05ba4b4db0c964b8d8ec) is dev-verified by the live dev deploy 42500035692, and admitted to staging only under HUMANOPS-STAGING-ADMISSION-20261110H (HD-08h, HD-09h). Exact push CI 42496350199 on 751439bac ran and passed all 7 product lanes (product-lint-unit, product-node, product-api-contract, product-db, product-e2e-gate, product-security and performance-gate), and merge group CI 42492640644 on 751439bac did the same. Gate 2 is passed-with-deviation for staging; gates 1 and 4 stay blocked pending owner decision HD-07; gates 3, 5 and 6 block production. A Supervisor lease and the GitHub staging environment approval are still required before any deploy.",
   "migration": {
     "from_schema_version": "1.0.0",
     "source_registry_id": "ODP-RELEASE-GATE-REGISTRY",
@@ -12,21 +12,21 @@
     "re_attestation_required": true
   },
   "release": {
-    "candidate_sha": "28881624b834fd711e98b29726497107485b0961",
+    "candidate_sha": "751439bacac1ac7396bf0300c39eaaae87f21bd7",
     "candidate_ref": "refs/heads/dev",
     "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
-    "manifest_digest": "sha256:40d946512f6321fd3a5b52fcafea08129afdb6614401aaad54783bc4b8e2b167",
+    "manifest_digest": "sha256:955b2eba7234ef9db199f8ee456026b56235eda3556a05ba4b4db0c964b8d8ec",
     "stage": "dev-verified",
     "environment": "dev",
     "admission_target": "staging",
     "decision": "go",
     "decision_owner": "Human/Ops",
-    "decision_date": "2026-11-07",
-    "decision_note": "GO for staging admission only under HUMANOPS-STAGING-ADMISSION-20261107G: candidate 28881624b834fd711e98b29726497107485b0961, core-ops staging manifest sha256:40d946512f6321fd3a5b52fcafea08129afdb6614401aaad54783bc4b8e2b167, Runtime Release staging build 42423504694. The live dev deploy 42373586318 of 28881624b passed on its first attempt: Cloud Run smoke, live E2E 77/77 including worker:idempotent_replay, the worker, migration and scheduler job validations, and the public-egress probe. Exact push CI 42372983710 and merge group CI 42372195272 on 28881624b concluded success, but change scope skipped all 7 product lanes on both. The product lanes last ran on dev at 5eb7cba6c (PR #1661 merged): push CI 42356697819 and merge group CI 42354651502, where product-lint-unit, product-node, product-api-contract, product-db, product-e2e-gate, product-security and performance-gate all succeeded. 28881624b differs from 5eb7cba6c in six paths, all classified as development tooling: .orchestrator/supervisor.py, .orchestrator/test_supervisor.py, .orchestrator/worker_failure_policy.py, delivery_toolchain/e2e/product_e2e_receipt.py, tests/e2e/test_acceptance_coverage.py and tests/tooling/test_ci_product_parallel.py; no product path changed. The receipt module and its test are exercised by product-lint-unit and have not run in CI since those lanes; a local blob:none sparse-clone run of tests/e2e/test_acceptance_coverage.py and tests/release/test_release_manifest.py at 916d1457f (identical content for those files) passed 156 of 157, the one failure being @playwright/test not installed locally. The lanes are not claimed to have run on 28881624b itself in this record. This authorizes one staging release request, one short-lived lease and one Runtime Release deploy phase only; the GitHub staging environment approval is still required. Production remains outside scope. Gate-2 is cleared with the deviations recorded on it.",
+    "decision_date": "2026-11-10",
+    "decision_note": "GO for staging admission only under HUMANOPS-STAGING-ADMISSION-20261110H: candidate 751439bacac1ac7396bf0300c39eaaae87f21bd7, core-ops staging manifest sha256:955b2eba7234ef9db199f8ee456026b56235eda3556a05ba4b4db0c964b8d8ec, Runtime Release staging build 42757249880. The live dev deploy 42500035692 of 751439bac passed on its first attempt: Cloud Run smoke, live E2E 77/77 including worker:idempotent_replay, the worker, migration and scheduler job validations, and the public-egress probe. Exact push CI 42496350199 on 751439bac ran and passed all 7 product lanes (product-lint-unit, product-node, product-api-contract, product-db, product-e2e-gate, product-security and performance-gate), and merge group CI 42492640644 on 751439bac did the same. This authorizes one staging release request, one short-lived lease and one Runtime Release deploy phase only; the GitHub staging environment approval is still required. Production remains outside scope. Gate-2 is cleared with the deviations recorded on it.",
     "human_signoff": {
       "approver": "Human/Ops (owner 蔡尚志, interactive approval in the Claude Code conversation transcribed by Claude; not an external identity-system signature)",
-      "date": "2026-11-07",
-      "approval_id": "HUMANOPS-STAGING-ADMISSION-20261107G"
+      "date": "2026-11-10",
+      "approval_id": "HUMANOPS-STAGING-ADMISSION-20261110H"
     }
   },
   "gates": [
@@ -38,8 +38,8 @@
       "owner": "Codex2",
       "reviewer": "Claude",
       "status": "passed",
-      "status_date": "2026-11-07",
-      "release_sha": "28881624b834fd711e98b29726497107485b0961",
+      "status_date": "2026-11-10",
+      "release_sha": "751439bacac1ac7396bf0300c39eaaae87f21bd7",
       "stage": "candidate-built",
       "environment": "dev",
       "admission_target": "dev",
@@ -63,20 +63,20 @@
         },
         {
           "kind": "ci-check",
-          "ref": "docs/evidence/runtime/ODP-STAGING-ADMISSION-28881624B-001/candidate-ci-28881624b.json",
-          "description": "Per-job CI and Runtime Release records for 28881624b, including which runs last executed the product lanes."
+          "ref": "docs/evidence/runtime/ODP-STAGING-ADMISSION-751439BAC-001/candidate-ci-751439bac.json",
+          "description": "Per-job CI and Runtime Release records for 751439bac, including the product lanes run on the exact candidate."
         }
       ],
       "receipts": [
         {
-          "receipt_id": "gate-0-28881624b834-ci",
-          "release_sha": "28881624b834fd711e98b29726497107485b0961",
+          "receipt_id": "gate-0-751439bacac1-ci",
+          "release_sha": "751439bacac1ac7396bf0300c39eaaae87f21bd7",
           "result": "pass",
-          "recorded_at": "2026-11-07T23:24:05Z",
+          "recorded_at": "2026-11-10T11:54:21Z",
           "recorded_by": "Claude (exact candidate CI reconciliation)",
-          "artifact": "docs/evidence/runtime/ODP-STAGING-ADMISSION-28881624B-001/candidate-ci-28881624b.json",
+          "artifact": "docs/evidence/runtime/ODP-STAGING-ADMISSION-751439BAC-001/candidate-ci-751439bac.json",
           "gate_name": "Code Gate",
-          "summary": "Exact push CI 42372983710 and merge group CI 42372195272 on 28881624b concluded success, but change scope skipped all 7 product lanes on both. The product lanes last ran on dev at 5eb7cba6c (PR #1661 merged): push CI 42356697819 and merge group CI 42354651502, where product-lint-unit, product-node, product-api-contract, product-db, product-e2e-gate, product-security and performance-gate all succeeded. 28881624b differs from 5eb7cba6c in six paths, all classified as development tooling: .orchestrator/supervisor.py, .orchestrator/test_supervisor.py, .orchestrator/worker_failure_policy.py, delivery_toolchain/e2e/product_e2e_receipt.py, tests/e2e/test_acceptance_coverage.py and tests/tooling/test_ci_product_parallel.py; no product path changed. The receipt module and its test are exercised by product-lint-unit and have not run in CI since those lanes; a local blob:none sparse-clone run of tests/e2e/test_acceptance_coverage.py and tests/release/test_release_manifest.py at 916d1457f (identical content for those files) passed 156 of 157, the one failure being @playwright/test not installed locally. The lanes are not claimed to have run on 28881624b itself in this record. Runtime Release staging build 42423504694 produced the immutable digests recorded in the canonical manifest."
+          "summary": "Exact push CI 42496350199 on 751439bac ran and passed all 7 product lanes (product-lint-unit, product-node, product-api-contract, product-db, product-e2e-gate, product-security and performance-gate), and merge group CI 42492640644 on 751439bac did the same. Runtime Release staging build 42757249880 produced the immutable digests recorded in the canonical manifest."
         }
       ],
       "blockers": [],
@@ -174,6 +174,17 @@
           "gate_name": "Code Gate",
           "summary": "Exact push CI 41753251393 on 8e5872544 concluded success with 4 of 11 jobs run (orchestrator, change-scope, the product aggregate and the automatic dev release request); change scope skipped all 7 product lanes because the merge touched only tooling paths. The product lanes ran on pull_request CI 42068563588 at e68b3688e, which is 8e5872544 plus one docs/evidence-only commit: product-lint-unit, product-node, product-api-contract, product-db, product-e2e-gate, product-security and performance-gate all succeeded. Runtime Release staging build 41753392676 produced the immutable digests recorded in the canonical manifest.",
           "superseded_by_candidate": "28881624b834fd711e98b29726497107485b0961"
+        },
+        {
+          "receipt_id": "gate-0-28881624b834-ci",
+          "release_sha": "28881624b834fd711e98b29726497107485b0961",
+          "result": "pass",
+          "recorded_at": "2026-11-07T23:24:05Z",
+          "recorded_by": "Claude (exact candidate CI reconciliation)",
+          "artifact": "docs/evidence/runtime/ODP-STAGING-ADMISSION-28881624B-001/candidate-ci-28881624b.json",
+          "gate_name": "Code Gate",
+          "summary": "Exact push CI 42372983710 and merge group CI 42372195272 on 28881624b concluded success, but change scope skipped all 7 product lanes on both. The product lanes last ran on dev at 5eb7cba6c (PR #1661 merged): push CI 42356697819 and merge group CI 42354651502, where product-lint-unit, product-node, product-api-contract, product-db, product-e2e-gate, product-security and performance-gate all succeeded. 28881624b differs from 5eb7cba6c in six paths, all classified as development tooling: .orchestrator/supervisor.py, .orchestrator/test_supervisor.py, .orchestrator/worker_failure_policy.py, delivery_toolchain/e2e/product_e2e_receipt.py, tests/e2e/test_acceptance_coverage.py and tests/tooling/test_ci_product_parallel.py; no product path changed. The receipt module and its test are exercised by product-lint-unit and have not run in CI since those lanes; a local blob:none sparse-clone run of tests/e2e/test_acceptance_coverage.py and tests/release/test_release_manifest.py at 916d1457f (identical content for those files) passed 156 of 157, the one failure being @playwright/test not installed locally. The lanes are not claimed to have run on 28881624b itself in this record. Runtime Release staging build 42423504694 produced the immutable digests recorded in the canonical manifest.",
+          "superseded_by_candidate": "751439bacac1ac7396bf0300c39eaaae87f21bd7"
         }
       ]
     },
@@ -185,8 +196,8 @@
       "owner": "Claude",
       "reviewer": "Codex2",
       "status": "blocked",
-      "status_date": "2026-11-07",
-      "release_sha": "28881624b834fd711e98b29726497107485b0961",
+      "status_date": "2026-11-10",
+      "release_sha": "751439bacac1ac7396bf0300c39eaaae87f21bd7",
       "stage": "candidate-built",
       "environment": "dev",
       "admission_target": "dev",
@@ -211,7 +222,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "The not-applicable justification covered only the tooling-only candidate 6140d0ef; 28881624b carries product changes since then, so the OpenAPI/event/data/model contract review must be redone for this candidate (HD-07). product-api-contract last passed on dev at 5eb7cba6c (push CI 42356697819, merge group CI 42354651502; exact push CI 42372983710 on 28881624b skipped it, and 28881624b changes no product path relative to 5eb7cba6c) but is not a breaking-change review."
+        "The not-applicable justification covered only the tooling-only candidate 6140d0ef; 751439bac carries product changes since then, so the OpenAPI/event/data/model contract review must be redone for this candidate (HD-07). product-api-contract passed on exact push CI 42496350199 and merge group CI 42492640644 but is not a breaking-change review."
       ],
       "historical_receipts": [
         {
@@ -285,8 +296,8 @@
       "owner": "Codex2",
       "reviewer": "Claude",
       "status": "passed-with-deviation",
-      "status_date": "2026-11-07",
-      "release_sha": "28881624b834fd711e98b29726497107485b0961",
+      "status_date": "2026-11-10",
+      "release_sha": "751439bacac1ac7396bf0300c39eaaae87f21bd7",
       "stage": "dev-verified",
       "environment": "dev",
       "admission_target": "staging",
@@ -316,28 +327,28 @@
         },
         {
           "kind": "doc",
-          "ref": "docs/evidence/runtime/ODP-STAGING-ADMISSION-28881624B-001/humanops-staging-admission-authorization-20261107.json",
-          "description": "Owner HD-08g/HD-09g decisions for this candidate's staging admission."
+          "ref": "docs/evidence/runtime/ODP-STAGING-ADMISSION-751439BAC-001/humanops-staging-admission-authorization-20261110.json",
+          "description": "Owner HD-08h/HD-09h decisions for this candidate's staging admission."
         }
       ],
       "receipts": [
         {
-          "receipt_id": "gate-2-28881624b834-20261107",
-          "release_sha": "28881624b834fd711e98b29726497107485b0961",
+          "receipt_id": "gate-2-751439bacac1-20261110",
+          "release_sha": "751439bacac1ac7396bf0300c39eaaae87f21bd7",
           "result": "pass",
-          "recorded_at": "2026-11-07T23:24:05Z",
-          "recorded_by": "Claude (per-job CI and live dev deploy reconciliation; Human/Ops disposition HD-08g)",
-          "artifact": "docs/evidence/runtime/ODP-STAGING-ADMISSION-28881624B-001/candidate-ci-28881624b.json",
+          "recorded_at": "2026-11-10T11:54:21Z",
+          "recorded_by": "Claude (per-job CI and live dev deploy reconciliation; Human/Ops disposition HD-08h)",
+          "artifact": "docs/evidence/runtime/ODP-STAGING-ADMISSION-751439BAC-001/candidate-ci-751439bac.json",
           "gate_name": "Data Gate",
-          "summary": "product-db (canonical mapping and data-quality suites), product-lint-unit and product-e2e-gate last passed on dev at 5eb7cba6c (push CI 42356697819, merge group CI 42354651502); exact push CI 42372983710 on 28881624b skipped them, and 28881624b changes no product path relative to 5eb7cba6c. The live dev deploy 42373586318 of 28881624b passed on its first attempt: Cloud Run smoke, live E2E 77/77 including worker:idempotent_replay, the worker, migration and scheduler job validations, and the public-egress probe. Source-contract, point-in-time and live freshness/lineage are dispositioned in the deviation, not claimed."
+          "summary": "product-db (canonical mapping and data-quality suites), product-lint-unit and product-e2e-gate passed on exact push CI 42496350199 and merge group CI 42492640644 on 751439bac. The live dev deploy 42500035692 of 751439bac passed on its first attempt: Cloud Run smoke, live E2E 77/77 including worker:idempotent_replay, the worker, migration and scheduler job validations, and the public-egress probe. Source-contract, point-in-time and live freshness/lineage are dispositioned in the deviation, not claimed."
         }
       ],
       "blockers": [],
       "deviation": {
-        "description": "For candidate 28881624b entering staging only (core-ops profile): 'source contract and sample data reviewed' is not applicable because every external source is disabled (16 sources audited, no credentials present); 'point-in-time correctness checked for model-ready data' is not applicable because core-ops serves no model; 'freshness and lineage evidence captured' is not satisfied — check_live_production_data.py has never run against this candidate and is deferred to the staging verify run and the production gates. Any later candidate or environment needs a fresh disposition.",
-        "approver": "Human/Ops (owner 蔡尚志, 2026-11-07, decision HD-08g in the Claude Code conversation; transcribed by Claude)",
-        "review_by": "2026-11-20",
-        "artifact": "docs/evidence/runtime/ODP-STAGING-ADMISSION-28881624B-001/humanops-staging-admission-authorization-20261107.json"
+        "description": "For candidate 751439bac entering staging only (core-ops profile): 'source contract and sample data reviewed' is not applicable because every external source is disabled (16 sources audited, no credentials present); 'point-in-time correctness checked for model-ready data' is not applicable because core-ops serves no model; 'freshness and lineage evidence captured' is not satisfied — check_live_production_data.py has never run against this candidate and is deferred to the staging verify run and the production gates. Any later candidate or environment needs a fresh disposition.",
+        "approver": "Human/Ops (owner 蔡尚志, 2026-11-10, decision HD-08h in the Claude Code conversation; transcribed by Claude)",
+        "review_by": "2026-11-24",
+        "artifact": "docs/evidence/runtime/ODP-STAGING-ADMISSION-751439BAC-001/humanops-staging-admission-authorization-20261110.json"
       },
       "historical_receipts": [
         {
@@ -372,6 +383,17 @@
           "gate_name": "Data Gate",
           "summary": "product-db (canonical mapping and data-quality suites), product-lint-unit and product-e2e-gate passed on pull_request CI 42068563588 at e68b3688e, which is 8e5872544 plus one docs/evidence-only commit; exact push CI 41753251393 on 8e5872544 skipped those lanes by change scope. The live dev deploy 41754011897 of 8e5872544 passed Cloud Run smoke, live E2E 77/77 including worker:idempotent_replay, the worker, migration and scheduler job validations, and the public-egress probe. Source-contract, point-in-time and live freshness/lineage are dispositioned in the deviation, not claimed.",
           "superseded_by_candidate": "28881624b834fd711e98b29726497107485b0961"
+        },
+        {
+          "receipt_id": "gate-2-28881624b834-20261107",
+          "release_sha": "28881624b834fd711e98b29726497107485b0961",
+          "result": "pass",
+          "recorded_at": "2026-11-07T23:24:05Z",
+          "recorded_by": "Claude (per-job CI and live dev deploy reconciliation; Human/Ops disposition HD-08g)",
+          "artifact": "docs/evidence/runtime/ODP-STAGING-ADMISSION-28881624B-001/candidate-ci-28881624b.json",
+          "gate_name": "Data Gate",
+          "summary": "product-db (canonical mapping and data-quality suites), product-lint-unit and product-e2e-gate last passed on dev at 5eb7cba6c (push CI 42356697819, merge group CI 42354651502); exact push CI 42372983710 on 28881624b skipped them, and 28881624b changes no product path relative to 5eb7cba6c. The live dev deploy 42373586318 of 28881624b passed on its first attempt: Cloud Run smoke, live E2E 77/77 including worker:idempotent_replay, the worker, migration and scheduler job validations, and the public-egress probe. Source-contract, point-in-time and live freshness/lineage are dispositioned in the deviation, not claimed.",
+          "superseded_by_candidate": "751439bacac1ac7396bf0300c39eaaae87f21bd7"
         }
       ]
     },
@@ -383,8 +405,8 @@
       "owner": "Codex2",
       "reviewer": "Antigravity2",
       "status": "blocked",
-      "status_date": "2026-11-07",
-      "release_sha": "28881624b834fd711e98b29726497107485b0961",
+      "status_date": "2026-11-10",
+      "release_sha": "751439bacac1ac7396bf0300c39eaaae87f21bd7",
       "stage": "staging-verified",
       "environment": "staging",
       "admission_target": "production",
@@ -410,7 +432,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Model and Solver Gate receipt is bound to release candidate 28881624b834fd711e98b29726497107485b0961 in this registry.",
+        "No Model and Solver Gate receipt is bound to release candidate 751439bacac1ac7396bf0300c39eaaae87f21bd7 in this registry.",
         "Reconciled from legacy references: canonical task HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001 (owner Human/Ops) covers specific BRAND_TRANSFER/FORMAT_CONVERSION/LEASE/PARTIAL/CDC/merge-queue dispositions, but does not own formal ForecastOps model release/history/production alias or general model-risk approval. Formal model release/history/production alias and general model-risk acceptance require unassigned proposal to coordinator (Authority: Product Owner + ML Risk Owner; Required Input: ForecastOps model card, SiteScore/AVM validation, production alias binding; Acceptance: named human signoff receipt). Staging model and solver execution rehearsal is exercised under active task ODP-EPHEMERAL-STAGING-ROLLOUT-001 (owner Antigravity5).",
         "Solver domain tasks (ODP-BRAND-TRANSFER-IMPLEMENTATION-001, ODP-FORMAT-CONVERSION-IMPLEMENTATION-001, ODP-NET002-LEASE-IMPLEMENTATION-001) remain blocked on upstream dependencies; gate ownership by Codex2 (reviewer Antigravity2)."
       ]
@@ -423,8 +445,8 @@
       "owner": "Claude",
       "reviewer": "Antigravity2",
       "status": "blocked",
-      "status_date": "2026-11-07",
-      "release_sha": "28881624b834fd711e98b29726497107485b0961",
+      "status_date": "2026-11-10",
+      "release_sha": "751439bacac1ac7396bf0300c39eaaae87f21bd7",
       "stage": "candidate-built",
       "environment": "dev",
       "admission_target": "dev",
@@ -455,7 +477,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "The H01/dev-only npm deviation was accepted for candidate 6140d0ef only. 28881624b needs a fresh Human/Ops disposition (HD-07) before this gate clears; product-security last passed on dev at 5eb7cba6c (push CI 42356697819, merge group CI 42354651502; exact push CI 42372983710 on 28881624b skipped it) and the staging build 42423504694 npm audit passed with 0 findings, but neither replaces that disposition."
+        "The H01/dev-only npm deviation was accepted for candidate 6140d0ef only. 751439bac needs a fresh Human/Ops disposition (HD-07) before this gate clears; product-security passed on exact push CI 42496350199 and merge group CI 42492640644, and the staging build 42757249880 npm audit passed, but neither replaces that disposition."
       ],
       "historical_receipts": [
         {
@@ -486,8 +508,8 @@
       "owner": "Codex2",
       "reviewer": "Human/Ops",
       "status": "blocked",
-      "status_date": "2026-11-07",
-      "release_sha": "28881624b834fd711e98b29726497107485b0961",
+      "status_date": "2026-11-10",
+      "release_sha": "751439bacac1ac7396bf0300c39eaaae87f21bd7",
       "stage": "staging-verified",
       "environment": "staging",
       "admission_target": "production",
@@ -522,7 +544,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "No E2E, Performance and UAT Gate receipt is bound to release candidate 28881624b834fd711e98b29726497107485b0961 in this registry.",
+        "No E2E, Performance and UAT Gate receipt is bound to release candidate 751439bacac1ac7396bf0300c39eaaae87f21bd7 in this registry.",
         "Reconciled from legacy references: exact-SHA live ephemeral staging end-to-end rehearsal, backup/restore drill, and rollback rehearsal are assigned to active task ODP-EPHEMERAL-STAGING-ROLLOUT-001 (owner Antigravity5).",
         "Runtime NFR measurement (SHARED-008, PERF/BATCH/AVAIL/RPO) is assigned to active task ODP-NFR-RUNTIME-EVIDENCE-001 (owner Antigravity3); cross-role UAT defect closeout and formal sign-off require human/ops decision when staging is live (proposal submitted to coordinator); gate ownership by Codex2 (reviewer Human/Ops)."
       ]
@@ -535,8 +557,8 @@
       "owner": "Claude",
       "reviewer": "Human/Ops",
       "status": "blocked",
-      "status_date": "2026-11-07",
-      "release_sha": "28881624b834fd711e98b29726497107485b0961",
+      "status_date": "2026-11-10",
+      "release_sha": "751439bacac1ac7396bf0300c39eaaae87f21bd7",
       "stage": "staging-verified",
       "environment": "staging",
       "admission_target": "production",
@@ -578,38 +600,38 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Ops, Release and Audit Gate receipt is bound to release candidate 28881624b834fd711e98b29726497107485b0961 in this registry.",
+        "No Ops, Release and Audit Gate receipt is bound to release candidate 751439bacac1ac7396bf0300c39eaaae87f21bd7 in this registry.",
         "Pre-production admission readiness (required prior to production admission): runbook review, deployment and rollback plan review, backup/DR review, decision-log retention proof (docs/evidence/AUDIT_EVIDENCE_RETENTION_PROOF.md), subsidy audit matrix (docs/evidence/SUBSIDY_EVIDENCE_MATRIX.md), on-call route assignment, and Stage 0-7 / Gate 0-6 final gate audit readiness require coordinator disposition / Human/Ops final go/no-go signoff in docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md (every Human/Ops row remains pending-human; gate ownership by Claude, reviewer Human/Ops).",
         "Post-production closeout (downstream of production rollout): post-deploy production watch window, staging cleanup, and final release archive are assigned to active task ODP-POSTDEPLOY-WATCH-CLOSEOUT-001 (owner Antigravity5, canonical depends_on ODP-PROD-BLUEGREEN-ROLLOUT-001). Structural remediation ledger closeout is assigned to active task ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001 (owner Antigravity5). Post-deploy activities do not block pre-production admission, resolving circular production-order dependency."
       ]
     }
   ],
   "candidate_rebind": {
-    "task_id": "ODP-STAGING-ADMISSION-28881624B-001",
-    "from_candidate_sha": "8e5872544bff88d421a1923c7957ca6b12429ce2",
-    "to_candidate_sha": "28881624b834fd711e98b29726497107485b0961",
-    "from_manifest_digest": "sha256:22c22bdcf83cfa3458670467be2d7e2a423da92aef4f2496854d3ffca44b2794",
-    "to_manifest_digest": "sha256:40d946512f6321fd3a5b52fcafea08129afdb6614401aaad54783bc4b8e2b167",
+    "task_id": "ODP-STAGING-ADMISSION-751439BAC-001",
+    "from_candidate_sha": "28881624b834fd711e98b29726497107485b0961",
+    "to_candidate_sha": "751439bacac1ac7396bf0300c39eaaae87f21bd7",
+    "from_manifest_digest": "sha256:40d946512f6321fd3a5b52fcafea08129afdb6614401aaad54783bc4b8e2b167",
+    "to_manifest_digest": "sha256:955b2eba7234ef9db199f8ee456026b56235eda3556a05ba4b4db0c964b8d8ec",
     "re_attestation_required": true,
-    "reason": "Rebind to the core-ops staging build of dev tip 28881624b834fd711e98b29726497107485b0961. The last merged binding is 8e5872544; it was voided before a lease when PR #1649 changed CI workflows. The next candidate c4f5771ff was voided the same way (PRs #1658 to #1665 changed CI, toolchain and product paths) and its registry PR #1655 was closed unmerged, so this rebinds from the 8e5872544 record. Only control-plane paths (.orchestrator/ and the ai-status scripts) are exempt from candidate ancestry. Exact push CI 42372983710 and merge group CI 42372195272 on 28881624b concluded success, but change scope skipped all 7 product lanes on both. The product lanes last ran on dev at 5eb7cba6c (PR #1661 merged): push CI 42356697819 and merge group CI 42354651502, where product-lint-unit, product-node, product-api-contract, product-db, product-e2e-gate, product-security and performance-gate all succeeded. 28881624b differs from 5eb7cba6c in six paths, all classified as development tooling: .orchestrator/supervisor.py, .orchestrator/test_supervisor.py, .orchestrator/worker_failure_policy.py, delivery_toolchain/e2e/product_e2e_receipt.py, tests/e2e/test_acceptance_coverage.py and tests/tooling/test_ci_product_parallel.py; no product path changed. The receipt module and its test are exercised by product-lint-unit and have not run in CI since those lanes; a local blob:none sparse-clone run of tests/e2e/test_acceptance_coverage.py and tests/release/test_release_manifest.py at 916d1457f (identical content for those files) passed 156 of 157, the one failure being @playwright/test not installed locally. The lanes are not claimed to have run on 28881624b itself in this record. Components, SBOM and signature refs are replaced together with candidate_sha by copying the build 42423504694 manifest verbatim; nothing is reused from 8e5872544. Gates 0 and 2 are re-attested for 28881624b; gates 1 and 4 stay blocked pending owner decision HD-07; gates 3, 5 and 6 remain blocked for production.",
+    "reason": "Rebind to the core-ops staging build of dev tip 751439bacac1ac7396bf0300c39eaaae87f21bd7. The merged binding 28881624b was voided before a lease when PR #1651 changed deploy-dev.yml, product_ops/deployment and release tooling; #1651 also broke the dev deploy scheduler lookup, fixed by PR #1670 in this candidate. Exact push CI 42496350199 on 751439bac ran and passed all 7 product lanes (product-lint-unit, product-node, product-api-contract, product-db, product-e2e-gate, product-security and performance-gate), and merge group CI 42492640644 on 751439bac did the same. Components, SBOM and signature refs are replaced together with candidate_sha by copying the build 42757249880 manifest verbatim; nothing is reused from 28881624b. Gates 0 and 2 are re-attested for 751439bac; gates 1 and 4 stay blocked pending owner decision HD-07; gates 3, 5 and 6 remain blocked for production.",
     "build_run": {
       "workflow": "Runtime Release",
-      "run_id": 42423504694,
-      "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/42423504694",
+      "run_id": 42757249880,
+      "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/42757249880",
       "event": "workflow_dispatch",
       "phase": "build",
       "environment": "staging",
       "release_profile": "core-ops",
       "conclusion": "success",
-      "release_sha_input": "28881624b834fd711e98b29726497107485b0961",
+      "release_sha_input": "751439bacac1ac7396bf0300c39eaaae87f21bd7",
       "deploy_jobs": "skipped; no lease supplied, nothing deployed",
-      "evidence": "docs/evidence/runtime/ODP-STAGING-ADMISSION-28881624B-001/hosted-artifacts/run-42423504694"
+      "evidence": "docs/evidence/runtime/ODP-STAGING-ADMISSION-751439BAC-001/hosted-artifacts/run-42757249880"
     },
     "candidate_ci_runs": [
-      42372983710
+      42496350199
     ],
-    "candidate_ci_evidence": "docs/evidence/runtime/ODP-STAGING-ADMISSION-28881624B-001/candidate-ci-28881624b.json",
-    "approval_id": "HUMANOPS-STAGING-ADMISSION-20261107G",
+    "candidate_ci_evidence": "docs/evidence/runtime/ODP-STAGING-ADMISSION-751439BAC-001/candidate-ci-751439bac.json",
+    "approval_id": "HUMANOPS-STAGING-ADMISSION-20261110H",
     "approval_status": "approved"
   }
 }
