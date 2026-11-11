@@ -341,9 +341,10 @@ describe("Survey actual native work in the existing assignment dialog", () => {
     expect(api.submit).toHaveBeenCalledWith(assignment(), { ...submission, surveyedAt: new Date("2026-10-16T08:00").toISOString() }, expect.any(String));
     fireEvent.click(screen.getByRole("button", { name: "重讀回報狀態" }));
     await waitFor(() => expect(count).toBe(3));
+    // The read mock counts at entry; wait for the re-read Work form to render again before asserting.
+    expect(await screen.findByRole("button", { name: "預覽現勘回報" })).toBeDisabled();
     expect(api.submit).toHaveBeenCalledOnce();
     expect(accepted).toHaveTextContent("survey-owned");
-    expect(screen.getByRole("button", { name: "預覽現勘回報" })).toBeDisabled();
   });
 
   it("does not borrow another uploader's media for the actual current surveyor's native evidence", async () => {
