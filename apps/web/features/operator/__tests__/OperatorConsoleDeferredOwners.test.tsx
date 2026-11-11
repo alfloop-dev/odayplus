@@ -124,7 +124,8 @@ function envelope(allowed: WorkspaceId[] = ["today", "store", "growth", "network
   const role = { id: "ops-lead", label: "Controlled operator", subtitle: "Controlled scope", allowedWorkspaces: allowed };
   const counts = { approvals: 0, critical: 0, notifications: 1, search: 0, taskCenter: 1 };
   return {
-    meta: { source: "operator-shell-production", dataMode: "live", role, counts },
+    // The Store workflow opener requires the admitted subject and tenant scope.
+    meta: { source: "operator-shell-production", dataMode: "live", tenantId: "00000000-0000-0000-0000-000000000116", role, counts },
     navigation: { roles: [role], allowedWorkspaces: allowed,
       workspaces: allowed.map((id) => ({ id, label: id, shortLabel: id, description: id, allowed: true })) },
     header: { counts },
