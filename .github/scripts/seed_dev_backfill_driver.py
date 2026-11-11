@@ -29,6 +29,11 @@ def _proxy_dsn(raw: str) -> str:
 
 
 def main() -> int:
+    # Belt-and-suspenders: dlt must not phone home (a hanging telemetry POST per
+    # partition stalled the first attempt for hours).
+    os.environ.setdefault("DO_NOT_TRACK", "1")
+    os.environ.setdefault("DLT__RUNTIME__DLTHUB_TELEMETRY", "false")
+
     raw = os.environ["RAW_DB_URL"]
     dsn = _proxy_dsn(raw)
     os.environ.update(
@@ -72,11 +77,11 @@ def main() -> int:
     ])
     print("BACKFILL snapshot rc:", rc1, flush=True)
 
-    print("BACKFILL orders (fact window) ...", flush=True)
+    print("BACKFILL orders (fact window, coarse partitions) ...", flush=True)
     rc2 = backfill_main([
         "--kind", "orders",
         "--start", "2026-05-01", "--end", "2026-11-12",
-        "--partition-days", "7", "--max-partitions", "60",
+        "--partition-days", "31", "--max-partitions", "12",
     ])
     print("BACKFILL orders rc:", rc2, flush=True)
 
