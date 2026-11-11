@@ -40,11 +40,14 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install data-plane dependencies
+      - name: Install project env (root deps) + Mongo deps
+        env:
+          UV_PYTHON: '3.12'
         run: |
-          python -m pip install --upgrade pip
-          pip install 'dlt[postgres]>=1.20,<2' 'psycopg[binary,pool]>=3.2,<4' \
-            'pymongo>=4.10,<5' dnspython
+          set -euo pipefail
+          pip install uv
+          uv sync --frozen
+          uv pip install 'pymongo>=4.10,<5' dnspython
 
       - name: Start Cloud SQL Auth Proxy
         run: |
@@ -68,4 +71,5 @@ jobs:
             --secret="${DB_URL_SECRET%%:*}" --project="${GCP_PROJECT}")"
           echo "::add-mask::${RAW_DB_URL}"
           export RAW_DB_URL
-          PYTHONPATH="${GITHUB_WORKSPACE}" python3 .github/scripts/seed_dev_backfill_driver.py
+          PYTHONPATH="${GITHUB_WORKSPACE}" UV_PYTHON=3.12 \
+            uv run --frozen python .github/scripts/seed_dev_backfill_driver.py
