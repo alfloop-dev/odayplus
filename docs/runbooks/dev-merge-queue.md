@@ -180,10 +180,17 @@ when `branch_workflow.task_pr.auto_merge` is on - the route:
    through the canonical revision CAS (`commit_canonical_task_transition`)
    before `gh` is called. A rejected (stale) write reloads status and issues
    nothing that tick, so a concurrent writer cannot make an admission the
-   counter does not know about. An offline mutation keeps the attempt
-   because its outcome is unknown. Any other failed mutation is read back
-   (step 6) before it is called a refusal - a 5xx or a dropped response can
-   arrive after GitHub applied it: if GitHub shows the PR armed, queued or
+   counter does not know about. A committed write is not yet permission:
+   the writer syncs and reloads after releasing its lock, and a reviewer
+   reopen, a newly approved head, a retargeted PR/base/repository or a task
+   leaving its approved state may be recorded in between. The reloaded task
+   must still be the same task, repository, PR, base and approved head and
+   still carry this reservation; otherwise nothing is issued and nothing
+   stale is written back over the other writer's record (the committed
+   attempt stays counted only if that record kept it). An offline mutation
+   keeps the attempt because its outcome is unknown. Any other failed
+   mutation is read back (step 6) before it is called a refusal - a 5xx or a
+   dropped response can arrive after GitHub applied it: if GitHub shows the PR armed, queued or
    merged, that is the outcome; only a whole `not_admitted` readback restores
    the previous record (a definite refusal, retried next tick); anything it
    cannot settle is `unconfirmed` and keeps the counted attempt. A failed

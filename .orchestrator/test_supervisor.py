@@ -23879,6 +23879,9 @@ class MergeAdmissionSingleOwnerTests(unittest.TestCase):
         # When set, `gh` is answered as a process and the real `run_gh`
         # classifies exits, instead of the fake raising typed errors itself.
         self.real_transport = False
+        # When set, run once by the status sync that follows a committed
+        # write, i.e. between the reservation's CAS write and its reload.
+        self.on_sync = None
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -23910,7 +23913,7 @@ class MergeAdmissionSingleOwnerTests(unittest.TestCase):
         stack.enter_context(mock.patch.object(supervisor, "load_event_queue", return_value=[]))
         stack.enter_context(mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None))
         stack.enter_context(mock.patch.object(supervisor, "agent_dispatch_capacity", return_value=0))
-        stack.enter_context(mock.patch.object(supervisor, "sync_status_pipeline", return_value=True))
+        stack.enter_context(mock.patch.object(supervisor, "sync_status_pipeline", side_effect=self._sync))
         stack.enter_context(mock.patch.object(supervisor, "queue_delivery_event", return_value=True))
         stack.enter_context(mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=self.HEAD))
         stack.enter_context(mock.patch.object(
@@ -23932,6 +23935,12 @@ class MergeAdmissionSingleOwnerTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(github_bus, name, return_value=False))
         stack.enter_context(mock.patch.object(github_bus, "push_cloud_relay_digest", return_value=None))
         return stack
+
+    def _sync(self, _config) -> bool:
+        if self.on_sync is not None:
+            hook, self.on_sync = self.on_sync, None
+            hook()
+        return True
 
     def _tick(self, *, bus_polls: int = 2) -> None:
         """One supervisor cycle: the dispatcher stage, then the bus stage polled
@@ -23997,6 +24006,73 @@ class MergeAdmissionSingleOwnerTests(unittest.TestCase):
         self.assertEqual(disk["next"], "operator note")
 
         self._tick(bus_polls=1)
+        self.assertEqual(len(self._merges()), 1)
+        self.assertEqual(self._disk_task()["merge_route"]["attempts"], 1)
+
+    # Recorded by another canonical writer after the reservation's CAS write
+    # committed but before its reload: the write succeeded, yet the task it
+    # reloads no longer authorizes this PR at this approved head.
+    def _reopen(t: dict) -> None:
+        t.update({"status": "in_progress", "next": "reopened by reviewer"})
+        t.pop("approved_head", None)
+        t.pop("merge_route", None)
+
+    CHANGES_AFTER_RESERVATION = {
+        "reviewer reopen": _reopen,
+        "another approved head": lambda t: t.update({"approved_head": "e" * 40, "next": "new head approved"}),
+        "another PR": lambda t: t.update({"pr_number": t["pr_number"] + 1, "next": "PR replaced"}),
+        "another base": lambda t: t.update({"base_branch": "main", "next": "retargeted"}),
+        "another repository": lambda t: t.update({"repository": "alfloop-dev/other", "next": "moved"}),
+        "reservation replaced": lambda t: t.update({
+            "merge_route": {"head": t["approved_head"], "route": "queued", "attempts": 3,
+                            "pr_number": t["pr_number"], "at": t["merge_route"]["at"]},
+            "next": "another writer recorded the route",
+        }),
+        "left approved state": lambda t: t.update({"status": "blocked", "next": "blocked by operator"}),
+    }
+
+    def test_a_change_recorded_after_the_reservation_commits_admits_nothing(self) -> None:
+        for name, change in self.CHANGES_AFTER_RESERVATION.items():
+            with self.subTest(name):
+                self._fresh()
+
+                recorded: dict = {}
+
+                def interleave(change=change, recorded=recorded) -> None:
+                    # Only the reservation write is interleaved; the disk must
+                    # already hold it, or this is not the race under test.
+                    self.assertEqual(self._disk_task().get("merge_route", {}).get("route"), "issuing")
+                    self._edit_disk(change)
+                    recorded.update(self._disk_task())
+
+                self.on_sync = interleave
+
+                self._tick(bus_polls=3)
+                expected = recorded
+
+                self.assertIsNone(self.on_sync, "the reservation write was never committed")
+                self.assertEqual(self._merges(), [])
+                disk = self._disk_task()
+                # The other writer's record survives: no stale route, head or
+                # explanation is written back over it.
+                self.assertEqual(disk["next"], expected["next"])
+                self.assertEqual(disk.get("approved_head"), expected.get("approved_head"))
+                self.assertEqual(disk.get("status"), expected.get("status"))
+                self.assertEqual(disk.get("pr_number"), expected.get("pr_number"))
+                self.assertEqual(disk.get("base_branch"), expected.get("base_branch"))
+                self.assertEqual(disk.get("repository"), expected.get("repository"))
+                # The route is exactly what the other writer left: absent after
+                # a reopen, theirs when replaced, otherwise the counted
+                # reservation that was never turned into an admission.
+                self.assertEqual(disk.get("merge_route"), expected.get("merge_route"))
+                if name != "reservation replaced":
+                    self.assertNotEqual((disk.get("merge_route") or {}).get("route"), "queued")
+
+        # Unchanged after the commit, the same reservation is admitted once:
+        # the check reads what is recorded, it is not a new gate.
+        self._fresh()
+        self.on_sync = lambda: None
+        self._tick()
         self.assertEqual(len(self._merges()), 1)
         self.assertEqual(self._disk_task()["merge_route"]["attempts"], 1)
 

@@ -728,9 +728,14 @@ def route_approved_pr_to_merge(
     is `unknown`, never "not queued".
 
     `reserve`, when given, persists the incremented attempt record before the
-    mutation is issued and returns whether that canonical write committed. A
-    rejected reservation issues nothing (`deferred`), so a CAS conflict can
-    never turn into an admission the counter does not know about.
+    mutation is issued and returns whether that canonical write committed and
+    the reloaded status still holds the task for admission. A rejected
+    reservation issues nothing (`deferred`), so a CAS conflict can never turn
+    into an admission the counter does not know about. A committed one is
+    checked again against the reloaded task, which a reopen or a new approval
+    recorded between the write and the reload may have changed: unless it is
+    still this task, repository, PR, base and approved head carrying this
+    reservation, nothing is issued and nothing stale is written back.
 
     Returns ``(route, detail)`` where route is ``queued`` / ``armed`` /
     ``merged`` (GitHub confirmed it), ``unconfirmed`` (issued, readback did not
@@ -888,11 +893,34 @@ def route_approved_pr_to_merge(
         "attempts": attempts + 1,
     }
     task[MERGE_ROUTE_FIELD] = reservation
-    if reserve is not None and not reserve():
-        return "deferred", (
-            "canonical merge_route reservation was not committed; status was reloaded "
-            "and nothing was issued"
-        )
+    if reserve is not None:
+        if not reserve():
+            return "deferred", (
+                "canonical merge_route reservation was not committed, or the reloaded "
+                "status no longer holds this task for admission; nothing was issued"
+            )
+        # A committed write is not yet permission: the canonical writer syncs
+        # and reloads after releasing its lock, so a reviewer reopen, a newly
+        # approved head or a retargeted PR recorded in between is what `task`
+        # now holds. Only the exact task, repository, PR, base and approved
+        # head this reservation was made for, still carrying the reservation,
+        # is admitted; anything else is left as recorded and nothing is issued.
+        try:
+            held_pr = int(task.get("pr_number") or 0)
+        except (TypeError, ValueError):
+            held_pr = 0
+        if (
+            task.get(MERGE_ROUTE_FIELD) != reservation
+            or str(task.get("id") or "").strip() != task_id
+            or str(task.get("approved_head") or "").strip() != approved_head
+            or held_pr != pr_number
+            or _task_repository_slug(config, task) != slug
+            or (str(task.get("base_branch") or "").strip() or task_pr_base_branch(config)) != base
+        ):
+            return "deferred", (
+                "canonical status changed after the merge_route reservation committed; "
+                "the reloaded task no longer authorizes this admission and nothing was issued"
+            )
 
     try:
         # Read back bound to the PR checked above: a readback whose head, base
@@ -976,7 +1004,12 @@ def advance_approved_prs_to_merge(
         nonlocal reload_failed, reserved
         if commit_canonical_task_transition(config, status):
             reserved = True
-            return True
+            # The commit reloaded canonical status into `status` in place. A
+            # task that has since left the list or its approved state is no
+            # longer this route's to admit, whatever its stale copy still says.
+            return any(t is task for t in status.get(tasks_path, [])) and (
+                str(task.get("status") or "").lower() in finalize_statuses
+            )
         try:
             fresh = load_status(config)
         except Exception:
