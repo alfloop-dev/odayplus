@@ -161,7 +161,11 @@ when `branch_workflow.task_pr.auto_merge` is on - the route:
    naming the task, and its head is exactly `approved_head`. A moved head is
    unreviewed work and needs its own review. An unreadable PR or unreadable
    queue enrollment is `unknown`: nothing is issued and it is never treated
-   as "not queued".
+   as "not queued". "Not queued" must be stated, not inferred: the GraphQL
+   node has to name the same PR number and head, and read OPEN,
+   `merged: false`, `isInMergeQueue: false` and a null `mergeQueueEntry`. A
+   missing field, a contradiction (an entry beside `isInMergeQueue: false`,
+   `state` and `merged` disagreeing) or another PR/head is `unknown`.
 2. **Does not re-issue** when GitHub already reports the PR armed
    (`autoMergeRequest`) or queued (`isInMergeQueue`); that observation is
    recorded with zero attempts.
@@ -182,7 +186,12 @@ when `branch_workflow.task_pr.auto_merge` is on - the route:
    `--admin`.
 6. **Reads back again** and records `queued`, `armed`, `merged`, or
    `unconfirmed`. A zero exit alone is never recorded as queued or merged;
-   `unconfirmed` still counts toward the window and the cap.
+   `unconfirmed` still counts toward the window and the cap. The readback is
+   bound to the head, base and branch checked in step 1: if any of them moved
+   in between, the answer belongs to another PR state and is recorded as
+   `unconfirmed`, never as the approved head's `queued`/`armed`/`merged`; the
+   next tick's step 1 then refuses the moved PR. Archive housekeeping PRs go
+   through the same readers and the same binding.
 
 Bounded recovery: a task reported `stalled` or `unconfirmed` is not retried
 past the cap - look at the PR's queue entry and required checks. Clearing

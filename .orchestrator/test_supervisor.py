@@ -22021,6 +22021,12 @@ class _FakeAdmissionGitHub:
     mutation helpers run. `admission` is what GitHub currently holds for the
     PR (`none`, `armed`, `queued`, `merged`); a `pr merge` moves it to `after`.
     Any `--admin` mutation fails the test outright.
+
+    `graphql` overrides fields of the GraphQL PR node and `graphql_drop` removes
+    them, for partial or contradictory answers. `drift` is applied as attribute
+    changes when a `pr merge` lands, for a PR whose head, base or branch moves
+    between the initial check and the readback; `graphql_head` lets the queue
+    node alone name another head.
     """
 
     def __init__(
@@ -22040,6 +22046,9 @@ class _FakeAdmissionGitHub:
         view_readable: bool = True,
         has_queue: bool | None = True,
         on_first_view=None,
+        graphql: dict | None = None,
+        graphql_drop: tuple[str, ...] = (),
+        drift: dict | None = None,
     ) -> None:
         self.number = number
         self.branch = branch
@@ -22055,6 +22064,10 @@ class _FakeAdmissionGitHub:
         self.view_readable = view_readable
         self.has_queue = has_queue
         self.on_first_view = on_first_view
+        self.graphql = dict(graphql or {})
+        self.graphql_drop = tuple(graphql_drop)
+        self.drift = dict(drift or {})
+        self.graphql_head: str | None = None
         self.mutations: list[list[str]] = []
         self.reads: list[list[str]] = []
 
@@ -22072,6 +22085,8 @@ class _FakeAdmissionGitHub:
                 self.draft = False
             else:
                 self.admission = self.after
+                for field, value in self.drift.items():
+                    setattr(self, field, value)
             return self._out({})
         self.reads.append(args)
         if args[:2] == ["pr", "view"]:
@@ -22105,24 +22120,20 @@ class _FakeAdmissionGitHub:
 
                 raise github_bus.GitHubBusError("GraphQL: something went wrong")
             queued = self.admission == "queued"
-            return self._out(
-                {
-                    "data": {
-                        "repository": {
-                            "pullRequest": {
-                                "number": self.number,
-                                "state": "MERGED" if self.admission == "merged" else self.state,
-                                "merged": self.admission == "merged",
-                                "headRefOid": self.head,
-                                "isInMergeQueue": queued,
-                                "mergeQueueEntry": (
-                                    {"position": 1, "state": "AWAITING_CHECKS"} if queued else None
-                                ),
-                            }
-                        }
-                    }
-                }
-            )
+            node = {
+                "number": self.number,
+                "state": "MERGED" if self.admission == "merged" else self.state,
+                "merged": self.admission == "merged",
+                "headRefOid": self.graphql_head or self.head,
+                "isInMergeQueue": queued,
+                "mergeQueueEntry": (
+                    {"position": 1, "state": "AWAITING_CHECKS"} if queued else None
+                ),
+            }
+            node.update(self.graphql)
+            for field in self.graphql_drop:
+                node.pop(field, None)
+            return self._out({"data": {"repository": {"pullRequest": node}}})
         return self._out({})
 
 
@@ -23485,7 +23496,7 @@ class MergeRouteWithoutQueueTests(unittest.TestCase):
     HEAD = "1111111122222222333333334444444455555555"
 
     def _route(self, *, has_queue, repository="alfloop-dev/oday-data-platform",
-               ci_status="success", after=None):
+               ci_status="success", after=None, **fake):
         import dispatch_engine
 
         task = {"id": "T-1", "pr_number": 42, "approved_head": self.HEAD,
@@ -23493,7 +23504,7 @@ class MergeRouteWithoutQueueTests(unittest.TestCase):
         if after is None:
             after = "merged" if has_queue is False and ci_status == "success" else "queued"
         gh = _FakeAdmissionGitHub(number=42, branch="task/T-1", head=self.HEAD,
-                                  has_queue=has_queue, after=after)
+                                  has_queue=has_queue, after=after, **fake)
         with unittest.mock.patch.object(dispatch_engine, "repository_has_merge_queue", return_value=has_queue), \
                 unittest.mock.patch.object(dispatch_engine, "approved_pr_change_scope", return_value="product_or_mixed"), \
                 unittest.mock.patch("github_bus.run_gh", side_effect=gh.run_gh):
@@ -23519,6 +23530,26 @@ class MergeRouteWithoutQueueTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(task["merge_route"]["route"], "unconfirmed")
         self.assertEqual(task["merge_route"]["attempts"], 1)
+
+    def test_a_direct_merge_readback_on_a_moved_pr_is_not_called_merged(self) -> None:
+        for drift in ({"head": "f" * 40}, {"base": "main"}, {"branch": "task/OTHER"}):
+            with self.subTest(drift=drift):
+                route, _d, calls, task = self._route(has_queue=False, drift=drift)
+
+                self.assertEqual(calls[0][:4], ["pr", "merge", "42", "--merge"])
+                self.assertEqual(route, "unconfirmed")
+                self.assertEqual(task["merge_route"]["route"], "unconfirmed")
+                self.assertEqual((task["merge_route"]["head"], task["merge_route"]["attempts"]),
+                                 (self.HEAD, 1))
+
+    def test_a_partial_queue_answer_merges_nothing_directly(self) -> None:
+        for drop in ("isInMergeQueue", "mergeQueueEntry", "merged", "state", "headRefOid"):
+            with self.subTest(drop=drop):
+                route, _d, calls, task = self._route(has_queue=False, graphql_drop=(drop,))
+
+                self.assertEqual(route, "unknown")
+                self.assertEqual(calls, [])
+                self.assertNotIn("merge_route", task)
 
     def test_a_repository_with_a_queue_is_still_enqueued(self) -> None:
         route, _d, calls, task = self._route(has_queue=True, repository="alfloop-dev/odayplus")
@@ -23924,6 +23955,82 @@ class MergeAdmissionSingleOwnerTests(unittest.TestCase):
 
         self.assertEqual(len(self._merges()), 1)
         self.assertEqual(self._disk_task()["merge_route"]["route"], "armed")
+
+    def _fresh(self) -> None:
+        """A new status file, bus state and GitHub for the next sub-case."""
+        self.tearDown()
+        self.setUp()
+
+    # Each is an answer that is not a whole, consistent statement about this
+    # PR and head. `not_admitted` would license a new mutation, so all of them
+    # must read as unknown on both tick entries.
+    UNKNOWN_QUEUE_ANSWERS = {
+        "flag missing": {"drop": ("isInMergeQueue",)},
+        "entry missing": {"drop": ("mergeQueueEntry",)},
+        "state missing": {"drop": ("state",)},
+        "merged missing": {"drop": ("merged",)},
+        "head missing": {"drop": ("headRefOid",)},
+        "flag null": {"set": {"isInMergeQueue": None}},
+        "entry beside a false flag": {"set": {"mergeQueueEntry": {"position": 1}}},
+        "MERGED state, merged false": {"set": {"state": "MERGED"}},
+        "merged true, OPEN state": {"set": {"merged": True}},
+        "another PR": {"set": {"number": PR + 1}},
+        "another head": {"set": {"headRefOid": "f" * 40}},
+    }
+
+    def test_a_partial_or_mismatched_queue_answer_is_not_absence(self) -> None:
+        for name, answer in self.UNKNOWN_QUEUE_ANSWERS.items():
+            with self.subTest(name):
+                self._fresh()
+                self.gh.graphql = dict(answer.get("set") or {})
+                self.gh.graphql_drop = tuple(answer.get("drop") or ())
+
+                self._tick(bus_polls=3)
+
+                self.assertEqual(self.gh.mutations, [])
+                self.assertNotIn("merge_route", self._disk_task())
+
+        # The same PR with a whole answer is admitted: the guard is the
+        # answer's completeness, not a new gate in front of admission.
+        self._fresh()
+        self._tick()
+        self.assertEqual(len(self._merges()), 1)
+
+    # The PR checked before the mutation, then moved before the readback.
+    IDENTITY_DRIFTS = {
+        "head": {"head": "f" * 40},
+        "base": {"base": "main"},
+        "branch": {"branch": "task/SOMEONE-ELSE"},
+        "queue node head": {"graphql_head": "f" * 40},
+    }
+
+    def test_an_admission_readback_on_a_moved_pr_is_not_the_approved_heads(self) -> None:
+        for name, drift in self.IDENTITY_DRIFTS.items():
+            for after in ("queued", "armed", "merged"):
+                with self.subTest(drift=name, after=after):
+                    self._fresh()
+                    self.gh.after = after
+                    self.gh.drift = drift
+
+                    self._tick(bus_polls=2)
+
+                    self.assertEqual(len(self._merges()), 1)
+                    route = self._disk_task()["merge_route"]
+                    # A readback that no longer describes the approved head
+                    # is never recorded as its success; the attempt stays
+                    # spent so the window and cap still see it.
+                    if name == "queue node head" and after != "queued":
+                        # Armed and merged are read from the PR view, which
+                        # did not move; the queue node is not consulted.
+                        self.assertEqual(route["route"], after)
+                    else:
+                        self.assertEqual(route["route"], "unconfirmed")
+                    self.assertEqual((route["head"], route["attempts"]), (self.HEAD, 1))
+
+                    # The next tick sees the moved PR on its initial check and
+                    # issues nothing for it.
+                    self._tick(bus_polls=2)
+                    self.assertEqual(len(self._merges()), 1)
 
 
 class QuarantineCrossRepositoryTests(unittest.TestCase):

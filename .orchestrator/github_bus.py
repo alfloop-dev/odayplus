@@ -1501,8 +1501,23 @@ def _record_auto_merge(
     return True
 
 
-def read_pr_merge_admission(repo: str, number: int) -> dict[str, Any] | None:
+# The PR identity an admission is bound to. A readback taken after the initial
+# check must still show all three; a PR whose head, base or source branch moved
+# in between is a different thing from the one that was checked and admitted.
+PR_ADMISSION_IDENTITY_FIELDS = ("headRefOid", "baseRefName", "headRefName")
+
+
+def read_pr_merge_admission(
+    repo: str,
+    number: int,
+    expected: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Read one PR for merge admission, bound to this repository and number.
+
+    With `expected` (the PR as it was read and checked before a mutation), the
+    readback must also carry the same head commit, base and source branch.
+    Anything else describes another PR, or this PR after it changed under the
+    admission, and must not be counted as the checked head's outcome.
 
     Returns None when the answer is unusable or describes another PR. None is
     "unknown", never "not armed" or "not queued": a caller that treats an
@@ -1514,6 +1529,11 @@ def read_pr_merge_admission(repo: str, number: int) -> dict[str, Any] | None:
     pr = gh_json(["pr", "view", str(number), "--repo", repo, "--json", AUTO_MERGE_PR_FIELDS])
     if not isinstance(pr, dict) or pr.get("number") != number:
         return None
+    if expected is not None:
+        for field in PR_ADMISSION_IDENTITY_FIELDS:
+            want = str(expected.get(field) or "").strip().lower()
+            if not want or str(pr.get(field) or "").strip().lower() != want:
+                return None
     return pr
 
 
@@ -1526,20 +1546,53 @@ def pr_merge_admission(repo: str, number: int, pr: dict[str, Any]) -> tuple[str,
     so an unreadable GraphQL answer is `unknown`, never `not_admitted`.
     Returns the queue node alongside the state so a caller can record its
     position without a second read.
+
+    The GraphQL node is bound to the PR that was read: it must name the same
+    number and the same head commit. Its answer then counts only when it is
+    whole and consistent. `not_admitted` is a positive statement of absence -
+    OPEN, `merged: false`, `isInMergeQueue: false` and a present, null
+    `mergeQueueEntry` - because it licenses a new mutation; a missing field, a
+    contradiction (an entry beside `isInMergeQueue: false`, `state` and
+    `merged` disagreeing) or another PR/head is `unknown`, and nothing is
+    issued on it.
     """
 
     if str(pr.get("state") or "").upper() == "MERGED":
         return "merged", None
     if auto_merge_request_present(pr):
         return "armed", None
-    queue_info = pr if is_in_merge_queue(pr) else fetch_pr_merge_queue_status(repo, number)
-    if is_in_merge_queue(queue_info):
-        return "queued", queue_info
-    if not isinstance(queue_info, dict):
+    if is_in_merge_queue(pr):
+        return "queued", pr
+    expected_head = str(pr.get("headRefOid") or "").strip().lower()
+    if not expected_head:
         return "unknown", None
-    if str(queue_info.get("state") or "").upper() == "MERGED" or queue_info.get("merged") is True:
-        return "merged", None
-    return "not_admitted", queue_info
+    node = fetch_pr_merge_queue_status(repo, number)
+    if not isinstance(node, dict) or node.get("number") != number:
+        return "unknown", None
+    if str(node.get("headRefOid") or "").strip().lower() != expected_head:
+        return "unknown", None
+    node_state = str(node.get("state") or "").upper()
+    merged_flag = node.get("merged")
+    in_queue_flag = node.get("isInMergeQueue")
+    entry = node.get("mergeQueueEntry")
+    if node_state == "MERGED" or merged_flag is True:
+        if node_state == "MERGED" and merged_flag is True:
+            return "merged", None
+        return "unknown", None
+    if in_queue_flag is True:
+        # GitHub may report enrollment before it fills in the entry detail.
+        if entry is None or isinstance(entry, dict):
+            return "queued", node
+        return "unknown", None
+    if (
+        node_state == "OPEN"
+        and merged_flag is False
+        and in_queue_flag is False
+        and "mergeQueueEntry" in node
+        and entry is None
+    ):
+        return "not_admitted", node
+    return "unknown", None
 
 
 def arm_pr_auto_merge(repo: str, number: int, pr: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
@@ -1553,7 +1606,9 @@ def arm_pr_auto_merge(repo: str, number: int, pr: dict[str, Any]) -> tuple[str, 
 
     A zero exit is only the CLI's acknowledgement that the mutation was
     accepted, not proof that GitHub persisted an auto-merge request or an
-    enqueue, so the same PR is read back before anything is claimed. Returns
+    enqueue, so the same PR is read back before anything is claimed - bound to
+    the head, base and branch of `pr` as checked before the mutation, so a PR
+    that moved in between is never reported as this head's admission. Returns
     `armed`, `queued`, `merged`, or `unconfirmed` when the readback is
     unreadable or shows none of those. A refused mutation raises
     `GitHubBusError`; an unreachable GitHub raises `GitHubBusOffline`, whose
@@ -1565,7 +1620,7 @@ def arm_pr_auto_merge(repo: str, number: int, pr: dict[str, Any]) -> tuple[str, 
     run_gh(["pr", "merge", str(number), "--repo", repo, "--auto", "--merge"])
 
     try:
-        readback = read_pr_merge_admission(repo, number)
+        readback = read_pr_merge_admission(repo, number, expected=pr)
         if readback is None:
             return "unconfirmed", None
         admission, queue_info = pr_merge_admission(repo, number, readback)

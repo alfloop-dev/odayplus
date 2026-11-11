@@ -2048,6 +2048,7 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
     TASK_ID = "ODP-ORCH-REVIEWBUS-AUTOMERGE-001"
     BRANCH = "task/ODP-ORCH-REVIEWBUS-AUTOMERGE-001"
     REPO = "alfloop-dev/odayplus"
+    HEAD_SHA = "a" * 40
 
     def test_pr_publish_and_auto_merge_have_one_owner_each(self) -> None:
         root = Path(github_bus.__file__).resolve().parents[1]
@@ -2111,11 +2112,27 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
             "autoMergeRequest": None,
             "baseRefName": "dev",
             "headRefName": self.BRANCH,
+            "headRefOid": self.HEAD_SHA,
             "url": f"https://github.com/{self.REPO}/pull/700",
             "mergeStateStatus": "BLOCKED",
         }
         pr.update(overrides)
         return pr
+
+    @staticmethod
+    def _graphql_node(target: dict) -> dict:
+        """The whole node `PR_MERGE_QUEUE_GRAPHQL_QUERY` asks GitHub for."""
+
+        merged = str(target.get("state") or "").upper() == "MERGED"
+        return {
+            "number": target.get("number", 700),
+            "state": target.get("state", "OPEN"),
+            "merged": merged,
+            "mergedAt": "2026-09-01T00:00:00Z" if merged else None,
+            "headRefOid": target.get("headRefOid"),
+            "isInMergeQueue": bool(target.get("isInMergeQueue")),
+            "mergeQueueEntry": target.get("mergeQueueEntry"),
+        }
 
     def _arm(
         self,
@@ -2154,17 +2171,7 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
                 target = readback if (run_gh_calls and readback is not None) else pr
                 if target is None:
                     return None
-                return {
-                    "data": {
-                        "repository": {
-                            "pullRequest": {
-                                "number": target.get("number", 700),
-                                "isInMergeQueue": bool(target.get("isInMergeQueue")),
-                                "mergeQueueEntry": target.get("mergeQueueEntry"),
-                            }
-                        }
-                    }
-                }
+                return {"data": {"repository": {"pullRequest": self._graphql_node(target)}}}
             return None
 
         with (
@@ -2777,6 +2784,7 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
             "isDraft": False,
             "baseRefName": "dev",
             "headRefName": head,
+            "headRefOid": "b" * 40,
             "url": url,
             "mergeStateStatus": "BLOCKED",
         }
@@ -2790,7 +2798,7 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
             if args[:2] == ["pr", "view"]:
                 return next(view_readbacks)
             if args[:2] == ["api", "graphql"]:
-                return {"data": {"repository": {"pullRequest": {"number": 812, "isInMergeQueue": False, "mergeQueueEntry": None}}}}
+                return {"data": {"repository": {"pullRequest": self._graphql_node(listed)}}}
             return None
 
         bus_state: dict = {}
@@ -2812,6 +2820,88 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         self.assertIn("--auto", self._gh_calls(run_gh)[0])
         entry = bus_state["housekeeping_prs"][head]
         self.assertEqual(entry["auto_merge"]["state"], "enabled")
+
+    def _housekeeping_round(self, viewed: list[dict], node) -> tuple[list[list[str]], dict]:
+        """One real `sync_archive_housekeeping_auto_merge` pass: `viewed` are
+        the successive `gh pr view` answers, `node(listed)` the GraphQL node."""
+
+        head = "task/OPS-ARCHIVE-AUTO-COMMIT-20260814T120000Z"
+        listed = dict(viewed[0])
+        view_readbacks = iter(viewed)
+
+        def fake_gh_json(args: list[str]):
+            if args[:2] == ["pr", "list"]:
+                return [listed]
+            if args[:2] == ["pr", "view"]:
+                return next(view_readbacks)
+            if args[:2] == ["api", "graphql"]:
+                return {"data": {"repository": {"pullRequest": node(listed)}}}
+            return None
+
+        bus_state: dict = {}
+        with (
+            mock.patch.object(github_bus, "gh_json", side_effect=fake_gh_json),
+            mock.patch.object(
+                github_bus,
+                "run_gh",
+                return_value=subprocess.CompletedProcess(["gh"], 0, "", ""),
+            ) as run_gh,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            github_bus.sync_archive_housekeeping_auto_merge(self._config(), bus_state, self.REPO)
+        return self._gh_calls(run_gh), bus_state["housekeeping_prs"][head]["auto_merge"]
+
+    def _housekeeping_pr(self, **overrides) -> dict:
+        pr = {
+            "number": 812,
+            "state": "OPEN",
+            "isDraft": False,
+            "autoMergeRequest": None,
+            "baseRefName": "dev",
+            "headRefName": "task/OPS-ARCHIVE-AUTO-COMMIT-20260814T120000Z",
+            "headRefOid": "b" * 40,
+            "url": f"https://github.com/{self.REPO}/pull/812",
+            "mergeStateStatus": "BLOCKED",
+        }
+        pr.update(overrides)
+        return pr
+
+    def test_archive_housekeeping_partial_queue_answer_arms_nothing(self) -> None:
+        """Housekeeping shares the reader: a partial or mismatched node is
+        unknown there too, and unknown never re-issues the mutation."""
+
+        broken = {
+            "flag missing": lambda n: {k: v for k, v in n.items() if k != "isInMergeQueue"},
+            "entry missing": lambda n: {k: v for k, v in n.items() if k != "mergeQueueEntry"},
+            "merged missing": lambda n: {k: v for k, v in n.items() if k != "merged"},
+            "entry beside a false flag": lambda n: {**n, "mergeQueueEntry": {"position": 1}},
+            "another head": lambda n: {**n, "headRefOid": "c" * 40},
+            "another PR": lambda n: {**n, "number": 813},
+        }
+        for name, mangle in broken.items():
+            with self.subTest(name):
+                calls, record = self._housekeeping_round(
+                    [self._housekeeping_pr()], lambda listed: mangle(self._graphql_node(listed))
+                )
+                self.assertEqual(calls, [])
+                self.assertEqual(record["state"], "skipped_queue_unreadable")
+
+    def test_archive_housekeeping_readback_on_a_moved_pr_is_not_enabled(self) -> None:
+        armed = {"autoMergeRequest": {"enabledAt": "2026-09-01T00:00:00Z"}}
+        for name, moved in {
+            "head": {"headRefOid": "c" * 40},
+            "base": {"baseRefName": "main"},
+            "branch": {"headRefName": "task/OPS-ARCHIVE-AUTO-COMMIT-20260815T000000Z"},
+        }.items():
+            with self.subTest(name):
+                calls, record = self._housekeeping_round(
+                    [self._housekeeping_pr(), self._housekeeping_pr(**armed, **moved)],
+                    self._graphql_node,
+                )
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(calls[0][:2], ["pr", "merge"])
+                self.assertEqual(record["state"], "failed")
+                self.assertEqual(record["failure_code"], "auto_merge_unconfirmed_readback")
 
     def test_archive_housekeeping_auto_merge_switch_fails_closed(self) -> None:
         config = self._config()

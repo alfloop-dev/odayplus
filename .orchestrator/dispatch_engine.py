@@ -914,8 +914,10 @@ def route_approved_pr_to_merge(
         return "blocked", str(exc)
 
     if direct:
+        # Bound to the PR checked above: a readback whose head, base or branch
+        # moved since is another PR's outcome, never this approved head's.
         try:
-            readback = read_pr_merge_admission(slug, pr_number)
+            readback = read_pr_merge_admission(slug, pr_number, expected=pr)
             result = pr_merge_admission(slug, pr_number, readback)[0] if readback else "unconfirmed"
         except GitHubBusOffline:
             result = "unconfirmed"
