@@ -29,12 +29,14 @@ test.describe("ODP-OC-R4-008 Network Rebalance", () => {
   test("AVM + NetPlan workflow persists selected scenario and creates Govern approval without execution", async ({
     page,
   }) => {
-    await page.goto("/operator?ws=network");
+    // Enter through the existing tab route so this business journey does not
+    // first mount the unrelated Find Areas map and spend its 30s budget there.
+    await page.goto("/operator?ws=network&tab=rebalance");
     await expect(
       page.getByTestId("network-find-areas-workspace"),
     ).toBeVisible();
 
-    await page.getByTestId("network-tab-6").click();
+    await expect(page.getByTestId("network-tab-6")).toHaveAttribute("aria-selected", "true");
     await expect(page.getByTestId("network-panel-rebalance")).toBeVisible();
     await expect(page.getByTestId("rebalance-card-RB-801")).toContainText(
       "新北板橋文化",

@@ -252,7 +252,9 @@ describe("cold read metadata passed to the existing detail renderer", () => {
       ? json({ subject: "A", expiresAt: Math.floor(Date.now() / 1000) + 3600 }) : json(value)));
     render(<ColdIntakeDetail intakeId="OWN-INTAKE" onClose={vi.fn()} />);
     expect(await screen.findByTestId("intake-detail-id")).toHaveTextContent("OWN-INTAKE");
-    expect(screen.getByTestId("assignment-sla-summary")).toHaveTextContent("OWN-ASSIGNMENT");
+    expect(screen.getByTestId("assignment-sla-summary")).toHaveTextContent("Owned reviewer");
+    expect(screen.getByTestId("assignment-sla-summary")).toHaveTextContent("Owned queue");
+    expect(screen.getByTestId("assignment-sla-summary")).not.toHaveTextContent("OWN-ASSIGNMENT");
     expect(screen.getByTestId("assignment-sla-summary")).toHaveTextContent("Owned handoff");
     expect(screen.getByTestId("intake-submission-summary")).toHaveTextContent("2026-10-14T00:00:00Z");
     expect(screen.queryByTestId("asg-btn-claim")).toBeNull();

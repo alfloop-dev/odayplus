@@ -19,6 +19,7 @@ export type HeatZoneCompositionClient = {
 
 export function buildHeatZoneCompositionClient(
   activeRoleId: OperatorRoleId = "expansion-manager",
+  fetchImpl: typeof fetch = fetch,
 ): HeatZoneCompositionClient {
   const headers = {
     ...operatorSecurityHeaders(activeRoleId),
@@ -31,7 +32,7 @@ export function buildHeatZoneCompositionClient(
         ? `/api/v1/heatzones/merge-split/proposals?status=${encodeURIComponent(status)}`
         : "/api/v1/heatzones/merge-split/proposals";
       const correlationId = `corr-hz006-proposals-list-${Date.now()}`;
-      const response = await fetch(url, {
+      const response = await fetchImpl(url, {
         cache: "no-store",
         headers: {
           ...headers,
@@ -50,7 +51,7 @@ export function buildHeatZoneCompositionClient(
     },
 
     async getProposal(proposalId: string): Promise<HeatZoneProposal | null> {
-      const response = await fetch(
+      const response = await fetchImpl(
         `/api/v1/heatzones/merge-split/proposals/${encodeURIComponent(proposalId)}`,
         {
           cache: "no-store",
@@ -67,7 +68,7 @@ export function buildHeatZoneCompositionClient(
     },
 
     async previewProposal(proposalId: string): Promise<ProposalPreviewData | null> {
-      const response = await fetch(
+      const response = await fetchImpl(
         `/api/v1/heatzones/merge-split/proposals/${encodeURIComponent(proposalId)}/preview`,
         {
           method: "POST",
@@ -84,7 +85,7 @@ export function buildHeatZoneCompositionClient(
     },
 
     async approveProposal(proposalId: string, notes?: string): Promise<boolean> {
-      const response = await fetch(
+      const response = await fetchImpl(
         `/api/v1/heatzones/merge-split/proposals/${encodeURIComponent(proposalId)}/approve`,
         {
           method: "POST",
@@ -100,7 +101,7 @@ export function buildHeatZoneCompositionClient(
     },
 
     async rejectProposal(proposalId: string, reason: string): Promise<boolean> {
-      const response = await fetch(
+      const response = await fetchImpl(
         `/api/v1/heatzones/merge-split/proposals/${encodeURIComponent(proposalId)}/reject`,
         {
           method: "POST",
@@ -116,7 +117,7 @@ export function buildHeatZoneCompositionClient(
     },
 
     async fetchZoneLineage(zoneId: string): Promise<Record<string, unknown> | null> {
-      const response = await fetch(
+      const response = await fetchImpl(
         `/api/v1/heatzones/zones/${encodeURIComponent(zoneId)}/lineage`,
         {
           cache: "no-store",

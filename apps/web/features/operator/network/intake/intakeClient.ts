@@ -128,9 +128,17 @@ export function toPromotionApiError(error: unknown): IntakeApiError {
   });
 }
 
-export function toIntakeApiError(error: unknown): IntakeApiError {
+export function toIntakeApiError(error: unknown, operation?: "decide"): IntakeApiError {
   return toOperatorApiError(error, {
-    byStatus: INTAKE_ERRORS,
+    byStatus: operation === "decide" ? {
+      ...INTAKE_ERRORS,
+      409: { code: "ODP-INTAKE-CONFLICT", retryable: false,
+        next: "決策版本或重送內容衝突。請先重新讀取案件確認狀態，再檢視新的決策；原命令重送必須保留原內容與版本。" },
+      428: { code: "ODP-INTAKE-PRECONDITION", retryable: false,
+        next: "決策缺少 Intake 版本。請重新讀取案件，取得權威版本後重新檢視並確認。" },
+      503: { code: "ODP-INTAKE-UNAVAILABLE", retryable: true,
+        next: "決策結果或權威版本尚未確認。請查詢案件狀態，或以原內容、版本與 Idempotency-Key 重送。" },
+    } : INTAKE_ERRORS,
     fallbackPrefix: "ODP-INTAKE",
     roleDenied: ROLE_DENIED,
     timeoutSummary: "連線逾時 — 後端未在時限內回應，操作結果尚未確認。",
@@ -154,8 +162,8 @@ export function missingClientError(): IntakeApiError {
 export type IntakeResult<T> = OperatorApiResult<T>;
 type IntakeWriteOptions = { idempotencyKey: string; correlationId?: string; ifMatch?: string };
 
-function guard<T>(run: () => Promise<T>): Promise<IntakeResult<T>> {
-  return guardCall(run, toIntakeApiError);
+function guard<T>(run: () => Promise<T>, operation?: "decide"): Promise<IntakeResult<T>> {
+  return guardCall(run, (error) => toIntakeApiError(error, operation));
 }
 
 function guardPromotion<T>(run: () => Promise<T>): Promise<IntakeResult<T>> {
@@ -249,6 +257,7 @@ export const intakeApi = {
         idempotencyKey: options.idempotencyKey,
         ifMatch: options.ifMatch,
       }),
+      "decide",
     );
   },
 

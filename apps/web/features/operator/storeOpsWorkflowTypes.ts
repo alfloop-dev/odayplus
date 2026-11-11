@@ -1,4 +1,5 @@
 import type { Issue, OperatorRoleId, Severity } from "./types";
+import type { ForecastReadGuardFactory } from "./storeOpsForecastClient";
 
 export const STORE_OPS_REFRESH_EVENT = "oday:store-ops-refresh";
 
@@ -186,4 +187,9 @@ export type StoreOpsWorkflowDialogsProps = {
   issue?: StoreOpsWorkflowIssue;
   onClose: () => void;
   callbacks?: StoreOpsWorkflowCallbacks;
+  onStorageFailure?: (retryReadOrPreference: () => void) => void;
+  browserStorageBlocked?: boolean;
+  commandScope?: string;
+  commandPrincipal?: { subject: string; tenantId: string };
+  createAuthenticatedReadGuard?: ForecastReadGuardFactory;
 };

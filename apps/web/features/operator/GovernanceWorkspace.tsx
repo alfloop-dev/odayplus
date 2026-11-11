@@ -54,6 +54,8 @@ import type { GovernanceTab, GovernanceViewState } from "./governance/governance
 const FIELD_UNAVAILABLE = "未提供";
 
 export type GovernanceWorkspaceProps = {
+  onStorageFailure?: (retryReadOrPreference: () => void) => void;
+  browserStorageBlocked?: boolean;
   approvals?: GovernanceApproval[];
   decisions?: GovernanceDecisionRow[];
   auditRows?: GovernanceAuditRow[];
@@ -399,6 +401,8 @@ const DECISION_AUTHORITY_LABEL: Record<GovernanceDecisionAuthorityState, string>
 };
 
 export function GovernanceWorkspace({
+  onStorageFailure,
+  browserStorageBlocked = false,
   approvals: approvalsProp,
   decisions: decisionsProp,
   auditRows: auditRowsProp,
@@ -461,6 +465,12 @@ export function GovernanceWorkspace({
   );
   const [apiLoadError, setApiLoadError] = useState<string | null>(null);
   const [serverAuthority, setServerAuthority] = useState<GovernanceActionAuthority | null>(null);
+  const snapshotContext = JSON.stringify([roleId, canonicalMonitoringScopeKey]);
+  const snapshotCurrent = useRef({ key: snapshotContext, blocked: browserStorageBlocked });
+  snapshotCurrent.current = { key: snapshotContext, blocked: browserStorageBlocked };
+  const snapshotSequence = useRef(0);
+  const [loadedSnapshotContext, setLoadedSnapshotContext] = useState<string | null>(null);
+  const retainedView = useRef(false);
 
   const [activeTab, setActiveTab] = useState<GovernanceTab>(viewState?.tab ?? "approvals");
   const [selectedApprovalId, setSelectedApprovalId] = useState(viewState?.approvalId ?? localApprovals[0]?.id ?? "");
@@ -505,9 +515,16 @@ export function GovernanceWorkspace({
   );
 
   const refreshSnapshot = useCallback(async () => {
+    if (browserStorageBlocked) return false;
+    const sequence = ++snapshotSequence.current;
+    const current = () => snapshotSequence.current === sequence && snapshotCurrent.current.key === snapshotContext
+      && !snapshotCurrent.current.blocked;
+    const verified = createCanonicalMonitoringReadGuard?.(current);
     if (!fixturesAllowed) setApiLoadState("loading");
     setApiLoadError(null);
+    if (!current() || verified && !await verified()) return false;
     const snapshot = await fetchGovernanceSnapshot(roleId);
+    if (!current() || verified && !await verified()) return false;
     setServerAuthority(snapshot?.actionAuthority ?? null);
     if (!snapshot) {
       setApiLoadState(fixturesAllowed ? "fixture" : "error");
@@ -565,17 +582,19 @@ export function GovernanceWorkspace({
         : apiApprovals[0]?.id ?? ""),
     );
     setApiActive(true);
+    setLoadedSnapshotContext(snapshotContext);
     if (inspection === "seed") {
       setApiLoadState(fixturesAllowed ? "fixture" : "seed");
     } else {
       setApiLoadState(hasData ? "ready" : fixturesAllowed ? "fixture" : "empty");
     }
     return true;
-  }, [fixturesAllowed, roleId]);
+  }, [fixturesAllowed, roleId, browserStorageBlocked, snapshotContext, createCanonicalMonitoringReadGuard]);
 
   useEffect(() => {
     // Bind on mount / role change; only local/POC keeps fixtures while pending.
     void refreshSnapshot();
+    return () => { snapshotSequence.current += 1; };
   }, [refreshSnapshot]);
 
   useEffect(() => {
@@ -671,15 +690,15 @@ export function GovernanceWorkspace({
     return Array.from(categorySet);
   }, [localAuditRows]);
 
-  if (!fixturesAllowed && apiLoadState !== "ready") {
-    return (
+  const unavailable = browserStorageBlocked || !fixturesAllowed && (apiLoadState !== "ready" || loadedSnapshotContext !== snapshotContext);
+  if (!unavailable) retainedView.current = true;
+  const unavailableView = unavailable ? (
       <OperatorDataUnavailableGate
         detail={apiLoadError}
         onRetry={() => void refreshSnapshot()}
-        status={toUnavailableOperatorStatus(apiLoadState)}
+        status={apiLoadState === "ready" ? "loading" : toUnavailableOperatorStatus(apiLoadState)}
       />
-    );
-  }
+    ) : null;
 
   const filteredAuditRows =
     auditCategory === "all"
@@ -708,7 +727,7 @@ export function GovernanceWorkspace({
     ].filter((value): value is string => Boolean(value));
 
   const handleExport = async () => {
-    if (exportBusyRef.current) return;
+    if (unavailable || exportBusyRef.current) return;
     exportBusyRef.current = true;
     setEvdRunning(true);
     setEvdResult(null);
@@ -818,7 +837,7 @@ export function GovernanceWorkspace({
   }
 
   async function submitDecision(action: GovernanceDecisionAction) {
-    if (!selectedApproval || nativeReviewRequired || !canDecide || decisionBusyRef.current) {
+    if (unavailable || !selectedApproval || nativeReviewRequired || !canDecide || decisionBusyRef.current) {
       return;
     }
 
@@ -835,6 +854,12 @@ export function GovernanceWorkspace({
       setDecisionRunning(true);
       const signature = JSON.stringify({ approvalId: selectedApproval.id, action, reason: trimmedReason, roleId });
       if (decisionIntent.current?.signature !== signature) decisionIntent.current = { signature, key: `ik-govern-decision-${crypto.randomUUID()}` };
+      const current = () => snapshotCurrent.current.key === snapshotContext && !snapshotCurrent.current.blocked;
+      const verified = createCanonicalMonitoringReadGuard?.(current);
+      if (!current() || verified && !await verified()) {
+        decisionBusyRef.current = false; setDecisionRunning(false);
+        setReasonError("登入範圍尚未重新核對，核決未送出。"); return;
+      }
       const outcome = await submitGovernanceDecision({
         approvalId: selectedApproval.id,
         action,
@@ -844,8 +869,15 @@ export function GovernanceWorkspace({
         roleId,
         idempotencyKey: decisionIntent.current.key,
       });
+      if (!current() || verified && !await verified()) {
+        decisionBusyRef.current = false; setDecisionRunning(false);
+        setReasonError("登入範圍尚未重新核對，核決結果需重新確認。"); return;
+      }
       if (outcome.ok) {
         await refreshSnapshot();
+        if (!current() || verified && !await verified()) {
+          decisionBusyRef.current = false; setDecisionRunning(false); return;
+        }
         decisionBusyRef.current = false;
         setDecisionRunning(false);
         setReason("");
@@ -1014,7 +1046,7 @@ export function GovernanceWorkspace({
   ]);
 
   return (
-    <section className={`${styles.workspace} ${activeTab === "approvals" ? styles.approvalView : ""}`} data-testid="governance-workspace" data-screen-label="Govern 治理稽核">
+    <>{unavailableView}{retainedView.current ? <section hidden={unavailable} style={unavailable ? { display: "none" } : undefined} className={`${styles.workspace} ${activeTab === "approvals" ? styles.approvalView : ""}`} data-testid="governance-workspace" data-screen-label="Govern 治理稽核">
       <header className={styles.header}>
         <div className={styles.headerTitle}>
           <h1>治理稽核</h1>
@@ -1373,7 +1405,8 @@ export function GovernanceWorkspace({
       ) : null}
 
       {activeTab === "evidencePackage" && !fixturesAllowed ? (
-        <CanonicalEvidencePanel roleId={roleId} canExport={decisionAuthority.canExport} requestedDecisionId={canonicalEvidenceDecisionId} />
+        <CanonicalEvidencePanel roleId={roleId} canExport={decisionAuthority.canExport} requestedDecisionId={canonicalEvidenceDecisionId}
+          suspended={unavailable} createAuthenticatedReadGuard={createCanonicalMonitoringReadGuard} onStorageFailure={onStorageFailure} />
       ) : null}
 
       {activeTab === "evidencePackage" && fixturesAllowed ? (
@@ -1746,7 +1779,7 @@ export function GovernanceWorkspace({
       ) : null}
 
       {localToast ? <div className={styles.toast}>{localToast}</div> : null}
-    </section>
+    </section> : null}</>
   );
 }
 

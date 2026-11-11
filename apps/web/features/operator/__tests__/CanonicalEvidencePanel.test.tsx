@@ -57,6 +57,92 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); window.sessionStorage.clear(); });
 
 describe("ordinary canonical evidence in the original Govern export area", () => {
+  it("restarts only source reads when initial loading is suspended before its response settles", async () => {
+    const ordinary = transport();
+    let finish!: (response: Response) => void;
+    let first = true;
+    const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/sources") && first) {
+        first = false; return new Promise<Response>((resolve) => { finish = resolve; });
+      }
+      return ordinary(input, init);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const view = render(<CanonicalEvidencePanel roleId="pm-audit" canExport />);
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    view.rerender(<CanonicalEvidencePanel roleId="pm-audit" canExport suspended />);
+    await act(async () => { finish(reply(catalog())); });
+    view.rerender(<CanonicalEvidencePanel roleId="pm-audit" canExport />);
+    await chooseAndPreview();
+    expect(screen.getByTestId("governance-export-button")).toBeEnabled();
+    expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("/sources"))).toHaveLength(2);
+    expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("/export"))).toHaveLength(0);
+  });
+
+  it("blocks a temporarily revoked export grant without replacing the same owner's unknown intent", async () => {
+    const ordinary = transport();
+    let first = true;
+    const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/export") && first) { first = false; return Promise.resolve(reply({}, 503)); }
+      return ordinary(input, init);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const view = render(<CanonicalEvidencePanel roleId="pm-audit" canExport />);
+    await chooseAndPreview();
+    fireEvent.click(screen.getByTestId("governance-export-button"));
+    await screen.findByRole("alert");
+    const writes = () => fetcher.mock.calls.filter(([url]) => String(url).endsWith("/export"));
+    const originalKey = new Headers(writes()[0][1]?.headers).get("Idempotency-Key");
+    view.rerender(<CanonicalEvidencePanel roleId="pm-audit" canExport={false} />);
+    expect(screen.getByTestId("governance-export-button")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("governance-export-button"));
+    expect(writes()).toHaveLength(1);
+    view.rerender(<CanonicalEvidencePanel roleId="pm-audit" canExport />);
+    await waitFor(() => expect(screen.getByTestId("governance-export-button")).toBeEnabled());
+    expect(screen.getByLabelText("匯出理由")).toHaveValue(selection.reason);
+    fireEvent.click(screen.getByTestId("governance-export-button"));
+    await screen.findByTestId("canonical-evidence-created");
+    expect(writes()).toHaveLength(2);
+    expect(new Headers(writes()[1][1]?.headers).get("Idempotency-Key")).toBe(originalKey);
+    expect(writes()[1][1]?.body).toBe(writes()[0][1]?.body);
+  });
+  it("releases the mounted owner's busy latch and retains an unknown export key after actual storage denial", async () => {
+    const ordinary = transport();
+    let finish!: (response: Response) => void;
+    let exports = 0;
+    const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/export") && ++exports === 1)
+        return new Promise<Response>((resolve) => { finish = resolve; });
+      return ordinary(input, init);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const onStorageFailure = vi.fn();
+    const view = render(<CanonicalEvidencePanel roleId="pm-audit" canExport onStorageFailure={onStorageFailure} />);
+    await chooseAndPreview();
+    fireEvent.click(screen.getByTestId("governance-export-button"));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    const first = fetcher.mock.calls.find(([url]) => String(url).endsWith("/export"))!;
+    const originalKey = new Headers(first[1]?.headers).get("Idempotency-Key");
+    const denied = vi.spyOn(window.sessionStorage, "getItem").mockImplementation(() => {
+      throw new DOMException("Denied", "SecurityError");
+    });
+    try {
+      await act(async () => { finish(reply({ export_id: "engineering-export", artifact_sha256: digest,
+        delivery_status: "pending", download_ready: false, external_acknowledged: false }, 201)); });
+      await screen.findByText("瀏覽器無法保存或核對操作狀態");
+      expect(onStorageFailure).toHaveBeenCalled();
+      denied.mockRestore();
+      view.rerender(<CanonicalEvidencePanel roleId="pm-audit" canExport onStorageFailure={onStorageFailure} />);
+      expect(screen.getByLabelText("匯出理由")).toHaveValue(selection.reason);
+      expect(screen.getByTestId("governance-export-button")).toBeEnabled();
+      expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("/export"))).toHaveLength(1);
+      fireEvent.click(screen.getByTestId("governance-export-button"));
+      await screen.findByTestId("canonical-evidence-created");
+      const writes = fetcher.mock.calls.filter(([url]) => String(url).endsWith("/export"));
+      expect(writes).toHaveLength(2);
+      expect(new Headers(writes[1][1]?.headers).get("Idempotency-Key")).toBe(originalKey);
+    } finally { denied.mockRestore(); }
+  });
   it.each([source.decision_id, "foreign-or-no-longer-authorized-decision"])("resolves requested %s only through the current server source catalog", async (id) => {
     transport();
     render(<CanonicalEvidencePanel roleId="pm-audit" canExport requestedDecisionId={id} />);
