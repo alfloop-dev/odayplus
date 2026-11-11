@@ -307,6 +307,26 @@ jobs:
       # boundary on this runner rather than a stand-in.
       - name: Install sandbox dependency
         run: |
+          # Bounded read-only resolver evidence for the APT DNS failures
+          # (ODP-CI-APT-DNS-DIAGNOSTIC-261111): nameserver addresses and
+          # getent outcomes only, at most 8 x 3s. Results are data; every
+          # lookup sits in an if-condition so it cannot fail this step.
+          echo "dns-diagnostic: resolver nameservers"
+          for conf in /etc/resolv.conf /run/systemd/resolve/resolv.conf; do
+            if [ -r "$conf" ]; then
+              echo "  $conf: $(awk '$1 == "nameserver" {printf "%s ", $2}' "$conf")"
+            fi
+          done
+          echo "dns-diagnostic: getent lookups (timeout 3s each)"
+          for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com github.com; do
+            for db in ahostsv4 ahosts; do
+              started="${EPOCHREALTIME/./}"
+              if answer="$(timeout 3 getent "$db" "$host")"; then rc=0; else rc=$?; fi
+              elapsed_ms=$(( (${EPOCHREALTIME/./} - started) / 1000 ))
+              addrs="$(printf '%s\n' "$answer" | awk 'NF {print $1}' | sort -u | tr '\n' ' ')"
+              echo "  $db $host rc=$rc elapsed_ms=$elapsed_ms addrs=$addrs"
+            done
+          done
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends bubblewrap
           sudo install -m 0644 .orchestrator/profiles/bwrap /etc/apparmor.d/bwrap
