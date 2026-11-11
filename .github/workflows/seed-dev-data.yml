@@ -68,4 +68,4 @@ jobs:
             --secret="${DB_URL_SECRET%%:*}" --project="${GCP_PROJECT}")"
           echo "::add-mask::${RAW_DB_URL}"
           export RAW_DB_URL
-          python3 .github/scripts/seed_dev_backfill_driver.py
+          PYTHONPATH="${GITHUB_WORKSPACE}" python3 .github/scripts/seed_dev_backfill_driver.py
