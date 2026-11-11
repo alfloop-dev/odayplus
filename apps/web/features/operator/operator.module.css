@@ -656,6 +656,18 @@
   gap: 7px;
   padding: 10px;
   border-top: 1px solid var(--operator-border);
+  /*
+   * Keep small controls (severity badge, action buttons, the select checkbox,
+   * timestamp and source lines) at their natural width. Grid items default to
+   * justify-items: stretch, which blew the "! 危急" pill and the buttons out to
+   * the full card width. Text blocks below are re-stretched so they still wrap.
+   */
+  justify-items: start;
+}
+
+.notificationItem > strong,
+.notificationItem > p {
+  justify-self: stretch;
 }
 
 .notificationItem p {
