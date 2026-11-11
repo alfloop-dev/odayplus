@@ -3,6 +3,18 @@ body {
   padding: 0 !important;
 }
 
+/*
+ * Reserve the vertical scrollbar gutter at the viewport level so the centered
+ * console (top navigation included) keeps a constant width whether or not the
+ * active workspace overflows. Without this, switching from a tall workspace
+ * (e.g. 今日工作, 44 items) to a short one (a no-data store/growth card) adds or
+ * removes the scrollbar and shifts the whole shell horizontally on every tab
+ * change.
+ */
+html {
+  scrollbar-gutter: stable;
+}
+
 /* Native scrolling must leave controls below the sticky, responsive topbar. */
 html:has([data-testid="operator-console"]) {
   --operator-header-before-hydration: 53px;
