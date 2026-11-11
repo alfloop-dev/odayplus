@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import inspect
 import json
 import subprocess
 import sys
@@ -2058,7 +2059,15 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         )
 
         self.assertNotIn('["pr", "create"', bus_source)
-        self.assertEqual(bus_source.count('run_gh(["pr", "merge"'), 1)
+        # Every `gh pr merge` command - the queue/auto admission and the
+        # dispatcher's direct merge on a base without a queue - is built in the
+        # one helper that issues it and reads it back; nothing else in the bus
+        # or the dispatcher issues one.
+        mutation_owner = inspect.getsource(github_bus.issue_pr_merge_admission)
+        self.assertEqual(bus_source.count('["pr", "merge"'), mutation_owner.count('["pr", "merge"'))
+        self.assertEqual(mutation_owner.count("run_gh(command)"), 1)
+        dispatch_source = (root / ".orchestrator/dispatch_engine.py").read_text(encoding="utf-8")
+        self.assertNotIn('"pr", "merge"', dispatch_source)
         self.assertNotIn(" --auto", finalize_source)
         self.assertFalse((root / ".orchestrator/auto_merge_green_prs.py").exists())
         self.assertFalse((root / ".orchestrator/auto-merge-guard.sh").exists())
@@ -2162,6 +2171,8 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
             "state": target.get("state", "OPEN"),
             "merged": merged,
             "mergedAt": "2026-09-01T00:00:00Z" if merged else None,
+            "baseRefName": target.get("baseRefName"),
+            "headRefName": target.get("headRefName"),
             "headRefOid": target.get("headRefOid"),
             "isInMergeQueue": bool(target.get("isInMergeQueue")),
             "mergeQueueEntry": target.get("mergeQueueEntry"),
@@ -2174,7 +2185,12 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         bus_state: dict | None = None,
         run_gh_side_effect=None,
         readback: dict | None = None,
+        graphql_before: dict | None = None,
+        graphql_after: dict | None = None,
     ):
+        """`graphql_before`/`graphql_after` override fields of the GraphQL node
+        alone, before and after the first mutation, for a queue answer that
+        no longer agrees with the PR view."""
         bus_state = bus_state if bus_state is not None else self._bus_state()
         view_calls = 0
         run_gh_calls = []
@@ -2204,7 +2220,9 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
                 target = readback if (run_gh_calls and readback is not None) else pr
                 if target is None:
                     return None
-                return {"data": {"repository": {"pullRequest": self._graphql_node(target)}}}
+                node = self._graphql_node(target)
+                node.update((graphql_after if run_gh_calls else graphql_before) or {})
+                return {"data": {"repository": {"pullRequest": node}}}
             return None
 
         with (
@@ -2466,6 +2484,64 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         self.assertFalse(second_changed)
         self.assertEqual(second_log.call_count, 0)
         self.assertEqual(entry["auto_merge"]["state"], "failed")
+
+    def test_queue_answer_for_another_base_or_branch_is_not_this_pr(self) -> None:
+        """The GraphQL node is held to the PR view's base and source branch too.
+        Before the mutation a mismatch is unknown and nothing is issued; after
+        it, a queued answer for a retargeted PR is not this PR's admission."""
+        queued = {"isInMergeQueue": True, "mergeQueueEntry": {"position": 1, "state": "QUEUED"}}
+        for name, moved in {
+            "another base": {"baseRefName": "main"},
+            "base case": {"baseRefName": "DEV"},
+            "another branch": {"headRefName": "task/ODP-OTHER-001"},
+            "base missing": {"baseRefName": None},
+        }.items():
+            with self.subTest(name):
+                _c, entry, run_gh, _l, _g = self._arm(self._pr(isDraft=False), graphql_before=moved)
+                self.assertEqual(self._gh_calls(run_gh), [])
+                self.assertEqual(entry["auto_merge"]["state"], "skipped_queue_unreadable")
+
+                _c, entry, run_gh, _l, _g = self._arm(
+                    self._pr(isDraft=False), graphql_after={**queued, **moved}
+                )
+                self.assertEqual([c[:2] for c in self._gh_calls(run_gh)], [["pr", "merge"]])
+                self.assertEqual(entry["auto_merge"]["state"], "failed")
+                self.assertEqual(entry["auto_merge"]["failure_code"], "auto_merge_unconfirmed_readback")
+
+        # The same queued answer on the checked base and branch is the admission.
+        _c, entry, _r, _l, _g = self._arm(self._pr(isDraft=False), graphql_after=queued)
+        self.assertEqual(entry["auto_merge"]["state"], "queued")
+
+    def test_a_failed_mutation_is_settled_by_its_readback(self) -> None:
+        """A nonzero `gh pr merge` is not proof GitHub applied nothing. Its
+        readback decides: armed is armed, a whole `not_admitted` is the
+        refusal, and anything unsettled is an unconfirmed retry - never the
+        error recorded as if nothing happened, never an admission."""
+        bad_gateway = github_bus.GitHubBusError("HTTP 502: Bad Gateway (https://api.github.com/graphql)")
+
+        def merge_fails(args, **_kwargs):
+            if args[:2] == ["pr", "merge"]:
+                raise bad_gateway
+            return subprocess.CompletedProcess(["gh"], 0, "", "")
+
+        _c, entry, _r, log, _g = self._arm(
+            self._pr(isDraft=False),
+            run_gh_side_effect=merge_fails,
+            readback=self._pr(isDraft=False, autoMergeRequest={"enabledAt": "2026-09-01T00:00:00Z"}),
+        )
+        self.assertEqual(entry["auto_merge"]["state"], "enabled")
+        self.assertEqual(log.call_args.args[1]["type"], "github_auto_merge_enabled")
+
+        _c, entry, _r, _l, _g = self._arm(
+            self._pr(isDraft=False), run_gh_side_effect=merge_fails, graphql_after={"state": None}
+        )
+        self.assertEqual(entry["auto_merge"]["state"], "failed")
+        self.assertEqual(entry["auto_merge"]["failure_code"], "auto_merge_unconfirmed_readback")
+
+        _c, entry, _r, _l, _g = self._arm(self._pr(isDraft=False), run_gh_side_effect=merge_fails)
+        self.assertEqual(entry["auto_merge"]["state"], "failed")
+        self.assertNotIn("failure_code", entry["auto_merge"])
+        self.assertIn("502", entry["auto_merge"]["message"])
 
     def test_zero_exit_without_armed_readback_fails_closed_and_retries(self) -> None:
         bus_state = self._bus_state()

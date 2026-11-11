@@ -151,7 +151,7 @@ cap; it now only projects the dispatcher's record into bus state
 (`auto_merge.owner = dispatch_engine.route_approved_pr_to_merge`) and makes no
 GitHub call for task PRs. Archive housekeeping PRs
 (`task/OPS-ARCHIVE-AUTO-COMMIT-*`) have no canonical task, so the bus still
-arms those through the same `arm_pr_auto_merge` helper.
+arms those through the same `issue_pr_merge_admission` helper.
 
 Each tick, for a `review_approved` task whose CI is green - or still running,
 when `branch_workflow.task_pr.auto_merge` is on - the route:
@@ -162,10 +162,13 @@ when `branch_workflow.task_pr.auto_merge` is on - the route:
    unreviewed work and needs its own review. An unreadable PR or unreadable
    queue enrollment is `unknown`: nothing is issued and it is never treated
    as "not queued". "Not queued" must be stated, not inferred: the GraphQL
-   node has to name the same PR number and head, and read OPEN,
+   node has to name the same PR number, head, base and source branch as the
+   PR read just before it (a PR retargeted between the two reads is not this
+   one), and read OPEN,
    `merged: false`, `isInMergeQueue: false` and a null `mergeQueueEntry`. A
    missing field, a contradiction (an entry beside `isInMergeQueue: false`,
-   `state` and `merged` disagreeing) or another PR/head is `unknown`.
+   `state` and `merged` disagreeing) or another PR, head, base or branch is
+   `unknown`.
 2. **Does not re-issue** when GitHub already reports the PR armed
    (`autoMergeRequest`) or queued (`isInMergeQueue`); that observation is
    recorded with zero attempts.
@@ -177,9 +180,14 @@ when `branch_workflow.task_pr.auto_merge` is on - the route:
    through the canonical revision CAS (`commit_canonical_task_transition`)
    before `gh` is called. A rejected (stale) write reloads status and issues
    nothing that tick, so a concurrent writer cannot make an admission the
-   counter does not know about. A refusal from GitHub restores the previous
-   record; an offline mutation keeps the attempt because its outcome is
-   unknown.
+   counter does not know about. An offline mutation keeps the attempt
+   because its outcome is unknown. Any other failed mutation is read back
+   (step 6) before it is called a refusal - a 5xx or a dropped response can
+   arrive after GitHub applied it: if GitHub shows the PR armed, queued or
+   merged, that is the outcome; only a whole `not_admitted` readback restores
+   the previous record (a definite refusal, retried next tick); anything it
+   cannot settle is `unconfirmed` and keeps the counted attempt. A failed
+   undraft is a refusal too, since no admission was issued after it.
 5. **Issues one command**: `gh pr merge --auto --merge` (queue enqueue, or
    armed auto-merge while checks run), or `gh pr merge --merge` only for a
    repository without a queue whose checks are already green. Never
@@ -188,7 +196,8 @@ when `branch_workflow.task_pr.auto_merge` is on - the route:
    `unconfirmed`. A zero exit alone is never recorded as queued or merged;
    `unconfirmed` still counts toward the window and the cap. The readback is
    bound to the head, base and branch checked in step 1: if any of them moved
-   in between, the answer belongs to another PR state and is recorded as
+   in between - in the PR view or in the GraphQL queue node - the answer
+   belongs to another PR state and is recorded as
    `unconfirmed`, never as the approved head's `queued`/`armed`/`merged`; the
    next tick's step 1 then refuses a moved head or base, and anything still
    passing step 1 stays under the same window and cap. Base and branch are

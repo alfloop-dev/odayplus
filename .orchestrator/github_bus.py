@@ -1320,6 +1320,8 @@ query($owner: String!, $name: String!, $number: Int!) {
       state
       merged
       mergedAt
+      baseRefName
+      headRefName
       headRefOid
       isInMergeQueue
       mergeQueueEntry {
@@ -1531,18 +1533,33 @@ def read_pr_merge_admission(
     pr = gh_json(["pr", "view", str(number), "--repo", repo, "--json", AUTO_MERGE_PR_FIELDS])
     if not isinstance(pr, dict) or pr.get("number") != number:
         return None
-    if expected is not None:
-        for field in PR_ADMISSION_IDENTITY_FIELDS:
-            want = str(expected.get(field) or "").strip()
-            got = str(pr.get(field) or "").strip()
-            if field == "headRefOid":
-                # A commit SHA is hex: its case carries no identity.
-                want, got = want.lower(), got.lower()
-            # Base and source branch names are case-sensitive git refs, so they
-            # are compared exactly: `dev` -> `DEV` is a different base.
-            if not want or got != want:
-                return None
+    if expected is not None and not pr_admission_identity_matches(expected, pr):
+        return None
     return pr
+
+
+def pr_admission_identity_matches(expected: dict[str, Any], observed: Any) -> bool:
+    """Whether `observed` names the same head commit, base and source branch.
+
+    The one identity rule for every admission read: the CLI readback after a
+    mutation and the GraphQL node the queue answer comes from. A field missing
+    on either side is not a match - an answer that cannot show its identity
+    cannot be counted as this PR's.
+    """
+
+    if not isinstance(observed, dict):
+        return False
+    for field in PR_ADMISSION_IDENTITY_FIELDS:
+        want = str(expected.get(field) or "").strip()
+        got = str(observed.get(field) or "").strip()
+        if field == "headRefOid":
+            # A commit SHA is hex: its case carries no identity.
+            want, got = want.lower(), got.lower()
+        # Base and source branch names are case-sensitive git refs, so they
+        # are compared exactly: `dev` -> `DEV` is a different base.
+        if not want or got != want:
+            return False
+    return True
 
 
 def pr_merge_admission(repo: str, number: int, pr: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
@@ -1556,7 +1573,9 @@ def pr_merge_admission(repo: str, number: int, pr: dict[str, Any]) -> tuple[str,
     position without a second read.
 
     The GraphQL node is bound to the PR that was read: it must name the same
-    number and the same head commit. Its answer then counts only when it is
+    number, head commit, base and source branch (`pr_admission_identity_matches`),
+    so a PR retargeted or force-pushed between the CLI read and this query is
+    never answered for. Its answer then counts only when it is
     whole and consistent. `not_admitted` is a positive statement of absence -
     OPEN, `merged: false`, `isInMergeQueue: false` and a present, null
     `mergeQueueEntry` - because it licenses a new mutation; a missing field, a
@@ -1571,13 +1590,10 @@ def pr_merge_admission(repo: str, number: int, pr: dict[str, Any]) -> tuple[str,
         return "armed", None
     if is_in_merge_queue(pr):
         return "queued", pr
-    expected_head = str(pr.get("headRefOid") or "").strip().lower()
-    if not expected_head:
-        return "unknown", None
     node = fetch_pr_merge_queue_status(repo, number)
     if not isinstance(node, dict) or node.get("number") != number:
         return "unknown", None
-    if str(node.get("headRefOid") or "").strip().lower() != expected_head:
+    if not pr_admission_identity_matches(pr, node):
         return "unknown", None
     node_state = str(node.get("state") or "").upper()
     merged_flag = node.get("merged")
@@ -1603,29 +1619,57 @@ def pr_merge_admission(repo: str, number: int, pr: dict[str, Any]) -> tuple[str,
     return "unknown", None
 
 
-def arm_pr_auto_merge(repo: str, number: int, pr: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
-    """Issue the one `gh pr merge --auto --merge` mutation and classify its readback.
+def issue_pr_merge_admission(
+    repo: str,
+    number: int,
+    pr: dict[str, Any],
+    *,
+    direct: bool = False,
+) -> tuple[str, dict[str, Any] | None]:
+    """Issue the one merge admission mutation for `pr` and classify its readback.
 
-    `--auto --merge` is the single admission command: GitHub treats it as a
-    queue enqueue on a queue-protected base and as protected auto-merge on a
-    base without a queue, and in both cases branch protection and required
-    checks still decide when anything merges. Draft is undrafted first because
-    GitHub refuses auto-merge on a draft.
+    `--auto --merge` is the admission command: GitHub treats it as a queue
+    enqueue on a queue-protected base and as protected auto-merge on a base
+    without a queue, and in both cases branch protection and required checks
+    still decide when anything merges. Draft is undrafted first because GitHub
+    refuses auto-merge on a draft. `direct` issues `--merge` instead (never
+    `--admin`), which only the dispatcher asks for, on a base without a queue
+    whose checks already passed.
 
     A zero exit is only the CLI's acknowledgement that the mutation was
-    accepted, not proof that GitHub persisted an auto-merge request or an
-    enqueue, so the same PR is read back before anything is claimed - bound to
-    the head, base and branch of `pr` as checked before the mutation, so a PR
-    that moved in between is never reported as this head's admission. Returns
-    `armed`, `queued`, `merged`, or `unconfirmed` when the readback is
-    unreadable or shows none of those. A refused mutation raises
-    `GitHubBusError`; an unreachable GitHub raises `GitHubBusOffline`, whose
-    outcome is unknown.
+    accepted, not proof that GitHub persisted an auto-merge request, an enqueue
+    or a merge, so the same PR is read back before anything is claimed - bound
+    to the head, base and branch of `pr` as checked before the mutation, so a
+    PR that moved in between is never reported as this head's admission.
+
+    A nonzero exit is not proof of refusal either: `run_gh` names only some
+    transport failures offline, and a 5xx, a reset stream or a dropped
+    response can come back as a plain `GitHubBusError` after GitHub applied the
+    mutation. So a failed mutation is read back the same way, and it is
+    re-raised as a refusal only when that readback positively shows GitHub
+    holds nothing for this PR (`not_admitted`). If the readback finds the PR
+    admitted, that is the outcome; if it cannot tell, the outcome is
+    `unconfirmed`.
+
+    Returns `armed`, `queued`, `merged`, or `unconfirmed`. Raises
+    `GitHubBusError` for a refusal (including an undraft that failed, so no
+    admission was issued) and `GitHubBusOffline` when GitHub became unreachable
+    during the mutation or its readback, whose outcome is unknown.
     """
 
-    if pr.get("isDraft"):
+    if pr.get("isDraft") and not direct:
         run_gh(["pr", "ready", str(number), "--repo", repo])
-    run_gh(["pr", "merge", str(number), "--repo", repo, "--auto", "--merge"])
+    if direct:
+        command = ["pr", "merge", str(number), "--merge", "--repo", repo]
+    else:
+        command = ["pr", "merge", str(number), "--repo", repo, "--auto", "--merge"]
+    mutation_error: GitHubBusError | None = None
+    try:
+        run_gh(command)
+    except GitHubBusOffline:
+        raise
+    except GitHubBusError as exc:
+        mutation_error = exc
 
     try:
         readback = read_pr_merge_admission(repo, number, expected=pr)
@@ -1635,11 +1679,13 @@ def arm_pr_auto_merge(repo: str, number: int, pr: dict[str, Any]) -> tuple[str, 
     except GitHubBusOffline:
         raise
     except GitHubBusError:
-        # The mutation already went out; an unreadable answer afterwards is an
-        # unconfirmed admission, not a refused one.
+        # The mutation already went out, or may have; an unreadable answer
+        # afterwards is an unconfirmed admission, not a refused one.
         return "unconfirmed", None
     if admission in {"armed", "queued", "merged"}:
         return admission, queue_info if queue_info is not None else readback
+    if mutation_error is not None and admission == "not_admitted":
+        raise mutation_error
     return "unconfirmed", readback
 
 
@@ -1657,7 +1703,7 @@ def enable_review_pr_auto_merge(config: dict[str, Any], bus_state: dict[str, Any
 
     Housekeeping PRs have no canonical task and therefore no dispatcher route,
     so they keep this path. It reads back through the same helpers the
-    dispatcher uses and issues through the same `arm_pr_auto_merge`.
+    dispatcher uses and issues through the same `issue_pr_merge_admission`.
 
     Arming is deliberately not merging: GitHub still holds the PR until branch
     protection on the base is satisfied. Two guards fail closed on stale bus
@@ -1786,7 +1832,7 @@ def enable_review_pr_auto_merge(config: dict[str, Any], bus_state: dict[str, Any
                 log_type="github_auto_merge_skipped",
             )
 
-        result, readback_info = arm_pr_auto_merge(repo, number, pr)
+        result, readback_info = issue_pr_merge_admission(repo, number, pr)
         if result in {"armed", "merged"}:
             return _record_auto_merge(config, entry, task_id, armed, log_type="github_auto_merge_enabled")
         if result == "queued":
@@ -1801,7 +1847,7 @@ def enable_review_pr_auto_merge(config: dict[str, Any], bus_state: dict[str, Any
                 "state": "failed",
                 "number": number,
                 "message": (
-                    f"Auto-merge command returned success for PR #{number}, but the same-PR "
+                    f"Auto-merge command for PR #{number} was issued, but the same-PR "
                     "readback did not confirm `autoMergeRequest`, merge queue enrollment, "
                     "or a merged state; retrying."
                 ),

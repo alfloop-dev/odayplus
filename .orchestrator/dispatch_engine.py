@@ -742,10 +742,9 @@ def route_approved_pr_to_merge(
         AUTO_MERGE_BLOCKING_MERGE_STATES,
         GitHubBusError,
         GitHubBusOffline,
-        arm_pr_auto_merge,
+        issue_pr_merge_admission,
         pr_merge_admission,
         read_pr_merge_admission,
-        run_gh,
         task_id_matches_branch,
         task_pr_base_branch,
     )
@@ -896,35 +895,27 @@ def route_approved_pr_to_merge(
         )
 
     try:
-        if direct:
-            run_gh(["pr", "merge", str(pr_number), "--merge", "--repo", slug])
-        else:
-            result, _info = arm_pr_auto_merge(slug, pr_number, pr)
+        # Read back bound to the PR checked above: a readback whose head, base
+        # or branch moved since is another PR's outcome, never this approved
+        # head's. A failed mutation is read back too, because a nonzero exit
+        # does not prove GitHub applied nothing.
+        result, _info = issue_pr_merge_admission(slug, pr_number, pr, direct=direct)
     except GitHubBusOffline as exc:
         # The command may or may not have reached GitHub. Keep the attempt.
         task[MERGE_ROUTE_FIELD] = {**reservation, "route": "unconfirmed"}
         return "unconfirmed", f"GitHub went offline during admission ({exc})"
     except GitHubBusError as exc:
-        # GitHub refused it; nothing was admitted, so the attempt is not spent
-        # and the next tick may retry once the reason is resolved.
+        # A definite refusal: GitHub rejected the mutation and the readback
+        # shows it holds nothing for this PR, or the undraft before it failed
+        # so nothing was issued. The attempt is not spent and the next tick may
+        # retry once the reason is resolved. An error whose outcome the
+        # readback could not settle never reaches here; it is `unconfirmed`
+        # and keeps its counted reservation.
         if isinstance(previous, dict):
             task[MERGE_ROUTE_FIELD] = previous
         else:
             task.pop(MERGE_ROUTE_FIELD, None)
         return "blocked", str(exc)
-
-    if direct:
-        # Bound to the PR checked above: a readback whose head, base or branch
-        # moved since is another PR's outcome, never this approved head's.
-        try:
-            readback = read_pr_merge_admission(slug, pr_number, expected=pr)
-            result = pr_merge_admission(slug, pr_number, readback)[0] if readback else "unconfirmed"
-        except GitHubBusOffline:
-            result = "unconfirmed"
-        except GitHubBusError:
-            result = "unconfirmed"
-        if result not in {"armed", "queued", "merged"}:
-            result = "unconfirmed"
 
     task[MERGE_ROUTE_FIELD] = {**reservation, "route": result}
     if config and (config.get("paths") or {}).get("activity_log"):
