@@ -514,8 +514,12 @@ jobs:
       # orchestrator job above. Exclude that same directory and the exact
       # receipt-module file it also owns, so product changes do not execute the
       # identical tooling cases a second time.
+      # tests/security has one owner too: the required product-security job,
+      # whose `make security` runs `pytest tests/security` with no marker
+      # filter, a superset of this lane's selection there. Executing it here as
+      # well ran the same security cases twice inside this job's 50m budget.
       - name: Test product code
-        run: uv run pytest -m "not requires_live_env and not performance" --ignore=tests/tooling --ignore=tests/e2e/test_acceptance_coverage.py tests modules apps shared models -n auto
+        run: uv run pytest -m "not requires_live_env and not performance" --ignore=tests/tooling --ignore=tests/security --ignore=tests/e2e/test_acceptance_coverage.py tests modules apps shared models -n auto
 
   product-db:
     needs: change-scope

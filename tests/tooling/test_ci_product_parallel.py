@@ -164,9 +164,15 @@ TOOLING_COMMAND = (
 )
 PRODUCT_UNIT_COMMAND = (
     'uv run pytest -m "not requires_live_env and not performance" --ignore=tests/tooling'
-    " --ignore=tests/e2e/test_acceptance_coverage.py tests modules apps shared models -n auto"
+    " --ignore=tests/security --ignore=tests/e2e/test_acceptance_coverage.py tests modules apps shared models -n auto"
 )
 RECEIPT_UNIT_FILE = "tests/e2e/test_acceptance_coverage.py"
+SECURITY_UNIT_FILE = "tests/security/test_security_unit.py"
+# The required product-security lane runs `make security`; this is the one
+# pytest line of that existing Makefile recipe, matched verbatim (no marker
+# filter, so it selects every tests/security case the unit lane would).
+SECURITY_MAKE_RECIPE_LINE = "\t$(UV) run pytest tests/security"
+SECURITY_PYTEST_ARGS = ["tests/security"]
 # A synthetic stand-in for every selection root either lane names. Each file
 # holds one trivial case; no repository test or source body is collected.
 SYNTHETIC_SELECTION_TREE = (
@@ -177,6 +183,7 @@ SYNTHETIC_SELECTION_TREE = (
     "infra/test_infra_unit.py",
     RECEIPT_UNIT_FILE,
     "tests/e2e/test_other_e2e_unit.py",
+    SECURITY_UNIT_FILE,
     "tests/unit/test_product_unit.py",
     "modules/test_module_unit.py",
     "apps/test_app_unit.py",
@@ -215,10 +222,23 @@ def synthetic_collected_files(tree: Path, pytest_args: list[str]) -> list[str]:
     return sorted({line.split("::", 1)[0] for line in result.stdout.splitlines() if "::" in line})
 
 
-def receipt_unit_lane_owners(jobs: dict[str, Any], tree: Path) -> dict[str, list[str]]:
+def security_lane_pytest_argv(jobs: dict[str, Any], makefile_text: str) -> list[str]:
+    """Return the security lane's pytest argv only while its real callers are unchanged."""
+    assert count_exact_command_occurrences(jobs, "make security") == {"product-security": 1}
+    recipe = makefile_text.split("\nsecurity:", 1)[1].split("\n\n", 1)[0].splitlines()[1:]
+    assert recipe == [SECURITY_MAKE_RECIPE_LINE], f"make security recipe changed: {recipe}"
+    return list(SECURITY_PYTEST_ARGS)
+
+
+def receipt_unit_lane_owners(
+    jobs: dict[str, Any], tree: Path, makefile_text: str | None = None,
+) -> dict[str, list[str]]:
+    if makefile_text is None:
+        makefile_text = (ROOT / "Makefile").read_text(encoding="utf-8")
     lanes = {
         "orchestrator": lane_pytest_argv(jobs, "orchestrator", "Test orchestrator and infrastructure code"),
         "product-lint-unit": lane_pytest_argv(jobs, "product-lint-unit", "Test product code"),
+        "product-security": security_lane_pytest_argv(jobs, makefile_text),
     }
     return {lane: synthetic_collected_files(tree, args) for lane, args in lanes.items()}
 
@@ -368,7 +388,33 @@ def test_receipt_unit_file_has_one_owner_in_tooling_and_mixed_scope(
     assert "tests/e2e/test_other_e2e_unit.py" in selected["product-lint-unit"]
     assert not any(path.startswith("tests/tooling/") for path in selected["product-lint-unit"])
     assert not set(selected["orchestrator"]) & set(selected["product-lint-unit"])
-    assert set(selected["orchestrator"]) | set(selected["product-lint-unit"]) == set(SYNTHETIC_SELECTION_TREE)
+    assert set(selected["orchestrator"]) | set(selected["product-lint-unit"]) | set(
+        selected["product-security"]) == set(SYNTHETIC_SELECTION_TREE)
+
+
+def test_security_files_have_one_required_owner_and_no_omission(
+    ci_workflow: dict[str, Any], tmp_path: Path,
+) -> None:
+    """product-security owns tests/security; the unit lane never re-executes it."""
+    jobs = ci_workflow["jobs"]
+    selected = receipt_unit_lane_owners(jobs, tmp_path)
+    assert selected["product-security"] == [SECURITY_UNIT_FILE]
+    assert not any(path.startswith("tests/security/") for path in selected["product-lint-unit"])
+    assert not any(path.startswith("tests/security/") for path in selected["orchestrator"])
+    lanes = list(selected)
+    for index, lane in enumerate(lanes):
+        for other in lanes[index + 1:]:
+            assert not set(selected[lane]) & set(selected[other]), (lane, other)
+    union = set().union(*map(set, selected.values()))
+    assert union == set(SYNTHETIC_SELECTION_TREE)
+    owner = jobs["product-security"]
+    assert owner.get("if") == jobs["product-lint-unit"].get("if")
+    assert owner.get("continue-on-error", False) is False
+    step, = [step for step in owner["steps"] if step.get("name") == "Run security checks"]
+    assert step.get("if") is None and step.get("continue-on-error", False) is False
+    assert "product-security" in jobs["product"]["needs"]
+    policy = json.loads((ROOT / ".github/branch-protection/policy.json").read_text())
+    assert "product" in policy["required_status_checks"]
 
 
 @pytest.mark.parametrize("damage", ["tooling-omits", "product-repeats"])
@@ -386,6 +432,43 @@ def test_receipt_unit_selection_rejects_omission_or_duplicate_run(
         step["run"] = step["run"].replace(" --ignore=" + RECEIPT_UNIT_FILE, "")
     with pytest.raises(AssertionError):
         test_receipt_unit_file_has_one_owner_in_tooling_and_mixed_scope(workflow, tmp_path)
+
+
+@pytest.mark.parametrize("damage", [
+    "unit-repeats", "security-recipe-narrowed", "security-recipe-filtered",
+    "security-recipe-duplicated", "security-command-dropped", "security-command-repeated",
+    "security-optional",
+])
+def test_security_selection_rejects_omission_or_duplicate_run(
+    ci_workflow: dict[str, Any], tmp_path: Path, damage: str,
+) -> None:
+    workflow = deepcopy(ci_workflow)
+    jobs = workflow["jobs"]
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    assert makefile.count(SECURITY_MAKE_RECIPE_LINE + "\n") == 1
+    unit_step, = [step for step in jobs["product-lint-unit"]["steps"] if step.get("name") == "Test product code"]
+    security_step, = [step for step in jobs["product-security"]["steps"]
+                      if step.get("name") == "Run security checks"]
+    if damage == "unit-repeats":
+        unit_step["run"] = unit_step["run"].replace(" --ignore=tests/security", "")
+    elif damage == "security-recipe-narrowed":
+        makefile = makefile.replace(SECURITY_MAKE_RECIPE_LINE, SECURITY_MAKE_RECIPE_LINE + "/test_audit_policy.py")
+    elif damage == "security-recipe-filtered":
+        makefile = makefile.replace(SECURITY_MAKE_RECIPE_LINE, "\t$(UV) run pytest -m 'not requires_live_env' tests/security")
+    elif damage == "security-recipe-duplicated":
+        makefile = makefile.replace(SECURITY_MAKE_RECIPE_LINE, SECURITY_MAKE_RECIPE_LINE + "\n" + SECURITY_MAKE_RECIPE_LINE)
+    elif damage == "security-command-dropped":
+        security_step["run"] = 'echo "make security"'
+    elif damage == "security-command-repeated":
+        unit_step["run"] += "\nmake security"
+    else:
+        security_step["continue-on-error"] = True
+    if damage.startswith("security-recipe"):
+        with pytest.raises(AssertionError):
+            receipt_unit_lane_owners(jobs, tmp_path, makefile)
+    else:
+        with pytest.raises(AssertionError):
+            test_security_files_have_one_required_owner_and_no_omission(workflow, tmp_path)
 
 
 def test_ci_workflow_pytest_addopts_are_reporting_only(ci_workflow: dict[str, Any]) -> None:
