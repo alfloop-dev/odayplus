@@ -562,16 +562,17 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         self._git(self.repo, "worktree", "add", "-b", "task/DOM-REUSE-001", str(worktree), old_base)
         self.assertIsNone(worktree_cleanliness.protected_body_checkout_refusal(worktree))
         new_base = self._domain_introducing_base()
+        merges: list[list[str]] = []
+        real_run = subprocess.run
+
+        def recording_run(args, *a, **kw):
+            if list(args[:2]) in (["git", "merge"], ["git", "checkout"], ["git", "read-tree"]):
+                merges.append(list(args))
+            return real_run(args, *a, **kw)
+
         for label, kwargs in (("base fast-forward", {}), ("review pin", {"required_head": new_base})):
             with self.subTest(path=label):
-                merges: list[list[str]] = []
-                real_run = subprocess.run
-
-                def recording_run(args, *a, **kw):
-                    if list(args[:2]) in (["git", "merge"], ["git", "checkout"], ["git", "read-tree"]):
-                        merges.append(list(args))
-                    return real_run(args, *a, **kw)
-
+                merges.clear()
                 with mock.patch("subprocess.run", side_effect=recording_run):
                     ok, status = supervisor._refresh_reused_worker_worktree(
                         self.repo, worktree, new_base, "task/DOM-REUSE-001", protected_paths=(), **kwargs
