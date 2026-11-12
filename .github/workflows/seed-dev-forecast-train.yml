@@ -1,0 +1,88 @@
+name: seed-dev-forecast-train
+
+# Dev only: train the governed forecastops candidate (forecast_revenue_interval)
+# with the real trainer and register it in the dev MLflow. Does NOT promote:
+# a release alias needs a separately signed approval (approver != actor).
+on:
+  push:
+    branches: [seed-dev-data-backfill]
+    paths:
+      - .github/workflows/seed-dev-forecast-train.yml
+      - .github/scripts/seed_dev_forecast_train_driver.py
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: dev
+    env:
+      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+      DB_URL_SECRET: ${{ vars.ODAY_DATABASE_URL_SECRET }}
+      MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+      ODP_MLFLOW_CLOUD_RUN_AUDIENCE: ${{ vars.ODP_MLFLOW_CLOUD_RUN_AUDIENCE }}
+      ODP_MODEL_ARTIFACT_ROOT: gs://odayplus-runtime-20260825-model-artifacts/dev-model-releases
+      ODP_RELEASE_COMMIT_SHA: ${{ github.sha }}
+      ODP_MODEL_TRAINING_ACTOR: github-actions:seed-dev-forecast-train
+      MODEL_VERSION: dev-forecast-20261112-1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (WIF) + ID token for dev MLflow
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ vars.ODP_MLFLOW_CLOUD_RUN_AUDIENCE }}
+          id_token_include_email: true
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install project env (root deps)
+        env:
+          UV_PYTHON: '3.12'
+        run: |
+          set -euo pipefail
+          pip install uv
+          uv sync --frozen
+
+      - name: Start Cloud SQL Auth Proxy (unix socket)
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /cloudsql && sudo chown "$(id -u)" /cloudsql
+          curl -sSL -o cloud-sql-proxy \
+            https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64
+          chmod +x cloud-sql-proxy
+          ./cloud-sql-proxy --unix-socket /cloudsql "${CLOUD_SQL_INSTANCE}" &
+          for i in $(seq 1 30); do
+            if [ -S "/cloudsql/${CLOUD_SQL_INSTANCE}/.s.PGSQL.5432" ]; then
+              echo "Cloud SQL proxy socket is up"; break
+            fi
+            sleep 1
+          done
+
+      - name: Train and register forecastops candidate (no promotion)
+        env:
+          MLFLOW_ID_TOKEN: ${{ steps.auth.outputs.id_token }}
+        run: |
+          set -euo pipefail
+          RAW_DB_URL="$(gcloud secrets versions access latest \
+            --secret="${DB_URL_SECRET%%:*}" --project="${GCP_PROJECT}")"
+          echo "::add-mask::${RAW_DB_URL}"
+          export RAW_DB_URL
+          PYTHONPATH="${GITHUB_WORKSPACE}" UV_PYTHON=3.12 \
+            uv run --frozen python .github/scripts/seed_dev_forecast_train_driver.py
