@@ -11,6 +11,7 @@ on:
       - .github/workflows/seed-dev-documents.yml
       - .github/scripts/seed_dev_documents_driver.py
       - product_ops/data_platform/seed_operator_documents.py
+      - product_ops/data_platform/synthetic_source.py
   workflow_dispatch: {}
 
 permissions:
