@@ -77,24 +77,21 @@ async function selectNativeIntake(page: Page, intakeId: string, refresh = false)
   if (refresh) {
     // The selected durable detail owns its original refresh control. It does
     // not reopen or refresh the inbox after a whole-page reload.
-    // A detail read still in flight when the refresh starts is superseded and
-    // aborted by the app, so the browser keeps no body for it. Only a read
-    // whose body is readable is the one the app actually kept.
-    const bodies = new WeakMap<object, string>();
-    const fresh = page.waitForResponse(async (candidate) => {
-      if (candidate.request().method() !== "GET"
-        || new URL(candidate.url()).pathname !== `/api/v1/canonical-intakes/${intakeId}`) return false;
-      try {
-        bodies.set(candidate, await candidate.text());
-        return true;
-      } catch {
-        return false;
-      }
-    });
-    await page.getByTestId("intake-refresh-button").click();
-    const response = await fresh;
-    const body = bodies.get(response) ?? "";
-    expect(response.status(), body).toBe(200);
+    // The detail read issued on mount (e.g. after a whole-page reload) must
+    // settle first: a read still in flight would be superseded and aborted by
+    // this refresh, and it is not the refresh's own read. Only the GET issued
+    // after that point, by this click, is the refresh evidence; its own
+    // response and body must be readable, so any failure fails this check.
+    const refreshButton = page.getByTestId("intake-refresh-button");
+    await expect(refreshButton).toBeEnabled();
+    await expect(page.getByText("正在讀取所選收件與案件…", { exact: true })).toHaveCount(0);
+    const issued = page.waitForRequest((request) => request.method() === "GET"
+      && new URL(request.url()).pathname === `/api/v1/canonical-intakes/${intakeId}`);
+    await refreshButton.click();
+    const response = await (await issued).response();
+    expect(response, "refresh read received no response").not.toBeNull();
+    const body = await response!.text();
+    expect(response!.status(), body).toBe(200);
     expect(JSON.parse(body).intake_id).toBe(intakeId);
     return;
   }
