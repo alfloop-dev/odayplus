@@ -61,6 +61,15 @@ def git(repo: Path, *args: str) -> str:
 
 
 def clean(repo: Path) -> bool:
+    """No tracked change, judged only once no protected body can be read doing so.
+
+    The shared domain proof runs first: status may hash a materialized tracked
+    body to compare it, so a checkout holding one is never clean.
+    """
+    refusal = worktree_cleanliness.protected_body_checkout_refusal(repo)
+    if refusal:
+        print(f"protected_body_refused={repo}: {refusal}", file=sys.stderr)
+        return False
     return not git(repo, "status", "--porcelain", "--untracked-files=no")
 
 
@@ -166,11 +175,18 @@ def protected_preflight(source: Path, target_sha: str, protected: tuple[str, ...
 
 
 def add_runtime_worktree(source: Path, target: Path, branch: str, target_sha: str) -> None:
-    """Register the runtime without a checkout, prove HEAD, then materialize it."""
+    """Register the runtime without a checkout, prove HEAD, exclude the protected
+    body domain, then materialize it and prove the domain stayed out."""
     git(source, "worktree", "add", "--no-checkout", "-b", branch, str(target), target_sha)
     if git(target, "symbolic-ref", "--quiet", "HEAD") != f"refs/heads/{branch}" or git(target, "rev-parse", "HEAD") != target_sha:
         raise RuntimeError(f"runtime worktree HEAD is not {branch} at {target_sha}")
+    excluded = worktree_cleanliness.install_protected_body_sparse(target)
+    if excluded:
+        raise RuntimeError(f"runtime worktree protected body exclusion failed: {excluded}")
     git(target, "read-tree", "--reset", "-u", target_sha)
+    refusal = worktree_cleanliness.protected_body_checkout_refusal(target, require_sparse=True)
+    if refusal:
+        raise RuntimeError(f"runtime worktree materialized protected body domain: {refusal}")
 
 
 def restore_link(link: Path, previous: Path | None) -> None:

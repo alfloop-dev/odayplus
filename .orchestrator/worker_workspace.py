@@ -24,8 +24,11 @@ from worktree_cleanliness import (
     ProtectedPathPolicyError,
     WorktreeInspection,
     context_path_protection_error,
+    in_protected_body_domain,
     inspect_protected_git_metadata,
+    install_protected_body_sparse,
     normalize_protected_paths,
+    protected_body_checkout_refusal,
     task_protected_paths,
     _git_metadata,
     _tree_entry,
@@ -478,7 +481,14 @@ def _protected_commit_refusal(
     prefix, is refused before they run, as is any error proving neither.  The one
     entry a healthy checkout holds is the empty directory its own protected
     launch mounts the mask on (``plan_protected_execution``).
+
+    The checkout itself is also held to the shared protected body domain, for
+    every task, before any caller's status, hash, copy, checkout or merge.
     """
+    if worktree_path is not None and check_index:
+        body_refusal = protected_body_checkout_refusal(worktree_path)
+        if body_refusal:
+            return f"protected_metadata_refused: {body_refusal}"
     if not protected:
         return None
     verdict = inspect_protected_git_metadata(
@@ -600,6 +610,11 @@ def _create_worker_worktree(
     refusal = _protected_commit_refusal(path, created_sha, protected, worktree_path=path)
     if refusal:
         return _abandon(refusal)
+    # Nothing is on disk yet: the protected body domain is excluded first, so
+    # neither this read-tree nor any later checkout/merge here writes a body.
+    excluded = install_protected_body_sparse(path)
+    if excluded:
+        return _abandon(f"protected_metadata_refused: {excluded}")
     materialize = subprocess.run(
         ["git", "read-tree", "--reset", "-u", created_sha],
         cwd=path,
@@ -613,6 +628,10 @@ def _create_worker_worktree(
     ref_rc, attached = _git_output(path, "symbolic-ref", "--quiet", "HEAD")
     if ref_rc != 0 or attached != f"refs/heads/{branch}" or _git_commit_oid(path, "HEAD") != created_sha:
         return False, f"Worker worktree {path} HEAD drifted from {created_sha} during materialization"
+    body_refusal = protected_body_checkout_refusal(path, require_sparse=True)
+    if body_refusal:
+        # Left in place, unread: every later lease refuses it the same way.
+        return False, f"Refusing worker worktree {path} for {branch}: protected_metadata_refused: {body_refusal}"
     return True, None
 
 def _classify_worktree_dirt(
@@ -796,6 +815,9 @@ def _interrupted_merge_worktree_fingerprint(
     path_root = Path(worktree_path)
     entries: list[dict[str, Any]] = []
     for code, path in inspection.entries:
+        if in_protected_body_domain(path):
+            # Its body could be neither bound nor preserved without reading it.
+            return None
         candidate = path_root / path
         try:
             metadata = candidate.lstat()
@@ -2341,9 +2363,10 @@ def materialize_worker_context_files(
         raise ValueError(f"Fail-closed on workspace materialization for task {request.task_id}: {error}") from error
 
     def _protection_refusal(rel_path: str) -> None:
-        """Judge source and destination metadata before any hash, listing or copy."""
-        if not protected_paths:
-            return
+        """Judge source and destination metadata before any hash, listing or copy.
+
+        The protected body domain applies to every task, so this always runs.
+        """
         for root in (status_root, workspace_path):
             error = context_path_protection_error(root, rel_path, protected_paths)
             if error:
@@ -4329,6 +4352,9 @@ def _quarantine_and_preserve_dirty_worktree(
         orig_path = os.fsdecode(orig_path_bytes) if orig_path_bytes is not None else None
         if not rel_path:
             continue
+        if in_protected_body_domain(rel_path) or (orig_path and in_protected_body_domain(orig_path)):
+            # Hashing or backing it up would read the body; it stays where it is.
+            return _quarantine_refused("protected_metadata_refused", f"protected body domain dirt: {rel_path}")
         full_p = worktree_path / rel_path
 
         is_symlink = os.path.islink(full_p) or (hasattr(full_p, "is_symlink") and full_p.is_symlink())

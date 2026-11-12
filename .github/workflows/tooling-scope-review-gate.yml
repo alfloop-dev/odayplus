@@ -33,12 +33,17 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
-            !/tests/sources
+            !**/tests/sources/**
+            !**/test_listing_production_asset.py*
 
       # Git path, tree and index metadata only; no denied body is ever opened.
       # Sparse checkout only stops materialization: rename detection could still
       # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
       # job compares is refused here, before anything downstream can read it.
+      # The deny is the shared protected body domain of worktree_cleanliness: the
+      # root prefix stays refused when tracked, and every embedded copy of it (or
+      # of a named asset) stays tracked but skip-worktree, absent, and identical
+      # at both compared commits, proven from index flags and lstat alone.
       # Host Git config is excluded because hosted runners ship a global LFS
       # filter that is unrelated to this checkout and would always be refused.
       - name: Prove protected path stayed out of checkout
@@ -73,6 +78,8 @@ jobs:
               wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
               *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
           ]
+          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)
+          domains = [wc.protected_body_tree_entries(root, sha, (denied,)) for sha in endpoints]
           failures = [
               label
               for label, failed in (
@@ -81,10 +88,13 @@ jobs:
                   )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
-                  ("deny patterns changed", patterns != ["/*", f"!/{denied}"]),
+                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,)))),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
                   ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
+                  (f"protected body domain: {body}", body is not None),
+                  ("protected body domain unreadable at a compared commit", None in domains),
+                  ("protected body domain differs between compared commits", len(set(domains)) > 1),
                   *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
                   *(
                       (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)

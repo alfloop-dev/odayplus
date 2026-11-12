@@ -118,6 +118,190 @@ def _ancestors(relative_path: str) -> list[str]:
     return ["/".join(parts[:index]) for index in range(1, len(parts))]
 
 
+# --- protected body domain (every checkout) ---------------------------------
+#
+# Unlike ``protected_paths`` this is not a task record that refuses a commit:
+# it names the path domains whose bodies no runtime, worker or CI checkout may
+# materialize, wherever a copy sits.  A canonical prefix matches as consecutive
+# path components at any depth (``tests/sources`` and an archived
+# ``docs/.../untracked/tests/sources/...``); a named file matches any component
+# that starts with it (``test_listing_production_asset.py.txt``).  Membership is
+# decided from the path name alone, so a denied body is never opened to judge
+# it.  Tracked domain entries stay tracked: a sparse exclusion keeps them out
+# of the checkout, and Git tree/index/lstat metadata proves that it did.
+
+PROTECTED_BODY_PREFIXES: tuple[str, ...] = ("tests/sources",)
+PROTECTED_BODY_NAMES: tuple[str, ...] = ("test_listing_production_asset.py",)
+
+
+def _domain_prefixes(prefixes: Iterable[str] | None) -> tuple[str, ...]:
+    return PROTECTED_BODY_PREFIXES if prefixes is None else tuple(prefixes)
+
+
+def protected_body_sparse_patterns(prefixes: Iterable[str] | None = None) -> tuple[str, ...]:
+    """The non-cone sparse patterns that keep every domain entry out of a checkout."""
+    return (
+        "/*",
+        *(f"!**/{prefix}/**" for prefix in _domain_prefixes(prefixes)),
+        *(f"!**/{name}*" for name in PROTECTED_BODY_NAMES),
+    )
+
+
+def in_protected_body_domain(relative_path: object, prefixes: Iterable[str] | None = None) -> bool:
+    """Whether a repo-relative path names a domain entry, from its name only."""
+    parts = [part for part in str(relative_path or "").replace("\\", "/").split("/") if part not in {"", "."}]
+    for prefix in _domain_prefixes(prefixes):
+        wanted = prefix.split("/")
+        if any(parts[index : index + len(wanted)] == wanted for index in range(len(parts) - len(wanted) + 1)):
+            return True
+    return any(part.startswith(name) for part in parts for name in PROTECTED_BODY_NAMES)
+
+
+def protected_body_tree_entries(
+    cwd: Path | str, commit: str, prefixes: Iterable[str] | None = None
+) -> tuple[tuple[str, str, str], ...] | None:
+    """(mode, object id, path) of every domain entry ``commit`` tracks; None when unreadable.
+
+    Tree objects only: no blob is read, so a blob-filtered clone fetches nothing.
+    """
+    prefixes = _domain_prefixes(prefixes)
+    if not commit:
+        return None
+    proc = _git_metadata(Path(cwd), "ls-tree", "-r", "-z", "--full-tree", str(commit))
+    if proc is None or proc.returncode != 0:
+        return None
+    entries: list[tuple[str, str, str]] = []
+    for record in proc.stdout.split(b"\0"):
+        if not record:
+            continue
+        header, _, name = record.partition(b"\t")
+        fields = header.split()
+        if len(fields) != 3:
+            return None
+        path = os.fsdecode(name)
+        if in_protected_body_domain(path, prefixes):
+            entries.append((fields[0].decode("ascii", "replace"), fields[2].decode("ascii", "replace"), path))
+    return tuple(sorted(entries, key=lambda entry: entry[2]))
+
+
+def _git_flag(cwd: Path, key: str) -> str | None:
+    proc = _git_metadata(cwd, "config", "--type=bool", "--default", "false", "--get", key)
+    if proc is None or proc.returncode != 0:
+        return None
+    return proc.stdout.decode("ascii", "replace").strip()
+
+
+def _sparse_patterns(cwd: Path) -> list[str] | None:
+    located = _git_metadata(cwd, "rev-parse", "--git-path", "info/sparse-checkout")
+    if located is None or located.returncode != 0:
+        return None
+    path = Path(os.fsdecode(located.stdout.strip()))
+    if not path.is_absolute():
+        path = cwd / path
+    try:
+        return path.read_text(encoding="utf-8").split()
+    except FileNotFoundError:
+        return []
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def install_protected_body_sparse(worktree_path: Path | str, prefixes: Iterable[str] | None = None) -> str | None:
+    """Exclude the domain from a registered, not yet materialized worktree.
+
+    Returns why it could not.  An index that already holds entries means files
+    may already be on disk; changing the patterns then would delete them, so it
+    is refused rather than repaired.
+    """
+    root = Path(worktree_path)
+    listed = _git_metadata(root, "ls-files", "-z", "--cached")
+    if listed is None or listed.returncode != 0:
+        return "unreadable_metadata: index"
+    if listed.stdout:
+        return "already_materialized: sparse exclusion must precede the first checkout"
+    patterns = "".join(f"{pattern}\n" for pattern in protected_body_sparse_patterns(prefixes))
+    try:
+        proc = subprocess.run(
+            ["git", "sparse-checkout", "set", "--no-cone", "--stdin"],
+            cwd=root,
+            input=patterns.encode("utf-8"),
+            capture_output=True,
+            check=False,
+        )
+    except (OSError, ValueError) as error:
+        return f"sparse_exclusion_failed: {error}"
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).decode("utf-8", "replace").strip()
+        return f"sparse_exclusion_failed: {detail}"
+    return None
+
+
+def protected_body_checkout_refusal(
+    worktree_path: Path | str,
+    *,
+    prefixes: Iterable[str] | None = None,
+    require_sparse: bool = False,
+) -> str | None:
+    """Why status, hashing or copying could touch a domain body here, if it could.
+
+    Runs before any of them, from configuration, index flags and ``lstat``
+    only.  Once HEAD or the index tracks a domain entry (or ``require_sparse``
+    is set), the worktree must carry exactly the domain's sparse patterns, and
+    every indexed domain entry must be skip-worktree and absent from disk.  An
+    unreadable answer refuses; it is never read as "nothing there".
+    """
+    prefixes = _domain_prefixes(prefixes)
+    root = Path(worktree_path)
+    listed = _git_metadata(root, "ls-files", "-z", "-t", "--cached")
+    if listed is None or listed.returncode != 0:
+        return "unreadable_metadata: index"
+    indexed: list[tuple[str, str]] = []
+    for record in listed.stdout.split(b"\0"):
+        if not record:
+            continue
+        tag, _, name = record.partition(b" ")
+        path = os.fsdecode(name)
+        if in_protected_body_domain(path, prefixes):
+            indexed.append((tag.decode("ascii", "replace"), path))
+    tracked: tuple[tuple[str, str, str], ...] = ()
+    born = _git_metadata(root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    if born is None:
+        return "unreadable_metadata: HEAD"
+    if born.returncode == 0:
+        listing = protected_body_tree_entries(root, born.stdout.decode("ascii", "replace").strip(), prefixes)
+        if listing is None:
+            return "unreadable_metadata: HEAD tree"
+        tracked = listing
+    if not (indexed or tracked or require_sparse):
+        return None
+    if _git_flag(root, "core.sparseCheckout") != "true":
+        return "protected_body_not_excluded: sparse checkout is not enabled"
+    if _git_flag(root, "core.sparseCheckoutCone") != "false":
+        return "protected_body_not_excluded: sparse checkout is in cone mode"
+    patterns = _sparse_patterns(root)
+    if patterns is None:
+        return "unreadable_metadata: sparse patterns"
+    if patterns != list(protected_body_sparse_patterns(prefixes)):
+        return "protected_body_not_excluded: sparse patterns differ from the protected body domain"
+    for tag, path in indexed:
+        if tag != "S":
+            return f"protected_body_materialized: {path} is not skip-worktree ({tag})"
+        for candidate in [*_ancestors(path), path]:
+            try:
+                metadata = (root / candidate).lstat()
+            except (FileNotFoundError, NotADirectoryError):
+                break
+            except OSError:
+                return f"unreadable_metadata: worktree {candidate}"
+            if candidate == path:
+                return f"protected_body_present: {path}"
+            if stat.S_ISLNK(metadata.st_mode):
+                return f"protected_body_present: {candidate} is a symlink above {path}"
+            if not stat.S_ISDIR(metadata.st_mode):
+                break
+    return None
+
+
 @dataclass(frozen=True)
 class ProtectedMetadataInspection:
     ok: bool
@@ -288,10 +472,14 @@ def context_path_protection_error(
     relative_path: str,
     protected_paths: Iterable[str],
 ) -> str | None:
-    """Refuse a context source/destination before it is hashed, listed or copied."""
+    """Refuse a context source/destination before it is hashed, listed or copied.
+
+    The protected body domain applies to every task; ``protected_paths`` adds
+    the task's own entries.
+    """
     protected = tuple(protected_paths or ())
-    if not protected:
-        return None
+    if in_protected_body_domain(relative_path):
+        return f"context path {relative_path!r} lies in the protected body domain"
     conflict = protected_path_conflict(relative_path, protected)
     if conflict:
         return f"context path {relative_path!r} overlaps protected path {conflict!r}"
@@ -314,6 +502,8 @@ def context_path_protection_error(
                 target = current.resolve().relative_to(resolved_root).as_posix()
             except (OSError, RuntimeError, ValueError):
                 return f"context path {relative_path!r} has a symlink leaving its root"
+            if in_protected_body_domain(target):
+                return f"context path {relative_path!r} is a symlink alias into the protected body domain"
             conflict = protected_path_conflict(target, protected)
             if conflict:
                 return f"context path {relative_path!r} is a symlink alias of protected path {conflict!r}"
@@ -733,7 +923,8 @@ def is_reusable_dirt_entry(
     worktree_path: Path | None,
     allowlist: frozenset[str],
 ) -> bool:
-    if code.strip() != "??":
+    if code.strip() != "??" or in_protected_body_domain(path):
+        # Domain content is never proven to be a seed: its body is not read.
         return False
     normalized = path.replace("\\", "/").strip()
     trimmed = normalized.strip("/")
@@ -842,7 +1033,7 @@ def _worktree_fingerprint(
         digest.update(b"\0")
         digest.update(path.encode("utf-8", errors="surrogateescape"))
         digest.update(b"\0")
-        if protected_path_conflict(path, protected_paths):
+        if protected_path_conflict(path, protected_paths) or in_protected_body_domain(path):
             # Bind protected dirt by lstat metadata only; its body is never read.
             try:
                 metadata = (worktree_path / path).lstat()
@@ -901,6 +1092,17 @@ def inspect_worktree(
                 fingerprint="",
                 detail=f"{metadata.reason}: {metadata.detail}",
             )
+    # Status may hash a materialized tracked body to compare it, so the domain
+    # is proven absent first, for every worktree.
+    body_refusal = protected_body_checkout_refusal(path)
+    if body_refusal:
+        return WorktreeInspection(
+            kind="protected_metadata_refused",
+            entries=(),
+            blocking_entries=(),
+            fingerprint="",
+            detail=body_refusal,
+        )
     try:
         proc = subprocess.run(
             ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"],

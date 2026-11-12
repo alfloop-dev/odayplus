@@ -727,6 +727,14 @@ class WatchdogRolloutTests(unittest.TestCase):
         admission.assert_not_called()
         self.assert_untouched(old, config, None)
 
+    def test_reused_target_holding_a_protected_body_refuses_before_the_switch(self) -> None:
+        old = self.spawn_supervisor(self.previous)
+        config = self.config_file.read_text()
+        with mock.patch.object(rollout, "clean", lambda repo: repo != self.target):
+            with self.assertRaisesRegex(SystemExit, "existing target is not the expected clean runtime"):
+                self.roll_out()
+        self.assert_untouched(old, config, None)
+
     def test_proof_accepts_what_the_real_supervisor_stamps(self) -> None:
         """The proof reads the fields the stand-in writes; hold both to the real writer."""
         import supervisor
@@ -857,6 +865,92 @@ class ProtectedRolloutPreflightTests(unittest.TestCase):
         self.assertEqual(real_git(target, "rev-parse", "HEAD"), self.target_sha)
         self.assertEqual((target / ".orchestrator" / "profiles" / "bwrap").read_bytes(), self.PROFILE)
         self.assertTrue(rollout.clean(target))
+
+    # --- the shared protected body domain, on the original rollout path
+
+    DOMAIN_COPY = "archive/untracked/vault/copies/body.py.txt"
+
+    def _enter_body_domain(self) -> None:
+        for patcher in (
+            mock.patch.object(rollout.worktree_cleanliness, "PROTECTED_BODY_PREFIXES", ("vault/copies",)),
+            mock.patch.object(rollout.worktree_cleanliness, "PROTECTED_BODY_NAMES", ("synthetic_asset.py",)),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        (self.source / self.DOMAIN_COPY).parent.mkdir(parents=True)
+        (self.source / self.DOMAIN_COPY).write_text("synthetic archived copy\n", encoding="utf-8")
+        self._git("add", self.DOMAIN_COPY)
+        self._git("commit", "-q", "-m", "archive a synthetic copy")
+        self.target_sha = self._git("rev-parse", "HEAD")
+
+    def test_runtime_excludes_the_body_domain_before_materializing_it(self) -> None:
+        self._enter_body_domain()
+        target = self.root / "runtime"
+        order: list[str] = []
+        real_install = rollout.worktree_cleanliness.install_protected_body_sparse
+        real_git = rollout.git
+
+        def recording_install(path: Path, *a: object, **kw: object) -> str | None:
+            order.append("exclude")
+            return real_install(path, *a, **kw)
+
+        def recording_git(repo: Path, *args: str) -> str:
+            if args[:1] == ("read-tree",):
+                order.append("materialize")
+            return real_git(repo, *args)
+
+        with mock.patch.object(rollout.worktree_cleanliness, "install_protected_body_sparse", recording_install), \
+             mock.patch.object(rollout, "git", recording_git):
+            rollout.add_runtime_worktree(self.source, target, "runtime-live-dom", self.target_sha)
+
+        self.assertEqual(order, ["exclude", "materialize"])
+        self.assertFalse(os.path.lexists(target / self.DOMAIN_COPY))
+        self.assertEqual((target / ".orchestrator" / "profiles" / "bwrap").read_bytes(), self.PROFILE)
+        self.assertEqual(real_git(target, "ls-files", "-t", "--", self.DOMAIN_COPY).split()[0], "S")
+        self.assertEqual(real_git(target, "rev-parse", "HEAD"), self.target_sha)
+        self.assertEqual(real_git(target, "symbolic-ref", "--quiet", "HEAD"), "refs/heads/runtime-live-dom")
+        self.assertTrue(rollout.clean(target))
+
+    def test_source_holding_a_body_copy_is_never_clean_and_never_status_read(self) -> None:
+        self._enter_body_domain()
+        self.assertTrue((self.source / self.DOMAIN_COPY).is_file())
+        commands: list[list[str]] = []
+        real_run = subprocess.run
+
+        def recording_run(args, *a, **kw):
+            commands.append(list(args))
+            return real_run(args, *a, **kw)
+
+        with mock.patch("subprocess.run", side_effect=recording_run):
+            self.assertFalse(rollout.clean(self.source))
+        self.assertFalse([command for command in commands if "status" in command])
+        self.assertTrue((self.source / self.DOMAIN_COPY).is_file(), "refusal never deletes the copy")
+
+    def test_failed_exclusion_or_proof_stops_before_or_after_materializing(self) -> None:
+        self._enter_body_domain()
+        with mock.patch.object(rollout.worktree_cleanliness, "install_protected_body_sparse", return_value="sparse_exclusion_failed: x"):
+            with self.assertRaisesRegex(RuntimeError, "protected body exclusion failed"):
+                rollout.add_runtime_worktree(self.source, self.root / "runtime-a", "runtime-live-a", self.target_sha)
+        self.assertFalse((self.root / "runtime-a" / "README").exists())
+        self.assertFalse((self.root / "runtime-a" / ".orchestrator").exists(), "nothing was materialized")
+        with mock.patch.object(rollout.worktree_cleanliness, "protected_body_checkout_refusal", return_value="protected_body_present: x"):
+            with self.assertRaisesRegex(RuntimeError, "materialized protected body domain"):
+                rollout.add_runtime_worktree(self.source, self.root / "runtime-b", "runtime-live-b", self.target_sha)
+
+    def test_source_with_unreadable_metadata_refuses_before_any_fetch(self) -> None:
+        main_root = self.root / "main"
+        main_root.mkdir()
+        source, parent, _target, _previous, link, status_root = prepare_rollout(main_root)
+        calls: list[tuple[str, ...]] = []
+
+        def tracking_git(repo: Path, *args: str) -> str:
+            calls.append(args)
+            return fake_git(repo, *args)
+
+        with mock.patch.object(rollout, "git", tracking_git):
+            with self.assertRaisesRegex(SystemExit, "dirty source checkout"):
+                rollout.main(rollout_args(source, parent, link, status_root))
+        self.assertEqual(calls, [])
 
     def test_main_refuses_before_preparing_any_runtime(self) -> None:
         main_root = self.root / "main"

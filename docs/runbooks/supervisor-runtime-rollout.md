@@ -179,6 +179,56 @@ supervisor、worker 與人工狀態命令都由 `runtime-current/scripts/ai_stat
 舊 checkout 的 writer 把已修正狀態寫回舊格式。重啟失敗時會把 runtime symlink 與
 status launcher 一起回復，再重新啟動前一版服務。
 
+### 6.0 封存保護來源邊界（protected body domain）
+
+`.orchestrator/worktree_cleanliness.py` 是唯一一份規則：`PROTECTED_BODY_PREFIXES`
+（`tests/sources`，於任意深度以連續路徑元件比對，例如
+`docs/audits/external-source-ingestion-20260913/implementation-handoff/untracked/tests/sources/...`）
+與 `PROTECTED_BODY_NAMES`（任何以 `test_listing_production_asset.py` 開頭的路徑元件）。
+判定只看路徑名稱；被拒絕的 body 不讀、不 hash、不複製、不執行、不刪除。對應的
+non-cone sparse patterns 由 `protected_body_sparse_patterns()` 產生：
+
+```text
+/*
+!**/tests/sources/**
+!**/test_listing_production_asset.py*
+```
+
+同一規則接回的原入口：
+
+| 入口 | 行為 |
+|---|---|
+| `rollout_supervisor_runtime.add_runtime_worktree` | `--no-checkout` 註冊並證明 HEAD 後，先 `install_protected_body_sparse`，才 `read-tree --reset -u`；之後以 `protected_body_checkout_refusal(require_sparse=True)` 證明 domain 未落地 |
+| `rollout_supervisor_runtime.clean`（source、既有 target 重用、新 target） | 先跑 domain 證明，未通過即不 clean，`git status` 不會執行 |
+| `worker_workspace._create_worker_worktree` | 同上順序：註冊 → 證明 HEAD／task 保護 → sparse → materialize → 證明 |
+| `worker_workspace._protected_commit_refusal`（`check_index=True` 的所有呼叫者：重用 refresh、state identity、activity observer、handoff seal、merge continuation、preempt、quarantine、pruner） | task 保護之前先跑 domain 證明 |
+| `worktree_cleanliness.inspect_worktree`（含 `task_finalize.sh`） | status 之前先跑 domain 證明；domain 內的 dirt 一律 blocking，不可當 seed，fingerprint 只綁 lstat metadata（同路徑改寫會改變 fingerprint） |
+| quarantine／interrupted merge seal | domain 內的 dirt 拒絕備份與 seal，不讀 body |
+| context seeding | 對所有 task（不只 `protected_paths` task）拒絕 domain 內的 context 來源或目的地 |
+| 7 個既有 workflow 的 22 個 checkout | Git preflight → sparse checkout（上述 patterns）→ 同一份證明腳本；比較端點時另拒絕 domain 在兩端不一致 |
+
+`protected_body_checkout_refusal` 的判定：HEAD 或 index 追蹤任何 domain entry 時，
+worktree 必須 `core.sparseCheckout=true`、非 cone、patterns 完全相同，且每個 index domain
+entry 都是 skip-worktree（`S`）並以 lstat 證明不在磁碟上；祖先為 symlink、metadata 無法讀取
+皆拒絕。root `tests/sources` 的 task `protected_paths` 拒絕（tracked 即拒絕）完全保留，sparse
+不會把原本拒絕的 task／ref 變成允許。
+
+**已知限制。** 這是對已知 metadata 命中路徑的保護，不是任意內容副本的證明。未追蹤的
+domain 目錄若含 `.gitignore`，Git status 走訪時仍會讀取該 ignore 檔（Git 行為）；該 entry
+會被列為 blocking dirt，但 ignore 檔本身已被讀取。
+
+**採用後果（Root serial adoption 必讀）。** 在此規則之前建立、未設 sparse 的 worktree
+（包含既有 worker worktree、既有 runtime 目錄與 rollout `--source-root` checkout）若
+materialize 了 domain 副本，所有讀取入口都會以 `protected_metadata_refused:
+protected_body_not_excluded` 拒絕，且不會自動修復（修復需刪除副本，本規則禁止）。
+因此：
+
+1. rollout 的 `--source-root` 必須是以 `--no-checkout` 建立、先套上述 sparse patterns 再
+   materialize 的 worktree，否則 rollout 以「dirty source checkout」拒絕。
+2. 合併後、runtime 尚未 rollout 前，舊 supervisor 建立的 worktree 沒有 sparse；若其 task
+   branch 已包含此規則，`task_finalize.sh` 會在該 worktree 拒絕送審。
+3. 既有 worker worktree 需由 Root 依同一順序重建，pruner 不會回收被拒絕的 worktree。
+
 watchdog 的 systemd/cron 安裝根目錄同樣必須是 `runtime-current`（或由 service 直接
 執行該 symlink 內的 watchdog），絕不可指向開發者的 `dev` checkout；watchdog 只負責
 liveness/restart，不負責 fetch、merge 或任何 Git promotion。`restart-supervisor.sh` 已退役。

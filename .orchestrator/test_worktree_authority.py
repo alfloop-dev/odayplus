@@ -475,6 +475,136 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
                     self.assertEqual(outcomes[name].reason, "protected_metadata_refused", name)
                 self.assertFalse((self.root / ".orchestrator" / "worktree-dirt-backups").exists())
 
+    # --- the shared protected body domain, which binds every task
+
+    DOMAIN_COPY = "archive/untracked/vault/copies/body.py.txt"
+
+    def _enter_body_domain(self, *, tracked: bool = True) -> None:
+        """A synthetic domain; with ``tracked`` the base also archives one copy of it."""
+        for patcher in (
+            mock.patch.object(worktree_cleanliness, "PROTECTED_BODY_PREFIXES", ("vault/copies",)),
+            mock.patch.object(worktree_cleanliness, "PROTECTED_BODY_NAMES", ("synthetic_asset.py",)),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        if tracked:
+            (self.repo / self.DOMAIN_COPY).parent.mkdir(parents=True)
+            (self.repo / self.DOMAIN_COPY).write_text("synthetic archived copy\n", encoding="utf-8")
+            self._git(self.repo, "add", self.DOMAIN_COPY)
+            self._git(self.repo, "commit", "-m", "archive a synthetic copy")
+            self.base = self._rev(self.repo, "HEAD")
+
+    def test_creation_excludes_the_body_domain_before_materializing_for_an_unprotected_task(self) -> None:
+        self._enter_body_domain()
+        worktree = (self.root / "worktrees" / "pantheon" / "dom-create-001").resolve()
+        order: list[str] = []
+        real_install = worktree_cleanliness.install_protected_body_sparse
+        real_run = subprocess.run
+
+        def recording_install(path, *a, **kw):
+            order.append("exclude")
+            return real_install(path, *a, **kw)
+
+        def recording_run(args, *a, **kw):
+            if list(args[:2]) == ["git", "read-tree"]:
+                order.append("materialize")
+            return real_run(args, *a, **kw)
+
+        with mock.patch.object(worker_workspace, "install_protected_body_sparse", side_effect=recording_install), \
+             mock.patch("subprocess.run", side_effect=recording_run):
+            ok, error = supervisor._create_worker_worktree(self.repo, worktree, "task/DOM-CREATE-001", self.base)
+
+        self.assertTrue(ok, error)
+        self.assertEqual(order, ["exclude", "materialize"])
+        self.assertTrue((worktree / "README.md").is_file())
+        self.assertFalse(os.path.lexists(worktree / self.DOMAIN_COPY))
+        self.assertEqual(self._git(worktree, "ls-files", "-t", "--", self.DOMAIN_COPY).stdout.split()[0], "S")
+        ok, status = supervisor._refresh_reused_worker_worktree(self.repo, worktree, self.base, "task/DOM-CREATE-001")
+        self.assertTrue(ok, status)
+        self.assertEqual(worker_workspace.compute_worktree_state_identity(worktree), f"clean:{self.base}")
+
+    def test_creation_still_refuses_a_task_protected_tree_before_any_exclusion(self) -> None:
+        self._enter_body_domain()
+        worktree = self.root / "wt-dom-tracked"
+        with mock.patch.object(worker_workspace, "install_protected_body_sparse") as excluded:
+            ok, error = supervisor._create_worker_worktree(
+                self.repo, worktree, "task/DOM-TRACKED-001", self._tracked_protected_commit(), protected_paths=PROTECTED
+            )
+        self.assertFalse(ok)
+        self.assertIn("protected_entry_tracked", error or "")
+        excluded.assert_not_called()
+
+    def test_failed_exclusion_abandons_the_unmaterialized_registration(self) -> None:
+        self._enter_body_domain()
+        worktree = self.root / "wt-dom-fail"
+        with mock.patch.object(worker_workspace, "install_protected_body_sparse", return_value="sparse_exclusion_failed: x"):
+            ok, error = supervisor._create_worker_worktree(self.repo, worktree, "task/DOM-FAIL-001", self.base)
+        self.assertFalse(ok)
+        self.assertIn("sparse_exclusion_failed", error or "")
+        self.assertFalse(worktree.exists())
+
+    def test_checkout_holding_a_domain_copy_is_refused_by_every_reader_and_left_in_place(self) -> None:
+        self._enter_body_domain()
+        worktree, branch, config, worker, task = self._protected_checkout("DOM-LEGACY-001")
+        self.assertTrue((worktree / self.DOMAIN_COPY).is_file(), "a checkout made without the exclusion")
+        (worktree / "owner-wip.txt").write_text("keep me\n", encoding="utf-8")
+        commands: list[list[str]] = []
+        real_run = subprocess.run
+
+        def recording_run(args, *a, **kw):
+            commands.append(list(args))
+            return real_run(args, *a, **kw)
+
+        with mock.patch("subprocess.run", side_effect=recording_run):
+            outcomes = self._read_through_every_entry(worktree, branch, config, worker, task)
+
+        self.assertEqual([c for c in commands if "status" in c or "diff" in c], [])
+        self.assertFalse(outcomes["refresh"][0])
+        self.assertIn("protected_body_not_excluded", outcomes["refresh"][1])
+        self.assertTrue(outcomes["identity"].startswith("protected_metadata_refused:"), outcomes["identity"])
+        self.assertEqual(
+            (outcomes["observer"]["status"], outcomes["observer"]["reason"]),
+            ("unverifiable", "protected_metadata_refused"),
+        )
+        self.assertEqual((outcomes["seal"].accepted, outcomes["seal"].reason), (False, "protected_metadata_refused"))
+        self.assertEqual(outcomes["continuation"], (False, "protected_metadata_refused"))
+        self.assertFalse(outcomes["preempt"])
+        for name in ("quarantine", "preserve"):
+            self.assertEqual(outcomes[name].reason, "protected_metadata_refused", name)
+        self.assertFalse((self.root / ".orchestrator" / "worktree-dirt-backups").exists())
+        self.assertTrue((worktree / self.DOMAIN_COPY).is_file(), "refusal never deletes the copy")
+        self.assertEqual((worktree / "owner-wip.txt").read_text(encoding="utf-8"), "keep me\n")
+
+    def test_untracked_domain_dirt_is_neither_hashed_backed_up_nor_sealed(self) -> None:
+        self._enter_body_domain(tracked=False)
+        worktree, branch, config, worker, task = self._protected_checkout("DOM-DIRT-001")
+        copy = worktree / "notes" / "vault" / "copies" / "copy.txt"
+        copy.parent.mkdir(parents=True)
+        copy.write_text("synthetic stray copy\n", encoding="utf-8")
+        (worktree / "owner-wip.txt").write_text("keep me\n", encoding="utf-8")
+        opened: list[str] = []
+        real_open = open
+
+        def recording_open(path, *a, **kw):
+            opened.append(str(path))
+            return real_open(path, *a, **kw)
+
+        with mock.patch("builtins.open", side_effect=recording_open), \
+             mock.patch.object(worker_workspace.shutil, "copy2") as copied:
+            outcome = worker_workspace._quarantine_and_preserve_dirty_worktree(
+                config, {"workers": {}}, worktree, task["id"], expected_branch=branch, run_id=worker["run_id"],
+                owning_repo_root=self.repo,
+            )
+        self.assertEqual(outcome.reason, "protected_metadata_refused")
+        self.assertIn("protected body domain dirt", outcome.detail)
+        copied.assert_not_called()
+        self.assertFalse([name for name in opened if "vault/copies" in name])
+        inspection = worktree_cleanliness.inspect_worktree(worktree, materialized_paths=["notes"])
+        self.assertEqual(inspection.kind, "owner_dirty")
+        self.assertIn(("??", "notes/vault/copies/copy.txt"), inspection.blocking_entries)
+        self.assertIsNone(worker_workspace._interrupted_merge_worktree_fingerprint(worktree, inspection))
+        self.assertTrue(copy.is_file())
+
     def test_empty_mount_point_of_a_real_protected_launch_stays_a_healthy_checkout(self) -> None:
         worktree, branch, config, worker, task = self._protected_checkout("PROT-MOUNT-001")
         for name, ready in (
@@ -1262,6 +1392,40 @@ class ProtectedContextSeedingTests(unittest.TestCase):
                 copied.assert_not_called()
             self.assertFalse((workspace / "guarded").exists())
             self.assertFalse((workspace / "docs").exists())
+
+    def test_body_domain_context_is_refused_for_an_unprotected_task(self) -> None:
+        with tempfile.TemporaryDirectory() as raw, \
+             mock.patch.object(worktree_cleanliness, "PROTECTED_BODY_PREFIXES", ("vault/copies",)):
+            root = Path(raw)
+            status_root = root / "status"
+            (status_root / "archive" / "vault" / "copies").mkdir(parents=True)
+            (status_root / "archive" / "vault" / "copies" / "copy.txt").write_text("synthetic\n", encoding="utf-8")
+            (status_root / "archive" / "plain.md").write_text("plain\n", encoding="utf-8")
+            (status_root / "ai-status.json").write_text(json.dumps({"tasks": [{"id": "SEED-2"}]}), encoding="utf-8")
+            workspace = root / "workspace"
+            workspace.mkdir()
+            subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+            for context in ("archive/vault/copies/copy.txt", "archive"):
+                request = supervisor.DeliveryRequest(
+                    agent_id="claude",
+                    provider="claude",
+                    delivery_mode="claude",
+                    message="wake",
+                    task_id="SEED-2",
+                    context_files=[context],
+                    metadata={},
+                )
+                with (
+                    self.subTest(context=context),
+                    mock.patch.object(supervisor, "_file_or_dir_hash") as hashed,
+                    mock.patch.object(supervisor, "_atomic_copy_context_file") as copied,
+                    self.assertRaisesRegex(ValueError, "protected body domain"),
+                ):
+                    supervisor.materialize_worker_context_files(config, request, workspace)
+                hashed.assert_not_called()
+                copied.assert_not_called()
+            self.assertFalse((workspace / "archive").exists())
 
 
 class WorktreeAuthorityShapeTests(unittest.TestCase):
