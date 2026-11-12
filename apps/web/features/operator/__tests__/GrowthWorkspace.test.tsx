@@ -459,6 +459,31 @@ describe("GrowthWorkspace API loading", () => {
     expect(screen.queryByTestId("growth-workspace")).not.toBeInTheDocument();
   });
 
+  it("keeps a live canonical freshness with null updatedAt and null modelVersion ready", async () => {
+    mockGrowthReads({ freshness: () => json({ ...canonicalFreshness, updatedAt: null, modelVersion: null }) });
+    render(<GrowthWorkspace searchParams={{ gtab: "segments" }} />);
+    await screen.findByTestId("growth-segment-table");
+    expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
+    expect(screen.getByTestId("growth-data-status")).toHaveTextContent("LIVE");
+    expect(screen.getByText(/模型版本未提供/)).toBeInTheDocument();
+  });
+
+  it.each([
+    { name: "object updatedAt", body: { ...canonicalFreshness, updatedAt: { bad: true } } },
+    { name: "numeric updatedAt", body: { ...canonicalFreshness, updatedAt: 1760504400 } },
+    { name: "object modelVersion", body: { ...canonicalFreshness, modelVersion: { bad: true } } },
+    { name: "missing status", body: { ...canonicalFreshness, status: undefined } },
+  ])("rejects a malformed freshness reply ($name) with empty lists instead of rendering it", async ({ body }) => {
+    const { writes } = mockGrowthReads({ freshness: () => json(body) });
+    render(<GrowthWorkspace searchParams={{}} />);
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-status", "error"));
+    expect(gate).toHaveTextContent("growth freshness returned 200 without a valid Growth payload");
+    expect(within(gate).getByRole("button", { name: "重新載入" })).toBeInTheDocument();
+    expect(screen.queryByTestId("growth-workspace")).not.toBeInTheDocument();
+    expect(writes).toEqual([]);
+  });
+
   it("rejects seed data even when the lists are otherwise legitimately empty", async () => {
     mockGrowthReads({ segments: () => json({ items: [{ ...canonicalSegment, source: "fixture-growth" }] }) });
     render(<GrowthWorkspace searchParams={{}} />);

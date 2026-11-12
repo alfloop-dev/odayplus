@@ -907,8 +907,13 @@ const optional = (check: (value: unknown) => boolean) => (value: unknown) =>
 const fieldsMatch = (row: Record<string, unknown>, fields: Record<string, (value: unknown) => boolean>) =>
   Object.entries(fields).every(([field, check]) => check(row[field]));
 
+/**
+ * Status plus the fields the existing header renders. The canonical payload
+ * may carry a null updatedAt and null modelVersion; neither is filled in.
+ */
 function isFreshnessBody(body: unknown): body is GrowthFreshness {
-  return isRecord(body) && typeof body.status === "string" && body.status.trim().length > 0;
+  return hasId(body, "status") && isRecord(body) &&
+    fieldsMatch(body, { updatedAt: optional(isText), modelVersion: optional(isText) });
 }
 
 /** Identity plus every segment field the existing selection, builder and segment cards render. */
