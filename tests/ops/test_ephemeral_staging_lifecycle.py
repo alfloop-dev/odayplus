@@ -3060,6 +3060,10 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             trace.append(("read", name))
             if name == failed_name and ("restore", name) in trace and restore_failure == "readback":
                 raise RuntimeError("restore readback unavailable")
+            if name == failed_name and failure == "switch-unreadable" and (
+                ("switch", name) in trace and ("restore", name) not in trace
+            ):
+                raise RuntimeError("switched allocation readback unavailable")
             return {"status": {"traffic": [dict(route) for route in traffic[name]]}}
 
         def cloud(argv: list[str], **_kwargs: Any) -> str:
@@ -3082,6 +3086,28 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                         raise RuntimeError("restore command failed")
                     if not switching and restore_failure == "mismatch":
                         return ""  # A successful CLI exit is not proof of restored traffic.
+                    # A successful switch exit is not proof of the probe allocation either.
+                    probe = {"revisionName": f"{name}-probe", "tag": "rollback-probe"}
+                    a, b = (f"{name}-a", f"{name}-b")
+                    switched_readback = {
+                        "switch-unchanged": None,
+                        "switch-partial": [{"revisionName": a, "percent": 50}, {**probe, "percent": 50}],
+                        "switch-wrong-revision": [{"revisionName": a, "percent": 100}, probe],
+                        "switch-malformed": [{**probe, "percent": "all"}],
+                        "switch-missing": [],
+                        # Legitimate: the former targets stay listed at 0% and the
+                        # tag remains a separate tag-only route on the probe.
+                        "switch-zero-percent-routes": [
+                            {"revisionName": a, "percent": 0},
+                            {"revisionName": b, "percent": 0},
+                            {"revisionName": f"{name}-probe", "percent": 100},
+                            probe,
+                        ],
+                    }
+                    if switching and failure in switched_readback:
+                        if switched_readback[failure] is not None:
+                            traffic[name] = switched_readback[failure]
+                        return ""
                 traffic[name] = [
                     {**route, "percent": int(shares[route["revisionName"]])}
                     if route["revisionName"] in shares
@@ -3144,6 +3170,44 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             restore_index = trace.index(("restore", name))
             self.assertEqual(trace[restore_index + 1], ("read", name))
 
+    def test_rollback_reads_back_probe_allocation_before_health(self) -> None:
+        for service in ("api", "web"):
+            for failure in ("", "switch-zero-percent-routes"):
+                with self.subTest(service=service, failure=failure):
+                    with self._rollback_rehearsal_runtime(
+                        failure=failure, failed_service=service
+                    ) as (executor, traffic, baseline, trace):
+                        result = executor("rollback_rehearsal", {})
+                    self.assertTrue(result["success"])
+                    for name in traffic:
+                        switch_index = trace.index(("switch", name))
+                        self.assertEqual(
+                            trace[switch_index + 1 : switch_index + 3], [("read", name), ("health", name)]
+                        )
+                        self.assertCountEqual([r for r in traffic[name] if r.get("percent")], baseline[name])
+
+    def test_rollback_switch_without_probe_allocation_fails_before_health(self) -> None:
+        for service in ("api", "web"):
+            for failure in (
+                "switch-unchanged",
+                "switch-partial",
+                "switch-wrong-revision",
+                "switch-malformed",
+                "switch-missing",
+                "switch-unreadable",
+            ):
+                with self.subTest(service=service, failure=failure):
+                    with self._rollback_rehearsal_runtime(
+                        failure=failure, failed_service=service
+                    ) as (executor, traffic, baseline, trace):
+                        with self.assertRaisesRegex(RuntimeError, "rollback rehearsal switch readback"):
+                            executor("rollback_rehearsal", {})
+                    name = self._valid_outputs()[f"staging_{service}_service_name"]
+                    self.assertNotIn(("health", name), trace)
+                    self.assertEqual(trace[-2:], [("restore", name), ("read", name)])
+                    for name, routes in traffic.items():
+                        self.assertCountEqual([r for r in routes if r.get("percent")], baseline[name])
+
     def test_rollback_restores_after_uncertain_switch_result(self) -> None:
         for service in ("api", "web"):
             for failure in ("switch-before", "switch-after"):
@@ -3199,11 +3263,20 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 self.assertEqual(traffic[name], baseline[name])
 
     def test_uncertain_rollback_fails_verification_and_preserves_holdable_state(self) -> None:
+        for failure, service, error in (
+            ("switch-after", "api", "TimeoutExpired"),
+            ("switch-unchanged", "api", "switch readback does not serve the probe revision"),
+            ("switch-unchanged", "web", "switch readback does not serve the probe revision"),
+        ):
+            with self.subTest(failure=failure, service=service):
+                self._assert_rollback_failure_holds_verification(failure, service, error)
+
+    def _assert_rollback_failure_holds_verification(self, failure: str, service: str, error: str) -> None:
         from product_ops.deployment import staging_lifecycle as lifecycle
 
         outputs = self._valid_outputs()
         with tempfile.TemporaryDirectory() as tmpdir, self._rollback_rehearsal_runtime(
-            failure="switch-after"
+            failure=failure, failed_service=service
         ) as (executor, traffic, baseline, _trace):
             state_dir = Path(tmpdir)
             self._seed_live_state(state_dir)
@@ -3233,7 +3306,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             stage = next(r for r in receipt.resources if r["stage"] == "rollback_rehearsal")
             self.assertEqual(stage["status"], "failed")
             self.assertNotIn("proof", stage)
-            self.assertTrue(any("rollback_rehearsal" in error and "TimeoutExpired" in error for error in receipt.errors))
+            self.assertTrue(any("rollback_rehearsal" in item and error in item for item in receipt.errors))
             for name, routes in traffic.items():
                 self.assertCountEqual([r for r in routes if r.get("percent")], baseline[name])
 

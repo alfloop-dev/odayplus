@@ -129,12 +129,12 @@ Task: ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001 · Owner: Claude2 · Reviewer: Cod
 
 | 環境 | 實際 recovery 機制 | 讀不讀 manifest 的 `rollback_release` | 首次 release 時回到哪裡 |
 |---|---|---|---|
-| staging（ephemeral） | `staging_lifecycle.py` 的 `rollback_rehearsal`：先讀回 release-scoped API／Web service 目前已釘在 revision 上的非零流量配置，部署同一個 image 的 probe revision（`--no-traffic`、tag `rollback-probe`），切 100%、讀 health，再還原原配置並讀回比對 | 不讀 | 回到 **candidate 自己已釘選的 revision**。全新環境沒有前一版，所以這個演練驗證的是「流量指標切換與還原」的機制，不是「回到前一個版本」 |
+| staging（ephemeral） | `staging_lifecycle.py` 的 `rollback_rehearsal`：先讀回 release-scoped API／Web service 目前已釘在 revision 上的非零流量配置，部署同一個 image 的 probe revision（`--no-traffic`、tag `rollback-probe`），切 100% 並讀回確認 probe 實際承接全部流量、讀 health，再還原原配置並讀回比對 | 不讀 | 回到 **candidate 自己已釘選的 revision**。全新環境沒有前一版，所以這個演練驗證的是「流量指標切換與還原」的機制，不是「回到前一個版本」 |
 | production | `deploy_cloud_run_waji.sh` 在 deploy 前捕捉 API／Web traffic snapshot。失敗時 `release_recovery_mode` 依 snapshot 判斷：service 原本不存在就是 `initial-release-cleanup`，刪除 candidate job、維持零流量，log 寫明「沒有前一版可回滾」；否則還原 snapshot 的流量配置 | 不讀 | production 從未有 ODay Plus 工作負載，snapshot 顯示 service 不存在，所以是**刪除 candidate、維持 0% 流量**，等同 blue-green 的「移除 green、不切流量」。沒有舊狀態可保留，也不需要保留 |
 
 結論：manifest 的 `rollback_release` 是一份宣告。runtime 回復永遠以 target 當下的狀態為準，兩個環境都不會去部署 `rollback_release` 指向的版本。
 
-staging 的 `rollback_rehearsal` 在呼叫切換流量指令**之前**啟動還原責任：指令逾時或失敗不代表遠端未切換，因此仍須嘗試還原原先釘選的完整流量比例。切換或健康檢查失敗時，也必須在還原後讀回核對；還原指令失敗、讀回失敗或比例不符都會讓演練失敗，不得產生成功的 rollback proof。即使還原成功，原本的切換／健康檢查錯誤仍保留，verify 仍是 `verification_failed`，交由既有 hold 流程處理。這些失敗路徑由 `tests/ops/test_ephemeral_staging_lifecycle.py` 的 API／Web 故障注入回歸覆蓋，不是 live 演練證據。
+staging 的 `rollback_rehearsal` 在呼叫切換流量指令**之前**啟動還原責任：指令逾時或失敗不代表遠端未切換，因此仍須嘗試還原原先釘選的完整流量比例。切換或健康檢查失敗時，也必須在還原後讀回核對；還原指令失敗、讀回失敗或比例不符都會讓演練失敗，不得產生成功的 rollback proof。即使還原成功，原本的切換／健康檢查錯誤仍保留，verify 仍是 `verification_failed`，交由既有 hold 流程處理。切換指令成功結束也不算切換完成：API 與 Web 都要先用同一組 `describe_traffic`／`normalize_traffic` 讀回，確認 probe revision 實際拿到 100% 流量，才可打 health。其他 revision 留在 0% 或 probe 另有 tag-only 路由屬正常；讀回仍是原本 70/30、只切一部分、100% 落在別的 revision、配置缺漏或格式錯誤、或讀不到時，該 service 不打 health，直接失敗，並照上述還原責任還原與讀回。這些失敗路徑由 `tests/ops/test_ephemeral_staging_lifecycle.py` 的 API／Web 故障注入回歸覆蓋，不是 live 演練證據。
 
 **失敗時實際做什麼（兩個環境不同）：**
 
