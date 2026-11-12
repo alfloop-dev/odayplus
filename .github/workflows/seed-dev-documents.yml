@@ -2,8 +2,15 @@ name: seed-dev-documents
 
 # One-off, manual only: seed the Operator Console document-store expansion panels
 # (展店 listings + candidate sites) for the derived tenant in dev Cloud SQL.
-# workflow_dispatch only so it never re-triggers the core.* backfill on push.
+# Seeds only the document store (never the core.* backfill), so a push trigger
+# on this branch is safe: the writes are deterministic, fixed-id upserts.
 on:
+  push:
+    branches: [seed-dev-data-backfill]
+    paths:
+      - .github/workflows/seed-dev-documents.yml
+      - .github/scripts/seed_dev_documents_driver.py
+      - product_ops/data_platform/seed_operator_documents.py
   workflow_dispatch: {}
 
 permissions:
