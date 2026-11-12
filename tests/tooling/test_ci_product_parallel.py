@@ -993,7 +993,9 @@ COMPARED_COMMITS = {
 }
 GIT_PREFLIGHT_NAME = "Require sparse-capable Git before checkout"
 DENIAL_PROOF_NAME = "Prove protected path stayed out of checkout"
-DENY_PATTERNS = ["/*", "!/tests/sources"]
+# The shared protected body domain of .orchestrator/worktree_cleanliness.py:
+# the root prefix and every embedded copy of it, plus the named asset.
+DENY_PATTERNS = ["/*", "!**/tests/sources/**", "!**/test_listing_production_asset.py*"]
 # `sparse-checkout` is what denies; every other input can widen, redirect or replace it.
 ALLOWED_CHECKOUT_INPUTS = {"fetch-depth", "sparse-checkout", "sparse-checkout-cone-mode"}
 REMATERIALIZING_COMMAND = re.compile(
