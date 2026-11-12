@@ -1639,11 +1639,21 @@ def committed_merge_group_review_recovery(
         None,
     )
     # The caller's task must be the committed one: same status, reviewer,
-    # submitted head and route, so a stale or locally edited snapshot cannot
+    # submitted head, route, PR and repository, so a stale or locally edited snapshot cannot
     # borrow a recovery it does not carry.
     if not isinstance(canonical_task, dict):
         return False
-    for field in ("status", reviewer_field, "approved_head", "review_submission", MERGE_ROUTE_FIELD):
+    for field in (
+        "status",
+        reviewer_field,
+        "approved_head",
+        "review_submission",
+        MERGE_ROUTE_FIELD,
+        # The CI read after this check resolves the task's own PR and
+        # repository, so those must be the committed ones as well.
+        "pr_number",
+        "repository",
+    ):
         if canonical_task.get(field) != task.get(field):
             return False
 

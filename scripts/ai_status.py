@@ -6327,7 +6327,8 @@ def merge_group_recovery_cause(
     records the failure as one pending `merge_group_failure` handoff to the
     reviewer, leaving `task.merge_route` untouched. This is the single
     identity rule every later step reads that cause through: the task's
-    submitted head and PR equal the route's, the cause is the task's only
+    submitted head and PR equal the route's, the task's own `pr_number` is that
+    same PR, the cause is the task's only
     pending handoff, names the assigned reviewer, the same PR (also through
     its queue ref), a run id, a group commit distinct from the source head,
     postdates the route, and -- unless `require_source_head` is False, which
@@ -6357,6 +6358,15 @@ def merge_group_recovery_cause(
     except (TypeError, ValueError):
         return None
     if pr_number <= 0 or route_pr != pr_number:
+        return None
+    # The task's own PR is what every later read resolves (CI, provenance,
+    # reality probe through `task_pr_lookup_scope`); it has to be this PR too,
+    # or a recovery for one PR would be judged on another PR's checks.
+    try:
+        task_pr = int(task.get("pr_number"))
+    except (TypeError, ValueError):
+        return None
+    if task_pr != pr_number:
         return None
     routed_at = orchestrator_common.parse_utc_timestamp(route.get("at"))
     if routed_at is None:

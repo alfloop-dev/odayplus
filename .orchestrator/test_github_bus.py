@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import io
 import json
 import os
 import subprocess
@@ -5571,24 +5572,125 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             "repo_slug": "o/r", "sha": self.APPROVED_HEAD, "context": "task-review-gate",
         }
         status_path.write_text(json.dumps(self.status), encoding="utf-8")
+        # The canonical status launcher the Supervisor resolves under the
+        # status root. It is never executed: the process transport below
+        # serves it with the real `ai_status.main` against this board.
+        launcher = root / "scripts" / status_transition.STATUS_LAUNCHER_NAME
+        launcher.parent.mkdir(parents=True, exist_ok=True)
+        launcher.write_text("#!/bin/sh\nexit 97\n", encoding="utf-8")
+        launcher.chmod(0o755)
+        transport = mock.patch.object(subprocess, "run", side_effect=self._process_transport(status_path))
+        transport.start()
+        self.addCleanup(transport.stop)
         return status_path
 
-    @staticmethod
-    def _canonical_sync(status_path: Path):
-        """The `ai_status sync` the canonical commit runs, on the real emitter.
+    # ai_status / task_archive paths that resolve to the status root.
+    STATUS_ROOT_PATHS = {
+        "STATUS_ROOT": "",
+        "STATUS_FILE": "ai-status.json",
+        "LOG_FILE": "ai-activity-log.jsonl",
+        "CURRENT_WORK_FILE": "current-work.md",
+        "DOCS_SITE_DIR": "docs-site",
+        "CONFIG_FILE": ".orchestrator/config.json",
+        "STATUS_ROOT_CONFIG_LOCAL_FILE": ".orchestrator/config.local.json",
+        "PLANNING_STATE_FILE": ".orchestrator/planning-state.json",
+        "ORCHESTRATOR_STATE_FILE": ".orchestrator/state.json",
+        "APPROVAL_QUEUE_FILE": ".orchestrator/approval-queue.json",
+        "DASHBOARD_BUNDLE_FILE": "dashboard-bundle.json",
+        "ARCHIVE_TASKS_DIR": "ai-task-archive/tasks",
+    }
+    ARCHIVE_ROOT_PATHS = {
+        "STATUS_ROOT": "",
+        "ARCHIVE_DIR": "ai-task-archive",
+        "ARCHIVE_TASKS_DIR": "ai-task-archive/tasks",
+        "ARCHIVE_INDEX_FILE": "ai-task-archive/index.json",
+    }
 
-        Same calls `ai_status.main("sync")` makes after loading under its lock:
-        retry the outbox, then emit for every task whose gate needs refreshing,
-        and persist what that produced.
+    def _ai_status_cli(self, status_path: Path, argv: list[str], *, actor: str | None) -> list[dict]:
+        """One real `ai_status` CLI run (`main`) against the temporary board.
+
+        `main` is the whole command: load under the status lock, the command,
+        `sync_all`, the outbox/status-check emission and the second `sync_all`.
+        Every status-root path of `ai_status`/`task_archive` points at the
+        temporary root for the call and is restored after it; nothing here
+        can reach the live board. A refused command raises `SystemExit` as
+        the CLI does. Returns the activity-log entries the call appended.
         """
+        import task_archive
 
-        def _sync(_config) -> bool:
-            state = json.loads(status_path.read_text(encoding="utf-8"))
-            before = json.loads(json.dumps(state))
-            ai_status.reconcile_status_check_outbox(state, refresh_review_gates=True)
-            ai_status.emit_status_checks_for_changed_tasks(before, state, "sync", [])
-            status_path.write_text(json.dumps(state), encoding="utf-8")
-            return True
+        root = status_path.parent
+        log_path = root / "ai-activity-log.jsonl"
+        before = log_path.read_text(encoding="utf-8").splitlines() if log_path.exists() else []
+        environ = {"PANTHEON_STATUS_ROOT": str(root), "ORCH_STATUS_ROOT": str(root)}
+        if actor:
+            environ["AI_NAME"] = actor
+        with contextlib.ExitStack() as stack:
+            for name, relative in self.STATUS_ROOT_PATHS.items():
+                stack.enter_context(mock.patch.object(ai_status, name, root / relative if relative else root))
+            for name, relative in self.ARCHIVE_ROOT_PATHS.items():
+                stack.enter_context(mock.patch.object(task_archive, name, root / relative if relative else root))
+            stack.enter_context(mock.patch.dict(os.environ, environ, clear=False))
+            if not actor:
+                os.environ.pop("AI_NAME", None)  # restored by the patch above
+            self.assertEqual(ai_status.STATUS_FILE, status_path)
+            ai_status.main(["ai_status.py", *argv])
+        after = log_path.read_text(encoding="utf-8").splitlines() if log_path.exists() else []
+        return [json.loads(line) for line in after[len(before):] if line.strip()]
+
+    def _process_transport(self, status_path: Path):
+        """`subprocess.run` for this test: the launcher, no GitHub, real Git.
+
+        The Supervisor's original launcher calls (`sync_status_pipeline`,
+        `sync_dispatched_task_status`) reach the real `ai_status.main` for the
+        temporary board, with the actor the launcher env names. Any `gh`
+        process fails closed -- no live GitHub. Everything else (Git on the
+        synthetic source repository) runs for real.
+        """
+        real_run = subprocess.run
+        launcher = str(status_path.parent / "scripts" / status_transition.STATUS_LAUNCHER_NAME)
+
+        def run(argv, *args, **kwargs):
+            command = [str(part) for part in argv] if isinstance(argv, (list, tuple)) else [str(argv)]
+            if command and command[0] == launcher:
+                env = kwargs.get("env") or {}
+                self.assertEqual(env.get("PANTHEON_STATUS_ROOT"), str(status_path.parent))
+                self.assertEqual(env.get("ORCH_STATUS_ROOT"), str(status_path.parent))
+                out, err = io.StringIO(), io.StringIO()
+                code = 0
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    try:
+                        self._ai_status_cli(status_path, command[1:], actor=env.get("AI_NAME"))
+                    except SystemExit as exc:
+                        code = exc.code if isinstance(exc.code, int) else 1
+                        if not isinstance(exc.code, int):
+                            err.write(str(exc.code))
+                self.launcher_calls.append((command[1:], env.get("AI_NAME"), code))
+                return subprocess.CompletedProcess(command, code, out.getvalue(), err.getvalue())
+            if command and Path(command[0]).name == "gh":
+                return subprocess.CompletedProcess(command, 1, "", "no live GitHub in this test")
+            return real_run(argv, *args, **kwargs)
+
+        self.launcher_calls: list = []
+        return run
+
+    def _canonical_sync(self, status_path: Path):
+        """The `ai-status.sh sync` the canonical commit runs: the real CLI `sync`.
+
+        This stands in for `supervisor.sync_status_pipeline` only where a test
+        wants to count or inspect those calls; it runs exactly what the
+        original pipeline's launcher runs, through the same process transport.
+        """
+        launcher = str(status_path.parent / "scripts" / status_transition.STATUS_LAUNCHER_NAME)
+
+        def _sync(config) -> bool:
+            result = subprocess.run(
+                [launcher, "sync"],
+                cwd=str(status_path.parent),
+                capture_output=True,
+                text=True,
+                env=status_transition._status_launcher_env(config),
+            )
+            return result.returncode == 0
 
         return _sync
 
@@ -5645,7 +5747,6 @@ class MergeGroupReconciliationTests(unittest.TestCase):
 
         state = runtime_state.default_state() if state is None else state
         offline = github_bus.GitHubBusOffline("no live GitHub in this test")
-        status_path = Path(self.config["paths"]["status_file"])
         gh_view, gh_list = self._pr_transport(github_pr, [] if gh_calls is None else gh_calls)
         source_repo = self._source_repo() if "coordination" in self.config else None
         patches = (
@@ -5654,7 +5755,8 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             mock.patch("github_bus.gh_json", side_effect=offline),
             mock.patch("github_bus.run_gh", side_effect=offline),
             mock.patch.object(dispatch_engine, "task_reality_reconcile_is_due", return_value=False),
-            mock.patch.object(supervisor, "sync_status_pipeline", side_effect=self._canonical_sync(status_path)),
+            # `sync_status_pipeline` is the original one: its launcher call is
+            # served by the real CLI `sync` through the process transport.
             mock.patch.object(ai_status, "post_task_review_status_payload", return_value=(True, "")),
             mock.patch.object(ai_status, "task_repository_slug_safe", return_value="o/r"),
             mock.patch.object(supervisor, "load_event_queue", return_value=list(pending_events)),
@@ -5933,6 +6035,7 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             "task_id": "ODP-TEST-MG-001",
             "from": "Codex",
             "to": "Claude2",
+            "message": "Merge group failed for PR #756; fresh review required.",
             "status": "pending",
             "created_at": "2026-09-06T01:30:00Z",
             "reason": "merge_group_failure",
@@ -6002,6 +6105,101 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             self.assertFalse(dispatch_engine.is_task_review_dispatch_eligible(
                 self.config, supervisor.load_status(self.config)["tasks"][0], "Claude2"))
 
+    def test_route_recovery_refuses_before_reading_another_prs_ci(self) -> None:
+        """The task's own PR is part of the recovery identity, read before any CI.
+
+        The dispatcher's CI read resolves the task's top-level `pr_number`
+        (`task_pr_lookup_scope`), not the submission's. A canonical task whose
+        top-level PR drifted, is missing or malformed -- or a caller snapshot
+        that names another PR than the committed task -- must be refused by
+        the recovery identity before GitHub is asked about any PR, even when
+        that other PR is green. Only the real CI reader runs here; its `gh`
+        transport is the one thing replaced, and every PR it is asked about
+        is recorded.
+        """
+        import supervisor
+
+        status_path = self._canonical_store()
+        self._route_approved_head()
+        self.task.update({"status": "review", "next": "Merge group run 1 failed; reviewer recovery handoff dispatched"})
+        self.task.pop("approved_head")
+        cause = {
+            "task_id": "ODP-TEST-MG-001",
+            "from": "Codex",
+            "to": "Claude2",
+            "message": "Merge group failed for PR #756; fresh review required.",
+            "status": "pending",
+            "created_at": "2026-09-06T01:30:00Z",
+            "reason": "merge_group_failure",
+            "run_id": 31321422749,
+            "queue_ref": "refs/heads/gh-readonly-queue/dev/pr-756-a297b2a0",
+            "head_sha": self.GROUP_HEAD_OLD,
+            "pr_number": 756,
+            "source_head": self.APPROVED_HEAD,
+        }
+        green = {
+            "state": "OPEN",
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "product", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ],
+        }
+
+        def eligible(*, task_overrides=None, drop=(), snapshot_overrides=None):
+            board = json.loads(json.dumps(self.status))
+            board["tasks"][0].update(task_overrides or {})
+            for field in drop:
+                board["tasks"][0].pop(field, None)
+            board["handoffs"] = [cause]
+            status_path.write_text(json.dumps(board), encoding="utf-8")
+            snapshot = supervisor.load_status(self.config)["tasks"][0]
+            snapshot.update(snapshot_overrides or {})
+            ci_reads: list[str] = []
+
+            def gh_view(args, *, cwd=None):
+                if args[:2] == ["pr", "view"]:
+                    ci_reads.append(args[2])
+                    return dict(green)
+                return None
+
+            ai_status.clear_ai_status_caches()
+            self.addCleanup(ai_status.clear_ai_status_caches)
+            with (
+                mock.patch.object(ai_status, "resolve_task_sha", return_value=self.APPROVED_HEAD),
+                mock.patch.object(ai_status, "run_gh_json_command", side_effect=gh_view),
+                mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            ):
+                verdict = dispatch_engine.is_task_review_dispatch_eligible(self.config, snapshot, "Claude2")
+            # Reading the canonical store never rewrites it.
+            self.assertEqual(json.loads(status_path.read_text(encoding="utf-8")), board)
+            return verdict, ci_reads
+
+        # The committed recovery for PR 756 reads exactly PR 756's checks.
+        self.assertEqual(eligible(), (True, ["756"]))
+
+        refused = {
+            "canonical task PR drifted to a green PR": {"task_overrides": {"pr_number": 757}},
+            "canonical task PR missing": {"drop": ("pr_number",)},
+            "canonical task PR malformed": {"task_overrides": {"pr_number": "756abc"}},
+            "canonical task PR empty": {"task_overrides": {"pr_number": None}},
+            "canonical task in another repository": {"task_overrides": {"repository": "oday-data-platform"}},
+            "caller snapshot names another PR": {"snapshot_overrides": {"pr_number": 757}},
+            "caller snapshot without PR": {"snapshot_overrides": {"pr_number": None}},
+            "caller snapshot in another repository": {"snapshot_overrides": {"repository": "oday-data-platform"}},
+        }
+        for label, case in refused.items():
+            with self.subTest(label):
+                self.assertEqual(eligible(**case), (False, []))
+
+        # The shared identity itself: top-level PR drift, absence or a bad
+        # shape is no recovery for any caller (owner-return, publisher, reality).
+        task = dict(self.task, pr_number=756)
+        self.assertIsNotNone(ai_status.merge_group_recovery_cause(task, [cause]))
+        for value in (757, None, "", "756abc", 0, -756):
+            with self.subTest(top_level_pr=value):
+                self.assertIsNone(ai_status.merge_group_recovery_cause(dict(task, pr_number=value), [cause]))
+        self.assertIsNone(ai_status.merge_group_recovery_cause(
+            {k: v for k, v in task.items() if k != "pr_number"}, [cause]))
+
     # ------------------------------------------------------------------
     # A cause committed before `source_head` existed
     # ------------------------------------------------------------------
@@ -6018,6 +6216,7 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             "task_id": "ODP-TEST-MG-001",
             "from": "Codex",
             "to": "Claude2",
+            "message": "Merge group failed for PR #756; fresh review required.",
             "status": "pending",
             "created_at": "2026-09-06T01:30:00Z",
             "reason": "merge_group_failure",
@@ -6290,18 +6489,22 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         pr.update(overrides)
         return pr
 
-    def _status_command(self, status_path: Path, actor: str, command, args: list, *, pr=None) -> list[dict]:
-        """Run one real `ai_status` command and the handoff normalization `sync_all` applies.
+    def _status_command(self, status_path: Path, actor: str, command: str, args: list, *, pr=None) -> list[dict]:
+        """One real `ai_status <command>` by `actor`, through the CLI `main`.
 
-        Only GitHub (`run_gh_json_command`), the config/repository lookups and
-        the log path are injected; Git checks and the delivery-identity scan
-        run against the synthetic source repository.
+        The command commits with the original `sync_all` and status-check
+        emission under the status lock. Only GitHub (`run_gh_json_command` and
+        the status POST), the config/repository lookups and the status root
+        are injected; Git checks and the delivery-identity scan run against
+        the synthetic source repository. Returns the appended activity log.
         """
-        state = json.loads(status_path.read_text(encoding="utf-8"))
-        log_path = status_path.parent / "ai-status-commands.jsonl"
+        with self._status_cli_externals(pr=pr):
+            return self._ai_status_cli(status_path, [command, *args], actor=actor)
+
+    @contextlib.contextmanager
+    def _status_cli_externals(self, *, pr=None):
+        """GitHub and repository-registry answers for a CLI run; nothing else."""
         with (
-            mock.patch.dict(os.environ, {"AI_NAME": actor}, clear=False),
-            mock.patch.object(ai_status, "LOG_FILE", log_path),
             mock.patch.object(ai_status, "status_runtime_config", return_value={}),
             mock.patch.object(ai_status, "merged_orchestrator_config", return_value=self.config),
             mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
@@ -6309,13 +6512,10 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
             mock.patch.object(ai_status, "run_gh_json_command", return_value=pr),
             mock.patch.object(ai_status, "resolve_task_sha", return_value=self.APPROVED_HEAD),
+            mock.patch.object(ai_status, "post_task_review_status_payload", return_value=(True, "")),
+            mock.patch.object(ai_status, "task_repository_slug_safe", return_value="o/r"),
         ):
-            command(state, args)
-            ai_status.normalize_handoffs(state)
-        status_path.write_text(json.dumps(state), encoding="utf-8")
-        if not log_path.exists():
-            return []
-        return [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            yield
 
     def _proven_legacy_board(self):
         """W's shape: legacy cause, proven by the producer through the real CAS."""
@@ -6397,9 +6597,54 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         self.assertTrue(dispatch_engine.worker_matches_current_assignment(self.config, owner_worker, task_map))
         self.assertFalse(dispatch_engine.worker_matches_current_assignment(self.config, reviewer_worker, task_map))
 
-        # 2. The sync's handoff normalization keeps that one cause.
-        self._status_command(status_path, "Codex", lambda _state, _args: None, [])
+        # The owner-return was committed by the original CAS and the original
+        # `sync_status_pipeline`, whose launcher ran the real CLI `sync`.
+        self.assertIn((["sync"], None, 0), [(c[0], None, c[2]) for c in self.launcher_calls])
+
+        # 2. The queue consumer started the owner's worker: its original status
+        # action for the owned_in_progress lane runs `ai-status.sh progress`
+        # as the fixture owner, and the real CLI commits it with `sync_all`.
+        self.launcher_calls.clear()
+        with self._status_cli_externals():
+            self.assertTrue(status_transition.sync_dispatched_task_status(self.config, owner_event))
+        progress_message = "Supervisor re-dispatched ODP-TEST-MG-001; task remains in progress."
+        self.assertEqual(self.launcher_calls, [(["progress", "ODP-TEST-MG-001", progress_message], "Codex", 0)])
+        activity = [
+            json.loads(line)
+            for line in Path(self.config["paths"]["activity_log"]).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(
+            [(e["agent"], e["task_id"], e["message"]) for e in activity if e.get("type") == "progress"],
+            [("Codex", "ODP-TEST-MG-001", progress_message)],
+        )
+        self.assertEqual(
+            [(e["target_agent"], e["dispatch_reason"]) for e in activity if e.get("type") == "task_dispatch_synced"],
+            [("Codex", "owned_in_progress_dispatch")],
+        )
         board = json.loads(status_path.read_text(encoding="utf-8"))
+        self.assertEqual(board["tasks"][0]["status"], "in_progress")
+        self.assertEqual(board["tasks"][0]["owner"], "Codex")
+        self.assertEqual(board["tasks"][0]["next"], progress_message)
+        self.assertEqual(self._pending(board), [cause])
+        self.assertEqual(board["tasks"][0]["merge_route"], route)
+        task_map, key = owner_key_now()
+        self.assertEqual(key, owner_event["key"])
+        self.assertTrue(dispatch_engine.worker_matches_current_assignment(self.config, owner_worker, task_map))
+
+        # The reviewer is not the owner; the same action refuses to act for it.
+        with self._status_cli_externals():
+            self.assertFalse(status_transition.sync_dispatched_task_status(
+                self.config, dict(owner_event, target_agent="claude2", target_display_name="Claude2")))
+        self.assertEqual(json.loads(status_path.read_text(encoding="utf-8")), board)
+
+        # The original canonical sync (`sync_all`) keeps that one cause too.
+        self.launcher_calls.clear()
+        with self._status_cli_externals():
+            self.assertTrue(status_transition.sync_status_pipeline(self.config))
+        self.assertEqual([(c[0], c[2]) for c in self.launcher_calls], [(["sync"], 0)])
+        board = json.loads(status_path.read_text(encoding="utf-8"))
+        self.assertEqual(board["tasks"][0]["status"], "in_progress")
         self.assertEqual(self._pending(board), [cause])
         self.assertEqual(board["tasks"][0]["merge_route"], route)
         task_map, key = owner_key_now()
@@ -6415,7 +6660,7 @@ class MergeGroupReconciliationTests(unittest.TestCase):
 
         # 3. The owner's real publisher verifies the merge for the same PR/head.
         logs = self._status_command(
-            status_path, "Codex", ai_status.command_submit_review,
+            status_path, "Codex", "submit_review",
             ["ODP-TEST-MG-001", "756", "Publish merged recovery"], pr=self._merged_pr(merge_commit),
         )
         board = json.loads(status_path.read_text(encoding="utf-8"))
@@ -6434,6 +6679,15 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             [e.get("merge_group_recovery_publication") for e in logs if e["type"] == "review_submission"],
             [True],
         )
+        # The next canonical sync after the publisher keeps the published
+        # phase, the route and the one cause.
+        with self._status_cli_externals():
+            self.assertTrue(status_transition.sync_status_pipeline(self.config))
+        board = json.loads(status_path.read_text(encoding="utf-8"))
+        self.assertEqual(board["tasks"][0]["status"], "review")
+        self.assertEqual(board["tasks"][0]["review_submission"], submission)
+        self.assertEqual(board["tasks"][0]["merge_route"], route)
+        self.assertEqual(self._pending(board), [cause])
 
         # 4. The assigned reviewer is dispatched exactly once for the merged head.
         reviewer: list[dict] = []
@@ -6448,7 +6702,7 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         # 5. Only the reviewer's approval closes the cause and opens finalize.
         with mock.patch.object(ai_status, "resolve_immutable_merged_task_sha", return_value=self.APPROVED_HEAD):
             self._status_command(
-                status_path, "Claude2", ai_status.command_approve,
+                status_path, "Claude2", "approve",
                 ["ODP-TEST-MG-001", "Merged head re-reviewed after the group failure"],
                 pr=self._merged_pr(merge_commit),
             )
@@ -6644,7 +6898,7 @@ class MergeGroupReconciliationTests(unittest.TestCase):
                 status_path, route, cause, merge_commit, board = owner_returned()
                 with self.assertRaises(SystemExit):
                     self._status_command(
-                        status_path, actor, ai_status.command_submit_review,
+                        status_path, actor, "submit_review",
                         ["ODP-TEST-MG-001", "756", "Publish merged recovery"], pr=pr(merge_commit),
                     )
                 after = json.loads(status_path.read_text(encoding="utf-8"))
@@ -6655,7 +6909,7 @@ class MergeGroupReconciliationTests(unittest.TestCase):
 
             status_path, route, cause, merge_commit, _ = owner_returned()
             self._status_command(
-                status_path, "Codex", ai_status.command_submit_review,
+                status_path, "Codex", "submit_review",
                 ["ODP-TEST-MG-001", "756", "Publish merged recovery"], pr=self._merged_pr(merge_commit),
             )
             status = supervisor.load_status(self.config)
@@ -6675,7 +6929,7 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             self.assertEqual(self._pending(board), [cause])
             # The same owner republishes; still one cause, no generic handoff.
             self._status_command(
-                status_path, "Codex", ai_status.command_submit_review,
+                status_path, "Codex", "submit_review",
                 ["ODP-TEST-MG-001", "756", "Republish after seal"], pr=self._merged_pr(merge_commit),
             )
             board = json.loads(status_path.read_text(encoding="utf-8"))
