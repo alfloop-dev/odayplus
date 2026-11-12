@@ -5621,7 +5621,16 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         root = status_path.parent
         log_path = root / "ai-activity-log.jsonl"
         before = log_path.read_text(encoding="utf-8").splitlines() if log_path.exists() else []
-        environ = {"PANTHEON_STATUS_ROOT": str(root), "ORCH_STATUS_ROOT": str(root)}
+        # The committed example roster is the config fixture, as in
+        # scripts/test_ai_status.py: the temporary root has no config.json,
+        # and a worker's inherited runtime config must never be read here.
+        example_config = str(Path(__file__).resolve().parent / "config.example.json")
+        environ = {
+            "PANTHEON_STATUS_ROOT": str(root),
+            "ORCH_STATUS_ROOT": str(root),
+            "ORCH_CONFIG_PATH": example_config,
+            "PANTHEON_CONFIG_PATH": example_config,
+        }
         if actor:
             environ["AI_NAME"] = actor
         with contextlib.ExitStack() as stack:
