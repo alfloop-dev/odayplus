@@ -528,21 +528,14 @@ def reconcile_task_reality(config: dict[str, Any], status: dict[str, Any]) -> bo
         except (TypeError, ValueError):
             pr_number = 0
         # A route bound to a committed merge_group recovery cause is that
-        # recovery's admission record, not a stale merge attempt. A cause
-        # recorded before `source_head` existed counts until the producer has
-        # proven it; one naming another head does not.
-        cause = runtime_ai_status.merge_group_recovery_cause(
-            task, status.get("handoffs"), require_source_head=False
-        )
-        route_head = str((task.get("merge_route") or {}).get("head") or "").strip().lower()
-        merge_group_recovery = cause is not None and (
-            "source_head" not in cause
-            or str(cause.get("source_head") or "").strip().lower() == route_head
-        )
+        # recovery's admission record, not a stale merge attempt; a recovery
+        # the cause rule cannot resolve keeps it as evidence, fail-closed.
         return {
             "pull_request": _pull_request_record(pr_number) if pr_number > 0 else None,
             "branch_exists": str(task.get("branch") or "") in remote_branches,
-            "merge_group_recovery": merge_group_recovery,
+            "merge_group_recovery": runtime_ai_status.merge_group_route_recovery_hold(
+                task, status.get("handoffs")
+            ),
         }
 
     results = task_reality.reconcile_tasks(tasks, probe=probe)

@@ -6411,6 +6411,77 @@ def merge_group_recovery_cause(
     return cause
 
 
+MERGE_ROUTE_RECOVERY_BOUND = "recovery"
+MERGE_ROUTE_RECOVERY_UNRESOLVED = "unresolved"
+
+
+def merge_group_route_recovery_hold(task: dict[str, Any], handoffs: Any) -> str:
+    """Does a merge_group recovery still hold `task.merge_route`?
+
+    `recovery`: the route is bound to the committed cause (the identity rule
+    above; a cause recorded before `source_head` existed counts until its
+    producer has judged it). `unresolved`: the cause rule refuses every
+    pending `merge_group_failure` handoff of the task, yet none of them is
+    proven to concern another PR or another source head -- a damaged or
+    partially recorded recovery, whose route is the evidence the cause is
+    judged against and must not be released as an ordinary merge. `""`: no
+    recovery holds the route; it is released like any other.
+    """
+    if not isinstance(task, dict):
+        return ""
+    route = task.get("merge_route")
+    if not isinstance(route, dict):
+        return ""
+    route_head = str(route.get("head") or "").strip().lower()
+    cause = merge_group_recovery_cause(task, handoffs, require_source_head=False)
+    if cause is not None:
+        if "source_head" not in cause or (
+            str(cause.get("source_head") or "").strip().lower() == route_head
+        ):
+            return MERGE_ROUTE_RECOVERY_BOUND
+        return ""
+
+    task_id = str(task.get("id") or "").strip()
+    failures = [
+        handoff
+        for handoff in handoffs or []
+        if isinstance(handoff, dict)
+        and str(handoff.get("task_id") or "").strip() == task_id
+        and str(handoff.get("status") or "").strip().lower() == "pending"
+        and str(handoff.get("reason") or "") == MERGE_GROUP_FAILURE_HANDOFF_REASON
+    ]
+    if not task_id or not failures:
+        return ""
+    submission = task.get("review_submission")
+    source_head = (
+        str(submission.get("remote_sha") or "").strip().lower() if isinstance(submission, dict) else ""
+    )
+    if source_head and route_head and source_head != route_head:
+        # The task has since submitted another head: the route belongs to an
+        # earlier attempt, and the merge of the current PR releases it.
+        return ""
+
+    def positive_int(value: Any) -> int | None:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return None
+        return number if number > 0 else None
+
+    route_pr = positive_int(route.get("pr_number")) or positive_int(task.get("pr_number"))
+
+    def concerns_another_attempt(handoff: dict[str, Any]) -> bool:
+        named_source = str(handoff.get("source_head") or "").strip().lower()
+        if named_source and route_head and named_source != route_head:
+            return True
+        handoff_pr = positive_int(handoff.get("pr_number"))
+        return bool(handoff_pr and route_pr and handoff_pr != route_pr)
+
+    if all(concerns_another_attempt(handoff) for handoff in failures):
+        return ""
+    return MERGE_ROUTE_RECOVERY_UNRESOLVED
+
+
 def merge_group_recovery_publication_pending(task: dict[str, Any], handoffs: Any) -> bool:
     """An owner-returned recovery whose merged PR still awaits the owner's publisher.
 

@@ -724,6 +724,32 @@ def merge_group_audit_entry(
     return entry
 
 
+def record_review_gate_revocation_intent(
+    task: dict[str, Any], repo: str, group_heads: list[str]
+) -> None:
+    """Write the review-gate revocation intent of a merge_group recovery.
+
+    Confirmed grants move into the existing `review_gate_revocations`, each
+    group commit proven to enrol the reviewed head joins them, and
+    `review_gate_refresh_pending` makes the canonical `ai_status sync` that
+    commits the transition post them and persist the outcome (ACK, or the
+    exact payload in `status_check_outbox` for retry). The caller commits it
+    through the canonical CAS; nothing is posted from here.
+    """
+    runtime_ai_status.retain_review_gate_targets(task)
+    revocations = {
+        runtime_ai_status.status_check_target(target): target
+        for target in task.get("review_gate_revocations", []) or []
+        if isinstance(target, dict)
+    }
+    for group_head in group_heads:
+        group_target = {"repo_slug": repo, "sha": group_head, "context": "task-review-gate"}
+        revocations.setdefault(runtime_ai_status.status_check_target(group_target), group_target)
+    if revocations:
+        task["review_gate_revocations"] = list(revocations.values())
+    task["review_gate_refresh_pending"] = True
+
+
 def reconcile_merge_group_runs(
     config: dict[str, Any],
     bus_state: dict[str, Any],
@@ -1200,18 +1226,7 @@ def reconcile_merge_group_runs(
         # `review_gate_refresh_pending` makes the canonical `ai_status sync`
         # that commits this transition post them and persist the outcome
         # (ACK, or the exact payload in `status_check_outbox` for retry).
-        runtime_ai_status.retain_review_gate_targets(task)
-        revocations = {
-            runtime_ai_status.status_check_target(target): target
-            for target in task.get("review_gate_revocations", []) or []
-            if isinstance(target, dict)
-        }
-        for group_head in group_targets:
-            group_target = {"repo_slug": repo, "sha": group_head, "context": "task-review-gate"}
-            revocations.setdefault(runtime_ai_status.status_check_target(group_target), group_target)
-        if revocations:
-            task["review_gate_revocations"] = list(revocations.values())
-        task["review_gate_refresh_pending"] = True
+        record_review_gate_revocation_intent(task, repo, group_targets)
         task.pop("review_gate_sha", None)
         task.pop("waiting_for", None)
         task["next"] = (
@@ -1330,6 +1345,52 @@ def legacy_merge_group_cause_source_verdict(
     return LEGACY_CAUSE_PROVEN, "group_enrolled_source_head"
 
 
+def legacy_cause_group_revocation_targets(
+    repo: str,
+    cause: dict[str, Any],
+    source_head: str,
+    parents_cache: dict[str, list[str] | None] | None = None,
+) -> tuple[list[str], str, str]:
+    """Every group commit a proven legacy cause must revoke, or why not.
+
+    The cause's own group was proven to enrol `source_head` by
+    `legacy_merge_group_cause_source_verdict`. The PR's current queue entry
+    is read from the one PR reader, on the exact PR and source head, and its
+    group commit is revoked only when proven to enrol the source as well.
+    Returns ``(group_heads, verdict, reason)``; anything GitHub cannot answer
+    is `unresolved` and writes nothing.
+    """
+    group_head = str(cause.get("head_sha") or "").strip().lower()
+    try:
+        pr_number = int(cause.get("pr_number"))
+    except (TypeError, ValueError):
+        return [], LEGACY_CAUSE_UNRESOLVED, "pr_number_unusable"
+    facts = fetch_pr_queue_facts(repo, pr_number)
+    if facts is None:
+        return [], LEGACY_CAUSE_UNRESOLVED, "pr_facts_unavailable"
+    try:
+        facts_number = int(facts.get("number"))
+    except (TypeError, ValueError):
+        return [], LEGACY_CAUSE_UNRESOLVED, "pr_number_missing"
+    if facts_number != pr_number:
+        return [], LEGACY_CAUSE_UNRESOLVED, "pr_number_mismatch"
+    if pr_head_sha(facts) != source_head:
+        return [], LEGACY_CAUSE_UNRESOLVED, "pr_head_mismatch"
+    group_heads = [group_head]
+    active_group_head, active_known = merge_queue_entry_group_head(facts)
+    if not active_known:
+        return [], LEGACY_CAUSE_UNRESOLVED, "active_group_identity_unknown"
+    if active_group_head and active_group_head not in group_heads:
+        incorporates = merge_group_incorporates_head(
+            repo, active_group_head, source_head, parents_cache
+        )
+        if incorporates is None:
+            return [], LEGACY_CAUSE_UNRESOLVED, "active_group_association_unknown"
+        if incorporates:
+            group_heads.append(active_group_head)
+    return group_heads, LEGACY_CAUSE_PROVEN, "group_enrolled_source_head"
+
+
 def enrich_legacy_merge_group_causes(
     config: dict[str, Any],
     status: dict[str, Any],
@@ -1347,8 +1408,14 @@ def enrich_legacy_merge_group_causes(
     only when GitHub proves the relation. Nothing is remembered between
     cycles: a refuted or unresolved relation is audited like any unresolved
     merge_group failure and the cause is read and asked again next cycle,
-    against whatever the canonical record says then. Nothing else on the
-    task, its route or its handoffs changes.
+    against whatever the canonical record says then.
+
+    The same CAS carries the review-gate revocation the legacy producer
+    never wrote: the cause's proven group and the PR's current queue group,
+    when proven to enrol the source, join `review_gate_revocations` through
+    the producer's own `record_review_gate_revocation_intent`, and the
+    canonical sync that commits it posts them and persists ACK or outbox.
+    The route and every other handoff are left unchanged.
 
     Returns None when nothing was written, otherwise whether the canonical
     CAS accepted the write.
@@ -1386,8 +1453,18 @@ def enrich_legacy_merge_group_causes(
             "source_head": source_head,
         }
         if verdict == LEGACY_CAUSE_PROVEN:
-            proven.append(facts)
+            # The legacy producer committed the demotion without revoking the
+            # group commits; a success re-asserted on them would outlive the
+            # resumed review. The proven group and the PR's current queue
+            # group (when it is proven to enrol the source) are revoked in the
+            # same CAS that completes the cause, or nothing is written.
+            group_heads, verdict, reason = legacy_cause_group_revocation_targets(
+                repo, cause, source_head, parents_cache
+            )
+        if verdict == LEGACY_CAUSE_PROVEN:
+            proven.append(dict(facts, revoked_group_heads=group_heads))
             cause["source_head"] = source_head
+            record_review_gate_revocation_intent(task, repo, group_heads)
             continue
         write_activity_log(config, merge_group_audit_entry(
             f"merge_group_cause_source_{verdict}",
@@ -1411,7 +1488,9 @@ def enrich_legacy_merge_group_causes(
                 "group_enrolled_source_head",
                 (
                     f"Merge group run {facts['run_id']} on {facts['queue_ref']} enrolled source head "
-                    f"{facts['source_head']} of task {facts['task_id']}; recorded it on the committed cause."
+                    f"{facts['source_head']} of task {facts['task_id']}; recorded it on the committed cause "
+                    f"and queued review-gate revocation for group commits "
+                    f"{', '.join(h[:8] for h in facts['revoked_group_heads'])}."
                 ),
             ))
     return committed
