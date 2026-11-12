@@ -205,7 +205,13 @@ non-cone sparse patterns 由 `protected_body_sparse_patterns()` 產生：
 | `worktree_cleanliness.inspect_worktree`（含 `task_finalize.sh`） | status 之前先跑 domain 證明；domain 內的未追蹤 dirt 與同路徑漂移在 status 之前即以 `protected_metadata_refused` blocking，不可當 seed、不產生 fingerprint；fingerprint 對 domain 路徑仍只用 lstat（防禦性保留） |
 | quarantine／interrupted merge seal | domain 內的 dirt 拒絕備份與 seal，不讀 body |
 | context seeding | 對所有 task（不只 `protected_paths` task）拒絕 domain 內的 context 來源或目的地 |
-| 7 個既有 workflow 的 22 個 checkout | 全部：Git preflight → checkout（上述 sparse patterns）→ 同一份證明腳本，證明在任何 reader 之前（deploy-dev 緊接在 HEAD 身分 assert 之後）；比較端點時另拒絕 domain 在兩端不一致 |
+| 7 個既有 workflow 的 22 個 checkout | 全部：Git preflight → checkout（上述 sparse patterns）→ 同一份證明腳本，證明在任何 reader 之前（deploy-dev 緊接在 HEAD 身分 assert 之後）；比較端點時另拒絕 domain 在兩端不一致；唯一的結構驗證是既有 `tests/tooling/test_ci_product_parallel.py`（逐 job 鎖定 checkout 數、full history、精確 ref、HEAD 身分 assert、比較端點與下游 consumer 一致） |
+
+Repository 身分只有一條規則：`worktree_cleanliness.shares_git_common_dir`（路徑必須是 worktree 的
+top level，且解析後的 Git common dir 與 source 相同；metadata 無法回答即拒絕）。rollout 既有
+target 重用、`worker_workspace._refresh_reused_worker_worktree`（`wrong_worktree: ...`）與
+`_quarantine_and_preserve_dirty_worktree`（另保留兩端 git-dir 有效性；`worktree_belongs_to_another_repository`）
+都直接呼叫它，各自在當下重新判定；另一個 clone 即使同 HEAD、同 named branch 也拒絕。
 
 `protected_body_checkout_refusal` 的判定（全部只用 Git metadata 與 lstat）：
 

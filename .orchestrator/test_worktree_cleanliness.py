@@ -575,20 +575,6 @@ class ProtectedBodyDomainTests(SyntheticBodyDomain, unittest.TestCase):
 
 
 WORKFLOWS = THIS_DIR.parent / ".github" / "workflows"
-# Every existing workflow that checks out this repository, and how many times.
-CHECKOUT_WORKFLOWS = {
-    "assisted-intake-design-validation.yml": 1,
-    "ci.yml": 11,
-    "deploy-dev.yml": 6,
-    "emgi-consumer-boundary.yml": 1,
-    "merge-queue-review-gate.yml": 1,
-    "promote-dev-to-main.yml": 1,
-    "tooling-scope-review-gate.yml": 1,
-}
-PREFLIGHT_NAME = "Require sparse-capable Git before checkout"
-PROOF_NAME = "Prove protected path stayed out of checkout"
-# Inputs that could widen, redirect or replace the sparse deny.
-WIDENING_INPUTS = {"filter", "lfs", "submodules", "repository", "sparse-checkout-cone-mode-override"}
 
 
 def _load_workflow(name: str) -> dict:
@@ -600,53 +586,6 @@ def _load_workflow(name: str) -> dict:
 def _reference_scripts() -> tuple[str, str]:
     steps = _load_workflow("tooling-scope-review-gate.yml")["jobs"]["classify"]["steps"]
     return steps[0]["run"], steps[2]["run"]
-
-
-class CheckoutBoundaryWorkflowTests(unittest.TestCase):
-    """Every existing checkout follows the one domain policy, and its proof really refuses."""
-
-    def test_every_checkout_excludes_the_domain_before_anything_reads_it(self) -> None:
-        preflight, proof = _reference_scripts()
-        self.assertEqual(proof.count('denied = "tests/sources"'), 1)
-        self.assertIn("wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)", proof)
-        self.assertIn("wc.protected_body_sparse_patterns((denied,))", proof)
-        for name, expected in CHECKOUT_WORKFLOWS.items():
-            found = 0
-            for job_name, job in _load_workflow(name)["jobs"].items():
-                steps = job.get("steps", [])
-                positions = [i for i, step in enumerate(steps) if "actions/checkout" in str(step.get("uses", ""))]
-                if not positions:
-                    continue
-                here = f"{name}:{job_name}"
-                found += len(positions)
-                with self.subTest(job=here):
-                    self.assertEqual(positions, [1], "one checkout, directly after the Git preflight")
-                    self.assertEqual(steps[0].get("name"), PREFLIGHT_NAME)
-                    self.assertEqual(steps[0].get("run"), preflight)
-                    checkout = steps[1]
-                    self.assertEqual(checkout["uses"], "actions/checkout@v4")
-                    inputs = checkout.get("with") or {}
-                    self.assertIs(inputs.get("sparse-checkout-cone-mode"), False)
-                    self.assertEqual(
-                        str(inputs.get("sparse-checkout") or "").split(), list(wc.protected_body_sparse_patterns())
-                    )
-                    self.assertFalse(set(inputs) & WIDENING_INPUTS)
-                    proofs = [i for i, step in enumerate(steps) if step.get("name") == PROOF_NAME]
-                    self.assertEqual(len(proofs), 1)
-                    at = proofs[0]
-                    # Only a HEAD identity assertion may sit between checkout and proof.
-                    for between in steps[positions[0] + 1 : at]:
-                        self.assertTrue(str(between.get("name", "")).startswith("Assert"), between)
-                        self.assertNotIn("python", str(between.get("run", "")))
-                    self.assertEqual(steps[at].get("run"), proof)
-                    env = steps[at].get("env") or {}
-                    self.assertEqual(env.get("GIT_CONFIG_NOSYSTEM"), "1")
-                    self.assertEqual(env.get("GIT_CONFIG_GLOBAL"), "/dev/null")
-                    self.assertTrue(set(env) <= {"GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "PROTECTED_COMPARE_SHAS"})
-                    for step in (steps[0], checkout, steps[at]):
-                        self.assertNotIn("if", step)
-                        self.assertNotIn("continue-on-error", step)
-            self.assertEqual(found, expected, name)
 
 
 class CheckoutBoundaryProofTests(unittest.TestCase):

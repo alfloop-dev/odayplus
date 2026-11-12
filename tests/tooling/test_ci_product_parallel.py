@@ -968,36 +968,71 @@ def test_quarterly_password_browser_is_a_required_isolated_supplement() -> None:
     assert diagnostics["with"]["path"] == "${{ runner.temp }}/product-e2e-supplemental/area-planning3/"
 
 
-# --- protected checkout denial on the three unconditional PR workflows -------
+# --- protected checkout denial on every existing workflow checkout -------------
 
-PROTECTED_PR_WORKFLOWS = {
+# Every existing workflow that checks out this repository, and how many times.
+PROTECTED_CHECKOUT_WORKFLOWS = {
+    "assisted-intake-design-validation.yml": 1,
     "ci.yml": 11,
+    "deploy-dev.yml": 6,
     "emgi-consumer-boundary.yml": 1,
+    "merge-queue-review-gate.yml": 1,
+    "promote-dev-to-main.yml": 1,
     "tooling-scope-review-gate.yml": 1,
 }
+PROTECTED_CHECKOUT_TOTAL = 22
 # Jobs whose gates diff, walk or prove ancestry; a shallow clone would silently weaken them.
 FULL_HISTORY_JOBS = {
+    "assisted-intake-design-validation.yml": {"validate-contract-package"},
     "ci.yml": {"change-scope", "product-lint-unit", "product-db", "product-api-contract", "product-e2e-gate"},
+    "deploy-dev.yml": {"release_phase", "build", "admission", "automatic_admission", "deploy", "staging_closeout"},
     "emgi-consumer-boundary.yml": {"boundary"},
+    "merge-queue-review-gate.yml": {"review-gate"},
+    "promote-dev-to-main.yml": {"promote"},
     "tooling-scope-review-gate.yml": {"classify"},
 }
 PR_COMPARED_COMMITS = "${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }}"
 # The jobs whose steps hand these exact commits to a diff. Every other job proves HEAD only.
 COMPARED_COMMITS = {
+    ("assisted-intake-design-validation.yml", "validate-contract-package"): (
+        "${{ github.event.pull_request.base.sha || github.sha }} ${{ github.event.pull_request.head.sha || github.sha }}"
+    ),
     ("ci.yml", "change-scope"): (
         "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }} "
         "${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after }}"
     ),
+    ("deploy-dev.yml", "admission"): "${{ inputs.release_sha }} ${{ github.sha }}",
     ("emgi-consumer-boundary.yml", "boundary"): PR_COMPARED_COMMITS,
     ("tooling-scope-review-gate.yml", "classify"): PR_COMPARED_COMMITS,
+}
+# The exact trusted or dispatched ref each job checks out; every other job takes the event default.
+CHECKOUT_REFS = {
+    ("deploy-dev.yml", "release_phase"): "${{ inputs.phase == 'auto' && github.sha || inputs.release_sha }}",
+    ("deploy-dev.yml", "build"): "${{ inputs.release_sha }}",
+    ("deploy-dev.yml", "admission"): "${{ github.sha }}",
+    ("deploy-dev.yml", "automatic_admission"): "${{ inputs.release_sha }}",
+    ("deploy-dev.yml", "deploy"): "${{ inputs.release_sha }}",
+    ("deploy-dev.yml", "staging_closeout"): "${{ inputs.release_sha }}",
+    ("merge-queue-review-gate.yml", "review-gate"): "${{ github.event.merge_group.head_sha }}",
+    ("promote-dev-to-main.yml", "promote"): "${{ github.event.workflow_run.head_sha }}",
+}
+# The one HEAD identity assertion allowed between a ref checkout and its proof.
+IDENTITY_ASSERTIONS = {
+    ("deploy-dev.yml", "release_phase"): "Assert exact release SHA is checked out",
+    ("deploy-dev.yml", "build"): "Assert exact release SHA is checked out",
+    ("deploy-dev.yml", "admission"): "Assert the dispatch event SHA is checked out",
+    ("deploy-dev.yml", "automatic_admission"): "Assert automatic admission checkout identity",
+    ("deploy-dev.yml", "deploy"): "Assert exact release SHA is checked out",
+    ("deploy-dev.yml", "staging_closeout"): "Assert exact release SHA is checked out",
 }
 GIT_PREFLIGHT_NAME = "Require sparse-capable Git before checkout"
 DENIAL_PROOF_NAME = "Prove protected path stayed out of checkout"
 # The shared protected body domain of .orchestrator/worktree_cleanliness.py:
 # the root prefix and every embedded copy of it, plus the named asset.
 DENY_PATTERNS = ["/*", "!**/tests/sources/**", "!**/test_listing_production_asset.py*"]
-# `sparse-checkout` is what denies; every other input can widen, redirect or replace it.
-ALLOWED_CHECKOUT_INPUTS = {"fetch-depth", "sparse-checkout", "sparse-checkout-cone-mode"}
+# `sparse-checkout` is what denies and `ref` is pinned per job above; every
+# other input can widen, redirect or replace the deny.
+ALLOWED_CHECKOUT_INPUTS = {"fetch-depth", "ref", "sparse-checkout", "sparse-checkout-cone-mode"}
 REMATERIALIZING_COMMAND = re.compile(
     r"\bgit(?:\s+-[cC]\s+\S+|\s+-\S+)*\s+(?:checkout|switch|restore|read-tree|stash|clone|archive|pull|fetch|merge|rebase"
     r"|sparse-checkout|submodule|lfs|worktree\s+add|reset\s+--hard)\b"
@@ -1012,6 +1047,20 @@ def load_pr_workflow(name: str) -> dict[str, Any]:
 def reference_step_scripts() -> tuple[str, str]:
     steps = load_pr_workflow("tooling-scope-review-gate.yml")["jobs"]["classify"]["steps"]
     return steps[0]["run"], steps[2]["run"]
+
+
+def _identity_assertion_violations(here: str, step: dict[str, Any], expected_name: str | None) -> list[str]:
+    if expected_name is None:
+        return [f"{here}: exact denial proof must directly follow checkout"]
+    script = str(step.get("run") or "")
+    if (
+        step.get("name") != expected_name
+        or "uses" in step
+        or "git rev-parse HEAD" not in script
+        or re.search(r"\bpython", script)
+    ):
+        return [f"{here}: only the exact HEAD identity assertion may precede the denial proof"]
+    return []
 
 
 def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[str]:
@@ -1033,21 +1082,31 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
             violations.append(f"{here}: checkout version changed: {checkout['uses']}")
         if at != 1 or steps[0].get("name") != GIT_PREFLIGHT_NAME or steps[0].get("run") != preflight_run:
             violations.append(f"{here}: exact Git preflight must be the only step before checkout")
+        guarded = [steps[0], checkout]
         following = steps[at + 1] if at + 1 < len(steps) else {}
+        if following.get("name") != DENIAL_PROOF_NAME:
+            violations.extend(_identity_assertion_violations(here, following, IDENTITY_ASSERTIONS.get((name, job_name))))
+            guarded.append(following)
+            following = steps[at + 2] if at + 2 < len(steps) else {}
+        elif (name, job_name) in IDENTITY_ASSERTIONS:
+            violations.append(f"{here}: exact HEAD identity assertion was dropped")
         if following.get("name") != DENIAL_PROOF_NAME or following.get("run") != proof_run:
             violations.append(f"{here}: exact denial proof must directly follow checkout")
+        guarded.append(following)
         expected_env = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
         if (name, job_name) in COMPARED_COMMITS:
             expected_env["PROTECTED_COMPARE_SHAS"] = COMPARED_COMMITS[(name, job_name)]
         if following.get("env") != expected_env:
             violations.append(f"{here}: denial proof must judge repository configuration and every compared commit")
-        for step in (steps[0], checkout, following):
+        for step in guarded:
             for softener in ("if", "continue-on-error"):
                 if softener in step:
                     violations.append(f"{here}: {step.get('name') or step.get('uses')} may not set {softener}")
         inputs = checkout.get("with") or {}
         if set(inputs) - ALLOWED_CHECKOUT_INPUTS:
             violations.append(f"{here}: unsupported checkout inputs {sorted(set(inputs) - ALLOWED_CHECKOUT_INPUTS)}")
+        if inputs.get("ref") != CHECKOUT_REFS.get((name, job_name)):
+            violations.append(f"{here}: checkout ref changed: {inputs.get('ref')!r}")
         if inputs.get("sparse-checkout-cone-mode") is not False:
             violations.append(f"{here}: sparse checkout must stay non-cone")
         if str(inputs.get("sparse-checkout") or "").split() != DENY_PATTERNS:
@@ -1060,33 +1119,85 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
                 violations.append(f"{here}: {step.get('name')} can re-materialize the denied prefix")
             if re.search(r"git diff (?!--no-renames)[^\n]*--name-only", script):
                 violations.append(f"{here}: {step.get('name')} rename detection would fetch bodies")
-    if checkouts != PROTECTED_PR_WORKFLOWS[name]:
-        violations.append(f"{name}: expected {PROTECTED_PR_WORKFLOWS[name]} checkouts, found {checkouts}")
+    if checkouts != PROTECTED_CHECKOUT_WORKFLOWS[name]:
+        violations.append(f"{name}: expected {PROTECTED_CHECKOUT_WORKFLOWS[name]} checkouts, found {checkouts}")
     return violations
 
 
-@pytest.mark.parametrize("name", sorted(PROTECTED_PR_WORKFLOWS))
-def test_pr_workflow_denies_protected_prefix_before_every_checkout(name: str) -> None:
+@pytest.mark.parametrize("name", sorted(PROTECTED_CHECKOUT_WORKFLOWS))
+def test_workflow_denies_protected_prefix_before_every_checkout(name: str) -> None:
     assert protected_checkout_violations(name, load_pr_workflow(name)) == []
+
+
+def test_every_existing_checkout_is_covered() -> None:
+    """No workflow may check this repository out outside the validated set."""
+    found = {}
+    for path in sorted((ROOT / ".github" / "workflows").glob("*.y*ml")):
+        jobs = (yaml.safe_load(path.read_text()) or {}).get("jobs") or {}
+        count = sum(
+            "actions/checkout" in str(step.get("uses", ""))
+            for job in jobs.values()
+            for step in (job.get("steps") or [])
+        )
+        if count:
+            found[path.name] = count
+    assert found == PROTECTED_CHECKOUT_WORKFLOWS
+    assert sum(found.values()) == PROTECTED_CHECKOUT_TOTAL
+
+
+def test_deny_patterns_are_the_shared_domain_policy() -> None:
+    """The workflows deny exactly what the shared cleanliness policy names."""
+    sys.path.insert(0, str(ROOT / ".orchestrator"))
+    try:
+        import worktree_cleanliness as wc
+    finally:
+        sys.path.remove(str(ROOT / ".orchestrator"))
+    assert DENY_PATTERNS == list(wc.protected_body_sparse_patterns())
+    _preflight, proof = reference_step_scripts()
+    assert proof.count('denied = "tests/sources"') == 1
+    assert "wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)" in proof
+    assert "wc.protected_body_sparse_patterns((denied,))" in proof
+
+
+def _proof_step(name: str, job: str) -> tuple[list[dict[str, Any]], int]:
+    steps = load_pr_workflow(name)["jobs"][job]["steps"]
+    return steps, next(i for i, step in enumerate(steps) if step.get("name") == DENIAL_PROOF_NAME)
 
 
 def test_compared_commits_are_the_ones_the_downstream_consumers_read() -> None:
     """The proof must vouch for the exact values handed to the later diff, not lookalikes."""
     expression = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
     for name in ("emgi-consumer-boundary.yml", "tooling-scope-review-gate.yml"):
-        steps = next(iter(load_pr_workflow(name)["jobs"].values()))["steps"]
+        job = next(iter(load_pr_workflow(name)["jobs"]))
+        steps, proof = _proof_step(name, job)
         consumer = next(step for step in steps if "BASE_SHA" in (step.get("env") or {}))
-        assert steps.index(consumer) > 2, "the consumer must run after the proof"
-        assert steps[2]["env"]["PROTECTED_COMPARE_SHAS"] == f"{consumer['env']['BASE_SHA']} {consumer['env']['HEAD_SHA']}"
+        assert steps.index(consumer) > proof, "the consumer must run after the proof"
+        assert steps[proof]["env"]["PROTECTED_COMPARE_SHAS"] == f"{consumer['env']['BASE_SHA']} {consumer['env']['HEAD_SHA']}"
 
-    steps = load_pr_workflow("ci.yml")["jobs"]["change-scope"]["steps"]
+    steps, proof = _proof_step("ci.yml", "change-scope")
     consumer = next(step for step in steps if step.get("name") == "Classify change scope")
-    assert steps.index(consumer) > 2
-    base, head = expression.findall(steps[2]["env"]["PROTECTED_COMPARE_SHAS"])
+    assert steps.index(consumer) > proof
+    base, head = expression.findall(steps[proof]["env"]["PROTECTED_COMPARE_SHAS"])
     env = consumer["env"]
     # One alternative per case the classifier selects from, in each endpoint.
     assert [expression.fullmatch(env[key]).group(1) for key in ("PR_BASE_SHA", "MERGE_GROUP_BASE_SHA", "PUSH_BEFORE_SHA")] == base.split(" || ")
     assert [expression.fullmatch(env[key]).group(1) for key in ("PR_HEAD_SHA", "MERGE_GROUP_HEAD_SHA", "PUSH_AFTER_SHA")] == head.split(" || ")
+
+    # Admission compares the dispatched candidate with the trusted event commit it checked out.
+    steps, proof = _proof_step("deploy-dev.yml", "admission")
+    consumer = next(step for step in steps if step.get("name") == "Validate candidate ancestry against the dispatch event SHA")
+    assert steps.index(consumer) > proof
+    assert steps[proof]["env"]["PROTECTED_COMPARE_SHAS"] == f"{consumer['env']['RELEASE_SHA']} {consumer['env']['EVENT_SHA']}"
+
+    # The intake gate reviews the PR head against the PR base; a dispatch reviews its own commit.
+    steps, proof = _proof_step("assisted-intake-design-validation.yml", "validate-contract-package")
+    consumers = [step for step in steps if "REVIEWED_COMMIT" in (step.get("env") or {})]
+    assert consumers and all(steps.index(step) > proof for step in consumers)
+    base, head = expression.findall(steps[proof]["env"]["PROTECTED_COMPARE_SHAS"])
+    for step in consumers:
+        env = step["env"]
+        assert env["REVIEWED_COMMIT"] == env["CURRENT_PR_HEAD"] == f"${{{{ {head} }}}}"
+        assert expression.fullmatch(env["BASE_COMMIT"]).group(1).split(" || ")[0] == base.split(" || ")[0]
 
 
 def test_full_history_jobs_are_all_the_jobs_that_declared_it() -> None:
@@ -1100,6 +1211,18 @@ def test_full_history_jobs_are_all_the_jobs_that_declared_it() -> None:
             if (step.get("with") or {}).get("fetch-depth") == 0
         }
         assert declared == expected
+
+
+def test_pinned_refs_and_identity_assertions_are_all_the_jobs_that_declared_them() -> None:
+    """Exact dispatch/trusted refs and their HEAD assertions are not a hand-picked subset."""
+    declared_refs = {}
+    for name in PROTECTED_CHECKOUT_WORKFLOWS:
+        for job_name, job in load_pr_workflow(name)["jobs"].items():
+            for step in job.get("steps", []):
+                if "actions/checkout" in str(step.get("uses", "")) and "ref" in (step.get("with") or {}):
+                    declared_refs[(name, job_name)] = step["with"]["ref"]
+    assert declared_refs == CHECKOUT_REFS
+    assert set(IDENTITY_ASSERTIONS) <= set(CHECKOUT_REFS)
 
 
 def _mutated(mutate: Any) -> list[str]:
@@ -1146,6 +1269,54 @@ def _mutated(mutate: Any) -> list[str]:
 )
 def test_checkout_contract_rejects_each_weakening(label: str, mutate: Any) -> None:
     assert _mutated(mutate), label
+
+
+def _mutated_job(name: str, job: str, mutate: Any) -> list[str]:
+    workflow = load_pr_workflow(name)
+    mutate(workflow["jobs"][job]["steps"])
+    return protected_checkout_violations(name, workflow)
+
+
+@pytest.mark.parametrize(
+    ("label", "name", "job", "mutate"),
+    [
+        ("admission ref dropped", "deploy-dev.yml", "admission", lambda s: s[1]["with"].pop("ref")),
+        ("admission ref redirected", "deploy-dev.yml", "admission",
+         lambda s: s[1]["with"].update({"ref": "${{ inputs.release_sha }}"})),
+        ("auto ref untrusted", "deploy-dev.yml", "release_phase",
+         lambda s: s[1]["with"].update({"ref": "${{ inputs.release_sha }}"})),
+        ("admission history lost", "deploy-dev.yml", "admission", lambda s: s[1]["with"].pop("fetch-depth")),
+        ("admission compare dropped", "deploy-dev.yml", "admission", lambda s: s[3]["env"].pop("PROTECTED_COMPARE_SHAS")),
+        ("admission compare head only", "deploy-dev.yml", "admission",
+         lambda s: s[3]["env"].update({"PROTECTED_COMPARE_SHAS": "${{ github.sha }}"})),
+        ("identity assertion dropped", "deploy-dev.yml", "build", lambda s: s.pop(2)),
+        ("identity assertion runs python", "deploy-dev.yml", "deploy",
+         lambda s: s[2].update({"run": "python3 -c 'print(1)'\ngit rev-parse HEAD"})),
+        ("identity assertion renamed", "deploy-dev.yml", "staging_closeout", lambda s: s[2].update({"name": "Anything"})),
+        ("identity assertion skipped", "deploy-dev.yml", "automatic_admission", lambda s: s[2].update({"if": "false"})),
+        ("proof after identity removed", "deploy-dev.yml", "deploy", lambda s: s.pop(3)),
+        ("deploy proof skipped", "deploy-dev.yml", "deploy", lambda s: s[3].update({"continue-on-error": True})),
+        ("deploy deny weakened", "deploy-dev.yml", "deploy", lambda s: s[1]["with"].update({"sparse-checkout": "/*\n"})),
+        ("deploy rest tarball", "deploy-dev.yml", "deploy",
+         lambda s: s.append({"name": "x", "run": "gh api repos/o/r/tarball/main > a.tgz"})),
+        ("queue ref dropped", "merge-queue-review-gate.yml", "review-gate", lambda s: s[1]["with"].pop("ref")),
+        ("queue proof removed", "merge-queue-review-gate.yml", "review-gate", lambda s: s.pop(2)),
+        ("promote ref redirected", "promote-dev-to-main.yml", "promote",
+         lambda s: s[1]["with"].update({"ref": "${{ github.sha }}"})),
+        ("promote body fetch", "promote-dev-to-main.yml", "promote",
+         lambda s: s.append({"name": "x", "run": "git fetch origin main"})),
+        ("intake compare dropped", "assisted-intake-design-validation.yml", "validate-contract-package",
+         lambda s: s[2]["env"].pop("PROTECTED_COMPARE_SHAS")),
+        ("intake history lost", "assisted-intake-design-validation.yml", "validate-contract-package",
+         lambda s: s[1]["with"].pop("fetch-depth")),
+        ("intake ref injected", "assisted-intake-design-validation.yml", "validate-contract-package",
+         lambda s: s[1]["with"].update({"ref": "main"})),
+        ("ci lane deny omitted", "ci.yml", "product-db", lambda s: s[1]["with"].pop("sparse-checkout")),
+        ("ci lane history lost", "ci.yml", "product-e2e-gate", lambda s: s[1]["with"].pop("fetch-depth")),
+    ],
+)
+def test_every_workflow_rejects_each_weakening(label: str, name: str, job: str, mutate: Any) -> None:
+    assert _mutated_job(name, job, mutate), label
 
 
 def _run_preflight(path_dir: Path) -> subprocess.CompletedProcess[str]:

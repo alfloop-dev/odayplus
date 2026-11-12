@@ -1068,6 +1068,77 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         self.assertEqual(self._git(worktree, "symbolic-ref", "--short", "HEAD").stdout.strip(), "task/PROT-ATT-001")
         self.assertEqual(self._rev(worktree, "HEAD"), ahead)
 
+    def test_refresh_and_quarantine_bind_repository_identity_by_common_dir(self) -> None:
+        """Refresh and quarantine share the common-dir identity rule.
+
+        A separate clone holding the same HEAD on the same named branch is a
+        different repository; both entries refuse it before any status,
+        checkout or backup, while a registered worktree still passes.
+        """
+        branch = "task/PROT-IDENTITY-001"
+        registered = self.root / "wt-registered"
+        self._git(self.repo, "worktree", "add", "-b", branch, str(registered), self.base)
+        foreign = self.root / "foreign-clone"
+        self._git(self.root, "clone", "-q", "--no-local", str(self.repo), str(foreign))
+        self._git(foreign, "switch", "-q", "-c", branch, self.base)
+        self.assertEqual(self._rev(foreign, "HEAD"), self._rev(registered, "HEAD"))
+        for checkout in (registered, foreign):
+            (checkout / "owner-wip.txt").write_text("keep me\n", encoding="utf-8")
+        status_file = self.root / "fleet" / "ai-status.json"
+        status_file.parent.mkdir()
+        config = {"paths": {
+            "status_file": str(status_file),
+            "activity_log": str(self.root / "fleet" / "activity.jsonl"),
+            "state_file": str(self.root / "fleet" / "state.json"),
+        }}
+        backups = status_file.parent / ".orchestrator" / "worktree-dirt-backups"
+
+        ok, status = supervisor._refresh_reused_worker_worktree(
+            self.repo, foreign, self.base, branch, protected_paths=PROTECTED
+        )
+        self.assertEqual((ok, status), (False, "wrong_worktree: path is not the expected repository worktree"))
+        outcome = worker_workspace._quarantine_and_preserve_dirty_worktree(
+            config, {"workers": {}}, foreign, "PROT-IDENTITY-001", expected_branch=branch,
+            owning_repo_root=self.repo, protected_paths=PROTECTED,
+        )
+        self.assertFalse(outcome)
+        self.assertEqual(outcome.reason, "worktree_belongs_to_another_repository")
+        self.assertFalse(backups.exists())
+        self.assertEqual((foreign / "owner-wip.txt").read_text(encoding="utf-8"), "keep me\n")
+        self.assertEqual(self._rev(foreign, "HEAD"), self.base)
+
+        # A subdirectory of the registered worktree is not its top level.
+        (registered / "sub").mkdir()
+        ok, status = supervisor._refresh_reused_worker_worktree(
+            self.repo, registered / "sub", self.base, branch, protected_paths=PROTECTED
+        )
+        self.assertEqual((ok, status), (False, "wrong_worktree: path is not the expected repository worktree"))
+
+        # The registered worktree of the same repository passes identity in both.
+        ok, status = supervisor._refresh_reused_worker_worktree(
+            self.repo, registered, self.base, branch, protected_paths=PROTECTED
+        )
+        self.assertFalse(ok)
+        self.assertIn("owner-wip.txt", status)
+        outcome = worker_workspace._quarantine_and_preserve_dirty_worktree(
+            config, {"workers": {}}, registered, "PROT-IDENTITY-001", expected_branch=branch,
+            owning_repo_root=self.repo, protected_paths=PROTECTED,
+        )
+        self.assertTrue(outcome, getattr(outcome, "reason", ""))
+        self.assertEqual(len(list(backups.glob("prot-identity-001-*"))), 1)
+
+        # Unanswerable identity metadata refuses rather than passing.
+        with mock.patch.object(worker_workspace, "shares_git_common_dir", return_value=False):
+            ok, status = supervisor._refresh_reused_worker_worktree(
+                self.repo, registered, self.base, branch, protected_paths=PROTECTED
+            )
+            outcome = worker_workspace._quarantine_and_preserve_dirty_worktree(
+                config, {"workers": {}}, registered, "PROT-IDENTITY-001", expected_branch=branch,
+                owning_repo_root=self.repo, protected_paths=PROTECTED,
+            )
+        self.assertEqual(status, "wrong_worktree: path is not the expected repository worktree")
+        self.assertEqual(outcome.reason, "worktree_belongs_to_another_repository")
+
     def test_symbolic_ref_drift_after_precheck_refuses_before_mutation(self) -> None:
         worktree = self.root / "wt-drift"
         self._git(self.repo, "worktree", "add", "-b", "task/PROT-DRIFT-001", str(worktree), self.base)

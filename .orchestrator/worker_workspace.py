@@ -1347,25 +1347,14 @@ def _refresh_reused_worker_worktree(
     to the supplied SHA; a branch containing or diverging from that base stays
     untouched and the relation is returned for the worker/review workflow.
     """
-    worktree_path = worktree_path.resolve()
-    repo_root = repo_root.resolve()
-
-    top_rc, top_level = _git_output(worktree_path, "rev-parse", "--show-toplevel")
-    worktree_common_rc, worktree_common = _git_output(worktree_path, "rev-parse", "--git-common-dir")
-    repo_common_rc, repo_common = _git_output(repo_root, "rev-parse", "--git-common-dir")
     try:
-        resolved_top = Path(top_level).resolve()
-        resolved_worktree_common = (worktree_path / worktree_common).resolve()
-        resolved_repo_common = (repo_root / repo_common).resolve()
+        worktree_path = worktree_path.resolve()
+        repo_root = repo_root.resolve()
     except (OSError, RuntimeError, ValueError):
         return False, "wrong_worktree: unable to resolve repository identity"
-    if (
-        top_rc != 0
-        or worktree_common_rc != 0
-        or repo_common_rc != 0
-        or resolved_top != worktree_path
-        or resolved_worktree_common != resolved_repo_common
-    ):
+    # The shared repository-identity rule (exact top level, same resolved Git
+    # common directory); any unanswerable metadata is a refusal.
+    if not shares_git_common_dir(repo_root, worktree_path):
         return False, "wrong_worktree: path is not the expected repository worktree"
 
     if _git_operation_in_progress(worktree_path):
@@ -4228,28 +4217,21 @@ def _quarantine_and_preserve_dirty_worktree(
         return _quarantine_refused("not_a_worktree")
 
     wt_git_rc, wt_git_dir = _git_output(worktree_path, "rev-parse", "--git-dir")
-    repo_git_rc, _repo_git_dir = _git_output(repo_root, "rev-parse", "--git-dir")
-    top_rc, top_level = _git_output(worktree_path, "rev-parse", "--show-toplevel")
-    worktree_common_rc, worktree_common = _git_output(worktree_path, "rev-parse", "--git-common-dir")
-    repo_common_rc, repo_common = _git_output(repo_root, "rev-parse", "--git-common-dir")
+    repo_git_rc, repo_git_dir = _git_output(repo_root, "rev-parse", "--git-dir")
     try:
-        resolved_top = Path(top_level).resolve()
-        wt_gd = Path(wt_git_dir) if Path(wt_git_dir).is_absolute() else (worktree_path / wt_git_dir)
-        wt_cd = Path(worktree_common) if Path(worktree_common).is_absolute() else (wt_gd / worktree_common)
-        repo_cd = Path(repo_common) if Path(repo_common).is_absolute() else (repo_root / repo_common)
-
-        resolved_worktree_common = wt_cd.resolve()
-        resolved_repo_common = repo_cd.resolve()
+        # Both sides must name a readable Git directory of their own.
+        for base, git_dir in ((worktree_path, wt_git_dir), (repo_root, repo_git_dir)):
+            (base / git_dir).resolve()
     except (OSError, RuntimeError, ValueError):
         return _quarantine_refused("unreadable_git_metadata")
+    # Repository identity is the shared rule (exact top level, same resolved
+    # Git common directory); unanswerable metadata refuses.
     if (
-        top_rc != 0
-        or worktree_common_rc != 0
-        or repo_common_rc != 0
-        or wt_git_rc != 0
+        wt_git_rc != 0
         or repo_git_rc != 0
-        or resolved_top != worktree_path
-        or resolved_worktree_common != resolved_repo_common
+        or not wt_git_dir
+        or not repo_git_dir
+        or not shares_git_common_dir(repo_root, worktree_path)
     ):
         return _quarantine_refused("worktree_belongs_to_another_repository")
 
