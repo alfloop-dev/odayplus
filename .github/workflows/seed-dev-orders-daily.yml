@@ -1,0 +1,89 @@
+name: seed-dev-orders-daily
+
+# Dev only: append each newly closed day of synthetic orders and load it with
+# its own real data-plane backfill run, so forecast label maturity advances
+# like a live feed (backfilled history cannot train forecastops).
+# Triggered daily by a VM cron that updates .github/seed-dev-daily/tick on this
+# branch (GitHub `schedule` only runs on the default branch).
+on:
+  push:
+    branches: [seed-dev-data-backfill]
+    paths:
+      - .github/seed-dev-daily/tick
+      - .github/workflows/seed-dev-orders-daily.yml
+      - .github/scripts/seed_dev_orders_daily_driver.py
+  workflow_dispatch: {}
+
+concurrency:
+  group: seed-dev-orders-daily
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  append-day:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: dev
+    env:
+      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+      DB_URL_SECRET: ${{ vars.ODAY_DATABASE_URL_SECRET }}
+      ODP_DATA_MONGO_URI: ${{ secrets.ODP_DATA_MONGO_URI }}
+      TARGET_TENANT: d4fe5181-da2c-5438-bd12-230036ea6f59
+      INCREMENTAL_START: '2026-11-11'
+      DO_NOT_TRACK: '1'
+      DLT__RUNTIME__DLTHUB_TELEMETRY: 'false'
+      DLT__RUNTIME__LOG_LEVEL: 'WARNING'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install project env (root deps) + Mongo deps
+        env:
+          UV_PYTHON: '3.12'
+        run: |
+          set -euo pipefail
+          pip install uv
+          uv sync --frozen
+          uv pip install 'pymongo>=4.10,<5' dnspython
+
+      - name: Start Cloud SQL Auth Proxy
+        run: |
+          set -euo pipefail
+          curl -sSL -o cloud-sql-proxy \
+            https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64
+          chmod +x cloud-sql-proxy
+          ./cloud-sql-proxy --port 5432 "${CLOUD_SQL_INSTANCE}" &
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/127.0.0.1/5432) >/dev/null 2>&1; then
+              echo "Cloud SQL proxy is up"; break
+            fi
+            sleep 1
+          done
+
+      - name: Append newly closed days of orders
+        run: |
+          set -euo pipefail
+          RAW_DB_URL="$(gcloud secrets versions access latest \
+            --secret="${DB_URL_SECRET%%:*}" --project="${GCP_PROJECT}")"
+          echo "::add-mask::${RAW_DB_URL}"
+          export RAW_DB_URL
+          PYTHONPATH="${GITHUB_WORKSPACE}" UV_PYTHON=3.12 \
+            uv run --frozen python .github/scripts/seed_dev_orders_daily_driver.py
