@@ -911,8 +911,29 @@ function isFreshnessBody(body: unknown): body is GrowthFreshness {
   return isRecord(body) && typeof body.status === "string" && body.status.trim().length > 0;
 }
 
+/** Identity plus every segment field the existing selection, builder and segment cards render. */
 function isSegmentRow(row: unknown): boolean {
-  return hasId(row, "id");
+  return hasId(row, "id") && isRecord(row) && isText(row.name) &&
+    fieldsMatch(row, {
+      storeId: optional(isText), definition: optional(isText), storeCount: optional(isFiniteNumber),
+      revenueShare: optional(isText), trend: optional(isText), opportunity: optional(isText),
+      dataStatus: optional(isText),
+    });
+}
+
+const OBSERVATION_STATUSES = new Set(["MATURE", "OBSERVING", "UNAVAILABLE"]);
+
+/**
+ * The server-recorded observation window: an UNAVAILABLE clock carries null
+ * anchors, a recorded one carries typed times and a day count. Absent anchors
+ * stay unknown and keep the window immature; they are never filled in.
+ */
+function isObservationWindow(value: unknown): boolean {
+  return isRecord(value) && isText(value.status) && OBSERVATION_STATUSES.has(value.status) &&
+    fieldsMatch(value, {
+      startedAt: optional(isText), endsAt: optional(isText),
+      days: optional(isFiniteNumber), observedAt: optional(isText),
+    });
 }
 
 /** Fields the existing action list, detail, closeout and kind classification read from each row. */
@@ -924,8 +945,10 @@ function isActionRow(row: unknown): row is GrowthItem {
       objective: optional(isText), observationWindow: optional(isText),
       rationale: optional(isText), rollbackPlan: optional(isText),
       store: optional(isText), channel: optional(isText), evidenceLevel: optional(isText),
-      targetLift: optional(isFiniteNumber), observedLift: optional(isFiniteNumber),
-      budget: optional(isFiniteNumber), observation: optional(isRecord),
+      // A target is required; an observed lift is required and null only while unobserved.
+      targetLift: isFiniteNumber, observedLift: (value) => value === null || isFiniteNumber(value),
+      budget: optional(isFiniteNumber), approvalId: optional(isText),
+      observation: optional(isObservationWindow),
     }) &&
     fieldsMatch(row.audit as Record<string, unknown>, {
       modelVersion: optional(isText), featureSnapshotTime: optional(isText),

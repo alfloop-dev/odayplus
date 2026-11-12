@@ -582,6 +582,82 @@ describe("GrowthWorkspace API loading", () => {
     expect(screen.queryByTestId("growth-section-recommendations-unavailable")).not.toBeInTheDocument();
   });
 
+  /** A canonical created-draft action row as the backend lists it, with its server observation window. */
+  const canonicalActionRow = { id: "current-action", name: "current-store 離峰活動", kind: "offpeak",
+    segmentId: canonicalSegment.id, sourceRecommendationId: null, objective: "離峰營收", status: "DRAFT",
+    observationWindow: "尚未排程", observationWindowDays: 14, store: "current-store", channel: "LINE 推播", budget: 0,
+    targetLift: 0, observedLift: 0, evidenceLevel: null, rationale: "r", rollbackPlan: "rb", growthOutcome: null,
+    approvalId: "APR-7", observation: { status: "UNAVAILABLE", startedAt: null, endsAt: null, days: null,
+      observedAt: "2026-10-15T05:00:00+00:00" },
+    audit: { decisionId: "draft-current-action", correlationId: "corr-create", modelVersion: null,
+      policyVersion: [], featureSnapshotTime: null, sourceSnapshotIds: ["current-plan"] } };
+  const withoutField = (row: Record<string, unknown>, field: string) =>
+    Object.fromEntries(Object.entries(row).filter(([key]) => key !== field));
+
+  it("keeps a real zero lift, a recorded approval and an unavailable observation clock on a verified action", async () => {
+    const { writes } = mockGrowthReads({ actions: () => json({ items: [canonicalActionRow], count: 1 }) });
+    render(<GrowthWorkspace searchParams={{ item: "current-action" }} />);
+    const detail = await screen.findByTestId("growth-item-detail");
+    expect(screen.queryByTestId("growth-section-actions-unavailable")).not.toBeInTheDocument();
+    expect(within(detail).getAllByText("0.0%").length).toBeGreaterThan(0);
+    expect(within(detail).getByTestId("growth-approval-created")).toHaveTextContent("APR-7");
+    expect(writes).toEqual([]);
+  });
+
+  it.each([
+    { name: "missing targetLift", row: withoutField(canonicalActionRow, "targetLift") },
+    { name: "null targetLift", row: { ...canonicalActionRow, targetLift: null } },
+    { name: "missing observedLift", row: withoutField(canonicalActionRow, "observedLift") },
+    { name: "text observedLift", row: { ...canonicalActionRow, observedLift: "2.6" } },
+    { name: "object approvalId", row: { ...canonicalActionRow, approvalId: { id: "APR-7" } } },
+    { name: "MATURE observation with an object startedAt", row: { ...canonicalActionRow, status: "OUTCOME_READY",
+      observation: { status: "MATURE", startedAt: { at: "2026-10-01" }, endsAt: "2026-10-15T00:00:00+00:00", days: 14,
+        observedAt: "2026-10-15T05:00:00+00:00" } } },
+    { name: "observation with an unknown status", row: { ...canonicalActionRow,
+      observation: { ...canonicalActionRow.observation, status: "DONE" } } },
+    { name: "observation with text days", row: { ...canonicalActionRow,
+      observation: { ...canonicalActionRow.observation, days: "14" } } },
+  ])("isolates an action row with $name as that section's failure without rendering it", async ({ row }) => {
+    const { writes } = mockGrowthReads({
+      actions: () => json({ items: [row], count: 1 }, 200, { "X-Correlation-Id": "corr-actions-row" }),
+    });
+    render(<GrowthWorkspace searchParams={{ item: "current-action" }} />);
+    const section = await screen.findByTestId("growth-section-actions-unavailable");
+    expect(within(section).getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "unknown");
+    expect(within(section).getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-actions-row");
+    expect(within(section).getByTestId("operator-data-unavailable-technical"))
+      .toHaveTextContent("growth actions returned 200 without a valid Growth payload");
+    expect(screen.queryByTestId("growth-item-detail")).not.toBeInTheDocument();
+    expect(screen.getByTestId("growth-entry-cards")).toBeInTheDocument();
+    cleanup();
+    render(<GrowthWorkspace searchParams={{ gtab: "segments" }} />);
+    expect(within(await screen.findByTestId("growth-segment-table")).getByRole("link", { name: "建立活動草稿" })).toBeInTheDocument();
+    expect(writes).toEqual([]);
+  });
+
+  it.each([
+    { name: "missing name", row: withoutField(canonicalSegment, "name") },
+    { name: "object name", row: { ...canonicalSegment, name: { zh: "current-store" } } },
+    { name: "object definition", row: { ...canonicalSegment, definition: { rule: "x" } } },
+    { name: "object opportunity", row: { ...canonicalSegment, opportunity: ["x"] } },
+    { name: "text storeCount", row: { ...canonicalSegment, storeCount: "42" } },
+    { name: "object storeId", row: { ...canonicalSegment, storeId: { id: "current-store" } } },
+  ])("closes the workspace on a segment row with $name and keeps the actual reply metadata", async ({ row }) => {
+    const { writes } = mockGrowthReads({
+      segments: () => json({ items: [row], count: 1 }, 200, { "X-Correlation-Id": "corr-segments-row" }),
+    });
+    render(<GrowthWorkspace searchParams={{ builder: "offpeak" }} />);
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-status", "error"));
+    expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-segments-row");
+    const technical = screen.getByTestId("operator-data-unavailable-technical");
+    expect(technical).toHaveTextContent("growth segments returned 200 without a valid Growth payload");
+    expect(technical).toHaveTextContent(/發生時間\d{4}-\d{2}-\d{2}T/);
+    expect(screen.queryByTestId("growth-workspace")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(writes).toEqual([]);
+  });
+
   it("isolates a failed recommendation read and marks linked forecasts unread", async () => {
     mockGrowthReads({
       recommendations: () => new Error("Synthetic network failure"),
