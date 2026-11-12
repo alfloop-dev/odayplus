@@ -1072,6 +1072,15 @@ IDENTITY_ASSERTIONS = {
 # Keys a guarded script step may carry; anything else (shell, working-directory,
 # id-driven outputs, ...) could change what the exact script runs or judges.
 GUARDED_SCRIPT_KEYS = {"name", "run", "env"}
+# Guarded steps also inherit workflow/job `env` and `defaults.run`. Plain data
+# variables (release SHA, service names, PG*) are needed downstream; these names
+# instead decide what runs before or around the exact scripts: shell startup
+# files and functions, command lookup, loaders, interpreter hooks and Git's own
+# repository/config/object selection.
+INHERITED_EXECUTION_ENV = re.compile(
+    r"(?:BASH_ENV|ENV|SHELLOPTS|BASHOPTS|BASH_FUNC_\S*|BASH_XTRACEFD|PS4|IFS|CDPATH|GLOBIGNORE|EXECIGNORE"
+    r"|PATH|HOME|XDG_CONFIG_HOME|LD_\S*|DYLD_\S*|PYTHON\S*|GIT_\S*|PERL5?LIB|PERL5OPT|RUBYOPT|NODE_OPTIONS)"
+)
 GIT_PREFLIGHT_NAME = "Require sparse-capable Git before checkout"
 DENIAL_PROOF_NAME = "Prove protected path stayed out of checkout"
 # The shared protected body domain of .orchestrator/worktree_cleanliness.py:
@@ -1117,6 +1126,21 @@ def _identity_assertion_violations(
     return violations
 
 
+def _inherited_execution_violations(here: str, workflow: dict[str, Any], job: dict[str, Any]) -> list[str]:
+    """Workflow/job settings every guarded step inherits must not change how its exact script runs."""
+    violations = []
+    for scope, source in (("workflow", workflow), ("job", job)):
+        run_defaults = (source.get("defaults") or {}).get("run")
+        if run_defaults:
+            violations.append(f"{here}: guarded steps inherit {scope} defaults.run {sorted(run_defaults)}")
+        unsafe = sorted(key for key in (source.get("env") or {}) if INHERITED_EXECUTION_ENV.fullmatch(str(key)))
+        if unsafe:
+            violations.append(f"{here}: guarded steps inherit {scope} execution env {unsafe}")
+    if "container" in job:
+        violations.append(f"{here}: guarded steps inherit a job container")
+    return violations
+
+
 def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[str]:
     """Every way a job could materialize the denied prefix, stated as a violation."""
     preflight_run, proof_run = reference_step_scripts()
@@ -1132,6 +1156,7 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
             continue
         at = positions[0]
         checkout = steps[at]
+        violations.extend(_inherited_execution_violations(here, workflow, job))
         if checkout["uses"] != "actions/checkout@v4":
             violations.append(f"{here}: checkout version changed: {checkout['uses']}")
         if at != 1 or steps[0].get("name") != GIT_PREFLIGHT_NAME or steps[0].get("run") != preflight_run:
@@ -1436,6 +1461,61 @@ def test_guarded_script_steps_take_no_execution_overrides() -> None:
         workflow = load_pr_workflow("tooling-scope-review-gate.yml")
         workflow["jobs"]["classify"]["steps"][index].update(extra)
         assert protected_checkout_violations("tooling-scope-review-gate.yml", workflow), extra
+
+
+_STARTUP_READ = "$(git show HEAD:guarded/zone/body.txt; echo /dev/null)"
+_SHELL_READ = 'bash -c "git show HEAD:guarded/zone/body.txt; bash {0}"'
+
+
+def _set(container: dict[str, Any], key: str, value: dict[str, Any]) -> None:
+    container.setdefault(key, {}).update(value)
+
+
+@pytest.mark.parametrize(
+    ("label", "name", "job", "mutate"),
+    [
+        # The guarded preflight, identity assertion and proof all inherit these.
+        ("workflow startup env", "deploy-dev.yml", "build", lambda w: _set(w, "env", {"BASH_ENV": _STARTUP_READ})),
+        ("job startup env", "deploy-dev.yml", "build", lambda w: _set(w["jobs"]["build"], "env", {"BASH_ENV": _STARTUP_READ})),
+        ("workflow default shell", "deploy-dev.yml", "build",
+         lambda w: _set(w, "defaults", {"run": {"shell": _SHELL_READ}})),
+        ("job default shell", "deploy-dev.yml", "build",
+         lambda w: _set(w["jobs"]["build"], "defaults", {"run": {"shell": _SHELL_READ}})),
+        ("workflow default directory", "tooling-scope-review-gate.yml", "classify",
+         lambda w: _set(w, "defaults", {"run": {"working-directory": "guarded/zone"}})),
+        ("job default directory", "ci.yml", "product-db",
+         lambda w: _set(w["jobs"]["product-db"], "defaults", {"run": {"working-directory": "guarded"}})),
+        ("workflow sh startup", "promote-dev-to-main.yml", "promote", lambda w: _set(w, "env", {"ENV": _STARTUP_READ})),
+        ("job command lookup", "deploy-dev.yml", "deploy",
+         lambda w: _set(w["jobs"]["deploy"], "env", {"PATH": "guarded/zone:/usr/bin"})),
+        ("job exported function", "merge-queue-review-gate.yml", "review-gate",
+         lambda w: _set(w["jobs"]["review-gate"], "env", {"BASH_FUNC_git%%": "() { cat guarded/zone/body.txt; }"})),
+        ("workflow git redirect", "emgi-consumer-boundary.yml", "boundary",
+         lambda w: _set(w, "env", {"GIT_DIR": "/elsewhere/.git"})),
+        ("job loader", "assisted-intake-design-validation.yml", "validate-contract-package",
+         lambda w: _set(w["jobs"]["validate-contract-package"], "env", {"LD_PRELOAD": "guarded/zone/x.so"})),
+        ("job interpreter hook", "ci.yml", "orchestrator",
+         lambda w: _set(w["jobs"]["orchestrator"], "env", {"PYTHONPATH": "guarded/zone"})),
+        ("job container", "ci.yml", "change-scope",
+         lambda w: w["jobs"]["change-scope"].update({"container": {"image": "x", "env": {"BASH_ENV": _STARTUP_READ}}})),
+    ],
+)
+def test_guarded_steps_reject_inherited_execution_overrides(label: str, name: str, job: str, mutate: Any) -> None:
+    """In-memory mutations only: nothing here is executed and no body is read."""
+    workflow = load_pr_workflow(name)
+    assert protected_checkout_violations(name, workflow) == []
+    mutate(workflow)
+    violations = protected_checkout_violations(name, workflow)
+    assert any(v.startswith(f"{name}:{job}: guarded steps inherit") for v in violations), (label, violations)
+
+
+def test_inherited_data_env_and_pinned_commit_stay_accepted() -> None:
+    """The necessary workflow/job data env (including the pinned release SHA) is not an override."""
+    workflow = load_pr_workflow("deploy-dev.yml")
+    assert workflow["env"] and workflow["jobs"]["build"]["env"]["ODAY_RELEASE_SHA"]
+    _set(workflow["jobs"]["build"], "env", {"ODP_EXTRA_LABEL": "x"})
+    _set(workflow, "env", {"PGHOST": "localhost"})
+    assert protected_checkout_violations("deploy-dev.yml", workflow) == []
 
 
 def _run_preflight(path_dir: Path) -> subprocess.CompletedProcess[str]:
