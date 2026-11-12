@@ -580,8 +580,8 @@ def _merge_group_recovery_pr_merged_on_source_head(
     """GitHub's fresh answer that the recovery's exact PR merged its source head green.
 
     This is the boundary before the owner-return mutates anything, so it reads
-    the PR through the publisher's own provenance reader and repository
-    resolution -- uncached, with `--repo` -- and binds every fact the
+    the PR through the publisher's own provenance reader and the registry's
+    repository binding -- uncached, with `--repo` -- and binds every fact the
     publisher will later verify: the PR number recorded on the task, its
     submission and its route; the immutable source head (`headRefOid`, never
     the merge commit); the task branch and merge target; MERGED with a merge
@@ -605,15 +605,16 @@ def _merge_group_recovery_pr_merged_on_source_head(
         return False
     try:
         rt_config = ai.status_runtime_config()
-        repository_id = ai.task_repository_id(rt_config, task) or "pantheon"
-        repository_root = ai.repository_local_path(rt_config, repository_id) or ai.ROOT
-        slug = (
-            ai.repository_slug(rt_config, repository_id)
-            or ai.git_remote_repository_slug(repository_root, "origin")
-            or ai.get_repository_slug_safe()
-        )
-        if not slug:
+        # The registry's one task -> repository -> checkout answer. A task
+        # naming an unregistered repository, artifacts spanning several, or a
+        # registered repository without its checkout or slug is "cannot
+        # answer", never a default repository's PR.
+        binding = ai.resolve_task_repository(rt_config, task)
+        if not binding.resolved or not binding.repo_id or not binding.slug:
             return False
+        repository_id = binding.repo_id
+        repository_root = binding.root
+        slug = binding.slug
         if branch != ai.task_branch_name(task, task_id):
             return False
         if base_branch != ai.delivery_merge_target_branch(rt_config, repository_id):

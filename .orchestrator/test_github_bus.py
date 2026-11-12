@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import inspect
 import io
 import json
@@ -5764,7 +5765,6 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         state = runtime_state.default_state() if state is None else state
         offline = github_bus.GitHubBusOffline("no live GitHub in this test")
         gh_view, gh_list = self._pr_transport(github_pr, [] if gh_calls is None else gh_calls)
-        source_repo = self._source_repo() if "coordination" in self.config else None
 
         def run_gh(args, **_kwargs):
             if reality_pr is not None and list(args[:2]) == ["pr", "view"]:
@@ -5804,13 +5804,13 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
             mock.patch.object(ai_status, "resolve_task_sha", return_value=self.APPROVED_HEAD),
             mock.patch.object(ai_status, "task_pr_ci_status", return_value=pr_status),
-            # The PR provenance reader's transport and repository binding.
+            # The PR provenance reader's transport. The repository binding is
+            # the registry's real one, over this fixture's registry: `pantheon`
+            # is the synthetic source checkout, slug `o/r` (the bus repo).
             mock.patch.object(ai_status, "run_gh_json_command", side_effect=gh_view),
             mock.patch.object(ai_status, "run_gh_json_list_command", side_effect=gh_list),
-            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
-            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
-            mock.patch.object(ai_status, "repository_local_path", return_value=source_repo),
-            mock.patch.object(ai_status, "repository_slug", return_value="o/r"),
+            mock.patch.object(ai_status, "status_runtime_config",
+                              side_effect=lambda: copy.deepcopy(self.config)),
             mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
             mock.patch.object(
                 supervisor,
@@ -7295,6 +7295,18 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             "delivery pending for the task": (lambda mc: merged(mc), {}, "pending"),
             "cause not yet proven": (lambda mc: merged(mc), {}, "legacy"),
             "no committed cause": (lambda mc: merged(mc), {}, "no_cause"),
+            # The canonical task's repository changed after its valid cause
+            # was committed. GitHub still says the bus repository's PR #756
+            # merged green; the registry's binding is what decides whose PR
+            # that is, and "cannot answer" is never the default repository.
+            "task names an unregistered repository": (
+                lambda mc: merged(mc), {"repository": "nobody/nowhere"}, None),
+            "task names another registered repository": (
+                lambda mc: merged(mc), {"repository": "x/other"}, "other_repo"),
+            "task names a registered repository without its checkout": (
+                lambda mc: merged(mc), {"repository": "x/other"}, "other_repo_missing"),
+            "task artifacts span several repositories": (
+                lambda mc: merged(mc), {"artifacts": ["oday-data-platform/a.md", "other/b.md"]}, "other_repo"),
         }
         for label, (github_pr, task_overrides, variant) in cases.items():
             with self.subTest(label):
@@ -7304,6 +7316,13 @@ class MergeGroupReconciliationTests(unittest.TestCase):
                 else:
                     status_path, route, cause = self._proven_legacy_board()
                 merge_commit = self._merge_source_into_dev()
+                if variant in {"other_repo", "other_repo_missing"}:
+                    other_checkout = status_path.parent / "other-checkout"
+                    if variant == "other_repo":
+                        other_checkout.mkdir()
+                    self.config["coordination"]["repositories"]["other"] = {
+                        "repo": "x/other", "local_path": str(other_checkout), "artifact_prefixes": ["other/"],
+                    }
                 board = json.loads(status_path.read_text(encoding="utf-8"))
                 for key, value in task_overrides.items():
                     if isinstance(value, dict) and isinstance(board["tasks"][0].get(key), dict):
