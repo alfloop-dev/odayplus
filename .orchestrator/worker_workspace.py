@@ -2338,16 +2338,17 @@ def materialize_worker_context_files(
                 raise ValueError(f"Fail-closed on workspace materialization for task {request.task_id}: {error}")
             base = root / rel_path
             try:
-                is_tree = base.is_dir() and not base.is_symlink()
+                is_tree = base.is_dir()
             except OSError as os_error:
                 raise ValueError(
                     f"Fail-closed on workspace materialization for task {request.task_id}: "
                     f"context metadata for {rel_path!r} is unreadable ({os_error})"
                 ) from os_error
             if is_tree:
-                # A context directory is not protected (checked above), so
-                # listing its entry names is safe; each child is judged by
-                # metadata before the directory is hashed or copied.
+                # A context directory is not protected (checked above, through
+                # any alias to its resolved path), so listing its entry names
+                # is safe; each child is judged by metadata, through the same
+                # aliases the copy follows, before anything is hashed or copied.
                 for child in base.rglob("*"):
                     child_rel = (Path(rel_path) / child.relative_to(base)).as_posix()
                     error = context_path_protection_error(root, child_rel, protected_paths)

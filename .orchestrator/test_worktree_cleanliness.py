@@ -572,6 +572,33 @@ class ProtectedBodyDomainTests(SyntheticBodyDomain, unittest.TestCase):
         self.assertIn("protected body domain", wc.context_path_protection_error(status, NESTED_COPY, ()))
         self.assertIn("protected body domain", wc.context_path_protection_error(status, NAMED_COPY, ()))
         self.assertIsNone(wc.context_path_protection_error(status, "docs/readme.md", ()))
+        self.assertIn("leaving its root", wc.context_path_protection_error(status, "docs/alias/guarded", ()))
+        # Ancestor aliases inside the root: the alias target alone ("guarded",
+        # "archive/untracked") is outside the domain, the resolved full path is
+        # not. Generic names only; no body exists or is opened.
+        (status / "guarded").mkdir()
+        (status / "archive" / "untracked" / "guarded").mkdir(parents=True)
+        (status / "docs" / "up").symlink_to("../guarded", target_is_directory=True)
+        (status / "docs" / "copies").symlink_to("../archive/untracked/guarded", target_is_directory=True)
+        (status / "docs" / "root").symlink_to("..", target_is_directory=True)
+        (status / "docs" / "asset").symlink_to(f"../archive/untracked/{SYNTHETIC_NAME}.txt")
+        for context in (
+            "docs/up/zone/body.txt",
+            "docs/up/zone",
+            "docs/copies/zone/body.py.txt",
+            "docs/root/guarded/../docs/up/zone/body.txt",
+            "docs/asset",
+        ):
+            with self.subTest(context=context):
+                self.assertIn(
+                    "symlink alias into the protected body domain",
+                    wc.context_path_protection_error(status, context, ()),
+                )
+        for context in ("docs/up", "docs/up/zone2/x.txt", "docs/copies/plain.md", "docs/root/docs/readme.md"):
+            with self.subTest(context=context):
+                self.assertIsNone(wc.context_path_protection_error(status, context, ()))
+        # The task-specific rule keeps refusing an alias of a protected ancestor.
+        self.assertIn("alias of protected path", wc.context_path_protection_error(status, "docs/up", GUARD))
 
 
 WORKFLOWS = THIS_DIR.parent / ".github" / "workflows"

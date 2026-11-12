@@ -1510,6 +1510,56 @@ class ProtectedContextSeedingTests(unittest.TestCase):
                 copied.assert_not_called()
             self.assertFalse((workspace / "archive").exists())
 
+    def test_ancestor_alias_into_body_domain_is_refused_for_an_unprotected_task(self) -> None:
+        # The alias target alone ("vault", "archive") lies outside the domain;
+        # the resolved context path does not. Generic empty files only.
+        with tempfile.TemporaryDirectory() as raw, \
+             mock.patch.object(worktree_cleanliness, "PROTECTED_BODY_PREFIXES", ("vault/copies",)):
+            root = Path(raw)
+            status_root = root / "status"
+            (status_root / "vault" / "copies").mkdir(parents=True)
+            (status_root / "vault" / "copies" / "copy.txt").touch()
+            (status_root / "docs").mkdir()
+            (status_root / "docs" / "plain.md").touch()
+            (status_root / "docs" / "alias").symlink_to("../vault", target_is_directory=True)
+            (status_root / "docs" / "top").symlink_to("..", target_is_directory=True)
+            (status_root / "ai-status.json").write_text(json.dumps({"tasks": [{"id": "SEED-3"}]}), encoding="utf-8")
+            workspace = root / "workspace"
+            workspace.mkdir()
+            subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+
+            def request(context: str) -> supervisor.DeliveryRequest:
+                return supervisor.DeliveryRequest(
+                    agent_id="claude",
+                    provider="claude",
+                    delivery_mode="claude",
+                    message="wake",
+                    task_id="SEED-3",
+                    context_files=[context],
+                    metadata={"protected_paths": []},
+                )
+
+            for context in ("docs/alias/copies/copy.txt", "docs/top/vault/copies/copy.txt", "docs/alias", "docs/top"):
+                with (
+                    self.subTest(context=context),
+                    mock.patch.object(supervisor, "_file_or_dir_hash") as hashed,
+                    mock.patch.object(supervisor, "_atomic_copy_context_file") as copied,
+                    self.assertRaisesRegex(ValueError, "protected body domain"),
+                ):
+                    supervisor.materialize_worker_context_files(config, request(context), workspace)
+                hashed.assert_not_called()
+                copied.assert_not_called()
+            self.assertFalse((workspace / "docs").exists())
+            self.assertFalse((workspace / "vault").exists())
+
+            with (
+                mock.patch.object(supervisor, "_file_or_dir_hash", return_value="a" * 64),
+                mock.patch.object(supervisor, "_atomic_copy_context_file") as copied,
+            ):
+                supervisor.materialize_worker_context_files(config, request("docs/plain.md"), workspace)
+            copied.assert_called_once_with(status_root / "docs" / "plain.md", workspace / "docs" / "plain.md")
+
 
 class WorktreeAuthorityShapeTests(unittest.TestCase):
     def test_clone_fallback_and_reason_allowlist_are_absent(self) -> None:

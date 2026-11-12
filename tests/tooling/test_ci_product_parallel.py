@@ -1081,6 +1081,9 @@ INHERITED_EXECUTION_ENV = re.compile(
     r"(?:BASH_ENV|ENV|SHELLOPTS|BASHOPTS|BASH_FUNC_\S*|BASH_XTRACEFD|PS4|IFS|CDPATH|GLOBIGNORE|EXECIGNORE"
     r"|PATH|HOME|XDG_CONFIG_HOME|LD_\S*|DYLD_\S*|PYTHON\S*|GIT_\S*|PERL5?LIB|PERL5OPT|RUBYOPT|NODE_OPTIONS)"
 )
+# Inherited env may only carry literal data names; anything else (an
+# expression, a non-string YAML key) cannot be judged against the list above.
+PLAIN_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 GIT_PREFLIGHT_NAME = "Require sparse-capable Git before checkout"
 DENIAL_PROOF_NAME = "Prove protected path stayed out of checkout"
 # The shared protected body domain of .orchestrator/worktree_cleanliness.py:
@@ -1121,7 +1124,7 @@ def _identity_assertion_violations(
     if binder == "step":
         if step_env != {variable: pinned}:
             violations.append(f"{here}: identity assertion must compare HEAD with {pinned}")
-    elif step_env is not None or (job.get("env") or {}).get(variable) != pinned:
+    elif step_env is not None or not isinstance(job.get("env"), dict) or job["env"].get(variable) != pinned:
         violations.append(f"{here}: identity assertion must compare HEAD with {pinned}")
     return violations
 
@@ -1130,10 +1133,23 @@ def _inherited_execution_violations(here: str, workflow: dict[str, Any], job: di
     """Workflow/job settings every guarded step inherits must not change how its exact script runs."""
     violations = []
     for scope, source in (("workflow", workflow), ("job", job)):
-        run_defaults = (source.get("defaults") or {}).get("run")
-        if run_defaults:
-            violations.append(f"{here}: guarded steps inherit {scope} defaults.run {sorted(run_defaults)}")
-        unsafe = sorted(key for key in (source.get("env") or {}) if INHERITED_EXECUTION_ENV.fullmatch(str(key)))
+        # Any defaults value (mapping, expression string or other shape) is a
+        # run default the guarded steps would inherit; none is inspected away.
+        defaults = source.get("defaults")
+        if defaults is not None and defaults != {}:
+            violations.append(f"{here}: guarded steps inherit {scope} defaults {defaults!r}")
+        env = source.get("env")
+        if env is None:
+            continue
+        if not isinstance(env, dict):
+            # A whole-env expression decides its names only at run time.
+            violations.append(f"{here}: guarded steps inherit an opaque {scope} env {env!r}")
+            continue
+        unsafe = sorted(
+            repr(key)
+            for key in env
+            if not isinstance(key, str) or not PLAIN_ENV_NAME.fullmatch(key) or INHERITED_EXECUTION_ENV.fullmatch(key)
+        )
         if unsafe:
             violations.append(f"{here}: guarded steps inherit {scope} execution env {unsafe}")
     if "container" in job:
@@ -1505,6 +1521,35 @@ def test_guarded_steps_reject_inherited_execution_overrides(label: str, name: st
     workflow = load_pr_workflow(name)
     assert protected_checkout_violations(name, workflow) == []
     mutate(workflow)
+    violations = protected_checkout_violations(name, workflow)
+    assert any(v.startswith(f"{name}:{job}: guarded steps inherit") for v in violations), (label, violations)
+
+
+_WHOLE_ENV = "${{ fromJSON(vars.GUARDED_ENV) }}"
+
+
+@pytest.mark.parametrize(
+    ("label", "scope", "key", "value"),
+    [
+        # Shapes the name list cannot judge are refused, not skipped or crashed on.
+        ("workflow whole-env expression", "workflow", "env", _WHOLE_ENV),
+        ("job whole-env expression", "job", "env", _WHOLE_ENV),
+        ("job env list", "job", "env", ["BASH_ENV=/dev/null"]),
+        ("workflow expression env key", "workflow", "env", {"${{ vars.NAME }}": _STARTUP_READ}),
+        ("job non-string env key", "job", "env", {True: "x"}),
+        ("job spaced env key", "job", "env", {"BASH_ENV ": _STARTUP_READ}),
+        ("workflow defaults expression", "workflow", "defaults", "${{ fromJSON(vars.GUARDED_DEFAULTS) }}"),
+        ("job falsey non-mapping defaults", "job", "defaults", []),
+        ("job defaults run expression", "job", "defaults", {"run": "${{ fromJSON(vars.RUN) }}"}),
+        ("workflow empty defaults run", "workflow", "defaults", {"run": {}}),
+    ],
+)
+def test_guarded_steps_reject_opaque_inherited_context(label: str, scope: str, key: str, value: Any) -> None:
+    """In-memory mutations only: nothing here is executed and no body is read."""
+    name, job = "deploy-dev.yml", "build"
+    workflow = load_pr_workflow(name)
+    assert protected_checkout_violations(name, workflow) == []
+    (workflow if scope == "workflow" else workflow["jobs"][job])[key] = value
     violations = protected_checkout_violations(name, workflow)
     assert any(v.startswith(f"{name}:{job}: guarded steps inherit") for v in violations), (label, violations)
 

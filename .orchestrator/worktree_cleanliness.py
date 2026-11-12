@@ -548,7 +548,8 @@ def context_path_protection_error(
     except (OSError, RuntimeError):
         return f"context root {base} is unreadable"
     current = base
-    for part in str(relative_path).replace("\\", "/").strip("/").split("/"):
+    parts = str(relative_path).replace("\\", "/").strip("/").split("/")
+    for index, part in enumerate(parts):
         current = current / part
         try:
             metadata = current.lstat()
@@ -561,11 +562,15 @@ def context_path_protection_error(
                 target = current.resolve().relative_to(resolved_root).as_posix()
             except (OSError, RuntimeError, ValueError):
                 return f"context path {relative_path!r} has a symlink leaving its root"
-            if in_protected_body_domain(target):
-                return f"context path {relative_path!r} is a symlink alias into the protected body domain"
-            conflict = protected_path_conflict(target, protected)
-            if conflict:
-                return f"context path {relative_path!r} is a symlink alias of protected path {conflict!r}"
+            # An ancestor alias leads the rest of the path somewhere else:
+            # judge the resolved full path as well as the alias target.
+            resolved = "/".join(item for item in (target, *parts[index + 1 :]) if item not in {"", "."})
+            for candidate in (target, resolved):
+                if in_protected_body_domain(candidate):
+                    return f"context path {relative_path!r} is a symlink alias into the protected body domain"
+                conflict = protected_path_conflict(candidate, protected)
+                if conflict:
+                    return f"context path {relative_path!r} is a symlink alias of protected path {conflict!r}"
     return None
 
 
