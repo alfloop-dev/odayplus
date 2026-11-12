@@ -1016,15 +1016,62 @@ CHECKOUT_REFS = {
     ("merge-queue-review-gate.yml", "review-gate"): "${{ github.event.merge_group.head_sha }}",
     ("promote-dev-to-main.yml", "promote"): "${{ github.event.workflow_run.head_sha }}",
 }
-# The one HEAD identity assertion allowed between a ref checkout and its proof.
+def _head_equality_script(variable: str, label: str) -> str:
+    """The approved exact-SHA assertion form: HEAD must equal one named, pinned commit."""
+    return (
+        'head_sha="$(git rev-parse HEAD)"\n'
+        f'if [ "${{head_sha}}" != "${{{variable}}}" ]; then\n'
+        f'  echo "Error: checked out HEAD (${{head_sha}}) does not match {label} (${{{variable}}})." >&2\n'
+        "  exit 1\n"
+        "fi\n"
+    )
+
+
+RELEASE_SHA_INPUT = "${{ inputs.release_sha }}"
+# The one HEAD identity assertion allowed between a ref checkout and its proof:
+# (step name, exact approved script, compared variable, the pinned commit it must hold,
+#  whether the step itself binds that variable or inherits it from the job).
+# Nothing but this exact equality may run before the proof, so no extra read or
+# command can touch a denied body and no weakened comparison can pass.
 IDENTITY_ASSERTIONS = {
-    ("deploy-dev.yml", "release_phase"): "Assert exact release SHA is checked out",
-    ("deploy-dev.yml", "build"): "Assert exact release SHA is checked out",
-    ("deploy-dev.yml", "admission"): "Assert the dispatch event SHA is checked out",
-    ("deploy-dev.yml", "automatic_admission"): "Assert automatic admission checkout identity",
-    ("deploy-dev.yml", "deploy"): "Assert exact release SHA is checked out",
-    ("deploy-dev.yml", "staging_closeout"): "Assert exact release SHA is checked out",
+    ("deploy-dev.yml", "release_phase"): (
+        "Assert exact release SHA is checked out",
+        "set -euo pipefail\n" + _head_equality_script("RELEASE_SHA", "inputs.release_sha"),
+        "RELEASE_SHA", RELEASE_SHA_INPUT, "step",
+    ),
+    ("deploy-dev.yml", "build"): (
+        "Assert exact release SHA is checked out",
+        "set -euo pipefail\n" + _head_equality_script("ODAY_RELEASE_SHA", "ODAY_RELEASE_SHA"),
+        "ODAY_RELEASE_SHA", RELEASE_SHA_INPUT, "job",
+    ),
+    ("deploy-dev.yml", "admission"): (
+        "Assert the dispatch event SHA is checked out",
+        "set -euo pipefail\n"
+        'if [[ ! "${EVENT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then\n'
+        '  echo "Error: dispatch event SHA (${EVENT_SHA}) is not an exact 40-character commit SHA." >&2\n'
+        "  exit 1\n"
+        "fi\n" + _head_equality_script("EVENT_SHA", "the dispatch event SHA"),
+        "EVENT_SHA", "${{ github.sha }}", "step",
+    ),
+    ("deploy-dev.yml", "automatic_admission"): (
+        "Assert automatic admission checkout identity",
+        'test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"',
+        "RELEASE_SHA", RELEASE_SHA_INPUT, "step",
+    ),
+    ("deploy-dev.yml", "deploy"): (
+        "Assert exact release SHA is checked out",
+        "set -euo pipefail\n" + _head_equality_script("ODAY_RELEASE_SHA", "ODAY_RELEASE_SHA"),
+        "ODAY_RELEASE_SHA", RELEASE_SHA_INPUT, "job",
+    ),
+    ("deploy-dev.yml", "staging_closeout"): (
+        "Assert exact release SHA is checked out",
+        "set -euo pipefail\n" + _head_equality_script("ODAY_RELEASE_SHA", "ODAY_RELEASE_SHA"),
+        "ODAY_RELEASE_SHA", RELEASE_SHA_INPUT, "job",
+    ),
 }
+# Keys a guarded script step may carry; anything else (shell, working-directory,
+# id-driven outputs, ...) could change what the exact script runs or judges.
+GUARDED_SCRIPT_KEYS = {"name", "run", "env"}
 GIT_PREFLIGHT_NAME = "Require sparse-capable Git before checkout"
 DENIAL_PROOF_NAME = "Prove protected path stayed out of checkout"
 # The shared protected body domain of .orchestrator/worktree_cleanliness.py:
@@ -1049,18 +1096,25 @@ def reference_step_scripts() -> tuple[str, str]:
     return steps[0]["run"], steps[2]["run"]
 
 
-def _identity_assertion_violations(here: str, step: dict[str, Any], expected_name: str | None) -> list[str]:
-    if expected_name is None:
+def _identity_assertion_violations(
+    here: str, job: dict[str, Any], step: dict[str, Any], expected: tuple[str, str, str, str, str] | None
+) -> list[str]:
+    if expected is None:
         return [f"{here}: exact denial proof must directly follow checkout"]
-    script = str(step.get("run") or "")
-    if (
-        step.get("name") != expected_name
-        or "uses" in step
-        or "git rev-parse HEAD" not in script
-        or re.search(r"\bpython", script)
-    ):
-        return [f"{here}: only the exact HEAD identity assertion may precede the denial proof"]
-    return []
+    name, script, variable, pinned, binder = expected
+    violations = []
+    if step.get("name") != name or step.get("run") != script:
+        violations.append(f"{here}: only the exact HEAD identity assertion may precede the denial proof")
+    if set(step) - GUARDED_SCRIPT_KEYS - {"if", "continue-on-error"}:
+        violations.append(f"{here}: identity assertion may not set {sorted(set(step) - GUARDED_SCRIPT_KEYS)}")
+    # The compared value is the exact trusted/dispatched commit, bound where the approved form binds it.
+    step_env = step.get("env")
+    if binder == "step":
+        if step_env != {variable: pinned}:
+            violations.append(f"{here}: identity assertion must compare HEAD with {pinned}")
+    elif step_env is not None or (job.get("env") or {}).get(variable) != pinned:
+        violations.append(f"{here}: identity assertion must compare HEAD with {pinned}")
+    return violations
 
 
 def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[str]:
@@ -1085,7 +1139,9 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
         guarded = [steps[0], checkout]
         following = steps[at + 1] if at + 1 < len(steps) else {}
         if following.get("name") != DENIAL_PROOF_NAME:
-            violations.extend(_identity_assertion_violations(here, following, IDENTITY_ASSERTIONS.get((name, job_name))))
+            violations.extend(
+                _identity_assertion_violations(here, job, following, IDENTITY_ASSERTIONS.get((name, job_name)))
+            )
             guarded.append(following)
             following = steps[at + 2] if at + 2 < len(steps) else {}
         elif (name, job_name) in IDENTITY_ASSERTIONS:
@@ -1102,6 +1158,9 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
             for softener in ("if", "continue-on-error"):
                 if softener in step:
                     violations.append(f"{here}: {step.get('name') or step.get('uses')} may not set {softener}")
+        for step, keys in ((steps[0], {"name", "run"}), (following, GUARDED_SCRIPT_KEYS)):
+            if set(step) - keys - {"if", "continue-on-error"}:
+                violations.append(f"{here}: {step.get('name')} may not set {sorted(set(step) - keys)}")
         inputs = checkout.get("with") or {}
         if set(inputs) - ALLOWED_CHECKOUT_INPUTS:
             violations.append(f"{here}: unsupported checkout inputs {sorted(set(inputs) - ALLOWED_CHECKOUT_INPUTS)}")
@@ -1317,6 +1376,66 @@ def _mutated_job(name: str, job: str, mutate: Any) -> list[str]:
 )
 def test_every_workflow_rejects_each_weakening(label: str, name: str, job: str, mutate: Any) -> None:
     assert _mutated_job(name, job, mutate), label
+
+
+def _approved_assertion(job: str) -> str:
+    return IDENTITY_ASSERTIONS[("deploy-dev.yml", job)][1]
+
+
+@pytest.mark.parametrize(
+    ("label", "job", "mutate"),
+    [
+        # The exact-SHA equality must survive, not just its name or a substring of it.
+        ("equality missing", "build", lambda j: j["steps"][2].update({"run": "git rev-parse HEAD"})),
+        ("no assertion", "build", lambda j: j["steps"][2].update({"run": "echo git rev-parse HEAD"})),
+        ("body read before proof", "build",
+         lambda j: j["steps"][2].update({"run": "git rev-parse HEAD\ngit show HEAD:guarded/zone/body.txt"})),
+        ("body read appended", "build",
+         lambda j: j["steps"][2].update({"run": _approved_assertion("build") + "cat guarded/zone/body.txt\n"})),
+        ("extra command prepended", "deploy",
+         lambda j: j["steps"][2].update({"run": "git ls-tree -r HEAD guarded\n" + _approved_assertion("deploy")})),
+        ("equality inverted", "staging_closeout",
+         lambda j: j["steps"][2].update({"run": _approved_assertion("staging_closeout").replace("!=", "==")})),
+        ("failure tolerated", "build",
+         lambda j: j["steps"][2].update({"run": _approved_assertion("build").replace("exit 1", "exit 0")})),
+        ("self comparison", "automatic_admission",
+         lambda j: j["steps"][2].update({"run": 'test "$(git rev-parse HEAD)" = "$(git rev-parse HEAD)"\n'})),
+        ("exact sha shape dropped", "admission",
+         lambda j: j["steps"][2].update({"run": "set -euo pipefail\n" + _head_equality_script("EVENT_SHA", "the dispatch event SHA")})),
+        # The compared value must be the exact trusted/dispatched commit.
+        ("job value redirected", "build", lambda j: j["env"].update({"ODAY_RELEASE_SHA": "${{ github.sha }}"})),
+        ("job value overridden by step", "deploy",
+         lambda j: j["steps"][2].update({"env": {"ODAY_RELEASE_SHA": "${{ github.event.after }}"}})),
+        ("step value redirected", "release_phase",
+         lambda j: j["steps"][2]["env"].update({"RELEASE_SHA": "${{ github.sha }}"})),
+        ("step value dropped", "automatic_admission", lambda j: j["steps"][2].pop("env")),
+        ("dispatch value redirected", "admission",
+         lambda j: j["steps"][2]["env"].update({"EVENT_SHA": "${{ inputs.release_sha }}"})),
+        ("startup script injected", "release_phase",
+         lambda j: j["steps"][2]["env"].update({"BASH_ENV": "guarded/zone/body.txt"})),
+        # Anything that changes how the exact script runs.
+        ("shell replaced", "build", lambda j: j["steps"][2].update({"shell": "cat guarded/zone/body.txt; bash {0}"})),
+        ("directory moved", "deploy", lambda j: j["steps"][2].update({"working-directory": "guarded/zone"})),
+        ("action replaces script", "build", lambda j: j["steps"][2].update({"uses": "actions/github-script@v7"})),
+    ],
+)
+def test_identity_assertion_rejects_each_mutation(label: str, job: str, mutate: Any) -> None:
+    """In-memory mutations only: nothing here is executed and no body is read."""
+    workflow = load_pr_workflow("deploy-dev.yml")
+    assert protected_checkout_violations("deploy-dev.yml", workflow) == []
+    mutate(workflow["jobs"][job])
+    violations = protected_checkout_violations("deploy-dev.yml", workflow)
+    assert any(f"deploy-dev.yml:{job}: identity assertion" in v or "exact HEAD identity assertion" in v
+               for v in violations), (label, violations)
+
+
+def test_guarded_script_steps_take_no_execution_overrides() -> None:
+    for index, extra in ((0, {"shell": "sh -c 'cat guarded/zone/body.txt; sh {0}'"}),
+                         (0, {"env": {"BASH_ENV": "guarded/zone/body.txt"}}),
+                         (2, {"working-directory": "guarded"})):
+        workflow = load_pr_workflow("tooling-scope-review-gate.yml")
+        workflow["jobs"]["classify"]["steps"][index].update(extra)
+        assert protected_checkout_violations("tooling-scope-review-gate.yml", workflow), extra
 
 
 def _run_preflight(path_dir: Path) -> subprocess.CompletedProcess[str]:
