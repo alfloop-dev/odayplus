@@ -1,0 +1,113 @@
+name: seed-dev-forecast-probe
+
+# Read-only: can the governed forecastops trainer (product_ops.modeling.release)
+# run against dev? Reports model_ready view state, eligible forecast rows,
+# source-marker status, dev MLflow reachability for this SA, and bucket names.
+# Writes nothing.
+on:
+  push:
+    branches: [seed-dev-data-backfill]
+    paths:
+      - .github/workflows/seed-dev-forecast-probe.yml
+      - .github/scripts/seed_dev_forecast_probe.py
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: dev
+    env:
+      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+      DB_URL_SECRET: ${{ vars.ODAY_DATABASE_URL_SECRET }}
+      MLFLOW_URL: ${{ vars.MLFLOW_TRACKING_URI }}
+      TARGET_TENANT: d4fe5181-da2c-5438-bd12-230036ea6f59
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (WIF) + ID token for dev MLflow
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ vars.MLFLOW_TRACKING_URI }}
+          id_token_include_email: true
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Dev MLflow reachability (read-only)
+        env:
+          ID_TOKEN: ${{ steps.auth.outputs.id_token }}
+        run: |
+          set -uo pipefail
+          base="${MLFLOW_URL%/}"
+          code=$(curl -s --max-time 60 -o h.txt -w "%{http_code}" -H "Authorization: Bearer ${ID_TOKEN}" "${base}/health")
+          echo "MLFLOW /health HTTP ${code}: $(head -c 200 h.txt)"
+          code=$(curl -s --max-time 60 -o m.json -w "%{http_code}" -H "Authorization: Bearer ${ID_TOKEN}" \
+            "${base}/api/2.0/mlflow/registered-models/search?max_results=100")
+          echo "MLFLOW registered-models/search HTTP ${code}"
+          python3 - <<'PY'
+          import json
+          try:
+              d = json.load(open("m.json"))
+          except Exception as exc:
+              print("not json:", open("m.json").read()[:300]); raise SystemExit(0)
+          for m in d.get("registered_models", []) or []:
+              aliases = [a.get("alias") for a in m.get("aliases", []) or []]
+              latest = [v.get("version") for v in m.get("latest_versions", []) or []]
+              print("MODEL", m.get("name"), "aliases=", aliases, "latest=", latest)
+          if not d.get("registered_models"):
+              print("MODEL (none registered)", {k: v for k, v in d.items() if k != "registered_models"})
+          PY
+
+      - name: Bucket names in dev project (read-only)
+        run: |
+          set -uo pipefail
+          gcloud storage buckets list --project="${GCP_PROJECT}" --format="value(name)" 2>&1 | head -40
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install project env (root deps)
+        env:
+          UV_PYTHON: '3.12'
+        run: |
+          set -euo pipefail
+          pip install uv
+          uv sync --frozen
+
+      - name: Start Cloud SQL Auth Proxy (unix socket)
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /cloudsql && sudo chown "$(id -u)" /cloudsql
+          curl -sSL -o cloud-sql-proxy \
+            https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64
+          chmod +x cloud-sql-proxy
+          ./cloud-sql-proxy --unix-socket /cloudsql "${CLOUD_SQL_INSTANCE}" &
+          for i in $(seq 1 30); do
+            if [ -S "/cloudsql/${CLOUD_SQL_INSTANCE}/.s.PGSQL.5432" ]; then
+              echo "Cloud SQL proxy socket is up"; break
+            fi
+            sleep 1
+          done
+
+      - name: Forecast model-ready inventory (read-only)
+        run: |
+          set -euo pipefail
+          RAW_DB_URL="$(gcloud secrets versions access latest \
+            --secret="${DB_URL_SECRET%%:*}" --project="${GCP_PROJECT}")"
+          echo "::add-mask::${RAW_DB_URL}"
+          export RAW_DB_URL
+          PYTHONPATH="${GITHUB_WORKSPACE}" UV_PYTHON=3.12 \
+            uv run --frozen python .github/scripts/seed_dev_forecast_probe.py
