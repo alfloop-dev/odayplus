@@ -881,7 +881,7 @@ describe("GrowthWorkspace API loading", () => {
 
   async function openSyntheticDraft() {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
-    render(<GrowthWorkspace basePath="/operator" searchParams={{ builder: "offpeak" }} apiData={{
+    const view = render(<GrowthWorkspace basePath="/operator" searchParams={{ builder: "offpeak" }} apiData={{
       availability: "fixture", freshness: FIXTURE_FRESHNESS, fromApi: false,
       items: GROWTH_ITEMS, recommendations: PRICEOPS_RECOMMENDATIONS, segments: SEGMENTS,
     }} />);
@@ -891,7 +891,102 @@ describe("GrowthWorkspace API loading", () => {
     fireEvent.click(screen.getByTestId("growth-builder-next"));
     await screen.findByTestId("growth-builder-step-4");
     fireEvent.click(screen.getByTestId("growth-builder-next"));
+    return view;
   }
+
+  /** Builder writes whose create acknowledgement the test releases explicitly. */
+  function deferBuilderWrites() {
+    const writes: Array<{ path: string; key: string | null }> = [];
+    let releaseCreate: (response: Response) => void = () => {};
+    let releaseSubmit: (response: Response) => void = () => {};
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith("/conflicts/check")) {
+        return Promise.resolve(new Response(JSON.stringify({ checks: [], blocked: false, reasons: [] })));
+      }
+      writes.push({ path, key: new Headers(init?.headers).get("Idempotency-Key") });
+      return new Promise<Response>(resolve => {
+        if (path.endsWith("/actions")) releaseCreate = resolve;
+        else releaseSubmit = resolve;
+      });
+    }));
+    return {
+      writes,
+      releaseCreate: (body: unknown) => releaseCreate(new Response(JSON.stringify(body))),
+      releaseSubmit: (body: unknown) => releaseSubmit(new Response(JSON.stringify(body))),
+    };
+  }
+
+  it("does not let a late create acknowledgement navigate away from a newer dialog", async () => {
+    const transport = deferBuilderWrites();
+    const { rerender } = await openSyntheticDraft();
+    fireEvent.click(screen.getByTestId("growth-draft-submit"));
+    expect(transport.writes.map(write => write.path)).toEqual(["/api/v1/operator/growth/actions"]);
+    rerender(<GrowthWorkspace basePath="/operator" searchParams={{ builder: "winback" }} apiData={{
+      availability: "fixture", freshness: FIXTURE_FRESHNESS, fromApi: false,
+      items: GROWTH_ITEMS, recommendations: PRICEOPS_RECOMMENDATIONS, segments: SEGMENTS,
+    }} />);
+    const newer = screen.getByRole("dialog", { name: "建立 Growth Action 草稿" });
+    expect(within(newer).getByTestId("growth-builder-step-1")).toBeInTheDocument();
+    transport.releaseCreate({ id: "synthetic-late", status: "DRAFT", kind: "offpeak" });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await waitFor(() => expect(transport.writes).toHaveLength(1));
+    expect(routerPush).not.toHaveBeenCalled();
+    expect(within(newer).getByTestId("growth-builder-step-1")).toBeInTheDocument();
+    expect(within(newer).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(newer).getByLabelText("活動名稱")).not.toHaveValue("Synthetic recovery draft");
+  });
+
+  it("finishes an authorized create-and-submit once after the dialog closes, without navigating", async () => {
+    const transport = deferBuilderWrites();
+    const { unmount } = await openSyntheticDraft();
+    fireEvent.click(screen.getByTestId("growth-draft-submit-approval"));
+    unmount();
+    transport.releaseCreate({ id: "synthetic-left", status: "DRAFT", kind: "offpeak" });
+    await waitFor(() => expect(transport.writes).toHaveLength(2));
+    expect(transport.writes[1].path).toBe("/api/v1/operator/growth/actions/synthetic-left/submit");
+    expect(transport.writes[1].key).toBeTruthy();
+    expect(transport.writes[1].key).not.toBe(transport.writes[0].key);
+    transport.releaseSubmit({ id: "synthetic-left", status: "PENDING_APPROVAL",
+      approval: { id: "synthetic-left-approval", ref: "synthetic-left", module: "Growth", status: "pending" } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(transport.writes.map(write => write.path)).toEqual([
+      "/api/v1/operator/growth/actions",
+      "/api/v1/operator/growth/actions/synthetic-left/submit",
+    ]);
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  it("opens a fresh dialog for another recommendation instead of reusing the previous draft", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const [first, second] = PRICEOPS_RECOMMENDATIONS.filter(rec => rec.title);
+    const fixture = { availability: "fixture" as const, freshness: FIXTURE_FRESHNESS, fromApi: false,
+      items: GROWTH_ITEMS, recommendations: PRICEOPS_RECOMMENDATIONS, segments: SEGMENTS };
+    const { rerender } = render(<GrowthWorkspace basePath="/operator" searchParams={{ draft: first.id }} apiData={fixture} />);
+    const name = () => within(screen.getByRole("dialog")).getByLabelText("活動名稱");
+    expect(name()).toHaveValue(`${first.title}（草稿）`);
+    fireEvent.change(name(), { target: { value: "Synthetic edit for first recommendation" } });
+    rerender(<GrowthWorkspace basePath="/operator" searchParams={{ draft: second.id }} apiData={fixture} />);
+    expect(name()).toHaveValue(`${second.title}（草稿）`);
+    rerender(<GrowthWorkspace basePath="/operator" searchParams={{ draft: second.id }} apiData={{ ...fixture }} />);
+    expect(name()).toHaveValue(`${second.title}（草稿）`);
+  });
+
+  it("returns a mounted dialog to its current URL, not the one captured when the write began", async () => {
+    const transport = deferBuilderWrites();
+    const { rerender } = await openSyntheticDraft();
+    fireEvent.click(screen.getByTestId("growth-draft-submit"));
+    rerender(<GrowthWorkspace basePath="/operator" searchParams={{ builder: "offpeak", gstatus: "out" }} apiData={{
+      availability: "fixture", freshness: FIXTURE_FRESHNESS, fromApi: false,
+      items: GROWTH_ITEMS, recommendations: PRICEOPS_RECOMMENDATIONS, segments: SEGMENTS,
+    }} />);
+    transport.releaseCreate({ id: "synthetic-same", status: "DRAFT", kind: "offpeak" });
+    await waitFor(() => expect(routerPush).toHaveBeenCalledTimes(1));
+    const target = new URL(routerPush.mock.calls[0][0] as string, "http://localhost");
+    expect(target.searchParams.get("gstatus")).toBe("out");
+    expect(target.searchParams.has("builder")).toBe(false);
+    expect(transport.writes).toHaveLength(1);
+  });
 
   it("reconciles a lost create acknowledgement, then retries only submission of the confirmed draft", async () => {
     let creates = 0;

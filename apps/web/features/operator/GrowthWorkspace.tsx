@@ -421,6 +421,7 @@ export function GrowthWorkspace({
         />
       ) : vm.draftRecommendation ? (
         <GrowthBuilderModal
+          key={JSON.stringify(["draft", vm.dataSource, vm.draftRecommendation.id, vm.draftRecommendation.segmentId])}
           initialForm={formFromRecommendation(vm.draftRecommendation)}
           closeHref={href({ builder: undefined, draft: undefined })}
         />
@@ -1315,13 +1316,20 @@ function GrowthBuilderModal({
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const busyRef = useRef(false);
+  // A create/submit ACK that settles after this dialog unmounted (the operator
+  // moved to another scope, dialog or workspace) must not update or navigate
+  // the newer view; while mounted it returns to the dialog's current URL.
+  const mountedRef = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  const closeHrefRef = useRef(closeHref);
+  closeHrefRef.current = closeHref;
   const intentRef = useRef<{ signature: string; createKey: string; submitKey: string } | null>(null);
   const [createdDraft, setCreatedDraft] = useState<Awaited<ReturnType<typeof createGrowthDraft>>>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<ConflictCheck[] | null>(null);
   const [blocked, setBlocked] = useState(false);
   const [checking, setChecking] = useState(false);
-  const close = () => { if (!busyRef.current) router.push(closeHref); };
+  const close = () => { if (!busyRef.current) router.push(closeHrefRef.current); };
   const panelRef = useModalDialogBehavior({ onClose: close, dismissible: !isSubmitting });
 
   useEffect(() => {
@@ -1390,14 +1398,18 @@ function GrowthBuilderModal({
     }
     const created = createdDraft ?? await createGrowthDraft({ ...payload, idempotencyKey: intentRef.current.createKey });
     if (!created) {
+      if (!mountedRef.current) return;
       setApiError("尚未確認草稿建立結果。輸入已保留，請重試相同內容以核對結果。");
       busyRef.current = false;
       setIsSubmitting(false);
       return;
     }
-    setCreatedDraft(created);
+    if (mountedRef.current) setCreatedDraft(created);
     if (sendForApproval) {
+      // The operator already authorized create-and-submit; leaving the dialog
+      // neither cancels the submit nor rolls back the acknowledged create.
       const submitted = await submitGrowthForApproval({ actionId: created.id, idempotencyKey: intentRef.current.submitKey });
+      if (!mountedRef.current) return;
       if (!submitted) {
         setApiError(`草稿 ${created.id} 已建立，但送審尚未確認。可重試送核准，或保留此草稿稍後處理。`);
         busyRef.current = false;
@@ -1405,9 +1417,10 @@ function GrowthBuilderModal({
         return;
       }
     }
+    if (!mountedRef.current) return;
     busyRef.current = false;
     setIsSubmitting(false);
-    router.push(closeHref);
+    router.push(closeHrefRef.current);
   };
 
   return (
