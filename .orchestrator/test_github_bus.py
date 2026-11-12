@@ -6105,14 +6105,23 @@ class MergeGroupReconciliationTests(unittest.TestCase):
                     self._ready_dispatch(queued)
                     self.assertEqual(queued, [])
 
-                    # Immutable facts GitHub refuted are not fetched again; an
-                    # unanswered question is asked again without a duplicate audit.
+                    # Nothing is remembered between cycles: the next poll reads
+                    # the canonical cause and GitHub again, with the same result.
                     with mock.patch("status_transition.commit_canonical_task_transition") as commit:
                         _, canonical, again = self._poll(status_path, gh=gh)
                     commit.assert_not_called()
                     self.assertEqual(self._board_facts(canonical), self._board_facts(before))
-                    self.assertEqual(len(again["run_reads"]), 0 if kind == "refuted" else 1)
-                    self.assertNotIn(f"merge_group_cause_source_{kind}", self._log_types(again["log"]))
+                    self.assertEqual(len(again["run_reads"]), 1)
+                    self.assertEqual(self._log_types(again["log"]).count(f"merge_group_cause_source_{kind}"), 1)
+                    self.assertNotIn("legacy_merge_group_cause_checks", self.bus_state)
+
+                    # A cause the canonical record later corrects is re-judged
+                    # on its current facts, not on an earlier refusal.
+                    if kind == "refuted":
+                        fixed = self._gh(runs=[self._legacy_run()])
+                        changed, canonical, _ = self._poll(status_path, gh=fixed)
+                        self.assertTrue(changed)
+                        self.assertEqual(canonical["handoffs"][0]["source_head"], self.APPROVED_HEAD)
 
     def test_legacy_cause_not_bound_to_canonical_task_is_never_fetched(self) -> None:
         cases = {
