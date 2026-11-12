@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -483,7 +484,9 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
             ):
                 with self.assertRaises(ValueError) as ctx:
                     supervisor.materialize_worker_context_files(config, req, worktree_path)
-                self.assertIn("escapes workspace root", str(ctx.exception))
+                # The shared context-path check refuses the escaping symlink
+                # before any destination validation, hash or copy runs.
+                self.assertIn("context path 'docs/source.txt' has a symlink leaving its root", str(ctx.exception))
 
             self.assertEqual(outside_file.read_text(encoding="utf-8"), "DO NOT TOUCH")
 
@@ -532,7 +535,9 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
             ):
                 with self.assertRaises(ValueError) as ctx:
                     supervisor.materialize_worker_context_files(config, req, worktree_path)
-                self.assertIn("escapes workspace root", str(ctx.exception))
+                # The shared context-path check refuses the escaping symlink
+                # before any destination validation, hash or copy runs.
+                self.assertIn("context path 'docs' has a symlink leaving its root", str(ctx.exception))
 
             self.assertEqual(outside_file.read_text(encoding="utf-8"), "DO NOT TOUCH")
 
@@ -581,7 +586,9 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
             ):
                 with self.assertRaises(ValueError) as ctx:
                     supervisor.materialize_worker_context_files(config, req, worktree_path)
-                self.assertIn("escapes workspace root", str(ctx.exception))
+                # The shared context-path check refuses the escaping symlink
+                # before any destination validation, hash or copy runs.
+                self.assertIn("context path 'docs/source.txt' has a symlink leaving its root", str(ctx.exception))
 
             self.assertEqual(outside_file.read_text(encoding="utf-8"), "DO NOT TOUCH")
 
@@ -800,7 +807,11 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
             ):
                 with self.assertRaises(ValueError) as ctx:
                     supervisor.materialize_worker_context_files(config, req, worktree_path)
-                self.assertIn("external directory child symlink rejected", str(ctx.exception))
+                # The shared context-path check judges each directory child by
+                # metadata and refuses the escaping one before anything is copied.
+                self.assertIn("context path 'docs_dir/child_symlink' has a symlink leaving its root", str(ctx.exception))
+            self.assertFalse(os.path.lexists(worktree_path / "docs_dir"))
+            self.assertEqual(outside_file.read_text(encoding="utf-8"), "SECRET")
 
     def test_canonical_hash_binds_rendered_metadata_and_archived_ambiguity(self) -> None:
         task1 = {

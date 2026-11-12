@@ -202,20 +202,34 @@ non-cone sparse patterns 由 `protected_body_sparse_patterns()` 產生：
 | `rollout_supervisor_runtime.clean`（source、既有 target 重用、新 target） | 先跑 domain 證明，未通過即不 clean，`git status` 不會執行 |
 | `worker_workspace._create_worker_worktree` | 同上順序：註冊 → 證明 HEAD／task 保護 → sparse → materialize → 證明 |
 | `worker_workspace._protected_commit_refusal`（`check_index=True` 的所有呼叫者：重用 refresh、state identity、activity observer、handoff seal、merge continuation、preempt、quarantine、pruner） | task 保護之前先跑 domain 證明 |
-| `worktree_cleanliness.inspect_worktree`（含 `task_finalize.sh`） | status 之前先跑 domain 證明；domain 內的 dirt 一律 blocking，不可當 seed，fingerprint 只綁 lstat metadata（同路徑改寫會改變 fingerprint） |
+| `worktree_cleanliness.inspect_worktree`（含 `task_finalize.sh`） | status 之前先跑 domain 證明；domain 內的未追蹤 dirt 與同路徑漂移在 status 之前即以 `protected_metadata_refused` blocking，不可當 seed、不產生 fingerprint；fingerprint 對 domain 路徑仍只用 lstat（防禦性保留） |
 | quarantine／interrupted merge seal | domain 內的 dirt 拒絕備份與 seal，不讀 body |
 | context seeding | 對所有 task（不只 `protected_paths` task）拒絕 domain 內的 context 來源或目的地 |
 | 7 個既有 workflow 的 22 個 checkout | 全部：Git preflight → checkout（上述 sparse patterns）→ 同一份證明腳本，證明在任何 reader 之前（deploy-dev 緊接在 HEAD 身分 assert 之後）；比較端點時另拒絕 domain 在兩端不一致 |
 
-`protected_body_checkout_refusal` 的判定：HEAD 或 index 追蹤任何 domain entry 時，
-worktree 必須 `core.sparseCheckout=true`、非 cone、patterns 完全相同，且每個 index domain
-entry 都是 skip-worktree（`S`）並以 lstat 證明不在磁碟上；祖先為 symlink、metadata 無法讀取
-皆拒絕。root `tests/sources` 的 task `protected_paths` 拒絕（tracked 即拒絕）完全保留，sparse
+`protected_body_checkout_refusal` 的判定（全部只用 Git metadata 與 lstat）：
+
+1. HEAD tree 與 index 取聯集。HEAD 或 index 追蹤任何 domain entry（或 `require_sparse`）時，
+   worktree 必須 `core.sparseCheckout=true`、非 cone、patterns 完全相同。
+2. 同一 domain 路徑在 HEAD 與 index 必須是同一個 (mode, object)：只在 HEAD（從 index
+   移除、body 可能還在磁碟上）、只在 index、unmerged、object 或 mode 不同，一律以
+   `protected_body_drift` 拒絕。
+3. 每個 domain entry 都是 skip-worktree（`S`），並以 lstat 證明本身不在磁碟上；祖先為
+   symlink 亦拒絕。
+4. 以不帶任何 exclude 選項的 `git ls-files -z --others` 列出未追蹤名稱（Git 此時不開任何
+   `.gitignore`）；任何未追蹤的 domain entry（含 domain 內的 `.gitignore`）都以
+   `protected_body_present: ... is untracked domain content` 拒絕，`git status` 不會執行，
+   因此 status 不會走進 domain 目錄讀 ignore 檔。空目錄（例如 protected launch 的 mask
+   掛載點）沒有 body，不被列出也不拒絕。
+5. metadata 無法讀取一律拒絕，不當成「沒有東西」。
+
+root `tests/sources` 的 task `protected_paths` 拒絕（tracked 即拒絕）完全保留，sparse
 不會把原本拒絕的 task／ref 變成允許。
 
-**已知限制。** 這是對已知 metadata 命中路徑的保護，不是任意內容副本的證明。未追蹤的
-domain 目錄若含 `.gitignore`，Git status 走訪時仍會讀取該 ignore 檔（Git 行為）；該 entry
-會被列為 blocking dirt，但 ignore 檔本身已被讀取。
+**已知限制。** 這是對已知 metadata 命中路徑的保護，不是任意內容副本的證明。sparse
+bootstrap 只證明 working tree 上沒有 body，不證明沒有 Git object 存取；先前不受限的
+`git grep` 暴露仍為 UNKNOWN。被 `.gitignore` 忽略的目錄（例如 `.venv`、`node_modules`）
+內若有符合 domain 名稱的路徑，也會被拒絕（fail-closed），需人工確認。
 
 **採用後果（Root serial adoption 必讀）。** 在此規則之前建立、未設 sparse 的 worktree
 （包含既有 worker worktree、既有 runtime 目錄與 rollout `--source-root` checkout）若

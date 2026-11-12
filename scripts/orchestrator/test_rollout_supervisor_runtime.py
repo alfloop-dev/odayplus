@@ -926,6 +926,50 @@ class ProtectedRolloutPreflightTests(unittest.TestCase):
         self.assertFalse([command for command in commands if "status" in command])
         self.assertTrue((self.source / self.DOMAIN_COPY).is_file(), "refusal never deletes the copy")
 
+    def test_untracked_or_drifted_domain_entries_keep_source_and_reused_target_unclean(self) -> None:
+        """HEAD/index union and untracked names, on the source and on a reused runtime."""
+        self._enter_body_domain()
+        target = self.root / "runtime"
+        rollout.add_runtime_worktree(self.source, target, "runtime-live-dom", self.target_sha)
+        self.assertTrue(rollout.clean(target))
+        real_run = subprocess.run
+
+        def refused_without_status(repo: Path) -> None:
+            commands: list[list[str]] = []
+
+            def recording_run(args, *a, **kw):
+                commands.append(list(args))
+                return real_run(args, *a, **kw)
+
+            with mock.patch("subprocess.run", side_effect=recording_run):
+                self.assertFalse(rollout.clean(repo))
+            self.assertFalse([command for command in commands if "status" in command])
+            self.assertFalse([command for command in commands if any(f.startswith("--exclude") for f in command)])
+
+        # Reused target: an untracked .gitignore inside the domain that status would open.
+        ignore = target / "other" / "vault" / "copies" / ".gitignore"
+        ignore.parent.mkdir(parents=True)
+        ignore.write_text("hidden.ban\n", encoding="utf-8")
+        (ignore.parent / "hidden.ban").write_text("synthetic ignored\n", encoding="utf-8")
+        refused_without_status(target)
+        self.assertIn("untracked domain content", rollout.worktree_cleanliness.protected_body_checkout_refusal(target))
+        shutil.rmtree(target / "other")
+        self.assertTrue(rollout.clean(target))
+
+        # Reused target: the archived copy dropped from the index while its body is back.
+        rollout.git(target, "update-index", "--force-remove", self.DOMAIN_COPY)
+        (target / self.DOMAIN_COPY).parent.mkdir(parents=True, exist_ok=True)
+        (target / self.DOMAIN_COPY).write_text("synthetic leftover\n", encoding="utf-8")
+        refused_without_status(target)
+        self.assertIn("in HEAD but not in the index", rollout.worktree_cleanliness.protected_body_checkout_refusal(target))
+
+        # Source: an untracked domain entry beside an otherwise unremarkable checkout.
+        self._git("rm", "-q", "--cached", self.DOMAIN_COPY)
+        self._git("commit", "-q", "-m", "drop the synthetic copy from the tree")
+        self.assertTrue((self.source / self.DOMAIN_COPY).is_file())
+        refused_without_status(self.source)
+        self.assertIn("untracked domain content", rollout.worktree_cleanliness.protected_body_checkout_refusal(self.source))
+
     def test_failed_exclusion_or_proof_stops_before_or_after_materializing(self) -> None:
         self._enter_body_domain()
         with mock.patch.object(rollout.worktree_cleanliness, "install_protected_body_sparse", return_value="sparse_exclusion_failed: x"):

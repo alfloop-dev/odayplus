@@ -447,31 +447,123 @@ class ProtectedBodyDomainTests(SyntheticBodyDomain, unittest.TestCase):
             self.assertIsNone(wc.protected_body_tree_entries(worktree, self.commit))
         self.assertIsNone(wc.protected_body_tree_entries(worktree, ""))
 
-    def test_domain_dirt_blocks_and_binds_same_path_drift_without_opening_it(self) -> None:
-        worktree = self.prepared()
-        dirt = "other/guarded/zone/new.txt"
-        (worktree / dirt).parent.mkdir(parents=True)
-        (worktree / dirt).write_text("synthetic one\n", encoding="utf-8")
+    def _inspect_recording(self, worktree: Path, **kwargs: object) -> tuple[object, list[list[str]], list[str]]:
+        """inspect_worktree, recording every Git command and every Python open."""
+        commands: list[list[str]] = []
         opened: list[str] = []
+        real_run = subprocess.run
         real_open = Path.open
 
-        def recording_open(path, *args, **kwargs):
+        def recording_run(args, *a, **kw):
+            commands.append(list(args))
+            return real_run(args, *a, **kw)
+
+        def recording_open(path, *args, **kw):
             opened.append(str(path))
-            return real_open(path, *args, **kwargs)
+            return real_open(path, *args, **kw)
 
-        with mock.patch.object(Path, "open", recording_open):
-            first = inspect_worktree(worktree, materialized_paths=[dirt, "other"])
-        self.assertEqual(first.kind, "owner_dirty")
-        self.assertEqual(first.blocking_entries, (("??", dirt),))
-        self.assertFalse(any("guarded/zone" in name for name in opened))
+        with mock.patch.object(wc.subprocess, "run", side_effect=recording_run), \
+             mock.patch.object(Path, "open", recording_open):
+            inspection = inspect_worktree(worktree, **kwargs)
+        return inspection, commands, opened
 
-        os.utime(worktree / dirt, ns=(1, 1))
-        (worktree / dirt).write_text("synthetic two, longer\n", encoding="utf-8")
-        with mock.patch.object(Path, "open", recording_open):
-            second = inspect_worktree(worktree, materialized_paths=[dirt, "other"])
-        self.assertNotEqual(first.fingerprint, second.fingerprint)
-        self.assertFalse(any("guarded/zone" in name for name in opened))
-        self.assertFalse(wc.is_reusable_dirt_entry("??", dirt, None, frozenset({dirt})))
+    def test_untracked_domain_dirt_refuses_before_status_could_open_it(self) -> None:
+        """Untracked domain content blocks, and is never listed through an exclude file."""
+        cases = {
+            "nested body": ("other/guarded/zone/new.txt", "synthetic one\n"),
+            # Status would open this .gitignore to decide what to hide.
+            "domain .gitignore": ("other/guarded/zone/.gitignore", "hidden.ban\n"),
+            "root domain .gitignore": ("guarded/zone/.gitignore", "hidden.ban\n"),
+            "named asset": (f"other/{SYNTHETIC_NAME}.bak", "synthetic named\n"),
+        }
+        for label, (dirt, text) in cases.items():
+            with self.subTest(label=label):
+                if self.worktree.exists():
+                    git(self.seed, "worktree", "remove", "--force", str(self.worktree))
+                    git(self.seed, "branch", "-D", "task/x")
+                worktree = self.prepared()
+                (worktree / dirt).parent.mkdir(parents=True, exist_ok=True)
+                (worktree / dirt).write_text(text, encoding="utf-8")
+                (worktree / dirt).with_name("hidden.ban").write_text("synthetic ignored\n", encoding="utf-8")
+                inspection, commands, opened = self._inspect_recording(
+                    worktree, materialized_paths=[dirt, "other", "guarded"]
+                )
+                self.assertEqual(inspection.kind, "protected_metadata_refused")
+                self.assertIn("untracked domain content", inspection.detail)
+                self.assertFalse(inspection.handoff_clean)
+                self.assertEqual(inspection.fingerprint, "")
+                self.assertFalse([command for command in commands if "status" in command])
+                listings = [command for command in commands if "--others" in command]
+                self.assertEqual(len(listings), 1)
+                self.assertFalse([flag for flag in listings[0] if flag.startswith("--exclude")])
+                self.assertFalse(any("guarded/zone" in name or SYNTHETIC_NAME in name for name in opened))
+                self.assertTrue((worktree / dirt).is_file(), "refusal never deletes the dirt")
+                self.assertFalse(wc.is_reusable_dirt_entry("??", dirt, None, frozenset({dirt})))
+
+    def test_empty_domain_directory_is_no_body(self) -> None:
+        """An empty directory (a sandbox mask) holds nothing status could read."""
+        worktree = self.prepared()
+        (worktree / "guarded" / "zone").mkdir(parents=True)
+        self.assertIsNone(wc.protected_body_checkout_refusal(worktree, require_sparse=True))
+        self.assertEqual(inspect_worktree(worktree).kind, "clean")
+
+    def test_head_index_union_refuses_same_path_drift_without_opening_it(self) -> None:
+        other = git(self.seed, "rev-parse", f"{self.commit}:keep/tracked.txt")
+
+        def head_only(worktree: Path) -> None:
+            # Removed from the index while the body is back on disk: only HEAD names it.
+            git(worktree, "update-index", "--force-remove", NESTED_COPY)
+            (worktree / NESTED_COPY).parent.mkdir(parents=True, exist_ok=True)
+            (worktree / NESTED_COPY).write_text("synthetic leftover\n", encoding="utf-8")
+
+        def head_only_absent(worktree: Path) -> None:
+            git(worktree, "update-index", "--force-remove", NESTED_COPY)
+
+        def index_only(worktree: Path) -> None:
+            git(worktree, "update-index", "--add", "--cacheinfo", f"100644,{other},guarded/zone/staged.txt")
+
+        def object_drift(worktree: Path) -> None:
+            git(worktree, "update-index", "--cacheinfo", f"100644,{other},{NESTED_COPY}")
+
+        def mode_drift(worktree: Path) -> None:
+            blob = git(worktree, "rev-parse", f":{NESTED_COPY}")
+            git(worktree, "update-index", "--cacheinfo", f"100755,{blob},{NESTED_COPY}")
+
+        cases = {
+            "HEAD only, body on disk": (head_only, "in HEAD but not in the index"),
+            "HEAD only, absent": (head_only_absent, "in HEAD but not in the index"),
+            "index only": (index_only, "in the index but not in HEAD"),
+            "object drift": (object_drift, "differs between HEAD and the index"),
+            "mode drift": (mode_drift, "differs between HEAD and the index"),
+        }
+        for label, (damage, reason) in cases.items():
+            with self.subTest(label=label):
+                if self.worktree.exists():
+                    git(self.seed, "worktree", "remove", "--force", str(self.worktree))
+                    git(self.seed, "branch", "-D", "task/x")
+                worktree = self.prepared()
+                damage(worktree)
+                inspection, commands, opened = self._inspect_recording(worktree)
+                self.assertEqual(inspection.kind, "protected_metadata_refused")
+                self.assertIn("protected_body_drift", inspection.detail)
+                self.assertIn(reason, inspection.detail)
+                self.assertEqual(inspection.fingerprint, "")
+                self.assertFalse([command for command in commands if "status" in command])
+                self.assertFalse(any("guarded/zone" in name for name in opened))
+
+    def test_unmerged_domain_entry_refuses(self) -> None:
+        worktree = self.prepared()
+        blob = git(worktree, "rev-parse", f":{NESTED_COPY}")
+        entries = "".join(
+            f"100644 {blob} {stage}\t{NESTED_COPY}\n" for stage in (1, 2, 3)
+        )
+        git(worktree, "update-index", "--force-remove", NESTED_COPY)
+        subprocess.run(
+            ["git", "update-index", "--index-info"], cwd=worktree, input=entries.encode(), check=True
+        )
+        refusal = wc.protected_body_checkout_refusal(worktree)
+        self.assertIn("is unmerged in the index", refusal)
+        self.assertEqual(inspect_worktree(worktree).kind, "protected_metadata_refused")
 
     def test_context_paths_in_the_domain_are_refused_for_every_task(self) -> None:
         status = self.root / "status"

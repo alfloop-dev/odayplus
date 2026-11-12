@@ -244,26 +244,34 @@ def protected_body_checkout_refusal(
 ) -> str | None:
     """Why status, hashing or copying could touch a domain body here, if it could.
 
-    Runs before any of them, from configuration, index flags and ``lstat``
-    only.  Once HEAD or the index tracks a domain entry (or ``require_sparse``
-    is set), the worktree must carry exactly the domain's sparse patterns, and
-    every indexed domain entry must be skip-worktree and absent from disk.  An
-    unreadable answer refuses; it is never read as "nothing there".
+    Runs before any of them, from configuration, index flags, untracked names
+    and ``lstat`` only.  HEAD and the index are read as a union: once either
+    tracks a domain entry (or ``require_sparse`` is set), the worktree must
+    carry exactly the domain's sparse patterns, HEAD and the index must record
+    the same (mode, object) at every domain path, and every such entry must be
+    skip-worktree and absent from disk.  Untracked names are listed without any
+    exclude file, because status would open a ``.gitignore`` inside the domain;
+    any untracked domain entry refuses, whatever its kind.  An unreadable
+    answer refuses; it is never read as "nothing there".
     """
     prefixes = _domain_prefixes(prefixes)
     root = Path(worktree_path)
-    listed = _git_metadata(root, "ls-files", "-z", "-t", "--cached")
+    listed = _git_metadata(root, "ls-files", "-z", "-t", "--stage")
     if listed is None or listed.returncode != 0:
         return "unreadable_metadata: index"
-    indexed: list[tuple[str, str]] = []
+    indexed: dict[str, list[tuple[str, str, str, str]]] = {}
     for record in listed.stdout.split(b"\0"):
         if not record:
             continue
-        tag, _, name = record.partition(b" ")
+        header, _, name = record.partition(b"\t")
+        fields = header.decode("ascii", "replace").split()
+        if len(fields) != 4:
+            return "unreadable_metadata: index"
         path = os.fsdecode(name)
         if in_protected_body_domain(path, prefixes):
-            indexed.append((tag.decode("ascii", "replace"), path))
-    tracked: tuple[tuple[str, str, str], ...] = ()
+            tag, mode, object_id, stage = fields
+            indexed.setdefault(path, []).append((tag, mode, object_id, stage))
+    tracked: dict[str, tuple[str, str]] = {}
     born = _git_metadata(root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
     if born is None:
         return "unreadable_metadata: HEAD"
@@ -271,19 +279,28 @@ def protected_body_checkout_refusal(
         listing = protected_body_tree_entries(root, born.stdout.decode("ascii", "replace").strip(), prefixes)
         if listing is None:
             return "unreadable_metadata: HEAD tree"
-        tracked = listing
-    if not (indexed or tracked or require_sparse):
-        return None
-    if _git_flag(root, "core.sparseCheckout") != "true":
-        return "protected_body_not_excluded: sparse checkout is not enabled"
-    if _git_flag(root, "core.sparseCheckoutCone") != "false":
-        return "protected_body_not_excluded: sparse checkout is in cone mode"
-    patterns = _sparse_patterns(root)
-    if patterns is None:
-        return "unreadable_metadata: sparse patterns"
-    if patterns != list(protected_body_sparse_patterns(prefixes)):
-        return "protected_body_not_excluded: sparse patterns differ from the protected body domain"
-    for tag, path in indexed:
+        tracked = {path: (mode, object_id) for mode, object_id, path in listing}
+    if indexed or tracked or require_sparse:
+        if _git_flag(root, "core.sparseCheckout") != "true":
+            return "protected_body_not_excluded: sparse checkout is not enabled"
+        if _git_flag(root, "core.sparseCheckoutCone") != "false":
+            return "protected_body_not_excluded: sparse checkout is in cone mode"
+        patterns = _sparse_patterns(root)
+        if patterns is None:
+            return "unreadable_metadata: sparse patterns"
+        if patterns != list(protected_body_sparse_patterns(prefixes)):
+            return "protected_body_not_excluded: sparse patterns differ from the protected body domain"
+    for path in sorted(set(indexed) | set(tracked)):
+        stages = indexed.get(path, [])
+        if not stages:
+            return f"protected_body_drift: {path} is in HEAD but not in the index"
+        if len(stages) != 1 or stages[0][3] != "0":
+            return f"protected_body_drift: {path} is unmerged in the index"
+        tag, mode, object_id, _stage = stages[0]
+        if path not in tracked:
+            return f"protected_body_drift: {path} is in the index but not in HEAD"
+        if (mode, object_id) != tracked[path]:
+            return f"protected_body_drift: {path} differs between HEAD and the index"
         if tag != "S":
             return f"protected_body_materialized: {path} is not skip-worktree ({tag})"
         for candidate in [*_ancestors(path), path]:
@@ -299,6 +316,14 @@ def protected_body_checkout_refusal(
                 return f"protected_body_present: {candidate} is a symlink above {path}"
             if not stat.S_ISDIR(metadata.st_mode):
                 break
+    # No --exclude-standard: Git then opens no .gitignore while it lists.
+    untracked = _git_metadata(root, "ls-files", "-z", "--others")
+    if untracked is None or untracked.returncode != 0:
+        return "unreadable_metadata: untracked entries"
+    for record in untracked.stdout.split(b"\0"):
+        path = os.fsdecode(record)
+        if record and in_protected_body_domain(path, prefixes):
+            return f"protected_body_present: {path} is untracked domain content"
     return None
 
 

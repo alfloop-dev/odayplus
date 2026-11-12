@@ -4816,13 +4816,26 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
             self.assertNotIn(reassigned_owner_2, {"Antigravity", "Antigravity2"})
             self.assertEqual(reassigned_owner_2, "Antigravity3")
 
+    def _synthetic_worktree(self) -> Path:
+        """A real, empty Git checkout under this test's tmpdir.
+
+        Its index, HEAD and untracked listing are genuine metadata that hold no
+        protected body domain entry, so the shared guard is satisfied by proof,
+        not by a mock; HEAD, dirt and operation state stay mocked per case.
+        """
+        path = Path(self.tmpdir.name) / "test-worktree"
+        path.mkdir()
+        subprocess.run(["git", "init", "-q", str(path)], check=True, capture_output=True)
+        return path
+
     def test_same_dirty_fingerprint_redispatch_and_handoff_bounds(self) -> None:
         """Verify unsealed handoff recording, same dirty fingerprint redispatch, and rejection boundaries."""
         state: dict[str, Any] = {"worker_worktrees": {"handoff_blocks": {}}}
+        fake_path = self._synthetic_worktree()
         worker = {
             "run_id": "run-dirty-001",
             "task_id": "TASK-DIRTY-001",
-            "workspace_path": "/tmp/test-worktree",
+            "workspace_path": str(fake_path),
             "workspace_branch": "task/TASK-DIRTY-001",
         }
         task = {"id": "TASK-DIRTY-001", "owner": "Antigravity7", "status": "in_progress"}
@@ -4848,7 +4861,6 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
             message="wake",
             reason="owned_in_progress_dispatch",
         )
-        fake_path = Path("/tmp/test-worktree")
         mock_insp = mock.Mock(kind="owner_dirty", fingerprint="fingerprint-xyz-123")
         with (
             mock.patch.object(worktree_cleanliness, "inspect_worktree", return_value=mock_insp),
@@ -4906,13 +4918,40 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
             self.assertFalse(allowed)
             self.assertEqual(detail, "dirt_changed")
 
+        # 4. Same owner, same HEAD and dirt, but untracked protected body domain
+        #    content (synthetic namespace) in the checkout -> refused by metadata
+        domain = fake_path / "archive" / "guarded" / "zone" / ".gitignore"
+        domain.parent.mkdir(parents=True)
+        domain.write_text("synthetic\n", encoding="utf-8")
+        with (
+            mock.patch.object(worktree_cleanliness, "PROTECTED_BODY_PREFIXES", ("guarded/zone",)),
+            mock.patch.object(worktree_cleanliness, "inspect_worktree", return_value=mock_insp),
+            mock.patch.object(worker_workspace, "inspect_worktree", return_value=mock_insp),
+            mock.patch.object(worker_workspace, "_git_commit_oid", return_value="a" * 40),
+            mock.patch.object(worker_workspace, "_git_operation_in_progress", return_value=False),
+            mock.patch.object(supervisor, "_git_commit_oid", return_value="a" * 40),
+            mock.patch.object(supervisor, "_git_operation_in_progress", return_value=False),
+        ):
+            allowed, detail = worker_workspace.sealed_owner_continuation_allowed(
+                self.config,
+                state,
+                req_same_owner,
+                task,
+                target_agent="Antigravity7",
+                worktree_path=fake_path,
+                branch="task/TASK-DIRTY-001",
+            )
+            self.assertFalse(allowed)
+            self.assertEqual(detail, "protected_metadata_refused")
+
     def test_repeated_unsealed_handoff_rejection_exhaustion(self) -> None:
         """Verify repeated unsealed handoffs increment rejection_count and halt when exceeding bounds."""
         state: dict[str, Any] = {"worker_worktrees": {"handoff_blocks": {}}}
+        fake_path = self._synthetic_worktree()
         worker = {
             "run_id": "run-dirty-001",
             "task_id": "TASK-DIRTY-BOUND-001",
-            "workspace_path": "/tmp/test-worktree",
+            "workspace_path": str(fake_path),
             "workspace_branch": "task/TASK-DIRTY-BOUND-001",
         }
         task = {"id": "TASK-DIRTY-BOUND-001", "owner": "Antigravity7", "status": "in_progress"}
@@ -4936,7 +4975,6 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
             message="wake",
             reason="owned_in_progress_dispatch",
         )
-        fake_path = Path("/tmp/test-worktree")
         mock_insp = mock.Mock(kind="owner_dirty", fingerprint="fingerprint-abc-456")
         with (
             mock.patch.object(worktree_cleanliness, "inspect_worktree", return_value=mock_insp),
