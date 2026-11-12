@@ -117,9 +117,13 @@ This deletes the `dev-merge-queue` ruleset and re-applies classic protection
 with `strict` forced back to `true` on every branch, which is the pre-queue
 configuration. Nothing else has to be reverted:
 
-* `.orchestrator/github_bus.py` automatically arms auto-merge with
-  `gh pr merge --auto --merge`, which GitHub handles as direct auto-merge when
-  no queue is active and as queue enqueue when the queue is active.
+* The supervisor's single admission path (see "Who admits a PR" below)
+  issues `gh pr merge --auto --merge`, which GitHub handles as protected
+  direct auto-merge when no queue is active and as queue enqueue when the
+  queue is active. The queue probe is cached per supervisor process, so
+  restart the supervisor after a rollback for CI-green PRs to take the
+  no-queue route; until then they keep using `--auto --merge`, which is still
+  valid on a base without a queue.
 * The `merge_group` triggers in `ci.yml` and `merge-queue-review-gate.yml` are
   inert once nothing emits `merge_group` events.
 
@@ -135,6 +139,101 @@ JSON
 
 PRs already sitting in the queue are dequeued when the queue is deleted; they
 stay open and can be merged directly again.
+
+## Who admits a PR
+
+Approved task PRs have exactly one admission owner:
+`dispatch_ready_tasks` -> `advance_approved_prs_to_merge` ->
+`route_approved_pr_to_merge` in `.orchestrator/dispatch_engine.py`. The GitHub
+bus (`sync_github_bus` -> `sync_outbound`) used to issue its own
+`gh pr merge --auto --merge` every poll as well, with no window or attempt
+cap; it now only projects the dispatcher's record into bus state
+(`auto_merge.owner = dispatch_engine.route_approved_pr_to_merge`) and makes no
+GitHub call for task PRs. Archive housekeeping PRs
+(`task/OPS-ARCHIVE-AUTO-COMMIT-*`) have no canonical task, so the bus still
+arms those through the same `issue_pr_merge_admission` helper.
+
+Each tick, for a `review_approved` task whose CI is green - or still running,
+when `branch_workflow.task_pr.auto_merge` is on - the route:
+
+1. **Reads back the PR** in the task's repository and refuses (`blocked`, no
+   mutation) unless it is OPEN, targets the task base, comes from a branch
+   naming the task, and its head is exactly `approved_head`. A moved head is
+   unreviewed work and needs its own review. An unreadable PR or unreadable
+   queue enrollment is `unknown`: nothing is issued and it is never treated
+   as "not queued". "Not queued" must be stated, not inferred: the GraphQL
+   node has to name the same PR number, head, base and source branch as the
+   PR read just before it (a PR retargeted between the two reads is not this
+   one), and read OPEN,
+   `merged: false`, `isInMergeQueue: false` and a null `mergeQueueEntry`. A
+   missing field, a contradiction (an entry beside `isInMergeQueue: false`,
+   `state` and `merged` disagreeing) or another PR, head, base or branch is
+   `unknown`. The GraphQL node carries no arming state, so "not admitted"
+   also needs the PR view to say nothing is armed: an explicit null
+   `autoMergeRequest`. A view without that field, or with anything other
+   than null or GitHub's object, has not reported arming and is `unknown`
+   before the mutation (nothing is issued) and in the step 6 readback
+   (`unconfirmed`, attempt kept - never a refusal that refunds it).
+2. **Does not re-issue** when GitHub already reports the PR armed
+   (`autoMergeRequest`) or queued (`isInMergeQueue`); that observation is
+   recorded with zero attempts. Armed and queued are held to the same whole
+   answer as "not queued": only an OPEN PR holds a pending admission, so an
+   `autoMergeRequest` on a PR view that is not OPEN, or `isInMergeQueue: true`
+   on a node that is not OPEN with `merged: false` and a present (null or
+   populated) `mergeQueueEntry`, is `unknown` - neither recorded as admitted
+   nor read as absence. An OPEN, unmerged node with the flag set is queued
+   whether or not GitHub has filled in the entry detail yet. The same rule
+   classifies the step 6 readback.
+3. **Bounds retries** on `task.merge_route` for that exact head: no re-issue
+   within 30 minutes of the last one, and no more than four admissions
+   (`stalled` is reported instead). The counter belongs to the head, not to
+   the tree; a new head starts a new record only after a new review.
+4. **Reserves the attempt first.** The incremented `merge_route` is committed
+   through the canonical revision CAS (`commit_canonical_task_transition`)
+   before `gh` is called. A rejected (stale) write reloads status and issues
+   nothing that tick, so a concurrent writer cannot make an admission the
+   counter does not know about. A committed write is not yet permission:
+   the writer syncs and reloads after releasing its lock, and a reviewer
+   reopen, a newly approved head, a retargeted PR/base/repository or a task
+   leaving its approved state may be recorded in between. The reloaded task
+   must still be the same task, repository, PR, base and approved head and
+   still carry this reservation; otherwise nothing is issued and nothing
+   stale is written back over the other writer's record (the committed
+   attempt stays counted only if that record kept it). An offline mutation
+   keeps the attempt because its outcome is unknown. Any other failed
+   mutation is read back (step 6) before it is called a refusal - a 5xx or a
+   dropped response can arrive after GitHub applied it: if GitHub shows the PR armed, queued or
+   merged, that is the outcome; only a whole `not_admitted` readback restores
+   the previous record (a definite refusal, retried next tick); anything it
+   cannot settle is `unconfirmed` and keeps the counted attempt. A failed
+   undraft is a refusal too, since no admission was issued after it.
+5. **Issues one command**: `gh pr merge --auto --merge` (queue enqueue, or
+   protected auto-merge on a base without a queue), or `gh pr merge --merge`
+   only for a repository without a queue whose checks are already green and
+   whose PR GitHub reports immediately mergeable (`CLEAN`, `HAS_HOOKS` or
+   `UNSTABLE`, as `gh` itself defines it). A green PR still `BLOCKED` by a
+   required review or rule, `BEHIND` under strict protection, or in draft is
+   armed with `--auto --merge`, so GitHub merges it once protection is met.
+   A draft is marked ready first on either route. Never `--admin`.
+6. **Reads back again** and records `queued`, `armed`, `merged`, or
+   `unconfirmed`. A zero exit alone is never recorded as queued or merged;
+   `unconfirmed` still counts toward the window and the cap. The readback is
+   bound to the head, base and branch checked in step 1: if any of them moved
+   in between - in the PR view or in the GraphQL queue node - the answer
+   belongs to another PR state and is recorded as
+   `unconfirmed`, never as the approved head's `queued`/`armed`/`merged`; the
+   next tick's step 1 then refuses a moved head or base, and anything still
+   passing step 1 stays under the same window and cap. Base and branch are
+   compared exactly, because git refs are case-sensitive (`dev` -> `DEV` is
+   another base); only the hex head SHA is compared without case. Archive
+   housekeeping PRs go through the same readers and the same binding.
+
+Bounded recovery: a task reported `stalled` or `unconfirmed` is not retried
+past the cap - look at the PR's queue entry and required checks. Clearing
+`merge_route` by hand is not the recovery; it erases the counter that keeps
+the retry bounded. A queue ejection (the PR conflicts with `dev` after an
+earlier merge) returns the task to its owner to advance the base and be
+reviewed again.
 
 ## Verify
 
@@ -152,6 +251,6 @@ is `false`.
 |---|---|---|
 | Every queued PR is ejected after ~60 min | a required context is not reporting on `merge_group` | check the PR's `merge_group` workflow runs; confirm the triggers in `ci.yml` and `merge-queue-review-gate.yml` |
 | `gh pr merge` fails with a merge-queue error | a caller is still merging directly | that caller needs the `--auto` enqueue path |
-| Queue merges nothing while PRs sit "ready to merge" | nothing is enqueueing them | `.orchestrator/github_bus.py` auto-merge processing is not running |
+| Queue merges nothing while PRs sit "ready to merge" | nothing is enqueueing them | check the task's `merge_route` and `next`: `blocked` / `unknown` / `stalled` say why; the dispatcher stage (`dispatch_ready_tasks`) must be running - it is skipped while watchdog safe mode, discussion planning, or a dirty control plane holds dispatch |
 | PRs still report `BEHIND` | `strict` is still on for `dev` | re-apply the policy; see "`strict` must be off on `dev`" above |
 | Queue must go away now | any of the above, unresolved | run the rollback above |

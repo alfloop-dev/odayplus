@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import inspect
 import json
 import subprocess
 import sys
@@ -2048,6 +2049,7 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
     TASK_ID = "ODP-ORCH-REVIEWBUS-AUTOMERGE-001"
     BRANCH = "task/ODP-ORCH-REVIEWBUS-AUTOMERGE-001"
     REPO = "alfloop-dev/odayplus"
+    HEAD_SHA = "a" * 40
 
     def test_pr_publish_and_auto_merge_have_one_owner_each(self) -> None:
         root = Path(github_bus.__file__).resolve().parents[1]
@@ -2057,10 +2059,51 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         )
 
         self.assertNotIn('["pr", "create"', bus_source)
-        self.assertEqual(bus_source.count('run_gh(["pr", "merge"'), 1)
+        # Every `gh pr merge` command - the queue/auto admission and the
+        # dispatcher's direct merge on a base without a queue - is built in the
+        # one helper that issues it and reads it back; nothing else in the bus
+        # or the dispatcher issues one.
+        mutation_owner = inspect.getsource(github_bus.issue_pr_merge_admission)
+        self.assertEqual(bus_source.count('["pr", "merge"'), mutation_owner.count('["pr", "merge"'))
+        self.assertEqual(mutation_owner.count("run_gh(command)"), 1)
+        dispatch_source = (root / ".orchestrator/dispatch_engine.py").read_text(encoding="utf-8")
+        self.assertNotIn('"pr", "merge"', dispatch_source)
         self.assertNotIn(" --auto", finalize_source)
         self.assertFalse((root / ".orchestrator/auto_merge_green_prs.py").exists())
         self.assertFalse((root / ".orchestrator/auto-merge-guard.sh").exists())
+
+    def test_admission_readback_matches_branch_refs_exactly(self) -> None:
+        """The readback identity is the PR as checked: the head SHA is hex and
+        compares case-insensitively, but base and source branch are git refs
+        and a case-only change names another ref."""
+
+        checked = {
+            "number": 77,
+            "state": "OPEN",
+            "baseRefName": "dev",
+            "headRefName": self.BRANCH,
+            "headRefOid": self.HEAD_SHA,
+        }
+        cases = {
+            "same": ({}, True),
+            "head sha case": ({"headRefOid": self.HEAD_SHA.upper()}, True),
+            "base case": ({"baseRefName": "DEV"}, False),
+            "branch case": ({"headRefName": "Task/ODP-ORCH-REVIEWBUS-AUTOMERGE-001"}, False),
+            "branch lowered": ({"headRefName": self.BRANCH.lower()}, False),
+            "other base": ({"baseRefName": "main"}, False),
+            "other branch": ({"headRefName": "task/ODP-OTHER-001"}, False),
+            "other head": ({"headRefOid": "b" * 40}, False),
+            "missing base": ({"baseRefName": None}, False),
+        }
+        for name, (overrides, admitted) in cases.items():
+            with self.subTest(name):
+                answer = {**checked, **overrides}
+                with mock.patch.object(github_bus, "gh_json", return_value=answer):
+                    readback = github_bus.read_pr_merge_admission(self.REPO, 77, expected=checked)
+                if admitted:
+                    self.assertEqual(readback, answer)
+                else:
+                    self.assertIsNone(readback)
 
     def _config(self, *, auto_merge: bool = True) -> dict:
         return {
@@ -2111,11 +2154,29 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
             "autoMergeRequest": None,
             "baseRefName": "dev",
             "headRefName": self.BRANCH,
+            "headRefOid": self.HEAD_SHA,
             "url": f"https://github.com/{self.REPO}/pull/700",
             "mergeStateStatus": "BLOCKED",
         }
         pr.update(overrides)
         return pr
+
+    @staticmethod
+    def _graphql_node(target: dict) -> dict:
+        """The whole node `PR_MERGE_QUEUE_GRAPHQL_QUERY` asks GitHub for."""
+
+        merged = str(target.get("state") or "").upper() == "MERGED"
+        return {
+            "number": target.get("number", 700),
+            "state": target.get("state", "OPEN"),
+            "merged": merged,
+            "mergedAt": "2026-09-01T00:00:00Z" if merged else None,
+            "baseRefName": target.get("baseRefName"),
+            "headRefName": target.get("headRefName"),
+            "headRefOid": target.get("headRefOid"),
+            "isInMergeQueue": bool(target.get("isInMergeQueue")),
+            "mergeQueueEntry": target.get("mergeQueueEntry"),
+        }
 
     def _arm(
         self,
@@ -2124,7 +2185,12 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         bus_state: dict | None = None,
         run_gh_side_effect=None,
         readback: dict | None = None,
+        graphql_before: dict | None = None,
+        graphql_after: dict | None = None,
     ):
+        """`graphql_before`/`graphql_after` override fields of the GraphQL node
+        alone, before and after the first mutation, for a queue answer that
+        no longer agrees with the PR view."""
         bus_state = bus_state if bus_state is not None else self._bus_state()
         view_calls = 0
         run_gh_calls = []
@@ -2154,17 +2220,9 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
                 target = readback if (run_gh_calls and readback is not None) else pr
                 if target is None:
                     return None
-                return {
-                    "data": {
-                        "repository": {
-                            "pullRequest": {
-                                "number": target.get("number", 700),
-                                "isInMergeQueue": bool(target.get("isInMergeQueue")),
-                                "mergeQueueEntry": target.get("mergeQueueEntry"),
-                            }
-                        }
-                    }
-                }
+                node = self._graphql_node(target)
+                node.update((graphql_after if run_gh_calls else graphql_before) or {})
+                return {"data": {"repository": {"pullRequest": node}}}
             return None
 
         with (
@@ -2206,6 +2264,7 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
             "autoMergeRequest",
             "baseRefName",
             "headRefName",
+            "headRefOid",
             "url",
             "mergeStateStatus",
         }
@@ -2426,6 +2485,64 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         self.assertEqual(second_log.call_count, 0)
         self.assertEqual(entry["auto_merge"]["state"], "failed")
 
+    def test_queue_answer_for_another_base_or_branch_is_not_this_pr(self) -> None:
+        """The GraphQL node is held to the PR view's base and source branch too.
+        Before the mutation a mismatch is unknown and nothing is issued; after
+        it, a queued answer for a retargeted PR is not this PR's admission."""
+        queued = {"isInMergeQueue": True, "mergeQueueEntry": {"position": 1, "state": "QUEUED"}}
+        for name, moved in {
+            "another base": {"baseRefName": "main"},
+            "base case": {"baseRefName": "DEV"},
+            "another branch": {"headRefName": "task/ODP-OTHER-001"},
+            "base missing": {"baseRefName": None},
+        }.items():
+            with self.subTest(name):
+                _c, entry, run_gh, _l, _g = self._arm(self._pr(isDraft=False), graphql_before=moved)
+                self.assertEqual(self._gh_calls(run_gh), [])
+                self.assertEqual(entry["auto_merge"]["state"], "skipped_queue_unreadable")
+
+                _c, entry, run_gh, _l, _g = self._arm(
+                    self._pr(isDraft=False), graphql_after={**queued, **moved}
+                )
+                self.assertEqual([c[:2] for c in self._gh_calls(run_gh)], [["pr", "merge"]])
+                self.assertEqual(entry["auto_merge"]["state"], "failed")
+                self.assertEqual(entry["auto_merge"]["failure_code"], "auto_merge_unconfirmed_readback")
+
+        # The same queued answer on the checked base and branch is the admission.
+        _c, entry, _r, _l, _g = self._arm(self._pr(isDraft=False), graphql_after=queued)
+        self.assertEqual(entry["auto_merge"]["state"], "queued")
+
+    def test_a_failed_mutation_is_settled_by_its_readback(self) -> None:
+        """A nonzero `gh pr merge` is not proof GitHub applied nothing. Its
+        readback decides: armed is armed, a whole `not_admitted` is the
+        refusal, and anything unsettled is an unconfirmed retry - never the
+        error recorded as if nothing happened, never an admission."""
+        bad_gateway = github_bus.GitHubBusError("HTTP 502: Bad Gateway (https://api.github.com/graphql)")
+
+        def merge_fails(args, **_kwargs):
+            if args[:2] == ["pr", "merge"]:
+                raise bad_gateway
+            return subprocess.CompletedProcess(["gh"], 0, "", "")
+
+        _c, entry, _r, log, _g = self._arm(
+            self._pr(isDraft=False),
+            run_gh_side_effect=merge_fails,
+            readback=self._pr(isDraft=False, autoMergeRequest={"enabledAt": "2026-09-01T00:00:00Z"}),
+        )
+        self.assertEqual(entry["auto_merge"]["state"], "enabled")
+        self.assertEqual(log.call_args.args[1]["type"], "github_auto_merge_enabled")
+
+        _c, entry, _r, _l, _g = self._arm(
+            self._pr(isDraft=False), run_gh_side_effect=merge_fails, graphql_after={"state": None}
+        )
+        self.assertEqual(entry["auto_merge"]["state"], "failed")
+        self.assertEqual(entry["auto_merge"]["failure_code"], "auto_merge_unconfirmed_readback")
+
+        _c, entry, _r, _l, _g = self._arm(self._pr(isDraft=False), run_gh_side_effect=merge_fails)
+        self.assertEqual(entry["auto_merge"]["state"], "failed")
+        self.assertNotIn("failure_code", entry["auto_merge"])
+        self.assertIn("502", entry["auto_merge"]["message"])
+
     def test_zero_exit_without_armed_readback_fails_closed_and_retries(self) -> None:
         bus_state = self._bus_state()
 
@@ -2625,6 +2742,56 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         )
         self.assertEqual(log.call_args.args[1]["type"], "github_auto_merge_queued")
 
+    def test_contradictory_queued_node_is_not_queued_before_or_after_arming(self) -> None:
+        """A queue flag counts only on a node that is OPEN and unmerged.
+        Before arming a contradictory node is unknown and nothing is issued;
+        after arming it does not confirm the mutation."""
+        contradictions = {
+            "CLOSED, merged false": {"state": "CLOSED"},
+            "state null, merged false": {"state": None},
+            "OPEN, merged null": {"merged": None},
+        }
+        for name, contradiction in contradictions.items():
+            for entry in (None, {"position": 1, "state": "AWAITING_CHECKS"}):
+                node = {**contradiction, "isInMergeQueue": True, "mergeQueueEntry": entry}
+                with self.subTest(node=name, entry=entry, read="before"):
+                    _c, record, run_gh, _l, _g = self._arm(self._pr(isDraft=False), graphql_before=node)
+                    self.assertEqual(self._gh_calls(run_gh), [])
+                    self.assertEqual(record["auto_merge"]["state"], "skipped_queue_unreadable")
+
+                with self.subTest(node=name, entry=entry, read="after"):
+                    _c, record, run_gh, _l, _g = self._arm(self._pr(isDraft=False), graphql_after=node)
+                    self.assertEqual([c[:2] for c in self._gh_calls(run_gh)], [["pr", "merge"]])
+                    self.assertEqual(record["auto_merge"]["state"], "failed")
+                    self.assertEqual(record["auto_merge"]["failure_code"], "auto_merge_unconfirmed_readback")
+
+    def test_auto_merge_request_on_a_closed_readback_is_not_enabled(self) -> None:
+        """Same PR, same identity, CLOSED, still carrying `autoMergeRequest`:
+        not armed, whether `gh pr merge` exited zero or failed. A failed
+        mutation is not reported as refused either - the readback is not a
+        whole statement that GitHub holds nothing."""
+        closed_armed = self._pr(
+            isDraft=False, state="CLOSED", autoMergeRequest={"enabledAt": "2026-09-01T00:00:00Z"}
+        )
+        for name, side_effect in {
+            "zero exit": None,
+            "failed exit": github_bus.GitHubBusError("HTTP 502: Bad Gateway"),
+        }.items():
+            with self.subTest(name):
+                _c, record, run_gh, _l, gh_json = self._arm(
+                    self._pr(isDraft=False), readback=closed_armed, run_gh_side_effect=side_effect
+                )
+                self.assertEqual([c[:2] for c in self._gh_calls(run_gh)], [["pr", "merge"]])
+                self.assertEqual(record["auto_merge"]["state"], "failed")
+                self.assertEqual(record["auto_merge"]["failure_code"], "auto_merge_unconfirmed_readback")
+
+        # The OPEN PR carrying the same request is armed.
+        _c, record, _r, _l, _g = self._arm(
+            self._pr(isDraft=False),
+            readback=self._pr(isDraft=False, autoMergeRequest={"enabledAt": "2026-09-01T00:00:00Z"}),
+        )
+        self.assertEqual(record["auto_merge"]["state"], "enabled")
+
     def test_offline_propagates_for_bus_backoff(self) -> None:
         """Offline is the bus's own signal; swallowing it would hide the outage."""
 
@@ -2634,7 +2801,9 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
                 run_gh_side_effect=github_bus.GitHubBusOffline("no such host"),
             )
 
-    def _sync_and_capture_armed(self, tasks: list[dict], *, auto_merge: bool = True) -> list[str]:
+    def _sync_and_capture_armed(
+        self, tasks: list[dict], *, auto_merge: bool = True, bus_state: dict | None = None
+    ) -> list[str]:
         armed: list[str] = []
         config = self._config(auto_merge=auto_merge)
         config["github_bus"]["repo"] = self.REPO
@@ -2651,22 +2820,103 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
                 "sync_archive_housekeeping_auto_merge",
                 return_value=False,
             ),
+            mock.patch.object(github_bus, "run_gh") as run_gh,
+            mock.patch.object(github_bus, "gh_json") as gh_json,
             mock.patch.object(github_bus, "write_activity_log"),
         ):
-            github_bus.sync_outbound(config, {"tasks": {}}, {"tasks": tasks, "blockers": []}, {}, self.REPO)
+            github_bus.sync_outbound(
+                config,
+                bus_state if bus_state is not None else {"tasks": {}},
+                {"tasks": tasks, "blockers": []},
+                {},
+                self.REPO,
+            )
+        # Projection is read-only toward GitHub: not even a readback.
+        run_gh.assert_not_called()
+        gh_json.assert_not_called()
         return armed
 
-    def test_sync_outbound_arms_approved_tasks_only(self) -> None:
+    def test_sync_outbound_never_arms_canonical_tasks(self) -> None:
+        """Admission of an approved task belongs to the dispatcher route, which
+        keeps the exact-head window and attempt cap under canonical CAS. A bus
+        mutation beside it is a second owner with no counter."""
         in_review = self._task("review")
         in_review["id"] = "ODP-STILL-IN-REVIEW-001"
 
+        for auto_merge in (True, False):
+            with self.subTest(auto_merge=auto_merge):
+                self.assertEqual(
+                    self._sync_and_capture_armed(
+                        [self._task("review_approved"), in_review], auto_merge=auto_merge
+                    ),
+                    [],
+                )
+
+    def test_sync_outbound_projects_the_dispatcher_record_for_approved_tasks(self) -> None:
+        approved = self._task("review_approved")
+        approved.update(
+            {
+                "pr_number": 700,
+                "approved_head": "a" * 40,
+                "merge_route": {
+                    "head": "a" * 40,
+                    "route": "queued",
+                    "pr_number": 700,
+                    "at": "2026-11-11T00:00:00Z",
+                    "attempts": 2,
+                },
+            }
+        )
+        in_review = self._task("review")
+        in_review["id"] = "ODP-STILL-IN-REVIEW-001"
+        bus_state = self._bus_state()
+
+        self._sync_and_capture_armed([approved, in_review], bus_state=bus_state)
+
+        projected = bus_state["tasks"][self.TASK_ID]["auto_merge"]
+        self.assertEqual(projected["state"], "queued")
+        self.assertEqual(projected["attempts"], 2)
+        self.assertEqual(projected["head"], "a" * 40)
+        self.assertEqual(projected["owner"], "dispatch_engine.route_approved_pr_to_merge")
+        self.assertNotIn("ODP-STILL-IN-REVIEW-001", bus_state["tasks"])
+
+        # Unchanged record: no rewrite, so no churn in bus state.
+        before = dict(projected)
+        self.assertFalse(github_bus.project_task_merge_admission(bus_state, approved))
+        self.assertEqual(bus_state["tasks"][self.TASK_ID]["auto_merge"], before)
+
+    def test_an_unrouted_approved_task_is_projected_as_awaiting_the_dispatcher(self) -> None:
+        bus_state = self._bus_state()
+        approved = self._task("review_approved")
+
+        self.assertTrue(github_bus.project_task_merge_admission(bus_state, approved))
         self.assertEqual(
-            self._sync_and_capture_armed([self._task("review_approved"), in_review]),
-            [self.TASK_ID],
+            bus_state["tasks"][self.TASK_ID]["auto_merge"]["state"], "awaiting_dispatcher"
         )
 
-    def test_sync_outbound_respects_the_config_switch(self) -> None:
-        self.assertEqual(self._sync_and_capture_armed([self._task()], auto_merge=False), [])
+    def test_unknown_queue_enrollment_is_not_rearmed(self) -> None:
+        """None from GraphQL is unknown, not "not queued"."""
+
+        def run_gh_side_effect(args, **kwargs):
+            return subprocess.CompletedProcess(["gh"], 0, "", "")
+
+        pr = self._pr(isDraft=False)
+        bus_state = self._bus_state()
+        with (
+            mock.patch.object(
+                github_bus,
+                "gh_json",
+                side_effect=lambda args, **_k: dict(pr) if args[:2] == ["pr", "view"] else None,
+            ),
+            mock.patch.object(github_bus, "run_gh", side_effect=run_gh_side_effect) as run_gh,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            github_bus.enable_review_pr_auto_merge(self._config(), bus_state, self.REPO, self._task())
+
+        run_gh.assert_not_called()
+        self.assertEqual(
+            bus_state["tasks"][self.TASK_ID]["auto_merge"]["state"], "skipped_queue_unreadable"
+        )
 
     def test_auto_merge_statuses_track_the_finalize_gate(self) -> None:
         config = {"ready_dispatcher": {"finalize_statuses": ["approved"]}}
@@ -2693,6 +2943,7 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
             "isDraft": False,
             "baseRefName": "dev",
             "headRefName": head,
+            "headRefOid": "b" * 40,
             "url": url,
             "mergeStateStatus": "BLOCKED",
         }
@@ -2706,7 +2957,7 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
             if args[:2] == ["pr", "view"]:
                 return next(view_readbacks)
             if args[:2] == ["api", "graphql"]:
-                return {"data": {"repository": {"pullRequest": {"number": 812, "isInMergeQueue": False, "mergeQueueEntry": None}}}}
+                return {"data": {"repository": {"pullRequest": self._graphql_node(listed)}}}
             return None
 
         bus_state: dict = {}
@@ -2728,6 +2979,144 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         self.assertIn("--auto", self._gh_calls(run_gh)[0])
         entry = bus_state["housekeeping_prs"][head]
         self.assertEqual(entry["auto_merge"]["state"], "enabled")
+
+    def _housekeeping_round(self, viewed: list[dict], node) -> tuple[list[list[str]], dict]:
+        """One real `sync_archive_housekeeping_auto_merge` pass: `viewed` are
+        the successive `gh pr view` answers, `node(listed)` the GraphQL node."""
+
+        head = "task/OPS-ARCHIVE-AUTO-COMMIT-20260814T120000Z"
+        listed = dict(viewed[0])
+        view_readbacks = iter(viewed)
+
+        def fake_gh_json(args: list[str]):
+            if args[:2] == ["pr", "list"]:
+                return [listed]
+            if args[:2] == ["pr", "view"]:
+                return next(view_readbacks)
+            if args[:2] == ["api", "graphql"]:
+                return {"data": {"repository": {"pullRequest": node(listed)}}}
+            return None
+
+        bus_state: dict = {}
+        with (
+            mock.patch.object(github_bus, "gh_json", side_effect=fake_gh_json),
+            mock.patch.object(
+                github_bus,
+                "run_gh",
+                return_value=subprocess.CompletedProcess(["gh"], 0, "", ""),
+            ) as run_gh,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            github_bus.sync_archive_housekeeping_auto_merge(self._config(), bus_state, self.REPO)
+        return self._gh_calls(run_gh), bus_state["housekeeping_prs"][head]["auto_merge"]
+
+    def _housekeeping_pr(self, **overrides) -> dict:
+        pr = {
+            "number": 812,
+            "state": "OPEN",
+            "isDraft": False,
+            "autoMergeRequest": None,
+            "baseRefName": "dev",
+            "headRefName": "task/OPS-ARCHIVE-AUTO-COMMIT-20260814T120000Z",
+            "headRefOid": "b" * 40,
+            "url": f"https://github.com/{self.REPO}/pull/812",
+            "mergeStateStatus": "BLOCKED",
+        }
+        pr.update(overrides)
+        return pr
+
+    def test_archive_housekeeping_partial_queue_answer_arms_nothing(self) -> None:
+        """Housekeeping shares the reader: a partial or mismatched node is
+        unknown there too, and unknown never re-issues the mutation."""
+
+        broken = {
+            "flag missing": lambda n: {k: v for k, v in n.items() if k != "isInMergeQueue"},
+            "entry missing": lambda n: {k: v for k, v in n.items() if k != "mergeQueueEntry"},
+            "merged missing": lambda n: {k: v for k, v in n.items() if k != "merged"},
+            "entry beside a false flag": lambda n: {**n, "mergeQueueEntry": {"position": 1}},
+            "another head": lambda n: {**n, "headRefOid": "c" * 40},
+            "another PR": lambda n: {**n, "number": 813},
+        }
+        for name, mangle in broken.items():
+            with self.subTest(name):
+                calls, record = self._housekeeping_round(
+                    [self._housekeeping_pr()], lambda listed, mangle=mangle: mangle(self._graphql_node(listed))
+                )
+                self.assertEqual(calls, [])
+                self.assertEqual(record["state"], "skipped_queue_unreadable")
+
+    # `gh pr view` answers that do not say whether the PR is armed: the field
+    # it was asked for is missing, or not GitHub's nullable object.
+    UNREPORTED_ARMING = {
+        "field missing": "<drop>",
+        "true": True,
+        "list": [{"enabledAt": "2026-09-01T00:00:00Z"}],
+        "string": "",
+    }
+
+    def _housekeeping_view(self, arming) -> dict:
+        pr = self._housekeeping_pr()
+        if arming == "<drop>":
+            pr.pop("autoMergeRequest")
+        else:
+            pr["autoMergeRequest"] = arming
+        return pr
+
+    def test_archive_housekeeping_unreported_arming_is_not_absence(self) -> None:
+        """The queue node does not carry arming state, so a whole not-queued
+        node beside a view that did not report arming is still unknown:
+        nothing is issued on it, and a readback like it after the mutation
+        is not counted as armed, queued or refused."""
+
+        for name, arming in self.UNREPORTED_ARMING.items():
+            with self.subTest(name, read="before the mutation"):
+                calls, record = self._housekeeping_round(
+                    [self._housekeeping_view(arming)], self._graphql_node
+                )
+                self.assertEqual(calls, [])
+                self.assertEqual(record["state"], "skipped_queue_unreadable")
+
+            with self.subTest(name, read="after the mutation"):
+                calls, record = self._housekeeping_round(
+                    [self._housekeeping_pr(), self._housekeeping_view(arming)], self._graphql_node
+                )
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(calls[0][:2], ["pr", "merge"])
+                self.assertEqual(record["state"], "failed")
+                self.assertEqual(record["failure_code"], "auto_merge_unconfirmed_readback")
+
+        # Controls: an explicit null is absence and is admitted once; GitHub's
+        # object is armed and nothing is issued.
+        calls, record = self._housekeeping_round(
+            [self._housekeeping_pr(), self._housekeeping_view({"enabledAt": "2026-09-01T00:00:00Z"})],
+            self._graphql_node,
+        )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(record["state"], "enabled")
+        calls, record = self._housekeeping_round(
+            [self._housekeeping_view({"enabledAt": "2026-09-01T00:00:00Z"})], self._graphql_node
+        )
+        self.assertEqual(calls, [])
+        self.assertEqual(record["state"], "enabled")
+
+    def test_archive_housekeeping_readback_on_a_moved_pr_is_not_enabled(self) -> None:
+        armed = {"autoMergeRequest": {"enabledAt": "2026-09-01T00:00:00Z"}}
+        for name, moved in {
+            "head": {"headRefOid": "c" * 40},
+            "base": {"baseRefName": "main"},
+            "branch": {"headRefName": "task/OPS-ARCHIVE-AUTO-COMMIT-20260815T000000Z"},
+            "base case": {"baseRefName": "DEV"},
+            "branch case": {"headRefName": "task/ops-archive-auto-commit-20260814t120000z"},
+        }.items():
+            with self.subTest(name):
+                calls, record = self._housekeeping_round(
+                    [self._housekeeping_pr(), self._housekeeping_pr(**armed, **moved)],
+                    self._graphql_node,
+                )
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(calls[0][:2], ["pr", "merge"])
+                self.assertEqual(record["state"], "failed")
+                self.assertEqual(record["failure_code"], "auto_merge_unconfirmed_readback")
 
     def test_archive_housekeeping_auto_merge_switch_fails_closed(self) -> None:
         config = self._config()
