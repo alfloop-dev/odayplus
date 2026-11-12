@@ -1,0 +1,65 @@
+name: seed-dev-model-probe
+
+# Read-only: ask the dev API which production model bindings it actually resolved
+# at startup (GET /health -> modes.models.capabilities). Writes nothing. Used to
+# decide whether lighting the SiteScore decision panel is even possible in dev.
+on:
+  push:
+    branches: [seed-dev-data-backfill]
+    paths:
+      - .github/workflows/seed-dev-model-probe.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: dev
+    env:
+      API_URL: ${{ vars.ODP_AUTH_AUDIENCES }}
+    steps:
+      - name: Authenticate to GCP (WIF) and mint an ID token for the API
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ vars.ODP_AUTH_AUDIENCES }}
+          id_token_include_email: true
+
+      - name: Read model capabilities from dev API /health
+        env:
+          ID_TOKEN: ${{ steps.auth.outputs.id_token }}
+        run: |
+          set -uo pipefail
+          code=$(curl -s --max-time 90 -H "Authorization: Bearer ${ID_TOKEN}" \
+            -o health.json -w "%{http_code}" "${API_URL%/}/health")
+          echo "HTTP ${code} (503 just means some dependency is unhealthy; body still reports models)"
+          python3 - <<'PY'
+          import json
+          try:
+              d = json.load(open("health.json"))
+          except Exception as exc:
+              print("BODY NOT JSON:", exc)
+              print(open("health.json").read()[:600])
+              raise SystemExit(1)
+          print("status:", d.get("status"), "data_mode:", d.get("data_mode"))
+          m = (d.get("modes") or {}).get("models") or {}
+          print("models.mode:", m.get("mode"))
+          print("models.productionBindingsReady:", m.get("productionBindingsReady"))
+          print("models.requiredServices:", m.get("requiredServices"))
+          print("models.error:", m.get("error"))
+          print("models.blockingReasons:", m.get("blockingReasons"))
+          for svc, cap in (m.get("capabilities") or {}).items():
+              if isinstance(cap, dict):
+                  print(f"CAP {svc:12} available={cap.get('available')} "
+                        f"trainable={cap.get('trainable')} reason={cap.get('reasonCode')} "
+                        f"err={str(cap.get('error'))[:300]}")
+          prov = (d.get("modes") or {}).get("provider") or {}
+          print("provider.mode:", prov.get("mode"), "live:", prov.get("live"))
+          PY
