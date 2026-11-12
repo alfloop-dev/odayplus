@@ -12,7 +12,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import ai_status as runtime_ai_status
-from common import normalize_agent_id, parse_utc_timestamp, utc_now, write_activity_log
+from common import parse_utc_timestamp, utc_now, write_activity_log
 
 
 @dataclass(frozen=True)
@@ -57,10 +57,8 @@ SUCCESS_CONCLUSIONS = frozenset({
     MERGE_GROUP_CONCLUSION_SKIPPED,
 })
 
-MERGE_GROUP_QUEUE_REF_PATTERN = re.compile(
-    r"^(?:refs/heads/)?gh-readonly-queue/[^/]+/pr-(?P<pr>\d+)-[0-9a-fA-F]+$",
-    re.IGNORECASE,
-)
+# One queue-ref rule, shared with the canonical status writer.
+MERGE_GROUP_QUEUE_REF_PATTERN = runtime_ai_status.MERGE_GROUP_QUEUE_REF_PATTERN
 
 
 def evaluate_finalize_gate(task: dict[str, Any]) -> FinalizeGateResult:
@@ -160,25 +158,7 @@ def evaluate_finalize_gate(task: dict[str, Any]) -> FinalizeGateResult:
     )
 
 
-def parse_merge_group_pr_number(queue_ref: str | None) -> int | None:
-    """Extract candidate PR number from a merge_group queue ref.
-
-    Expected ref formats include:
-      - refs/heads/gh-readonly-queue/<base>/pr-<number>-<base_sha>
-      - gh-readonly-queue/<base>/pr-<number>-<base_sha>
-    """
-    if not queue_ref or not isinstance(queue_ref, str):
-        return None
-    raw = queue_ref.strip()
-    if not raw:
-        return None
-    match = MERGE_GROUP_QUEUE_REF_PATTERN.fullmatch(raw)
-    if not match:
-        return None
-    try:
-        return int(match.group("pr"))
-    except (TypeError, ValueError):
-        return None
+parse_merge_group_pr_number = runtime_ai_status.parse_merge_group_pr_number
 
 
 def correlate_merge_group_task(
@@ -243,89 +223,7 @@ def correlate_merge_group_task(
     return None, "unmatched"
 
 
-MERGE_GROUP_FAILURE_HANDOFF_REASON = "merge_group_failure"
-
-
-def committed_merge_group_cause(
-    task: dict[str, Any],
-    handoffs: Any,
-    *,
-    task_id_field: str = "id",
-    reviewer_field: str = "reviewer",
-) -> tuple[dict[str, Any] | None, str]:
-    """The one pending merge-group failure cause bound to this task's routed head.
-
-    `reconcile_merge_group_runs` demotes an approved task to `review` through
-    the canonical CAS, resolves every earlier handoff of the task and records
-    the failure as one pending `merge_group_failure` handoff to the reviewer.
-    `task.merge_route` is left untouched. Given the *canonical* task and
-    handoffs, return ``(cause, source_head)`` only when every identity the
-    cause names matches that state exactly; otherwise ``(None, "")``.
-
-    Whether the cause also proves its source relation (`cause.source_head`)
-    is deliberately left to the caller: the ready dispatcher requires it,
-    and `enrich_legacy_merge_group_causes` is the only path that may add it
-    to a cause recorded before the field existed.
-    """
-    task_id = str(task.get(task_id_field) or task.get("id") or "").strip()
-    reviewer = normalize_agent_id(str(task.get(reviewer_field) or ""))
-    if not task_id or not reviewer:
-        return None, ""
-    if str(task.get("status") or "").strip().lower() != "review" or task.get("approved_head"):
-        return None, ""
-    submission = task.get("review_submission")
-    route = task.get("merge_route")
-    if not isinstance(submission, dict) or not isinstance(route, dict):
-        return None, ""
-    source_head = str(submission.get("remote_sha") or "").strip().lower()
-    if not source_head or str(route.get("head") or "").strip().lower() != source_head:
-        return None, ""
-    try:
-        pr_number = int(submission.get("pr_number"))
-        route_pr = int(route.get("pr_number"))
-    except (TypeError, ValueError):
-        return None, ""
-    if pr_number <= 0 or route_pr != pr_number:
-        return None, ""
-    routed_at = parse_utc_timestamp(route.get("at"))
-    if routed_at is None:
-        return None, ""
-
-    pending = [
-        handoff
-        for handoff in handoffs or []
-        if isinstance(handoff, dict)
-        and str(handoff.get("task_id") or "").strip() == task_id
-        and str(handoff.get("status") or "").strip().lower() == "pending"
-    ]
-    # Recovery resolves every earlier handoff of the task in the same commit,
-    # so its cause is the only pending one. Anything else pending means the
-    # recovery was superseded or is ambiguous.
-    if len(pending) != 1:
-        return None, ""
-    cause = pending[0]
-    if str(cause.get("reason") or "") != MERGE_GROUP_FAILURE_HANDOFF_REASON:
-        return None, ""
-    if normalize_agent_id(str(cause.get("to") or "")) != reviewer:
-        return None, ""
-    try:
-        if int(cause.get("pr_number")) != pr_number:
-            return None, ""
-    except (TypeError, ValueError):
-        return None, ""
-    group_head = str(cause.get("head_sha") or "").strip().lower()
-    if not group_head or group_head == source_head:
-        return None, ""
-    if cause.get("run_id") in (None, ""):
-        return None, ""
-    if parse_merge_group_pr_number(str(cause.get("queue_ref") or "")) != pr_number:
-        return None, ""
-    created_at = parse_utc_timestamp(cause.get("created_at"))
-    # The failure has to postdate the admission that put this head in the
-    # queue; an older cause cannot explain the current route.
-    if created_at is None or created_at < routed_at:
-        return None, ""
-    return cause, source_head
+MERGE_GROUP_FAILURE_HANDOFF_REASON = runtime_ai_status.MERGE_GROUP_FAILURE_HANDOFF_REASON
 
 
 def _record_seen_run_ids(bus_state: dict[str, Any], new_keys: list[str], max_ids: int = 2000) -> None:
@@ -1435,8 +1333,8 @@ def enrich_legacy_merge_group_causes(
     cannot license a reviewer dispatch: the ready dispatcher requires the
     cause to name exactly the routed source head. This is the recovery
     producer completing its own committed record, not a new cause: it only
-    touches a cause `committed_merge_group_cause` already binds to the
-    canonical task, re-reads the exact run and group commit it names, and
+    touches a cause `ai_status.merge_group_recovery_cause` already binds to
+    the canonical task, re-reads the exact run and group commit it names, and
     writes `source_head` through the same canonical CAS only when GitHub
     proves the relation. A refuted relation is remembered so the immutable
     facts are not re-fetched; an unresolved one is asked again next cycle.
@@ -1449,7 +1347,6 @@ def enrich_legacy_merge_group_causes(
 
     schema = config.get("schema", {}) or {}
     task_id_field = schema.get("task_id_field", "id")
-    reviewer_field = schema.get("reviewer_field", "reviewer")
     handoffs = status.get("handoffs")
     checks = bus_state.get("legacy_merge_group_cause_checks")
     checks = dict(checks) if isinstance(checks, dict) else {}
@@ -1460,14 +1357,14 @@ def enrich_legacy_merge_group_causes(
     for task in status.get(schema.get("tasks_path", "tasks"), []) or []:
         if not isinstance(task, dict):
             continue
-        cause, source_head = committed_merge_group_cause(
-            task,
-            handoffs,
-            task_id_field=task_id_field,
-            reviewer_field=reviewer_field,
-        )
+        # Only the producer's own review-phase cause; the owner publication
+        # phase reads a cause that already proves its source.
+        if str(task.get("status") or "").strip().lower() != "review" or task.get("approved_head"):
+            continue
+        cause = runtime_ai_status.merge_group_recovery_cause(task, handoffs, require_source_head=False)
         if cause is None or "source_head" in cause:
             continue
+        source_head = str((task.get("review_submission") or {}).get("remote_sha") or "").strip().lower()
         task_id = str(task.get(task_id_field) or task.get("id") or "").strip()
         check_key = f"{task_id}:{cause.get('run_id')}:{source_head}"
         previous = str(checks.get(check_key) or "")

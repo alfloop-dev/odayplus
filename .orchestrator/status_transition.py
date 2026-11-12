@@ -522,7 +522,66 @@ def repair_open_task_metadata(config: dict[str, Any], status: dict[str, Any]) ->
     return changed
 
 
-def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, Any]) -> bool:
+def _merge_group_publication_owner_return_due(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    task: dict[str, Any],
+    state: dict[str, Any] | None,
+) -> bool:
+    """A merge_group recovery the reviewer cannot take until the owner publishes.
+
+    The recovery producer returned the task to `review` with a committed
+    cause, but its PR has since merged while the recorded submission was
+    verified only as open. The reviewer stays refused until the owner's
+    publisher verifies the merge; nothing but this narrow case is moved, and
+    any task that is busy, gated, or whose facts cannot be read stays put.
+    """
+    sv = _supervisor_module()
+    if not isinstance(state, dict):
+        return False
+    if str(task.get("status") or "").strip().lower() != "review":
+        return False
+    if str(task.get("approved_head") or "").strip():
+        return False
+    submission = task.get("review_submission")
+    if not isinstance(submission, dict) or submission.get("merged_at") or submission.get("merge_commit"):
+        return False
+    if not sv.review_submission_is_complete(config, task):
+        return False
+    if runtime_ai_status.merge_group_recovery_cause(task, status.get("handoffs")) is None:
+        return False
+    if (
+        sv.task_is_human_gate(task)
+        or bool(task.get("non_dispatchable"))
+        or sv.is_human_gate_agent(task.get("owner"))
+        or sv.is_human_gate_agent(task.get("waiting_for"))
+        or runtime_ai_status.task_unresolved_human_or_independent_gate_reason(task)
+        or task.get("helper_execution_lease")
+    ):
+        return False
+    task_id = str(task.get("id") or "").strip()
+    _agents, active_task_agents = sv.active_worker_indexes(
+        state, sv.active_worker_statuses(config), config
+    )
+    _pending_agents, pending_task_agents, _keys = sv.outstanding_delivery_indexes(config, state)
+    if any(item_task == task_id for item_task, _agent in active_task_agents | pending_task_agents):
+        return False
+    from dispatch_policy import task_review_source_identity
+
+    if task_review_source_identity(config, task).error:
+        return False
+    try:
+        pr_state, ci_status = runtime_ai_status.task_pr_ci_status(task_id, task=task)
+    except Exception:
+        return False
+    return str(pr_state or "").strip().upper() == "MERGED" and ci_status == "success"
+
+
+def repair_unsubmitted_review_tasks(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    state: dict[str, Any] | None = None,
+) -> bool:
     sv = _supervisor_module()
     paths = config.get("paths") or {}
     if not paths.get("status_file") or not paths.get("activity_log"):
@@ -532,6 +591,39 @@ def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, An
     timestamp = sv.utc_now()
     for task in status.get("tasks", []) or []:
         if str(task.get("status") or "").strip().lower() != "review":
+            continue
+        if _merge_group_publication_owner_return_due(config, status, task, state):
+            # The owner's publisher is the only writer that can verify the
+            # merge. The task goes back to it exactly like any owner-return,
+            # except that the committed cause and the route are kept: the
+            # reviewer decision is still owed for this same head.
+            task_id = str(task.get("id") or "").strip()
+            pr_number = (task.get("review_submission") or {}).get("pr_number")
+            message = (
+                f"Merge group recovery: PR #{pr_number} has merged, but its review submission was "
+                "verified only while open. The owner must publish the same PR via "
+                "delivery_toolchain/git/task_finalize.sh; the reviewer decision stays pending."
+            )
+            task["status"] = "in_progress"
+            task.pop("waiting_for", None)
+            task["last_update"] = timestamp
+            task["next"] = message
+            task["last_reopened_by"] = "Supervisor"
+            task["last_reopened_reason"] = REOPEN_REASON_CONTROL_PLANE_RECOVERY
+            task["last_reopen_category"] = REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY
+            task["last_reopened_at"] = timestamp
+            sv.write_activity_log(
+                config,
+                {
+                    "type": "review_submission_repaired",
+                    "task_id": task_id,
+                    "message": message,
+                    "reason": REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+                    "category": REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
+                    "entry": "merge_group_merged_publication",
+                },
+            )
+            changed = True
             continue
         if sv.review_submission_is_complete(config, task):
             continue
@@ -624,14 +716,25 @@ def reject_unsealed_worker_handoff(
         "worker_run_id": worker_run_id,
         "rejected_at": timestamp,
     }
+    # A merge_group recovery the owner was publishing keeps its committed
+    # cause and route through the retry: the same owner resubmits the same
+    # merged PR, and the reviewer decision is still owed for that head.
+    recovery_cause = (
+        None
+        if str(task.get("approved_head") or "").strip()
+        else runtime_ai_status.merge_group_recovery_cause(task, status.get("handoffs"))
+    )
     task.pop("waiting_for", None)
     task.pop("approved_head", None)
-    task.pop("merge_route", None)
+    if recovery_cause is None:
+        task.pop("merge_route", None)
     task["last_reopened_by"] = "Supervisor"
     task["last_reopened_reason"] = reopen_reason
     task["last_reopen_category"] = REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY
     task["last_reopened_at"] = timestamp
     for handoff in status.get("handoffs", []) or []:
+        if handoff is recovery_cause:
+            continue
         if handoff.get("task_id") == task_id and handoff.get("status") != "done":
             handoff["status"] = "done"
             handoff["resolved_at"] = timestamp

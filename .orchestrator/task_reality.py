@@ -102,6 +102,7 @@ def task_reality_findings(
     pull_request: dict[str, Any] | None,
     branch_exists: bool,
     head_has_review_gate: bool | None = None,
+    merge_group_recovery: bool = False,
 ) -> list[dict[str, Any]]:
     """Describe every way ``task`` disagrees with what it names.
 
@@ -109,6 +110,8 @@ def task_reality_findings(
     there is no such PR. ``branch_exists`` is whether ``task['branch']``
     resolves on the remote. ``head_has_review_gate`` is whether the approved
     head carries the required review status, or ``None`` when not probed.
+    ``merge_group_recovery`` is whether ``task['merge_route']`` is bound to a
+    committed merge_group failure cause still awaiting its reviewer.
 
     Every finding carries ``repairable``. A repairable finding states the single
     value reality allows; the rest carry only a description.
@@ -177,8 +180,11 @@ def task_reality_findings(
             }
         )
 
-    if pr_merged and isinstance(task.get(MERGE_ROUTE_FIELD), dict):
+    if pr_merged and isinstance(task.get(MERGE_ROUTE_FIELD), dict) and not merge_group_recovery:
         # The record described an attempt to get the PR merged. It merged.
+        # Except under a merge_group recovery: there the route is the
+        # admission record the owed reviewer decision is bound to, and it is
+        # released with that cause, not with the merge.
         findings.append(
             {
                 "kind": "merge_route_after_merge",
@@ -259,7 +265,8 @@ def reconcile_tasks(
     """Reconcile every task, returning one result per task that had findings.
 
     ``probe`` supplies the reality for one task as a mapping with
-    ``pull_request``, ``branch_exists`` and optionally ``head_has_review_gate``.
+    ``pull_request``, ``branch_exists`` and optionally ``head_has_review_gate``
+    and ``merge_group_recovery``.
     Injecting it keeps this module free of network calls and testable against
     the exact drifts observed in production.
     """
@@ -280,6 +287,7 @@ def reconcile_tasks(
             pull_request=reality.get("pull_request"),
             branch_exists=bool(reality.get("branch_exists")),
             head_has_review_gate=reality.get("head_has_review_gate"),
+            merge_group_recovery=bool(reality.get("merge_group_recovery")),
         )
         if not findings:
             continue

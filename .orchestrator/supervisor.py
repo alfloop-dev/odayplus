@@ -4099,13 +4099,19 @@ def repair_open_task_metadata(config: dict[str, Any], status: dict[str, Any]) ->
     return status_transition.repair_open_task_metadata(config, status)
 
 
-def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, Any]) -> bool:
+def repair_unsubmitted_review_tasks(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    state: dict[str, Any] | None = None,
+) -> bool:
     """Remove legacy false-review states before reviewer dispatch.
 
     Human data/approval gates return to blocked.  Executable tasks return to
     their owner so task_finalize can publish and atomically submit the PR.
+    ``state`` is the dispatch pass's runtime state; without it no busy task
+    can be told apart, so the merged merge_group publication return is skipped.
     """
-    return status_transition.repair_unsubmitted_review_tasks(config, status)
+    return status_transition.repair_unsubmitted_review_tasks(config, status, state)
 
 
 def normalize_task_assignment_integrity(

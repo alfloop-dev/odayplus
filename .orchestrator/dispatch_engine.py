@@ -410,14 +410,20 @@ def _remote_branch_names() -> set[str] | None:
 
 
 def _pull_request_record(pr_number: int) -> dict[str, Any] | None:
-    """The PR's state, or None when there is no readable PR."""
+    """The PR's state, or None when there is no readable PR.
+
+    `gh pr view` has no `merged` field (asking for it fails the whole call),
+    so the record is read with `mergedAt` and `merged` is derived: true only
+    when GitHub says MERGED and names when. A MERGED state without a merge
+    time is not proof of a merge.
+    """
     import json as _json
 
     from github_bus import GitHubBusError, GitHubBusOffline, run_gh
 
     try:
         proc = run_gh(
-            ["pr", "view", str(pr_number), "--json", "number,state,merged,headRefName"]
+            ["pr", "view", str(pr_number), "--json", "number,state,mergedAt,headRefName"]
         )
     except (GitHubBusError, GitHubBusOffline):
         return None
@@ -425,7 +431,11 @@ def _pull_request_record(pr_number: int) -> dict[str, Any] | None:
         payload = _json.loads(proc.stdout or "{}")
     except ValueError:
         return None
-    return payload if payload.get("number") else None
+    if not isinstance(payload, dict) or not payload.get("number"):
+        return None
+    state = str(payload.get("state") or "").strip().upper()
+    payload["merged"] = state == "MERGED" and bool(str(payload.get("mergedAt") or "").strip())
+    return payload
 
 
 def task_reality_reconcile_is_due(
@@ -517,9 +527,22 @@ def reconcile_task_reality(config: dict[str, Any], status: dict[str, Any]) -> bo
             pr_number = int(task.get("pr_number") or 0)
         except (TypeError, ValueError):
             pr_number = 0
+        # A route bound to a committed merge_group recovery cause is that
+        # recovery's admission record, not a stale merge attempt. A cause
+        # recorded before `source_head` existed counts until the producer has
+        # proven it; one naming another head does not.
+        cause = runtime_ai_status.merge_group_recovery_cause(
+            task, status.get("handoffs"), require_source_head=False
+        )
+        route_head = str((task.get("merge_route") or {}).get("head") or "").strip().lower()
+        merge_group_recovery = cause is not None and (
+            "source_head" not in cause
+            or str(cause.get("source_head") or "").strip().lower() == route_head
+        )
         return {
             "pull_request": _pull_request_record(pr_number) if pr_number > 0 else None,
             "branch_exists": str(task.get("branch") or "") in remote_branches,
+            "merge_group_recovery": merge_group_recovery,
         }
 
     results = task_reality.reconcile_tasks(tasks, probe=probe)
@@ -1588,12 +1611,10 @@ def committed_merge_group_review_recovery(
     reviewer from ever being dispatched. This reads the cause from the
     canonical store -- never from the caller's snapshot or `next` text -- and
     accepts it only when every identity it names matches exactly
-    (`github_reconciliation.committed_merge_group_cause`) and the cause proves
-    it failed a group that enrolled exactly this source head. Missing,
-    unknown, duplicated or superseded facts fail closed.
+    (`ai_status.merge_group_recovery_cause`), including the proof that it
+    failed a group that enrolled exactly this source head. Missing, unknown,
+    duplicated or superseded facts fail closed.
     """
-    from github_reconciliation import committed_merge_group_cause
-
     schema = config.get("schema", {}) or {}
     task_id_field = schema.get("task_id_field", "id")
     reviewer_field = schema.get("reviewer_field", "reviewer")
@@ -1626,15 +1647,12 @@ def committed_merge_group_review_recovery(
         if canonical_task.get(field) != task.get(field):
             return False
 
-    cause, source_head = committed_merge_group_cause(
-        canonical_task,
-        canonical.get("handoffs"),
-        task_id_field=task_id_field,
-        reviewer_field=reviewer_field,
-    )
-    if cause is None:
+    # Reviewer phase: the demoted, unapproved review the cause was written for.
+    if str(canonical_task.get("status") or "").strip().lower() != "review":
         return False
-    return str(cause.get("source_head") or "").strip().lower() == source_head
+    if str(canonical_task.get("approved_head") or "").strip():
+        return False
+    return runtime_ai_status.merge_group_recovery_cause(canonical_task, canonical.get("handoffs")) is not None
 
 
 @_entrypoint
@@ -2957,7 +2975,7 @@ def dispatch_ready_tasks(
     metadata_repaired = repair_open_task_metadata(config, status)
     if metadata_repaired:
         status = load_status(config)
-    review_states_repaired = repair_unsubmitted_review_tasks(config, status)
+    review_states_repaired = repair_unsubmitted_review_tasks(config, status, state)
     if review_states_repaired:
         status = load_status(config)
 

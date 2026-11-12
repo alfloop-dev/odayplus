@@ -6184,6 +6184,93 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         self._ready_dispatch(queued)
         self.assertEqual(queued, [])
 
+    def test_supervisor_merge_group_reconciliation_exports_and_behavior(self) -> None:
+        """Verify supervisor exports and delegates merge group reconciliation correctly."""
+        import supervisor
+
+        self.assertTrue(callable(supervisor.parse_merge_group_pr_number))
+        self.assertTrue(callable(supervisor.correlate_merge_group_task))
+        self.assertTrue(callable(supervisor.reconcile_merge_group_runs))
+        self.assertTrue(callable(supervisor.poll_merge_group_runs))
+
+        self.assertEqual(
+            supervisor.parse_merge_group_pr_number("refs/heads/gh-readonly-queue/dev/pr-555-abc"),
+            555,
+        )
+
+        approved_head = "abc123450000000000000000000000000000dead"
+        task = {
+            "id": "ODP-SUP-MG-001",
+            "status": "review_approved",
+            "owner": "Antigravity5",
+            "reviewer": "Claude2",
+            "pr_number": 555,
+            "approved_head": approved_head,
+        }
+        status = {"tasks": [task], "handoffs": []}
+        bus_state = {"processed_merge_group_run_ids": [], "tasks": {}}
+        # A merge group head is the temporary merge commit GitHub builds for the
+        # queue entry, never the PR head itself.
+        run = {
+            "id": 999111,
+            "head_branch": "gh-readonly-queue/dev/pr-555-abc",
+            "head_sha": "77aa11bb0000000000000000000000000000c0de",
+            "conclusion": "failure",
+            "status": "completed",
+            "name": "CI",
+            "workflow_id": 100,
+        }
+        pr_node = {
+            "number": 555,
+            "state": "OPEN",
+            "merged": False,
+            "mergedAt": None,
+            "headRefOid": approved_head,
+            "isInMergeQueue": False,
+            "mergeQueueEntry": None,
+        }
+
+        def fake_gh_json(args, **kwargs):
+            if args[:2] == ["api", "graphql"]:
+                return {"data": {"repository": {"pullRequest": pr_node}}}
+            if args[:1] == ["api"] and "actions/runs" in str(args[1]):
+                return {"total_count": 1, "workflow_runs": [run]}
+            if args[:1] == ["api"] and "/commits/" in str(args[1]):
+                return {
+                    "sha": run["head_sha"],
+                    "parents": [
+                        {"sha": "base000000000000000000000000000000000000"},
+                        {"sha": approved_head},
+                    ],
+                }
+            return None
+
+        with (
+            mock.patch("github_bus.gh_json", side_effect=fake_gh_json),
+            mock.patch("github_reconciliation.write_activity_log") as log,
+            mock.patch("status_transition.commit_canonical_task_transition", return_value=True),
+            mock.patch(
+                "github_reconciliation.runtime_ai_status.emit_task_review_status_check"
+            ),
+        ):
+            changed = supervisor.reconcile_merge_group_runs(
+                {"github_bus": {"enabled": True}},
+                bus_state,
+                status,
+                "o/r",
+                [run],
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(task["status"], "review")
+        self.assertIsNone(task.get("approved_head"))
+        self.assertEqual(len(status["handoffs"]), 1)
+        self.assertEqual(status["handoffs"][0]["to"], "Claude2")
+        self.assertEqual(status["handoffs"][0]["from"], "Antigravity5")
+        self.assertEqual(status["handoffs"][0]["reason"], "merge_group_failure")
+        log.assert_called_once()
+        self.assertEqual(log.call_args.args[1]["type"], "merge_group_failure_reconciled")
+
     # ------------------------------------------------------------------
     # Wiring
     # ------------------------------------------------------------------
