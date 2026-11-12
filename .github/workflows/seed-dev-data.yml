@@ -2,9 +2,9 @@ name: seed-dev-data
 
 # One-off: load the sample Atlas Mongo into dev Cloud SQL core.* via the real
 # data-plane backfill, then scope the bjoe734 demo account to the derived tenant.
+# Manual only now that the initial backfill has landed: a push trigger would
+# re-run the (idempotent) backfill on every commit to this branch.
 on:
-  push:
-    branches: [seed-dev-data-backfill]
   workflow_dispatch: {}
 
 permissions:

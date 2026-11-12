@@ -1,0 +1,72 @@
+name: seed-dev-documents
+
+# One-off, manual only: seed the Operator Console document-store expansion panels
+# (展店 listings + candidate sites) for the derived tenant in dev Cloud SQL.
+# workflow_dispatch only so it never re-triggers the core.* backfill on push.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  seed-documents:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: dev
+    env:
+      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+      DB_URL_SECRET: ${{ vars.ODAY_DATABASE_URL_SECRET }}
+      TARGET_TENANT: d4fe5181-da2c-5438-bd12-230036ea6f59
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install project env (root deps)
+        env:
+          UV_PYTHON: '3.12'
+        run: |
+          set -euo pipefail
+          pip install uv
+          uv sync --frozen
+
+      - name: Start Cloud SQL Auth Proxy
+        run: |
+          set -euo pipefail
+          curl -sSL -o cloud-sql-proxy \
+            https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64
+          chmod +x cloud-sql-proxy
+          ./cloud-sql-proxy --port 5432 "${CLOUD_SQL_INSTANCE}" &
+          echo "proxy_pid=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/127.0.0.1/5432) >/dev/null 2>&1; then
+              echo "Cloud SQL proxy is up"; break
+            fi
+            sleep 1
+          done
+
+      - name: Fetch dev DB URL and seed document-store panels
+        run: |
+          set -euo pipefail
+          RAW_DB_URL="$(gcloud secrets versions access latest \
+            --secret="${DB_URL_SECRET%%:*}" --project="${GCP_PROJECT}")"
+          echo "::add-mask::${RAW_DB_URL}"
+          export RAW_DB_URL
+          PYTHONPATH="${GITHUB_WORKSPACE}" UV_PYTHON=3.12 \
+            uv run --frozen python .github/scripts/seed_dev_documents_driver.py
