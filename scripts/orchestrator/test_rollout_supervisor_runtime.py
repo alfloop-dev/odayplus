@@ -52,6 +52,12 @@ def fake_git(repo: Path, *args: str) -> str:
     raise AssertionError((repo, args))
 
 
+def same_repository(source: Path, target: Path) -> bool:
+    # The stand-in source and runtimes are plain directories; repository identity
+    # is proven with real Git in ProtectedRolloutPreflightTests.
+    return True
+
+
 def rollout_args(source: Path, parent: Path, link: Path, status_root: Path) -> list[str]:
     return [
         "--source-root",
@@ -92,6 +98,7 @@ class RolloutSupervisorRuntimeTests(unittest.TestCase):
 
             with mock.patch.object(rollout, "git", fake_git), \
                  mock.patch.object(rollout, "clean", lambda _repo: True), \
+                 mock.patch.object(rollout.worktree_cleanliness, "shares_git_common_dir", same_repository), \
                  mock.patch.object(rollout.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0)):
                 self.assertEqual(rollout.main(rollout_args(source, parent, link, status_root)), 0)
 
@@ -112,6 +119,7 @@ class RolloutSupervisorRuntimeTests(unittest.TestCase):
 
             with mock.patch.object(rollout, "git", fake_git), \
                  mock.patch.object(rollout, "clean", lambda _repo: True), \
+                 mock.patch.object(rollout.worktree_cleanliness, "shares_git_common_dir", same_repository), \
                  mock.patch.object(rollout.subprocess, "run", lambda *args, **kwargs: next(restarts)):
                 with self.assertRaisesRegex(SystemExit, "restored previous runtime and status launcher"):
                     rollout.main(rollout_args(source, parent, link, status_root))
@@ -179,6 +187,7 @@ class WatchdogRolloutTests(unittest.TestCase):
         for patcher in (
             mock.patch.object(rollout, "git", fake_git),
             mock.patch.object(rollout, "clean", lambda _repo: True),
+            mock.patch.object(rollout.worktree_cleanliness, "shares_git_common_dir", same_repository),
             mock.patch.object(rollout, "LOADED_RUNTIME_PROOF_POLL_SECONDS", 0.05),
             mock.patch.object(rollout, "LOADED_RUNTIME_PROOF_TIMEOUT_SECONDS", 20.0),
         ):
@@ -1019,6 +1028,84 @@ class ProtectedRolloutPreflightTests(unittest.TestCase):
         self.assertEqual(gate.call_args.args[2], ("guarded/zone",))
         self.assertFalse(any(call[:1] == ("worktree",) for call in calls))
         self.assertFalse(target.exists())
+
+    # --- existing target repository identity, through the real entry and real Git
+
+    def _existing_target_rollout(self) -> tuple[Path, Path, Path, Path, list[str]]:
+        """A source exactly at origin/dev and the runtime slot main would reuse."""
+        origin = self.root / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(origin)], capture_output=True, check=True)
+        self._git("remote", "add", "origin", str(origin))
+        self._git("push", "-q", "origin", "dev")
+        self._git("fetch", "-q", "origin")
+        parent = self.root / "runtimes"
+        parent.mkdir()
+        previous = self.root / "previous"
+        previous.mkdir()
+        link = self.root / "runtime-current"
+        link.symlink_to(previous)
+        status_root = self.root / "status"
+        (status_root / "scripts").mkdir(parents=True)
+        (status_root / ".orchestrator").mkdir()
+        (status_root / ".orchestrator" / "config.json").write_text("{}\n")
+        (status_root / "scripts" / "ai-status.sh").write_text("old writer\n")
+        short = self.target_sha[:12]
+        target = parent / f"oday-plus-supervisor-runtime-{short}"
+        args = rollout_args(self.source, parent, link, status_root)
+        return target, link, previous, status_root, args
+
+    def _main_until_first_mutation(self, args: list[str], target: Path) -> tuple[BaseException, list[list[str]]]:
+        """Run the real main; stop it at the launcher snapshot that precedes the switch."""
+        target_commands: list[list[str]] = []
+        real_run = subprocess.run
+
+        def recording_run(command, *a, **kw):
+            cwd = kw.get("cwd")
+            if cwd is not None and Path(cwd).resolve() == target.resolve():
+                target_commands.append(list(command))
+            return real_run(command, *a, **kw)
+
+        class ReachedSwitch(Exception):
+            pass
+
+        with mock.patch("subprocess.run", side_effect=recording_run), \
+             mock.patch.object(rollout, "snapshot_file", side_effect=ReachedSwitch), \
+             contextlib.redirect_stdout(io.StringIO()):
+            try:
+                rollout.main(args)
+            except (ReachedSwitch, SystemExit) as outcome:
+                return outcome, target_commands
+        self.fail("main returned without reaching the switch or refusing")
+
+    def test_registered_existing_target_is_reused(self) -> None:
+        target, link, previous, status_root, args = self._existing_target_rollout()
+        rollout.add_runtime_worktree(self.source, target, f"runtime-live-{self.target_sha[:12]}", self.target_sha)
+
+        outcome, _commands = self._main_until_first_mutation(args, target)
+
+        self.assertNotIsInstance(outcome, SystemExit, outcome)
+        self.assertEqual(link.resolve(), previous.resolve())
+        self.assertEqual((status_root / "scripts" / "ai-status.sh").read_text(), "old writer\n")
+
+    def test_foreign_clone_with_same_head_and_branch_refuses_before_reading_or_switching(self) -> None:
+        target, link, previous, status_root, args = self._existing_target_rollout()
+        branch = f"runtime-live-{self.target_sha[:12]}"
+        subprocess.run(["git", "clone", "-q", "--no-checkout", str(self.source), str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "checkout", "-q", "-b", branch, self.target_sha], cwd=target, capture_output=True, check=True)
+        self.assertEqual(rollout.git(target, "rev-parse", "HEAD"), self.target_sha)
+        self.assertEqual(rollout.git(target, "rev-parse", "--abbrev-ref", "HEAD"), branch)
+        self.assertFalse(rollout.worktree_cleanliness.shares_git_common_dir(self.source, target))
+        head_before = (target / ".git" / "HEAD").read_bytes()
+
+        outcome, commands = self._main_until_first_mutation(args, target)
+
+        self.assertIsInstance(outcome, SystemExit)
+        self.assertIn("not a worktree of the source repository", str(outcome))
+        self.assertFalse([command for command in commands if "status" in command], commands)
+        self.assertTrue(all(command[:2] == ["git", "rev-parse"] for command in commands), commands)
+        self.assertEqual(link.resolve(), previous.resolve())
+        self.assertEqual((status_root / "scripts" / "ai-status.sh").read_text(), "old writer\n")
+        self.assertEqual((target / ".git" / "HEAD").read_bytes(), head_before)
 
 
 if __name__ == "__main__":

@@ -341,6 +341,40 @@ def _git_metadata(cwd: Path, *args: str) -> subprocess.CompletedProcess[bytes] |
         return None
 
 
+def _git_metadata_path(cwd: Path, *args: str) -> Path | None:
+    """One path Git reports for ``cwd``, resolved against ``cwd`` when relative."""
+    if not cwd.exists():
+        return None
+    proc = _git_metadata(cwd, *args)
+    if proc is None or proc.returncode != 0:
+        return None
+    reported = os.fsdecode(proc.stdout).strip()
+    if not reported:
+        return None
+    path = Path(reported)
+    return (path if path.is_absolute() else cwd / path).resolve()
+
+
+def shares_git_common_dir(repo_root: Path | str, path: Path | str) -> bool:
+    """``path`` is the top level of a worktree of ``repo_root``'s repository.
+
+    Only the resolved Git common directory binds a checkout to a repository: a
+    separate clone can hold the same HEAD on the same named branch.  Metadata
+    only; any unanswerable question is a refusal.
+    """
+    try:
+        repo_root = Path(repo_root)
+        path = Path(path).resolve()
+        expected = _git_metadata_path(repo_root, "rev-parse", "--git-common-dir")
+        if expected is None:
+            return False
+        if _git_metadata_path(path, "rev-parse", "--show-toplevel") != path:
+            return False
+        return _git_metadata_path(path, "rev-parse", "--git-common-dir") == expected
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+
+
 def _tree_entry(cwd: Path, commit: str, relative_path: str) -> tuple[str, str] | None | bool:
     """Exact (mode, type) of one tree entry; ``False`` when unreadable."""
     proc = _git_metadata(cwd, "ls-tree", "-z", "--full-tree", commit, "--", relative_path)

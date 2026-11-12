@@ -558,6 +558,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if target.exists():
+        # A separate clone can hold the same HEAD on the same named branch; only
+        # the Git common directory proves the target belongs to this repository.
+        # Judged before anything reads the target's status or switches to it.
+        if not worktree_cleanliness.shares_git_common_dir(source, target):
+            raise SystemExit(f"existing target is not a worktree of the source repository: {target}")
         if not clean(target) or git(target, "rev-parse", "HEAD") != target_sha:
             raise SystemExit(f"existing target is not the expected clean runtime: {target}")
     else:

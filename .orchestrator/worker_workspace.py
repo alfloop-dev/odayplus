@@ -29,6 +29,7 @@ from worktree_cleanliness import (
     install_protected_body_sparse,
     normalize_protected_paths,
     protected_body_checkout_refusal,
+    shares_git_common_dir,
     task_protected_paths,
     _git_metadata,
     _tree_entry,
@@ -380,32 +381,7 @@ def _detached_head_is_merged(repo_root: Path, worktree_path: Path, base_refs: li
 
 @_entrypoint
 def _worktree_matches_repo_common_dir(repo_root: Path, path: Path) -> bool:
-    try:
-        path = path.resolve()
-        repo_common_rc, repo_common = _git_output(repo_root, "rev-parse", "--git-common-dir")
-        if repo_common_rc != 0:
-            return False
-        expected_common = Path(repo_common)
-        if not expected_common.is_absolute():
-            expected_common = (repo_root / expected_common).resolve()
-        else:
-            expected_common = expected_common.resolve()
-
-        top_level_rc, top_level = _git_output(path, "rev-parse", "--show-toplevel")
-        if top_level_rc != 0 or Path(top_level).resolve() != path:
-            return False
-
-        worktree_common_rc, worktree_common = _git_output(path, "rev-parse", "--git-common-dir")
-        if worktree_common_rc != 0:
-            return False
-        resolved_worktree_common = Path(worktree_common)
-        if not resolved_worktree_common.is_absolute():
-            resolved_worktree_common = (path / resolved_worktree_common).resolve()
-        else:
-            resolved_worktree_common = resolved_worktree_common.resolve()
-    except (OSError, RuntimeError, ValueError):
-        return False
-    return resolved_worktree_common == expected_common
+    return shares_git_common_dir(repo_root, path)
 
 
 @_entrypoint
