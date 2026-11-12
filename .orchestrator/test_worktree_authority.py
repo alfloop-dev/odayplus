@@ -595,14 +595,26 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
                 config, {"workers": {}}, worktree, task["id"], expected_branch=branch, run_id=worker["run_id"],
                 owning_repo_root=self.repo,
             )
+        # The shared domain guard refuses from untracked names before status,
+        # so the dirt is never listed, hashed, backed up or sealed.
         self.assertEqual(outcome.reason, "protected_metadata_refused")
-        self.assertIn("protected body domain dirt", outcome.detail)
+        self.assertIn("notes/vault/copies/copy.txt is untracked domain content", outcome.detail)
         copied.assert_not_called()
         self.assertFalse([name for name in opened if "vault/copies" in name])
         inspection = worktree_cleanliness.inspect_worktree(worktree, materialized_paths=["notes"])
-        self.assertEqual(inspection.kind, "owner_dirty")
-        self.assertIn(("??", "notes/vault/copies/copy.txt"), inspection.blocking_entries)
-        self.assertIsNone(worker_workspace._interrupted_merge_worktree_fingerprint(worktree, inspection))
+        self.assertEqual(inspection.kind, "protected_metadata_refused")
+        self.assertIn("untracked domain content", inspection.detail)
+        self.assertFalse(inspection.handoff_clean)
+        self.assertEqual(inspection.fingerprint, "")
+        # Were such an entry ever listed, the merge seal still refuses to bind it.
+        listed = worktree_cleanliness.WorktreeInspection(
+            kind="owner_dirty",
+            entries=(("??", "notes/vault/copies/copy.txt"),),
+            blocking_entries=(("??", "notes/vault/copies/copy.txt"),),
+            fingerprint="x",
+            detail="",
+        )
+        self.assertIsNone(worker_workspace._interrupted_merge_worktree_fingerprint(worktree, listed))
         self.assertTrue(copy.is_file())
 
     def test_empty_mount_point_of_a_real_protected_launch_stays_a_healthy_checkout(self) -> None:
