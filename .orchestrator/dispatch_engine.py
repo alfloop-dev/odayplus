@@ -1573,9 +1573,6 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
     return str(build_dispatch_event(task, target_agent, reason, task_map).get("key") or "")
 
 
-MERGE_GROUP_FAILURE_HANDOFF_REASON = "merge_group_failure"
-
-
 @_entrypoint
 def committed_merge_group_review_recovery(
     config: dict[str, Any],
@@ -1590,34 +1587,19 @@ def committed_merge_group_review_recovery(
     `task.merge_route` alone, so the same-head route would otherwise keep the
     reviewer from ever being dispatched. This reads the cause from the
     canonical store -- never from the caller's snapshot or `next` text -- and
-    accepts it only when every identity it names matches exactly. Missing,
+    accepts it only when every identity it names matches exactly
+    (`github_reconciliation.committed_merge_group_cause`) and the cause proves
+    it failed a group that enrolled exactly this source head. Missing,
     unknown, duplicated or superseded facts fail closed.
     """
-    from github_reconciliation import parse_merge_group_pr_number
+    from github_reconciliation import committed_merge_group_cause
 
     schema = config.get("schema", {}) or {}
-    task_id = str(task.get(schema.get("task_id_field", "id")) or task.get("id") or "").strip()
-    reviewer = normalize_agent_id(str(task.get(schema.get("reviewer_field", "reviewer")) or ""))
+    task_id_field = schema.get("task_id_field", "id")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    task_id = str(task.get(task_id_field) or task.get("id") or "").strip()
+    reviewer = normalize_agent_id(str(task.get(reviewer_field) or ""))
     if not task_id or not reviewer or normalize_agent_id(target_agent or "") != reviewer:
-        return False
-    if str(task.get("status") or "").strip().lower() != "review" or task.get("approved_head"):
-        return False
-    submission = task.get("review_submission")
-    route = task.get(MERGE_ROUTE_FIELD)
-    if not isinstance(submission, dict) or not isinstance(route, dict):
-        return False
-    source_head = str(submission.get("remote_sha") or "").strip().lower()
-    if not source_head or str(route.get("head") or "").strip().lower() != source_head:
-        return False
-    try:
-        pr_number = int(submission.get("pr_number"))
-        route_pr = int(route.get("pr_number"))
-    except (TypeError, ValueError):
-        return False
-    if pr_number <= 0 or route_pr != pr_number:
-        return False
-    routed_at = parse_runtime_timestamp(route.get("at"))
-    if routed_at is None:
         return False
 
     try:
@@ -1631,7 +1613,7 @@ def committed_merge_group_review_recovery(
             candidate
             for candidate in canonical.get(schema.get("tasks_path", "tasks"), []) or []
             if isinstance(candidate, dict)
-            and str(candidate.get(schema.get("task_id_field", "id")) or "").strip() == task_id
+            and str(candidate.get(task_id_field) or "").strip() == task_id
         ),
         None,
     )
@@ -1640,52 +1622,19 @@ def committed_merge_group_review_recovery(
     # borrow a recovery it does not carry.
     if not isinstance(canonical_task, dict):
         return False
-    for field in ("status", schema.get("reviewer_field", "reviewer"), "approved_head"):
+    for field in ("status", reviewer_field, "approved_head", "review_submission", MERGE_ROUTE_FIELD):
         if canonical_task.get(field) != task.get(field):
             return False
-    if canonical_task.get("review_submission") != submission or canonical_task.get(MERGE_ROUTE_FIELD) != route:
-        return False
 
-    pending = [
-        handoff
-        for handoff in canonical.get("handoffs", []) or []
-        if isinstance(handoff, dict)
-        and str(handoff.get("task_id") or "").strip() == task_id
-        and str(handoff.get("status") or "").strip().lower() == "pending"
-    ]
-    # Recovery resolves every earlier handoff of the task in the same commit,
-    # so its cause is the only pending one. Anything else pending means the
-    # recovery was superseded or is ambiguous.
-    if len(pending) != 1:
+    cause, source_head = committed_merge_group_cause(
+        canonical_task,
+        canonical.get("handoffs"),
+        task_id_field=task_id_field,
+        reviewer_field=reviewer_field,
+    )
+    if cause is None:
         return False
-    cause = pending[0]
-    if str(cause.get("reason") or "") != MERGE_GROUP_FAILURE_HANDOFF_REASON:
-        return False
-    if normalize_agent_id(str(cause.get("to") or "")) != reviewer:
-        return False
-    try:
-        if int(cause.get("pr_number")) != pr_number:
-            return False
-    except (TypeError, ValueError):
-        return False
-    if str(cause.get("source_head") or "").strip().lower() != source_head:
-        return False
-    group_head = str(cause.get("head_sha") or "").strip().lower()
-    if not group_head or group_head == source_head:
-        return False
-    if cause.get("run_id") in (None, ""):
-        return False
-    if parse_merge_group_pr_number(str(cause.get("queue_ref") or "")) != pr_number:
-        return False
-    created_at = parse_runtime_timestamp(cause.get("created_at"))
-    if created_at is None:
-        return False
-    try:
-        # The failure has to postdate the admission that put this head in the
-        # queue; an older cause cannot explain the current route.
-        return created_at >= routed_at
-    except TypeError:
-        return False
+    return str(cause.get("source_head") or "").strip().lower() == source_head
 
 
 @_entrypoint

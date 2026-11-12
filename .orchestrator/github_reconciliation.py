@@ -12,7 +12,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import ai_status as runtime_ai_status
-from common import parse_utc_timestamp, utc_now, write_activity_log
+from common import normalize_agent_id, parse_utc_timestamp, utc_now, write_activity_log
 
 
 @dataclass(frozen=True)
@@ -241,6 +241,91 @@ def correlate_merge_group_task(
     if len(matched) > 1:
         return None, "ambiguous"
     return None, "unmatched"
+
+
+MERGE_GROUP_FAILURE_HANDOFF_REASON = "merge_group_failure"
+
+
+def committed_merge_group_cause(
+    task: dict[str, Any],
+    handoffs: Any,
+    *,
+    task_id_field: str = "id",
+    reviewer_field: str = "reviewer",
+) -> tuple[dict[str, Any] | None, str]:
+    """The one pending merge-group failure cause bound to this task's routed head.
+
+    `reconcile_merge_group_runs` demotes an approved task to `review` through
+    the canonical CAS, resolves every earlier handoff of the task and records
+    the failure as one pending `merge_group_failure` handoff to the reviewer.
+    `task.merge_route` is left untouched. Given the *canonical* task and
+    handoffs, return ``(cause, source_head)`` only when every identity the
+    cause names matches that state exactly; otherwise ``(None, "")``.
+
+    Whether the cause also proves its source relation (`cause.source_head`)
+    is deliberately left to the caller: the ready dispatcher requires it,
+    and `enrich_legacy_merge_group_causes` is the only path that may add it
+    to a cause recorded before the field existed.
+    """
+    task_id = str(task.get(task_id_field) or task.get("id") or "").strip()
+    reviewer = normalize_agent_id(str(task.get(reviewer_field) or ""))
+    if not task_id or not reviewer:
+        return None, ""
+    if str(task.get("status") or "").strip().lower() != "review" or task.get("approved_head"):
+        return None, ""
+    submission = task.get("review_submission")
+    route = task.get("merge_route")
+    if not isinstance(submission, dict) or not isinstance(route, dict):
+        return None, ""
+    source_head = str(submission.get("remote_sha") or "").strip().lower()
+    if not source_head or str(route.get("head") or "").strip().lower() != source_head:
+        return None, ""
+    try:
+        pr_number = int(submission.get("pr_number"))
+        route_pr = int(route.get("pr_number"))
+    except (TypeError, ValueError):
+        return None, ""
+    if pr_number <= 0 or route_pr != pr_number:
+        return None, ""
+    routed_at = parse_utc_timestamp(route.get("at"))
+    if routed_at is None:
+        return None, ""
+
+    pending = [
+        handoff
+        for handoff in handoffs or []
+        if isinstance(handoff, dict)
+        and str(handoff.get("task_id") or "").strip() == task_id
+        and str(handoff.get("status") or "").strip().lower() == "pending"
+    ]
+    # Recovery resolves every earlier handoff of the task in the same commit,
+    # so its cause is the only pending one. Anything else pending means the
+    # recovery was superseded or is ambiguous.
+    if len(pending) != 1:
+        return None, ""
+    cause = pending[0]
+    if str(cause.get("reason") or "") != MERGE_GROUP_FAILURE_HANDOFF_REASON:
+        return None, ""
+    if normalize_agent_id(str(cause.get("to") or "")) != reviewer:
+        return None, ""
+    try:
+        if int(cause.get("pr_number")) != pr_number:
+            return None, ""
+    except (TypeError, ValueError):
+        return None, ""
+    group_head = str(cause.get("head_sha") or "").strip().lower()
+    if not group_head or group_head == source_head:
+        return None, ""
+    if cause.get("run_id") in (None, ""):
+        return None, ""
+    if parse_merge_group_pr_number(str(cause.get("queue_ref") or "")) != pr_number:
+        return None, ""
+    created_at = parse_utc_timestamp(cause.get("created_at"))
+    # The failure has to postdate the admission that put this head in the
+    # queue; an older cause cannot explain the current route.
+    if created_at is None or created_at < routed_at:
+        return None, ""
+    return cause, source_head
 
 
 def _record_seen_run_ids(bus_state: dict[str, Any], new_keys: list[str], max_ids: int = 2000) -> None:
@@ -1187,7 +1272,7 @@ def reconcile_merge_group_runs(
             "message": handoff_msg,
             "status": "pending",
             "created_at": now_ts,
-            "reason": "merge_group_failure",
+            "reason": MERGE_GROUP_FAILURE_HANDOFF_REASON,
             "run_id": run_id,
             "queue_ref": queue_ref,
             "head_sha": head_sha,
@@ -1259,8 +1344,186 @@ def poll_merge_group_runs(
     repo: str,
 ) -> bool:
     """Poll GitHub merge_group runs and reconcile them."""
+    # At most one mutating transition per cycle: an enrichment that wrote (or
+    # was refused) leaves `status` carrying its edit, so the failure scan
+    # waits for the next cycle's fresh canonical read.
+    enriched = enrich_legacy_merge_group_causes(config, bus_state, status, repo)
+    if enriched is not None:
+        return enriched
     limit = int((config.get("github_bus", {}) or {}).get("poll_batch_sizes", {}).get("merge_group_runs", 30))
     runs = fetch_merge_group_runs(repo, limit=limit)
     if not runs:
         return False
     return reconcile_merge_group_runs(config, bus_state, status, repo, runs)
+
+
+LEGACY_CAUSE_PROVEN = "proven"
+LEGACY_CAUSE_REFUTED = "refuted"
+LEGACY_CAUSE_UNRESOLVED = "unresolved"
+
+
+def legacy_merge_group_cause_source_verdict(
+    repo: str,
+    cause: dict[str, Any],
+    source_head: str,
+    parents_cache: dict[str, list[str] | None] | None = None,
+) -> tuple[str, str]:
+    """Does GitHub prove this committed cause failed a group enrolling `source_head`?
+
+    Reads the exact run the cause names and the parents of its group commit.
+    Returns ``(verdict, reason)``: `proven` only when the run is the same
+    repository's `merge_group` run on the recorded queue ref and group head,
+    is still a completed failure, and the group commit carries `source_head`
+    as a non-base parent. `refuted` is reserved for immutable facts GitHub
+    answered differently; anything missing, re-running or unanswerable is
+    `unresolved`.
+    """
+    run_id = cause.get("run_id")
+    group_head = str(cause.get("head_sha") or "").strip().lower()
+    queue_ref = str(cause.get("queue_ref") or "").strip()
+    run = fetch_workflow_run(repo, run_id)
+    if not isinstance(run, dict) or not run:
+        return LEGACY_CAUSE_UNRESOLVED, "run_unavailable"
+
+    repository = run.get("repository")
+    observed = {
+        "run_id": str(run.get("id") or run.get("databaseId") or "").strip(),
+        "repository": str(repository.get("full_name") or "").strip().lower()
+        if isinstance(repository, dict)
+        else "",
+        "event": str(run.get("event") or "").strip().lower(),
+        "queue_ref": str(run.get("head_branch") or run.get("headBranch") or "").strip(),
+        "group_head": str(run.get("head_sha") or run.get("headSha") or "").strip().lower(),
+    }
+    expected = {
+        "run_id": str(run_id).strip(),
+        "repository": str(repo or "").strip().lower(),
+        "event": "merge_group",
+        "queue_ref": queue_ref,
+        "group_head": group_head,
+    }
+    for field, wanted in expected.items():
+        if not observed[field]:
+            return LEGACY_CAUSE_UNRESOLVED, f"run_{field}_missing"
+        if observed[field] != wanted:
+            return LEGACY_CAUSE_REFUTED, f"run_{field}_mismatch"
+
+    run_status = str(run.get("status") or "").strip().lower()
+    conclusion = str(run.get("conclusion") or "").strip().lower()
+    if run_status != "completed" or conclusion not in FAILURE_CONCLUSIONS:
+        # A re-run under the same id may be running or have succeeded; the
+        # cause is not proven, and the next re-run may fail again.
+        return LEGACY_CAUSE_UNRESOLVED, "run_not_a_completed_failure"
+
+    incorporates = merge_group_incorporates_head(repo, group_head, source_head, parents_cache)
+    if incorporates is None:
+        return LEGACY_CAUSE_UNRESOLVED, "group_association_unknown"
+    if not incorporates:
+        return LEGACY_CAUSE_REFUTED, "group_did_not_enrol_source_head"
+    return LEGACY_CAUSE_PROVEN, "group_enrolled_source_head"
+
+
+def enrich_legacy_merge_group_causes(
+    config: dict[str, Any],
+    bus_state: dict[str, Any],
+    status: dict[str, Any],
+    repo: str,
+) -> bool | None:
+    """Record the proven source relation on a cause committed before it existed.
+
+    A recovery cause written before `source_head` was part of the record
+    cannot license a reviewer dispatch: the ready dispatcher requires the
+    cause to name exactly the routed source head. This is the recovery
+    producer completing its own committed record, not a new cause: it only
+    touches a cause `committed_merge_group_cause` already binds to the
+    canonical task, re-reads the exact run and group commit it names, and
+    writes `source_head` through the same canonical CAS only when GitHub
+    proves the relation. A refuted relation is remembered so the immutable
+    facts are not re-fetched; an unresolved one is asked again next cycle.
+    Nothing else on the task, its route or its handoffs changes.
+
+    Returns None when nothing was written, otherwise whether the canonical
+    CAS accepted the write.
+    """
+    from status_transition import commit_canonical_task_transition
+
+    schema = config.get("schema", {}) or {}
+    task_id_field = schema.get("task_id_field", "id")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    handoffs = status.get("handoffs")
+    checks = bus_state.get("legacy_merge_group_cause_checks")
+    checks = dict(checks) if isinstance(checks, dict) else {}
+    parents_cache: dict[str, list[str] | None] = {}
+    proven: list[tuple[str, dict[str, Any]]] = []
+    checks_changed = False
+
+    for task in status.get(schema.get("tasks_path", "tasks"), []) or []:
+        if not isinstance(task, dict):
+            continue
+        cause, source_head = committed_merge_group_cause(
+            task,
+            handoffs,
+            task_id_field=task_id_field,
+            reviewer_field=reviewer_field,
+        )
+        if cause is None or "source_head" in cause:
+            continue
+        task_id = str(task.get(task_id_field) or task.get("id") or "").strip()
+        check_key = f"{task_id}:{cause.get('run_id')}:{source_head}"
+        previous = str(checks.get(check_key) or "")
+        if previous.startswith(f"{LEGACY_CAUSE_REFUTED}:"):
+            continue
+
+        verdict, reason = legacy_merge_group_cause_source_verdict(
+            repo, cause, source_head, parents_cache
+        )
+        facts = {
+            "task_id": task_id,
+            "run_id": cause.get("run_id"),
+            "queue_ref": cause.get("queue_ref"),
+            "head_sha": cause.get("head_sha"),
+            "pr_number": cause.get("pr_number"),
+            "source_head": source_head,
+        }
+        if verdict == LEGACY_CAUSE_PROVEN:
+            proven.append((check_key, facts))
+            cause["source_head"] = source_head
+            continue
+        outcome = f"{verdict}:{reason}"
+        if outcome == previous:
+            continue
+        checks[check_key] = outcome
+        checks_changed = True
+        write_activity_log(config, merge_group_audit_entry(
+            f"merge_group_cause_source_{verdict}",
+            facts,
+            reason,
+            (
+                f"Committed merge group failure cause for task {task_id} (run {cause.get('run_id')}) "
+                f"carries no source head; the relation to {source_head} is {verdict} ({reason}). "
+                "The cause is left unchanged."
+            ),
+        ))
+
+    committed: bool | None = None
+    if proven:
+        committed = bool(commit_canonical_task_transition(config, status))
+        if committed:
+            for check_key, facts in proven:
+                if checks.pop(check_key, None) is not None:
+                    checks_changed = True
+                write_activity_log(config, merge_group_audit_entry(
+                    "merge_group_cause_source_proven",
+                    facts,
+                    "group_enrolled_source_head",
+                    (
+                        f"Merge group run {facts['run_id']} on {facts['queue_ref']} enrolled source head "
+                        f"{facts['source_head']} of task {facts['task_id']}; recorded it on the committed cause."
+                    ),
+                ))
+    if checks_changed:
+        if checks:
+            bus_state["legacy_merge_group_cause_checks"] = checks
+        else:
+            bus_state.pop("legacy_merge_group_cause_checks", None)
+    return committed
