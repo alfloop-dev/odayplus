@@ -22023,7 +22023,8 @@ class _FakeAdmissionGitHub:
     Any `--admin` mutation fails the test outright.
 
     `graphql` overrides fields of the GraphQL PR node and `graphql_drop` removes
-    them, for partial or contradictory answers. `drift` is applied as attribute
+    them, for partial or contradictory answers; `view` and `view_drop` do the
+    same to the `gh pr view` answer. `drift` is applied as attribute
     changes when a `pr merge` lands, for a PR whose head, base or branch moves
     between the initial check and the readback; `graphql_head` lets the queue
     node alone name another head.
@@ -22054,6 +22055,8 @@ class _FakeAdmissionGitHub:
         on_first_view=None,
         graphql: dict | None = None,
         graphql_drop: tuple[str, ...] = (),
+        view: dict | None = None,
+        view_drop: tuple[str, ...] = (),
         drift: dict | None = None,
     ) -> None:
         self.number = number
@@ -22072,6 +22075,8 @@ class _FakeAdmissionGitHub:
         self.on_first_view = on_first_view
         self.graphql = dict(graphql or {})
         self.graphql_drop = tuple(graphql_drop)
+        self.view = dict(view or {})
+        self.view_drop = tuple(view_drop)
         self.drift = dict(drift or {})
         self.graphql_head: str | None = None
         self.mutation_exit: tuple[int, str] | None = None
@@ -22122,21 +22127,23 @@ class _FakeAdmissionGitHub:
                 hook()
             if not self.view_readable:
                 return self._out({})
-            return self._out(
-                {
-                    "number": self.number,
-                    "state": "MERGED" if self.admission == "merged" else self.state,
-                    "isDraft": self.draft,
-                    "autoMergeRequest": (
-                        {"enabledAt": "2026-11-11T00:00:00Z"} if self.admission == "armed" else None
-                    ),
-                    "baseRefName": self.base,
-                    "headRefName": self.branch,
-                    "headRefOid": self.head,
-                    "url": f"https://github.com/o/r/pull/{self.number}",
-                    "mergeStateStatus": self.merge_state,
-                }
-            )
+            view = {
+                "number": self.number,
+                "state": "MERGED" if self.admission == "merged" else self.state,
+                "isDraft": self.draft,
+                "autoMergeRequest": (
+                    {"enabledAt": "2026-11-11T00:00:00Z"} if self.admission == "armed" else None
+                ),
+                "baseRefName": self.base,
+                "headRefName": self.branch,
+                "headRefOid": self.head,
+                "url": f"https://github.com/o/r/pull/{self.number}",
+                "mergeStateStatus": self.merge_state,
+            }
+            view.update(self.view)
+            for field in self.view_drop:
+                view.pop(field, None)
+            return self._out(view)
         if args[:2] == ["api", "graphql"]:
             query = " ".join(args)
             if "mergeQueue(branch" in query:
@@ -24297,6 +24304,76 @@ class MergeAdmissionSingleOwnerTests(unittest.TestCase):
                 self.assertEqual(self._disk_task()["merge_route"]["attempts"], 1)
 
         # The same readback on the OPEN PR is armed.
+        self._fresh()
+        self.gh.after = "armed"
+        self._tick(bus_polls=2)
+        route = self._disk_task()["merge_route"]
+        self.assertEqual((route["route"], route["attempts"]), ("armed", 1))
+
+
+    # `gh pr view` answers that do not say whether the PR is armed: the field
+    # the view asked for is missing, or not GitHub's nullable object. The
+    # GraphQL node beside them is a whole not-queued answer, which says
+    # nothing about arming.
+    UNREPORTED_ARMING = {
+        "field missing": {"view_drop": ("autoMergeRequest",)},
+        "true": {"view": {"autoMergeRequest": True}},
+        "list": {"view": {"autoMergeRequest": [{"enabledAt": "2026-11-11T00:00:00Z"}]}},
+        "string": {"view": {"autoMergeRequest": ""}},
+    }
+
+    def test_an_unreported_arming_state_is_neither_armed_nor_absence(self) -> None:
+        """Before the mutation it issues nothing on either tick entry; after it
+        - a zero exit, an unsettled failure or a refusal message - the attempt
+        is `unconfirmed` and stays counted on canonical disk, never refunded."""
+        refusal = (1, "GraphQL: Repository rule violations found for refs/heads/dev (mergePullRequest)")
+        for name, answer in self.UNREPORTED_ARMING.items():
+            with self.subTest(name, read="before the mutation"):
+                self._fresh()
+                for field, value in answer.items():
+                    setattr(self.gh, field, value)
+
+                self._tick(bus_polls=3)
+
+                self.assertEqual(self.gh.mutations, [])
+                self.assertNotIn("merge_route", self._disk_task())
+
+            for exit_name, exit_ in (
+                ("acknowledged", None),
+                ("bad gateway", self.UNKNOWN_MUTATION_EXITS["bad gateway"]),
+                ("refusal message", refusal),
+            ):
+                with self.subTest(name, read="after the mutation", exit=exit_name):
+                    self._fresh()
+                    if exit_ is not None:
+                        self.real_transport = True
+                        self.gh.mutation_exit = exit_
+                    self.gh.after = "none"
+                    self.gh.drift = dict(answer)
+
+                    self._tick(bus_polls=2)
+
+                    self.assertEqual(len(self._merges()), 1)
+                    route = self._disk_task()["merge_route"]
+                    self.assertEqual(
+                        (route["head"], route["route"], route["attempts"]), (self.HEAD, "unconfirmed", 1)
+                    )
+                    # The view still does not report arming: inside the window
+                    # neither entry re-issues and the counter stays spent.
+                    self._tick(bus_polls=2)
+                    self.assertEqual(len(self._merges()), 1)
+                    self.assertEqual(self._disk_task()["merge_route"]["attempts"], 1)
+
+        # Controls. An explicit null beside a whole not-queued node is absence:
+        # a refusal is released, uncounted. GitHub's object is armed.
+        self._fresh()
+        self.real_transport = True
+        self.gh.mutation_exit = refusal
+        self.gh.after = "none"
+        self._tick(bus_polls=1)
+        self.assertEqual(len(self._merges()), 1)
+        self.assertNotIn("merge_route", self._disk_task())
+
         self._fresh()
         self.gh.after = "armed"
         self._tick(bus_polls=2)

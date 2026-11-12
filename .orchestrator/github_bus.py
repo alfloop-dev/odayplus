@@ -1342,10 +1342,25 @@ AUTO_MERGE_BLOCKING_MERGE_STATES = frozenset({"DIRTY", "CONFLICTING"})
 ARCHIVE_HOUSEKEEPING_BRANCH_PREFIX = "task/OPS-ARCHIVE-AUTO-COMMIT-"
 
 
-def auto_merge_request_present(pr: Any) -> bool:
-    """Return true only for GitHub's object-shaped auto-merge readback."""
+def auto_merge_request_state(pr: Any) -> str:
+    """Classify the PR view's `autoMergeRequest` as `armed`, `absent` or `unknown`.
 
-    return isinstance(pr, dict) and isinstance(pr.get("autoMergeRequest"), dict)
+    The view requests the field (`AUTO_MERGE_PR_FIELDS`) and GitHub defines it
+    as a nullable `AutoMergeRequest` object: an object is a persisted arming, an
+    explicit null is a positive statement that nothing is armed. A view without
+    the field, or with any other shape, has not said whether the PR is armed;
+    reading that as absence would license a new mutation, or refund an attempt
+    already issued, on an arming GitHub may hold.
+    """
+
+    if not isinstance(pr, dict) or "autoMergeRequest" not in pr:
+        return "unknown"
+    request = pr["autoMergeRequest"]
+    if isinstance(request, dict):
+        return "armed"
+    if request is None:
+        return "absent"
+    return "unknown"
 
 
 def fetch_pr_merge_queue_status(repo: str, number: int) -> dict[str, Any] | None:
@@ -1590,6 +1605,10 @@ def pr_merge_admission(repo: str, number: int, pr: dict[str, Any]) -> tuple[str,
     and is `unknown` - recording it as armed or queued would certify an
     admission GitHub may not hold. Queue enrollment is read from the GraphQL
     node alone; `gh pr view` cannot return it (`AUTO_MERGE_PR_FIELDS`).
+    Arming is read from the view alone, and the node cannot stand in for it:
+    `not_admitted` also needs the view's explicit null `autoMergeRequest`
+    (`auto_merge_request_state`), so a view that did not report arming is
+    `unknown` however whole the not-queued node is.
     """
 
     pr_state = str(pr.get("state") or "").upper()
@@ -1599,8 +1618,13 @@ def pr_merge_admission(repo: str, number: int, pr: dict[str, Any]) -> tuple[str,
         # CLOSED, or a view that does not say: nothing on it is a pending
         # admission, and absence cannot be read from it either.
         return "unknown", None
-    if auto_merge_request_present(pr):
+    arming = auto_merge_request_state(pr)
+    if arming == "armed":
         return "armed", None
+    if arming != "absent":
+        # The queue node does not carry arming state, so its absence of a
+        # queue entry cannot stand in for an arming the view did not report.
+        return "unknown", None
     node = fetch_pr_merge_queue_status(repo, number)
     if not isinstance(node, dict) or node.get("number") != number:
         return "unknown", None

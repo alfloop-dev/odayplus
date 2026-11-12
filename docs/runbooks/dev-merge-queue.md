@@ -168,7 +168,12 @@ when `branch_workflow.task_pr.auto_merge` is on - the route:
    `merged: false`, `isInMergeQueue: false` and a null `mergeQueueEntry`. A
    missing field, a contradiction (an entry beside `isInMergeQueue: false`,
    `state` and `merged` disagreeing) or another PR, head, base or branch is
-   `unknown`.
+   `unknown`. The GraphQL node carries no arming state, so "not admitted"
+   also needs the PR view to say nothing is armed: an explicit null
+   `autoMergeRequest`. A view without that field, or with anything other
+   than null or GitHub's object, has not reported arming and is `unknown`
+   before the mutation (nothing is issued) and in the step 6 readback
+   (`unconfirmed`, attempt kept - never a refusal that refunds it).
 2. **Does not re-issue** when GitHub already reports the PR armed
    (`autoMergeRequest`) or queued (`isInMergeQueue`); that observation is
    recorded with zero attempts. Armed and queued are held to the same whole

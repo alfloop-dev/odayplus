@@ -3045,6 +3045,60 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
                 self.assertEqual(calls, [])
                 self.assertEqual(record["state"], "skipped_queue_unreadable")
 
+    # `gh pr view` answers that do not say whether the PR is armed: the field
+    # it was asked for is missing, or not GitHub's nullable object.
+    UNREPORTED_ARMING = {
+        "field missing": "<drop>",
+        "true": True,
+        "list": [{"enabledAt": "2026-09-01T00:00:00Z"}],
+        "string": "",
+    }
+
+    def _housekeeping_view(self, arming) -> dict:
+        pr = self._housekeeping_pr()
+        if arming == "<drop>":
+            pr.pop("autoMergeRequest")
+        else:
+            pr["autoMergeRequest"] = arming
+        return pr
+
+    def test_archive_housekeeping_unreported_arming_is_not_absence(self) -> None:
+        """The queue node does not carry arming state, so a whole not-queued
+        node beside a view that did not report arming is still unknown:
+        nothing is issued on it, and a readback like it after the mutation
+        is not counted as armed, queued or refused."""
+
+        for name, arming in self.UNREPORTED_ARMING.items():
+            with self.subTest(name, read="before the mutation"):
+                calls, record = self._housekeeping_round(
+                    [self._housekeeping_view(arming)], self._graphql_node
+                )
+                self.assertEqual(calls, [])
+                self.assertEqual(record["state"], "skipped_queue_unreadable")
+
+            with self.subTest(name, read="after the mutation"):
+                calls, record = self._housekeeping_round(
+                    [self._housekeeping_pr(), self._housekeeping_view(arming)], self._graphql_node
+                )
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(calls[0][:2], ["pr", "merge"])
+                self.assertEqual(record["state"], "failed")
+                self.assertEqual(record["failure_code"], "auto_merge_unconfirmed_readback")
+
+        # Controls: an explicit null is absence and is admitted once; GitHub's
+        # object is armed and nothing is issued.
+        calls, record = self._housekeeping_round(
+            [self._housekeeping_pr(), self._housekeeping_view({"enabledAt": "2026-09-01T00:00:00Z"})],
+            self._graphql_node,
+        )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(record["state"], "enabled")
+        calls, record = self._housekeeping_round(
+            [self._housekeeping_view({"enabledAt": "2026-09-01T00:00:00Z"})], self._graphql_node
+        )
+        self.assertEqual(calls, [])
+        self.assertEqual(record["state"], "enabled")
+
     def test_archive_housekeeping_readback_on_a_moved_pr_is_not_enabled(self) -> None:
         armed = {"autoMergeRequest": {"enabledAt": "2026-09-01T00:00:00Z"}}
         for name, moved in {
