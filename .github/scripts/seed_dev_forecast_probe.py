@@ -114,6 +114,40 @@ def main() -> int:
         ).fetchall():
             print(f"INGESTION_RUNS status={status} n={n}", flush=True)
 
+        # Trainer resolves the platform-wide drift policy for this tenant.
+        platform = "00000000-0000-0000-0000-000000000001"
+        print(
+            "TENANTS total=",
+            conn.execute("SELECT count(*) FROM core.tenants").fetchone()[0],
+            "platform_tenant_exists=",
+            conn.execute(
+                "SELECT count(*) FROM core.tenants WHERE tenant_id = %s", (platform,)
+            ).fetchone()[0],
+            "target_tenant_exists=",
+            conn.execute(
+                "SELECT count(*) FROM core.tenants WHERE tenant_id = %s", (target,)
+            ).fetchone()[0],
+            flush=True,
+        )
+        for kind, tenant, in_force, n in conn.execute(
+            "SELECT policy_kind, tenant_id::text, (effective_to IS NULL), count(*) "
+            "FROM workflow.decision_policies "
+            "WHERE policy_kind IN ('model_performance_drift','forecast_alert') "
+            "GROUP BY 1,2,3 ORDER BY 1,2"
+        ).fetchall():
+            label = "PLATFORM" if tenant == platform else ("TARGET" if tenant == target else "other")
+            print(f"POLICY kind={kind} tenant={label} in_force={in_force} n={n}", flush=True)
+        for tg in conn.execute(
+            "SELECT tgname FROM pg_trigger WHERE tgrelid = 'core.tenants'::regclass "
+            "AND NOT tgisinternal"
+        ).fetchall():
+            print("TENANT_TRIGGER", tg[0], flush=True)
+        print(
+            "ALEMBIC",
+            conn.execute("SELECT version_num FROM alembic_version").fetchall(),
+            flush=True,
+        )
+
     env = dict(os.environ, ODAY_DATABASE_URL=dsn)
     proc = subprocess.run(
         [sys.executable, "-m", "product_ops.modeling.install_views", "inventory"],
