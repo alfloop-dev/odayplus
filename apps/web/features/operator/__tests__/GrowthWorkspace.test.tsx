@@ -503,6 +503,119 @@ describe("GrowthWorkspace API loading", () => {
     expect(screen.queryByTestId("growth-entry-cards")).not.toBeInTheDocument();
   });
 
+  /** The actual wire body of the canonical PRICEOPS_STORE_BINDING_UNAVAILABLE refusal (shared/api/errors.py). */
+  const sourceUnavailableEnvelope = (correlation: string) => json({
+    detail: { code: "PRICEOPS_STORE_BINDING_UNAVAILABLE", message: "Canonical pricing ownership is unavailable" },
+    error: { code: "internal_error", message: "Canonical pricing ownership is unavailable",
+      next_action: "Service unavailable; retry after a short back-off.", occurred_at: "2026-11-12T10:00:00.000Z",
+      details: [{ code: "PRICEOPS_STORE_BINDING_UNAVAILABLE", message: "Canonical pricing ownership is unavailable" }],
+      correlation_id: correlation },
+  }, 503);
+
+  it.each(["recommendations", "actions"] as const)(
+    "closes the workspace when only the %s read reports the canonical source-unavailable refusal",
+    async (section) => {
+      const { writes } = mockGrowthReads({ [section]: () => sourceUnavailableEnvelope(`corr-${section}-503`) });
+      render(<GrowthWorkspace searchParams={{ builder: "offpeak", segment: canonicalSegment.id }} />);
+      const gate = await screen.findByTestId("operator-data-unavailable");
+      await waitFor(() => expect(gate).toHaveAttribute("data-status", "error"));
+      expect(gate).toHaveAttribute("data-failure-kind", "server");
+      expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent(`corr-${section}-503`);
+      const technical = screen.getByTestId("operator-data-unavailable-technical");
+      expect(technical).toHaveTextContent(`growth ${section} returned 503 internal_error: Canonical pricing ownership is unavailable`);
+      expect(technical).toHaveTextContent(/發生時間\d{4}-\d{2}-\d{2}T/);
+      expect(screen.queryByTestId("growth-workspace")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("growth-entry-cards")).not.toBeInTheDocument();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(writes).toEqual([]);
+    },
+  );
+
+  it.each(["DRAFT", "APPROVED"])(
+    "offers no operation on a %s action whose segment is not visible in the same load",
+    async (status) => {
+      const straddled = { ...GROWTH_ITEMS[0], id: "straddled-action", segmentId: canonicalSegment.id, status };
+      const { writes } = mockGrowthReads({
+        segments: () => json({ items: [], count: 0 }),
+        actions: () => json({ items: [straddled], count: 1 }, 200, { "X-Correlation-Id": "corr-actions-straddled" }),
+      });
+      render(<GrowthWorkspace searchParams={{ item: "straddled-action" }} />);
+      const section = await screen.findByTestId("growth-section-actions-unavailable");
+      expect(within(section).getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "unknown");
+      expect(within(section).getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-actions-straddled");
+      expect(within(section).getByTestId("operator-data-unavailable-technical"))
+        .toHaveTextContent("growth actions returned 200 rows outside the visible segments");
+      expect(within(section).getByRole("button", { name: "重新載入" })).toBeInTheDocument();
+      expect(screen.queryByTestId("growth-item-straddled-action")).not.toBeInTheDocument();
+      expect(screen.queryByText(straddled.name)).not.toBeInTheDocument();
+      expect(screen.queryByTestId("growth-entry-cards")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("growth-new-action")).not.toBeInTheDocument();
+      expect(screen.queryAllByRole("button").map((button) => button.textContent)).toEqual(["重新載入"]);
+      expect(writes).toEqual([]);
+    },
+  );
+
+  it("isolates action and recommendation rows of a segment outside the visible list", async () => {
+    const otherSegmentId = "priceops:other-plan:other-item";
+    const { writes } = mockGrowthReads({
+      recommendations: () => json({ items: [{ id: "priceops-rec:other-plan:other-item", segmentId: otherSegmentId,
+        planId: "other-plan", itemId: "other-item", currentPrice: 100, recommendedPrice: 105,
+        constraintStatus: "SAFE", bindingConstraints: [], source: "priceops" }] }),
+      actions: () => json({ items: [{ ...GROWTH_ITEMS[0], id: "other-action", segmentId: otherSegmentId, status: "DRAFT" }] }),
+    });
+    render(<GrowthWorkspace searchParams={{ item: "other-action" }} />);
+    const section = await screen.findByTestId("growth-section-actions-unavailable");
+    expect(within(section).getByTestId("operator-data-unavailable-technical"))
+      .toHaveTextContent("growth actions returned 200 rows outside the visible segments");
+    expect(screen.queryByTestId("growth-item-other-action")).not.toBeInTheDocument();
+    expect(screen.getByTestId("growth-entry-cards")).toBeInTheDocument();
+    cleanup();
+    render(<GrowthWorkspace searchParams={{ gtab: "priceops", draft: "priceops-rec:other-plan:other-item" }} />);
+    const recommendations = await screen.findByTestId("growth-section-recommendations-unavailable");
+    expect(within(recommendations).getByTestId("operator-data-unavailable-technical"))
+      .toHaveTextContent("growth recommendations returned 200 rows outside the visible segments");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(writes).toEqual([]);
+  });
+
+  /** A 200 reply whose body cannot be read: the transport error, not a malformed payload. */
+  const unreadableBody = (error: Error, correlation: string) =>
+    Object.assign(json({ items: [] }, 200, { "X-Correlation-Id": correlation }), { json: () => Promise.reject(error) });
+
+  it.each([
+    { name: "dropped body stream", error: () => new TypeError("terminated"), kind: "network" },
+    { name: "body timeout", error: () => Object.assign(new Error("body read timed out"), { name: "TimeoutError" }), kind: "timeout" },
+  ])("keeps a $name on a required read as that transport failure with its actual reply", async ({ error, kind }) => {
+    let segmentReads = 0;
+    const { fetchMock } = mockGrowthReads({
+      segments: () => (++segmentReads === 1
+        ? unreadableBody(error(), "corr-segments-body")
+        : json({ items: [canonicalSegment], count: 1 })),
+    });
+    render(<GrowthWorkspace searchParams={{}} />);
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", kind));
+    expect(gate).toHaveAttribute("data-status", "error");
+    expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-segments-body");
+    const technical = screen.getByTestId("operator-data-unavailable-technical");
+    expect(technical).toHaveTextContent("200");
+    expect(technical).toHaveTextContent(`growth segments request failed: ${error().message}`);
+    expect(technical).not.toHaveTextContent("without a valid Growth payload");
+    fireEvent.click(screen.getByRole("button", { name: "重新載入" }));
+    expect(await screen.findByTestId("growth-workspace")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/segments"))).toHaveLength(2);
+  });
+
+  it("isolates an unreadable action body as a network failure of that section", async () => {
+    const { writes } = mockGrowthReads({ actions: () => unreadableBody(new TypeError("terminated"), "corr-actions-body") });
+    render(<GrowthWorkspace searchParams={{}} />);
+    const section = await screen.findByTestId("growth-section-actions-unavailable");
+    expect(within(section).getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "network");
+    expect(within(section).getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-actions-body");
+    expect(screen.getByTestId("growth-entry-cards")).toBeInTheDocument();
+    expect(writes).toEqual([]);
+  });
+
   it.each([
     { status: 401, code: "unauthorized", kind: "unauthenticated", action: "operator-data-unavailable-login-link" },
     { status: 403, code: "forbidden", kind: "forbidden", action: "operator-data-unavailable-admin-link" },

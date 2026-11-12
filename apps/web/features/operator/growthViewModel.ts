@@ -445,12 +445,15 @@ function newCorrelationId(): string {
 /**
  * One Growth transport for reads and writes. A reply keeps its Response so a
  * refused read can report the real status and canonical error envelope; a
- * request that never received a reply keeps its error. A local abort after
- * `timeoutMs` is reported as a timeout rather than a generic abort.
+ * request that never received a reply keeps its error. A reply whose body is
+ * not JSON is unparsed (malformed); a reply whose body could not be read at
+ * all (a dropped stream, an abort) keeps that transport error with its
+ * response. A local abort after `timeoutMs` is reported as a timeout rather
+ * than a generic abort.
  */
 type GrowthTransportResult =
   | { kind: "reply"; response: Response; body: unknown; parsed: boolean }
-  | { kind: "failed"; error: unknown };
+  | { kind: "failed"; error: unknown; response?: Response };
 
 async function growthRequest(
   path: string,
@@ -459,6 +462,7 @@ async function growthRequest(
   const { correlationId, timeoutMs, ...fetchOptions } = options;
   const controller = timeoutMs ? new AbortController() : undefined;
   let timedOut = false;
+  let response: Response | undefined;
   const timeout = timeoutMs
     ? setTimeout(() => { timedOut = true; controller?.abort(); }, timeoutMs)
     : undefined;
@@ -474,17 +478,20 @@ async function growthRequest(
       },
     });
     if (!res.ok) return { kind: "reply", response: res, body: undefined, parsed: false };
+    response = res;
     try {
       return { kind: "reply", response: res, body: await res.json(), parsed: true };
     } catch (error) {
-      if (timedOut) throw error;
+      // Only a body that arrived but is not JSON is malformed; any other
+      // failure to read it is a transport failure of this request.
+      if (timedOut || !(error instanceof Error && error.name === "SyntaxError")) throw error;
       return { kind: "reply", response: res, body: undefined, parsed: false };
     }
   } catch (error) {
-    if (!timedOut) return { kind: "failed", error };
+    if (!timedOut) return { kind: "failed", error, response };
     const timeoutError = new Error(`Growth ${path} timed out after ${timeoutMs}ms`);
     timeoutError.name = "TimeoutError";
-    return { kind: "failed", error: timeoutError };
+    return { kind: "failed", error: timeoutError, response };
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
   }
@@ -886,8 +893,19 @@ export type GrowthApiData = {
 };
 
 type GrowthRead<T> =
-  | { ok: true; body: T; raw: unknown }
+  | { ok: true; body: T; raw: unknown; response: Response }
   | { ok: false; failure: OperatorLoadFailure; raw?: unknown };
+
+/** A 2xx reply that cannot be used as verified data, with its actual status, correlation and time. */
+function unusableReplyFailure(response: Response, label: string, correlationId: string, reason: string): OperatorLoadFailure {
+  return {
+    correlationId: response.headers?.get?.("x-correlation-id") ?? correlationId,
+    httpStatus: response.status,
+    kind: "unknown",
+    occurredAt: new Date().toISOString(),
+    technicalDetail: `${label} returned ${response.status} ${reason}`,
+  };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -1001,7 +1019,18 @@ async function readGrowth<T>(
     headers: { "X-Correlation-Id": correlationId },
   });
   if (result.kind === "failed") {
-    return { ok: false, failure: operatorLoadFailureFromError(result.error, label, correlationId) };
+    const failure = operatorLoadFailureFromError(result.error, label, correlationId);
+    // A body that failed mid-read still had a reply: keep its actual status and correlation.
+    return {
+      ok: false,
+      failure: result.response
+        ? {
+            ...failure,
+            correlationId: result.response.headers?.get?.("x-correlation-id") ?? correlationId,
+            httpStatus: result.response.status,
+          }
+        : failure,
+    };
   }
   if (!result.response.ok) {
     return { ok: false, failure: await operatorLoadFailureFromResponse(result.response, label, correlationId) };
@@ -1018,16 +1047,30 @@ async function readGrowth<T>(
     return {
       ok: false,
       ...(result.parsed ? { raw: result.body } : {}),
-      failure: {
-        correlationId: result.response.headers?.get?.("x-correlation-id") ?? correlationId,
-        httpStatus: result.response.status,
-        kind: "unknown",
-        occurredAt: new Date().toISOString(),
-        technicalDetail: `${label} returned ${result.response.status} without a valid Growth payload`,
-      },
+      failure: unusableReplyFailure(result.response, label, correlationId, "without a valid Growth payload"),
     };
   }
-  return { ok: true, body, raw: result.body };
+  return { ok: true, body, raw: result.body, response: result.response };
+}
+
+/**
+ * A canonical snapshot only returns recommendations and actions of visible
+ * segments. Rows outside the verified segment list mean the independent reads
+ * straddled a source or scope change, so that section is an inconsistent read
+ * (retryable) and none of its rows is offered for a mutation.
+ */
+function withinVisibleSegments<T extends { segmentId: string }>(
+  read: GrowthRead<{ items: T[] }>,
+  visibleSegmentIds: ReadonlySet<string>,
+  label: string,
+  correlationId: string,
+): GrowthRead<{ items: T[] }> {
+  if (!read.ok || read.body.items.every((row) => visibleSegmentIds.has(row.segmentId))) return read;
+  return {
+    ok: false,
+    raw: read.raw,
+    failure: unusableReplyFailure(read.response, label, correlationId, "rows outside the visible segments"),
+  };
 }
 
 function unavailableGrowthData(
@@ -1051,11 +1094,12 @@ function unavailableGrowthData(
  * Fetch all Growth workspace data from /api/v1/operator/growth/*.
  *
  * Production classifies each read: an authentication or permission refusal
- * on any read, or a failed freshness/segment read, closes the whole workspace
- * with that read's actual failure. Seed/fixture payloads are rejected. Empty
- * recommendation or action lists are verified data (a canonical plan without
- * an optimization has no recommendation yet); a failed recommendation or
- * action read is isolated to that section. Local and test callers may retain
+ * or a 503 source/scope unavailability on any read, or a failed
+ * freshness/segment read, closes the whole workspace with that read's actual
+ * failure. Seed/fixture payloads are rejected. Empty recommendation or action
+ * lists are verified data (a canonical plan without an optimization has no
+ * recommendation yet); any other failed recommendation or action read,
+ * including rows outside the visible segments, is isolated to that section. Local and test callers may retain
  * the embedded fixture fallback whenever a read is incomplete.
  *
  * Called from server components (Next.js server-side fetch) or from
@@ -1074,7 +1118,7 @@ export async function fetchGrowthApiData(params: {
     : "";
 
   try {
-    const [freshnessRes, segmentsRes, recommendationsRes, actionsRes] = await Promise.all([
+    const [freshnessRes, segmentsRes, recommendationsReply, actionsReply] = await Promise.all([
       readGrowth("growth freshness", "/freshness", correlationId,
         (body) => (isFreshnessBody(body) ? body : null)),
       readGrowth("growth segments", "/segments", correlationId, parseList<GrowthSegment>(isSegmentRow)),
@@ -1082,6 +1126,9 @@ export async function fetchGrowthApiData(params: {
         parseList(isRecommendationRow, normalizePriceRecommendation)),
       readGrowth("growth actions", `/actions${segmentQuery}`, correlationId, parseList<GrowthItem>(isActionRow)),
     ]);
+    const visibleSegmentIds = new Set(segmentsRes.ok ? segmentsRes.body.items.map((segment) => segment.id) : []);
+    const recommendationsRes = withinVisibleSegments(recommendationsReply, visibleSegmentIds, "growth recommendations", correlationId);
+    const actionsRes = withinVisibleSegments(actionsReply, visibleSegmentIds, "growth actions", correlationId);
     const reads = [freshnessRes, segmentsRes, recommendationsRes, actionsRes];
     const failures = reads.flatMap((read) => (read.ok ? [] : [read.failure]));
     // Seed/fixture markers are checked on every 2xx reply, including malformed ones.
@@ -1094,6 +1141,14 @@ export async function fetchGrowthApiData(params: {
         failures.find((failure) => failure.kind === "forbidden");
       if (authFailure) {
         return unavailableGrowthData("error", authFailure.technicalDetail ?? authFailure.kind, authFailure);
+      }
+      // A 503 is the canonical refusal of an unavailable source, scope owner or
+      // identity dependency (API and Web BFF alike). Every Growth read shares
+      // that boundary, so one section reporting it closes the whole workspace
+      // and no write is offered on the other, seemingly verified reads.
+      const sourceFailure = failures.find((failure) => failure.httpStatus === 503);
+      if (sourceFailure) {
+        return unavailableGrowthData("error", sourceFailure.technicalDetail ?? sourceFailure.kind, sourceFailure);
       }
       // Freshness and segments define the source and every draft target.
       const requiredFailure = !freshnessRes.ok ? freshnessRes.failure : !segmentsRes.ok ? segmentsRes.failure : null;
