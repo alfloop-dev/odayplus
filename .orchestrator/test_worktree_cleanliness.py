@@ -493,6 +493,12 @@ CHECKOUT_WORKFLOWS = {
     "promote-dev-to-main.yml": 1,
     "tooling-scope-review-gate.yml": 1,
 }
+# Product contracts pin these jobs' first step to the checkout itself, so the
+# Git preflight cannot precede it; the proof still runs before any reader.
+CHECKOUT_FIRST = {"deploy-dev.yml"}
+# The merge-queue contract executes its one shell step verbatim and reads no
+# tree; the checkout there carries the deny only.
+DENY_ONLY = {"merge-queue-review-gate.yml"}
 PREFLIGHT_NAME = "Require sparse-capable Git before checkout"
 PROOF_NAME = "Prove protected path stayed out of checkout"
 # Inputs that could widen, redirect or replace the sparse deny.
@@ -528,10 +534,14 @@ class CheckoutBoundaryWorkflowTests(unittest.TestCase):
                 here = f"{name}:{job_name}"
                 found += len(positions)
                 with self.subTest(job=here):
-                    self.assertEqual(positions, [1], "one checkout, directly after the Git preflight")
-                    self.assertEqual(steps[0].get("name"), PREFLIGHT_NAME)
-                    self.assertEqual(steps[0].get("run"), preflight)
-                    checkout = steps[1]
+                    if name in CHECKOUT_FIRST or name in DENY_ONLY:
+                        self.assertEqual(positions, [0], "the contract pins the checkout first")
+                        self.assertFalse([s for s in steps if s.get("name") == PREFLIGHT_NAME])
+                    else:
+                        self.assertEqual(positions, [1], "one checkout, directly after the Git preflight")
+                        self.assertEqual(steps[0].get("name"), PREFLIGHT_NAME)
+                        self.assertEqual(steps[0].get("run"), preflight)
+                    checkout = steps[positions[0]]
                     self.assertEqual(checkout["uses"], "actions/checkout@v4")
                     inputs = checkout.get("with") or {}
                     self.assertIs(inputs.get("sparse-checkout-cone-mode"), False)
@@ -540,10 +550,14 @@ class CheckoutBoundaryWorkflowTests(unittest.TestCase):
                     )
                     self.assertFalse(set(inputs) & WIDENING_INPUTS)
                     proofs = [i for i, step in enumerate(steps) if step.get("name") == PROOF_NAME]
+                    if name in DENY_ONLY:
+                        self.assertEqual(proofs, [])
+                        self.assertFalse([s for s in steps if "python" in str(s.get("run", ""))])
+                        continue
                     self.assertEqual(len(proofs), 1)
                     at = proofs[0]
                     # Only a HEAD identity assertion may sit between checkout and proof.
-                    for between in steps[2:at]:
+                    for between in steps[positions[0] + 1 : at]:
                         self.assertTrue(str(between.get("name", "")).startswith("Assert"), between)
                         self.assertNotIn("python", str(between.get("run", "")))
                     self.assertEqual(steps[at].get("run"), proof)
@@ -551,7 +565,7 @@ class CheckoutBoundaryWorkflowTests(unittest.TestCase):
                     self.assertEqual(env.get("GIT_CONFIG_NOSYSTEM"), "1")
                     self.assertEqual(env.get("GIT_CONFIG_GLOBAL"), "/dev/null")
                     self.assertTrue(set(env) <= {"GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "PROTECTED_COMPARE_SHAS"})
-                    for step in (steps[0], checkout, steps[at]):
+                    for step in (steps[0], checkout, steps[at]):  # steps[0] is preflight or checkout
                         self.assertNotIn("if", step)
                         self.assertNotIn("continue-on-error", step)
             self.assertEqual(found, expected, name)

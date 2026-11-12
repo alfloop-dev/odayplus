@@ -205,7 +205,7 @@ non-cone sparse patterns 由 `protected_body_sparse_patterns()` 產生：
 | `worktree_cleanliness.inspect_worktree`（含 `task_finalize.sh`） | status 之前先跑 domain 證明；domain 內的 dirt 一律 blocking，不可當 seed，fingerprint 只綁 lstat metadata（同路徑改寫會改變 fingerprint） |
 | quarantine／interrupted merge seal | domain 內的 dirt 拒絕備份與 seal，不讀 body |
 | context seeding | 對所有 task（不只 `protected_paths` task）拒絕 domain 內的 context 來源或目的地 |
-| 7 個既有 workflow 的 22 個 checkout | Git preflight → sparse checkout（上述 patterns）→ 同一份證明腳本；比較端點時另拒絕 domain 在兩端不一致 |
+| 7 個既有 workflow 的 22 個 checkout | 全部使用上述 sparse patterns。ci／emgi／tooling／assisted-intake／promote：Git preflight → checkout → 同一份證明腳本；比較端點時另拒絕 domain 在兩端不一致。deploy-dev（6 個）：產品契約釘死 checkout 為第一步，故無 preflight，證明腳本緊接在 HEAD 身分 assert 之後、任何 reader 之前。merge-queue-review-gate：契約只允許一個 shell step 且不讀樹，只加 sparse deny、無證明步驟 |
 
 `protected_body_checkout_refusal` 的判定：HEAD 或 index 追蹤任何 domain entry 時，
 worktree 必須 `core.sparseCheckout=true`、非 cone、patterns 完全相同，且每個 index domain
