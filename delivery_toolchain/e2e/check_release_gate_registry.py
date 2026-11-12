@@ -692,11 +692,14 @@ def is_evidence_path(path: str) -> bool:
     """True if a change to path cannot alter what a candidate releases.
 
     Evidence, docs and receipts qualify, and so does the Supervisor control
-    plane (.orchestrator/, the ai-status board tooling, scripts/orchestrator/):
-    the Runtime Release jobs check out the exact candidate SHA and never run
-    those files, and the lease issuer runs from its own runtime checkout. The
-    workflow definitions, delivery_toolchain, product code and dependency
-    locks are not exempt, because the dispatch ref's copies are what run.
+    plane (.orchestrator/, the ai-status board tooling, scripts/orchestrator/).
+    The build, deploy and closeout jobs check out the candidate, so those
+    changes never reach them. The admission job checks out the dispatch event
+    SHA, so they are on its disk, but nothing it runs imports or reads them.
+    The lease issuer runs from its own runtime checkout. Workflow definitions
+    and delivery_toolchain stay refused because admission runs the dispatch
+    event SHA's copies; product code, infra and dependency locks because they
+    define the release.
     """
     normalized = path.replace("\\", "/").strip()
     if not normalized:
@@ -750,8 +753,10 @@ def check_candidate_ancestry(
                 f"{expected_sha!r}"
             ]
 
+        # --no-renames: rename detection lists only the destination, which would
+        # hide a refused file moved under an exempt prefix.
         diff_proc = subprocess.run(
-            ["git", "diff", "--name-only", candidate_sha, expected_sha],
+            ["git", "diff", "--no-renames", "--name-only", candidate_sha, expected_sha],
             cwd=root,
             check=True,
             capture_output=True,
@@ -761,6 +766,7 @@ def check_candidate_ancestry(
             [
                 "git",
                 "log",
+                "--no-renames",
                 "--format=",
                 "--name-only",
                 "--first-parent",
