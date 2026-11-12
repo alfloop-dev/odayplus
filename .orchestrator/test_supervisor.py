@@ -22034,6 +22034,12 @@ class _FakeAdmissionGitHub:
     `pr merge` process exit `(code, stderr)`; `mutation_lands` says whether
     GitHub applied the mutation anyway, as it can behind a 5xx or a dropped
     response. `drift` is applied either way.
+
+    Branch protection is GitHub's, not the caller's: any `pr merge` on a draft
+    is refused, and a bare `--merge` is refused unless `merge_state` is one
+    `gh` treats as immediately mergeable. `--auto` on a BLOCKED or BEHIND PR
+    is accepted and becomes `after`. `pr ready` turns a DRAFT `merge_state`
+    into `ready_state`.
     """
 
     def __init__(
@@ -22058,6 +22064,7 @@ class _FakeAdmissionGitHub:
         view: dict | None = None,
         view_drop: tuple[str, ...] = (),
         drift: dict | None = None,
+        ready_state: str = "CLEAN",
     ) -> None:
         self.number = number
         self.branch = branch
@@ -22078,6 +22085,7 @@ class _FakeAdmissionGitHub:
         self.view = dict(view or {})
         self.view_drop = tuple(view_drop)
         self.drift = dict(drift or {})
+        self.ready_state = ready_state
         self.graphql_head: str | None = None
         self.mutation_exit: tuple[int, str] | None = None
         self.mutation_lands = False
@@ -22115,7 +22123,17 @@ class _FakeAdmissionGitHub:
                 raise self.refuse
             if args[:2] == ["pr", "ready"]:
                 self.draft = False
+                if self.merge_state == "DRAFT":
+                    self.merge_state = self.ready_state
             else:
+                import github_bus
+
+                if self.draft:
+                    raise github_bus.GitHubBusError("Pull Request is still a draft (HTTP 405)")
+                if "--auto" not in args and self.merge_state not in {"CLEAN", "HAS_HOOKS", "UNSTABLE"}:
+                    raise github_bus.GitHubBusError(
+                        "Pull Request is not mergeable: the base branch policy prohibits the merge (HTTP 405)"
+                    )
                 self.admission = self.after
                 for field, value in self.drift.items():
                     setattr(self, field, value)
@@ -23665,6 +23683,46 @@ class MergeRouteWithoutQueueTests(unittest.TestCase):
         )
         self.assertEqual(task["merge_route"]["route"], "armed")
 
+    def test_green_checks_that_protection_still_holds_are_armed_not_merged(self) -> None:
+        """Green CI is not the whole of branch protection. A no-queue PR still
+        BLOCKED by a required review or rule, or BEHIND under strict
+        protection, takes the protected `--auto --merge` - never a bare merge
+        GitHub refuses every tick, and never `--admin`."""
+        for state in ("BLOCKED", "BEHIND"):
+            with self.subTest(state=state):
+                route, _d, calls, task = self._route(
+                    has_queue=False, repository="alfloop-dev/odayplus", after="armed", merge_state=state
+                )
+
+                self.assertEqual(route, "armed")
+                self.assertEqual(
+                    calls, [["pr", "merge", "42", "--repo", "alfloop-dev/odayplus", "--auto", "--merge"]]
+                )
+                self.assertEqual((task["merge_route"]["route"], task["merge_route"]["attempts"]), ("armed", 1))
+
+    def test_a_merge_state_that_was_not_reported_is_armed_not_merged(self) -> None:
+        for view in ({"view_drop": ("mergeStateStatus",)}, {"view": {"mergeStateStatus": "UNKNOWN"}}):
+            with self.subTest(**view):
+                route, _d, calls, _task = self._route(has_queue=False, after="armed", **view)
+
+                self.assertEqual(route, "armed")
+                self.assertEqual([c for c in calls if "--auto" not in c], [])
+
+    def test_a_green_approved_draft_is_readied_before_its_admission(self) -> None:
+        """An approved PR converted back to draft (or an inherited approved
+        draft) is undrafted on the no-queue route too; a merge on a draft is
+        refused by GitHub, so skipping the undraft strands it."""
+        route, _d, calls, task = self._route(
+            has_queue=False, draft=True, merge_state="DRAFT", after="merged"
+        )
+
+        self.assertEqual(route, "merged")
+        self.assertEqual(calls, [
+            ["pr", "ready", "42", "--repo", "alfloop-dev/oday-data-platform"],
+            ["pr", "merge", "42", "--repo", "alfloop-dev/oday-data-platform", "--auto", "--merge"],
+        ])
+        self.assertEqual(task["merge_route"]["route"], "merged")
+
     def test_detection_is_cached_per_repository(self) -> None:
         import dispatch_engine
 
@@ -23886,6 +23944,8 @@ class MergeAdmissionSingleOwnerTests(unittest.TestCase):
         # When set, `gh` is answered as a process and the real `run_gh`
         # classifies exits, instead of the fake raising typed errors itself.
         self.real_transport = False
+        # What the dispatcher's merge-queue probe answers for the base.
+        self.queue_present: bool | None = True
         # When set, run once by the status sync that follows a committed
         # write, i.e. between the reservation's CAS write and its reload.
         self.on_sync = None
@@ -23926,7 +23986,9 @@ class MergeAdmissionSingleOwnerTests(unittest.TestCase):
         stack.enter_context(mock.patch.object(
             supervisor.runtime_ai_status, "task_pr_ci_status", side_effect=lambda *_a, **_k: ("OPEN", self.ci)
         ))
-        stack.enter_context(mock.patch.object(dispatch_engine, "repository_has_merge_queue", return_value=True))
+        stack.enter_context(mock.patch.object(
+            dispatch_engine, "repository_has_merge_queue", side_effect=lambda *_a, **_k: self.queue_present
+        ))
         stack.enter_context(mock.patch.object(dispatch_engine, "approved_pr_change_scope", return_value="development_tooling"))
         if self.real_transport:
             stack.enter_context(mock.patch("github_bus.resolve_gh_binary", return_value="gh"))
@@ -24121,6 +24183,52 @@ class MergeAdmissionSingleOwnerTests(unittest.TestCase):
 
         self.assertEqual(len(self._merges()), 1)
         self.assertEqual(self._disk_task()["merge_route"]["route"], "armed")
+
+    def test_green_no_queue_prs_protection_still_holds_are_armed_once(self) -> None:
+        """No queue, green CI, but GitHub does not yet allow the merge: BLOCKED
+        by a required review or rule, BEHIND under strict protection, or an
+        approved PR back in draft. Through both real tick entries, GitHub's
+        own refusal classified by the real `run_gh`, and the canonical CAS,
+        each is admitted once with `--auto --merge` (a draft readied first),
+        recorded on disk, and not re-issued on the next tick."""
+        cases = {
+            "blocked": dict(merge_state="BLOCKED", after="armed", ready=False),
+            "behind": dict(merge_state="BEHIND", after="armed", ready=False),
+            "draft": dict(merge_state="DRAFT", draft=True, after="merged", ready=True),
+        }
+        for name, case in cases.items():
+            with self.subTest(name):
+                self._fresh()
+                self.real_transport = True
+                self.queue_present = False
+                self.gh.merge_state = case["merge_state"]
+                self.gh.draft = case.get("draft", False)
+                self.gh.after = case["after"]
+
+                self._tick(bus_polls=2)
+                self._tick(bus_polls=2)
+
+                merges = self._merges()
+                self.assertEqual(len(merges), 1, merges)
+                self.assertIn("--auto", merges[0])
+                readies = [m for m in self.gh.mutations if m[:2] == ["pr", "ready"]]
+                self.assertEqual(len(readies), 1 if case["ready"] else 0)
+                if case["ready"]:
+                    self.assertLess(self.gh.mutations.index(readies[0]), self.gh.mutations.index(merges[0]))
+                self.assertEqual(self.gh.admission, case["after"])
+                route = self._disk_task()["merge_route"]
+                self.assertEqual((route["head"], route["route"], route["attempts"]),
+                                 (self.HEAD, case["after"], 1))
+
+        # Control: a clean, green no-queue PR is still merged directly, once.
+        self._fresh()
+        self.real_transport = True
+        self.queue_present = False
+        self.gh.after = "merged"
+        self._tick()
+        self._tick()
+        self.assertEqual(self._merges(), [["pr", "merge", str(self.PR), "--merge", "--repo", "alfloop-dev/odayplus"]])
+        self.assertEqual(self._disk_task()["merge_route"]["route"], "merged")
 
     def _fresh(self) -> None:
         """A new status file, bus state and GitHub for the next sub-case."""

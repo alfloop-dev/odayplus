@@ -208,9 +208,13 @@ when `branch_workflow.task_pr.auto_merge` is on - the route:
    cannot settle is `unconfirmed` and keeps the counted attempt. A failed
    undraft is a refusal too, since no admission was issued after it.
 5. **Issues one command**: `gh pr merge --auto --merge` (queue enqueue, or
-   armed auto-merge while checks run), or `gh pr merge --merge` only for a
-   repository without a queue whose checks are already green. Never
-   `--admin`.
+   protected auto-merge on a base without a queue), or `gh pr merge --merge`
+   only for a repository without a queue whose checks are already green and
+   whose PR GitHub reports immediately mergeable (`CLEAN`, `HAS_HOOKS` or
+   `UNSTABLE`, as `gh` itself defines it). A green PR still `BLOCKED` by a
+   required review or rule, `BEHIND` under strict protection, or in draft is
+   armed with `--auto --merge`, so GitHub merges it once protection is met.
+   A draft is marked ready first on either route. Never `--admin`.
 6. **Reads back again** and records `queued`, `armed`, `merged`, or
    `unconfirmed`. A zero exit alone is never recorded as queued or merged;
    `unconfirmed` still counts toward the window and the cap. The readback is

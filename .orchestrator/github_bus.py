@@ -1339,6 +1339,14 @@ query($owner: String!, $name: String!, $number: Int!) {
 # checks, BEHIND its base, UNSTABLE while CI runs -- is precisely what
 # auto-merge is for, so only conflicts are treated as blocking here.
 AUTO_MERGE_BLOCKING_MERGE_STATES = frozenset({"DIRTY", "CONFLICTING"})
+# The `mergeStateStatus` values `gh pr merge` itself treats as immediately
+# mergeable. Only these may take the plain `--merge` on a base without a merge
+# queue. Green checks alone are not enough: a protected base can still report
+# BLOCKED (a required review or other rule) or BEHIND (strict up-to-date), and
+# a draft reports DRAFT. Those are armed with `--auto --merge`, so GitHub
+# merges them once branch protection is satisfied instead of refusing a bare
+# merge on every tick.
+IMMEDIATELY_MERGEABLE_STATES = frozenset({"CLEAN", "HAS_HOOKS", "UNSTABLE"})
 ARCHIVE_HOUSEKEEPING_BRANCH_PREFIX = "task/OPS-ARCHIVE-AUTO-COMMIT-"
 
 
@@ -1662,10 +1670,12 @@ def issue_pr_merge_admission(
     `--auto --merge` is the admission command: GitHub treats it as a queue
     enqueue on a queue-protected base and as protected auto-merge on a base
     without a queue, and in both cases branch protection and required checks
-    still decide when anything merges. Draft is undrafted first because GitHub
-    refuses auto-merge on a draft. `direct` issues `--merge` instead (never
-    `--admin`), which only the dispatcher asks for, on a base without a queue
-    whose checks already passed.
+    still decide when anything merges. A draft is undrafted first on either
+    route, because GitHub refuses both auto-merge and a merge on a draft.
+    `direct` issues `--merge` instead (never `--admin`), which only the
+    dispatcher asks for, on a base without a queue whose checks already passed
+    and whose PR GitHub reports immediately mergeable
+    (`IMMEDIATELY_MERGEABLE_STATES`).
 
     A zero exit is only the CLI's acknowledgement that the mutation was
     accepted, not proof that GitHub persisted an auto-merge request, an enqueue
@@ -1688,7 +1698,7 @@ def issue_pr_merge_admission(
     during the mutation or its readback, whose outcome is unknown.
     """
 
-    if pr.get("isDraft") and not direct:
+    if pr.get("isDraft"):
         run_gh(["pr", "ready", str(number), "--repo", repo])
     if direct:
         command = ["pr", "merge", str(number), "--merge", "--repo", repo]

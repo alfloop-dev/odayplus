@@ -745,6 +745,7 @@ def route_approved_pr_to_merge(
     """
     from github_bus import (
         AUTO_MERGE_BLOCKING_MERGE_STATES,
+        IMMEDIATELY_MERGEABLE_STATES,
         GitHubBusError,
         GitHubBusOffline,
         issue_pr_merge_admission,
@@ -872,13 +873,23 @@ def route_approved_pr_to_merge(
         ):
             return "waiting", str(previous.get("route") or "already routed")
 
-    # A repository without a merge queue that has already passed its checks is
-    # merged directly (`--merge`, never `--admin`); everything else goes through
-    # the single `--auto --merge` admission, which GitHub treats as an enqueue
-    # on a queue-protected base and as protected auto-merge without one. None
-    # (unreadable) takes the auto path: a direct merge on a queue-protected
-    # repository would be the bypass this routing exists to avoid.
-    direct = ci_status == "success" and repository_has_merge_queue(slug, base) is False
+    # A repository without a merge queue whose checks have passed and whose PR
+    # GitHub reports immediately mergeable is merged directly (`--merge`, never
+    # `--admin`); everything else goes through the single `--auto --merge`
+    # admission, which GitHub treats as an enqueue on a queue-protected base
+    # and as protected auto-merge without one. Green checks alone do not make
+    # a protected PR mergeable: BLOCKED (a required review or other rule),
+    # BEHIND (strict up-to-date) and a draft are armed, so GitHub merges them
+    # once protection is satisfied, rather than refusing a bare merge every
+    # tick. A queue answer of None (unreadable) takes the auto path too: a
+    # direct merge on a queue-protected repository would be the bypass this
+    # routing exists to avoid.
+    direct = (
+        ci_status == "success"
+        and not pr.get("isDraft")
+        and str(pr.get("mergeStateStatus") or "").upper() in IMMEDIATELY_MERGEABLE_STATES
+        and repository_has_merge_queue(slug, base) is False
+    )
 
     # Recorded for the audit trail only. Classification must never gate the
     # admission: an unreadable diff is a reason to say so, not to strand a
