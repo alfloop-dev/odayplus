@@ -516,6 +516,72 @@ describe("GrowthWorkspace API loading", () => {
     expect(writes).toEqual([]);
   });
 
+  it("isolates a 200 action reply with an unusable row as that section's failure", async () => {
+    const { writes } = mockGrowthReads({
+      actions: () => json({ items: [{ id: "current-action", segmentId: canonicalSegment.id }] }, 200,
+        { "X-Correlation-Id": "corr-actions-malformed" }),
+    });
+    render(<GrowthWorkspace searchParams={{}} />);
+    const section = await screen.findByTestId("growth-section-actions-unavailable");
+    const gate = within(section).getByTestId("operator-data-unavailable");
+    expect(gate).toHaveAttribute("data-failure-kind", "unknown");
+    expect(within(section).getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-actions-malformed");
+    const technical = within(section).getByTestId("operator-data-unavailable-technical");
+    expect(technical).toHaveTextContent("growth actions returned 200 without a valid Growth payload");
+    expect(technical).toHaveTextContent(/發生時間\d{4}-\d{2}-\d{2}T/);
+    expect(screen.queryByTestId("growth-item-current-action")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("growth-item-table")).not.toBeInTheDocument();
+    expect(screen.getByTestId("growth-entry-cards")).toBeInTheDocument();
+    cleanup();
+    render(<GrowthWorkspace searchParams={{ gtab: "segments" }} />);
+    expect(within(await screen.findByTestId("growth-segment-table")).getByRole("link", { name: "建立活動草稿" })).toBeInTheDocument();
+    expect(writes).toEqual([]);
+  });
+
+  it("isolates a recommendation row its normalizer cannot read and keeps verified segments", async () => {
+    const { writes } = mockGrowthReads({
+      recommendations: () => json({ items: [{ id: "priceops-rec:current-plan:current-item", segmentId: canonicalSegment.id,
+        planId: "current-plan", itemId: "current-item", currentPrice: 100, recommendedPrice: 105,
+        constraintStatus: "SAFE", bindingConstraints: 1, source: "priceops" }] }, 200,
+      { "X-Correlation-Id": "corr-recommendations-malformed" }),
+    });
+    render(<GrowthWorkspace searchParams={{ gtab: "priceops" }} />);
+    const section = await screen.findByTestId("growth-section-recommendations-unavailable");
+    expect(within(section).getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "unknown");
+    expect(within(section).getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-recommendations-malformed");
+    expect(within(section).getByTestId("operator-data-unavailable-technical"))
+      .toHaveTextContent("growth recommendations returned 200 without a valid Growth payload");
+    expect(screen.queryByTestId("growth-recommendation-table")).not.toBeInTheDocument();
+    expect(screen.getByTestId("growth-workspace")).toBeInTheDocument();
+    cleanup();
+    render(<GrowthWorkspace searchParams={{ gtab: "segments" }} />);
+    const segments = await screen.findByTestId("growth-segment-table");
+    expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
+    expect(within(segments).getByRole("link", { name: "建立活動草稿" })).toBeInTheDocument();
+    expect(writes).toEqual([]);
+  });
+
+  it("accepts legal null and absent optional fields on canonical action and recommendation rows", async () => {
+    mockGrowthReads({
+      recommendations: () => json({ items: [{ id: "priceops-rec:current-plan:current-item", segmentId: canonicalSegment.id,
+        planId: "current-plan", itemId: "current-item", storeId: "current-store", currentPrice: 100, recommendedPrice: 105,
+        constraintStatus: "SAFE", bindingConstraints: [], riskLevel: "low", source: "priceops" }] }),
+      actions: () => json({ items: [{ id: "current-action", name: "current-store 離峰活動", kind: "offpeak",
+        segmentId: canonicalSegment.id, sourceRecommendationId: null, objective: "離峰營收", status: "DRAFT",
+        observationWindow: "尚未排程", observationWindowDays: 14, store: "current-store", channel: "LINE 推播", budget: 0,
+        targetLift: 2, observedLift: null, evidenceLevel: null, rationale: "r", rollbackPlan: "rb", growthOutcome: null,
+        approvalId: null, audit: { decisionId: "draft-current-action", correlationId: "corr-create", modelVersion: null,
+          policyVersion: [], featureSnapshotTime: null, sourceSnapshotIds: ["current-plan"] } }] }),
+    });
+    render(<GrowthWorkspace searchParams={{}} />);
+    expect(await screen.findByTestId("growth-item-current-action")).toBeInTheDocument();
+    expect(screen.queryByTestId("growth-section-actions-unavailable")).not.toBeInTheDocument();
+    cleanup();
+    render(<GrowthWorkspace searchParams={{ gtab: "priceops" }} />);
+    expect(await screen.findByTestId("growth-draft-priceops-rec:current-plan:current-item")).toBeInTheDocument();
+    expect(screen.queryByTestId("growth-section-recommendations-unavailable")).not.toBeInTheDocument();
+  });
+
   it("isolates a failed recommendation read and marks linked forecasts unread", async () => {
     mockGrowthReads({
       recommendations: () => new Error("Synthetic network failure"),

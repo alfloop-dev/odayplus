@@ -885,7 +885,9 @@ export type GrowthApiData = {
   sectionFailures?: Partial<Record<GrowthSectionKey, OperatorLoadFailure>>;
 };
 
-type GrowthRead<T> = { ok: true; body: T } | { ok: false; failure: OperatorLoadFailure };
+type GrowthRead<T> =
+  | { ok: true; body: T; raw: unknown }
+  | { ok: false; failure: OperatorLoadFailure; raw?: unknown };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -895,26 +897,76 @@ function hasId(value: unknown, field: string): boolean {
   return isRecord(value) && typeof value[field] === "string" && (value[field] as string).trim().length > 0;
 }
 
+const isText = (value: unknown): value is string => typeof value === "string";
+const isFiniteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+const isTextOrNumber = (value: unknown) => isText(value) || isFiniteNumber(value);
+const isTextList = (value: unknown) => Array.isArray(value) && value.every(isText);
+/** Legal null/absent optional fields stay accepted; only a present value of the wrong type is malformed. */
+const optional = (check: (value: unknown) => boolean) => (value: unknown) =>
+  value === undefined || value === null || check(value);
+const fieldsMatch = (row: Record<string, unknown>, fields: Record<string, (value: unknown) => boolean>) =>
+  Object.entries(fields).every(([field, check]) => check(row[field]));
+
 function isFreshnessBody(body: unknown): body is GrowthFreshness {
   return isRecord(body) && typeof body.status === "string" && body.status.trim().length > 0;
 }
 
-function listBodyGuard(scopedRows: boolean) {
-  return (body: unknown): body is { items: unknown[] } =>
-    isRecord(body) && Array.isArray(body.items) &&
-    body.items.every((row) => hasId(row, "id") && (!scopedRows || hasId(row, "segmentId")));
+function isSegmentRow(row: unknown): boolean {
+  return hasId(row, "id");
+}
+
+/** Fields the existing action list, detail, closeout and kind classification read from each row. */
+function isActionRow(row: unknown): row is GrowthItem {
+  return hasId(row, "id") && hasId(row, "segmentId") && hasId(row, "status") &&
+    isRecord(row) && isText(row.name) && hasId(row.audit, "decisionId") &&
+    fieldsMatch(row, {
+      kind: optional(isText), sourceRecommendationId: optional(isText),
+      objective: optional(isText), observationWindow: optional(isText),
+      rationale: optional(isText), rollbackPlan: optional(isText),
+      store: optional(isText), channel: optional(isText), evidenceLevel: optional(isText),
+      targetLift: optional(isFiniteNumber), observedLift: optional(isFiniteNumber),
+      budget: optional(isFiniteNumber), observation: optional(isRecord),
+    }) &&
+    fieldsMatch(row.audit as Record<string, unknown>, {
+      modelVersion: optional(isText), featureSnapshotTime: optional(isText),
+      policyVersion: optional((value) => isText(value) || isTextList(value)),
+    });
+}
+
+/** Fields normalizePriceRecommendation and the existing PriceOps table read from each row. */
+function isRecommendationRow(row: unknown): boolean {
+  return hasId(row, "id") && hasId(row, "segmentId") && isRecord(row) &&
+    fieldsMatch(row, {
+      title: optional(isText), planId: optional(isText), itemId: optional(isText),
+      currentPrice: optional(isTextOrNumber), candidatePrice: optional(isTextOrNumber),
+      recommendedPrice: optional(isTextOrNumber), constraintStatus: optional(isText),
+      constraintDetail: optional(isText), bindingConstraints: optional(isTextList),
+      decisionStatus: optional(isText), store: optional(isText), storeId: optional(isText),
+      window: optional(isText), expectedUtilization: optional(isText), marginRisk: optional(isText),
+      riskLevel: optional(isText), rollbackCondition: optional(isText), linkedActionId: optional(isText),
+      confidence: optional(isText),
+    });
+}
+
+/** A list reply is verified only when every row is usable; one bad row makes the whole read malformed. */
+function parseList<T>(isRow: (row: unknown) => boolean, normalize: (row: never) => T = (row) => row) {
+  return (body: unknown): { items: T[] } | null =>
+    isRecord(body) && Array.isArray(body.items) && body.items.every(isRow)
+      ? { items: body.items.map((row) => normalize(row as never)) }
+      : null;
 }
 
 /**
  * Read one Growth endpoint through the shared transport. A refused reply keeps
- * its actual status and envelope; a 2xx reply without the expected shape is a
- * malformed read, never an empty one.
+ * its actual status and envelope; a 2xx reply that does not parse into usable
+ * rows (including a row its normalizer cannot read) is a malformed read of that
+ * endpoint with the actual status, correlation and time, never an empty one.
  */
 async function readGrowth<T>(
   label: string,
   path: string,
   correlationId: string,
-  accepts: (body: unknown) => body is T,
+  parse: (body: unknown) => T | null,
 ): Promise<GrowthRead<T>> {
   const result = await growthRequest(path, {
     correlationId,
@@ -926,9 +978,18 @@ async function readGrowth<T>(
   if (!result.response.ok) {
     return { ok: false, failure: await operatorLoadFailureFromResponse(result.response, label, correlationId) };
   }
-  if (!result.parsed || !accepts(result.body)) {
+  let body: T | null = null;
+  if (result.parsed) {
+    try {
+      body = parse(result.body);
+    } catch {
+      body = null;
+    }
+  }
+  if (body === null) {
     return {
       ok: false,
+      ...(result.parsed ? { raw: result.body } : {}),
       failure: {
         correlationId: result.response.headers?.get?.("x-correlation-id") ?? correlationId,
         httpStatus: result.response.status,
@@ -938,7 +999,7 @@ async function readGrowth<T>(
       },
     };
   }
-  return { ok: true, body: result.body };
+  return { ok: true, body, raw: result.body };
 }
 
 function unavailableGrowthData(
@@ -986,14 +1047,17 @@ export async function fetchGrowthApiData(params: {
 
   try {
     const [freshnessRes, segmentsRes, recommendationsRes, actionsRes] = await Promise.all([
-      readGrowth("growth freshness", "/freshness", correlationId, isFreshnessBody),
-      readGrowth("growth segments", "/segments", correlationId, listBodyGuard(false)),
-      readGrowth("growth recommendations", `/recommendations${segmentQuery}`, correlationId, listBodyGuard(true)),
-      readGrowth("growth actions", `/actions${segmentQuery}`, correlationId, listBodyGuard(true)),
+      readGrowth("growth freshness", "/freshness", correlationId,
+        (body) => (isFreshnessBody(body) ? body : null)),
+      readGrowth("growth segments", "/segments", correlationId, parseList<GrowthSegment>(isSegmentRow)),
+      readGrowth("growth recommendations", `/recommendations${segmentQuery}`, correlationId,
+        parseList(isRecommendationRow, normalizePriceRecommendation)),
+      readGrowth("growth actions", `/actions${segmentQuery}`, correlationId, parseList<GrowthItem>(isActionRow)),
     ]);
     const reads = [freshnessRes, segmentsRes, recommendationsRes, actionsRes];
     const failures = reads.flatMap((read) => (read.ok ? [] : [read.failure]));
-    const verified = reads.flatMap((read) => (read.ok ? [read.body] : []));
+    // Seed/fixture markers are checked on every 2xx reply, including malformed ones.
+    const replies = reads.flatMap((read) => (read.raw === undefined ? [] : [read.raw]));
 
     if (!allowFixtureFallback) {
       // Identity and permission refusals are authoritative for the whole workspace.
@@ -1010,16 +1074,14 @@ export async function fetchGrowthApiData(params: {
       }
     }
 
-    if (payloadContainsSeedData(verified)) {
+    if (payloadContainsSeedData(replies)) {
       if (!allowFixtureFallback) {
         return unavailableGrowthData("seed", "Growth API returned seed, fixture, or mock data.");
       }
     } else if (freshnessRes.ok && segmentsRes.ok && (!allowFixtureFallback || failures.length === 0)) {
-      const segments = segmentsRes.body.items as GrowthSegment[];
-      const recommendations = recommendationsRes.ok
-        ? (recommendationsRes.body.items as PriceOpsRecommendation[]).map(normalizePriceRecommendation)
-        : [];
-      const items = actionsRes.ok ? actionsRes.body.items as GrowthItem[] : [];
+      const segments = segmentsRes.body.items;
+      const recommendations = recommendationsRes.ok ? recommendationsRes.body.items : [];
+      const items = actionsRes.ok ? actionsRes.body.items : [];
       const sectionFailures: Partial<Record<GrowthSectionKey, OperatorLoadFailure>> = {
         ...(recommendationsRes.ok ? {} : { recommendations: recommendationsRes.failure }),
         ...(actionsRes.ok ? {} : { actions: actionsRes.failure }),
