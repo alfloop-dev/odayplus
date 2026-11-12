@@ -920,6 +920,28 @@ class ProtectedRolloutPreflightTests(unittest.TestCase):
         self.assertEqual(real_git(target, "symbolic-ref", "--quiet", "HEAD"), "refs/heads/runtime-live-dom")
         self.assertTrue(rollout.clean(target))
 
+    def test_runtime_excludes_entries_named_by_the_prefix_itself(self) -> None:
+        """A regular file tracked at the prefix path, at the root and nested; empty, metadata only."""
+        self._enter_body_domain()
+        for name in ("vault/copies", "archive/vault/copies"):
+            (self.source / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.source / name).touch()
+            self._git("add", name)
+        self._git("commit", "-q", "-m", "track generic files at the prefix path")
+        self.target_sha = self._git("rev-parse", "HEAD")
+        self.assertTrue(all(rollout.worktree_cleanliness.in_protected_body_domain(n) for n in ("vault/copies", "archive/vault/copies")))
+        target = self.root / "runtime"
+
+        rollout.add_runtime_worktree(self.source, target, "runtime-live-exact", self.target_sha)
+
+        for name in ("vault/copies", "archive/vault/copies", self.DOMAIN_COPY):
+            with self.subTest(path=name):
+                self.assertFalse(os.path.lexists(target / name))
+                self.assertEqual(rollout.git(target, "ls-files", "-t", "--", name).split()[0], "S")
+        self.assertEqual((target / ".orchestrator" / "profiles" / "bwrap").read_bytes(), self.PROFILE)
+        self.assertIsNone(rollout.worktree_cleanliness.protected_body_checkout_refusal(target, require_sparse=True))
+        self.assertTrue(rollout.clean(target))
+
     def test_source_holding_a_body_copy_is_never_clean_and_never_status_read(self) -> None:
         self._enter_body_domain()
         self.assertTrue((self.source / self.DOMAIN_COPY).is_file())

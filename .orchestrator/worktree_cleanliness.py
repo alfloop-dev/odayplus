@@ -139,10 +139,19 @@ def _domain_prefixes(prefixes: Iterable[str] | None) -> tuple[str, ...]:
 
 
 def protected_body_sparse_patterns(prefixes: Iterable[str] | None = None) -> tuple[str, ...]:
-    """The non-cone sparse patterns that keep every domain entry out of a checkout."""
+    """The non-cone sparse patterns that keep every domain entry out of a checkout.
+
+    They cover exactly what ``in_protected_body_domain`` denies: an entry
+    beneath a prefix and an entry named by the prefix itself (a file tracked
+    at ``.../tests/sources``), at any depth.
+    """
     return (
         "/*",
-        *(f"!**/{prefix}/**" for prefix in _domain_prefixes(prefixes)),
+        *(
+            pattern
+            for prefix in _domain_prefixes(prefixes)
+            for pattern in (f"!**/{prefix}", f"!**/{prefix}/**")
+        ),
         *(f"!**/{name}*" for name in PROTECTED_BODY_NAMES),
     )
 
@@ -241,8 +250,9 @@ def protected_body_checkout_refusal(
     *,
     prefixes: Iterable[str] | None = None,
     require_sparse: bool = False,
+    target: str | None = None,
 ) -> str | None:
-    """Why status, hashing or copying could touch a domain body here, if it could.
+    """Why status, hashing, copying, or checking ``target`` out could touch a domain body here.
 
     Runs before any of them, from configuration, index flags, untracked names
     and ``lstat`` only.  HEAD and the index are read as a union: once either
@@ -253,6 +263,11 @@ def protected_body_checkout_refusal(
     exclude file, because status would open a ``.gitignore`` inside the domain;
     any untracked domain entry refuses, whatever its kind.  An unreadable
     answer refuses; it is never read as "nothing there".
+
+    ``target`` is a commit about to be checked out or merged here.  Its domain
+    entries, read from tree objects only, need the same exclusion already in
+    place, so a checkout without one is refused before Git writes anything,
+    even when it holds no domain entry yet.
     """
     prefixes = _domain_prefixes(prefixes)
     root = Path(worktree_path)
@@ -280,7 +295,12 @@ def protected_body_checkout_refusal(
         if listing is None:
             return "unreadable_metadata: HEAD tree"
         tracked = {path: (mode, object_id) for mode, object_id, path in listing}
-    if indexed or tracked or require_sparse:
+    incoming: tuple[tuple[str, str, str], ...] = ()
+    if target is not None:
+        incoming = protected_body_tree_entries(root, target, prefixes)
+        if incoming is None:
+            return "unreadable_metadata: target tree"
+    if indexed or tracked or incoming or require_sparse:
         if _git_flag(root, "core.sparseCheckout") != "true":
             return "protected_body_not_excluded: sparse checkout is not enabled"
         if _git_flag(root, "core.sparseCheckoutCone") != "false":

@@ -443,6 +443,7 @@ def _protected_commit_refusal(
     *,
     worktree_path: Path | None = None,
     check_index: bool = False,
+    checkout_into: Path | None = None,
 ) -> str | None:
     """Why Git may not materialize or read ``commit`` for a protected task, if it may not.
 
@@ -460,9 +461,17 @@ def _protected_commit_refusal(
 
     The checkout itself is also held to the shared protected body domain, for
     every task, before any caller's status, hash, copy, checkout or merge.
+    ``checkout_into`` names the existing checkout ``commit`` is about to be
+    checked out or merged into: that checkout is held to the same domain for
+    what it holds now and for what ``commit`` would bring, so a target that
+    introduces a domain entry needs the exclusion before Git writes a file.
     """
     if worktree_path is not None and check_index:
         body_refusal = protected_body_checkout_refusal(worktree_path)
+        if body_refusal:
+            return f"protected_metadata_refused: {body_refusal}"
+    if checkout_into is not None:
+        body_refusal = protected_body_checkout_refusal(checkout_into, target=commit)
         if body_refusal:
             return f"protected_metadata_refused: {body_refusal}"
     if not protected:
@@ -1366,12 +1375,15 @@ def _refresh_reused_worker_worktree(
         return False, f"protected_metadata_refused: {error}"
 
     def _metadata_refusal(commit: str, *, current: bool = False) -> str | None:
+        # A target is judged for this very checkout too: its domain entries
+        # need the exclusion in place before any checkout/merge writes them.
         return _protected_commit_refusal(
             worktree_path,
             commit,
             protected,
             worktree_path=worktree_path if current else None,
             check_index=current,
+            checkout_into=None if current else worktree_path,
         )
 
     # Status, hashing and every later checkout/merge happen only after the
@@ -2327,12 +2339,15 @@ def materialize_worker_context_files(
     except ProtectedPathPolicyError as error:
         raise ValueError(f"Fail-closed on workspace materialization for task {request.task_id}: {error}") from error
 
-    def _protection_refusal(rel_path: str) -> None:
+    def _protection_refusal(rel_path: str, roots: tuple[Path, ...] | None = None) -> None:
         """Judge source and destination metadata before any hash, listing or copy.
 
         The protected body domain applies to every task, so this always runs.
+        ``roots`` narrows it to the side actually touched, for a path other than
+        the requested one (a task-brief compatibility candidate, which is read
+        from, or generated into, the status root only).
         """
-        for root in (status_root, workspace_path):
+        for root in roots or (status_root, workspace_path):
             error = context_path_protection_error(root, rel_path, protected_paths)
             if error:
                 raise ValueError(f"Fail-closed on workspace materialization for task {request.task_id}: {error}")
@@ -2400,6 +2415,9 @@ def materialize_worker_context_files(
             copied = False
             found_src = None
             for candidate in _task_brief_context_candidates(request.task_id, rel_value):
+                # The selected candidate, not only the requested path, is what
+                # is read and copied: judge it before its first metadata probe.
+                _protection_refusal(candidate, (status_root,))
                 source = status_root / candidate
                 if not source.exists() or not source.is_file():
                     continue
@@ -2421,6 +2439,9 @@ def materialize_worker_context_files(
                     continue
                 _atomic_write_context_text(destination, text)
                 for candidate in _task_brief_context_candidates(request.task_id, rel_value):
+                    # Generating into the canonical brief writes there: judged
+                    # again here, immediately before that write.
+                    _protection_refusal(candidate, (status_root,))
                     canon_brief = status_root / candidate
                     try:
                         canon_brief.parent.mkdir(parents=True, exist_ok=True)

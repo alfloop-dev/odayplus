@@ -190,9 +190,17 @@ non-cone sparse patterns 由 `protected_body_sparse_patterns()` 產生：
 
 ```text
 /*
+!**/tests/sources
 !**/tests/sources/**
 !**/test_listing_production_asset.py*
 ```
+
+`!**/tests/sources` 排除「路徑本身就是 prefix」的條目（例如追蹤在 `.../tests/sources` 的一般檔案），
+`!**/tests/sources/**` 排除其下所有條目；兩者合起來恰好等於 `in_protected_body_domain` 拒絕的範圍。
+證明要求 worktree 的 patterns 與上表完全一致。先前只用三行（沒有 `!**/tests/sources`）準備的既有
+worktree 會被 fail-closed 拒絕（`sparse patterns differ from the protected body domain`），不會自動改寫
+patterns（對已 materialize 的 worktree 重設 patterns 可能刪除檔案）；採入新版 runtime 前，由 Root 以
+`--no-checkout` 加新 patterns 重新準備這些 worktree。
 
 同一規則接回的原入口：
 
@@ -202,9 +210,10 @@ non-cone sparse patterns 由 `protected_body_sparse_patterns()` 產生：
 | `rollout_supervisor_runtime.clean`（source、既有 target 重用、新 target） | 先跑 domain 證明，未通過即不 clean，`git status` 不會執行 |
 | `worker_workspace._create_worker_worktree` | 同上順序：註冊 → 證明 HEAD／task 保護 → sparse → materialize → 證明 |
 | `worker_workspace._protected_commit_refusal`（`check_index=True` 的所有呼叫者：重用 refresh、state identity、activity observer、handoff seal、merge continuation、preempt、quarantine、pruner） | task 保護之前先跑 domain 證明 |
+| `worker_workspace._refresh_reused_worker_worktree` 的每一個 checkout／merge（review pin、detached 重新 attach、base fast-forward） | 變更前以 `checkout_into` 把目標 commit 交給同一個 `protected_body_checkout_refusal(target=...)`：目標 tree 有 domain 條目時，這個既有 worktree 必須已有完全一致的 sparse 排除，否則在 Git 寫檔前拒絕（即使 task `protected_paths` 為空、目前 checkout 尚無 domain 條目）；不遮蔽、不刪除任何已落地內容 |
 | `worktree_cleanliness.inspect_worktree`（含 `task_finalize.sh`） | status 之前先跑 domain 證明；domain 內的未追蹤 dirt 與同路徑漂移在 status 之前即以 `protected_metadata_refused` blocking，不可當 seed、不產生 fingerprint；fingerprint 對 domain 路徑仍只用 lstat（防禦性保留） |
 | quarantine／interrupted merge seal | domain 內的 dirt 拒絕備份與 seal，不讀 body |
-| context seeding | 對所有 task（不只 `protected_paths` task）拒絕 domain 內的 context 來源或目的地 |
+| context seeding | 對所有 task（不只 `protected_paths` task）拒絕 domain 內的 context 來源或目的地；task brief 的每個相容候選路徑（實際被讀取／複製的來源）與生成時寫回的 canonical brief 也在 metadata 探測與寫入前經同一個 `context_path_protection_error` 判定，拒絕即 fail-closed，不會改走下一個候選 |
 | 7 個既有 workflow 的 22 個 checkout | 全部：Git preflight → checkout（上述 sparse patterns）→ 同一份證明腳本，證明在任何 reader 之前（deploy-dev 緊接在 HEAD 身分 assert 之後）；比較端點時另拒絕 domain 在兩端不一致；唯一的結構驗證是既有 `tests/tooling/test_ci_product_parallel.py`（逐 job 鎖定 checkout 數、full history、精確 ref、HEAD 身分 assert、比較端點與下游 consumer 一致） |
 
 Repository 身分只有一條規則：`worktree_cleanliness.shares_git_common_dir`（路徑必須是 worktree 的

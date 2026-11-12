@@ -19,6 +19,7 @@ if str(MIGRATION_DIR) not in sys.path:
     sys.path.insert(0, str(MIGRATION_DIR))
 
 import capacity_controller
+import common
 import migrate_worker_worktree_config as migration
 import supervisor
 import task_archive
@@ -542,6 +543,66 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("sparse_exclusion_failed", error or "")
         self.assertFalse(worktree.exists())
+
+    def _domain_introducing_base(self) -> str:
+        """Advance dev with one generic empty domain entry and its exact-prefix twin."""
+        for name in (self.DOMAIN_COPY, "archive/vault/copies"):
+            (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / name).touch()
+            self._git(self.repo, "add", name)
+        self._git(self.repo, "commit", "-m", "archive generic domain entries")
+        return self._rev(self.repo, "HEAD")
+
+    def test_reuse_refuses_a_target_bringing_the_domain_into_an_unexcluded_checkout(self) -> None:
+        """Empty task protection, no current domain entry: the target alone needs the exclusion."""
+        self._enter_body_domain(tracked=False)
+        old_base = self.base
+        worktree = (self.root / "wt-dom-reuse-legacy").resolve()
+        # A registered, same-common-dir checkout made before the exclusion existed.
+        self._git(self.repo, "worktree", "add", "-b", "task/DOM-REUSE-001", str(worktree), old_base)
+        self.assertIsNone(worktree_cleanliness.protected_body_checkout_refusal(worktree))
+        new_base = self._domain_introducing_base()
+        for label, kwargs in (("base fast-forward", {}), ("review pin", {"required_head": new_base})):
+            with self.subTest(path=label):
+                merges: list[list[str]] = []
+                real_run = subprocess.run
+
+                def recording_run(args, *a, **kw):
+                    if list(args[:2]) in (["git", "merge"], ["git", "checkout"], ["git", "read-tree"]):
+                        merges.append(list(args))
+                    return real_run(args, *a, **kw)
+
+                with mock.patch("subprocess.run", side_effect=recording_run):
+                    ok, status = supervisor._refresh_reused_worker_worktree(
+                        self.repo, worktree, new_base, "task/DOM-REUSE-001", protected_paths=(), **kwargs
+                    )
+                self.assertFalse(ok)
+                self.assertIn("protected_metadata_refused", status)
+                self.assertIn("sparse checkout is not enabled", status)
+                self.assertEqual(merges, [], "refused before Git could write a file")
+                self.assertEqual(self._rev(worktree, "HEAD"), old_base)
+                self.assertEqual(self._git(worktree, "symbolic-ref", "--short", "HEAD").stdout.strip(), "task/DOM-REUSE-001")
+                for name in (self.DOMAIN_COPY, "archive/vault/copies", "archive"):
+                    self.assertFalse(os.path.lexists(worktree / name), name)
+
+    def test_reuse_of_an_excluded_checkout_keeps_target_domain_entries_out(self) -> None:
+        self._enter_body_domain(tracked=False)
+        worktree = (self.root / "worktrees" / "pantheon" / "dom-reuse-002").resolve()
+        ok, error = supervisor._create_worker_worktree(self.repo, worktree, "task/DOM-REUSE-002", self.base)
+        self.assertTrue(ok, error)
+        new_base = self._domain_introducing_base()
+        ok, status = supervisor._refresh_reused_worker_worktree(
+            self.repo, worktree, new_base, "task/DOM-REUSE-002", protected_paths=()
+        )
+        self.assertTrue(ok, status)
+        self.assertEqual(status, f"ff_to_{new_base[:12]}")
+        self.assertEqual(self._rev(worktree, "HEAD"), new_base)
+        for name in (self.DOMAIN_COPY, "archive/vault/copies"):
+            with self.subTest(path=name):
+                self.assertFalse(os.path.lexists(worktree / name))
+                self.assertEqual(self._git(worktree, "ls-files", "-t", "--", name).stdout.split()[0], "S")
+        self.assertIsNone(worktree_cleanliness.protected_body_checkout_refusal(worktree, require_sparse=True))
+        self.assertEqual(worker_workspace.compute_worktree_state_identity(worktree), f"clean:{new_base}")
 
     def test_checkout_holding_a_domain_copy_is_refused_by_every_reader_and_left_in_place(self) -> None:
         self._enter_body_domain()
@@ -1559,6 +1620,108 @@ class ProtectedContextSeedingTests(unittest.TestCase):
             ):
                 supervisor.materialize_worker_context_files(config, request("docs/plain.md"), workspace)
             copied.assert_called_once_with(status_root / "docs" / "plain.md", workspace / "docs" / "plain.md")
+
+    def test_selected_task_brief_candidate_is_judged_before_it_is_read(self) -> None:
+        """The compatibility candidate actually read, not only the requested brief path."""
+        task_id = "SEED-BRIEF-4"
+        requested = ".orchestrator/task-briefs/seed_brief_4.md"
+        fallback = ".orchestrator/task-briefs/seed-brief-4.md"
+        with tempfile.TemporaryDirectory() as raw, \
+             mock.patch.object(worktree_cleanliness, "PROTECTED_BODY_PREFIXES", ("vault/copies",)):
+            root = Path(raw)
+            status_root = root / "status"
+            (status_root / "vault" / "copies").mkdir(parents=True)
+            (status_root / "vault" / "copies" / "empty.md").touch()
+            briefs = status_root / ".orchestrator" / "task-briefs"
+            briefs.mkdir(parents=True)
+            (status_root / "ai-status.json").write_text(json.dumps({"tasks": [{"id": task_id}]}), encoding="utf-8")
+            workspace = root / "workspace"
+            workspace.mkdir()
+            subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+            request = supervisor.DeliveryRequest(
+                agent_id="claude",
+                provider="claude",
+                delivery_mode="claude",
+                message="wake",
+                task_id=task_id,
+                context_files=[requested],
+                metadata={"protected_paths": []},
+            )
+            self.assertEqual(worker_workspace._task_brief_context_candidates(task_id, requested)[:2], [requested, fallback])
+            denied = (status_root / "vault" / "copies" / "empty.md").resolve()
+            reads: list[Path] = []
+            real_read_text = Path.read_text
+
+            def guarded_read_text(path: Path, *a, **kw):
+                if Path(path).resolve() == denied:
+                    reads.append(Path(path))
+                    raise AssertionError(f"denied body read through {path}")
+                return real_read_text(path, *a, **kw)
+
+            # Requested path absent; the hyphen fallback is an alias into the domain.
+            (briefs / "seed-brief-4.md").symlink_to("../../vault/copies/empty.md")
+            with (
+                mock.patch.object(Path, "read_text", autospec=True, side_effect=guarded_read_text),
+                mock.patch.object(supervisor, "_file_or_dir_hash") as hashed,
+                mock.patch.object(supervisor, "_atomic_copy_context_file") as copied,
+                mock.patch.object(supervisor, "_generated_worker_task_brief") as generated,
+                self.assertRaisesRegex(ValueError, "protected body domain"),
+            ):
+                supervisor.materialize_worker_context_files(config, request, workspace)
+            self.assertEqual(reads, [])
+            hashed.assert_not_called()
+            copied.assert_not_called()
+            generated.assert_not_called()
+            self.assertFalse(os.path.lexists(workspace / requested))
+
+            # Legitimate fallback: a fresh regular compatibility brief is still selected and copied.
+            fresh = (
+                "# Task Brief\n"
+                f"- SHA256: {common.task_brief_canonical_hash({'id': task_id})}\n"
+                "\n## Source Documents\n- none\n"
+            )
+            (briefs / "seed-brief-4.md").unlink()
+            (briefs / "seed-brief-4.md").write_text(fresh, encoding="utf-8")
+            with (
+                mock.patch.object(Path, "read_text", autospec=True, side_effect=guarded_read_text),
+                mock.patch.object(supervisor, "_file_or_dir_hash", return_value="a" * 64),
+                mock.patch.object(supervisor, "_atomic_copy_context_file") as copied,
+            ):
+                self.assertEqual(supervisor.materialize_worker_context_files(config, request, workspace), [requested])
+            copied.assert_called_once_with(briefs / "seed-brief-4.md", workspace / requested)
+
+            # Generation: with no candidate on disk the brief is generated and written back.
+            (briefs / "seed-brief-4.md").unlink()
+            with (
+                mock.patch.object(Path, "read_text", autospec=True, side_effect=guarded_read_text),
+                mock.patch.object(supervisor, "_generated_worker_task_brief", return_value="# Generated\n"),
+                mock.patch.object(supervisor, "_atomic_copy_context_file") as copied,
+            ):
+                self.assertEqual(supervisor.materialize_worker_context_files(config, request, workspace), [requested])
+            copied.assert_not_called()
+            self.assertEqual((workspace / requested).read_text(encoding="utf-8"), "# Generated\n")
+            self.assertEqual((status_root / requested).read_text(encoding="utf-8"), "# Generated\n")
+            self.assertEqual(reads, [])
+
+            # Direct control: the requested brief itself aliased into the domain is
+            # refused before any read, generation or canonical write-back.
+            (status_root / requested).unlink()
+            (workspace / requested).unlink()
+            (briefs / "seed_brief_4.md").symlink_to("../../vault/copies/empty.md")
+            with (
+                mock.patch.object(Path, "read_text", autospec=True, side_effect=guarded_read_text),
+                mock.patch.object(supervisor, "_file_or_dir_hash") as hashed,
+                mock.patch.object(supervisor, "_atomic_copy_context_file") as copied,
+                mock.patch.object(supervisor, "_generated_worker_task_brief") as generated,
+                self.assertRaisesRegex(ValueError, "protected body domain"),
+            ):
+                supervisor.materialize_worker_context_files(config, request, workspace)
+            self.assertEqual(reads, [])
+            hashed.assert_not_called()
+            copied.assert_not_called()
+            generated.assert_not_called()
+            self.assertFalse(os.path.lexists(workspace / requested))
 
 
 class WorktreeAuthorityShapeTests(unittest.TestCase):

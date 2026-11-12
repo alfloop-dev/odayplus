@@ -38,6 +38,7 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
+            !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
 
@@ -176,6 +177,7 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
+            !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
 
@@ -393,6 +395,7 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
+            !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
 
@@ -560,6 +563,7 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
+            !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
 
@@ -815,6 +819,7 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
+            !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
 
@@ -935,6 +940,7 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
+            !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
 
@@ -1056,6 +1062,7 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
+            !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
 
@@ -1184,6 +1191,7 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
+            !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
 
@@ -1301,6 +1309,7 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
+            !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
 
@@ -1480,6 +1489,7 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
+            !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
 
@@ -1764,6 +1774,7 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
+            !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
 

@@ -314,7 +314,7 @@ class ProductionBodyDomainTests(unittest.TestCase):
         self.assertEqual(wc.PROTECTED_BODY_NAMES, ("test_listing_production_asset.py",))
         self.assertEqual(
             wc.protected_body_sparse_patterns(),
-            ("/*", "!**/tests/sources/**", "!**/test_listing_production_asset.py*"),
+            ("/*", "!**/tests/sources", "!**/tests/sources/**", "!**/test_listing_production_asset.py*"),
         )
         self.assertTrue(
             wc.in_protected_body_domain(
@@ -360,7 +360,7 @@ class ProtectedBodyDomainTests(SyntheticBodyDomain, unittest.TestCase):
                 self.assertFalse(wc.in_protected_body_domain(path))
         self.assertEqual(
             wc.protected_body_sparse_patterns(),
-            ("/*", "!**/guarded/zone/**", f"!**/{SYNTHETIC_NAME}*"),
+            ("/*", "!**/guarded/zone", "!**/guarded/zone/**", f"!**/{SYNTHETIC_NAME}*"),
         )
 
     def test_exclusion_before_materialization_keeps_root_and_nested_copies_out(self) -> None:
