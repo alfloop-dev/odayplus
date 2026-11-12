@@ -66,6 +66,37 @@ def main() -> int:
     mlflow_cloud_run_auth.fetch_id_token = _wif_minted
 
     from product_ops.modeling import install_views, release
+    from shared.governance.model_performance import (
+        MODEL_PERFORMANCE_DRIFT_POLICY_KIND,
+        MODEL_PERFORMANCE_DRIFT_POLICY_TENANT_ID,
+    )
+
+    # The trainer resolves its platform-wide drift policy in the registry scope
+    # MODEL_PERFORMANCE_DRIFT_POLICY_TENANT_ID ("canonical deployment tenant").
+    # Dev never provisioned that tenant, so the policy was never seeded. Create
+    # the tenant row only; the migration-installed core.tenants trigger seeds
+    # the canonical v1 policies through workflow.seed_*_policy().
+    import psycopg
+
+    with psycopg.connect(os.environ["ODAY_DATABASE_URL"], connect_timeout=30) as conn:
+        created = conn.execute(
+            "INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, %s) "
+            "ON CONFLICT (tenant_id) DO NOTHING RETURNING tenant_id",
+            (MODEL_PERFORMANCE_DRIFT_POLICY_TENANT_ID, "platform-model-governance"),
+        ).fetchone()
+        in_force = conn.execute(
+            "SELECT count(*) FROM workflow.decision_policies WHERE policy_kind = %s "
+            "AND tenant_id = %s AND effective_to IS NULL",
+            (MODEL_PERFORMANCE_DRIFT_POLICY_KIND, MODEL_PERFORMANCE_DRIFT_POLICY_TENANT_ID),
+        ).fetchone()[0]
+        conn.commit()
+    print(
+        f"PLATFORM_POLICY tenant_created={bool(created)} drift_policy_in_force={in_force}",
+        flush=True,
+    )
+    if in_force != 1:
+        print("RESULT: FAILED (platform drift policy not seeded by trigger)", flush=True)
+        return 1
 
     # The versioned views are already installed in dev (probe 43215309998);
     # only re-verify them read-only instead of re-applying the SQL.
