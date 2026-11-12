@@ -77,12 +77,25 @@ async function selectNativeIntake(page: Page, intakeId: string, refresh = false)
   if (refresh) {
     // The selected durable detail owns its original refresh control. It does
     // not reopen or refresh the inbox after a whole-page reload.
-    const fresh = page.waitForResponse((candidate) => candidate.request().method() === "GET"
-      && new URL(candidate.url()).pathname === `/api/v1/canonical-intakes/${intakeId}`);
+    // A detail read still in flight when the refresh starts is superseded and
+    // aborted by the app, so the browser keeps no body for it. Only a read
+    // whose body is readable is the one the app actually kept.
+    const bodies = new WeakMap<object, string>();
+    const fresh = page.waitForResponse(async (candidate) => {
+      if (candidate.request().method() !== "GET"
+        || new URL(candidate.url()).pathname !== `/api/v1/canonical-intakes/${intakeId}`) return false;
+      try {
+        bodies.set(candidate, await candidate.text());
+        return true;
+      } catch {
+        return false;
+      }
+    });
     await page.getByTestId("intake-refresh-button").click();
     const response = await fresh;
-    expect(response.status(), await response.text()).toBe(200);
-    expect((await response.json()).intake_id).toBe(intakeId);
+    const body = bodies.get(response) ?? "";
+    expect(response.status(), body).toBe(200);
+    expect(JSON.parse(body).intake_id).toBe(intakeId);
     return;
   }
   await openNativeIntakeList(page);
