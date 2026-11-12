@@ -174,6 +174,32 @@ class MergeRouteTests(unittest.TestCase):
         self.assertEqual(findings, [])
         self.assertIn("merge_route", task)
 
+    def test_a_route_bound_to_a_merge_group_recovery_survives_the_merge(self) -> None:
+        """The route is the admission record the owed reviewer decision is bound
+        to; the merge does not release it, the reviewer's decision does."""
+        route = {"head": HEAD, "route": "queued", "attempts": 2, "at": "2026-09-06T01:20:00Z"}
+        task = _task(status="review", merge_route=dict(route))
+
+        findings = task_reality.task_reality_findings(
+            task, pull_request=_pr(state="MERGED", merged=True), branch_exists=True,
+            merge_group_recovery=True,
+        )
+        task_reality.apply_task_reality_repairs(task, findings)
+
+        self.assertEqual(findings, [])
+        self.assertEqual(task["merge_route"], route)
+
+        results = task_reality.reconcile_tasks(
+            [task],
+            probe=lambda _t: {
+                "pull_request": _pr(state="MERGED", merged=True),
+                "branch_exists": True,
+                "merge_group_recovery": True,
+            },
+        )
+        self.assertEqual(results, [])
+        self.assertEqual(task["merge_route"], route)
+
 
 class ReviewGateTests(unittest.TestCase):
     def test_a_missing_review_gate_is_reported_never_stamped(self) -> None:
