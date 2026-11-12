@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -3518,6 +3519,7 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             # after a merge_group failure is dispatched from these same facts.
             "review_submission": {
                 "pr_number": 756,
+                "pr_url": "https://github.com/o/r/pull/756",
                 "branch": "task/odp-test-mg-001",
                 "remote_sha": "8eabc9734a000000000000000000000000000000",
                 "base_branch": "dev",
@@ -6459,6 +6461,89 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         self.assertEqual(seen["run_reads"], [])
         self.assertNotIn("source_head", canonical["handoffs"][0])
 
+    def test_legacy_cause_of_task_not_bound_to_bus_repository_writes_nothing(self) -> None:
+        """The board spans repositories; the bus reads one. PR numbers and SHAs repeat.
+
+        The cause names the bus repository's run, PR number and source head
+        exactly, and GitHub would prove it -- but the canonical task's own
+        repository or submitted PR has drifted elsewhere. The producer must
+        not read the run, CAS, revoke on the bus repository, or let the
+        dispatcher send anyone.
+        """
+        other = "https://github.com/x/other/pull/756"
+        # label -> (task overrides, submission overrides, verdict, reason)
+        cases = {
+            "task names another registered repository": (
+                {"repository": "x/other"}, {}, "refuted", "task_repository_mismatch"),
+            "task names an unregistered repository": (
+                {"repository": "nobody/nowhere"}, {}, "unresolved", "task_repository_unknown"),
+            "submission PR in another repository": (
+                {}, {"pr_url": other}, "refuted", "submission_pr_url_repository_mismatch"),
+            "submission PR is another number": (
+                {}, {"pr_url": "https://github.com/o/r/pull/757"}, "refuted", "submission_pr_url_number_mismatch"),
+            "submission PR URL missing": ({}, {"pr_url": None}, "unresolved", "submission_pr_url_unusable"),
+            "submission PR URL malformed": (
+                {}, {"pr_url": "https://github.com/o/r/issues/756"}, "unresolved", "submission_pr_url_unusable"),
+            "task PR URL in another repository": (
+                {"pr_url": other}, {}, "refuted", "task_pr_url_repository_mismatch"),
+            "task PR URL malformed": ({"pr_url": 756}, {}, "unresolved", "task_pr_url_unusable"),
+        }
+        for label, (task_overrides, submission_overrides, kind, reason) in cases.items():
+            with self.subTest(label):
+                self.setUp()
+                status_path, route, cause = self._legacy_board()
+                # Another repository the registry knows, with its own checkout.
+                self.config["coordination"]["repositories"]["other"] = {
+                    "repo": "x/other", "local_path": str(status_path.parent / "other-checkout"),
+                }
+                board = json.loads(status_path.read_text(encoding="utf-8"))
+                board["tasks"][0].update(task_overrides)
+                board["tasks"][0]["review_submission"].update(submission_overrides)
+                status_path.write_text(json.dumps(board), encoding="utf-8")
+                gh = self._gh(
+                    pr_node=self._active_group_node(self.GROUP_HEAD_NEW),
+                    runs=[self._legacy_run()],
+                    commits={self.GROUP_HEAD_NEW: self._group_enrolling_approved_head()},
+                )
+
+                with mock.patch("status_transition.commit_canonical_task_transition") as commit:
+                    changed, canonical, seen = self._poll(status_path, gh=gh)
+
+                self.assertFalse(changed)
+                commit.assert_not_called()
+                seen["sync"].assert_not_called()
+                seen["post"].assert_not_called()
+                self.assertEqual(seen["run_reads"], [])
+                self.assertEqual(canonical, board)
+                for field in ("status_check_outbox", "review_gate_revocations", "review_gate_refresh_pending"):
+                    self.assertNotIn(field, canonical["tasks"][0])
+                # Audited as the producer's own refusal; the failure scan that
+                # follows sees a task in review and writes nothing either.
+                self.assertEqual(
+                    [(c.args[1]["type"], c.args[1]["reason"]) for c in seen["log"].call_args_list
+                     if c.args[1]["type"].startswith("merge_group_cause_source_")],
+                    [(f"merge_group_cause_source_{kind}", reason)],
+                )
+                self.assertNotIn("legacy_merge_group_cause_checks", self.bus_state)
+                queued: list[dict] = []
+                self._ready_dispatch(queued)
+                self.assertEqual(queued, [])
+
+                # Nothing is remembered: once the canonical record names the
+                # bus repository and PR again, the same cause is proven.
+                for key in task_overrides:
+                    board["tasks"][0].pop(key)
+                board["tasks"][0]["review_submission"]["pr_url"] = "https://github.com/o/r/pull/756"
+                status_path.write_text(json.dumps(board), encoding="utf-8")
+                changed, canonical, seen = self._poll(status_path, gh=gh)
+                self.assertTrue(changed)
+                self.assertEqual(canonical["handoffs"], [dict(cause, source_head=self.APPROVED_HEAD)])
+                self.assertEqual(canonical["tasks"][0]["merge_route"], route)
+                self.assertEqual(
+                    {(c.args[0]["sha"], c.args[0]["repo_slug"]) for c in seen["post"].call_args_list},
+                    {(sha, "o/r") for sha in (self.APPROVED_HEAD, self.GROUP_HEAD_OLD, self.GROUP_HEAD_NEW)},
+                )
+
     def test_legacy_cause_enrichment_cas_reject_has_no_side_effects(self) -> None:
         import supervisor
 
@@ -6944,6 +7029,96 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             [h for h in board["handoffs"] if h.get("reason") == "merge_group_failure"][0]["status"], "done"
         )
         self.assertIsNone(ai_status.merge_group_recovery_cause(task, board["handoffs"]))
+
+    def test_merged_recovery_owner_busy_past_sla_waits_for_owner_not_helper(self) -> None:
+        """Owner-only publication is never leased to a helper, however long the owner is busy.
+
+        The owner-return makes the task ordinary `in_progress` work, which the
+        helper lane offers to an independent agent once the owner is saturated
+        past the dispatch SLA. The publisher refuses any helper for a merged
+        recovery, so that lease could only fail and hold the task against its
+        owner. A control task of the same owner, idle as long, shows the
+        helper lane itself is live in this tick.
+        """
+        import runtime_state
+
+        status_path, route, cause = self._proven_legacy_board()
+        merge_commit = self._merge_source_into_dev()
+        # An independent third agent, in a pool of its own.
+        self.config["agents"]["gemini"] = {
+            "display_name": "Gemini", "provider": "gemini", "account_pool": "gemini_three",
+        }
+        board = json.loads(status_path.read_text(encoding="utf-8"))
+        board["tasks"].append({
+            "id": "ODP-TEST-MG-002",
+            "title": "Ordinary owner work",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Claude2",
+            "next": "keep going",
+        })
+        status_path.write_text(json.dumps(board), encoding="utf-8")
+
+        def owner_busy_elsewhere():
+            state = runtime_state.default_state()
+            state.setdefault("workers", {})["run-other"] = {
+                "run_id": "run-other", "status": "running", "agent_id": "codex",
+                "task_id": "OTHER-BUSY-001", "pid": os.getpid(),
+                "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+            }
+            return state
+
+        def recovery_events(events):
+            return [(e["reason"], e["target_agent"]) for e in events if e["task_id"] == "ODP-TEST-MG-001"]
+
+        # 1. The owner is busy on other work; the owner-return still happens
+        # (it reads only this task's work), but the owner has no slot.
+        queued: list[dict] = []
+        self._ready_dispatch(
+            queued, pr_status=(None, "unknown"), github_pr=self._merged_pr(merge_commit),
+            state=owner_busy_elsewhere(),
+        )
+        board = json.loads(status_path.read_text(encoding="utf-8"))
+        task = board["tasks"][0]
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["merge_route"], route)
+        self.assertEqual(self._pending(board), [cause])
+        self.assertTrue(ai_status.merge_group_recovery_publication_pending(task, board["handoffs"]))
+        self.assertEqual(recovery_events(queued), [])
+
+        # 2. The owner stays busy past the 600-second dispatch SLA.
+        stale = (datetime.now(UTC) - timedelta(seconds=700)).isoformat().replace("+00:00", "Z")
+        for item in board["tasks"]:
+            item["last_update"] = stale
+        status_path.write_text(json.dumps(board), encoding="utf-8")
+        helper_tick: list[dict] = []
+        skips = self._ready_dispatch(helper_tick, state=owner_busy_elsewhere())
+        board = json.loads(status_path.read_text(encoding="utf-8"))
+        # The helper lane ran: the control task is leased to the third agent.
+        self.assertEqual(
+            [(e["task_id"], e["reason"], e["target_agent"]) for e in helper_tick],
+            [("ODP-TEST-MG-002", "helper_claim_dispatch", "Gemini")],
+        )
+        self.assertEqual(skips, [None])
+        self.assertEqual(board["tasks"][1]["helper_execution_lease"]["claimed_by"], "Gemini")
+        # The recovery is not: no lease, no event, the owner's cause and route kept.
+        task = board["tasks"][0]
+        self.assertNotIn("helper_execution_lease", task)
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["owner"], "Codex")
+        self.assertEqual(task["merge_route"], route)
+        self.assertEqual(self._pending(board), [cause])
+
+        # 3. Once the owner has a slot, the ordinary owner lane wakes it.
+        owner_tick: list[dict] = []
+        skips = self._ready_dispatch(owner_tick, pending_events=helper_tick)
+        self.assertEqual(recovery_events(owner_tick), [("owned_in_progress_dispatch", "Codex")])
+        self.assertEqual(
+            [skip for event, skip in zip(owner_tick, skips, strict=True) if event["task_id"] == "ODP-TEST-MG-001"], [None]
+        )
+        board = json.loads(status_path.read_text(encoding="utf-8"))
+        self.assertNotIn("helper_execution_lease", board["tasks"][0])
+        self.assertEqual(self._pending(board), [cause])
 
     @staticmethod
     def _recovery_facts(board) -> dict:

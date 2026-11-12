@@ -3553,6 +3553,14 @@ def dispatch_ready_tasks(
                             and not bool(task.get("non_dispatchable"))
                             and not is_human_gate_agent(str(task.get("waiting_for") or ""))
                             and not is_human_gate_agent(str(task_owner or ""))
+                            # Publishing the merged PR of an owner-returned
+                            # merge_group recovery is owner-only (the publisher
+                            # refuses any helper), so a helper lease on it could
+                            # only fail and hold the task's lock against its
+                            # owner. The owner keeps waiting for capacity.
+                            and not runtime_ai_status.merge_group_recovery_publication_pending(
+                                task, status.get("handoffs")
+                            )
                             and dependencies_satisfied(task, task_map, dependency_done_statuses)
                             and independent
                             and (

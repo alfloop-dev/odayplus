@@ -1391,6 +1391,59 @@ def legacy_cause_group_revocation_targets(
     return group_heads, LEGACY_CAUSE_PROVEN, "group_enrolled_source_head"
 
 
+GITHUB_PULL_URL_PATTERN = re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)$")
+
+
+def legacy_cause_repository_verdict(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    repo: str,
+    pr_number: Any,
+) -> tuple[str, str]:
+    """Is this canonical task's PR the bus repository's PR the cause names?
+
+    The bus polls one repository, but the board holds tasks of every
+    registered repository, and PR numbers and shared source SHAs repeat
+    across them. A cause names only a run and a PR number, so before the
+    producer reads or writes anything on `repo` the task itself must say it
+    lives there: its repository through the registry's one task->repository
+    answer, and its submitted PR URL (and the task's, when recorded) naming
+    exactly that repository and PR. Returns ``(verdict, reason)``; a task
+    that names another repository is `refuted`, and one whose repository or
+    PR URL cannot be read is `unresolved`. Neither is enriched.
+    """
+    from multi_repo_registry import normalized_repository_slug, repository_slug, task_repository_id
+
+    bus_slug = normalized_repository_slug(repo)
+    if not bus_slug:
+        return LEGACY_CAUSE_UNRESOLVED, "bus_repository_unknown"
+    repo_id = task_repository_id(config, task)
+    task_slug = normalized_repository_slug(repository_slug(config, repo_id)) if repo_id else None
+    if not task_slug:
+        return LEGACY_CAUSE_UNRESOLVED, "task_repository_unknown"
+    if task_slug != bus_slug:
+        return LEGACY_CAUSE_REFUTED, "task_repository_mismatch"
+    try:
+        wanted_pr = int(pr_number)
+    except (TypeError, ValueError):
+        return LEGACY_CAUSE_UNRESOLVED, "pr_number_unusable"
+
+    submission = task.get("review_submission")
+    urls = [("submission", (submission or {}).get("pr_url") if isinstance(submission, dict) else None)]
+    if task.get("pr_url") is not None:
+        urls.append(("task", task.get("pr_url")))
+    for label, raw in urls:
+        url = str(raw or "").strip().rstrip("/") if isinstance(raw, str) else ""
+        match = GITHUB_PULL_URL_PATTERN.fullmatch(url)
+        if not match:
+            return LEGACY_CAUSE_UNRESOLVED, f"{label}_pr_url_unusable"
+        if normalized_repository_slug(match.group(1)) != bus_slug:
+            return LEGACY_CAUSE_REFUTED, f"{label}_pr_url_repository_mismatch"
+        if int(match.group(2)) != wanted_pr:
+            return LEGACY_CAUSE_REFUTED, f"{label}_pr_url_number_mismatch"
+    return LEGACY_CAUSE_PROVEN, "task_bound_to_bus_repository"
+
+
 def enrich_legacy_merge_group_causes(
     config: dict[str, Any],
     status: dict[str, Any],
@@ -1403,7 +1456,9 @@ def enrich_legacy_merge_group_causes(
     cause to name exactly the routed source head. This is the recovery
     producer completing its own committed record, not a new cause: it only
     touches a cause `ai_status.merge_group_recovery_cause` binds to the
-    canonical task as read this cycle, re-reads the exact run and group
+    canonical task as read this cycle, of a task whose registered repository
+    and submitted PR URL are this bus's repository and the cause's PR
+    (`legacy_cause_repository_verdict`), re-reads the exact run and group
     commit it names, and writes `source_head` through the same canonical CAS
     only when GitHub proves the relation. Nothing is remembered between
     cycles: a refuted or unresolved relation is audited like any unresolved
@@ -1441,9 +1496,13 @@ def enrich_legacy_merge_group_causes(
         source_head = str((task.get("review_submission") or {}).get("remote_sha") or "").strip().lower()
         task_id = str(task.get(task_id_field) or task.get("id") or "").strip()
 
-        verdict, reason = legacy_merge_group_cause_source_verdict(
-            repo, cause, source_head, parents_cache
-        )
+        # The cause is bound to the task; the task has to be bound to the
+        # repository this bus reads before any of its runs or commits are.
+        verdict, reason = legacy_cause_repository_verdict(config, task, repo, cause.get("pr_number"))
+        if verdict == LEGACY_CAUSE_PROVEN:
+            verdict, reason = legacy_merge_group_cause_source_verdict(
+                repo, cause, source_head, parents_cache
+            )
         facts = {
             "task_id": task_id,
             "run_id": cause.get("run_id"),
