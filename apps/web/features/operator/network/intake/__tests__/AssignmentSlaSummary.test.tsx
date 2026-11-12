@@ -65,18 +65,34 @@ const STEWARD_TARGET_KEY = transferTargetKey(TEST_TRANSFER_TARGETS[1]!);
 
 describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001)", () => {
   describe("AssignmentSlaSummary Component & SLA Logic", () => {
-    it("computes SLA states correctly based on time and flags", () => {
-      expect(computeSlaState({ ...sampleIntakeRecord, slaState: "PAUSED" })).toBe("PAUSED");
-      expect(computeSlaState({ ...sampleIntakeRecord, isBreached: true } as any)).toBe("BREACHED");
+    it.each(["ON_TRACK", "DUE_SOON", "OVERDUE", "BREACHED", "PAUSED", "COMPLETED"])(
+      "displays the persisted %s state without a browser-clock override", (slaState) => {
+        const record = { ...sampleIntakeRecord, slaState, dueAt: "2000-01-01T00:00:00Z" };
+        expect(computeSlaState(record)).toBe(slaState);
+      });
 
-      const futureDue = new Date(Date.now() + 120 * 60 * 1000).toISOString();
-      expect(computeSlaState({ ...sampleIntakeRecord, dueAt: futureDue } as any)).toBe("ON_TRACK");
+    it.each([null, undefined, "UNRECOGNIZED"])("keeps missing or unknown state %s unavailable despite a future deadline", (slaState) => {
+      expect(computeSlaState({ ...sampleIntakeRecord, slaState, dueAt: "2099-01-01T00:00:00Z" })).toBe("UNAVAILABLE");
+    });
 
-      const soonDue = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-      expect(computeSlaState({ ...sampleIntakeRecord, dueAt: soonDue } as any)).toBe("DUE_SOON");
+    it("does not let legacy flags replace the persisted state", () => {
+      const record = { ...sampleIntakeRecord, isBreached: true, isSlaPaused: true };
+      expect(computeSlaState(record)).toBe("ON_TRACK");
+    });
 
-      const pastDue = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-      expect(computeSlaState({ ...sampleIntakeRecord, dueAt: pastDue } as any)).toBe("OVERDUE");
+    it("keeps workflow binding IDs out of the general summary while preserving supplied owner labels", () => {
+      const html = renderToString(<AssignmentSlaSummary record={sampleIntakeRecord} assignmentResourceVersion={3} slaResourceVersion={2} />);
+      expect(html).toContain("許庭瑜（展店）");
+      expect(html).not.toContain("ASG-TEST-001");
+      expect(html).not.toContain("SLA-TEST-001");
+      expect(html).not.toContain("asg-btn-");
+    });
+
+    it("does not present a subject UUID as the assigned person's name", () => {
+      const record = { ...sampleIntakeRecord, owner: null, ownerSubjectId: "00000000-0000-4000-8000-000000000061" };
+      const html = renderToString(<AssignmentSlaSummary record={record} assignmentResourceVersion={2} slaResourceVersion={3} />);
+      expect(html).toContain("已指派（姓名未提供）");
+      expect(html).not.toContain(record.ownerSubjectId);
     });
 
     it("verifies SLA text plus icon/pattern mapping for WCAG AA compliance", () => {

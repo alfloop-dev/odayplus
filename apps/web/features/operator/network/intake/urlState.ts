@@ -1,4 +1,6 @@
 import type { IntakeUrlState } from "./types";
+import { clearIntakeSelection, intakeNavigationHash } from "./intakeNavigation";
+export { clearIntakeSelection, intakePathSelection, intakeNavigationHash } from "./intakeNavigation";
 
 export function parseUrlState(
   searchParams: URLSearchParams | Record<string, string | string[] | undefined> | string,
@@ -28,8 +30,14 @@ export function parseUrlState(
   };
 
   const compareVal = get("compare");
+  const kinds = params.getAll("intakeKind");
+  const cursors = params.getAll("canonicalCursor");
+  const validCursor = cursors.every((value) => value === cursors[0] && value.length <= 2048);
 
   return {
+    ...(kinds.length ? { intakeKind: kinds.every((value) => value === "canonical") && validCursor
+      ? "canonical" as const : "invalid" as const } : {}),
+    ...(cursors.length ? { canonicalCursor: validCursor ? cursors[0] : null } : {}),
     filters: {
       stage: (params.get("stage") as any) || undefined,
       matchOutcome: (params.get("outcome") as any) || undefined,
@@ -56,6 +64,7 @@ export function serializeUrlState(
     ? new URLSearchParams(existingParams.toString())
     : new URLSearchParams();
 
+  clearIntakeSelection(params);
   const keysToClear = [
     "stage",
     "outcome",
@@ -63,17 +72,13 @@ export function serializeUrlState(
     "hz",
     "sort",
     "view",
-    "selected",
-    "dialog",
-    "section",
-    "field",
-    "decision",
-    "receipt",
-    "compare",
   ];
   for (const k of keysToClear) {
     params.delete(k);
   }
+
+  if (state.intakeKind) params.set("intakeKind", state.intakeKind);
+  if (state.intakeKind === "canonical" && state.canonicalCursor != null) params.set("canonicalCursor", state.canonicalCursor);
 
   if (state.filters) {
     if (state.filters.stage) params.set("stage", state.filters.stage);
@@ -94,4 +99,30 @@ export function serializeUrlState(
   }
 
   return params;
+}
+
+export function buildInboxReturnHref(
+  state: IntakeUrlState,
+  existingParams?: URLSearchParams,
+  hash = "",
+): string {
+  const params = serializeUrlState(state, existingParams);
+  params.set("ws", "network");
+  params.set("tab", "radar");
+  return `/operator?${params.toString()}${intakeNavigationHash(hash)}`;
+}
+
+export function buildDurableDetailHref(
+  intakeId: string,
+  state: IntakeUrlState,
+  existingParams?: URLSearchParams,
+  hash = "",
+): string {
+  const params = serializeUrlState(
+    { ...state, selectedId: intakeId, dialog: "detail" },
+    existingParams,
+  );
+  params.delete("ws");
+  params.delete("tab");
+  return `/intake/${encodeURIComponent(intakeId)}?${params.toString()}${intakeNavigationHash(hash)}`;
 }

@@ -1,7 +1,39 @@
 import { describe, it, expect } from "vitest";
-import { parseUrlState, serializeUrlState } from "../urlState";
+import { parseUrlState, serializeUrlState, clearIntakeSelection, intakePathSelection, buildDurableDetailHref } from "../urlState";
 
 describe("urlState serialization and parsing", () => {
+  it("keeps an exact canonical resource distinct from explicitly requested collection browsing", () => {
+    const exact = parseUrlState("intakeKind=canonical&selected=one");
+    expect(exact.intakeKind).toBe("canonical");
+    expect(exact.canonicalCursor).toBeUndefined();
+    const browse = parseUrlState("intakeKind=canonical&canonicalCursor=");
+    expect(browse.canonicalCursor).toBe("");
+    expect(serializeUrlState(browse).has("canonicalCursor")).toBe(true);
+    expect(serializeUrlState(exact).has("canonicalCursor")).toBe(false);
+    expect(intakePathSelection("/intake/a%20b")).toBe("a b");
+    expect(intakePathSelection("/intake/%XX")).toBeNull();
+    expect(intakePathSelection("/operator")).toBeUndefined();
+  });
+  it.each(["", "unknown", "canonical&intakeKind=legacy", "canonical&canonicalCursor=a&canonicalCursor=b"])(
+    "refuses an unknown or ambiguous explicit native locator: %s", (value) => {
+      expect(parseUrlState("intakeKind=" + value).intakeKind).toBe("invalid");
+    });
+  it("clears only the prior Intake locator while keeping repeated unrelated context and filters", () => {
+    const params = new URLSearchParams("intakeKind=canonical&canonicalCursor=opaque&selected=old&dialog=detail&receipt=old&section=identity&stage=READY&sort=due_at_asc&unrelated=a&unrelated=b");
+    clearIntakeSelection(params);
+    expect(params.getAll("unrelated")).toEqual(["a", "b"]);
+    expect(params.get("stage")).toBe("READY");
+    expect(params.get("sort")).toBe("due_at_asc");
+    expect(params.has("intakeKind")).toBe(false);
+    expect(params.has("canonicalCursor")).toBe(false);
+    expect(params.has("selected")).toBe(false);
+    const href = buildDurableDetailHref("new", { ...parseUrlState(params), intakeKind: "canonical" }, params);
+    const link = new URL(href, "https://unit.invalid");
+    expect(link.pathname).toBe("/intake/new");
+    expect(link.searchParams.get("selected")).toBe("new");
+    expect(link.searchParams.get("intakeKind")).toBe("canonical");
+    expect(link.searchParams.getAll("unrelated")).toEqual(["a", "b"]);
+  });
   it("refuses conflicting navigation targets and unknown dialogs", () => {
     const parsed = parseUrlState("selected=IN-1&selected=IN-2&section=identity&section=audit&dialog=unknown");
     expect(parsed.selectedId).toBeNull();

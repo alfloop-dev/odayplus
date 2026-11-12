@@ -4,37 +4,51 @@ import { Chip, StatusBadge } from "./components";
 import { ADMIN_PATH } from "./operatorSession";
 import { WORKSPACES, type OperatorRole, type OperatorRoleId } from "./navigation";
 import type { OperatorTask } from "./OperatorConsole";
+import type { OperatorShellEnvelope, ShellTarget } from "./shellEnvelope";
 import styles from "./operator.module.css";
 
-export function OperatorTaskPopover({ shellEnvelope, taskCenterSource, taskCenterLoadState, taskSummary, liveTasks, handleTaskSelect }: {
-  shellEnvelope: { header: { counts: { taskCenter: number } } }; taskCenterSource: "api" | "fixture";
+export function OperatorTaskPopover({ taskCenterCount, taskCenterSource, taskCenterLoadState, taskSummary, liveTasks, handleTaskSelect }: {
+  taskCenterCount: number | null; taskCenterSource: "api" | "fixture";
   taskCenterLoadState: "idle" | "loading" | "ready" | "fallback" | "empty" | "error"; taskSummary: { urgent: number }; liveTasks: OperatorTask[]; handleTaskSelect: (task: OperatorTask) => void;
-}) { return (<div className={styles.taskCenterPanel} data-testid="operator-task-center">
+}) {
+  // Only a completed Task API read (or explicit local fixture mode) may claim
+  // API status or counts. Urgent/Visible describe the rows actually shown.
+  const apiReadCompleted = taskCenterSource === "api" && (taskCenterLoadState === "ready" || taskCenterLoadState === "empty");
+  const countsClaimable = apiReadCompleted || taskCenterSource === "fixture";
+  const rowsShown = countsClaimable || taskCenterLoadState === "error";
+  const sourceLabel = taskCenterLoadState === "loading" ? "SYNCING"
+    : taskCenterSource === "fixture" ? "FIXTURE"
+      : apiReadCompleted ? "API" : taskCenterLoadState === "error" ? "UNAVAILABLE" : "NOT LOADED";
+  return (<div className={styles.taskCenterPanel} data-testid="operator-task-center" data-task-read-state={taskCenterLoadState}>
                   <div className={styles.taskCenterHeader}>
                     <div>
                       <div className={styles.popoverTitle}>Task center</div>
                       <strong>我的待辦與核准</strong>
                     </div>
-                    <Chip tone={taskCenterSource === "api" ? "success" : "neutral"}>
-                      {taskCenterLoadState === "loading" ? "SYNCING" : taskCenterSource.toUpperCase()}
+                    <Chip tone={apiReadCompleted ? "success" : "neutral"}>
+                      {sourceLabel}
                     </Chip>
                   </div>
                   <div className={styles.taskCenterStats} aria-label="Task center summary">
                     <span>
-                      <strong>{shellEnvelope.header.counts.taskCenter}</strong>
+                      <strong>{countsClaimable ? taskCenterCount ?? "—" : "—"}</strong>
                       API
                     </span>
                     <span>
-                      <strong>{taskSummary.urgent}</strong>
+                      <strong>{rowsShown ? taskSummary.urgent : "—"}</strong>
                       Urgent
                     </span>
                     <span>
-                      <strong>{liveTasks.length}</strong>
+                      <strong>{rowsShown ? liveTasks.length : "—"}</strong>
                       Visible
                     </span>
                   </div>
                   <div className={styles.taskList}>
-                    {taskCenterLoadState === "empty" || taskCenterLoadState === "error" ? (
+                    {taskCenterLoadState === "idle" && taskCenterSource === "api" ? (
+                      <div className={styles.commandEmpty} data-testid="operator-task-center-not-loaded">
+                        Task API 尚未讀取；目前不顯示任務數。
+                      </div>
+                    ) : taskCenterLoadState === "empty" || taskCenterLoadState === "error" ? (
                       <div className={styles.commandEmpty} data-testid="operator-task-center-unavailable">
                         {taskCenterLoadState === "empty"
                           ? "Task API 已回應，但目前沒有可用任務。"
@@ -114,3 +128,36 @@ export function OperatorRoleMenu({ rolesForShell, activeRole, handleRoleSelect, 
                     </button>
                   </div>
                 </div>); }
+
+export function OperatorSearchResults({ matches, activeIndex, onSelect }: {
+  matches: OperatorShellEnvelope["search"]["items"]; activeIndex: number;
+  onSelect: (target: ShellTarget, label: string) => void;
+}) { return (
+                <div className={styles.searchPanel} data-testid="operator-search-results" role="listbox">
+                  <div className={styles.popoverTitle}>Search</div>
+                  {matches.length ? (
+                    matches.map((item, index) => (
+                      <button
+                        aria-selected={index === activeIndex}
+                        className={styles.searchResult}
+                        data-target-entity={item.target.entityId}
+                        data-target-tab={item.target.tab}
+                        data-target-workspace={item.target.workspace}
+                        key={item.id}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          onSelect(item.target, item.entityId);
+                        }}
+                        role="option"
+                        type="button"
+                      >
+                        <span>{item.entityId}</span>
+                        <strong>{item.label}</strong>
+                        <small>{item.description}</small>
+                      </button>
+                    ))
+                  ) : (
+                    <div className={styles.searchEmpty}>No matching operator work</div>
+                  )}
+                </div>
+); }

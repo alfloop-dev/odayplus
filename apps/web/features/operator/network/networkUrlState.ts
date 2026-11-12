@@ -1,3 +1,5 @@
+import { clearIntakeSelection } from "./intake/intakeNavigation";
+
 export const NETWORK_TAB_IDS = [
   "areas",
   "radar",
@@ -88,11 +90,13 @@ export function candidateWorkflowNavigationParams(
   existing: { toString(): string },
   currentCandidateId: string | null,
   extraParams?: Record<string, string>,
+  leavingIntake = false,
 ): URLSearchParams {
   const explicitCandidate = extraParams?.[CANDIDATE_SELECTION_PARAM];
   const candidateId = isCandidateWorkflowTab(tabIndex)
     ? explicitCandidate || (extraParams?.zone ? null : currentCandidateId) : null;
-  const params = candidateId ? candidateNavigationParams(candidateId, existing) : new URLSearchParams(existing.toString());
+  const params = new URLSearchParams(existing.toString());
+  if (candidateId || leavingIntake || params.has("intakeKind")) clearIntakeSelection(params);
   params.delete(REVIEW_SELECTION_PARAM);
   params.delete(CANDIDATE_SELECTION_PARAM);
   params.delete("zone");
@@ -112,8 +116,8 @@ export function parseCandidateSelection(params: { toString(): string }): { id: s
 
 /** Candidate and intake selection have separate URL owners. */
 export function candidateNavigationParams(candidateId: string, existing: { toString(): string }): URLSearchParams {
-  const params = new URLSearchParams(existing.toString());
-  for (const key of ["zone", "selected", "dialog", "section", "field", "decision", "receipt", "compare", REVIEW_SELECTION_PARAM]) {
+  const params = clearIntakeSelection(new URLSearchParams(existing.toString()));
+  for (const key of ["zone", REVIEW_SELECTION_PARAM]) {
     params.delete(key);
   }
   params.set(CANDIDATE_SELECTION_PARAM, candidateId);

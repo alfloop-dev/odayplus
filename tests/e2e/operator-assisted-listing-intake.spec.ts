@@ -6,8 +6,11 @@ import {
   type Page,
   type TestInfo,
 } from "@playwright/test";
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import type { CanonicalIdentityReceipt, CanonicalIntakeAssistedEntryRequestReceipt, CanonicalIntakeReceipt, MatchCaseReceipt } from "@oday-plus/openapi-client";
 
-import { createPgNavigationControl, openPgRadar, openPgScenario, type PgScenario } from "./_intakeScorePg";
+import { createPgNavigationControl, openPgRadar, openPgScenario, PG_WEB, type PgScenario } from "./_intakeScorePg";
 
 import {
   acquireOperatorBackendLock,
@@ -20,11 +23,12 @@ import {
  * Every canonical flow uses the mounted Operator Console and the real FastAPI
  * service. Canonical promotion cases use isolated PostgreSQL, explicit
  * synthetic admission/model inputs, and the actual worker. Source revocation
- * exercises the real admission failure gate. No Playwright route is stubbed.
+ * exercises the real admission failure gate. The native reload control drops
+ * one actual committed response; it never fabricates a server result.
  */
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
-const PG_CASE = /^canonical (4:|5 and 6:)/;
+const PG_CASE = /^canonical (4:|5 and 6:|native:)/;
 // Explicit isolated fixture input; never a production default or catalog entry.
 const SYNTHETIC_TARGET_FORMAT = "synthetic-manual-format:Browser/v1";
 
@@ -57,6 +61,455 @@ test.beforeAll(async () => {
 test.afterAll(() => {
   releaseOperatorBackendLock();
 });
+
+async function loginNativeSession(page: Page, account: { username: string; password: string; actor_id: string }) {
+  await page.goto("/login?returnTo=" + encodeURIComponent("/operator?ws=network&tab=radar"));
+  await page.getByLabel("使用者帳號").fill(account.username);
+  await page.getByLabel("密碼", { exact: true }).fill(account.password);
+  await page.getByRole("button", { name: "登入", exact: true }).click();
+  await expect(page).toHaveURL(/\/operator\?/);
+  const session = await page.request.get("/auth/session");
+  expect(session.status()).toBe(200);
+  expect((await session.json()).subject).toBe(account.actor_id);
+}
+
+async function selectNativeIntake(page: Page, intakeId: string, refresh = false) {
+  if (refresh) {
+    // The selected durable detail owns its original refresh control. It does
+    // not reopen or refresh the inbox after a whole-page reload.
+    // The detail read issued on mount (e.g. after a whole-page reload) must
+    // settle first: a read still in flight would be superseded and aborted by
+    // this refresh, and it is not the refresh's own read. Only the GET issued
+    // after that point, by this click, is the refresh evidence; its own
+    // response and body must be readable, so any failure fails this check.
+    const refreshButton = page.getByTestId("intake-refresh-button");
+    await expect(refreshButton).toBeEnabled();
+    await expect(page.getByText("正在讀取所選收件與案件…", { exact: true })).toHaveCount(0);
+    const issued = page.waitForRequest((request) => request.method() === "GET"
+      && new URL(request.url()).pathname === `/api/v1/canonical-intakes/${intakeId}`);
+    await refreshButton.click();
+    const response = await (await issued).response();
+    expect(response, "refresh read received no response").not.toBeNull();
+    const body = await response!.text();
+    expect(response!.status(), body).toBe(200);
+    expect(JSON.parse(body).intake_id).toBe(intakeId);
+    return;
+  }
+  await openNativeIntakeList(page);
+  await page.getByRole("button", { name: new RegExp(intakeId) }).click();
+}
+
+async function openNativeIntakeList(page: Page) {
+  const listing = () => page.waitForResponse((candidate) => candidate.request().method() === "GET"
+    && new URL(candidate.url()).pathname === "/api/v1/canonical-intakes");
+  const pending = listing();
+  await page.getByRole("button", { name: "選取收件／比對案件", exact: true }).click();
+  let response = await pending;
+  if (response.status() === 409) {
+    // Exercise the existing visible refresh after a real snapshot conflict;
+    // other failures remain failures and no command is automatically replayed.
+    await expect(page.getByTestId("canonical-intake-case-picker").getByRole("alert")).toBeVisible();
+    const reloaded = listing();
+    await page.getByRole("button", { name: "重新讀取", exact: true }).click();
+    response = await reloaded;
+  }
+  expect(response.status(), await response.text()).toBe(200);
+}
+
+// One fault control for the original native command callers. Only the browser
+// response is lost: the ordinary BFF/API transaction must first really commit.
+async function recoverNativeCommandResponse<R extends { audit_event_id: string; correlation_id: string }>(page: Page,
+  scope: { actor_id: string; tenant_id: string; intake_id: string }, commandPath: string,
+  expectedStatus: 200 | 201 | 202, submit: () => Promise<unknown>,
+  options: { storageFailure?: boolean; waitForReadyOnConflict?: boolean;
+    beforeReload?: (receipt: R, key: string) => Promise<void>; receiptPath?: string } = {}) {
+  let recordCommitted!: (result: { receipt: R; capturedKey: string }) => void;
+  const committed = new Promise<{ receipt: R; capturedKey: string }>((resolve) => { recordCommitted = resolve; });
+  const seenKeys: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === commandPath)
+      seenKeys.push(request.headers()["idempotency-key"]);
+  });
+  await page.route("**" + commandPath, async (route) => {
+    expect(route.request().method()).toBe("POST");
+    const headers = route.request().headers();
+    const capturedKey = headers["idempotency-key"];
+    expect(capturedKey).toBeTruthy();
+    expect(headers["if-actor-match"]).toBe(scope.actor_id);
+    expect(headers["if-tenant-match"]).toBe(scope.tenant_id);
+    const upstream = await route.fetch();
+    expect(upstream.status(), await upstream.text()).toBe(expectedStatus);
+    const receipt = await upstream.json() as R;
+    await route.abort("failed");
+    recordCommitted({ receipt, capturedKey });
+  }, { times: 1 });
+  await submit();
+  await expect(page.getByRole("region", { name: "先前收件操作", exact: true }).getByRole("status"))
+    .toContainText("原操作結果尚未確認");
+  const { receipt, capturedKey } = await committed;
+  const postCount = () => seenKeys.filter((key) => key === capturedKey).length;
+  const referenceBefore = await page.evaluate(() => Object.entries(sessionStorage)
+    .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")));
+  expect(referenceBefore).toHaveLength(1);
+  expect(referenceBefore[0][1]).toContain(capturedKey);
+  expect(referenceBefore[0][1]).not.toContain("已核對原始解析欄位");
+  // References are a closed contract, never a saved command body or reason.
+  expect(JSON.parse(referenceBefore[0][1])).not.toHaveProperty("body");
+  expect(JSON.parse(referenceBefore[0][1])).not.toHaveProperty("reason");
+  const storageErrors: string[] = [];
+  if (options.storageFailure) {
+    const storageContext = await page.evaluateHandle(() => ({ storage: window.sessionStorage,
+      descriptor: Object.getOwnPropertyDescriptor(window, "sessionStorage") }));
+    const recordStorageError = (error: Error) => storageErrors.push(error.name);
+    page.on("pageerror", recordStorageError);
+    try {
+      await page.evaluate(() => { Object.defineProperty(window, "sessionStorage", { configurable: true,
+        get() { throw new DOMException("Synthetic accessor denial", "SecurityError"); } }); });
+      await page.getByTestId("operator-command-trigger").click();
+      await expect(page.getByRole("heading", { name: "瀏覽器無法保存或核對操作狀態" })).toBeVisible();
+      await expect(page.getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "storage");
+      await page.getByRole("button", { name: "重新載入", exact: true }).click();
+      expect(postCount()).toBe(1);
+      expect(await page.evaluate(({ storage }) => Object.entries(storage)
+        .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")), storageContext)).toEqual(referenceBefore);
+      expect(storageErrors).toEqual([]);
+      await page.screenshot({ path: test.info().outputPath("native-storage-unavailable.png"), fullPage: true });
+    } finally {
+      await page.evaluate(({ descriptor }) => {
+        if (descriptor) Object.defineProperty(window, "sessionStorage", descriptor);
+        else Reflect.deleteProperty(window, "sessionStorage");
+      }, storageContext);
+      await storageContext.dispose(); page.off("pageerror", recordStorageError);
+    }
+    const freshBootstrap = page.waitForResponse((response) => response.request().method() === "GET"
+      && new URL(response.url()).pathname === "/api/v1/operator/bootstrap");
+    await page.getByRole("button", { name: "重新載入", exact: true }).click();
+    expect((await freshBootstrap).status()).toBe(200);
+    expect(postCount()).toBe(1);
+    expect(await page.evaluate(() => Object.entries(sessionStorage)
+      .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")))).toEqual(referenceBefore);
+  }
+  await options.beforeReload?.(receipt, capturedKey);
+  const exactPath = options.receiptPath ?? commandPath + "/receipt";
+  const restored = page.waitForResponse((response) => response.request().method() === "GET"
+    && new URL(response.url()).pathname === exactPath);
+  await page.reload();
+  let observedReceipt = await restored;
+  const initialReceiptStatus = observedReceipt.status();
+  if (initialReceiptStatus === 409 && options.waitForReadyOnConflict) {
+    expect(await observedReceipt.json()).toEqual({ detail: "CANONICAL_MATCH_CASE_CONCURRENT_CHANGE" });
+    await expect(page.getByRole("button", { name: "查詢原操作回執", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "重試原操作", exact: true })).toHaveCount(0);
+    expect(postCount()).toBe(1);
+    expect(await page.evaluate(() => Object.entries(sessionStorage)
+      .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:")))).toEqual(referenceBefore);
+    expect(observedReceipt.request().headers()["idempotency-key"]).toBe(capturedKey);
+    await expect.poll(async () => {
+      const fresh = await page.request.get(`/api/v1/canonical-intakes/${scope.intake_id}`);
+      expect(fresh.status()).toBe(200);
+      return (await fresh.json()).processing_state;
+    }, { timeout: 60_000 }).toBe("READY");
+    const retried = page.waitForResponse((response) => response.request().method() === "GET"
+      && new URL(response.url()).pathname === exactPath);
+    await page.getByRole("button", { name: "查詢原操作回執", exact: true }).click();
+    observedReceipt = await retried;
+  }
+  expect(observedReceipt.status(), await observedReceipt.text()).toBe(200);
+  expect(await observedReceipt.json()).toMatchObject({ observation: "RECEIPT_COMMITTED",
+    original_http_status: expectedStatus, receipt });
+  const lookupHeaders = observedReceipt.request().headers();
+  expect(lookupHeaders["idempotency-key"]).toBe(capturedKey);
+  expect(lookupHeaders["if-actor-match"]).toBe(scope.actor_id);
+  expect(lookupHeaders["if-tenant-match"]).toBe(scope.tenant_id);
+  expect(observedReceipt.request().postData()).toBeNull();
+  const status = page.getByRole("region", { name: "先前收件操作", exact: true }).getByRole("status");
+  await expect(status).toContainText("原操作已收到回執");
+  await expect(status).toContainText(receipt.audit_event_id);
+  await expect(status).toContainText(receipt.correlation_id);
+  await expect(page.getByRole("button", { name: "重試原操作", exact: true })).toHaveCount(0);
+  expect(seenKeys).toEqual([capturedKey]);
+  return { actor_id: scope.actor_id, tenant_id: scope.tenant_id, command_path: commandPath,
+    key: capturedKey, receipt, postCount, sentKeys: () => [...seenKeys], whole_page_reload: true, recovered_by_exact_GET: true,
+    initial_receipt_status: initialReceiptStatus, manual_read_retry: initialReceiptStatus === 409,
+    storage_accessor_denial_gated: Boolean(options.storageFailure), storage_reference_preserved: true,
+    storage_denial_uncaught_errors: storageErrors.length,
+    same_provider_receipt_before_reload: Boolean(options.beforeReload) };
+}
+
+// The existing Python SQL fixture owns this production-auth browser profile.
+// The ordinary 130-case product packet has no native scenario or credentials.
+if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
+  test("canonical native: real password session confirms original parser fields and reads persisted result", async ({ page, request, browser }) => {
+    test.setTimeout(180_000);
+    page.setDefaultTimeout(30_000);
+    const inputPath = process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE;
+    expect(inputPath, "Owned native SQL preconditions are required").toBeTruthy();
+    const input = JSON.parse(readFileSync(inputPath!, "utf8")) as {
+      username: string; password: string; actor_id: string; tenant_id: string; intake_id: string;
+      match_case_id: string | null; api_url: string; manager_region_id: string | null; outside_intake_id: string;
+      context_property_ids: string[];
+      append_property_id: string | null; append_receipt_probe: boolean;
+      independent_reviewer: { username: string; password: string; actor_id: string } | null;
+      url_manual: { original_url: string; fields: { address: string; rent: number; areaPing: number } } | null;
+    };
+    const spoof = { "x-subject-id": input.actor_id, "x-tenant-id": input.tenant_id, "x-roles": "site_reviewer,expansion_user" };
+    expect((await request.get(`${input.api_url}/api/v1/canonical-intakes`, { headers: spoof })).status()).toBe(401);
+    expect((await request.get("/api/v1/canonical-intakes", { headers: spoof })).status()).toBe(401);
+    await loginNativeSession(page, input);
+    const bootstrap = await page.request.get("/api/v1/operator/bootstrap");
+    expect(bootstrap.status(), await bootstrap.text()).toBe(200);
+    if (input.manager_region_id) {
+      const outside = await page.request.get(`/api/v1/canonical-intakes/${input.outside_intake_id}`);
+      expect(outside.status(), await outside.text()).toBe(403);
+      expect((await outside.json()).detail).toBe("SCOPE_DENIED");
+      const ownRegion = await page.request.get(`/api/v1/canonical-intakes/${input.intake_id}`);
+      expect(ownRegion.status(), await ownRegion.text()).toBe(200);
+      expect((await ownRegion.json()).scope.region_id).toBe(input.manager_region_id);
+    }
+    const submissionRecoveries: Array<Awaited<ReturnType<typeof recoverNativeCommandResponse<CanonicalIntakeReceipt | CanonicalIntakeAssistedEntryRequestReceipt>>> & {
+      variant: "url-submit" | "manual-entry"; intake_id: string; original_http_status: 201 | 202;
+    }> = [];
+    if (input.url_manual) {
+      await openNativeIntakeList(page);
+      await page.getByRole("button", { name: "從網址建立正式收件", exact: true }).click();
+      await page.getByLabel("物件頁網址", { exact: true }).fill(input.url_manual.original_url);
+      await page.getByRole("combobox", { name: /^正式收件範圍/ })
+        .selectOption({ label: "不指定範圍（依目前帳號權限核對）" });
+      await page.getByLabel("送件原因", { exact: true }).fill("明確送入既有已核准人工補錄來源，核對真實新收件與回執。");
+      const submitted = await recoverNativeCommandResponse<CanonicalIntakeReceipt>(page, input,
+        "/api/v1/canonical-intakes", 201, () => page.getByTestId("intake-submit-button").click(),
+        { receiptPath: "/api/v1/canonical-intakes/submissions/receipt" });
+      expect(submitted.receipt.processing_state).toBe("SUBMITTED");
+      const newIntakeId = submitted.receipt.intake_id;
+      submissionRecoveries.push({ ...submitted, variant: "url-submit", intake_id: newIntakeId, original_http_status: 201 });
+      expect(await page.evaluate(() => JSON.stringify(Object.entries(sessionStorage)
+        .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:"))))).not.toContain(input.url_manual.original_url);
+      await page.screenshot({ path: test.info().outputPath("native-url-restored-exact-receipt.png"), fullPage: true });
+      await expect.poll(async () => {
+        const actual = await page.request.get(`/api/v1/canonical-intakes/${newIntakeId}`);
+        expect(actual.status(), await actual.text()).toBe(200);
+        return (await actual.json()).processing_state;
+      }, { timeout: 60_000 }).toBe("AWAITING_ASSISTED_ENTRY");
+      await page.getByRole("button", { name: new RegExp(newIntakeId) }).click();
+      await page.getByTestId("assisted-address").fill(input.url_manual.fields.address);
+      await page.getByTestId("assisted-rent").fill(String(input.url_manual.fields.rent));
+      await page.getByTestId("assisted-area").fill(String(input.url_manual.fields.areaPing));
+      await page.getByLabel("補錄原因", { exact: true }).fill("人工核對隔離測試來源資料，保留原提案欄位與風險聲明。");
+      await page.getByTestId("assisted-risk-ack").check();
+      const manual = await recoverNativeCommandResponse<CanonicalIntakeAssistedEntryRequestReceipt>(page,
+        { ...input, intake_id: newIntakeId }, `/api/v1/canonical-intakes/${newIntakeId}/assisted-entry-completions`, 202,
+        () => page.getByTestId("assisted-save").click());
+      expect(manual.receipt.status).toBe("REQUESTED");
+      expect(manual.receipt.intake_id).toBe(newIntakeId);
+      submissionRecoveries.push({ ...manual, variant: "manual-entry", intake_id: newIntakeId, original_http_status: 202 });
+      expect(await page.evaluate(() => JSON.stringify(Object.entries(sessionStorage)
+        .filter(([key]) => key.startsWith("oday.canonicalIntake.receipt.v1:"))))).not.toContain(input.url_manual.fields.address);
+      await page.screenshot({ path: test.info().outputPath("native-manual-restored-exact-receipt.png"), fullPage: true });
+      await expect.poll(async () => {
+        const actual = await page.request.get(`/api/v1/canonical-intakes/${newIntakeId}`);
+        expect(actual.status(), await actual.text()).toBe(200);
+        return (await actual.json()).processing_state;
+      }, { timeout: 60_000 }).toBe("PARSING");
+      await page.getByRole("button", { name: "收起原操作回執", exact: true }).click();
+      await page.getByRole("button", { name: /返回收件匣/ }).click();
+      await page.getByRole("button", { name: new RegExp(input.intake_id) }).click();
+    } else await selectNativeIntake(page, input.intake_id);
+    const otherRecoveries: Array<Awaited<ReturnType<typeof recoverNativeCommandResponse<MatchCaseReceipt | CanonicalIdentityReceipt>>> & {
+      operation: "createCanonicalMatchCase" | "reviewCanonicalIdentity"; resource_id: string; original_http_status: 200 | 201;
+      variant: "case-create" | "case-append" | "identity-review";
+    }> = [];
+    let caseId = input.match_case_id;
+    if (caseId === null) {
+      expect(input.independent_reviewer).toBeTruthy();
+      expect(input.independent_reviewer!.actor_id).not.toBe(input.actor_id);
+      await page.getByRole("button", { name: "建立人工覆核案件", exact: true }).click();
+      for (const id of input.context_property_ids) {
+        const option = page.getByRole("checkbox", { name: new RegExp(id) });
+        await expect(option).not.toBeChecked();
+        await option.check();
+      }
+      await page.getByLabel(/人工判斷信心值/).fill("0.75");
+      await page.getByLabel("人工關聯依據", { exact: true }).fill("已核對隔離資料庫內兩個正式主體及其實際版本，提交人工關聯依據。");
+      await page.getByLabel("建立案件原因", { exact: true }).fill("兩個正式主體需要獨立人員覆核合併計畫。");
+      await page.getByRole("checkbox", { name: "我已核對所選正式主體、版本與人工關聯依據" }).check();
+      const created = await recoverNativeCommandResponse<MatchCaseReceipt>(page, input,
+        `/api/v1/intakes/${input.intake_id}/match-case`, 201,
+        () => page.getByRole("button", { name: "建立人工覆核案件", exact: true }).click());
+      otherRecoveries.push({ ...created, operation: "createCanonicalMatchCase", resource_id: input.intake_id,
+        original_http_status: 201, variant: "case-create" });
+      caseId = created.receipt.match_case_id;
+      expect(caseId).toMatch(/^[0-9a-f-]{36}$/);
+      await expect(page.getByRole("region", { name: "先前收件操作", exact: true })).toContainText(`比對案件 ${caseId}`);
+      await selectNativeIntake(page, input.intake_id, true);
+      const originalCaseResponse = await page.request.get(`/api/v1/intakes/${input.intake_id}/match-case`);
+      expect(originalCaseResponse.status(), await originalCaseResponse.text()).toBe(200);
+      const originalCase = await originalCaseResponse.json();
+      expect(input.append_property_id).toBeTruthy();
+      await page.getByRole("button", { name: "追加人工覆核關聯", exact: true }).click();
+      await page.getByRole("checkbox", { name: new RegExp(input.append_property_id!) }).check();
+      for (const id of input.context_property_ids) {
+        await expect(page.getByRole("checkbox", { name: new RegExp(id) })).toHaveCount(0);
+      }
+      await page.getByLabel(/人工判斷信心值/).fill("0.3750");
+      await page.getByLabel("人工關聯依據", { exact: true }).fill("已核對額外正式主體及其實際版本，保留原始候選與信心值，追加人工關聯供獨立覆核。");
+      await page.getByLabel("追加關聯原因", { exact: true }).fill("補充這個實際主體的人工覆核關聯，不更動原比對證據。");
+      await page.getByRole("checkbox", { name: "我已核對所選正式主體、版本與人工關聯依據" }).check();
+      await page.screenshot({ path: test.info().outputPath("native-manual-context.png"), fullPage: true });
+      const viewport = page.viewportSize()!;
+      await page.setViewportSize({ width: 390, height: 900 });
+      await page.screenshot({ path: test.info().outputPath("native-manual-context-390.png"), fullPage: true });
+      await page.setViewportSize(viewport);
+      const appended = await recoverNativeCommandResponse<MatchCaseReceipt>(page, input,
+        `/api/v1/intakes/${input.intake_id}/match-case`, 201,
+        () => page.getByRole("button", { name: "提交人工關聯", exact: true }).click(),
+        { beforeReload: input.append_receipt_probe ? async (receipt, key) => {
+          // Preserve the original success-path stale-view guard: the visible
+          // read-only probe first confirms the real committed append receipt.
+          const observed = page.waitForResponse((response) => response.request().method() === "GET"
+            && new URL(response.url()).pathname === `/api/v1/intakes/${input.intake_id}/match-case/receipt`);
+          await page.getByRole("button", { name: "查詢原操作回執", exact: true }).click();
+          const response = await observed;
+          expect(response.status(), await response.text()).toBe(200);
+          expect(response.request().headers()["idempotency-key"]).toBe(key);
+          expect(await response.json()).toMatchObject({ observation: "RECEIPT_COMMITTED", original_http_status: 201, receipt });
+          await expect(page.getByText(new RegExp(`已追加人工關聯至案件 ${caseId}`))).toBeVisible();
+          await expect(page.getByRole("button", { name: "提出合併／拆分計畫", exact: true })).toHaveCount(0);
+        } : undefined });
+      otherRecoveries.push({ ...appended, operation: "createCanonicalMatchCase", resource_id: input.intake_id,
+        original_http_status: 201, variant: "case-append" });
+      const appendReceipt = appended.receipt;
+      expect(appendReceipt.match_case_id).toBe(caseId);
+      expect(appendReceipt.version).toBe(originalCase.version + 1);
+      expect(appendReceipt.intake_version).toBe(originalCase.intake_version);
+      await expect(page.getByText(/原操作已收到回執/)).toBeVisible();
+      const updatedCaseResponse = await page.request.get(`/api/v1/intakes/${input.intake_id}/match-case`);
+      expect(updatedCaseResponse.status(), await updatedCaseResponse.text()).toBe(200);
+      const updatedCase = await updatedCaseResponse.json();
+      expect(updatedCase.match_case_id).toBe(originalCase.match_case_id);
+      expect(updatedCase.outcome).toBe(originalCase.outcome);
+      expect(updatedCase.candidates.slice(0, originalCase.candidates.length)).toEqual(originalCase.candidates);
+      expect(updatedCase.candidates.at(-1)).toMatchObject({ property_id: input.append_property_id,
+        manual_context_version: appendReceipt.version });
+      expect(Number(updatedCase.candidates.at(-1).confidence)).toBe(0.375);
+      await selectNativeIntake(page, input.intake_id, true);
+      await expect(page.getByText(`追加人工關聯 · 案件版本 ${appendReceipt.version}`, { exact: true })).toBeVisible();
+      const graphContext = page.waitForResponse((candidate) => candidate.request().method() === "GET"
+        && new URL(candidate.url()).pathname === `/api/v1/match-cases/${caseId}/identity-context`);
+      await page.getByRole("button", { name: "提出合併／拆分計畫", exact: true }).click();
+      const graphResponse = await graphContext;
+      expect(graphResponse.status(), await graphResponse.text()).toBe(200);
+      await page.getByLabel("身分計畫類型").selectOption("MERGE");
+      await page.getByLabel("合併目標主體").selectOption(input.context_property_ids[1]);
+      await page.getByRole("checkbox", { name: new RegExp(`來源 ${input.context_property_ids[0]}`) }).check();
+      await page.getByLabel(/決策／覆核原因/).fill("已核對兩個正式主體、物件及來源關聯的現況，提案合併並交另一位人員獨立覆核。");
+      await page.getByRole("checkbox", { name: /我已閱讀上述影響/ }).check();
+      const proposed = page.waitForResponse((candidate) => candidate.request().method() === "POST"
+        && new URL(candidate.url()).pathname === `/api/v1/match-cases/${caseId}/identity-decisions`);
+      await page.getByRole("button", { name: "提交合併提案", exact: true }).click();
+      const proposalResponse = await proposed;
+      expect(proposalResponse.status(), await proposalResponse.text()).toBe(201);
+      const proposal = await proposalResponse.json();
+      expect(proposal.status).toBe("PENDING_REVIEW");
+      const reviewerContext = await browser.newContext({ baseURL: new URL(page.url()).origin, extraHTTPHeaders: {} });
+      try {
+        const reviewerPage = await reviewerContext.newPage();
+        await loginNativeSession(reviewerPage, input.independent_reviewer!);
+        await selectNativeIntake(reviewerPage, input.intake_id);
+        await reviewerPage.getByRole("button", { name: `檢視決策 ${proposal.decision_id}`, exact: true }).click();
+        await reviewerPage.getByLabel("覆核結果").selectOption("APPROVE");
+        await reviewerPage.getByLabel(/決策／覆核原因/).fill("由獨立登入的人員核對已記錄的合併計畫、實際主體與版本，核准交既有執行器處理。");
+        await reviewerPage.getByRole("checkbox", { name: /我已閱讀上述影響/ }).check();
+        const reviewed = await recoverNativeCommandResponse<CanonicalIdentityReceipt>(reviewerPage,
+          { ...input, actor_id: input.independent_reviewer!.actor_id },
+          `/api/v1/canonical-identity-decisions/${proposal.decision_id}/actions/review`, 200,
+          () => reviewerPage.getByRole("button", { name: "確認核准", exact: true }).click());
+        otherRecoveries.push({ ...reviewed, operation: "reviewCanonicalIdentity", resource_id: proposal.decision_id,
+          original_http_status: 200, variant: "identity-review" });
+        await expect.poll(async () => {
+          const actual = await reviewerPage.request.get(`/api/v1/canonical-identity-decisions/${proposal.decision_id}`);
+          expect(actual.status(), await actual.text()).toBe(200);
+          const decision = await actual.json();
+          return [decision.status, decision.job_status];
+        }, { timeout: 60_000 }).toEqual(["EXECUTED", "SUCCEEDED"]);
+      } finally {
+        await reviewerContext.close();
+      }
+      // MERGE changes the graph only. Refresh the original session before the
+      // original confirmation command applies parser fields and reaches READY.
+      await selectNativeIntake(page, input.intake_id, true);
+    }
+    const observed = page.waitForResponse((candidate) => candidate.request().method() === "GET"
+      && new URL(candidate.url()).pathname === `/api/v1/match-cases/${caseId}/identity-context`);
+    await page.getByRole("button", { name: input.match_case_id === null ? "繼續確認原收件" : "檢視確認資料", exact: true }).click();
+    const planning = await observed;
+    expect(planning.status(), await planning.text()).toBe(200);
+    await expect(page.getByRole("table", { name: "本次確認的補錄欄位" })).toBeVisible();
+    await page.getByLabel("確認方式").selectOption("CREATE");
+    await page.getByLabel(/決策／覆核原因/).fill("已核對原始解析欄位與實際案件，確認這筆隔離測試收件為新物件。");
+    await page.getByRole("checkbox", { name: /我已閱讀上述影響/ }).check();
+    const commandPath = `/api/v1/match-cases/${caseId}/identity-decisions`;
+    const confirmed = await recoverNativeCommandResponse<CanonicalIdentityReceipt>(page, input, commandPath, 201,
+      () => page.getByRole("button", { name: "確認為新物件", exact: true }).click(),
+      { storageFailure: true, waitForReadyOnConflict: true });
+    const { receipt, key: capturedKey, postCount } = confirmed;
+    expect(receipt.job_status).toBe("QUEUED");
+    await page.screenshot({ path: test.info().outputPath("native-restored-exact-receipt.png"), fullPage: true });
+    await expect.poll(async () => {
+      const fresh = await page.request.get(`/api/v1/canonical-intakes/${input.intake_id}`);
+      expect(fresh.status()).toBe(200);
+      return (await fresh.json()).processing_state;
+    }, { timeout: 60_000 }).toBe("READY");
+    await selectNativeIntake(page, input.intake_id, true);
+    const persisted = page.getByRole("region", { name: "已落庫物件" });
+    await expect(persisted).toBeVisible();
+    const fresh = await page.request.get(`/api/v1/canonical-intakes/${input.intake_id}`);
+    const actual = (await fresh.json()).resolution;
+    expect(actual.listing_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(actual.current_revision_id).toMatch(/^[0-9a-f-]{36}$/);
+    await expect(persisted).toContainText(actual.listing_id);
+    await expect(persisted).toContainText(actual.current_revision_id);
+    await expect(persisted).toContainText(actual.effective_property_id);
+    const savedFields = page.getByRole("table", { name: "已落庫欄位" });
+    await expect(savedFields).toBeVisible();
+    expect(actual.fields.length).toBeGreaterThan(0);
+    for (const field of actual.fields) {
+      expect(field.masked).toBe(false);
+      expect(field.classification).toBe("INTERNAL");
+      const savedRow = savedFields.getByRole("rowheader", { name: field.field_path, exact: true }).locator("..");
+      await expect(savedRow).toContainText(String(field.effective));
+    }
+    await page.screenshot({ path: test.info().outputPath("native-persisted-result.png"), fullPage: true });
+    for (const width of [768, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(savedFields).toBeVisible();
+      await page.screenshot({ path: test.info().outputPath(`native-persisted-result-${width}.png`), fullPage: true });
+    }
+    // Sample through the final real READY/detail/viewport rendering, so a late
+    // remount cannot send another command after the evidence was captured.
+    expect(confirmed.sentKeys()).toEqual([capturedKey]);
+    for (const recovery of otherRecoveries) {
+      const expectedKeys = recovery.variant === "case-create"
+        ? [recovery.key, otherRecoveries.find((entry) => entry.variant === "case-append")!.key] : [recovery.key];
+      expect(recovery.sentKeys()).toEqual(expectedKeys);
+      expect(recovery.postCount()).toBe(1);
+    }
+    for (const recovery of submissionRecoveries) {
+      expect(recovery.sentKeys()).toEqual([recovery.key]);
+      expect(recovery.postCount()).toBe(1);
+    }
+    writeFileSync(join(dirname(inputPath!), "native-receipt-reload.json"), JSON.stringify({
+      actor_id: input.actor_id, tenant_id: input.tenant_id, match_case_id: caseId,
+      ...confirmed, key: capturedKey, receipt, postCount: postCount(),
+      post_keys_seen: confirmed.sentKeys(), storage_recovery_POSTs: postCount() - 1,
+      other_command_recoveries: otherRecoveries.map(({ postCount: count, sentKeys, ...proof }) => ({
+        ...proof, postCount: count(), post_keys_seen: sentKeys(),
+      })),
+      submission_command_recoveries: submissionRecoveries.map(({ postCount: count, sentKeys, ...proof }) => ({
+        ...proof, postCount: count(), post_keys_seen: sentKeys(),
+      })),
+    }), { mode: 0o600 });
+  });
+}
 
 test.beforeEach(async ({}, info) => {
   // These positive cases have a separate physical PostgreSQL composition.
@@ -432,6 +885,10 @@ test("canonical 4: independent reviewer completes promotion with durable Candida
         await expect(page).toHaveURL((url) => url.pathname === "/operator" && url.searchParams.get("candidate") === candidateId);
         await expect(page.getByTestId(`candidate-row-${candidateId}`)).toHaveAttribute("data-active", "true", { timeout: 30_000 });
         await expect(page.getByTestId("network-candidate-table").locator('[data-testid^="candidate-row-"]')).toHaveCount(2);
+        await expect(page.getByTestId(`candidate-state-data-${candidateId}`)).toContainText("資料齊備");
+        await expect(page.getByTestId(`candidate-state-job-${candidateId}`)).toContainText("SUCCEEDED");
+        await expect(page.getByTestId(`candidate-state-report-${candidateId}`)).toContainText("v1");
+        await expect(page.getByTestId(`candidate-state-review-${candidateId}`)).toContainText("本次讀取無審核紀錄");
       }
       expect(navigationWrites).toEqual([]);
     } finally {
@@ -473,6 +930,19 @@ test("canonical 5 and 6: SCORE_FAILED retains Candidate and same-key replay queu
     expect(failed.inferences).toEqual([]);
     await refreshPromotion(page);
     await expect(page.getByTestId("candidate-retained-note")).toContainText(receipt.candidate_site_id);
+    await expect(page.getByTestId("sitescore-job-state")).toContainText("FAILED");
+    const intakeUrl = page.url();
+    await page.goto(`${PG_WEB}/operator?ws=network&tab=candidates&candidate=${receipt.candidate_site_id}`);
+    await expect(page.getByTestId(`candidate-row-${receipt.candidate_site_id}`)).toContainText("候選點評分失敗");
+    await expect(page.getByTestId(`candidate-state-data-${receipt.candidate_site_id}`)).toContainText("資料齊備");
+    // Revoked source admission cannot authorize discovery of a job receipt.
+    // Keep the persisted failure visible without inventing a verified job.
+    await expect(page.getByTestId(`candidate-state-job-${receipt.candidate_site_id}`)).toContainText("尚未核驗");
+    await expect(page.getByTestId(`candidate-state-report-${receipt.candidate_site_id}`)).toContainText("本次讀取無保存報告");
+    await expect(page.getByTestId(`candidate-state-review-${receipt.candidate_site_id}`)).toContainText("本次讀取無審核紀錄");
+    await info.attach("actual-pg-failed-candidate-states", { body: await page.getByTestId("candidate-workflow-facts").innerText(), contentType: "text/plain" });
+    await page.screenshot({ path: info.outputPath("actual-pg-failed-candidate-states.png") });
+    await page.goto(intakeUrl);
     await expect(page.getByTestId("sitescore-job-state")).toContainText("FAILED");
     expect((await api.post(policyUrl, { data: { production_enabled: true } })).ok()).toBe(true);
     await page.getByTestId("sitescore-replay-reason").fill("Synthetic source registry approval fixture restored; authorized replay of the same real job.");

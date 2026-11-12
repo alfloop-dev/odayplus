@@ -4,6 +4,10 @@ import type { IntakeDecisionKind } from "./intakeTypes";
 export * from "./intakeTypes";
 
 export type IntakeUrlState = {
+  /** Presentation selects one existing reader; never an authorization grant. */
+  intakeKind?: "canonical" | "invalid" | null;
+  /** Return-to-inbox context; empty is its first page. A selected detail never discovers the collection. */
+  canonicalCursor?: string | null;
   filters: {
     stage?: IntakeStage;
     matchOutcome?: MatchOutcome;

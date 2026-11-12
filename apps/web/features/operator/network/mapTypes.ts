@@ -2,11 +2,11 @@ export type HeatZone = {
   id: string;
   district: string;
   h3: string;
-  /** Explicit null from a native owner means unavailable; never derive over it. */
+  /** Missing recorded geometry/coordinates remain unavailable. */
   geometry?: GeoJSON.Polygon | null;
-  centroid: [number, number];
+  centroid: [number, number] | null;
   h3Resolution: number;
-  score: number;
+  score: number | null;
   confidence: number | null;
   state:
     | "UNTOUCHED"
@@ -14,22 +14,26 @@ export type HeatZone = {
     | "SATURATED"
     | "UNDER_REALIZED"
     | "STILL_EXPANDABLE"
-    | "SUPPRESSED_LOW_CONFIDENCE";
-  rank: number;
+    | "SUPPRESSED_LOW_CONFIDENCE"
+    | "ABSTAINED"
+    | "UNKNOWN";
+  rank: number | null;
   listings: number | null;
   warnings: string[];
   reasons: string[];
   modelVersion: string;
+  executionMode?: string;
   featureVersion: string;
   featureSnapshotTime: string;
   predictionOriginTime: string;
   lastScoredAt: string;
   sourceSnapshotIds: string[];
-  unmetDemandScore: number;
-  formatFitScore: number;
-  cannibalizationRisk: number;
-  rentFeasibility: number;
-  listingAvailability: number;
+  unmetDemandScore: number | null;
+  formatFitScore: number | null;
+  cannibalizationRisk: number | null;
+  rentFeasibility: number | null;
+  listingAvailability: number | null;
+  competitorPressureScore?: number | null;
   poiCount: number | null;
   competitorCount: number | null;
   competitorCapacity: number | null;
