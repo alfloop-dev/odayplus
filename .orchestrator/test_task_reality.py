@@ -4,7 +4,14 @@ import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+# The same bootstrap the sibling orchestrator tests use: DriverTests imports
+# dispatch_engine, which imports `ai_status` from scripts/. Run alone, this
+# module must not depend on another module's collection having put it there.
+SCRIPTS_DIR = os.path.join(os.path.dirname(THIS_DIR), "scripts")
+for _path in (SCRIPTS_DIR, THIS_DIR):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 import task_reality  # noqa: E402
 

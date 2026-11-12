@@ -7,6 +7,7 @@ from typing import Any
 
 import fcntl
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -570,11 +571,85 @@ def _merge_group_publication_owner_return_due(
 
     if task_review_source_identity(config, task).error:
         return False
+    return _merge_group_recovery_pr_merged_on_source_head(task, submission)
+
+
+def _merge_group_recovery_pr_merged_on_source_head(
+    task: dict[str, Any], submission: dict[str, Any]
+) -> bool:
+    """GitHub's fresh answer that the recovery's exact PR merged its source head green.
+
+    This is the boundary before the owner-return mutates anything, so it reads
+    the PR through the publisher's own provenance reader and repository
+    resolution -- uncached, with `--repo` -- and binds every fact the
+    publisher will later verify: the PR number recorded on the task, its
+    submission and its route; the immutable source head (`headRefOid`, never
+    the merge commit); the task branch and merge target; MERGED with a merge
+    time and commit; and CI under the shared `normalized_green_pr_checks` rule.
+    A missing, unknown, malformed or drifted fact moves nothing.
+    """
+    ai = runtime_ai_status
+    task_id = str(task.get("id") or "").strip()
     try:
-        pr_state, ci_status = runtime_ai_status.task_pr_ci_status(task_id, task=task)
-    except Exception:
+        pr_number = int(submission.get("pr_number"))
+        if pr_number <= 0 or int(task.get("pr_number")) != pr_number:
+            return False
+        if int((task.get("merge_route") or {}).get("pr_number")) != pr_number:
+            return False
+    except (TypeError, ValueError):
         return False
-    return str(pr_state or "").strip().upper() == "MERGED" and ci_status == "success"
+    source_head = str(submission.get("remote_sha") or "").strip().lower()
+    branch = str(submission.get("branch") or "").strip()
+    base_branch = str(submission.get("base_branch") or "").strip()
+    if not source_head or not branch or not base_branch:
+        return False
+    try:
+        rt_config = ai.status_runtime_config()
+        repository_id = ai.task_repository_id(rt_config, task) or "pantheon"
+        repository_root = ai.repository_local_path(rt_config, repository_id) or ai.ROOT
+        slug = (
+            ai.repository_slug(rt_config, repository_id)
+            or ai.git_remote_repository_slug(repository_root, "origin")
+            or ai.get_repository_slug_safe()
+        )
+        if not slug:
+            return False
+        if branch != ai.task_branch_name(task, task_id):
+            return False
+        if base_branch != ai.delivery_merge_target_branch(rt_config, repository_id):
+            return False
+        pr = ai.pull_request_status_for_branch(
+            repository_root, branch, slug, base_branch=base_branch, head_sha=source_head
+        )
+        if not isinstance(pr, dict):
+            return False
+        if isinstance(pr.get("number"), bool) or int(pr.get("number")) != pr_number:
+            return False
+        url = str(pr.get("url") or "").strip().rstrip("/").lower()
+        if not url.endswith(f"/{slug.lower()}/pull/{pr_number}"):
+            return False
+        if str(pr.get("state") or "").strip().upper() != "MERGED":
+            return False
+        if str(pr.get("headRefOid") or "").strip().lower() != source_head:
+            return False
+        if str(pr.get("headRefName") or "").strip() != branch:
+            return False
+        if str(pr.get("baseRefName") or "").strip() != base_branch:
+            return False
+        if not isinstance(pr.get("mergedAt"), str) or not pr["mergedAt"].strip():
+            return False
+        merge_commit = pr.get("mergeCommit")
+        merge_commit = merge_commit.get("oid") if isinstance(merge_commit, dict) else merge_commit
+        if not isinstance(merge_commit, str) or not re.fullmatch(
+            r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", merge_commit.strip()
+        ):
+            return False
+        # The publisher's own CI rule for a merged PR; it raises on anything
+        # pending, failed, unrecognised or absent.
+        ai.normalized_green_pr_checks(pr, exclude_review_gate=True)
+    except (Exception, SystemExit):
+        return False
+    return True
 
 
 def repair_unsubmitted_review_tasks(

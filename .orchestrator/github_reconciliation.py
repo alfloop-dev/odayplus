@@ -310,15 +310,24 @@ def merge_queue_entry_group_head(pr_facts: Any) -> tuple[str, bool]:
     (`headCommit: null`). `("", False)` means GitHub's answer cannot say which
     commit it is -- an enrolled PR without an entry, an entry without the
     field, or a malformed oid -- and must never be read as "nothing to revoke".
-    """
-    from github_bus import is_in_merge_queue
 
+    "Not enrolled" is only ever GitHub's explicit answer: the reader's GraphQL
+    node always carries `isInMergeQueue` and `mergeQueueEntry`, so a node
+    missing either field, or with a flag that is not a boolean, did not answer
+    the question and is unknown -- never an empty target list. An entry beside
+    a flag that is not `true` contradicts itself and is unknown as well.
+    """
     if not isinstance(pr_facts, dict):
         return "", False
-    entry = pr_facts.get("mergeQueueEntry")
+    if "mergeQueueEntry" not in pr_facts:
+        return "", False
+    enrolled = pr_facts.get("isInMergeQueue")
+    if not isinstance(enrolled, bool):
+        return "", False
+    entry = pr_facts["mergeQueueEntry"]
     if entry is None:
-        return "", not is_in_merge_queue(pr_facts)
-    if not isinstance(entry, dict) or "headCommit" not in entry:
+        return "", not enrolled
+    if not enrolled or not isinstance(entry, dict) or "headCommit" not in entry:
         return "", False
     head_commit = entry.get("headCommit")
     if head_commit is None:
