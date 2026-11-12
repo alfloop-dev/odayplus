@@ -3709,6 +3709,20 @@ def make_live_rehearsal_executor(
                     # did not commit. Arm restoration before issuing it.
                     traffic_switch_attempted = True
                     update_traffic(service_name, {probe_revision: 100})
+                    # A successful CLI exit is not an allocation receipt. The
+                    # health probe only proves the rehearsal target once the
+                    # remote readback serves every request from the probe;
+                    # zero-percent and tag-only routes may remain listed.
+                    try:
+                        switched = normalize_traffic(service_name, describe_traffic(service_name))
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"{service_name} rollback rehearsal switch readback failed: {type(exc).__name__}"
+                        ) from exc
+                    if switched.get(probe_revision) != 100:
+                        raise RuntimeError(
+                            f"{service_name} rollback rehearsal switch readback does not serve the probe revision"
+                        )
                     if is_web:
                         health_readback = web_operator_requires_login()
                     else:
