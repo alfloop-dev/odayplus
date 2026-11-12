@@ -2742,6 +2742,56 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         )
         self.assertEqual(log.call_args.args[1]["type"], "github_auto_merge_queued")
 
+    def test_contradictory_queued_node_is_not_queued_before_or_after_arming(self) -> None:
+        """A queue flag counts only on a node that is OPEN and unmerged.
+        Before arming a contradictory node is unknown and nothing is issued;
+        after arming it does not confirm the mutation."""
+        contradictions = {
+            "CLOSED, merged false": {"state": "CLOSED"},
+            "state null, merged false": {"state": None},
+            "OPEN, merged null": {"merged": None},
+        }
+        for name, contradiction in contradictions.items():
+            for entry in (None, {"position": 1, "state": "AWAITING_CHECKS"}):
+                node = {**contradiction, "isInMergeQueue": True, "mergeQueueEntry": entry}
+                with self.subTest(node=name, entry=entry, read="before"):
+                    _c, record, run_gh, _l, _g = self._arm(self._pr(isDraft=False), graphql_before=node)
+                    self.assertEqual(self._gh_calls(run_gh), [])
+                    self.assertEqual(record["auto_merge"]["state"], "skipped_queue_unreadable")
+
+                with self.subTest(node=name, entry=entry, read="after"):
+                    _c, record, run_gh, _l, _g = self._arm(self._pr(isDraft=False), graphql_after=node)
+                    self.assertEqual([c[:2] for c in self._gh_calls(run_gh)], [["pr", "merge"]])
+                    self.assertEqual(record["auto_merge"]["state"], "failed")
+                    self.assertEqual(record["auto_merge"]["failure_code"], "auto_merge_unconfirmed_readback")
+
+    def test_auto_merge_request_on_a_closed_readback_is_not_enabled(self) -> None:
+        """Same PR, same identity, CLOSED, still carrying `autoMergeRequest`:
+        not armed, whether `gh pr merge` exited zero or failed. A failed
+        mutation is not reported as refused either - the readback is not a
+        whole statement that GitHub holds nothing."""
+        closed_armed = self._pr(
+            isDraft=False, state="CLOSED", autoMergeRequest={"enabledAt": "2026-09-01T00:00:00Z"}
+        )
+        for name, side_effect in {
+            "zero exit": None,
+            "failed exit": github_bus.GitHubBusError("HTTP 502: Bad Gateway"),
+        }.items():
+            with self.subTest(name):
+                _c, record, run_gh, _l, gh_json = self._arm(
+                    self._pr(isDraft=False), readback=closed_armed, run_gh_side_effect=side_effect
+                )
+                self.assertEqual([c[:2] for c in self._gh_calls(run_gh)], [["pr", "merge"]])
+                self.assertEqual(record["auto_merge"]["state"], "failed")
+                self.assertEqual(record["auto_merge"]["failure_code"], "auto_merge_unconfirmed_readback")
+
+        # The OPEN PR carrying the same request is armed.
+        _c, record, _r, _l, _g = self._arm(
+            self._pr(isDraft=False),
+            readback=self._pr(isDraft=False, autoMergeRequest={"enabledAt": "2026-09-01T00:00:00Z"}),
+        )
+        self.assertEqual(record["auto_merge"]["state"], "enabled")
+
     def test_offline_propagates_for_bus_backoff(self) -> None:
         """Offline is the bus's own signal; swallowing it would hide the outage."""
 

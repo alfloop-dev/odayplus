@@ -1582,14 +1582,25 @@ def pr_merge_admission(repo: str, number: int, pr: dict[str, Any]) -> tuple[str,
     contradiction (an entry beside `isInMergeQueue: false`, `state` and
     `merged` disagreeing) or another PR/head is `unknown`, and nothing is
     issued on it.
+
+    Armed and queued are positive statements too, and are held to the same
+    whole answer: only an OPEN PR holds an admission that has yet to merge.
+    An `autoMergeRequest` on a PR the view does not show OPEN, or a queue
+    flag on a node that is not OPEN with `merged: false`, contradicts itself
+    and is `unknown` - recording it as armed or queued would certify an
+    admission GitHub may not hold. Queue enrollment is read from the GraphQL
+    node alone; `gh pr view` cannot return it (`AUTO_MERGE_PR_FIELDS`).
     """
 
-    if str(pr.get("state") or "").upper() == "MERGED":
+    pr_state = str(pr.get("state") or "").upper()
+    if pr_state == "MERGED":
         return "merged", None
+    if pr_state != "OPEN":
+        # CLOSED, or a view that does not say: nothing on it is a pending
+        # admission, and absence cannot be read from it either.
+        return "unknown", None
     if auto_merge_request_present(pr):
         return "armed", None
-    if is_in_merge_queue(pr):
-        return "queued", pr
     node = fetch_pr_merge_queue_status(repo, number)
     if not isinstance(node, dict) or node.get("number") != number:
         return "unknown", None
@@ -1603,18 +1614,14 @@ def pr_merge_admission(repo: str, number: int, pr: dict[str, Any]) -> tuple[str,
         if node_state == "MERGED" and merged_flag is True:
             return "merged", None
         return "unknown", None
-    if in_queue_flag is True:
-        # GitHub may report enrollment before it fills in the entry detail.
-        if entry is None or isinstance(entry, dict):
-            return "queued", node
+    # Queued and not_admitted both describe an open, unmerged PR, and both
+    # need the whole answer: OPEN, `merged: false` and a present entry field.
+    if node_state != "OPEN" or merged_flag is not False or "mergeQueueEntry" not in node:
         return "unknown", None
-    if (
-        node_state == "OPEN"
-        and merged_flag is False
-        and in_queue_flag is False
-        and "mergeQueueEntry" in node
-        and entry is None
-    ):
+    if in_queue_flag is True and (entry is None or isinstance(entry, dict)):
+        # GitHub may report enrollment before it fills in the entry detail.
+        return "queued", node
+    if in_queue_flag is False and entry is None:
         return "not_admitted", node
     return "unknown", None
 

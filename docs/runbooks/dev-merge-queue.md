@@ -171,7 +171,14 @@ when `branch_workflow.task_pr.auto_merge` is on - the route:
    `unknown`.
 2. **Does not re-issue** when GitHub already reports the PR armed
    (`autoMergeRequest`) or queued (`isInMergeQueue`); that observation is
-   recorded with zero attempts.
+   recorded with zero attempts. Armed and queued are held to the same whole
+   answer as "not queued": only an OPEN PR holds a pending admission, so an
+   `autoMergeRequest` on a PR view that is not OPEN, or `isInMergeQueue: true`
+   on a node that is not OPEN with `merged: false` and a present (null or
+   populated) `mergeQueueEntry`, is `unknown` - neither recorded as admitted
+   nor read as absence. An OPEN, unmerged node with the flag set is queued
+   whether or not GitHub has filled in the entry detail yet. The same rule
+   classifies the step 6 readback.
 3. **Bounds retries** on `task.merge_route` for that exact head: no re-issue
    within 30 minutes of the last one, and no more than four admissions
    (`stalled` is reported instead). The counter belongs to the head, not to

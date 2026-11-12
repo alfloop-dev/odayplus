@@ -24206,6 +24206,103 @@ class MergeAdmissionSingleOwnerTests(unittest.TestCase):
                     self._tick(bus_polls=2)
                     self.assertEqual(len(self._merges()), 1)
 
+    # A queue flag is only enrollment on a node that is OPEN and unmerged; any
+    # other node carrying it contradicts itself and is not a queued answer.
+    CONTRADICTORY_QUEUED_NODES = {
+        "CLOSED, merged false": {"state": "CLOSED"},
+        "state null, merged false": {"state": None},
+        "OPEN, merged null": {"merged": None},
+        "OPEN, merged missing": {"merged": "<drop>"},
+        "OPEN, entry field missing": {"mergeQueueEntry": "<drop>"},
+    }
+
+    def _node_answer(self, answer: dict) -> tuple[dict, tuple[str, ...]]:
+        return (
+            {k: v for k, v in answer.items() if v != "<drop>"},
+            tuple(k for k, v in answer.items() if v == "<drop>"),
+        )
+
+    def test_a_contradictory_queued_answer_is_neither_queued_nor_absence(self) -> None:
+        for name, answer in self.CONTRADICTORY_QUEUED_NODES.items():
+            graphql, drop = self._node_answer(answer)
+            for entry in (None, {"position": 1, "state": "AWAITING_CHECKS"}):
+                with self.subTest(node=name, entry=entry, read="before the mutation"):
+                    self._fresh()
+                    self.gh.admission = "queued"
+                    self.gh.graphql = {**graphql, "mergeQueueEntry": entry}
+                    self.gh.graphql_drop = drop
+
+                    self._tick(bus_polls=3)
+
+                    # Not certified queued, and not read as absence either.
+                    self.assertEqual(self.gh.mutations, [])
+                    self.assertNotIn("merge_route", self._disk_task())
+
+                with self.subTest(node=name, entry=entry, read="after the mutation"):
+                    self._fresh()
+                    self.gh.after = "queued"
+                    self.gh.drift = {
+                        "graphql": {**graphql, "mergeQueueEntry": entry},
+                        "graphql_drop": drop,
+                    }
+
+                    self._tick(bus_polls=2)
+
+                    self.assertEqual(len(self._merges()), 1)
+                    route = self._disk_task()["merge_route"]
+                    self.assertEqual(
+                        (route["head"], route["route"], route["attempts"]), (self.HEAD, "unconfirmed", 1)
+                    )
+                    self._tick(bus_polls=2)
+                    self.assertEqual(len(self._merges()), 1)
+                    self.assertEqual(self._disk_task()["merge_route"]["attempts"], 1)
+
+        # A whole OPEN, unmerged node with the flag set is queued with or
+        # without entry detail: the guard is consistency, not a filled entry.
+        for entry in (None, {"position": 2, "state": "QUEUED"}):
+            with self.subTest(control=entry):
+                self._fresh()
+                self.gh.after = "queued"
+                self.gh.drift = {"graphql": {"mergeQueueEntry": entry}}
+
+                self._tick(bus_polls=2)
+
+                self.assertEqual(len(self._merges()), 1)
+                route = self._disk_task()["merge_route"]
+                self.assertEqual((route["route"], route["attempts"]), ("queued", 1))
+
+    def test_an_auto_merge_request_on_a_closed_pr_is_not_armed(self) -> None:
+        """The PR view after the mutation shows the same PR, CLOSED, still
+        carrying an `autoMergeRequest`. That is not this head's armed
+        admission, whether the mutation exited zero or failed."""
+        for exit_ in (None, self.UNKNOWN_MUTATION_EXITS["bad gateway"]):
+            with self.subTest(mutation_exit=exit_):
+                self._fresh()
+                if exit_ is not None:
+                    self.real_transport = True
+                    self.gh.mutation_exit = exit_
+                    self.gh.mutation_lands = True
+                self.gh.after = "armed"
+                self.gh.drift = {"state": "CLOSED"}
+
+                self._tick(bus_polls=2)
+
+                self.assertEqual(len(self._merges()), 1)
+                route = self._disk_task()["merge_route"]
+                self.assertEqual(
+                    (route["head"], route["route"], route["attempts"]), (self.HEAD, "unconfirmed", 1)
+                )
+                self._tick(bus_polls=2)
+                self.assertEqual(len(self._merges()), 1)
+                self.assertEqual(self._disk_task()["merge_route"]["attempts"], 1)
+
+        # The same readback on the OPEN PR is armed.
+        self._fresh()
+        self.gh.after = "armed"
+        self._tick(bus_polls=2)
+        route = self._disk_task()["merge_route"]
+        self.assertEqual((route["route"], route["attempts"]), ("armed", 1))
+
 
     # Exits the real `run_gh` reports as a plain `GitHubBusError`, none of
     # which says whether GitHub applied the mutation before failing.
