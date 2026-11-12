@@ -5910,6 +5910,108 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         self.assertEqual(posts, [])
         self.assertEqual(len([h for h in canonical["handoffs"] if h["status"] == "pending"]), 1)
 
+    def test_recovery_chain_task_not_bound_to_bus_repository_writes_nothing(self) -> None:
+        """The failure scan correlates by PR number across the whole multi-repository board.
+
+        The bus repository's group failed for PR #756 on exactly the approved
+        head, and GitHub would prove it; but the correlated canonical task's
+        repository or submitted PR is another repository's (or another PR).
+        Nothing is read from GitHub for it, and nothing is demoted, revoked,
+        posted or dispatched. A task proven foreign is not this run's (the
+        run is settled as stale); one that cannot be bound is asked again.
+        """
+        other = "https://github.com/x/other/pull/756"
+        # label -> (task overrides, submission overrides, verdict, reason)
+        cases = {
+            "task names another registered repository": (
+                {"repository": "x/other"}, {}, "refuted", "task_repository_mismatch"),
+            "task names an unregistered repository": (
+                {"repository": "nobody/nowhere"}, {}, "unresolved", "task_repository_unknown"),
+            "submission PR in another repository": (
+                {}, {"pr_url": other}, "refuted", "submission_pr_url_repository_mismatch"),
+            "submission PR is another number": (
+                {}, {"pr_url": "https://github.com/o/r/pull/757"}, "refuted", "submission_pr_url_number_mismatch"),
+            "submission PR URL missing": ({}, {"pr_url": None}, "unresolved", "submission_pr_url_unusable"),
+            "task PR URL in another repository": (
+                {"pr_url": other}, {}, "refuted", "task_pr_url_repository_mismatch"),
+        }
+        run_key = "merge_group_run:31321422749"
+        for label, (task_overrides, submission_overrides, kind, reason) in cases.items():
+            with self.subTest(label):
+                self.setUp()
+                status_path = self._canonical_store()
+                route = self._route_approved_head()
+                self.config["coordination"]["repositories"]["other"] = {
+                    "repo": "x/other", "local_path": str(status_path.parent / "other-checkout"),
+                }
+                self.task.update(task_overrides)
+                self.task["review_submission"].update(submission_overrides)
+                status_path.write_text(json.dumps(self.status), encoding="utf-8")
+                board = json.loads(status_path.read_text(encoding="utf-8"))
+                self._runs = [self._failure_run(id=31321422749)]
+                answer = self._gh(
+                    pr_node=self._active_group_node(self.GROUP_HEAD_NEW),
+                    runs=self._runs,
+                    commits={self.GROUP_HEAD_NEW: self._group_enrolling_approved_head()},
+                )
+                gh_reads: list = []
+                posts: list[dict] = []
+
+                with (
+                    mock.patch("status_transition.commit_canonical_task_transition") as commit,
+                    mock.patch.object(github_reconciliation, "write_activity_log") as write_log,
+                ):
+                    changed, canonical = self._recover(
+                        status_path,
+                        gh=lambda args, _reads=gh_reads, _answer=answer, **kw: (
+                            _reads.append(list(args)) or _answer(args, **kw)
+                        ),
+                        post=lambda payload, _posts=posts: _posts.append(dict(payload)) or (True, ""),
+                    )
+
+                self.assertFalse(changed)
+                commit.assert_not_called()
+                self.assertEqual(posts, [])
+                # Not one PR, run or commit read for a task this repository does not own.
+                self.assertEqual(gh_reads, [])
+                self.assertEqual(canonical, board)
+                self.assertEqual(canonical["tasks"][0]["status"], "review_approved")
+                self.assertEqual(canonical["tasks"][0]["merge_route"], route)
+                self.assertEqual(
+                    [(c.args[1]["type"], c.args[1].get("reason")) for c in write_log.call_args_list],
+                    [("merge_group_failure_stale" if kind == "refuted" else "merge_group_failure_unresolved",
+                      reason)],
+                )
+                processed = self.bus_state["processed_merge_group_run_ids"]
+                if kind == "refuted":
+                    self.assertIn(run_key, processed)
+                else:
+                    self.assertNotIn(run_key, processed)
+                queued: list[dict] = []
+                self._ready_dispatch(queued)
+                self.assertEqual([e for e in queued if e["reason"] == "review_ready_dispatch"], [])
+
+                if kind == "unresolved":
+                    # Retained: once the canonical record binds the task to
+                    # this repository's PR, the same failure is reconciled.
+                    for key in task_overrides:
+                        board["tasks"][0].pop(key)
+                    board["tasks"][0]["review_submission"]["pr_url"] = "https://github.com/o/r/pull/756"
+                    status_path.write_text(json.dumps(board), encoding="utf-8")
+                    changed, canonical = self._recover(
+                        status_path,
+                        gh=answer,
+                        post=lambda payload, _posts=posts: _posts.append(dict(payload)) or (True, ""),
+                    )
+                    self.assertTrue(changed)
+                    self.assertEqual(canonical["tasks"][0]["status"], "review")
+                    self.assertEqual(canonical["tasks"][0]["merge_route"], route)
+                    self.assertEqual(
+                        {(p["sha"], p["repo_slug"]) for p in posts},
+                        {(sha, "o/r") for sha in (self.APPROVED_HEAD, self.GROUP_HEAD_OLD, self.GROUP_HEAD_NEW)},
+                    )
+                    self.assertIn(run_key, self.bus_state["processed_merge_group_run_ids"])
+
     def test_recovery_chain_cas_reject_has_no_side_effects(self) -> None:
         status_path = self._canonical_store()
         self._route_approved_head()
@@ -7399,6 +7501,9 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             "reviewer": "Claude2",
             "pr_number": 555,
             "approved_head": approved_head,
+            # The submitted PR task_finalize.sh records, binding the task to
+            # the bus repository's PR.
+            "review_submission": {"pr_number": 555, "pr_url": "https://github.com/o/r/pull/555"},
         }
         status = {"tasks": [task], "handoffs": []}
         bus_state = {"processed_merge_group_run_ids": [], "tasks": {}}
@@ -7447,7 +7552,7 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             ),
         ):
             changed = supervisor.reconcile_merge_group_runs(
-                {"github_bus": {"enabled": True}},
+                {"github_bus": {"enabled": True, "repo": "o/r"}},
                 bus_state,
                 status,
                 "o/r",

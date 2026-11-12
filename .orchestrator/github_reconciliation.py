@@ -161,6 +161,66 @@ def evaluate_finalize_gate(task: dict[str, Any]) -> FinalizeGateResult:
 parse_merge_group_pr_number = runtime_ai_status.parse_merge_group_pr_number
 
 
+# Verdicts of the merge_group producer's binding checks.
+LEGACY_CAUSE_PROVEN = "proven"
+LEGACY_CAUSE_REFUTED = "refuted"
+LEGACY_CAUSE_UNRESOLVED = "unresolved"
+GITHUB_PULL_URL_PATTERN = re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)$")
+
+
+def merge_group_task_repository_verdict(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    repo: str,
+    pr_number: Any,
+) -> tuple[str, str]:
+    """Is this canonical task's PR the bus repository's PR `pr_number`?
+
+    The bus polls one repository, but the board holds tasks of every
+    registered repository, and PR numbers and shared source SHAs repeat
+    across them. A merge_group run, and a cause recorded from one, names
+    only a queue ref and a PR number, so before the merge_group producer
+    reads or writes anything on `repo` for a task -- the failure scan's
+    demotion and the legacy cause enrichment alike -- the task itself must
+    say it lives there: its repository through the registry's one
+    task->repository answer, and its submitted PR URL (and the task's, when
+    recorded) naming exactly that repository and PR. Returns
+    ``(verdict, reason)``: `proven` when bound, `refuted` when the task
+    names another repository or PR, `unresolved` when its repository or PR
+    URL cannot be read. Only `proven` lets the producer go on.
+    """
+    from multi_repo_registry import normalized_repository_slug, repository_slug, task_repository_id
+
+    bus_slug = normalized_repository_slug(repo)
+    if not bus_slug:
+        return LEGACY_CAUSE_UNRESOLVED, "bus_repository_unknown"
+    repo_id = task_repository_id(config, task)
+    task_slug = normalized_repository_slug(repository_slug(config, repo_id)) if repo_id else None
+    if not task_slug:
+        return LEGACY_CAUSE_UNRESOLVED, "task_repository_unknown"
+    if task_slug != bus_slug:
+        return LEGACY_CAUSE_REFUTED, "task_repository_mismatch"
+    try:
+        wanted_pr = int(pr_number)
+    except (TypeError, ValueError):
+        return LEGACY_CAUSE_UNRESOLVED, "pr_number_unusable"
+
+    submission = task.get("review_submission")
+    urls = [("submission", (submission or {}).get("pr_url") if isinstance(submission, dict) else None)]
+    if task.get("pr_url") is not None:
+        urls.append(("task", task.get("pr_url")))
+    for label, raw in urls:
+        url = str(raw or "").strip().rstrip("/") if isinstance(raw, str) else ""
+        match = GITHUB_PULL_URL_PATTERN.fullmatch(url)
+        if not match:
+            return LEGACY_CAUSE_UNRESOLVED, f"{label}_pr_url_unusable"
+        if normalized_repository_slug(match.group(1)) != bus_slug:
+            return LEGACY_CAUSE_REFUTED, f"{label}_pr_url_repository_mismatch"
+        if int(match.group(2)) != wanted_pr:
+            return LEGACY_CAUSE_REFUTED, f"{label}_pr_url_number_mismatch"
+    return LEGACY_CAUSE_PROVEN, "task_bound_to_bus_repository"
+
+
 def correlate_merge_group_task(
     status: dict[str, Any],
     pr_number: int,
@@ -925,6 +985,26 @@ def reconcile_merge_group_runs(
                 extra,
             ))
 
+        # Correlation matched a PR number on the whole multi-repository board;
+        # the task must be this repository's PR before anything is read from
+        # or written to it. A task proven to be another repository's (or
+        # another PR's) is not this run's; one that cannot be bound is asked
+        # again next cycle, against whatever the canonical record says then.
+        binding, binding_reason = merge_group_task_repository_verdict(config, task, repo, pr_number)
+        if binding == LEGACY_CAUSE_REFUTED:
+            record_stale(
+                binding_reason,
+                "the correlated task's repository or submitted PR is not this repository's PR.",
+            )
+            non_mutating_seen.append(run_key)
+            continue
+        if binding != LEGACY_CAUSE_PROVEN:
+            record_unresolved(
+                binding_reason,
+                "the correlated task's repository or submitted PR URL cannot be bound to this repository.",
+            )
+            continue
+
         approved_head = str(task.get("approved_head") or "").strip().lower()
         if not approved_head:
             record_unresolved(
@@ -1279,11 +1359,6 @@ def poll_merge_group_runs(
     return reconcile_merge_group_runs(config, bus_state, status, repo, runs)
 
 
-LEGACY_CAUSE_PROVEN = "proven"
-LEGACY_CAUSE_REFUTED = "refuted"
-LEGACY_CAUSE_UNRESOLVED = "unresolved"
-
-
 def legacy_merge_group_cause_source_verdict(
     repo: str,
     cause: dict[str, Any],
@@ -1391,59 +1466,6 @@ def legacy_cause_group_revocation_targets(
     return group_heads, LEGACY_CAUSE_PROVEN, "group_enrolled_source_head"
 
 
-GITHUB_PULL_URL_PATTERN = re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)$")
-
-
-def legacy_cause_repository_verdict(
-    config: dict[str, Any],
-    task: dict[str, Any],
-    repo: str,
-    pr_number: Any,
-) -> tuple[str, str]:
-    """Is this canonical task's PR the bus repository's PR the cause names?
-
-    The bus polls one repository, but the board holds tasks of every
-    registered repository, and PR numbers and shared source SHAs repeat
-    across them. A cause names only a run and a PR number, so before the
-    producer reads or writes anything on `repo` the task itself must say it
-    lives there: its repository through the registry's one task->repository
-    answer, and its submitted PR URL (and the task's, when recorded) naming
-    exactly that repository and PR. Returns ``(verdict, reason)``; a task
-    that names another repository is `refuted`, and one whose repository or
-    PR URL cannot be read is `unresolved`. Neither is enriched.
-    """
-    from multi_repo_registry import normalized_repository_slug, repository_slug, task_repository_id
-
-    bus_slug = normalized_repository_slug(repo)
-    if not bus_slug:
-        return LEGACY_CAUSE_UNRESOLVED, "bus_repository_unknown"
-    repo_id = task_repository_id(config, task)
-    task_slug = normalized_repository_slug(repository_slug(config, repo_id)) if repo_id else None
-    if not task_slug:
-        return LEGACY_CAUSE_UNRESOLVED, "task_repository_unknown"
-    if task_slug != bus_slug:
-        return LEGACY_CAUSE_REFUTED, "task_repository_mismatch"
-    try:
-        wanted_pr = int(pr_number)
-    except (TypeError, ValueError):
-        return LEGACY_CAUSE_UNRESOLVED, "pr_number_unusable"
-
-    submission = task.get("review_submission")
-    urls = [("submission", (submission or {}).get("pr_url") if isinstance(submission, dict) else None)]
-    if task.get("pr_url") is not None:
-        urls.append(("task", task.get("pr_url")))
-    for label, raw in urls:
-        url = str(raw or "").strip().rstrip("/") if isinstance(raw, str) else ""
-        match = GITHUB_PULL_URL_PATTERN.fullmatch(url)
-        if not match:
-            return LEGACY_CAUSE_UNRESOLVED, f"{label}_pr_url_unusable"
-        if normalized_repository_slug(match.group(1)) != bus_slug:
-            return LEGACY_CAUSE_REFUTED, f"{label}_pr_url_repository_mismatch"
-        if int(match.group(2)) != wanted_pr:
-            return LEGACY_CAUSE_REFUTED, f"{label}_pr_url_number_mismatch"
-    return LEGACY_CAUSE_PROVEN, "task_bound_to_bus_repository"
-
-
 def enrich_legacy_merge_group_causes(
     config: dict[str, Any],
     status: dict[str, Any],
@@ -1458,7 +1480,7 @@ def enrich_legacy_merge_group_causes(
     touches a cause `ai_status.merge_group_recovery_cause` binds to the
     canonical task as read this cycle, of a task whose registered repository
     and submitted PR URL are this bus's repository and the cause's PR
-    (`legacy_cause_repository_verdict`), re-reads the exact run and group
+    (`merge_group_task_repository_verdict`), re-reads the exact run and group
     commit it names, and writes `source_head` through the same canonical CAS
     only when GitHub proves the relation. Nothing is remembered between
     cycles: a refuted or unresolved relation is audited like any unresolved
@@ -1498,7 +1520,7 @@ def enrich_legacy_merge_group_causes(
 
         # The cause is bound to the task; the task has to be bound to the
         # repository this bus reads before any of its runs or commits are.
-        verdict, reason = legacy_cause_repository_verdict(config, task, repo, cause.get("pr_number"))
+        verdict, reason = merge_group_task_repository_verdict(config, task, repo, cause.get("pr_number"))
         if verdict == LEGACY_CAUSE_PROVEN:
             verdict, reason = legacy_merge_group_cause_source_verdict(
                 repo, cause, source_head, parents_cache
