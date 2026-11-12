@@ -77,12 +77,22 @@ async function selectNativeIntake(page: Page, intakeId: string, refresh = false)
   if (refresh) {
     // The selected durable detail owns its original refresh control. It does
     // not reopen or refresh the inbox after a whole-page reload.
-    const fresh = page.waitForResponse((candidate) => candidate.request().method() === "GET"
-      && new URL(candidate.url()).pathname === `/api/v1/canonical-intakes/${intakeId}`);
-    await page.getByTestId("intake-refresh-button").click();
-    const response = await fresh;
-    expect(response.status(), await response.text()).toBe(200);
-    expect((await response.json()).intake_id).toBe(intakeId);
+    // The detail read issued on mount (e.g. after a whole-page reload) must
+    // settle first: a read still in flight would be superseded and aborted by
+    // this refresh, and it is not the refresh's own read. Only the GET issued
+    // after that point, by this click, is the refresh evidence; its own
+    // response and body must be readable, so any failure fails this check.
+    const refreshButton = page.getByTestId("intake-refresh-button");
+    await expect(refreshButton).toBeEnabled();
+    await expect(page.getByText("正在讀取所選收件與案件…", { exact: true })).toHaveCount(0);
+    const issued = page.waitForRequest((request) => request.method() === "GET"
+      && new URL(request.url()).pathname === `/api/v1/canonical-intakes/${intakeId}`);
+    await refreshButton.click();
+    const response = await (await issued).response();
+    expect(response, "refresh read received no response").not.toBeNull();
+    const body = await response!.text();
+    expect(response!.status(), body).toBe(200);
+    expect(JSON.parse(body).intake_id).toBe(intakeId);
     return;
   }
   await openNativeIntakeList(page);
