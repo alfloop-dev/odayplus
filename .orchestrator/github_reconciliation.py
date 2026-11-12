@@ -318,6 +318,34 @@ def pr_queue_identity(pr_facts: Any) -> tuple[bool, str]:
     return enrolled, enqueued_at
 
 
+def merge_queue_entry_group_head(pr_facts: Any) -> tuple[str, bool]:
+    """Return (group_head_sha, known) for the PR's current merge queue entry.
+
+    `MergeQueueEntry.headCommit` is the group commit GitHub built for the
+    entry. `("", True)` is a positive answer that there is no group commit to
+    consider: the PR is not enrolled, or its entry has not been grouped yet
+    (`headCommit: null`). `("", False)` means GitHub's answer cannot say which
+    commit it is -- an enrolled PR without an entry, an entry without the
+    field, or a malformed oid -- and must never be read as "nothing to revoke".
+    """
+    from github_bus import is_in_merge_queue
+
+    if not isinstance(pr_facts, dict):
+        return "", False
+    entry = pr_facts.get("mergeQueueEntry")
+    if entry is None:
+        return "", not is_in_merge_queue(pr_facts)
+    if not isinstance(entry, dict) or "headCommit" not in entry:
+        return "", False
+    head_commit = entry.get("headCommit")
+    if head_commit is None:
+        return "", True
+    oid = head_commit.get("oid") if isinstance(head_commit, dict) else None
+    if not isinstance(oid, str) or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", oid.strip()):
+        return "", False
+    return oid.strip().lower(), True
+
+
 def is_valid_pr_facts(pr_facts: Any) -> bool:
     """Return true only when GitHub returned a PR node this guard may act on.
 
@@ -957,6 +985,7 @@ def reconcile_merge_group_runs(
         superseding_run: dict[str, Any] | None = None
         supersede_reason: str | None = None
         association_unknown = False
+        target_group_head = ""
         if target_kind == TARGET_CURRENT_FAILURE:
             effective_target = fresh_target if isinstance(fresh_target, dict) and fresh_target else run
             target_group_head = str(
@@ -1080,6 +1109,35 @@ def reconcile_merge_group_runs(
             )
             continue
 
+        # Every group commit proven to enrol the reviewed head may carry the
+        # success `merge-queue-review-gate.yml` re-asserted from the PR head.
+        # Revoking only the PR head would leave those standing. The failing
+        # group was proven above; the PR's current queue entry is read from the
+        # same facts-B node and must be proven the same way before it is
+        # touched, and an entry that cannot be classified leaves the failure
+        # open rather than revoking an unknown target or skipping a real one.
+        group_targets = [target_group_head] if target_group_head else []
+        active_group_head, active_known = merge_queue_entry_group_head(facts_b)
+        if not active_known:
+            record_unresolved(
+                "active_group_identity_unknown",
+                "the PR's current merge queue entry does not name a usable group commit.",
+            )
+            continue
+        if active_group_head and active_group_head not in group_targets:
+            active_incorporates = merge_group_incorporates_head(
+                repo, active_group_head, approved_head, parents_cache
+            )
+            if active_incorporates is None:
+                record_unresolved(
+                    "active_group_association_unknown",
+                    "the PR's current merge queue group could not be proven to enrol or "
+                    "exclude the reviewed head.",
+                )
+                continue
+            if active_incorporates:
+                group_targets.append(active_group_head)
+
         log_entry = {
             "type": "merge_group_failure_reconciled",
             "task_id": task_id,
@@ -1134,15 +1192,34 @@ def reconcile_merge_group_runs(
             "queue_ref": queue_ref,
             "head_sha": head_sha,
             "pr_number": pr_number,
+            # The reviewed PR head the failing group was proven to enrol. The
+            # ready dispatcher accepts this cause only for exactly this head.
+            "source_head": approved_head,
         }
         status.setdefault("handoffs", []).append(handoff_entry)
 
         task["status"] = "review"
         task.pop("approved_head", None)
-        # A successful task-review-gate status may still be attached to the
-        # exact merge-group head.  Recovery requires a fresh reviewer decision,
-        # so remove the local receipt before the canonical transition and
-        # overwrite GitHub's status with the pending review state below.
+        # A successful task-review-gate status may still be attached to the PR
+        # head and to every group commit that enrolled it.  Recovery requires a
+        # fresh reviewer decision, so the revocation intent is written into the
+        # same canonical transition: confirmed grants move into the existing
+        # `review_gate_revocations`, each proven group commit joins them, and
+        # `review_gate_refresh_pending` makes the canonical `ai_status sync`
+        # that commits this transition post them and persist the outcome
+        # (ACK, or the exact payload in `status_check_outbox` for retry).
+        runtime_ai_status.retain_review_gate_targets(task)
+        revocations = {
+            runtime_ai_status.status_check_target(target): target
+            for target in task.get("review_gate_revocations", []) or []
+            if isinstance(target, dict)
+        }
+        for group_head in group_targets:
+            group_target = {"repo_slug": repo, "sha": group_head, "context": "task-review-gate"}
+            revocations.setdefault(runtime_ai_status.status_check_target(group_target), group_target)
+        if revocations:
+            task["review_gate_revocations"] = list(revocations.values())
+        task["review_gate_refresh_pending"] = True
         task.pop("review_gate_sha", None)
         task.pop("waiting_for", None)
         task["next"] = (
@@ -1163,20 +1240,10 @@ def reconcile_merge_group_runs(
         for _, task_id, failure_record in mutating_failures:
             task_entry = bus_state.setdefault("tasks", {}).setdefault(task_id, {})
             task_entry["last_merge_group_failure"] = failure_record
-        for _, task_id, _ in mutating_failures:
-            recovered_task = next(
-                (
-                    candidate
-                    for candidate in status.get("tasks", []) or []
-                    if isinstance(candidate, dict) and str(candidate.get("id") or "") == task_id
-                ),
-                None,
-            )
-            if recovered_task is not None:
-                # This must happen after the CAS-backed transition succeeds:
-                # a stale snapshot must never emit a recovery gate for a task
-                # state that was not committed.
-                runtime_ai_status.emit_task_review_status_check(recovered_task, "review")
+        # No emission from this snapshot. The committed transition carries the
+        # revocation intent, and the canonical `ai_status sync` run by the
+        # commit is the emitter whose outbox/ACK result is persisted; anything
+        # emitted here would be discarded by the caller's immediate reload.
         return True
 
     if non_mutating_seen:

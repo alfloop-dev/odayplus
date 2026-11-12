@@ -1328,6 +1328,12 @@ query($owner: String!, $name: String!, $number: Int!) {
         position
         state
         enqueuedAt
+        headCommit {
+          oid
+        }
+        baseCommit {
+          oid
+        }
       }
     }
   }

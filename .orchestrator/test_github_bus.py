@@ -4069,7 +4069,15 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         self.assertEqual(task_bus["pr_number"], 756)
 
         commit_trans.assert_called_once_with(self.config, self.status)
-        emit_gate.assert_called_once_with(self.task, "review")
+        # The exact reviewed head the failing group enrolled binds the cause.
+        self.assertEqual(handoff["source_head"], self.APPROVED_HEAD)
+        # The gate is not emitted from this snapshot (the caller reloads it
+        # away); the revocation intent rides the committed transition instead.
+        emit_gate.assert_not_called()
+        self.assertTrue(self.task["review_gate_refresh_pending"])
+        self.assertEqual(
+            [t["sha"] for t in self.task["review_gate_revocations"]], [self.GROUP_HEAD_OLD]
+        )
 
     def test_reconcile_merge_group_failure_clears_and_reemits_pending_review_gate(self) -> None:
         self.task["review_gate_sha"] = self.task["approved_head"]
@@ -4080,6 +4088,7 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             mock.patch("github_reconciliation.write_activity_log"),
             mock.patch("status_transition.commit_canonical_task_transition", return_value=True),
             mock.patch("github_reconciliation.runtime_ai_status.emit_task_review_status_check") as emit_gate,
+            mock.patch.object(ai_status, "task_repository_slug_safe", return_value="o/r"),
         ):
             changed = github_reconciliation.reconcile_merge_group_runs(
                 self.config, self.bus_state, self.status, "o/r", [run_fixture]
@@ -4089,7 +4098,21 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         self.assertEqual(self.task["status"], "review")
         self.assertNotIn("approved_head", self.task)
         self.assertNotIn("review_gate_sha", self.task)
-        emit_gate.assert_called_once_with(self.task, "review")
+        # The confirmed PR-head grant and the failing group commit are both
+        # retained as revocation targets in the committed transition, for the
+        # canonical sync to re-emit as pending.
+        emit_gate.assert_not_called()
+        self.assertTrue(self.task["review_gate_refresh_pending"])
+        self.assertEqual(
+            sorted(
+                (t["repo_slug"], t["sha"], t["context"])
+                for t in self.task["review_gate_revocations"]
+            ),
+            sorted([
+                ("o/r", self.APPROVED_HEAD, "task-review-gate"),
+                ("o/r", self.GROUP_HEAD_OLD, "task-review-gate"),
+            ]),
+        )
 
     def test_reconcile_merge_group_failure_stale_snapshot_reject_does_not_mark_run_processed(self) -> None:
         run_fixture = self._failure_run(id=31321422749)
@@ -4598,6 +4621,9 @@ class MergeGroupReconciliationTests(unittest.TestCase):
                 "position": 1,
                 "state": "AWAITING_CHECKS",
                 "enqueuedAt": "2026-09-06T01:24:00Z",
+                # The entry's group commit is the failing group itself.
+                "headCommit": {"oid": self.GROUP_HEAD_OLD},
+                "baseCommit": {"oid": self.QUEUE_BASE_OLD},
             },
         )
 
@@ -4619,6 +4645,10 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         self.assertEqual(self.task["status"], "review")
         self.assertEqual(len(self.status["handoffs"]), 1)
         self.assertEqual(self._log_types(write_log), ["merge_group_failure_reconciled"])
+        # The entry's group is the failing group: revoked once, not twice.
+        self.assertEqual(
+            [t["sha"] for t in self.task["review_gate_revocations"]], [self.GROUP_HEAD_OLD]
+        )
 
     def test_reconcile_merge_group_enrolled_pr_still_stale_when_new_group_proven(self) -> None:
         """Enrollment plus a proven newer group is the path that suppresses."""
@@ -5452,12 +5482,13 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         node_a = dict(
             self.default_pr_node,
             isInMergeQueue=True,
-            mergeQueueEntry={"position": 3, "enqueuedAt": "2026-09-06T01:00:00Z"},
+            mergeQueueEntry={"position": 3, "enqueuedAt": "2026-09-06T01:00:00Z", "headCommit": None},
         )
         node_b = dict(
             self.default_pr_node,
             isInMergeQueue=True,
-            mergeQueueEntry={"position": 1, "enqueuedAt": "2026-09-06T01:00:00Z"},
+            # GitHub has not built a group commit for the entry yet.
+            mergeQueueEntry={"position": 1, "enqueuedAt": "2026-09-06T01:00:00Z", "headCommit": None},
         )
 
         with (

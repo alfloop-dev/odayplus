@@ -1573,6 +1573,121 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
     return str(build_dispatch_event(task, target_agent, reason, task_map).get("key") or "")
 
 
+MERGE_GROUP_FAILURE_HANDOFF_REASON = "merge_group_failure"
+
+
+@_entrypoint
+def committed_merge_group_review_recovery(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    target_agent: str,
+) -> bool:
+    """True only for a committed merge-group failure recovery of this routed head.
+
+    `github_reconciliation.reconcile_merge_group_runs` demotes an approved task
+    back to `review` through the canonical CAS and records the cause as one
+    pending `merge_group_failure` handoff. It deliberately leaves
+    `task.merge_route` alone, so the same-head route would otherwise keep the
+    reviewer from ever being dispatched. This reads the cause from the
+    canonical store -- never from the caller's snapshot or `next` text -- and
+    accepts it only when every identity it names matches exactly. Missing,
+    unknown, duplicated or superseded facts fail closed.
+    """
+    from github_reconciliation import parse_merge_group_pr_number
+
+    schema = config.get("schema", {}) or {}
+    task_id = str(task.get(schema.get("task_id_field", "id")) or task.get("id") or "").strip()
+    reviewer = normalize_agent_id(str(task.get(schema.get("reviewer_field", "reviewer")) or ""))
+    if not task_id or not reviewer or normalize_agent_id(target_agent or "") != reviewer:
+        return False
+    if str(task.get("status") or "").strip().lower() != "review" or task.get("approved_head"):
+        return False
+    submission = task.get("review_submission")
+    route = task.get(MERGE_ROUTE_FIELD)
+    if not isinstance(submission, dict) or not isinstance(route, dict):
+        return False
+    source_head = str(submission.get("remote_sha") or "").strip().lower()
+    if not source_head or str(route.get("head") or "").strip().lower() != source_head:
+        return False
+    try:
+        pr_number = int(submission.get("pr_number"))
+        route_pr = int(route.get("pr_number"))
+    except (TypeError, ValueError):
+        return False
+    if pr_number <= 0 or route_pr != pr_number:
+        return False
+    routed_at = parse_runtime_timestamp(route.get("at"))
+    if routed_at is None:
+        return False
+
+    try:
+        canonical = load_status(config)
+    except Exception:
+        return False
+    if not isinstance(canonical, dict):
+        return False
+    canonical_task = next(
+        (
+            candidate
+            for candidate in canonical.get(schema.get("tasks_path", "tasks"), []) or []
+            if isinstance(candidate, dict)
+            and str(candidate.get(schema.get("task_id_field", "id")) or "").strip() == task_id
+        ),
+        None,
+    )
+    # The caller's task must be the committed one: same status, reviewer,
+    # submitted head and route, so a stale or locally edited snapshot cannot
+    # borrow a recovery it does not carry.
+    if not isinstance(canonical_task, dict):
+        return False
+    for field in ("status", schema.get("reviewer_field", "reviewer"), "approved_head"):
+        if canonical_task.get(field) != task.get(field):
+            return False
+    if canonical_task.get("review_submission") != submission or canonical_task.get(MERGE_ROUTE_FIELD) != route:
+        return False
+
+    pending = [
+        handoff
+        for handoff in canonical.get("handoffs", []) or []
+        if isinstance(handoff, dict)
+        and str(handoff.get("task_id") or "").strip() == task_id
+        and str(handoff.get("status") or "").strip().lower() == "pending"
+    ]
+    # Recovery resolves every earlier handoff of the task in the same commit,
+    # so its cause is the only pending one. Anything else pending means the
+    # recovery was superseded or is ambiguous.
+    if len(pending) != 1:
+        return False
+    cause = pending[0]
+    if str(cause.get("reason") or "") != MERGE_GROUP_FAILURE_HANDOFF_REASON:
+        return False
+    if normalize_agent_id(str(cause.get("to") or "")) != reviewer:
+        return False
+    try:
+        if int(cause.get("pr_number")) != pr_number:
+            return False
+    except (TypeError, ValueError):
+        return False
+    if str(cause.get("source_head") or "").strip().lower() != source_head:
+        return False
+    group_head = str(cause.get("head_sha") or "").strip().lower()
+    if not group_head or group_head == source_head:
+        return False
+    if cause.get("run_id") in (None, ""):
+        return False
+    if parse_merge_group_pr_number(str(cause.get("queue_ref") or "")) != pr_number:
+        return False
+    created_at = parse_runtime_timestamp(cause.get("created_at"))
+    if created_at is None:
+        return False
+    try:
+        # The failure has to postdate the admission that put this head in the
+        # queue; an older cause cannot explain the current route.
+        return created_at >= routed_at
+    except TypeError:
+        return False
+
+
 @_entrypoint
 def is_task_review_dispatch_eligible(
     config: dict[str, Any],
@@ -1649,11 +1764,18 @@ def is_task_review_dispatch_eligible(
     # Merge route on current submitted head suppresses redundant review dispatch.
     # Stale merge route records from prior/repaired heads must not block new head review.
     # Malformed/unknown route metadata or routes missing an explicit head fail closed.
+    # The one exception is a committed merge-group failure recovery for exactly
+    # this routed head: the route stays untouched (head/at/attempts), and the
+    # canonical recovery handoff is what licenses one fresh reviewer decision.
     route = task.get("merge_route")
     if route is not None:
         if isinstance(route, dict):
             route_head = str(route.get("head") or "").strip()
-            if not route_head or route_head == submitted_sha:
+            if not route_head:
+                return False
+            if route_head == submitted_sha and not committed_merge_group_review_recovery(
+                config, task, target_agent
+            ):
                 return False
         else:
             return False
