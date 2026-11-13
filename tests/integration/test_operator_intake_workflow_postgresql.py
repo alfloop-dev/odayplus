@@ -1,5 +1,7 @@
 """Prove the production operator factory writes one durable V1 workflow owner."""
 
+import hashlib
+import json
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -15,6 +17,8 @@ from modules.opsboard.application import network_listings
 from modules.opsboard.application.operator_live_repository import OperatorLiveRepository
 from shared.auth import Role
 from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
+from shared.infrastructure.persistence.operator_intake_workflow import OperatorIntakeWorkflowRepository
+from shared.jobs.queue import JobRequest
 from tests.intake_registry_fixture import (
     AT,
     MANAGER,
@@ -305,17 +309,66 @@ def _claim_intake_job(bundle, job_id):
     raise AssertionError("Intake job was not claimable")
 
 
-def test_production_operator_submit_reads_and_transfers_same_canonical_workflow(bridge_database, monkeypatch):
+def _seed_historical_submission(bundle, url, *, key="synthetic-operator-submit", linked_job=False):
+    """Prepare retained Operator data through its existing repository contract.
+
+    No HTTP/service fresh command or native READY result is used for setup.
+    The original bridge owns workflow initialization and the same physical SQL
+    transaction owns the retained row, optional job and actor-bound receipt.
+    """
+    repository = OperatorIntakeWorkflowRepository(
+        bundle.assisted_intake_store, bundle.operator_intake_repository_for_tenant(TENANT),
+        TENANT, bundle.assisted_intake_workflow_policy,
+    )
+    intake_id, correlation = str(uuid4()), str(uuid4())
+    at = AT.isoformat().replace("+00:00", "Z")
+    actor_key = hashlib.sha256(MANAGER.encode()).hexdigest() + ":" + key
+    record = {
+        "id": intake_id, "tenantId": TENANT, "intakeMethod": "URL",
+        "originalUrl": url, "canonicalUrl": url, "heatZoneId": None,
+        "submitter": MANAGER, "submittedBy": MANAGER, "owner": MANAGER,
+        "submittedAt": at, "updatedAt": at, "lastObservedAt": None,
+        "stage": "SUBMITTED" if linked_job else "AWAITING_ASSISTED_ENTRY",
+        "version": 1, "sourceId": "synthetic.retained-source",
+        "policy": "APPROVED_RETRIEVAL" if linked_job else "ASSISTED_ENTRY_ONLY",
+        "correlationId": correlation, "idempotencyKey": key,
+        "parsedFields": {}, "matchResult": None, "auditEvents": [],
+    }
+    with repository.transaction():
+        if linked_job:
+            job, created = bundle.job_queue.enqueue(JobRequest(
+                job_type="assisted-listing-intake", payload={
+                    "intake_id": intake_id, "url": url, "tenant_id": TENANT,
+                    "heat_zone_id": None, "actor_role_id": Role.SITE_REVIEWER.value,
+                    "actor_name": MANAGER,
+                }, idempotency_key="intake-submit:" + hashlib.sha256(
+                    f"{TENANT}:{actor_key}".encode()).hexdigest(),
+            ), correlation_id=correlation)
+            assert created
+            record["jobId"] = job.job_id
+        repository.save_intake(record)
+        repository.save_idempotency_record(network_listings.IntakeIdempotencyRecord(
+            action="submit_intake", key=actor_key, response=deepcopy(record),
+            actor_subject_id=MANAGER, request_sha256=hashlib.sha256(json.dumps(
+                {"url": url.strip(), "heat_zone_id": None, "async_intake": False},
+                sort_keys=True, separators=(",", ":"), allow_nan=False,
+            ).encode()).hexdigest(),
+        ))
+    return record
+
+
+def test_retained_operator_replay_reads_and_transfers_same_canonical_workflow(bridge_database, monkeypatch):
     db = bridge_database
     bundle = _bundle(db, monkeypatch)
     try:
         client = _client(bundle)
         body = {"url": "https://rent.591.com.tw/bridge-real", "actorName": "spoof@example.invalid"}
         headers = _headers()
-        submitted = client.post(f"{BASE}/intake/submit", json=body, headers=headers)
-        assert submitted.status_code == 200, submitted.text
-        record = submitted.json()
-        iid = record["id"]
+        retained = _seed_historical_submission(bundle, body["url"])
+        iid = retained["id"]
+        read = client.get(f"{BASE}/intake/{iid}", headers=headers)
+        assert read.status_code == 200, read.text
+        record = read.json()
         assert str(UUID(iid)) == iid
         assert record["submittedBy"] == MANAGER
         assert record["submittedAt"] == "2026-10-09T08:30:00Z"
@@ -424,10 +477,9 @@ def test_linked_job_retry_after_restart_is_atomic_and_idempotent(bridge_database
     bundle = _bundle(bridge_database, monkeypatch)
     try:
         client = _client(bundle)
-        submitted = client.post(f"{BASE}/intake/submit", json={"url": "https://example.invalid/approved-double"},
-                                headers=_headers())
-        assert submitted.status_code == 200, submitted.text
-        record = submitted.json()
+        record = _seed_historical_submission(
+            bundle, "https://example.invalid/approved-double", linked_job=True,
+        )
         iid, job_id = record["id"], record["jobId"]
         assert bundle.job_queue.get(job_id).payload["intake_id"] == iid
         store = bundle.assisted_intake_store
@@ -486,14 +538,13 @@ def test_production_worker_failure_is_visible_on_same_canonical_intake(bridge_da
     bundle = _bundle(bridge_database, monkeypatch)
     try:
         client = _client(bundle)
-        submitted = client.post(f"{BASE}/intake/submit", json={"url": "https://example.invalid/no-live-adapter"},
-                                headers=_headers())
-        assert submitted.status_code == 200, submitted.text
-        record = submitted.json()
+        record = _seed_historical_submission(
+            bundle, "https://example.invalid/no-live-adapter", linked_job=True,
+        )
         job = _claim_intake_job(bundle, record["jobId"])
         assert job is not None and job.job_id == record["jobId"]
-        # Synthetic authenticated submission above; production retrieval gate
-        # below. Production HTTP authentication is deliberately not weakened.
+        # Explicit retained work above; production retrieval gate below.
+        # Production HTTP authentication is deliberately not weakened.
         with monkeypatch.context() as production:
             production.setenv("ODP_PRODUCT_MODE", "production")
             production.setenv("EXTERNAL_PROVIDER_MODE", "live")
@@ -512,14 +563,16 @@ def test_production_worker_failure_is_visible_on_same_canonical_intake(bridge_da
         bundle.engine.close()
 
 
-def test_concurrent_submission_replays_one_workflow(bridge_database, monkeypatch):
+def test_concurrent_retained_submission_replays_one_workflow(bridge_database, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
 
     bundle = _bundle(bridge_database, monkeypatch)
     replica = _bundle(bridge_database, monkeypatch)
     try:
+        retained = _seed_historical_submission(bundle, "https://rent.591.com.tw/concurrent")
         clients = [_client(bundle), _client(replica)]
+        before = _snapshot(bundle)
         barrier = Barrier(2)
         headers = _headers()
 
@@ -532,7 +585,9 @@ def test_concurrent_submission_replays_one_workflow(bridge_database, monkeypatch
             results = list(pool.map(submit, range(2)))
         assert all(result.status_code == 200 for result in results), [r.text for r in results]
         assert results[0].json() == results[1].json()
+        assert results[0].json()["id"] == retained["id"]
         state = _snapshot(bundle)
+        assert state == before
         assert len(state[0]) == len(state[1]) == len(state[2]) == 1
         assert len(bundle.operator_intake_repository_for_tenant(TENANT).list_idempotency_records()) == 1
     finally:
@@ -544,10 +599,7 @@ def test_operator_correction_and_decision_versions_survive_replay(bridge_databas
     bundle = _bundle(bridge_database, monkeypatch)
     try:
         client = _client(bundle)
-        submitted = client.post(f"{BASE}/intake/submit", json={"url": "https://rent.591.com.tw/edits"},
-                                headers=_headers())
-        assert submitted.status_code == 200, submitted.text
-        initial = submitted.json()
+        initial = _seed_historical_submission(bundle, "https://rent.591.com.tw/edits")
         iid = initial["id"]
         correction_body = {"fields": {"floor": "2"}, "reason": "Synthetic correction",
                            "riskSummary": "Synthetic non-identity edit", "riskAcknowledged": True}
@@ -600,10 +652,7 @@ def test_parent_authorization_lock_serializes_v1_owner_change(bridge_database, m
     bundle = _bundle(bridge_database, monkeypatch)
     replica = _bundle(bridge_database, monkeypatch)
     try:
-        submitted = _client(bundle).post(f"{BASE}/intake/submit", json={"url": "https://rent.591.com.tw/locked"},
-                                         headers=_headers())
-        assert submitted.status_code == 200, submitted.text
-        record = submitted.json()
+        record = _seed_historical_submission(bundle, "https://rent.591.com.tw/locked")
         iid = record["id"]
         repo = OperatorIntakeWorkflowRepository(bundle.assisted_intake_store,
             bundle.operator_intake_repository_for_tenant(TENANT), TENANT, bundle.assisted_intake_workflow_policy)
@@ -655,10 +704,9 @@ def test_stale_worker_cannot_publish_after_job_fence_changes(bridge_database, mo
     bundle = _bundle(bridge_database, monkeypatch)
     try:
         client = _client(bundle)
-        submitted = client.post(f"{BASE}/intake/submit", json={"url": "https://example.invalid/fence-double"},
-                                headers=_headers())
-        assert submitted.status_code == 200, submitted.text
-        record = submitted.json()
+        record = _seed_historical_submission(
+            bundle, "https://example.invalid/fence-double", linked_job=True,
+        )
         job = _claim_intake_job(bundle, record["jobId"])
         before = _snapshot(bundle)
 
