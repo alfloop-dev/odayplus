@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -34,29 +35,24 @@ def test_promotion_api_contract_flow() -> None:
     app = create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     client = TestClient(app)
 
-    # 1. Submit an intake to /api/v1/intakes/url (resolves to READY)
-    submit_payload = {
-        "original_url": "https://www.synthetic.example/detail-77120345.html",
-        "scope": {"tenant_id": TENANT_A},
-    }
-    submit_headers = {
-        **HEADERS_A,
-        "Idempotency-Key": f"idem-api-submit-{uuid4()}",
-    }
-    submit_resp = client.post("/api/v1/intakes/url", json=submit_payload, headers=submit_headers)
-    assert submit_resp.status_code == 202, submit_resp.text
-    intake = submit_resp.json()
-    intake_id = intake["intake_id"]
-
-    # Transition the intake state to READY in store to satisfy the promotion prerequisite
+    # 1. Retained V1 READY history is a promotion precondition, not fresh URL
+    # creation or evidence that the native SQL parser/identity flow completed.
     store = AssistedIntakeStore._instances[-1]
-    store.intakes[intake_id]["state"] = "READY"
-    target_listing_id = "L-GOLD-99"
-    store.intakes[intake_id]["matchResult"] = {
-        "targetListingId": target_listing_id,
-        "confidence": 0.95,
-        "contradictorySignals": [],
+    intake_id, target_listing_id = str(uuid4()), "L-GOLD-99"
+    at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    intake = {
+        "intake_id": intake_id, "state": "READY", "version": 1,
+        "intake_method": "URL", "scope": {"tenant_id": TENANT_A},
+        "submitted_by": ACTOR_A, "submitted_at": at, "updated_at": at,
+        "correlation_id": str(uuid4()), "policy_state": "APPROVED_RETRIEVAL",
+        "original_url": "https://www.synthetic.example/detail-77120345.html",
+        "processing_history": [], "fields": [], "audit": [],
+        "matchResult": {"targetListingId": target_listing_id,
+                        "confidence": 0.95, "contradictorySignals": []},
     }
+    store.intakes[intake_id] = intake
+    retained = client.get(f"/api/v1/intakes/{intake_id}", headers=HEADERS_A)
+    assert retained.status_code == 200 and retained.json()["state"] == "READY", retained.text
 
     # Seed the listing repository
     repository = getattr(app.state, "listing_repository", None)
@@ -174,26 +170,27 @@ def test_operator_intake_cannot_invent_delivery_without_a_canonical_dispatcher(m
     app = create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     client = TestClient(app)
 
-    submitted = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
-        json={
-            "url": "https://www.synthetic.example/detail-88520242.html",
-            "heatZoneId": "HZ-01",
-        },
-        headers={
-            "x-subject-id": OPERATOR_PROPOSER,
-            "x-tenant-id": OPERATOR_TENANT,
-            "x-roles": "site_reviewer,data_owner,expansion_user",
-            "x-operator-role": "expansion-manager",
-            "Idempotency-Key": f"operator-submit-{uuid4()}",
-            "X-Correlation-Id": str(uuid4()),
-        },
+    # Explicit historical Operator row. Keep the real V1 promotion adapter and
+    # dispatcher refusal; neither retired URL POST is a fixture-creation API.
+    intake = {
+        "id": "IN-RETAINED-PROMOTION", "tenantId": OPERATOR_TENANT,
+        "owner": OPERATOR_PROPOSER, "submitter": OPERATOR_PROPOSER,
+        "submittedBy": OPERATOR_PROPOSER, "stage": "READY", "version": 1,
+        "intakeMethod": "URL", "heatZoneId": "HZ-01",
+        "originalUrl": "https://www.synthetic.example/detail-88520242.html",
+        "parsedFields": {}, "matchResult": {"targetListingId": None}, "auditEvents": [],
+    }
+    app.state.operator_intake_repository.save_intake(intake)
+    retained = client.get(
+        f"/api/v1/operator/network-listings/intake/{intake['id']}",
+        headers={"x-subject-id": OPERATOR_PROPOSER, "x-tenant-id": OPERATOR_TENANT,
+                 "x-roles": "site_reviewer,data_owner,expansion_user",
+                 "x-operator-role": "expansion-manager"},
     )
-    assert submitted.status_code == 200, submitted.text
-    intake = submitted.json()
-    assert intake["stage"] == "READY"
-    assert intake["tenantId"] == OPERATOR_TENANT
-    assert intake["version"] == 1
+    assert retained.status_code == 200, retained.text
+    assert retained.json()["stage"] == "READY"
+    assert retained.json()["tenantId"] == OPERATOR_TENANT
+    assert retained.json()["version"] == 1
 
     from modules.listing.domain.models import ListingDedupKey
     from shared.domain.models import AddressLocation, Listing
