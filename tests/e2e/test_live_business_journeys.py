@@ -964,7 +964,7 @@ def test_all_six_journeys_pass_and_seal_a_verifiable_receipt() -> None:
     assert web.issue["status"] == "triaged"
     assert web.scenario["status"] == "approved"
     assert web.intake["stage"] == "READY"
-    assert web.intake["version"] == 3
+    assert web.intake["version"] == 4
     assert web.intake["matchResult"]["targetListingId"] == "L-2030"
     assert len(web.store["reports"]) == 1
 
@@ -2078,6 +2078,109 @@ def test_receipt_without_fresh_solve_capture_is_refused_without_exception() -> N
     receipt, _, _ = run()
     receipt["journeys"]["expansion"].pop("captured")
     assert "business_journey:expansion" in failing_checks(reseal(receipt))
+
+
+@pytest.mark.parametrize("version", [None, True, False, 0, -1, "3", 3.5])
+def test_intake_missing_or_invalid_observed_version_sends_no_commands(version) -> None:
+    web = BusinessWeb()
+    web.intake["version"] = version
+    receipt, web, _ = run(web, selection=["intake"])
+    assert receipt["journeys"]["intake"]["status"] == "BLOCKED"
+    assert "read:read_intake:capture:intake_version" in blockers(receipt, "intake")
+    _zero_writes(receipt, web, "intake")
+
+
+def test_intake_staff_cannot_be_admitted_as_final_decision_actor() -> None:
+    web = BusinessWeb()
+    web.account_roles[ACTORS["intake"]["primary"]] = frozenset({"expansion_user"})
+    receipt, web, _ = run(web, selection=["intake"])
+    assert receipt["journeys"]["intake"]["status"] == "BLOCKED"
+    _zero_writes(receipt, web, "intake")
+
+
+@pytest.mark.parametrize("fault", ["capture", "before", "after", "staff"])
+def test_resealed_intake_receipt_requires_observed_version_and_final_role(fault: str) -> None:
+    receipt, _, _ = run()
+    entry = receipt["journeys"]["intake"]
+    if fault == "capture":
+        entry["captured"]["intake_version"] = True
+    elif fault == "staff":
+        entry["actor"]["verified_business_roles"]["primary"] = ["expansion_user"]
+    else:
+        entry[fault]["state"]["version"] = 99
+    assert "business_journey:intake" in failing_checks(reseal(receipt))
+
+
+@pytest.mark.parametrize("fault,expected", [("none", 200), ("missing", 428), ("stale", 409), ("staff", 422)])
+def test_runner_uses_actual_legacy_http_decision_version_and_role(fault: str, expected: int) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from apps.api.app.routes.operator_modules.network_listings import create_network_listings_sub_router
+    from apps.api.oday_api.security.dependencies import build_engine, require_operator_permission, reset_bound_persistence
+    from modules.opsboard.application.network_listings import InMemoryAssistedIntakeRepository, NetworkListingService
+    from shared.audit import InMemoryAuditLog
+    from shared.auth import Action
+
+    reset_bound_persistence()
+    repository = InMemoryAssistedIntakeRepository()
+    historical = deepcopy(BusinessWeb().intake)
+    historical.update(parsedFields={}, owner=account_id("intake.manager"), submitter=account_id("intake.manager"))
+    repository.save_intake(historical)
+    service = NetworkListingService(intake_repository=repository, seed_fixtures=False, tenant_id=TENANT)
+    audit = InMemoryAuditLog()
+    engine = build_engine(audit_log=audit)
+    app = FastAPI()
+    app.include_router(create_network_listings_sub_router(service, audit_log=audit,
+        require_view_permission_fn=require_operator_permission("listing", Action.VIEW, engine=engine),
+        require_write_permission_fn=require_operator_permission("listing", Action.UPDATE, engine=engine)), prefix="/api/v1/operator")
+    client = TestClient(app)
+    observed: list[tuple[str | None, int]] = []
+
+    class RealLegacyWeb(BusinessWeb):
+        def request(self, method: str, path: str, **kwargs: Any) -> Resp:
+            base = "/api/v1/operator/network-listings/intake/"
+            if path.startswith(base):
+                headers = dict(kwargs["headers"])
+                actor = headers["cookie"].split("odp_session=sess-", 1)[1]
+                self.calls.append((method, path, actor))
+                headers.update({"x-subject-id": account_id(actor), "x-tenant-id": TENANT,
+                    "x-roles": ",".join(ACCOUNTS[actor])})
+                if method == "POST" and actor == ACTORS["intake"]["primary"]:
+                    assert headers["if-match"] == f'W/"{historical["version"]}"'
+                    if fault == "missing":
+                        headers.pop("if-match")
+                    elif fault == "stale":
+                        headers["if-match"] = 'W/"2"'
+                    elif fault == "staff":
+                        headers["x-roles"], headers["x-operator-role"] = "expansion_user", "expansion-staff"
+                result = client.request(method, path, headers=headers, json=kwargs.get("body"))
+                self.audit.extend(event.to_dict() for event in audit.list_events())
+                if method == "POST" and actor == ACTORS["intake"]["primary"]:
+                    observed.append((headers.get("if-match"), result.status_code))
+                return Resp(result.status_code, result.json())
+            return super().request(method, path, **kwargs)
+
+    scope = scope_document()
+    scope["journeys"]["intake"]["writes"]["decide"].update(action="quarantine",
+        body={"action": "quarantine", "reason": "Offline historical intake decision",
+            "riskSummary": "Offline no retrieval", "riskAcknowledged": True})
+    before = deepcopy((repository.intakes, repository.idempotency))
+    try:
+        receipt, _, _ = run(web=RealLegacyWeb(), scope=scope, selection=["intake"])
+        entry = receipt["journeys"]["intake"]
+        assert observed == [(None if fault == "missing" else 'W/"2"' if fault == "stale" else 'W/"3"', expected)]
+        if fault == "none":
+            assert entry["status"] == "PASSED", entry["blockers"]
+            assert entry["captured"]["intake_version"] == 3
+            assert service.get_intake(historical["id"])["version"] == 4
+            assert bj.journey_receipt_problems(bj.JOURNEYS_BY_ID["intake"], entry) == []
+        else:
+            assert entry["status"] == "FAILED"
+            assert (repository.intakes, repository.idempotency) == before
+    finally:
+        client.close()
+        reset_bound_persistence()
 
 
 # Review R1-R8: offline regressions, never live acceptance.

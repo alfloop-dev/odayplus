@@ -2734,6 +2734,8 @@ class JourneyRunner:
             row is not None and metadata.get("decision") == action
             and metadata.get("stage") == stages.get(action)
             and payload.get("stage") == stages.get(action)
+            and type(payload.get("version")) is int
+            and payload["version"] == self.captured["intake_version"] + 1
             and metadata.get("targetListingId") == target_id
         )
         if action in {"create", "revise", "duplicate"}:
