@@ -203,7 +203,9 @@ def test_browser_ready_fixture_uses_retained_history_without_fresh_http(intake_b
             assert conn.execute("SELECT capture_method FROM intake.source_snapshots WHERE intake_id=%s",
                                 (case["intake_id"],)).fetchone() == ("MANUAL_ENTRY",)
             assert conn.execute("SELECT count(*) FROM workflow.jobs").fetchone()[0] == 0
-            assert conn.execute("SELECT count(*) FROM durable_jobs WHERE job_type='assisted-listing-intake'").fetchone()[0] == 0
+        assert bundle.engine.query_one(
+            "SELECT count(*) AS count FROM durable_jobs WHERE job_type='assisted-listing-intake'",
+        )["count"] == 0
         # The original promotion API still sees the real resolved listing and
         # linked workflow version, rather than a fabricated browser receipt.
         requested = _request(client, intake, key="synthetic-browser-retained-promotion")
