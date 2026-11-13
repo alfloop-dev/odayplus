@@ -648,6 +648,9 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     });
     await expect(page.getByTestId("intake-detail-id")).toHaveText(id);
     await page.reload();
+    // Reload, like the initial deep link above, waits for the real detail
+    // mount within the original 15-second UI bound before inspecting its ID.
+    await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("intake-detail-id")).toHaveText(id);
     expect(await getIntakeApi(id, scenario)).toMatchObject({ id, stage: "READY", version: 1 });
     } finally { await api.dispose(); }
