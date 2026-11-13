@@ -72,8 +72,14 @@ def main() -> int:
         SyntheticDataset,
     )
 
+    # Generate with the as_of the original seeding used (GEN_AS_OF) so store
+    # opening dates match the canonical stores; orders are seeded per
+    # store-day, so the window's values do not depend on as_of.
+    gen_as_of = date.fromisoformat(os.environ.get("GEN_AS_OF", "") or end.isoformat())
     dataset = SyntheticDataset(
-        SyntheticConfig(as_of=_midnight(end), order_history_days=(end - start).days)
+        SyntheticConfig(
+            as_of=_midnight(gen_as_of), order_history_days=(gen_as_of - start).days
+        )
     )
     docs = [
         coerce_dates(SourceKind.ORDERS, d)

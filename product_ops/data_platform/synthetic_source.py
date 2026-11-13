@@ -322,19 +322,36 @@ class SyntheticDataset:
         )
         for place_id in self._place_ids:
             opened = self._place_opened_at(place_id)
+            devices = [d for d in self._device_ids if self._place_of_device[d] == place_id]
+            # Store-level demand and ticket size, plus the same weekly/yearly
+            # seasonality as the daily statistics, so revenue has learnable
+            # structure. Seeded per store / per store-day (not by the shared
+            # stream) so a given day regenerates identically for any as_of --
+            # the daily incremental feed relies on that.
+            store_rng = random.Random(f"{cfg.seed}:{place_id}:orders")
+            store_level = store_rng.uniform(0.6, 2.2)
+            store_ticket = store_rng.uniform(110.0, 240.0)
             for day in _daterange(max(opened, order_start), cfg.history_end):
-                for n in range(cfg.orders_per_store_per_day):
-                    device_id = self._rng.choice(
-                        [d for d in self._device_ids if self._place_of_device[d] == place_id]
-                    )
-                    amount = round(self._rng.uniform(60.0, 320.0), 2)
+                day_rng = random.Random(f"{cfg.seed}:{place_id}:{day.strftime('%Y%m%d')}")
+                count = max(
+                    1,
+                    round(
+                        cfg.orders_per_store_per_day
+                        * store_level
+                        * _seasonal_factor(day)
+                        * day_rng.uniform(0.85, 1.15)
+                    ),
+                )
+                for n in range(count):
+                    device_id = day_rng.choice(devices)
+                    amount = round(store_ticket * day_rng.uniform(0.7, 1.3), 2)
                     ts = day.replace(
-                        hour=self._rng.randint(7, 22),
-                        minute=self._rng.randint(0, 59),
+                        hour=day_rng.randint(7, 22),
+                        minute=day_rng.randint(0, 59),
                     )
-                    succeeded = self._rng.random() > 0.05
+                    succeeded = day_rng.random() > 0.05
                     order_id = f"{place_id}-ORD-{day.strftime('%Y%m%d')}-{n + 1}"
-                    gateway = self._rng.choice(_GATEWAYS)
+                    gateway = day_rng.choice(_GATEWAYS)
                     self.collections[SourceKind.ORDERS].append(
                         {
                             "_id": order_id,

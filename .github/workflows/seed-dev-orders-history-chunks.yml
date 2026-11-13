@@ -1,6 +1,6 @@
 name: seed-dev-orders-history-chunks
 
-# Dev only: load 2026-01-14..2026-05-13 synthetic orders (empty in dev) as
+# Dev only: load an empty stretch of synthetic orders (see HIST_*) as
 # consecutive 20-day real backfill runs in date order, so forecast horizon
 # labels mature after their prediction origin (see driver docstring).
 on:
@@ -26,8 +26,9 @@ jobs:
       DB_URL_SECRET: ${{ vars.ODAY_DATABASE_URL_SECRET }}
       ODP_DATA_MONGO_URI: ${{ secrets.ODP_DATA_MONGO_URI }}
       TARGET_TENANT: d4fe5181-da2c-5438-bd12-230036ea6f59
-      HIST_START: '2026-01-14'
-      HIST_END: '2026-05-14'
+      HIST_START: '2025-09-15'
+      HIST_END: '2026-01-14'
+      GEN_AS_OF: '2026-11-11'
       CHUNK_DAYS: '20'
       DO_NOT_TRACK: '1'
       DLT__RUNTIME__DLTHUB_TELEMETRY: 'false'
