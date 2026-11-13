@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "record_kind": "humanops-runtime-release-staging-admission-authorization",
+  "status": "approved",
+  "is_approval": true,
+  "task_id": "ODP-STAGING-ADMISSION-0B69B62D3-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-STAGING-ADMISSION-20261113L",
+  "candidate_sha": "0b69b62d32e0ad71f1a70b20eb546f4b5c6725b1",
+  "manifest_digest": "sha256:aac410ab364240d1600805e016ab458d3c41c4240740f4bddbf9f2252b4c9fe6",
+  "manifest_run_id": "43523926766",
+  "target_environment": "staging",
+  "release_profile": "core-ops",
+  "approved_at": "2026-11-13T23:01:28Z",
+  "authorization_basis": {
+    "user_reply": "同意 A–F，你執行",
+    "context": "One full-chain question naming candidate 0b69b62d3 (dev tip, PR #1695): (A) dispatch the core-ops staging build; (B) HD-08l with the three deviations above; (C) HD-09l with approval HUMANOPS-STAGING-ADMISSION-20261113L and the scope limits below; (D) approve the registry PR as Human/Ops once it touches only docs/evidence/, the registry checker says GO, admission errors are empty and every CI job is green; (E) HD-10l: after the registry merges, sync the main checkout registry and manifest from origin/dev and register lease HUMANOPS-STAGING-LEASE-20261113L (new nonce, 6 hours, non_dispatchable); (F) HD-12l: approve the GitHub staging environment with ajoe734 only for the run that lease triggers. Before every step dev tip must still be 0b69b62d3 (plus the evidence-only registry merge for E and F) with empty ancestry, else stop and ask again. B and C took effect only if the build succeeded, its manifest named 0b69b62d3 with profile core-ops and 16 disabled sources with no credentials, npm audit reported 0 findings and all 5 staging targets read back absent. All held: build 43523926766 produced manifest sha256:aac410ab…, the digest bound here. Facts stated in the question: exact push CI 43484884486 and merge group CI 43483269225 on 0b69b62d3 succeeded but skipped the product lanes; the lanes last ran at 5cb356cb3 (push CI 43400629117, merge group CI 43394531969), all 7 succeeded; 5cb356cb3..0b69b62d3 touches only .orchestrator/, scripts/ai_status.py and .github/workflows/ci.yml; dev deploy 43486461634 passed on its first attempt with live E2E 77/77, 0 blockers, job validations ok and the egress probe denied.",
+    "interpretation": "Owner 蔡尚志 replied in the Claude Code conversation at 2026-11-13T23:01:28Z. Transcribed by Claude; not an external identity-system signature."
+  },
+  "authorized_scope": {
+    "max_release_requests": 1,
+    "max_short_lived_supervisor_leases": 1,
+    "runtime_release_deploy_phases": 1,
+    "allowed_environment": "staging",
+    "external_sources_enabled": false,
+    "production_changes": false,
+    "github_staging_environment_approval_still_required": true,
+    "supervisor_lease_still_required": true
+  },
+  "recorded_by": "Claude (interactive owner-response transcription; no external identity signature claimed)",
+  "evidence": {
+    "exact_ci": "docs/evidence/runtime/ODP-STAGING-ADMISSION-0B69B62D3-001/candidate-ci-0b69b62d3.json",
+    "staging_build_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/43523926766",
+    "dev_deploy_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/43486461634",
+    "product_lanes_workflow_urls": [
+      "https://github.com/alfloop-dev/odayplus/actions/runs/43400629117",
+      "https://github.com/alfloop-dev/odayplus/actions/runs/43394531969"
+    ],
+    "exact_candidate_ci_workflow_urls": [
+      "https://github.com/alfloop-dev/odayplus/actions/runs/43484884486",
+      "https://github.com/alfloop-dev/odayplus/actions/runs/43483269225"
+    ]
+  },
+  "decisions": {
+    "HD-08l": {
+      "decision": "approve",
+      "subject": "gate-2 Data Gate passed-with-deviation for this candidate's staging admission only, review_by 2026-11-27",
+      "accepted_deviations": [
+        "source contract and sample data reviewed: not applicable — the core-ops profile keeps every external source disabled (sources-off attestation in the build manifest: 16 sources audited, all disabled, zero credentials present).",
+        "point-in-time correctness checked for model-ready data: not applicable — core-ops serves no model (release_profile.model_readiness=not_claimed).",
+        "freshness and lineage evidence captured: check_live_production_data.py has never run against this candidate; deferred to the staging verify run and the production gates, not claimed as passed."
+      ]
+    },
+    "HD-09l": {
+      "decision": "approve",
+      "subject": "release.stage=dev-verified, admission_target=staging, decision=go for this exact candidate and the manifest produced by its staging build"
+    }
+  }
+}

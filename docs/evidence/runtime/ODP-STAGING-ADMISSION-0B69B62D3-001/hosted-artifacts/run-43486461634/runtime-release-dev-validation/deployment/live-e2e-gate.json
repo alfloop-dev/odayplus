@@ -1,0 +1,566 @@
+{
+  "blockers": [],
+  "blocking_dependencies": [],
+  "checks": [
+    {
+      "dependency": "config",
+      "detail": "configured deployed API origin",
+      "name": "config:api_url",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "configured deployed Web origin",
+      "name": "config:web_url",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "0b69b62d32e0ad71f1a70b20eb546f4b5c6725b1",
+      "name": "config:expected_sha",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "configured",
+      "name": "config:operator_credential",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "configured",
+      "name": "config:api_transport_credential",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "operations_manager,model_owner,data_owner",
+      "name": "config:operator_role",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "disabled",
+      "name": "config:external_provider_mode",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "external providers disabled; no activation allowlist is expected",
+      "name": "config:required_providers",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "all required providers are classified",
+      "name": "config:provider_registry_known",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "skipped while external providers are disabled",
+      "name": "config:snapshot_providers",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "skipped while external providers are disabled",
+      "name": "config:worker_probe_provider",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "dev",
+      "name": "config:expected_deployment",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "deadline=600.0s interval=10.0s",
+      "name": "config:worker_polling",
+      "ok": true
+    },
+    {
+      "dependency": "release-profile",
+      "detail": "dev-admin",
+      "name": "config:release_profile",
+      "ok": true
+    },
+    {
+      "dependency": "release-profile",
+      "detail": "profile=dev-admin expectedDeployment=dev allowed=['dev']",
+      "name": "config:release_profile_deployment",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "configured",
+      "name": "config:dev_admin_account",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "cs-lead",
+      "name": "config:dev_admin_denied_role",
+      "ok": true
+    },
+    {
+      "dependency": "release",
+      "detail": "expected=0b69b62d32e0ad71f1a70b20eb546f4b5c6725b1 actual=0b69b62d32e0ad71f1a70b20eb546f4b5c6725b1",
+      "name": "release:platform_version",
+      "ok": true
+    },
+    {
+      "dependency": "data-binding",
+      "detail": "none",
+      "name": "release:no_surrogate_markers",
+      "ok": true
+    },
+    {
+      "dependency": "api-runtime",
+      "detail": "status=ok requireLiveData=True deploymentMode=dev expectedDeploymentMode=dev",
+      "name": "runtime:readiness",
+      "ok": true
+    },
+    {
+      "dependency": "postgresql",
+      "detail": "configured=postgresql runtime=postgresql durable=True reachable=True",
+      "name": "runtime:persistence",
+      "ok": true
+    },
+    {
+      "dependency": "release-profile",
+      "detail": "admitted=dev-admin runtime=dev-admin valid=True modelReadinessClaimed=False error=none",
+      "name": "runtime:release_profile",
+      "ok": true
+    },
+    {
+      "dependency": "provider",
+      "detail": "configured=disabled runtime=disabled",
+      "name": "runtime:provider_mode_alignment",
+      "ok": true
+    },
+    {
+      "dependency": "provider",
+      "detail": "mode=disabled configurationValid=True connectivityHealthy=False",
+      "name": "runtime:provider",
+      "ok": true
+    },
+    {
+      "dependency": "mlflow",
+      "detail": "mode=mlflow-production-unverified ready=False autoSeeded=False error=present blockingReasons=['PRODUCTION_MODEL_BINDINGS_UNVERIFIED']",
+      "name": "runtime:model_limitation_reported",
+      "ok": true
+    },
+    {
+      "dependency": "provider",
+      "detail": "no provider probe is run while external providers are disabled",
+      "name": "runtime:provider_probe",
+      "ok": true
+    },
+    {
+      "dependency": "mlflow",
+      "detail": "governedDisabled=True available=False reasonCode=DATA_CONTRACT_NOT_MATURE evidenceReasonCode=DATA_CONTRACT_NOT_MATURE evidenceComplete=True evidenceAutoSeeded=False inventoryVersion=pg16-production-model-inventory-2026-07-25-v1 observedAt=2026-07-25T15:20:00Z",
+      "name": "runtime:model_capability:avm",
+      "ok": true
+    },
+    {
+      "dependency": "mlflow",
+      "detail": "available=False reasonCode=PRODUCTION_MODEL_REGISTRY_UNAVAILABLE (refused-in-scope)",
+      "name": "runtime:model_capability:forecastops",
+      "ok": true
+    },
+    {
+      "dependency": "mlflow",
+      "detail": "governedDisabled=True available=False reasonCode=DATA_CONTRACT_NOT_MATURE evidenceReasonCode=DATA_CONTRACT_NOT_MATURE evidenceComplete=True evidenceAutoSeeded=False inventoryVersion=pg16-production-model-inventory-2026-07-25-v1 observedAt=2026-07-25T15:20:00Z",
+      "name": "runtime:model_capability:heatzone",
+      "ok": true
+    },
+    {
+      "dependency": "mlflow",
+      "detail": "governedDisabled=True available=False reasonCode=DATA_CONTRACT_NOT_MATURE evidenceReasonCode=DATA_CONTRACT_NOT_MATURE evidenceComplete=True evidenceAutoSeeded=False inventoryVersion=pg16-production-model-inventory-2026-07-25-v1 observedAt=2026-07-25T15:20:00Z",
+      "name": "runtime:model_capability:sitescore",
+      "ok": true
+    },
+    {
+      "dependency": "postgresql",
+      "detail": "mode=live origin=authoritative persistenceMode=postgresql operatorReady=True",
+      "name": "runtime:data_origin",
+      "ok": true
+    },
+    {
+      "dependency": "api-runtime",
+      "detail": "none",
+      "name": "runtime:no_blocking_reasons",
+      "ok": true
+    },
+    {
+      "dependency": "data-binding",
+      "detail": "none",
+      "name": "runtime:no_surrogate_markers",
+      "ok": true
+    },
+    {
+      "dependency": "auth",
+      "detail": "status=401 (expected 401/403)",
+      "name": "auth:anonymous_denied",
+      "ok": true
+    },
+    {
+      "dependency": "auth",
+      "detail": "status=200",
+      "name": "auth:operator_bootstrap",
+      "ok": true
+    },
+    {
+      "dependency": "data-binding",
+      "detail": "data_mode=live data_source=operator-shell-production surrogatePaths=none",
+      "name": "auth:operator_bootstrap:provenance",
+      "ok": true
+    },
+    {
+      "dependency": "auth",
+      "detail": "status=307 location=/login?returnTo=%2Foperator",
+      "name": "auth:web_operator_requires_login",
+      "ok": true
+    },
+    {
+      "dependency": "mlflow",
+      "detail": "status=200 (expected 503, or 200 with no model versions from the bound registry) body={\"count\": 0, \"items\": []}",
+      "name": "models:registry_refused",
+      "ok": true
+    },
+    {
+      "dependency": "data-binding",
+      "detail": "none",
+      "name": "models:no_surrogate_markers",
+      "ok": true
+    },
+    {
+      "dependency": "worker",
+      "detail": "status=202 jobId=present jobStatus=queued auditEventId=present",
+      "name": "worker:enqueue",
+      "ok": true
+    },
+    {
+      "dependency": "worker",
+      "detail": "status=202 sameJob=True created=False",
+      "name": "worker:idempotent_replay",
+      "ok": true
+    },
+    {
+      "dependency": "worker",
+      "detail": "worker job oday-worker-r-0b69b62d32e0 execution completed",
+      "name": "worker:drain_trigger",
+      "ok": true
+    },
+    {
+      "dependency": "worker",
+      "detail": "status=succeeded attempts=1 error=none deadline=600.0s",
+      "name": "worker:terminal_disabled",
+      "ok": true
+    },
+    {
+      "dependency": "audit",
+      "detail": "correlationId=corr-live-e2e-0b69b62d32e0-1794597276 jobEnqueueEvents=2 accepted=1",
+      "name": "audit:durable_receipt",
+      "ok": true
+    },
+    {
+      "dependency": "audit",
+      "detail": "idempotentReplayEvents=1",
+      "name": "audit:idempotent_replay_receipt",
+      "ok": true
+    },
+    {
+      "dependency": "audit",
+      "detail": "hash-chained receipt present",
+      "name": "audit:receipt_integrity",
+      "ok": true
+    },
+    {
+      "dependency": "data-binding",
+      "detail": "none",
+      "name": "audit:no_surrogate_markers",
+      "ok": true
+    },
+    {
+      "dependency": "external-data",
+      "detail": "disabled provider receipt is blocked with no snapshot written",
+      "name": "data:ingestion_runs",
+      "ok": true
+    },
+    {
+      "dependency": "data-binding",
+      "detail": "none",
+      "name": "data:no_surrogate_markers",
+      "ok": true
+    },
+    {
+      "dependency": "session",
+      "detail": "status=401 (expected 401) body={\"error\": {\"code\": \"WEB_SESSION_REQUIRED\", \"summary\": \"A valid web session is required.\"}}",
+      "name": "session:anonymous_session_denied",
+      "ok": true
+    },
+    {
+      "dependency": "auth",
+      "detail": "status=401 (expected 401/403) body={\"error\": {\"code\": \"WEB_SESSION_REQUIRED\", \"retryable\": false, \"summary\": \"A valid web session is required.\"}}",
+      "name": "session:anonymous_api_denied",
+      "ok": true
+    },
+    {
+      "dependency": "session",
+      "detail": "status=401 (expected 401 AUTH_INVALID_CREDENTIALS) body={\"error\": {\"code\": \"AUTH_INVALID_CREDENTIALS\", \"summary\": \"Invalid username or password.\"}} sessionIssued=False",
+      "name": "session:invalid_credentials_refused",
+      "ok": true
+    },
+    {
+      "dependency": "session",
+      "detail": "status=200 (expected 200 ok) body={\"ok\": true, \"returnTo\": \"/operator?view=admin\", \"subject\": \"ajoe734\"} sessionCookie=issued",
+      "name": "session:password_login",
+      "ok": true
+    },
+    {
+      "dependency": "session",
+      "detail": "status=200 subjectMatches=True accountResolved=True principalStatus=200 principalAccountMatches=True",
+      "name": "session:session_resolves_account",
+      "ok": true
+    },
+    {
+      "dependency": "auth",
+      "detail": "status=200 users=2 selfListed=True roles=['auditor', 'platform_admin'] identitySource=identity.accounts",
+      "name": "admin:identity_user_list",
+      "ok": true
+    },
+    {
+      "dependency": "auth",
+      "detail": "status=200 accountTenantRolesBound=True",
+      "name": "admin:read_principal_bound",
+      "ok": true
+    },
+    {
+      "dependency": "audit",
+      "detail": "status=200 identityEvents=10 bootstrapEvents=1",
+      "name": "admin:bootstrap_audited",
+      "ok": true
+    },
+    {
+      "dependency": "audit",
+      "detail": "status=200 matchingExplicitGrants=2",
+      "name": "admin:read_grant_audited",
+      "ok": true
+    },
+    {
+      "dependency": "tenant-isolation",
+      "detail": "status=422 (expected 422 identity tenant-policy refusal ('caller is restricted to its own tenant')) body={\"detail\": \"Cannot save user scope for tenant '0d1e5a7e-f0e1-4000-8000-00000000f0e1'; caller is restricted to its own tenant.\", \"error\": {\"code\": \"unprocessable_entity\", \"correlation_id\": \"corr-live-e2e-0b69b62d32e0-1794597276-session\", \"details\": [], \"message\": \"Cannot save user scope for tenant '0d1e5a7e-f0e1-4000-8000-00000000f0e1'; caller is restricted to its own tenant.\", \"next_action\": \"Fix ",
+      "name": "session:cross_tenant_denied",
+      "ok": true
+    },
+    {
+      "dependency": "tenant-isolation",
+      "detail": "status=200 matches=1 changedOrMissing=none",
+      "name": "admin:foreign_tenant_unmodified_readback",
+      "ok": true
+    },
+    {
+      "dependency": "data-binding",
+      "detail": "status=200 liveOriginVerified=True",
+      "name": "admin:scoped_business_read",
+      "ok": true
+    },
+    {
+      "dependency": "tenant-isolation",
+      "detail": "status=200",
+      "name": "admin:scoped_account_read",
+      "ok": true
+    },
+    {
+      "dependency": "auth",
+      "detail": "status=403 (expected 403) body={\"detail\": \"role does not permit update on listing\", \"error\": {\"code\": \"forbidden\", \"correlation_id\": \"corr-live-e2e-0b69b62d32e0-1794597276-session\", \"details\": [], \"message\": \"role does not permit update on listing\", \"next_action\": \"Request access for this role or tenant; do not retry as-is.\", \"occurred_at\": \"2026-11-13T19:15:44.539Z\"}}",
+      "name": "admin:business_write_denied",
+      "ok": true
+    },
+    {
+      "dependency": "auth",
+      "detail": "status=403 (expected 403) body={\"detail\": \"role does not permit approve on sitescore\", \"error\": {\"code\": \"forbidden\", \"correlation_id\": \"corr-live-e2e-0b69b62d32e0-1794597276-session\", \"details\": [], \"message\": \"role does not permit approve on sitescore\", \"next_action\": \"Request access for this role or tenant; do not retry as-is.\", \"occurred_at\": \"2026-11-13T19:15:44.829Z\"}}",
+      "name": "admin:business_approve_denied",
+      "ok": true
+    },
+    {
+      "dependency": "auth",
+      "detail": "status=403 (expected 403) body={\"detail\": \"role does not permit execute on sitescore\", \"error\": {\"code\": \"forbidden\", \"correlation_id\": \"corr-live-e2e-0b69b62d32e0-1794597276-session\", \"details\": [], \"message\": \"role does not permit execute on sitescore\", \"next_action\": \"Request access for this role or tenant; do not retry as-is.\", \"occurred_at\": \"2026-11-13T19:15:45.154Z\"}}",
+      "name": "admin:business_execute_denied",
+      "ok": true
+    },
+    {
+      "dependency": "auth",
+      "detail": "status=403 (expected 403) body={\"detail\": \"role does not permit approve on intervention\", \"error\": {\"code\": \"forbidden\", \"correlation_id\": \"corr-live-e2e-0b69b62d32e0-1794597276-session\", \"details\": [], \"message\": \"role does not permit approve on intervention\", \"next_action\": \"Request access for this role or tenant; do not retry as-is.\", \"occurred_at\": \"2026-11-13T19:15:45.453Z\"}}",
+      "name": "admin:business_publish_denied",
+      "ok": true
+    },
+    {
+      "dependency": "auth",
+      "detail": "status=403 (expected 403 for role cs-lead) body={\"detail\": \"requested Operator Console role is outside principal roles\", \"error\": {\"code\": \"forbidden\", \"correlation_id\": \"corr-live-e2e-0b69b62d32e0-1794597276-session\", \"details\": [], \"message\": \"requested Operator Console role is outside principal roles\", \"next_action\": \"Request access for this role or tenant; do not retry as-is.\", \"occurred_at\": \"2026-11-13T19:15:45.753Z\"}}",
+      "name": "session:wrong_role_denied",
+      "ok": true
+    },
+    {
+      "dependency": "session",
+      "detail": "status=200 (expected 200 (not a /login redirect))",
+      "name": "admin:admin_page_served",
+      "ok": true
+    },
+    {
+      "dependency": "session",
+      "detail": "status=200 (expected 200 ok) body={\"ok\": true, \"summary\": \"Logged out successfully.\"} cookieCleared=True",
+      "name": "session:logout",
+      "ok": true
+    },
+    {
+      "dependency": "session",
+      "detail": "status=401 (expected 401 after logout) body={\"error\": {\"code\": \"WEB_SESSION_REQUIRED\", \"summary\": \"A valid web session is required.\"}}",
+      "name": "session:revoked_session_refused",
+      "ok": true
+    },
+    {
+      "dependency": "session",
+      "detail": "replay=status=401 (expected 401/403) body={\"error\": {\"code\": \"WEB_SESSION_REQUIRED\", \"retryable\": false, \"summary\": \"A valid web session is required.\"}}",
+      "name": "admin:logout_revokes_admin_api",
+      "ok": true
+    },
+    {
+      "dependency": "session",
+      "detail": "status=303 sameOrigin=True",
+      "name": "session:html_form_invalid_redirect",
+      "ok": true
+    },
+    {
+      "dependency": "session",
+      "detail": "status=303 sameOrigin=True sessionCookie=issued",
+      "name": "session:html_form_password_login",
+      "ok": true
+    },
+    {
+      "dependency": "session",
+      "detail": "status=200 subjectMatches=True",
+      "name": "session:html_form_session_resolves_account",
+      "ok": true
+    },
+    {
+      "dependency": "session",
+      "detail": "status=200 (expected 200 (not a /login redirect))",
+      "name": "admin:html_form_admin_page_served",
+      "ok": true
+    },
+    {
+      "dependency": "session",
+      "detail": "status=200 (expected 200 ok) body={\"ok\": true, \"summary\": \"Logged out successfully.\"}",
+      "name": "session:html_form_logout",
+      "ok": true
+    },
+    {
+      "dependency": "session",
+      "detail": "status=401 (expected 401 after logout) body={\"error\": {\"code\": \"WEB_SESSION_REQUIRED\", \"summary\": \"A valid web session is required.\"}}",
+      "name": "session:html_form_revoked_session_refused",
+      "ok": true
+    }
+  ],
+  "correlation_id": "corr-live-e2e-0b69b62d32e0-1794597276",
+  "dev_admin": {
+    "account_mode": "read-enabled-admin",
+    "correlation_id": "corr-live-e2e-0b69b62d32e0-1794597276-session",
+    "operations": [
+      "anonymous_denied",
+      "invalid_password_refused",
+      "password_login",
+      "session_read",
+      "identity_user_list",
+      "bootstrap_audit_readback",
+      "cross_tenant_denied",
+      "scoped_read_and_business_mutations_denied",
+      "wrong_role_denied",
+      "admin_page",
+      "logout_and_revocation",
+      "html_form_login_and_revocation"
+    ],
+    "read_account_binding": {
+      "account_id": "17e9cb99-db46-4a07-8e61-6bf9b22cf5d2",
+      "canonical_finite_grants_verified": true,
+      "roles": [
+        "auditor",
+        "platform_admin"
+      ],
+      "tenant_id": "e34f2117-de4b-478c-82fd-13c4ef428d42"
+    }
+  },
+  "expected_deployment": "dev",
+  "expected_release_sha": "0b69b62d32e0ad71f1a70b20eb546f4b5c6725b1",
+  "full_acceptance": {
+    "blockers": [
+      {
+        "check": "business_journeys:admission",
+        "dependency": "release-profile",
+        "detail": "release profile 'dev-admin' has no full business acceptance admission",
+        "next_action": "Redeploy from the admitted manifest: the runtime must report exactly the release profile sealed into the manifest digest, and a narrowed profile may only serve the deployment it was admitted for."
+      }
+    ],
+    "blocking_dependencies": [
+      "release-profile"
+    ],
+    "checks": [
+      {
+        "dependency": "release-profile",
+        "detail": "release profile 'dev-admin' has no full business acceptance admission",
+        "name": "business_journeys:admission",
+        "ok": false
+      }
+    ],
+    "expected_manifest_digest": "sha256:dc98c9e90eae3459493519685e9be1d3ac30372c711a40d58c90060ae2c25013",
+    "journeys": {
+      "expansion": "NOT_ADMITTED",
+      "franchise": "NOT_ADMITTED",
+      "governance": "NOT_ADMITTED",
+      "growth": "NOT_ADMITTED",
+      "intake": "NOT_ADMITTED",
+      "operations": "NOT_ADMITTED"
+    },
+    "receipt_digest": "",
+    "receipt_note": "no business journey receipt configured",
+    "receipt_provided": false,
+    "release_profile": "dev-admin",
+    "runtime_gate_ok": true,
+    "status": "NOT_ADMITTED"
+  },
+  "generated_at": "2026-11-13T19:14:36Z",
+  "inputs": {
+    "api_transport_credential_configured": true,
+    "api_url_configured": true,
+    "bootstrap_admin_account_configured": true,
+    "dev_admin_account_configured": true,
+    "dev_admin_initial_password_configured": true,
+    "enrichment_provider_ids": [],
+    "external_provider_mode": "disabled",
+    "operator_credential_configured": true,
+    "release_profile": "dev-admin",
+    "required_provider_ids": [],
+    "secret_values_redacted": true,
+    "snapshot_provider_ids": [],
+    "web_url_configured": true,
+    "worker_probe_provider_id": "listing.partner_feed"
+  },
+  "ok": true,
+  "release_profile": {
+    "full_product_acceptance_claimed": false,
+    "model_readiness_claimed": false,
+    "name": "dev-admin"
+  },
+  "schema_version": 1,
+  "worker": {
+    "expected_terminal_status": "succeeded",
+    "idempotency_key_configured": true,
+    "ingestion_probe_provider_ids": [],
+    "job_id": "e912a15d-a042-4da5-b4c0-fb52419153a2",
+    "job_type": "external-fetch",
+    "terminal_status": "succeeded"
+  }
+}

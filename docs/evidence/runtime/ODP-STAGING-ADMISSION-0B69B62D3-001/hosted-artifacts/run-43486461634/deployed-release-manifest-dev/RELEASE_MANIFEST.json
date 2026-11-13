@@ -1,0 +1,208 @@
+{
+  "candidate_sha": "0b69b62d32e0ad71f1a70b20eb546f4b5c6725b1",
+  "components": {
+    "api": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:c838e5a8978284d77803c3e996a64fb6eccfd87ae42bc5b8a4a9aeb67bc2435e"
+    },
+    "migration": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:865fb026a088df0a53f3d99a3e26f65a0eb7de9dbba39cf58eb60e3b818d2470",
+      "shares_image_with": "worker"
+    },
+    "scheduler": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:2521dfb94e129f9533790c1578e45e902d49c773077e5f025fa3f10758e3ae43"
+    },
+    "web": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:8952aa705f0773899d19c5706a6d2b982dd47fed324a102f335240e98b50a77e"
+    },
+    "worker": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:865fb026a088df0a53f3d99a3e26f65a0eb7de9dbba39cf58eb60e3b818d2470"
+    }
+  },
+  "created_at": "2026-11-13T18:30:03+00:00",
+  "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@0b69b62d32e0ad71f1a70b20eb546f4b5c6725b1",
+  "data_contract_digest": "sha256:dd83d46fc44f53d637c298597c8703881ac7327b67d93259920068fd9a93dddd",
+  "external_sources_expected_enabled": [],
+  "manifest_digest": "sha256:dc98c9e90eae3459493519685e9be1d3ac30372c711a40d58c90060ae2c25013",
+  "migration_digest": "sha256:ae7fff914483b923dd0425e4755cf3f51b611a56ae4982dc3e19e082561f7299",
+  "release_id": "odp-0b69b62d32e0",
+  "release_profile": {
+    "model_readiness": "not_claimed",
+    "name": "dev-admin",
+    "target_environment": "dev"
+  },
+  "release_status": "ready",
+  "rollback_release": {
+    "candidate_sha": "502898d3fc636cb32fa03bcbd9290b22203c68e1",
+    "components": {
+      "api": {
+        "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:5d5f99f8a166a1b4c576ac6fcaa360915017278a5f645fac7b3ecfb3b9b7f578"
+      },
+      "migration": {
+        "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:9a40eb2a95a59a6d54ec8a3af7c3b33457572a899d48d8b72371a1586b3f6d4b",
+        "shares_image_with": "worker"
+      },
+      "scheduler": {
+        "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:57cb7448df95311f23af28ffbdfa3bfaf78af4ec3a69ce78f96ebe69797aca59"
+      },
+      "web": {
+        "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:900451634e1826e0a735c8c6ccdf15c7e5fa73436a5b8350ab62d2589061040e"
+      },
+      "worker": {
+        "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:9a40eb2a95a59a6d54ec8a3af7c3b33457572a899d48d8b72371a1586b3f6d4b"
+      }
+    },
+    "manifest_digest": "sha256:97b178b4c78fd6342b1c074b4a8dc92121b73626e38b1651ad36cef4ed368a0b",
+    "release_id": "odp-502898d3fc63",
+    "sources_off_attestation": {
+      "binding_digest": "sha256:0f67c2b4bc629fb4bc10cdf2b267387342e31e3ae0c2af4a2e2ac153bb33c6db"
+    }
+  },
+  "sbom_refs": [
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:2e3db35f08c05ed998a72b192091d8ce3f744a3593690abab38df40b3c572d79",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:84b8610a8ee5ae1678ecc4121855ab477c82a5e37ec7d1be4a82e84b8ac3d6e6",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:2567966dbecd66d9938f20f7e0ba87f6dc32abf5e46dc374d5a5243061a01ae7",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:31494c0a9532bd9473c895e9f46f962fbe4920c6b6174d222e442f8712d6506b"
+  ],
+  "schema_version": 2,
+  "signature_refs": [
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:91442ae2d7f740e76877f1d1b14e16ebba142b17cf93a01a9fb43e1f8e9850a3",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:08eb50f6b57fae91973c1758bd6ed3f57f320a47b11869980fbcd68ab4dc4b9f",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:8bdf084cb6cbaf80286a75f0abbf7d20b631e1f75d54663c06ce825ad5d8e292",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:6176b6d29e12fee1aa32e33f3881e02d2542962ae976a100174128b7db3a2e56"
+  ],
+  "source_policy_digest": "sha256:f3cd9557c11f63721300914c31fbceb97250cc76e0c5dcfbe89c9249c93dfcbf",
+  "sources_off_attestation": {
+    "all_sources_disabled": true,
+    "binding_digest": "sha256:6d6cb5b1dc0e2cba583bb4b4cf29455bd6a02bd0839f3bd2846d132fa77c5a69",
+    "egress_evidence": {
+      "cloud_run_egress": "ALL_TRAFFIC",
+      "contract_digest": "sha256:49c294dbc190e82c513ac1ec09dc3192375fee8edaadc8d2818210023ebda699",
+      "deploy_entrypoint_vpc_binding": "verified",
+      "firewall_egress": "default-deny",
+      "kind": "runtime-release-egress-contract",
+      "proof_source": [
+        ".github/workflows/deploy-dev.yml",
+        "product_ops/deployment/deploy_cloud_run_waji.sh",
+        "infra/terraform/cloud_run.tf",
+        "infra/terraform/network.tf",
+        "product_ops/deployment/staging_lifecycle.py",
+        "product_ops/deployment/cloud_run_job_entrypoint.py",
+        "infra/terraform/modules/runtime_foundation/main.tf",
+        "infra/terraform/modules/runtime_foundation/variables.tf",
+        "infra/terraform/modules/runtime_foundation/network.tf",
+        "infra/terraform/modules/runtime_foundation/outputs.tf",
+        "infra/terraform/modules/runtime_foundation/kms.tf",
+        "infra/terraform/modules/runtime_foundation/database.tf"
+      ],
+      "provider_credentials_runtime": "absent",
+      "resolved_cloud_run_egress": "ALL_TRAFFIC",
+      "runtime_probe": "public_egress_denied",
+      "runtime_probe_receipt": ".odp_data/deployment/public-egress-probe.json",
+      "runtime_probe_receipt_content_digest": "sha256:c41821c2e44c23c08142ed4d18de093112607fa07dff09660902df8379d29f85",
+      "runtime_probe_wiring": "verified",
+      "workflow_vpc_binding": "verified"
+    },
+    "egress_posture": "default-deny",
+    "provider_mode": "disabled",
+    "sources_inventory": [
+      {
+        "credentials_present": false,
+        "public_egress": "denied",
+        "source_id": "admin_boundary_snapshot",
+        "status": "disabled"
+      },
+      {
+        "credentials_present": false,
+        "public_egress": "denied",
+        "source_id": "competitor_store_snapshot",
+        "status": "disabled"
+      },
+      {
+        "credentials_present": false,
+        "public_egress": "denied",
+        "source_id": "customer_service_case_event",
+        "status": "disabled"
+      },
+      {
+        "credentials_present": false,
+        "public_egress": "denied",
+        "source_id": "demographics_snapshot",
+        "status": "disabled"
+      },
+      {
+        "credentials_present": false,
+        "public_egress": "denied",
+        "source_id": "geocode_result_snapshot",
+        "status": "disabled"
+      },
+      {
+        "credentials_present": false,
+        "public_egress": "denied",
+        "source_id": "listing_raw_snapshot",
+        "status": "disabled"
+      },
+      {
+        "credentials_present": false,
+        "public_egress": "denied",
+        "source_id": "machine_cycle_event",
+        "status": "disabled"
+      },
+      {
+        "credentials_present": false,
+        "public_egress": "denied",
+        "source_id": "machine_master_snapshot",
+        "status": "disabled"
+      },
+      {
+        "credentials_present": false,
+        "public_egress": "denied",
+        "source_id": "machine_status_event",
+        "status": "disabled"
+      },
+      {
+        "credentials_present": false,
+        "public_egress": "denied",
+        "source_id": "maintenance_work_order_event",
+        "status": "disabled"
+      },
+      {
+        "credentials_present": false,
+        "public_egress": "denied",
+        "source_id": "poi_snapshot",
+        "status": "disabled"
+      },
+      {
+        "credentials_present": false,
+        "public_egress": "denied",
+        "source_id": "price_schedule_snapshot",
+        "status": "disabled"
+      },
+      {
+        "credentials_present": false,
+        "public_egress": "denied",
+        "source_id": "store_master_snapshot",
+        "status": "disabled"
+      },
+      {
+        "credentials_present": false,
+        "public_egress": "denied",
+        "source_id": "store_opening_authority_snapshot",
+        "status": "disabled"
+      },
+      {
+        "credentials_present": false,
+        "public_egress": "denied",
+        "source_id": "transaction_event",
+        "status": "disabled"
+      },
+      {
+        "credentials_present": false,
+        "public_egress": "denied",
+        "source_id": "weather_daily_snapshot",
+        "status": "disabled"
+      }
+    ],
+    "total_sources_audited": 16,
+    "zero_credentials_present": true
+  }
+}
