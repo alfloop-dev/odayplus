@@ -725,7 +725,11 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       await expect(page.getByTestId("intake-url-input")).toBeFocused();
       await page.keyboard.press("Escape");
       await expect(page.getByTestId("intake-add-dialog")).toBeHidden();
-      await expect(page.getByTestId("canonical-intake-case-picker")).toBeVisible();
+      // The existing shared Escape dismissal closes both stacked shells and
+      // returns to the original Inbox; it does not leave a hidden add intent.
+      await expect(page.getByTestId("intake-inbox-view")).toBeVisible();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      expect(new URL(page.url()).searchParams.get("dialog")).toBeNull();
       expect(writes).toEqual([]);
     } finally { page.off("request", observe); }
   });
