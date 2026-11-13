@@ -2140,7 +2140,7 @@ def test_runner_uses_actual_legacy_http_decision_version_and_role(fault: str, ex
     class RealLegacyWeb(BusinessWeb):
         def request(self, method: str, path: str, **kwargs: Any) -> Resp:
             base = "/api/v1/operator/network-listings/intake/"
-            if path.startswith(base):
+            if path.startswith(base) and path != base + "submit":
                 headers = dict(kwargs["headers"])
                 actor = headers["cookie"].split("odp_session=sess-", 1)[1]
                 self.calls.append((method, path, actor))
@@ -2159,6 +2159,8 @@ def test_runner_uses_actual_legacy_http_decision_version_and_role(fault: str, ex
                 if method == "POST" and actor == ACTORS["intake"]["primary"]:
                     observed.append((headers.get("if-match"), result.status_code))
                 return Resp(result.status_code, result.json())
+            if method == "POST" and path == base + "submit":
+                assert "if-match" not in kwargs["headers"]
             return super().request(method, path, **kwargs)
 
     scope = scope_document()

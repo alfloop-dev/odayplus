@@ -59,6 +59,30 @@ field masking precede Inbox filters and counts. A transfer directory response
 is only a candidate list; command execution still revalidates actor, target,
 policy, version and scope.
 
+## Historical decision caller and URL cutover preparation
+
+The existing six-journey business runner retains authorized historical Operator
+Intake GET and decision routes. Its final-decision actor must actually hold
+`site_reviewer`; `expansion-staff`/`expansion_user` alone is proposal authority,
+not a final-decision grant. The runner uses the manager persona only after
+verifying the scoped account's real role. It does not grant that role.
+
+The decision sends `If-Match` from the positive integer `version` returned by
+that exact legacy Intake GET. Missing or malformed versions stop the runner
+before business writes. Native Intake, Listing, Assignment and SLA versions
+are not substitutes. A stale decision is refused rather than retried with a
+guessed or refreshed token. The schema2 receipt retains the observed version
+and the independently read post-decision version. URL creation has no such
+version precondition; it must not inherit this decision header.
+
+This is preparation for `ODP-URL-CREATE-CANONICAL-CUTOVER-261111`, not the URL
+writer cutover itself. Both existing legacy fresh endpoints and the old UI
+producer remain enabled at this intermediate checkpoint. Their retirement,
+historical receipt/fixture conversion, native-only UI navigation and complete
+owned PostgreSQL/browser regression are still pending. Offline HTTP/service
+controls do not execute or authorize the non-dispatchable live business
+acceptance, source admission, deployment, Human UAT or GO.
+
 ## Verification evidence required
 
 | Proof | Required observation |
