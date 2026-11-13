@@ -6,7 +6,7 @@ model production execution. Original receipt/disclosure policies remain real.
 """
 from contextlib import contextmanager
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI, Request
@@ -22,6 +22,7 @@ from shared.auth import Action
 from shared.governance.decision_policy import InMemoryDecisionPolicyRepository
 from shared.governance.netplan_disclosure import default_netplan_disclosure_policy
 from shared.infrastructure.persistence.netplan_outcomes import (
+    DUE_JOB_TYPE,
     LABEL_COLLECTION,
     RECEIPT_COLLECTION,
     TASK_COLLECTION,
@@ -154,6 +155,86 @@ def test_signed_native_approval_creates_three_pending_then_actual_execution_anch
         assert event.actor == "planner" and event.metadata["execution_id"] == actual.execution_id
 
 
+def execute(case, value, *, key="actual-execution", actor="planner", **changes):
+    return case.client.post(BASE + "/execute", headers={**_headers(actor), "Idempotency-Key": key},
+        json={"scenarioId": value["scenarioId"], "expectedProblemHash": value["problemHash"],
+              "reason": "Record delayed actual native execution", **changes})
+
+
+def test_delayed_actual_execution_date_anchors_original_three_tasks_status_and_queue(tmp_path, monkeypatch):
+    with signed_pending(tmp_path / "actual-date.sqlite", monkeypatch) as (case, receipt):
+        value = current(case)
+        approved = decide(case, value, receipt)
+        assert approved.status_code == 200, approved.text
+        pending = approved.json()["builder"]["outcomeTracking"]["tasks"]
+        approval = case.repository.list_approvals(case.scenario_id)[0]
+        # An explicit +08:00 instant distinct from the registration clock.
+        taipei = timezone(timedelta(hours=8))
+        actual = (approval.decided_at + timedelta(days=2)).astimezone(taipei).replace(microsecond=0)
+        registered_from = datetime.now(UTC)
+        response = execute(case, value, executedAt=actual.isoformat())
+        assert response.status_code == 200, response.text
+        record = case.repository.get_execution(case.scenario_id)
+        assert record.executed_at == actual and abs(record.executed_at - registered_from) > timedelta(days=1)
+        assert record.executed_by == "planner"
+        builder = response.json()["builder"]
+        assert builder["lifecycle"]["execution"] == record.to_dict()
+        assert builder["statusHistory"][-1]["to_status"] == "executed"
+        assert datetime.fromisoformat(builder["statusHistory"][-1]["occurred_at"]) == actual
+        tasks = builder["outcomeTracking"]["tasks"]
+        assert sorted(row["task_id"] for row in tasks) == sorted(row["task_id"] for row in pending)
+        assert all(row["executed_at"] == actual.isoformat() and row["status"] == "SCHEDULED"
+                   and row["due_at"] == (actual + timedelta(days=row["horizon_days"])).isoformat()
+                   and row["measured_value"] is None and not row["mature"] and not row["training_eligible"]
+                   for row in tasks)
+        jobs = case.bundle.engine.query("SELECT job_id, available_at FROM durable_jobs WHERE job_type = ?", (DUE_JOB_TYPE,))
+        assert {row["job_id"]: row["available_at"] for row in jobs} == {
+            row["collection_job_id"]: row["due_at"] for row in tasks}
+        documents = case.repository._store
+        assert len(documents.list_all(TASK_COLLECTION)) == 3
+        audit = case.bundle.audit_log.get_event(response.json()["audit"]["event_id"], tenant_id=TENANT)
+        assert audit.actor == "planner" and audit.metadata["executedAt"] == actual.isoformat()
+        after = _business(case)
+        # Same key and same instant (another explicit offset) replays the receipt.
+        replay = execute(case, value, executedAt=actual.astimezone(UTC).isoformat().replace("+00:00", "Z"))
+        assert replay.status_code == 200 and replay.json()["idempotentReplay"] is True
+        assert replay.json()["audit"] == response.json()["audit"] and _business(case) == after
+        changed = execute(case, value, executedAt=(actual + timedelta(days=1)).isoformat())
+        assert changed.status_code == 409 and _business(case) == after
+        omitted = execute(case, value)
+        assert omitted.status_code == 409 and _business(case) == after
+        assert case.repository.get_execution(case.scenario_id) == record
+
+
+@pytest.mark.parametrize("executed_at", [None, "", "  ", "not-a-date", "2026-02-30T09:00:00+08:00",
+                                         "9999-12-31T00:00:00Z", 1_793_000_000, ["2026-10-01T00:00:00Z"]])
+def test_malformed_actual_execution_date_never_writes_or_executes(tmp_path, monkeypatch, executed_at):
+    with signed_pending(tmp_path / "malformed-date.sqlite", monkeypatch) as (case, receipt):
+        value = current(case)
+        assert decide(case, value, receipt).status_code == 200
+        before = _business(case)
+        response = execute(case, value, executedAt=executed_at)
+        assert response.status_code == 422 and _business(case) == before
+        assert case.repository.get_execution(case.scenario_id) is None
+        # The refused body consumed no receipt; the same key still executes once.
+        valid = execute(case, value, executedAt="2026-11-01T09:00:00+08:00")
+        assert valid.status_code == 200, valid.text
+        assert case.repository.get_execution(case.scenario_id).executed_at == datetime(2026, 11, 1, 1, tzinfo=UTC)
+
+
+def test_actual_execution_date_still_rechecks_role_tenant_and_problem_hash(tmp_path, monkeypatch):
+    with signed_pending(tmp_path / "date-guards.sqlite", monkeypatch) as (case, receipt):
+        value = current(case)
+        assert decide(case, value, receipt).status_code == 200
+        before = _business(case)
+        date = "2026-11-01T09:00:00+08:00"
+        assert execute(case, value, actor="viewer", executedAt=date).status_code == 403
+        assert execute(case, value, actor="foreign", executedAt=date).status_code in {403, 404}
+        assert execute(case, {**value, "problemHash": "0" * 64}, executedAt=date).status_code == 409
+        assert execute(case, value, executedAt=date, executedBy="forged").status_code == 422
+        assert _business(case) == before and case.repository.get_execution(case.scenario_id) is None
+
+
 @pytest.mark.parametrize("extra", [{"actor_id": "forged"}, {"actor": "planner"}, {"decided_at": "2000-01-01"}])
 def test_body_actor_and_clock_never_authorize_scoped_native_approval(tmp_path, monkeypatch, extra):
     with signed_pending(tmp_path / "body.sqlite", monkeypatch) as (case, receipt):
@@ -210,3 +291,25 @@ def test_tracking_audit_failure_rolls_back_real_native_approval_and_same_SQL_rec
         assert documents.list_all(TASK_COLLECTION) == []
         assert documents.list_all(LABEL_COLLECTION) == []
         assert documents.list_all(RECEIPT_COLLECTION) == []
+
+
+def test_dated_execution_rolls_back_execution_tasks_and_jobs_when_builder_audit_fails(tmp_path, monkeypatch):
+    with signed_pending(tmp_path / "date-rollback.sqlite", monkeypatch) as (case, receipt):
+        value = current(case)
+        assert decide(case, value, receipt).status_code == 200
+        pending = sorted(row["task_id"] for row in current(case)["outcomeTracking"]["tasks"])
+        before = _business(case)
+        original = case.bundle.audit_log.record
+        def failing(event):
+            if event.event_type == "operator.netplan.builder.execute":
+                raise RuntimeError("declared builder audit failure")
+            return original(event)
+        monkeypatch.setattr(case.bundle.audit_log, "record", failing)
+        response = execute(case, value, executedAt="2026-11-01T09:00:00+08:00")
+        assert response.status_code == 503 and _business(case) == before
+        assert case.repository.get_execution(case.scenario_id) is None
+        monkeypatch.setattr(case.bundle.audit_log, "record", original)
+        tasks = current(case)["outcomeTracking"]["tasks"]
+        assert sorted(row["task_id"] for row in tasks) == pending
+        assert all(row["status"] == "PENDING_EXECUTION" and row["due_at"] is None for row in tasks)
+        assert case.bundle.engine.query("SELECT job_id FROM durable_jobs WHERE job_type = ?", (DUE_JOB_TYPE,)) == []
