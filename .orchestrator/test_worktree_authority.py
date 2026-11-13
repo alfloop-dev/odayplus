@@ -1747,6 +1747,138 @@ class ProtectedContextSeedingTests(unittest.TestCase):
             generated.assert_not_called()
             self.assertFalse(os.path.lexists(workspace / requested))
 
+    def test_directory_child_metadata_uses_the_filesystem_spelling_that_is_copied(self) -> None:
+        """A literal-backslash child name is judged as the entry rglob yields and the copy opens.
+
+        Generic domain ``guarded/zone`` and empty files only; real hash/copy run
+        behind interceptors that refuse the denied body before it is opened.
+        """
+
+        class DeniedSink(Exception):
+            pass
+
+        def run_case(
+            name: str,
+            *,
+            source_child: str | None = None,
+            source_alias: bool = False,
+            workspace_child: str | None = None,
+            workspace_dir_alias: str | None = None,
+            requested: str = "docs/context",
+            phase: str = "Unassigned",
+        ) -> tuple[object, list[tuple[str, str]], Path, Path]:
+            holder = tempfile.TemporaryDirectory(prefix=f"context-spelling-{name}-")
+            self.addCleanup(holder.cleanup)
+            root = Path(holder.name)
+            status_root = root / "status"
+            context = status_root / "docs" / "context"
+            context.mkdir(parents=True)
+            (status_root / "guarded" / "zone").mkdir(parents=True)
+            (status_root / "guarded" / "zone" / "empty.md").touch()
+            (context / "manifest.json").write_text("{}\n", encoding="utf-8")
+            if source_child is not None:
+                if source_alias:
+                    (context / source_child).symlink_to("../../guarded/zone/empty.md")
+                else:
+                    (context / source_child).write_text("ordinary\n", encoding="utf-8")
+            task = {"id": "SEED-SPELL-5", "phase": phase, "source_docs": ["docs/context"]}
+            (status_root / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+            workspace = root / "workspace"
+            workspace.mkdir()
+            subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
+            if workspace_child is not None or workspace_dir_alias is not None:
+                (workspace / "guarded" / "zone").mkdir(parents=True)
+                (workspace / "guarded" / "zone" / "empty.md").touch()
+                (workspace / "docs" / "other").mkdir(parents=True)
+                (workspace / "docs" / "context").mkdir()
+                if workspace_child is not None:
+                    (workspace / "docs" / "context" / workspace_child).symlink_to("../../guarded/zone/empty.md")
+                if workspace_dir_alias is not None:
+                    (workspace / "docs" / "context" / workspace_dir_alias).symlink_to(
+                        "../other", target_is_directory=True
+                    )
+            denied = {
+                (status_root / "guarded" / "zone" / "empty.md").resolve(),
+                (workspace / "guarded" / "zone" / "empty.md").resolve(),
+            }
+            sinks: list[tuple[str, str]] = []
+            real_copy = supervisor._atomic_copy_context_file
+            real_hash = supervisor._file_or_dir_hash
+
+            def copy(source: Path, destination: Path):
+                if Path(source).resolve() in denied or Path(destination).resolve() in denied:
+                    sinks.append(("copy", str(source)))
+                    raise DeniedSink(str(source))
+                return real_copy(source, destination)
+
+            def hashed(path: Path):
+                target = Path(path)
+                walked = [target, *target.rglob("*")] if target.is_dir() else [target]
+                if any(item.resolve() in denied for item in walked):
+                    sinks.append(("hash", str(path)))
+                    raise DeniedSink(str(path))
+                return real_hash(path)
+
+            request = supervisor.DeliveryRequest(
+                agent_id="claude",
+                provider="claude",
+                delivery_mode="claude",
+                message="wake",
+                task_id=task["id"],
+                context_files=[requested],
+                metadata={"protected_paths": []},
+            )
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+            with (
+                mock.patch.object(worktree_cleanliness, "PROTECTED_BODY_PREFIXES", ("guarded/zone",)),
+                mock.patch.object(supervisor, "_atomic_copy_context_file", side_effect=copy),
+                mock.patch.object(supervisor, "_file_or_dir_hash", side_effect=hashed),
+            ):
+                try:
+                    outcome: object = supervisor.materialize_worker_context_files(config, request, workspace)
+                except (ValueError, DeniedSink) as error:
+                    outcome = error
+            return outcome, sinks, status_root, workspace
+
+        # Source child spelled with a literal backslash, aliasing the domain.
+        for child in ("alias\\leaf.md", "alias.md"):
+            with self.subTest(source_alias=child):
+                outcome, sinks, _, workspace = run_case("source", source_child=child, source_alias=True)
+                self.assertIsInstance(outcome, ValueError)
+                self.assertIn("symlink alias into the protected body domain", str(outcome))
+                self.assertEqual(sinks, [])
+                self.assertFalse(os.path.lexists(workspace / "docs"))
+
+        # Existing destination child spelled with a literal backslash, aliasing
+        # the domain: refused before the destination directory is hashed.
+        outcome, sinks, _, _ = run_case("destination", source_child="plain.md", workspace_child="alias\\leaf.md")
+        self.assertIsInstance(outcome, ValueError)
+        self.assertIn("symlink alias into the protected body domain", str(outcome))
+        self.assertEqual(sinks, [])
+
+        # Legitimate control: a logical Windows-style request still materializes
+        # an ordinary directory child, also on the strict (mutating) path.
+        for phase in ("Unassigned", "Build"):
+            with self.subTest(phase=phase):
+                outcome, sinks, _, workspace = run_case(
+                    "positive", source_child="plain.md", requested="docs\\context", phase=phase
+                )
+                self.assertEqual(outcome, ["docs/context"])
+                self.assertEqual(sinks, [])
+                self.assertEqual(
+                    (workspace / "docs" / "context" / "plain.md").read_text(encoding="utf-8"), "ordinary\n"
+                )
+
+        # The projected (slash-normalized) destination through an existing
+        # workspace directory alias stays rejected by the destination validator.
+        outcome, sinks, _, workspace = run_case(
+            "projected", source_child="alias\\leaf.md", workspace_dir_alias="alias", phase="Build"
+        )
+        self.assertIsInstance(outcome, ValueError)
+        self.assertIn("is a symlink", str(outcome))
+        self.assertEqual(sinks, [])
+        self.assertFalse(os.path.lexists(workspace / "docs" / "other" / "leaf.md"))
+
 
 class WorktreeAuthorityShapeTests(unittest.TestCase):
     def test_clone_fallback_and_reason_allowlist_are_absent(self) -> None:

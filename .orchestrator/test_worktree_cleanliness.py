@@ -611,6 +611,22 @@ class ProtectedBodyDomainTests(SyntheticBodyDomain, unittest.TestCase):
         # The task-specific rule keeps refusing an alias of a protected ancestor.
         self.assertIn("alias of protected path", wc.context_path_protection_error(status, "docs/up", GUARD))
 
+    def test_context_metadata_names_the_literal_filesystem_entry(self) -> None:
+        # A POSIX name may contain a literal backslash; a directory listing
+        # yields it and the copy opens it, so its metadata is what is judged.
+        status = self.root / "status"
+        (status / "docs").mkdir(parents=True)
+        (status / "guarded" / "zone").mkdir(parents=True)
+        (status / "docs" / "alias\\leaf.md").symlink_to("../guarded/zone/empty.md")
+        (status / "docs" / "note\\plain.md").touch()
+        self.assertIn(
+            "symlink alias into the protected body domain",
+            wc.context_path_protection_error(status, "docs/alias\\leaf.md", ()),
+        )
+        self.assertIsNone(wc.context_path_protection_error(status, "docs/note\\plain.md", ()))
+        # The logical name keeps its slash-normalized domain classification.
+        self.assertIn("protected body domain", wc.context_path_protection_error(status, "docs\\guarded\\zone\\x", ()))
+
 
 WORKFLOWS = THIS_DIR.parent / ".github" / "workflows"
 

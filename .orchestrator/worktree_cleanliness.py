@@ -576,7 +576,10 @@ def context_path_protection_error(
     except (OSError, RuntimeError):
         return f"context root {base} is unreadable"
     current = base
-    parts = str(relative_path).replace("\\", "/").strip("/").split("/")
+    # The domain/task checks above judge the logical (slash-normalized) name;
+    # metadata is read for the exact filesystem spelling the caller will hash
+    # or copy. A literal backslash is part of a POSIX entry name, not a separator.
+    parts = str(relative_path).strip("/").split("/")
     for index, part in enumerate(parts):
         current = current / part
         try:
