@@ -31,17 +31,41 @@ COMMENT ON TABLE model_ready.view_contracts IS
     'Fail-closed registry for versioned model-ready relations and outcome readiness.';
 
 CREATE OR REPLACE VIEW model_ready.forecast_training_view AS
-WITH clean_order_runs AS (
+WITH RECURSIVE clean_order_runs AS (
     -- One reconciliation rule for EOF candidates, bounded predecessors and
     -- the historical bad-run veto below. No per-chunk EOF requirement.
     SELECT ingestion.*
     FROM data_plane.ingestion_runs AS ingestion
-    WHERE ingestion.source_kind = 'orders'
+    WHERE ingestion.source_database = 'fongniao_prod'
+      AND ingestion.source_kind = 'orders'
       AND ingestion.status = 'SUCCEEDED'
       AND ingestion.reconciled
       AND ingestion.quarantined_count = 0
       AND ingestion.processed_count = ingestion.valid_loaded
       AND ingestion.finished_at IS NOT NULL
+),
+reread AS (
+    -- The same cursor-linked suffix proves both bounded-chunk settlement and
+    -- empty-failure recovery. Keep this proof shared, including its source,
+    -- exact partition and non-overlapping run intervals.
+    SELECT completion.run_id AS completion_run_id, completion.run_id,
+           completion.source_database, completion.partition_key,
+           completion.resumed_from, completion.started_at
+    FROM clean_order_runs AS completion
+    WHERE completion.partition_complete
+      AND completion.started_at <= completion.finished_at
+    UNION
+    SELECT successor.completion_run_id, predecessor.run_id,
+           predecessor.source_database, predecessor.partition_key,
+           predecessor.resumed_from, predecessor.started_at
+    FROM clean_order_runs AS predecessor
+    INNER JOIN reread AS successor
+        ON predecessor.source_database = successor.source_database
+       AND predecessor.partition_key = successor.partition_key
+       AND predecessor.final_cursor = successor.resumed_from
+       AND predecessor.finished_at <= successor.started_at
+       AND predecessor.started_at < successor.started_at
+    WHERE predecessor.started_at <= predecessor.finished_at
 ),
 authoritative_order_partitions AS (
     -- EOF proof for an exact orders source partition, not an event date.
@@ -77,14 +101,17 @@ authoritative_order_partitions AS (
     -- Backfill keys are compared as ISO date text (no cast) over the inclusive
     -- start/end dates that _windows derives from the window bounds.
     SELECT
+        completion.source_database,
         completion.partition_key,
         completion.finished_at
     FROM clean_order_runs AS completion
     WHERE completion.partition_complete
+      AND completion.started_at <= completion.finished_at
       AND NOT EXISTS (
           SELECT 1
           FROM data_plane.ingestion_runs AS chunk
-          WHERE chunk.source_kind = completion.source_kind
+          WHERE chunk.source_database = completion.source_database
+            AND chunk.source_kind = completion.source_kind
             AND (
                 chunk.partition_key = completion.partition_key
                 OR (
@@ -103,7 +130,20 @@ authoritative_order_partitions AS (
                 )
                 OR (
                     NOT chunk.partition_complete
-                    AND chunk.finished_at >= completion.finished_at
+                    AND (
+                        chunk.finished_at >= completion.finished_at
+                        OR NOT EXISTS (
+                            SELECT 1 FROM reread
+                            WHERE reread.completion_run_id = completion.run_id
+                              AND (
+                                  reread.run_id = chunk.run_id
+                                  OR (
+                                      reread.resumed_from IS NULL
+                                      AND chunk.finished_at < reread.started_at
+                                  )
+                              )
+                        )
+                    )
                 )
             )
             AND NOT coalesce(
@@ -112,22 +152,9 @@ authoritative_order_partitions AS (
                 AND chunk.started_at <= chunk.finished_at
                 AND completion.started_at <= completion.finished_at
                 AND EXISTS (
-                    WITH RECURSIVE reread AS (
-                        SELECT completion.run_id, completion.resumed_from,
-                               completion.started_at
-                        UNION
-                        SELECT predecessor.run_id, predecessor.resumed_from,
-                               predecessor.started_at
-                        FROM clean_order_runs AS predecessor
-                        INNER JOIN reread AS successor
-                            ON predecessor.final_cursor = successor.resumed_from
-                           AND predecessor.finished_at <= successor.started_at
-                           AND predecessor.started_at < successor.started_at
-                        WHERE predecessor.partition_key = completion.partition_key
-                          AND predecessor.started_at <= predecessor.finished_at
-                    )
                     SELECT 1 FROM reread
-                    WHERE (
+                    WHERE reread.completion_run_id = completion.run_id
+                      AND (
                         reread.resumed_from IS NULL
                         OR reread.resumed_from = chunk.resumed_from
                     )
@@ -149,6 +176,25 @@ authoritative_order_partitions AS (
                 FALSE
             )
       )
+),
+orders_scope AS (
+    -- Mongo orders windows on createdAt OR updatedAt in global _id order.
+    -- The unprojected bounded tail has no persisted tenant/store/event-day
+    -- scope. Absence of target lineage cannot prove it unrelated. Fail closed
+    -- across this original source authority until the SAME settlement proof
+    -- qualifies every partition; another day/source EOF cannot settle it.
+    -- This is a veto, not an all-history clock: once genuinely unrelated work
+    -- is accounted for, only contributing record/partition clocks flow below.
+    SELECT NOT EXISTS (
+        SELECT 1 FROM data_plane.ingestion_runs AS ingestion
+        WHERE ingestion.source_database = 'fongniao_prod'
+          AND ingestion.source_kind = 'orders'
+          AND NOT EXISTS (
+              SELECT 1 FROM authoritative_order_partitions AS proof
+              WHERE proof.source_database = ingestion.source_database
+                AND proof.partition_key = ingestion.partition_key
+          )
+    ) AS settled
 ),
 transaction_source AS (
     SELECT
@@ -230,6 +276,7 @@ transaction_source AS (
             SELECT min(proof.finished_at) AS finished_at
             FROM authoritative_order_partitions AS proof
             WHERE ingestion.source_kind = 'orders'
+              AND proof.source_database = ingestion.source_database
               AND proof.partition_key = ingestion.partition_key
               AND proof.finished_at >= ingestion.finished_at
         ) AS partition_proof ON TRUE
@@ -415,7 +462,7 @@ SELECT
     rolling_mean_28,
     lineage_window_snapshot_ids AS source_snapshot_ids,
     CASE
-        WHEN lineage_complete AND source_run_complete THEN 1.0
+        WHEN lineage_complete AND source_run_complete AND orders_scope.settled THEN 1.0
         ELSE 0.0
     END::double precision AS data_quality_score,
     1.0::double precision AS confidence,
@@ -425,6 +472,7 @@ SELECT
         AND cardinality(lineage_window_snapshot_ids) > 0
         AND prior_day_count_28 = 28
         AND prior_complete_day_count_28 = 28
+        AND orders_scope.settled
         AND revenue_lag_1 IS NOT NULL
         AND revenue_lag_7 IS NOT NULL
         AND rolling_mean_7 IS NOT NULL
@@ -445,9 +493,13 @@ SELECT
         WHEN revenue_lag_1 IS NULL OR revenue_lag_7 IS NULL
             THEN 'DAILY_HISTORY_GAP'
         WHEN label_maturity_time > CURRENT_TIMESTAMP THEN 'LABEL_NOT_MATURE'
+        -- Keep known target/prior defects precise before reporting unknown
+        -- source scope; do not relabel a known bad prior input as target failure.
+        WHEN NOT orders_scope.settled THEN 'SOURCE_RUN_NOT_COMPLETE'
         ELSE NULL
     END AS exclusion_reason
-FROM point_in_time;
+FROM point_in_time
+CROSS JOIN orders_scope;
 
 COMMENT ON VIEW model_ready.forecast_training_view IS
     'v2: tenant/store daily revenue labels from core.transactions; all features use only prior dates.';

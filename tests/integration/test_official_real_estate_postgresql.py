@@ -921,6 +921,7 @@ def _create_model_view_prerequisites(database: Any) -> None:
             );
             CREATE TABLE data_plane.ingestion_runs (
                 run_id UUID PRIMARY KEY,
+                source_database TEXT NOT NULL DEFAULT 'fongniao_prod',
                 source_kind TEXT NOT NULL,
                 partition_key TEXT NOT NULL,
                 status TEXT NOT NULL,

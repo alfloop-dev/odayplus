@@ -65,6 +65,7 @@ REQUIRED_PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
     ),
     "data_plane.ingestion_runs": (
         "run_id",
+        "source_database",
         "source_kind",
         "partition_key",
         "status",

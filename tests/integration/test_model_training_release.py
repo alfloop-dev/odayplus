@@ -515,7 +515,9 @@ def test_model_ready_sql_is_real_causal_and_activates_supported_outcomes() -> No
     assert "'prior_source_not_complete'" in lowered
     assert "split_part(completion.partition_key, '__'" not in lowered
     assert "chunk.finished_at <= completion.finished_at" not in lowered
-    assert "and chunk.finished_at >= completion.finished_at" in lowered
+    assert "chunk.finished_at >= completion.finished_at" in lowered
+    assert "and orders_scope.settled" in lowered
+    assert "proof.source_database = ingestion.source_database" in lowered
     assert "from external_data.real_estate_transactions as outcome" in lowered
     assert "external_data.real_estate_ingestion_runs as ingestion" in lowered
     assert "government-open-data-license-v1" in lowered
@@ -613,6 +615,7 @@ def test_model_ready_view_preflight_requires_opening_and_geo_columns() -> None:
 @pytest.mark.parametrize(
     ("relation", "column"),
     (
+        ("data_plane.ingestion_runs", "source_database"),
         ("data_plane.ingestion_runs", "started_at"),
         ("data_plane.ingestion_runs", "resumed_from"),
         ("data_plane.quarantined_records", "run_id"),

@@ -50,9 +50,12 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     assert "chunk.status = 'FAILED'" in body
     assert "AND chunk.partition_key = completion.partition_key" in body
     assert "AND completion.started_at <= completion.finished_at" in body
-    assert "WITH RECURSIVE reread AS" in body
+    assert "WITH RECURSIVE clean_order_runs AS" in body
+    assert body.count("reread AS (") == 1
+    assert "reread.completion_run_id = completion.run_id" in body
     assert "predecessor.final_cursor = successor.resumed_from" in body
-    assert "predecessor.partition_key = completion.partition_key" in body
+    assert "predecessor.partition_key = successor.partition_key" in body
+    assert "predecessor.source_database = successor.source_database" in body
     assert "predecessor.finished_at <= successor.started_at" in body
     assert "predecessor.started_at < successor.started_at" in body
     assert "predecessor.started_at <= predecessor.finished_at" in body
@@ -65,12 +68,20 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     # The orders source reads every store in one _id order, so a clean bounded
     # chunk of the day finishing at or after the proof leaves records of any
     # store unread and revokes the older EOF until a later run reaches EOF.
-    assert (
-        "OR (\n"
-        "                    NOT chunk.partition_complete\n"
-        "                    AND chunk.finished_at >= completion.finished_at\n"
-        "                )"
-    ) in body
+    assert "NOT chunk.partition_complete" in body
+    assert "chunk.finished_at >= completion.finished_at" in body
+    assert "reread.run_id = chunk.run_id" in body
+    assert "ingestion.source_database = 'fongniao_prod'" in body
+    assert "chunk.source_database = completion.source_database" in body
+    assert "proof.source_database = ingestion.source_database" in body
+    scope = body.split("orders_scope AS (", 1)[1].split("transaction_source AS (", 1)[0]
+    assert "FROM authoritative_order_partitions AS proof" in scope
+    assert "proof.partition_key = ingestion.partition_key" in scope
+    assert "tenant_id" not in scope.split("SELECT NOT EXISTS (", 1)[1]
+    assert "AND orders_scope.settled" in body
+    assert body.index("THEN 'PRIOR_SOURCE_NOT_COMPLETE'") < body.index(
+        "WHEN NOT orders_scope.settled THEN 'SOURCE_RUN_NOT_COMPLETE'"
+    )
     # Backfill windows reaching the day revoke its proof, compared as ISO date
     # text over the window's inclusive start/end dates.
     assert (

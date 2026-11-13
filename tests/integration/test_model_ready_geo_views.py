@@ -136,6 +136,7 @@ def _install_minimal_authoritative_schema(connection) -> None:
 
         CREATE TABLE data_plane.ingestion_runs (
             run_id UUID PRIMARY KEY,
+            source_database TEXT NOT NULL DEFAULT 'fongniao_prod',
             source_kind TEXT NOT NULL,
             partition_key TEXT NOT NULL,
             status TEXT NOT NULL,
@@ -1792,6 +1793,203 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
             assert late_row["feature_snapshot_time"] == prior_eof_at
 
         assert _forecast_rows(connection, tenant_id, store_id) == baseline
+
+
+@pytest.mark.parametrize("day", (FORECAST_TARGET_DAY, FORECAST_PRIOR_DAY))
+@pytest.mark.parametrize("other_tenant", ("forecast", "unread-other"))
+@pytest.mark.parametrize("tail", ("zero", "unrelated", "increase", "exit"))
+def test_postgresql_forecast_unread_update_scope_requires_exact_settlement(
+    intake_blank_db, day: date, other_tenant: str, tail: str,
+) -> None:
+    """Identical persisted U prefixes can precede either a D correction or an
+    unrelated tail. No target lineage can establish which: both must refuse.
+    Synthetic durable states only; execute the original installer and loader.
+    """
+    spec = MODEL_SPECS["forecastops"]
+    bounds = DataBounds(
+        _at(FORECAST_FIRST_DAY, 0), _at(FORECAST_TARGET_DAY + timedelta(days=1), 0), 10,
+    )
+    update_day = FORECAST_TARGET_DAY + timedelta(days=3)
+    start, partial_end = _at(update_day, 4), _at(update_day, 5)
+    eof_start, eof_end = _at(update_day, 9), _at(update_day, 10)
+    cursor_a, cursor_b = "000000000000000000000001", "000000000000000000000002"
+    with intake_blank_db.connect() as connection:
+        _install_minimal_authoritative_schema(connection)
+        tenant_id, store_id, daily_runs = _seed_forecast_history(connection)
+        _insert_transaction(
+            connection, tenant_id=tenant_id, store_id=store_id, name="unread-second-order",
+            event_time=_at(day, 11), amount=20, daily_runs=daily_runs,
+        )
+        _set_run(connection, daily_runs[day], "processed_count = 2, valid_loaded = 2")
+        other_id, other_store, _ = _insert_store(
+            connection, tenant=other_tenant, store="unread-prefix", opened_on=date(2024, 1, 1),
+        )
+        client = _PsycopgInstallationClient(connection)
+        installed = ModelReadyViewInstaller(client).install()
+        assert installed["forecast"]["installer_sha256"] == hashlib.sha256(
+            MODEL_READY_SQL_PATH.read_bytes()
+        ).hexdigest()
+        assert installed["forecast"]["view_version"] == spec.expected_view_version
+        source = PostgresModelReadySource(client)
+        baseline = source.load(spec, bounds)
+        before = _forecast_rows(connection, tenant_id, store_id)
+        partial = _insert_run(
+            connection, name="unread-prefix", source_kind="orders",
+            partition_key=update_day.isoformat(), started_at=start, finished_at=partial_end,
+            processed_count=1, valid_loaded=1, final_cursor=cursor_a, partition_complete=False,
+        )
+        _insert_transaction(
+            connection, tenant_id=other_id, store_id=other_store, name="unread-prefix-order",
+            event_time=start, amount=11, daily_runs={update_day: partial},
+        )
+
+        def assert_refused(reason: str = "SOURCE_RUN_NOT_COMPLETE") -> None:
+            assert _forecast_target(connection, tenant_id, store_id) == (False, reason)
+            with pytest.raises(ModelReadyDataError, match="not trainable"):
+                source.load(spec, bounds)
+
+        # No U lineage is present for either D or its required prior inputs.
+        # The old value and clock are unchanged, but not known complete.
+        assert connection.execute(
+            "SELECT count(*) FROM data_plane.canonical_lineage "
+            "WHERE run_id = %s AND tenant_id = %s AND canonical_id IN "
+            "(SELECT transaction_id FROM core.transactions WHERE store_id = %s)",
+            (partial, tenant_id, store_id),
+        ).fetchone() == (0,)
+        unknown = _forecast_rows(connection, tenant_id, store_id)[FORECAST_TARGET_DAY]
+        for field in ("daily_net_revenue", "feature_snapshot_time", "source_snapshot_ids"):
+            assert unknown[field] == before[FORECAST_TARGET_DAY][field]
+        assert_refused()
+        # Unknown scope must not hide an already known bad prior day.
+        with connection.transaction(force_rollback=True):
+            _set_run(connection, daily_runs[FORECAST_PRIOR_DAY], "reconciled = FALSE")
+            assert_refused("PRIOR_SOURCE_NOT_COMPLETE")
+        # Neither the event-day's old checkpoint EOF nor arbitrary source/day
+        # completion can settle U. Wrong-cursor same-U EOF is refused too.
+        for index, (kind, key, cursor, finished) in enumerate((
+            ("orders", day.isoformat(), cursor_a, eof_end),
+            ("orders", (update_day + timedelta(days=1)).isoformat(), cursor_a, eof_end),
+            ("trade", update_day.isoformat(), cursor_a, eof_end),
+            ("orders", update_day.isoformat(), "wrong-cursor", eof_end),
+            ("orders", update_day.isoformat(), cursor_a, start - timedelta(seconds=1)),
+        )):
+            with connection.transaction(force_rollback=True):
+                _insert_run(
+                    connection, name=f"unread-unrelated-eof:{index}", source_kind=kind,
+                    partition_key=key, resumed_from=cursor, final_cursor=cursor,
+                    started_at=finished - timedelta(minutes=1), finished_at=finished,
+                )
+                assert_refused()
+
+        eof = _insert_run(
+            connection, name="unread-real-eof", source_kind="orders",
+            partition_key=update_day.isoformat(), resumed_from=cursor_a,
+            final_cursor=cursor_a if tail == "zero" else cursor_b,
+            started_at=eof_start, finished_at=eof_end,
+            processed_count=0 if tail == "zero" else 1,
+            valid_loaded=0 if tail == "zero" else 1,
+        )
+        delta = 0.0
+        added_snapshots: set[str] = set()
+        if tail == "unrelated":
+            _insert_transaction(
+                connection, tenant_id=other_id, store_id=other_store, name="unread-other-tail",
+                event_time=eof_start, amount=19, daily_runs={update_day: eof},
+            )
+        elif tail in ("increase", "exit"):
+            txn_name = f"forecast:{day.isoformat()}"
+            txn_id = _id(f"transaction:{txn_name}")
+            old_amount = before[day]["daily_net_revenue"] - 20
+            delta = 30 if tail == "increase" else -old_amount
+            _insert_lineage(
+                connection, name="unread-corrected-tail", run_id=eof, tenant_id=tenant_id,
+                table="core.transactions", entity_id=txn_id, projected_at=eof_start,
+            )
+            snapshot = _id("snapshot:unread-corrected-tail")
+            connection.execute(
+                "UPDATE data_plane.canonical_lineage SET source_id = %s "
+                "WHERE source_snapshot_id = %s", (txn_name, snapshot),
+            )
+            connection.execute(
+                "UPDATE data_plane.transaction_authority SET source_snapshot_id = %s "
+                "WHERE transaction_id = %s", (snapshot, txn_id),
+            )
+            connection.execute(
+                "UPDATE core.transactions SET net_amount = net_amount + %s, "
+                "transaction_status = %s, observation_time = %s, ingested_at = %s "
+                "WHERE transaction_id = %s",
+                (delta, "refunded" if tail == "exit" else "succeeded", eof_start, eof_start, txn_id),
+            )
+            added_snapshots.add(str(snapshot))
+        loaded = source.load(spec, bounds)
+        expected_fingerprint = hashlib.sha256(
+            (f"{spec.relation}|{','.join(spec.required_columns)}|"
+             f"{bounds.start.isoformat()}|{bounds.end.isoformat()}|{bounds.max_rows}").encode()
+        ).hexdigest()
+        assert loaded.query_sha256 == baseline.query_sha256 == expected_fingerprint
+        assert loaded.relation == spec.relation
+        assert loaded.bounds == bounds
+        (row,) = loaded.rows
+        assert row["tenant_id"] == tenant_id
+        assert row["store_id"] == store_id
+        assert row["view_version"] == spec.expected_view_version
+        assert row["daily_net_revenue"] == pytest.approx(
+            baseline.rows[0]["daily_net_revenue"] + (delta if day == FORECAST_TARGET_DAY else 0)
+        )
+        assert row["rolling_mean_28"] == pytest.approx(
+            baseline.rows[0]["rolling_mean_28"] + (delta / 28 if day == FORECAST_PRIOR_DAY else 0)
+        )
+        assert set(row["source_snapshot_ids"]) == (
+            set(baseline.rows[0]["source_snapshot_ids"]) | added_snapshots
+        )
+        changed = tail in ("increase", "exit")
+        expected_clock = eof_end if changed else baseline.rows[0]["feature_snapshot_time"]
+        assert row["feature_snapshot_time"] == expected_clock
+        assert row["prediction_origin_time"] == expected_clock + timedelta(microseconds=1)
+        assert row["label_maturity_time"] == (
+            eof_end if changed and day == FORECAST_TARGET_DAY
+            else baseline.rows[0]["label_maturity_time"]
+        )
+        # Real EOF availability, not a fabricated all-history maximum; an
+        # unrelated fully accounted tail only removes its unknown-scope veto.
+        assert _forecast_rows(connection, tenant_id, store_id)[day]["label_maturity_time"] == (
+            eof_end if changed else before[day]["label_maturity_time"]
+        )
+        for assignment in (
+            "source_database = 'unrelated_database'", "resumed_from = 'wrong-cursor'",
+            "partition_complete = FALSE", "reconciled = FALSE", "status = 'FAILED'",
+        ):
+            with connection.transaction(force_rollback=True):
+                _set_run(connection, eof, assignment)
+                assert_refused(
+                    "PRIOR_SOURCE_NOT_COMPLETE" if changed and day == FORECAST_PRIOR_DAY
+                    else "SOURCE_RUN_NOT_COMPLETE"
+                )
+        for evidence in ("projection", "quarantine"):
+            with connection.transaction(force_rollback=True):
+                bad = _insert_run(
+                    connection, name=f"unread-failed:{evidence}", source_kind="orders",
+                    partition_key=update_day.isoformat(), status="FAILED", reconciled=False,
+                    partition_complete=False, resumed_from=cursor_a,
+                    started_at=partial_end + timedelta(minutes=1),
+                    finished_at=partial_end + timedelta(minutes=2),
+                )
+                if evidence == "projection":
+                    _insert_lineage(
+                        connection, name="unread-failed-projection", run_id=bad,
+                        tenant_id=other_id, table="core.stores", entity_id=other_store,
+                        projected_at=partial_end + timedelta(minutes=2),
+                    )
+                else:
+                    _insert_quarantine(
+                        connection, name="unread-failed-quarantine", source_id="unread-order",
+                        run_id=bad, partition_key=update_day.isoformat(),
+                        quarantined_at=partial_end + timedelta(minutes=2),
+                    )
+                assert_refused(
+                    "PRIOR_SOURCE_NOT_COMPLETE" if changed and day == FORECAST_PRIOR_DAY
+                    else "SOURCE_RUN_NOT_COMPLETE"
+                )
 
 
 @pytest.mark.parametrize("day", (FORECAST_TARGET_DAY, FORECAST_PRIOR_DAY))
