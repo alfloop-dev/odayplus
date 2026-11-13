@@ -44,7 +44,7 @@ import {
  * ============================================================================
  */
 
-import { openPgScenario, PG_API, type PgScenario } from "./_intakeScorePg";
+import { openPgScenario, PG_API, PG_WEB, type PgScenario } from "./_intakeScorePg";
 
 import {
   acquireOperatorBackendLock,
@@ -613,40 +613,44 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     } finally { await api.dispose(); }
   });
 
-  test("revision outcome offers append-version against the matched listing", async ({
+  test("retained revision outcome offers append-version against the matched listing", async ({
     page,
   }) => {
-    await openRadarAsExpansionManager(page);
-    await submitUrl(page, URLS.revision);
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "revision" });
+    try {
 
     await expect(page.getByTestId("intake-detail-match")).toHaveText(
       "版本更新",
     );
     const revise = page.getByTestId("decide-action-revise");
     await expect(revise).toBeVisible();
-    await expect(revise).toContainText("L-2024");
+    await expect(revise).toContainText(scenario.listing_id!);
+    expect(await getIntakeApi(scenario.intake_id, scenario)).toMatchObject({ stage: "READY", version: 1,
+      matchResult: { outcome: "REVISION", targetListingId: scenario.listing_id } });
+    } finally { await api.dispose(); }
   });
 
-  test("deep link reopens the intake record after leaving the page", async ({
+  test("retained deep link reopens the intake record after leaving the page", async ({
     page,
   }) => {
-    await openRadarAsExpansionManager(page);
-    await submitUrl(page, URLS.clean);
-    const id = (
-      await page.getByTestId("intake-detail-id").textContent()
-    )?.trim();
-    expect(id).toBeTruthy();
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "revision" });
+    try {
+    const id = scenario.intake_id;
 
     // Leave entirely, then return via the canonical durable deep link
     // (?selected=<id>&dialog=detail). The restored detail view replaces the
     // tab shell, so no tab click is needed or possible here.
-    await page.goto("/operator?ws=today");
-    await page.goto(`/operator?ws=network&tab=radar&selected=${id}&dialog=detail`);
+    await page.goto(`${PG_WEB}/operator?ws=today`);
+    await page.goto(`${PG_WEB}/operator?ws=network&tab=radar&selected=${id}&dialog=detail`);
 
     await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({
       timeout: 15_000,
     });
-    await expect(page.getByTestId("intake-detail-id")).toHaveText(id!);
+    await expect(page.getByTestId("intake-detail-id")).toHaveText(id);
+    await page.reload();
+    await expect(page.getByTestId("intake-detail-id")).toHaveText(id);
+    expect(await getIntakeApi(id, scenario)).toMatchObject({ id, stage: "READY", version: 1 });
+    } finally { await api.dispose(); }
   });
 
   test("queue counts reflect real server state across mixed outcomes", async ({
@@ -946,16 +950,16 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     ]);
   });
 
-  test("decisions and corrections survive page reload and a fresh browser context", async ({
+  test("retained decisions and corrections survive page reload and a fresh browser context", async ({
     page,
     context,
   }) => {
-    await openRadarAsExpansionManager(page);
-    await submitUrl(page, URLS.possible);
-    const id = (
-      await page.getByTestId("intake-detail-id").textContent()
-    )?.trim();
-    expect(id).toBeTruthy();
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    const contexts: import("@playwright/test").BrowserContext[] = [];
+    try {
+    const id = scenario.intake_id;
+    const headers = { "x-subject-id": scenario.proposer_id, "x-tenant-id": scenario.tenant_id,
+      "x-roles": "expansion_user,site_reviewer", "x-operator-role": "expansion-manager" };
 
     // Perform correction on address
     await page.getByTestId("fix-field-address").click();
@@ -975,18 +979,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await page.getByTestId("intake-return-button").click();
 
     // Create a fresh browser context to prove durability
-    const freshContext = await context.browser()!.newContext();
+    const freshContext = await context.browser()!.newContext({ baseURL: PG_WEB, extraHTTPHeaders: headers });
+    contexts.push(freshContext);
     const freshPage = await freshContext.newPage();
 
-    await freshPage.addInitScript(() => {
-      window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
-      // Fail-closed operator identity: without a session subject the UI
-      // disables every write action, hiding the decide buttons.
-      window.sessionStorage.setItem(
-        "oday.operator.subject",
-        "operator-expansion-manager",
-      );
-    });
+    await freshPage.addInitScript(({ actor, tenant }) => {
+      sessionStorage.setItem("oday.operator.role", "expansion-manager");
+      sessionStorage.setItem("oday.operator.subject", actor);
+      sessionStorage.setItem("oday.operator.tenant", tenant);
+    }, { actor: scenario.proposer_id, tenant: scenario.tenant_id });
     // Navigate directly using the canonical durable deep link; the restored
     // detail view replaces the tab shell, so no tab click is needed.
     await freshPage.goto(
@@ -1021,15 +1022,14 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await freshContext.close();
 
     // Reopen in another fresh context to ensure final decision stage is durable
-    const anotherContext = await context.browser()!.newContext();
+    const anotherContext = await context.browser()!.newContext({ baseURL: PG_WEB, extraHTTPHeaders: headers });
+    contexts.push(anotherContext);
     const anotherPage = await anotherContext.newPage();
-    await anotherPage.addInitScript(() => {
-      window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
-      window.sessionStorage.setItem(
-        "oday.operator.subject",
-        "operator-expansion-manager",
-      );
-    });
+    await anotherPage.addInitScript(({ actor, tenant }) => {
+      sessionStorage.setItem("oday.operator.role", "expansion-manager");
+      sessionStorage.setItem("oday.operator.subject", actor);
+      sessionStorage.setItem("oday.operator.tenant", tenant);
+    }, { actor: scenario.proposer_id, tenant: scenario.tenant_id });
     await anotherPage.goto(
       `/operator?ws=network&tab=radar&selected=${id}&dialog=detail`,
     );
@@ -1042,30 +1042,37 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
 
     await anotherPage.close();
     await anotherContext.close();
+    const durable = await getIntakeApi(id, scenario);
+    expect(durable).toMatchObject({ stage: "READY", version: 3,
+      parsedFields: { address: { correctedValue: "新北市板橋區府中路 26 號 1F" } } });
+    expect(durable.auditEvents.filter((event: any) => event.action === "intake.correct")).toHaveLength(1);
+    expect(durable.auditEvents.filter((event: any) => event.action === "intake.decide.create")).toHaveLength(1);
+    } finally {
+      for (const isolated of contexts) await isolated.close();
+      await api.dispose();
+    }
   });
 
-  test("tablet viewport folds the 5-up meta grid correctly", async ({
+  test("retained tablet viewport folds the 5-up meta grid correctly", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 768, height: 1024 }); // Tablet viewport
-    await openRadarAsExpansionManager(page);
-    await submitUrl(page, URLS.clean);
-
-    await expect(page.getByTestId("intake-detail-dialog")).toBeVisible();
-    await expect(page.getByTestId("timeline-stepper")).toBeVisible();
-    await expect(page.getByTestId("intake-parsed-lineage")).toBeVisible();
+    const { api } = await openPgScenario(page, { retainedHistory: "revision" });
+    try {
+      await expect(page.getByTestId("intake-detail-dialog")).toBeVisible();
+      await expect(page.getByTestId("timeline-stepper")).toBeVisible();
+      await expect(page.getByTestId("intake-parsed-lineage")).toBeVisible();
+    } finally { await api.dispose(); }
   });
 
-  test("verify audit envelope for CREATE and PROMOTE decisions", async ({
+  test("retained verify audit envelope for CREATE and PROMOTE decisions", async ({
     page,
   }, info) => {
-    await openRadarAsExpansionManager(page);
-
-    // 1. CREATE decision
-    await submitUrl(page, URLS.possible);
-    const id1 = (
-      await page.getByTestId("intake-detail-id").textContent()
-    )?.trim()!;
+    const retained = await openPgScenario(page, { retainedHistory: "possible-match" });
+    try {
+    // 1. Actual CREATE decision on explicit retained history, not a new URL.
+    const id1 = retained.scenario.intake_id;
+    const beforeCreate = await getIntakeApi(id1, retained.scenario);
     await page.getByTestId("decide-action-create").click();
     await page
       .getByTestId("intake-decide-reason")
@@ -1077,15 +1084,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     });
     await page.getByTestId("intake-return-button").click();
 
-    const data1 = await getIntakeApi(id1);
-    expect(data1.parserVersion).toBeTruthy();
-    expect(data1.snapshotId).toBeTruthy();
+    const data1 = await getIntakeApi(id1, retained.scenario);
+    expect(data1).toMatchObject({ parserVersion: null, snapshotId: null, rawSnapshot: null, version: 2 });
+    expect(data1.parsedFields).toEqual(beforeCreate.parsedFields);
     const auditCreate = data1.auditEvents.find(
       (e: any) => e.action === "intake.decide.create",
     );
     expect(auditCreate).toBeDefined();
     expect(auditCreate.actorRoleId).toBe("site_reviewer");
-    expect(auditCreate.actorName).toBe("operator-expansion-manager");
+    expect(auditCreate.actorName).toBe(retained.scenario.proposer_id);
     expect(auditCreate.occurredAt).toBeTruthy();
     expect(auditCreate.message).toContain("Audit test create reason");
     expect(auditCreate.correlationId).toBeTruthy();
@@ -1166,15 +1173,14 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       await api.dispose();
       await pgPage.close();
     }
+    } finally { await retained.api.dispose(); }
   });
 
-  test("verify audit envelope for REVISE decision", async ({ page }) => {
-    await openRadarAsExpansionManager(page);
-
-    await submitUrl(page, URLS.revision);
-    const id2 = (
-      await page.getByTestId("intake-detail-id").textContent()
-    )?.trim()!;
+  test("retained verify audit envelope for REVISE decision", async ({ page }) => {
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "revision" });
+    try {
+    const id2 = scenario.intake_id;
+    const beforeRevise = await getIntakeApi(id2, scenario);
     await page.getByTestId("decide-action-revise").click();
     await page
       .getByTestId("intake-decide-reason")
@@ -1186,15 +1192,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     });
     await page.getByTestId("intake-return-button").click();
 
-    const data2 = await getIntakeApi(id2);
-    expect(data2.parserVersion).toBeTruthy();
-    expect(data2.snapshotId).toBeTruthy();
+    const data2 = await getIntakeApi(id2, scenario);
+    expect(data2).toMatchObject({ parserVersion: null, snapshotId: null, rawSnapshot: null, version: 2 });
+    expect(data2.parsedFields).toEqual(beforeRevise.parsedFields);
     const auditRevise = data2.auditEvents.find(
       (e: any) => e.action === "intake.decide.revise",
     );
     expect(auditRevise).toBeDefined();
     expect(auditRevise.actorRoleId).toBe("site_reviewer");
-    expect(auditRevise.actorName).toBe("operator-expansion-manager");
+    expect(auditRevise.actorName).toBe(scenario.proposer_id);
     expect(auditRevise.occurredAt).toBeTruthy();
     expect(auditRevise.message).toContain("Audit test revise reason");
     expect(auditRevise.correlationId).toBeTruthy();
@@ -1205,16 +1211,19 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(auditRevise.metadata.beforeAfter.stage.before).toBe("READY");
     expect(auditRevise.metadata.beforeAfter.stage.after).toBe("READY");
     expect(auditRevise.metadata.beforeAfter.target_rent).toBeDefined();
-    expect(auditRevise.metadata.targetListingId).toBe("L-2024");
+    expect(auditRevise.metadata.targetListingId).toBe(scenario.listing_id);
+    expect(auditRevise.metadata.beforeAfter.target_rent).toEqual({ before: 53000,
+      after: beforeRevise.parsedFields.rent.normalizedValue });
+    await page.reload();
+    expect(await getIntakeApi(id2, scenario)).toEqual(data2);
+    } finally { await api.dispose(); }
   });
 
-  test("verify audit envelope for DUPLICATE decision", async ({ page }) => {
-    await openRadarAsExpansionManager(page);
-
-    await submitUrl(page, URLS.possible);
-    const id3 = (
-      await page.getByTestId("intake-detail-id").textContent()
-    )?.trim()!;
+  test("retained verify audit envelope for DUPLICATE decision", async ({ page }) => {
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    try {
+    const id3 = scenario.intake_id;
+    const beforeDuplicate = await getIntakeApi(id3, scenario);
     await page.getByTestId("decide-action-dup").click();
     await page
       .getByTestId("intake-decide-reason")
@@ -1226,15 +1235,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     });
     await page.getByTestId("intake-return-button").click();
 
-    const data3 = await getIntakeApi(id3);
-    expect(data3.parserVersion).toBeTruthy();
-    expect(data3.snapshotId).toBeTruthy();
+    const data3 = await getIntakeApi(id3, scenario);
+    expect(data3).toMatchObject({ parserVersion: null, snapshotId: null, rawSnapshot: null, version: 2 });
+    expect(data3.parsedFields).toEqual(beforeDuplicate.parsedFields);
     const auditDup = data3.auditEvents.find(
       (e: any) => e.action === "intake.decide.duplicate",
     );
     expect(auditDup).toBeDefined();
     expect(auditDup.actorRoleId).toBe("site_reviewer");
-    expect(auditDup.actorName).toBe("operator-expansion-manager");
+    expect(auditDup.actorName).toBe(scenario.proposer_id);
     expect(auditDup.occurredAt).toBeTruthy();
     expect(auditDup.message).toContain("Audit test duplicate reason");
     expect(auditDup.correlationId).toBeTruthy();
@@ -1245,16 +1254,17 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(auditDup.metadata.beforeAfter.stage.before).toBe("NEEDS_REVIEW");
     expect(auditDup.metadata.beforeAfter.stage.after).toBe("READY");
     expect(auditDup.metadata.beforeAfter.target_evidence_count).toBeDefined();
-    expect(auditDup.metadata.targetListingId).toBe("L-2025");
+    expect(auditDup.metadata.targetListingId).toBe(scenario.listing_id);
+    // No snapshot is invented by merging a retained row without one.
+    expect(auditDup.metadata.beforeAfter.target_evidence_count).toEqual({ before: 0, after: 0 });
+    } finally { await api.dispose(); }
   });
 
-  test("verify audit envelope for QUARANTINE decision", async ({ page }) => {
-    await openRadarAsExpansionManager(page);
-
-    await submitUrl(page, URLS.possible);
-    const id4 = (
-      await page.getByTestId("intake-detail-id").textContent()
-    )?.trim()!;
+  test("retained verify audit envelope for QUARANTINE decision", async ({ page }) => {
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    try {
+    const id4 = scenario.intake_id;
+    const beforeQuarantine = await getIntakeApi(id4, scenario);
     await page.getByTestId("decide-action-steward").click();
     await page
       .getByTestId("intake-decide-reason")
@@ -1266,15 +1276,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     });
     await page.getByTestId("intake-return-button").click();
 
-    const data4 = await getIntakeApi(id4);
-    expect(data4.parserVersion).toBeTruthy();
-    expect(data4.snapshotId).toBeTruthy();
+    const data4 = await getIntakeApi(id4, scenario);
+    expect(data4).toMatchObject({ parserVersion: null, snapshotId: null, rawSnapshot: null, version: 2 });
+    expect(data4.parsedFields).toEqual(beforeQuarantine.parsedFields);
     const auditQuarantine = data4.auditEvents.find(
       (e: any) => e.action === "intake.decide.quarantine",
     );
     expect(auditQuarantine).toBeDefined();
     expect(auditQuarantine.actorRoleId).toBe("site_reviewer");
-    expect(auditQuarantine.actorName).toBe("operator-expansion-manager");
+    expect(auditQuarantine.actorName).toBe(scenario.proposer_id);
     expect(auditQuarantine.occurredAt).toBeTruthy();
     expect(auditQuarantine.message).toContain("Audit test quarantine reason");
     expect(auditQuarantine.correlationId).toBeTruthy();
@@ -1290,24 +1300,24 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(auditQuarantine.metadata.beforeAfter.stage.after).toBe(
       "QUARANTINED",
     );
+    } finally { await api.dispose(); }
   });
 
-  test("verify audit envelope for REJECT decision", async ({ page }) => {
-    await openRadarAsExpansionManager(page);
-
-    await submitUrl(page, URLS.possible);
-    const id5 = (
-      await page.getByTestId("intake-detail-id").textContent()
-    )?.trim()!;
+  test("retained verify audit envelope for REJECT decision", async ({ page }) => {
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    try {
+    const id5 = scenario.intake_id;
+    const beforeReject = await getIntakeApi(id5, scenario);
     await page.getByTestId("intake-return-button").click();
 
     const apiContext = await playwrightRequest.newContext({
-      baseURL: API_BASE_URL,
+      baseURL: PG_API,
       extraHTTPHeaders: {
-        "x-subject-id": "operator-expansion-manager",
+        "x-subject-id": scenario.proposer_id,
         "x-roles": "expansion_user",
         "x-operator-role": "expansion-staff",
-        "x-tenant-id": "tenant-a",
+        "x-tenant-id": scenario.tenant_id,
+        "If-Match": `W/"${beforeReject.version}"`,
         "X-Correlation-Id": "reject-corr-id-12345",
         "Idempotency-Key": "reject-key-12345",
       },
@@ -1319,16 +1329,24 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
         actorRoleId: "expansion-manager", actorName: "forged-manager" } },
     );
     expect(deniedStaff.status()).toBe(422);
-    const unchanged = await getIntakeApi(id5);
+    const deniedFinal = await apiContext.post(`/api/v1/operator/network-listings/intake/${id5}/decide`, {
+      data: { action: "reject", reason: "Pure staff cannot make a final decision",
+        riskSummary: "Synthetic rejection risk", riskAcknowledged: true },
+    });
+    expect(deniedFinal.status(), await deniedFinal.text()).toBe(422);
+    expect((await deniedFinal.json()).detail).toContain("is not allowed to decide intake");
+    const unchanged = await getIntakeApi(id5, scenario);
+    expect(unchanged).toEqual(beforeReject);
     expect(unchanged.stage).toBe("NEEDS_REVIEW");
     expect(unchanged.auditEvents.filter((event: any) => event.action === "intake.decide.reject")).toHaveLength(0);
     await apiContext.dispose();
     // Explicit authorized test identity, rather than a body-supplied persona.
     const managerContext = await playwrightRequest.newContext({
-      baseURL: API_BASE_URL, extraHTTPHeaders: {
-        "x-subject-id": "operator-expansion-manager",
+      baseURL: PG_API, extraHTTPHeaders: {
+        "x-subject-id": scenario.proposer_id,
         "x-roles": "expansion_user,site_reviewer", "x-operator-role": "expansion-manager",
-        "x-tenant-id": "tenant-a", "X-Correlation-Id": "reject-corr-id-12345",
+        "x-tenant-id": scenario.tenant_id, "X-Correlation-Id": "reject-corr-id-12345",
+        "If-Match": `W/"${unchanged.version}"`,
         "Idempotency-Key": "reject-key-12345",
       },
     });
@@ -1340,23 +1358,21 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
           reason: "Audit test reject reason",
           riskSummary: "測試拒絕風險宣告",
           riskAcknowledged: true,
-          actorRoleId: "expansion-manager",
-          actorName: "林曉青",
         },
       },
     );
     expect(rejectRes.status()).toBe(200);
     await managerContext.dispose();
 
-    const data5 = await getIntakeApi(id5);
-    expect(data5.parserVersion).toBeTruthy();
-    expect(data5.snapshotId).toBeTruthy();
+    const data5 = await getIntakeApi(id5, scenario);
+    expect(data5).toMatchObject({ parserVersion: null, snapshotId: null, rawSnapshot: null, version: 2 });
+    expect(data5.parsedFields).toEqual(beforeReject.parsedFields);
     const auditReject = data5.auditEvents.find(
       (e: any) => e.action === "intake.decide.reject",
     );
     expect(auditReject).toBeDefined();
     expect(auditReject.actorRoleId).toBe("site_reviewer");
-    expect(auditReject.actorName).toBe("operator-expansion-manager");
+    expect(auditReject.actorName).toBe(scenario.proposer_id);
     expect(auditReject.occurredAt).toBeTruthy();
     expect(auditReject.message).toContain("Audit test reject reason");
     expect(auditReject.correlationId).toBe("reject-corr-id-12345");
@@ -1366,5 +1382,6 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(auditReject.metadata.riskAcknowledged).toBe(true);
     expect(auditReject.metadata.beforeAfter.stage.before).toBe("NEEDS_REVIEW");
     expect(auditReject.metadata.beforeAfter.stage.after).toBe("FAILED");
+    } finally { await api.dispose(); }
   });
 });

@@ -217,7 +217,7 @@ def test_browser_ready_fixture_uses_retained_history_without_fresh_http(intake_b
         bundle.engine.close()
 
 
-@pytest.mark.parametrize("history", ["possible-match", "retrieval-timeout"])
+@pytest.mark.parametrize("history", ["possible-match", "retrieval-timeout", "revision"])
 def test_browser_retained_review_and_failure_keep_real_guards(intake_blank_db, monkeypatch, history):
     from modules.opsboard.application.network_listings import NetworkListingService
     from tests.support.intake_score_synthetic import headers, prepare_database, ready_scenario
@@ -257,12 +257,13 @@ def test_browser_retained_review_and_failure_keep_real_guards(intake_blank_db, m
             assert bundle.listing_repository_for_tenant(TENANT).list_listings() == []
             record = initial
         else:
-            assert initial["stage"] == "NEEDS_REVIEW"
-            assert initial["matchResult"]["outcome"] == "POSSIBLE_MATCH"
+            revision = history == "revision"
+            assert initial["stage"] == ("READY" if revision else "NEEDS_REVIEW")
+            assert initial["matchResult"]["outcome"] == ("REVISION" if revision else "POSSIBLE_MATCH")
             assert initial["matchResult"]["targetListingId"] == case["listing_id"]
             assert initial["matchResult"]["agreeingSignals"] and initial["matchResult"]["contradictingSignals"]
             assert initial["parsedFields"]["address"]["sourceValue"]
-            body = {"action": "create", "reason": "Explicit retained browser human decision",
+            body = {"action": "revise" if revision else "create", "reason": "Explicit retained browser human decision",
                     "riskSummary": "Retained ambiguous history; no new source acquisition", "riskAcknowledged": True}
             for precondition, status in ((None, 428), ('W/"9"', 409)):
                 response = client.post(path + "/decide", json=body,
@@ -278,14 +279,24 @@ def test_browser_retained_review_and_failure_keep_real_guards(intake_blank_db, m
             assert decided.status_code == 200, decided.text
             record = decided.json()
             assert (record["stage"], record["version"]) == ("READY", 2)
-            assert record["matchResult"]["outcome"] == "NEW"
-            assert record["matchResult"]["targetListingId"] != case["listing_id"]
-            assert [event["action"] for event in record["auditEvents"]] == ["intake.decide.create"]
+            assert record["matchResult"]["outcome"] == ("REVISION" if revision else "NEW")
+            if revision:
+                assert record["matchResult"]["targetListingId"] == case["listing_id"]
+                target = bundle.listing_repository_for_tenant(TENANT).get_listing(case["listing_id"])
+                assert target.rent_amount == initial["parsedFields"]["rent"]["normalizedValue"]
+                assert record["auditEvents"][0]["metadata"]["beforeAfter"]["target_rent"] == {
+                    "before": 53000, "after": target.rent_amount,
+                }
+            else:
+                assert record["matchResult"]["targetListingId"] != case["listing_id"]
+            assert [event["action"] for event in record["auditEvents"]] == ["intake.decide.revise" if revision else "intake.decide.create"]
+            assert record["parsedFields"] == initial["parsedFields"]
+            assert record["parserVersion"] is record["snapshotId"] is record["rawSnapshot"] is None
             committed = _snapshot(bundle)
             replay = client.post(path + "/decide", json=body, headers=command_headers)
             assert replay.status_code == 200 and replay.json() == record
             assert _snapshot(bundle) == committed
-            assert len(bundle.listing_repository_for_tenant(TENANT).list_listings()) == 2
+            assert len(bundle.listing_repository_for_tenant(TENANT).list_listings()) == (1 if revision else 2)
         assert record["assignmentId"] == initial["assignmentId"]
         assert record["slaInstanceId"] == initial["slaInstanceId"]
         assert bundle.listing_repository_for_tenant(TENANT).list_candidates() == []

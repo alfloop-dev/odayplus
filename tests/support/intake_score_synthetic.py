@@ -36,7 +36,7 @@ from tests.intake_registry_fixture import (
 )
 
 SCOPE = "ISOLATED_SYNTHETIC_PG_BROWSER_NOT_PRODUCTION_ADMISSION"
-RetainedBrowserHistory = Literal["assisted-entry-only", "possible-match", "retrieval-timeout"]
+RetainedBrowserHistory = Literal["assisted-entry-only", "possible-match", "retrieval-timeout", "revision"]
 
 
 def _insert_policy(connection, row, tenant, approver, now):
@@ -556,7 +556,7 @@ def ready_scenario(database_url, bundle, client, *,
     # The no-body control retains its original ready scenario. Explicit history
     # variants stop before the original UI correction/decision/recovery commands.
     # These fixtures attest neither fresh source policy nor successful retrieval.
-    if retained_history not in (None, "assisted-entry-only", "possible-match", "retrieval-timeout"):
+    if retained_history not in (None, "assisted-entry-only", "possible-match", "retrieval-timeout", "revision"):
         raise ValueError("Unknown retained browser history")
     scenario_id = str(uuid4())
     source_id = "synthetic-browser-" + scenario_id
@@ -572,7 +572,8 @@ def ready_scenario(database_url, bundle, client, *,
     url = "https://rent.591.com.tw/browser-" + scenario_id
     history = {}
     listing_id = None
-    if retained_history == "possible-match":
+    target_seed = None
+    if retained_history in {"possible-match", "revision"}:
         from modules.external_data.application.assisted_intake import (
             RETRIEVAL_CORPUS,
             MatchResult,
@@ -589,16 +590,19 @@ def ready_scenario(database_url, bundle, client, *,
             rent_amount=53000, area_ping=22, floor="1F")
         address = AddressLocation(address_id=listing.address_id,
             raw_address="新北市板橋區府中路 52 號 1F", normalized_address="新北市板橋區府中路 52 號 1F")
-        bundle.listing_repository_for_tenant(TENANT).save_listing(listing, address, ListingDedupKey(
+        target_seed = (listing, address, ListingDedupKey(
             source_id=source_id, source_listing_id=listing.source_listing_id,
             normalized_address=address.normalized_address, rent_amount=53000, area_ping=22))
+        revision = retained_history == "revision"
         history = {
-            "stage": "NEEDS_REVIEW",
-            "parsedFields": parse_snapshot(RETRIEVAL_CORPUS["https://www.synthetic.example/detail-99310418.html"]),
-            "matchResult": MatchResult("POSSIBLE_MATCH", 0.55, listing_id, (
+            "stage": "READY" if revision else "NEEDS_REVIEW",
+            "parsedFields": parse_snapshot(RETRIEVAL_CORPUS["https://www.synthetic.example/detail-88520242.html"
+                if revision else "https://www.synthetic.example/detail-99310418.html"]),
+            "matchResult": MatchResult("REVISION" if revision else "POSSIBLE_MATCH", 0.95 if revision else 0.55, listing_id, (
                 MatchSignal("normalizedAddress", "正規化地址", True, "Explicit retained synthetic comparison"),
+                MatchSignal("rent", "租金", False, "Retained commercial revision compared with actual target") if revision else
                 MatchSignal("floor", "樓層", False, "Retained 2F submission compared with actual 1F target"),
-            ), "Retained synthetic ambiguous history; independent human decision required.").to_dict(),
+            ), "Explicit retained synthetic match history; no retrieval or parser run is attested.").to_dict(),
         }
     elif retained_history == "retrieval-timeout":
         from modules.external_data.application.assisted_intake import RETRIEVAL_CORPUS
@@ -607,6 +611,8 @@ def ready_scenario(database_url, bundle, client, *,
         assert failure is not None
         history = {"stage": "FAILED", "failure": failure.to_dict()}
     with repository.transaction():
+        if target_seed:
+            bundle.listing_repository_for_tenant(TENANT).save_listing(*target_seed)
         repository.save_intake({
             "id": iid, "tenantId": TENANT, "intakeMethod": "URL",
             "originalUrl": url, "canonicalUrl": url, "heatZoneId": None,
