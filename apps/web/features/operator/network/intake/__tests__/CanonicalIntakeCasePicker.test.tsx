@@ -415,10 +415,16 @@ describe("native Intake and case selection", () => {
     act(() => {
       const url = new URL(window.location.href); url.searchParams.set("unrelated", "changed");
       window.history.replaceState(null, "", url);
+      // Notify the existing useSyncExternalStore router double, just as its
+      // push/replace and the other history controls do. A silent history
+      // mutation does not establish that the new transport observed navigation.
+      window.dispatchEvent(new PopStateEvent("popstate"));
       view.rerender(<CanonicalIntakeCasePicker context={second} />);
     });
     expect(screen.queryByText(/正式收件 .*已送出/)).not.toBeInTheDocument();
     expect(screen.queryByText(/第一個已驗證帳號/)).not.toBeInTheDocument();
+    await waitFor(() => expect(second.fetchImpl).toHaveBeenCalledOnce());
+    expect(String(vi.mocked(second.fetchImpl).mock.calls[0][0])).toContain("/api/v1/canonical-intakes/" + id(95));
     await act(async () => { secondRead.resolve(json({ detail: "current account denied" }, 403)); });
     expect(await screen.findByRole("alert")).toBeVisible();
     expect(posts(second)).toHaveLength(0);

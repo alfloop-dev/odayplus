@@ -143,7 +143,14 @@ of retrieval. No capture, parser run, native READY or transition history is
 manufactured for these records. The native timeline separately shows actual SQL
 transitions; the derived legacy stepper cannot attest those transitions.
 The network spec's five-policy fresh caller and full exact-head PostgreSQL/
-browser qualification remain pending at this intermediate checkpoint. Historical GETs (UUID and `IN-...`),
+browser qualification remain pending at this intermediate checkpoint. Its old
+approved-HTML-retrieval/parser assertion cannot be transplanted as native parser
+success: `NativeParserAdmissionPrerequisites` uses the existing manual-input
+reader and requires `MANUAL_ENTRY`/`application/json`; the artifact owner supports
+only the fixed manual provider. A retrieved HTML snapshot or an admitted policy
+is not a parser run, matching result or READY. Do not add another provider,
+forge manual lineage or seed success to conceal this integration boundary.
+Historical GETs (UUID and `IN-...`),
 original Intake-version decisions, corrections, batch/schedule operations and
 existing job recovery remain supported. Native versions are never legacy
 version tokens. Offline HTTP/service controls do not execute or authorize the
