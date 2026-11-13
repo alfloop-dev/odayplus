@@ -158,6 +158,63 @@ def _snapshot(bundle):
         "score_jobs": bundle.engine.query("SELECT job_id,status,version,payload FROM workflow.jobs WHERE job_type='intake-sitescore' ORDER BY job_id")})
 
 
+def test_browser_ready_fixture_uses_retained_history_without_fresh_http(intake_blank_db, monkeypatch):
+    from modules.opsboard.application.network_listings import NetworkListingService
+    from tests.support.intake_score_synthetic import SCOPE, headers, prepare_database, ready_scenario
+
+    db = intake_blank_db
+    prepare_database(db.url())
+    bundle = _bundle(db, monkeypatch)
+
+    def forbid_fresh(*_args, **_kwargs):
+        pytest.fail("The browser's retained setup must not invoke either fresh writer")
+
+    monkeypatch.setattr(NetworkListingService, "submit_intake", forbid_fresh)
+    try:
+        client = _promotion_client(bundle)
+        case = ready_scenario(db.url(), bundle, client)
+        assert case["scope"] == SCOPE
+        record = client.get(f"{BASE}/intake/{case['intake_id']}", headers=headers())
+        assert record.status_code == 200, record.text
+        intake = record.json()
+        assert (intake["stage"], intake["version"]) == ("READY", 4)
+        assert intake["submittedBy"] == MANAGER
+        assert intake["assignmentId"] and intake["slaInstanceId"]
+        assert intake["matchResult"]["targetListingId"] == case["listing_id"]
+        assert [event["action"] for event in intake["auditEvents"]] == [
+            "intake.correct", "intake.decide.revise",
+        ]
+        assert [event["actorName"] for event in intake["auditEvents"]] == [MANAGER, APPROVER]
+        assert intake["parsedFields"]["floor"]["correctedValue"] == "1F"
+        assert intake["rawSnapshot"] is None and intake["parserVersion"] is None
+        store = bundle.assisted_intake_store
+        store.refresh(TENANT)
+        assert len(store.intakes) == len(store.assignments) == len(store.slas) == 1
+        assert not store.promotions and not store.jobs
+        assert all(
+            replay.action != "submit_intake"
+            for replay in bundle.operator_intake_repository_for_tenant(TENANT).list_idempotency_records()
+        )
+        with db.connect() as conn:
+            # The explicit manual source/snapshot fixture is unchanged. It is
+            # not a native URL command, parser output or worker result.
+            assert conn.execute("SELECT intake_method,processing_state FROM intake.intakes WHERE intake_id=%s",
+                                (case["intake_id"],)).fetchone() == ("MANUAL", "READY")
+            assert conn.execute("SELECT capture_method FROM intake.source_snapshots WHERE intake_id=%s",
+                                (case["intake_id"],)).fetchone() == ("MANUAL_ENTRY",)
+            assert conn.execute("SELECT count(*) FROM workflow.jobs").fetchone()[0] == 0
+            assert conn.execute("SELECT count(*) FROM durable_jobs WHERE job_type='assisted-listing-intake'").fetchone()[0] == 0
+        # The original promotion API still sees the real resolved listing and
+        # linked workflow version, rather than a fabricated browser receipt.
+        requested = _request(client, intake, key="synthetic-browser-retained-promotion")
+        assert requested.status_code == 202, requested.text
+        assert requested.json()["status"] == "PENDING_REVIEW"
+        assert requested.json()["listing_id"] == case["listing_id"]
+        assert bundle.listing_repository_for_tenant(TENANT).list_candidates() == []
+    finally:
+        bundle.engine.close()
+
+
 def test_canonical_promotion_positive_restart_and_replay(bridge_database, monkeypatch):
     bundle = _bundle(bridge_database, monkeypatch)
     try:

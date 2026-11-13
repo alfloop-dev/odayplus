@@ -23,6 +23,7 @@ from modules.sitescore.domain.scoring import SITESCORE_FEATURE_VERSION
 from shared.auth import Role
 from shared.domain.models import AddressLocation, Listing
 from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
+from shared.infrastructure.persistence.operator_intake_workflow import OperatorIntakeWorkflowRepository
 from tests.intake_registry_fixture import (
     APPROVER,
     MANAGER,
@@ -566,10 +567,35 @@ def ready_scenario(database_url, bundle, client):
     bundle.listing_repository_for_tenant(TENANT).save_listing(listing, address, ListingDedupKey(
         source_id=source_id, source_listing_id=scenario_id, normalized_address=address.normalized_address,
         rent_amount=listing.rent_amount, area_ping=listing.area_ping))
+    # Explicit retained Operator history, not a fresh HTTP command or native
+    # submission. The existing bridge initializes its workflow in the same SQL
+    # transaction; correction and resolution below remain actual API commands.
+    repository = OperatorIntakeWorkflowRepository(
+        bundle.assisted_intake_store, bundle.operator_intake_repository_for_tenant(TENANT),
+        TENANT, bundle.assisted_intake_workflow_policy,
+    )
+    iid, correlation_id = str(uuid4()), str(uuid4())
+    submitted_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    url = "https://rent.591.com.tw/browser-" + scenario_id
+    with repository.transaction():
+        repository.save_intake({
+            "id": iid, "tenantId": TENANT, "intakeMethod": "URL",
+            "originalUrl": url, "canonicalUrl": url, "heatZoneId": None,
+            "submitter": MANAGER, "submittedBy": MANAGER, "owner": MANAGER,
+            "submittedAt": submitted_at, "updatedAt": submitted_at, "lastObservedAt": None,
+            "stage": "AWAITING_ASSISTED_ENTRY", "version": 1,
+            "sourceId": source_id, "policy": "ASSISTED_ENTRY_ONLY",
+            "policyLabel": "僅人工補錄", "policyReason": SCOPE,
+            "correlationId": correlation_id, "parsedFields": {}, "matchResult": None,
+            "rawSnapshot": None, "snapshotId": None, "capturedAt": None,
+            "parserVersion": None, "auditEvents": [],
+        })
     base = "/api/v1/operator/network-listings/intake"
-    submitted = client.post(base + "/submit", json={"url": "https://rent.591.com.tw/browser-" + scenario_id}, headers=headers())
-    assert submitted.status_code == 200, submitted.text
-    iid = submitted.json()["id"]
+    retained = client.get(f"{base}/{iid}", headers=headers())
+    assert retained.status_code == 200, retained.text
+    initial = retained.json()
+    assert initial["stage"] == "AWAITING_ASSISTED_ENTRY"
+    assert initial["assignmentId"] and initial["slaInstanceId"]
     corrected = client.post(f"{base}/{iid}/correct", json={"fields": {"floor": "1F"}, "reason": SCOPE,
                             "riskSummary": "Explicit synthetic measured input", "riskAcknowledged": True}, headers=headers())
     assert corrected.status_code == 200, corrected.text
@@ -577,7 +603,12 @@ def ready_scenario(database_url, bundle, client):
                           "reason": SCOPE, "riskSummary": "Synthetic local integration", "riskAcknowledged": True},
                           headers={**headers(APPROVER), "If-Match": f'W/"{corrected.json()["version"]}"'})
     assert decided.status_code == 200, decided.text
-    assert decided.json()["stage"] == "READY"
+    resolved = decided.json()
+    assert resolved["stage"] == "READY" and resolved["version"] == 3
+    assert resolved["matchResult"]["targetListingId"] == listing_id
+    assert resolved["submittedBy"] == MANAGER
+    assert resolved["assignmentId"] == initial["assignmentId"]
+    assert resolved["slaInstanceId"] == initial["slaInstanceId"]
     store = bundle.assisted_intake_store
     store.refresh(TENANT)
     with psycopg.connect(database_url) as conn:
