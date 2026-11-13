@@ -120,6 +120,9 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         "outside_intake_id": ids["intake"], "context_property_ids": [ids["target"], ids["split_target"]],
         "append_property_id": append_property, "append_receipt_probe": append_receipt_probe,
         "url_manual": None,
+        # Explicit test URLs, not admitted sources or a fixture retrieval path.
+        "fresh_urls": {kind: "https://browser-fresh.example.invalid/" + ids["tenant"] + "/" + kind
+            for kind in ("presentation", "durability", "duplicate", "replay")},
         "independent_reviewer": {"actor_id": independent_reviewer, "username": "synthetic-manager-" + independent_reviewer,
             "password": password} if independent_reviewer else None}
     hash_script = "const a=require('argon2');a.hash(process.env.OWNED_BROWSER_PASSWORD,{type:a.argon2id,memoryCost:65536,timeCost:3,parallelism:1}).then(h=>process.stdout.write(h))"
@@ -133,9 +136,11 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             assert source_id.startswith("native-parser-") and source_id.endswith(".manual")
             credentials["url_manual"] = {"original_url": original_url.rsplit("/", 1)[0] + "/BrowserFreshListing-" + uuid4().hex,
                 "fields": {"address": "Explicit synthetic browser manual address 29", "rent": 43210, "areaPing": 42.5}}
-        actual_region = connection.execute("SELECT region_id FROM intake.intakes WHERE tenant_id=%s AND intake_id=%s",
-            (ids["tenant"], parsed["intake_id"])).fetchone()[0]
-        assert (str(actual_region) if actual_region is not None else None) == manager_region_id
+        scope_keys = ("brand_id", "region_id", "assigned_area_id", "heat_zone_id")
+        actual_scope = connection.execute("SELECT brand_id,region_id,assigned_area_id,heat_zone_id FROM intake.intakes "
+            "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], parsed["intake_id"])).fetchone()
+        credentials["fresh_scope"] = {key: str(value) if value is not None else None for key, value in zip(scope_keys, actual_scope)}
+        assert credentials["fresh_scope"]["region_id"] == manager_region_id
         if manager_region_id:
             assert connection.execute("SELECT region_id FROM intake.intakes WHERE tenant_id=%s AND intake_id=%s",
                 (ids["tenant"], ids["intake"])).fetchone()[0] is None
@@ -341,7 +346,8 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             "ODP_PLAYWRIGHT_API_HEALTH_URL": api_url + "/_synthetic/health", "ODP_PLAYWRIGHT_REUSE_EXISTING": "1",
             "ODP_NATIVE_BROWSER_SCENARIO_FILE": str(scenario)}
         browser = launch(["node", "node_modules/@playwright/test/cli.js", "test",
-            "tests/e2e/operator-assisted-listing-intake.spec.ts", "--grep", "canonical native:",
+            "tests/e2e/operator-assisted-listing-intake.spec.ts", "tests/e2e/operator-network-assisted-intake.spec.ts",
+            "--grep", "canonical native:",
             "--workers=1", "--retries=0", "--trace=off", "--output", str(private_dir / "browser-results")], browser_env, "browser")
         browser.wait(timeout=240)
         browser_log = (private_dir / "browser.log").read_text()
@@ -414,7 +420,56 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             saved = worker_bundle.assisted_intake_store.read_command_replay(
                 ids["tenant"], actor, operation, entry["key"], resource)
             assert saved is not None and saved[1] == entry["receipt"] and saved[2] == (200 if is_review else 201)
+        fresh_commands = [json.loads(path.read_text()) for path in sorted(private_dir.glob("native-url-command-*.json"))]
+        assert len(fresh_commands) == 5
+        assert len({entry["key"] for entry in fresh_commands}) == 5
+        assert len({entry["receipt"]["intake_id"] for entry in fresh_commands}) == 5
         with database.connect() as connection:
+            # Independently verify the actual browser-to-SQL graph. No worker
+            # admission was requested for these submission-only URLs; SUBMITTED
+            # is not successful policy/retrieval, a match outcome or READY.
+            for url in credentials["fresh_urls"].values():
+                rows = connection.execute("SELECT intake_id FROM intake.intakes WHERE tenant_id=%s AND original_url=%s",
+                    (ids["tenant"], url)).fetchall()
+                expected = [entry for entry in fresh_commands if entry["body"]["original_url"] == url]
+                assert len(expected) == (2 if url == credentials["fresh_urls"]["duplicate"] else 1)
+                assert {str(row[0]) for row in rows} == {entry["receipt"]["intake_id"] for entry in expected}
+            for entry in fresh_commands:
+                receipt, body, key = entry["receipt"], entry["body"], entry["key"]
+                fresh_id = receipt["intake_id"]
+                saved = worker_bundle.assisted_intake_store.read_command_replay(
+                    ids["tenant"], ids["reviewer"], "submitCanonicalIntake", key)
+                assert saved is not None and saved[1] == receipt and saved[2] == 201
+                row = connection.execute("SELECT submitter_subject_id,processing_state,version,original_url,source_id,"
+                    "source_policy_state,resolved_listing_id,canonical_url FROM intake.intakes WHERE tenant_id=%s AND intake_id=%s",
+                    (ids["tenant"], fresh_id)).fetchone()
+                assert tuple(map(str, row[:3])) == (ids["reviewer"], "SUBMITTED", "1")
+                assert row[3] == body["original_url"] and all(value is None for value in row[4:])
+                transitions = connection.execute("SELECT transition_id,from_state,to_state,actor_subject_id,"
+                    "resulting_version FROM intake.intake_stage_transitions WHERE tenant_id=%s AND intake_id=%s",
+                    (ids["tenant"], fresh_id)).fetchall()
+                assert len(transitions) == 1
+                assert tuple(map(str, transitions[0])) == (receipt["transition_id"], "None", "SUBMITTED", ids["reviewer"], "1")
+                assignment, = connection.execute("SELECT assignment_id,status,version FROM workflow.assignments "
+                    "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], fresh_id)).fetchall()
+                sla, = connection.execute("SELECT assignment_id,version FROM workflow.sla_instances "
+                    "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], fresh_id)).fetchall()
+                assert assignment[1:] == ("UNASSIGNED", 1) and sla == (assignment[0], 1)
+                audits = connection.execute("SELECT action,audit_event_id FROM audit.audit_events WHERE tenant_id=%s "
+                    "AND correlation_id=%s AND action IN ('assignment.create','intake.create','sla.create')",
+                    (ids["tenant"], receipt["correlation_id"])).fetchall()
+                assert sorted(row[0] for row in audits) == ["assignment.create", "intake.create", "sla.create"]
+                assert [str(row[1]) for row in audits if row[0] == "intake.create"] == [receipt["audit_event_id"]]
+                events = connection.execute("SELECT event_type,event_id FROM workflow.outbox_events WHERE tenant_id=%s "
+                    "AND correlation_id=%s", (ids["tenant"], receipt["correlation_id"])).fetchall()
+                assert sorted(row[0] for row in events) == ["intake.submitted", "sla.state_changed"]
+                assert [str(row[1]) for row in events if row[0] == "intake.submitted"] == [receipt["outbox_event_id"]]
+                for table in ("workflow.jobs", "identity.match_cases", "intake.source_snapshots", "intake.parser_runs"):
+                    column = "aggregate_id" if table == "workflow.jobs" else "intake_id"
+                    assert connection.execute(f"SELECT count(*) FROM {table} WHERE tenant_id=%s AND {column}=%s",
+                        (ids["tenant"], fresh_id)).fetchone()[0] == 0
+                assert connection.execute("SELECT count(*) FROM durable_documents WHERE doc_id=%s AND "
+                    "collection IN ('operator.assisted_intakes','assisted_intake.intakes')", (fresh_id,)).fetchone()[0] == 0
             if submissions:
                 new_intake = submitted["intake_id"]
                 assert connection.execute("SELECT count(*) FROM intake.intakes WHERE tenant_id=%s AND original_url=%s",
@@ -515,6 +570,8 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             "independent_reviewer_id": independent_reviewer, "real_reviewer_sessions": reviewer_sessions,
             "manual_context_appended": bool(append_property),
             "new_url_manual_admissions": url_admissions,
+            "fresh_url_submissions": [{"intake_id": entry["receipt"]["intake_id"], "processing_state": "SUBMITTED",
+                "key": entry["key"]} for entry in fresh_commands],
             "private_artifacts": str(private_dir)}
     except BaseException:
         for label in ("api", "web", "browser"):

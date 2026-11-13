@@ -6,11 +6,11 @@ import {
   type Page,
   type TestInfo,
 } from "@playwright/test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CanonicalIdentityReceipt, CanonicalIntakeAssistedEntryRequestReceipt, CanonicalIntakeReceipt, MatchCaseReceipt } from "@oday-plus/openapi-client";
 
-import { createPgNavigationControl, openPgRadar, openPgScenario, PG_WEB, type PgScenario } from "./_intakeScorePg";
+import { createPgNavigationControl, loginNativeSession, nativeBrowserInput, openNativeIntakeList, openPgRadar, openPgScenario, PG_WEB, submitNativeURL, type PgScenario } from "./_intakeScorePg";
 
 import {
   acquireOperatorBackendLock,
@@ -62,17 +62,6 @@ test.afterAll(() => {
   releaseOperatorBackendLock();
 });
 
-async function loginNativeSession(page: Page, account: { username: string; password: string; actor_id: string }) {
-  await page.goto("/login?returnTo=" + encodeURIComponent("/operator?ws=network&tab=radar"));
-  await page.getByLabel("使用者帳號").fill(account.username);
-  await page.getByLabel("密碼", { exact: true }).fill(account.password);
-  await page.getByRole("button", { name: "登入", exact: true }).click();
-  await expect(page).toHaveURL(/\/operator\?/);
-  const session = await page.request.get("/auth/session");
-  expect(session.status()).toBe(200);
-  expect((await session.json()).subject).toBe(account.actor_id);
-}
-
 async function selectNativeIntake(page: Page, intakeId: string, refresh = false) {
   if (refresh) {
     // The selected durable detail owns its original refresh control. It does
@@ -97,23 +86,6 @@ async function selectNativeIntake(page: Page, intakeId: string, refresh = false)
   }
   await openNativeIntakeList(page);
   await page.getByRole("button", { name: new RegExp(intakeId) }).click();
-}
-
-async function openNativeIntakeList(page: Page) {
-  const listing = () => page.waitForResponse((candidate) => candidate.request().method() === "GET"
-    && new URL(candidate.url()).pathname === "/api/v1/canonical-intakes");
-  const pending = listing();
-  await page.getByRole("button", { name: "選取收件／比對案件", exact: true }).click();
-  let response = await pending;
-  if (response.status() === 409) {
-    // Exercise the existing visible refresh after a real snapshot conflict;
-    // other failures remain failures and no command is automatically replayed.
-    await expect(page.getByTestId("canonical-intake-case-picker").getByRole("alert")).toBeVisible();
-    const reloaded = listing();
-    await page.getByRole("button", { name: "重新讀取", exact: true }).click();
-    response = await reloaded;
-  }
-  expect(response.status(), await response.text()).toBe(200);
 }
 
 // One fault control for the original native command callers. Only the browser
@@ -244,14 +216,7 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
     page.setDefaultTimeout(30_000);
     const inputPath = process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE;
     expect(inputPath, "Owned native SQL preconditions are required").toBeTruthy();
-    const input = JSON.parse(readFileSync(inputPath!, "utf8")) as {
-      username: string; password: string; actor_id: string; tenant_id: string; intake_id: string;
-      match_case_id: string | null; api_url: string; manager_region_id: string | null; outside_intake_id: string;
-      context_property_ids: string[];
-      append_property_id: string | null; append_receipt_probe: boolean;
-      independent_reviewer: { username: string; password: string; actor_id: string } | null;
-      url_manual: { original_url: string; fields: { address: string; rent: number; areaPing: number } } | null;
-    };
+    const input = nativeBrowserInput();
     const spoof = { "x-subject-id": input.actor_id, "x-tenant-id": input.tenant_id, "x-roles": "site_reviewer,expansion_user" };
     expect((await request.get(`${input.api_url}/api/v1/canonical-intakes`, { headers: spoof })).status()).toBe(401);
     expect((await request.get("/api/v1/canonical-intakes", { headers: spoof })).status()).toBe(401);
@@ -651,17 +616,30 @@ async function reopenIntakeAs(
   await expect(page.getByTestId("intake-detail-id")).toHaveText(intakeId);
 }
 
-test("canonical 1: exact URL duplicate is intercepted before retrieval", async ({
-  page,
-}) => {
-  await openRadar(page);
-  const firstId = await submitUrl(page, URLS.clean);
+test("canonical native: 1 exact submission replay keeps one durable Intake without retrieval", async ({ page }) => {
+  const input = nativeBrowserInput();
+  await loginNativeSession(page, input);
+  await openNativeIntakeList(page);
+  await page.getByRole("button", { name: "從網址建立正式收件", exact: true }).click();
+  const command = await submitNativeURL(page, input, input.fresh_urls.replay,
+    "明確核對同一正式送件識別的合法重播，不能以相同網址猜測回執。");
+  const replay = await page.request.post("/api/v1/canonical-intakes", {
+    headers: { "Idempotency-Key": command.key, "If-Actor-Match": input.actor_id, "If-Tenant-Match": input.tenant_id },
+    data: command.body,
+  });
+  expect(replay.status(), await replay.text()).toBe(201);
+  expect(replay.headers()["idempotency-replayed"]).toBe("true");
+  expect(await replay.json()).toEqual(command.receipt);
+  const conflict = await page.request.post("/api/v1/canonical-intakes", {
+    headers: { "Idempotency-Key": command.key, "If-Actor-Match": input.actor_id, "If-Tenant-Match": input.tenant_id },
+    data: { ...command.body, reason: "Different explicit intent cannot borrow the accepted key" },
+  });
+  expect(conflict.status(), await conflict.text()).toBe(409);
+  await page.reload();
+  await expect(page.getByTestId("intake-detail-id")).toHaveText(command.receipt.intake_id);
+  await expect(page.getByTestId("intake-detail-stage")).toHaveText("已送出");
   await page.getByTestId("intake-return-button").click();
-
-  const secondId = await submitUrl(page, URLS.clean);
-  expect(secondId).toBe(firstId);
-  await page.getByTestId("intake-return-button").click();
-  await expect(page.getByTestId(`intake-inbox-row-${firstId}`)).toHaveCount(1);
+  await expect(page.getByRole("button", { name: new RegExp(command.receipt.intake_id) })).toHaveCount(1);
 });
 
 test("canonical 2: retained assisted-entry-only keeps URL and validates durable manual input", async ({

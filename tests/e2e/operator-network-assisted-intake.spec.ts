@@ -44,7 +44,7 @@ import {
  * ============================================================================
  */
 
-import { openPgScenario, PG_API, PG_WEB, type PgScenario } from "./_intakeScorePg";
+import { loginNativeSession, nativeBrowserInput, openNativeIntakeList, openPgScenario, PG_API, PG_WEB, submitNativeURL, type PgScenario } from "./_intakeScorePg";
 
 import {
   acquireOperatorBackendLock,
@@ -81,7 +81,7 @@ test.afterAll(() => {
 test.beforeEach(async ({}, info) => {
   // Retained history belongs to the separate physical PG composition. Do
   // not reset an unrelated legacy backend for these original UI journeys.
-  if (info.title.startsWith("retained ")) return;
+  if (info.title.startsWith("retained ") || info.title.startsWith("canonical native:")) return;
   const api = await playwrightRequest.newContext({
     baseURL: API_BASE_URL,
     extraHTTPHeaders: {
@@ -154,96 +154,69 @@ async function getIntakeApi(id: string, scenario?: PgScenario) {
 }
 
 test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
-  test("Package 10 inbox and continuous detail replace retired Package 7 surfaces", async ({
-    page,
-  }) => {
-    await openRadarAsExpansionManager(page);
-
-    // 1. Package 10 canonical Listing Inbox
-    await expect(
-      page.locator('[data-screen-label="Listing Inbox 收件匣"]'),
-    ).toBeVisible();
-
-    // 2. Dialog 從網址新增物件
+  test("canonical native: Package 10 inbox opens the same formal URL form and continuous detail", async ({ page }) => {
+    const input = nativeBrowserInput();
+    await loginNativeSession(page, input);
+    await expect(page.locator('[data-screen-label="Listing Inbox 收件匣"]')).toBeVisible();
+    // The old Inbox button, not a new navigation producer, opens the real form.
     await page.getByTestId("intake-add-button").click();
-    await expect(
-      page.locator('[data-screen-label="Dialog 從網址新增物件"]'),
-    ).toBeVisible();
-    await page.getByTestId("intake-url-input").fill(URLS.clean);
-    await page.getByTestId("intake-submit-button").click();
-
-    // 3. Package 10 continuous intake detail page
-    await expect(
-      page.locator('[data-screen-label="Intake 收件處理詳情頁"]'),
-    ).toBeVisible({
-      timeout: 15_000,
-    });
-
-    await expect(
-      page.locator('[data-screen-label="Network URL 收件佇列"]'),
-    ).toHaveCount(0);
-    await expect(
-      page.locator('[data-screen-label="Dialog 收件處理詳情"]'),
-    ).toHaveCount(0);
+    await expect(page.locator('[data-screen-label="Dialog 從網址新增物件"]')).toBeVisible();
+    expect(new URL(page.url()).searchParams.get("intakeKind")).toBe("canonical");
+    const { receipt } = await submitNativeURL(page, input, input.fresh_urls.presentation,
+      "從原收件匣明確提交正式新網址，核對同一表單、SQL回執與原生詳情。");
+    await expect(page.locator('[data-screen-label="Intake 收件處理詳情頁"]')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-screen-label="Network URL 收件佇列"]')).toHaveCount(0);
+    await expect(page.locator('[data-screen-label="Dialog 收件處理詳情"]')).toHaveCount(0);
+    await expect(page.getByTestId("native-intake-stage-timeline")).toContainText("建立 → 已送出");
+    await expect(page.getByTestId("intake-detail-id")).toHaveText(receipt.intake_id);
+    await expect(page.getByTestId("timeline-stepper")).toHaveCount(0);
   });
 
-  test("empty state, then a clean URL submits to a durable READY / NEW record", async ({
-    page,
-  }) => {
-    await openRadarAsExpansionManager(page);
+  test("canonical native: empty legacy view and old add link submit a durable SUBMITTED record", async ({ page }) => {
+    const input = nativeBrowserInput();
+    await loginNativeSession(page, input);
+    // Empty legacy presentation is not an empty native collection or READY.
     await expect(page.getByTestId("intake-inbox-empty")).toBeVisible();
-
-    await page.getByTestId("intake-add-button").click();
-    // Double-submit guard: the button is inert until a URL is entered.
-    await expect(page.getByTestId("intake-submit-button")).toBeDisabled();
-    await page.getByTestId("intake-url-input").fill(URLS.clean);
-    await expect(page.getByTestId("intake-submit-button")).toBeEnabled();
-    await page.getByTestId("intake-submit-button").click();
-
-    const detail = page.getByTestId("intake-detail-dialog");
-    await expect(detail).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("intake-detail-stage")).toHaveText("可決策");
-    await expect(page.getByTestId("intake-detail-match")).toHaveText("新物件");
-
-    // Source evidence is present at the point of decision.
-    await expect(
-      page
-        .getByTestId("match-evidence-panel")
-        .getByTestId("evidence-correlation-id"),
-    ).not.toHaveText("UNAVAILABLE");
-    await expect(page.getByTestId("timeline-stepper")).toBeVisible();
-
-    // The record is durable: it survives closing the dialog and reloading.
-    const intakeId = (
-      await page.getByTestId("intake-detail-id").textContent()
-    )?.trim();
-    expect(intakeId).toBeTruthy();
+    await page.goto("/operator?ws=network&tab=radar&dialog=add&extra=preserved");
+    const { receipt } = await submitNativeURL(page, input, input.fresh_urls.durability,
+      "由原dialog=add連結明確送件，確認已送出不代表解析或新物件決策成功。");
+    expect(new URL(page.url()).searchParams.get("extra")).toBe("preserved");
+    const read = await page.request.get(`/api/v1/canonical-intakes/${receipt.intake_id}?include_source=true&include_history=true&include_evidence=true`);
+    expect(read.status(), await read.text()).toBe(200);
+    const data = await read.json();
+    expect(data).toMatchObject({ intake_id: receipt.intake_id, submitter_subject_id: input.actor_id,
+      processing_state: "SUBMITTED", version: 1, correlation_id: receipt.correlation_id, resolution: null,
+      source_info: { source_id: null, recorded_policy_state: null }, processing_evidence: { items: [] } });
+    expect(data.processing_history.items).toHaveLength(1);
+    expect(data.processing_history.items[0]).toMatchObject({ transition_id: receipt.transition_id,
+      from_state: null, to_state: "SUBMITTED", actor_subject_id: input.actor_id });
+    expect(data.workflow.assignment_id).toBeTruthy();
+    expect(data.workflow.sla_instance_id).toBeTruthy();
+    await page.reload();
+    await expect(page.getByTestId("intake-detail-id")).toHaveText(receipt.intake_id);
+    await expect(page.getByTestId("intake-detail-stage")).toHaveText("已送出");
+    await expect(page.getByTestId("native-intake-stage-timeline")).toContainText(receipt.transition_id);
     await page.getByTestId("intake-return-button").click();
-    await page.goto("/operator?ws=network");
-    await page.getByTestId("network-tab-1").click();
-    await expect(page.getByTestId("intake-table")).toBeVisible();
-    await expect(
-      page.getByTestId(`intake-inbox-row-${intakeId}`),
-    ).toBeVisible();
+    await expect(page.getByRole("button", { name: new RegExp(receipt.intake_id) })).toHaveCount(1);
   });
 
-  test("exact duplicate is caught before retrieval and never creates a second record", async ({
-    page,
-  }) => {
-    await openRadarAsExpansionManager(page);
-    await submitUrl(page, URLS.clean);
-    const firstId = await page.getByTestId("intake-detail-id").textContent();
+  test("canonical native: a new key for the same URL cannot borrow a prior receipt or claim retrieval", async ({ page }) => {
+    const input = nativeBrowserInput();
+    await loginNativeSession(page, input);
+    await openNativeIntakeList(page);
+    await page.getByRole("button", { name: "從網址建立正式收件", exact: true }).click();
+    const first = await submitNativeURL(page, input, input.fresh_urls.duplicate,
+      "第一份正式網址送件，後續身分與來源檢查仍由既有worker負責。");
     await page.getByTestId("intake-return-button").click();
-
-    await submitUrl(page, URLS.clean);
-    const secondId = await page.getByTestId("intake-detail-id").textContent();
-
-    // Same terminal record returned — the duplicate did not spawn a new intake.
-    expect(secondId).toBe(firstId);
+    await page.getByRole("button", { name: "從網址建立正式收件", exact: true }).click();
+    const second = await submitNativeURL(page, input, input.fresh_urls.duplicate,
+      "同網址的新送件意圖，不能以URL相等冒充原識別的歷史重播。");
+    expect(second.key).not.toBe(first.key);
+    expect(second.receipt.intake_id).not.toBe(first.receipt.intake_id);
+    expect(second.receipt.processing_state).toBe("SUBMITTED");
     await page.getByTestId("intake-return-button").click();
-    await expect(page.getByTestId(`intake-inbox-row-${firstId}`)).toHaveCount(
-      1,
-    );
+    for (const id of [first.receipt.intake_id, second.receipt.intake_id])
+      await expect(page.getByRole("button", { name: new RegExp(id) })).toHaveCount(1);
   });
 
   test("retained possible match requires a human decision and refuses an empty reason", async ({
@@ -738,17 +711,23 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-add-button")).toHaveCount(0);
   });
 
-  test("dialogs are keyboard operable and Escape closes them", async ({
-    page,
-  }) => {
-    await openRadarAsExpansionManager(page);
-    await page.getByTestId("intake-add-button").click();
-    await expect(page.getByTestId("intake-add-dialog")).toBeVisible();
-
-    // Focus lands inside the dialog rather than being left on the page behind.
-    await expect(page.getByTestId("intake-url-input")).toBeFocused();
-    await page.keyboard.press("Escape");
-    await expect(page.getByTestId("intake-add-dialog")).toBeHidden();
+  test("canonical native: dialogs are keyboard operable and Escape closes without writing", async ({ page }) => {
+    const input = nativeBrowserInput();
+    await loginNativeSession(page, input);
+    const writes: string[] = [];
+    const observe = (request: import("@playwright/test").Request) => {
+      if (request.method() !== "GET" && new URL(request.url()).pathname.startsWith("/api/v1/")) writes.push(request.url());
+    };
+    page.on("request", observe);
+    try {
+      await page.getByTestId("intake-add-button").click();
+      await expect(page.getByTestId("intake-add-dialog")).toBeVisible();
+      await expect(page.getByTestId("intake-url-input")).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId("intake-add-dialog")).toBeHidden();
+      await expect(page.getByTestId("canonical-intake-case-picker")).toBeVisible();
+      expect(writes).toEqual([]);
+    } finally { page.off("request", observe); }
   });
 
   test("retained mobile routes ambiguous side-by-side compare to a desktop-required state", async ({

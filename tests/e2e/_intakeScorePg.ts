@@ -1,5 +1,98 @@
 import { expect, request as playwrightRequest, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import type { CanonicalIntakeReceipt, NativeIntakeScope } from "@oday-plus/openapi-client";
+
+export type NativeBrowserInput = {
+  username: string; password: string; actor_id: string; tenant_id: string; intake_id: string;
+  match_case_id: string | null; api_url: string; manager_region_id: string | null; outside_intake_id: string;
+  context_property_ids: string[]; append_property_id: string | null; append_receipt_probe: boolean;
+  independent_reviewer: { username: string; password: string; actor_id: string } | null;
+  url_manual: { original_url: string; fields: { address: string; rent: number; areaPing: number } } | null;
+  fresh_urls: { presentation: string; durability: string; duplicate: string; replay: string };
+  fresh_scope: NativeIntakeScope;
+};
+
+export function nativeBrowserInput(): NativeBrowserInput {
+  const path = process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE;
+  expect(path, "Original owned native SQL/password-session composition is required").toBeTruthy();
+  return JSON.parse(readFileSync(path!, "utf8")) as NativeBrowserInput;
+}
+
+export async function loginNativeSession(page: Page, account: { username: string; password: string; actor_id: string }) {
+  await page.goto("/login?returnTo=" + encodeURIComponent("/operator?ws=network&tab=radar"));
+  await page.getByLabel("使用者帳號").fill(account.username);
+  await page.getByLabel("密碼", { exact: true }).fill(account.password);
+  await page.getByRole("button", { name: "登入", exact: true }).click();
+  await expect(page).toHaveURL(/\/operator\?/);
+  const session = await page.request.get("/auth/session");
+  expect(session.status()).toBe(200);
+  expect((await session.json()).subject).toBe(account.actor_id);
+}
+
+export async function openNativeIntakeList(page: Page) {
+  const listing = () => page.waitForResponse((candidate) => candidate.request().method() === "GET"
+    && new URL(candidate.url()).pathname === "/api/v1/canonical-intakes");
+  const pending = listing();
+  await page.getByRole("button", { name: "選取收件／比對案件", exact: true }).click();
+  let response = await pending;
+  if (response.status() === 409) {
+    // Original visible refresh, not a command retry or suppressed failure.
+    await expect(page.getByTestId("canonical-intake-case-picker").getByRole("alert")).toBeVisible();
+    const reloaded = listing();
+    await page.getByRole("button", { name: "重新讀取", exact: true }).click();
+    response = await reloaded;
+  }
+  expect(response.status(), await response.text()).toBe(200);
+}
+
+/** Both original specs submit the actual form, never the retired HTTP producer. */
+export async function submitNativeURL(page: Page, input: NativeBrowserInput, url: string, reason: string) {
+  await expect(page.getByTestId("intake-add-dialog")).toBeVisible();
+  await expect(page.getByTestId("intake-submit-button")).toBeDisabled();
+  await expect(page.getByRole("combobox", { name: /^正式收件範圍/ })).toHaveValue("");
+  await expect(page.getByLabel("送件原因", { exact: true })).toHaveValue("");
+  await page.getByTestId("intake-url-input").fill(url);
+  await page.getByRole("combobox", { name: /^正式收件範圍/ })
+    .selectOption({ label: `沿用收件 ${input.intake_id} 的範圍` });
+  await page.getByLabel("送件原因", { exact: true }).fill(reason);
+  const posts: string[] = [];
+  const observe = (request: import("@playwright/test").Request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname.startsWith("/api/v1/"))
+      posts.push(new URL(request.url()).pathname);
+  };
+  page.on("request", observe);
+  try {
+    const [response] = await Promise.all([
+      page.waitForResponse((candidate) => candidate.request().method() === "POST"
+        && new URL(candidate.url()).pathname === "/api/v1/canonical-intakes"),
+      page.getByTestId("intake-submit-button").click(),
+    ]);
+    expect(response.status(), await response.text()).toBe(201);
+    const request = response.request(), headers = await request.allHeaders();
+    const body = request.postDataJSON();
+    expect(body).toEqual({ intake_method: "URL", original_url: url, scope: input.fresh_scope, reason });
+    expect(headers["if-actor-match"]).toBe(input.actor_id);
+    expect(headers["if-tenant-match"]).toBe(input.tenant_id);
+    expect(headers["if-match"]).toBeUndefined();
+    expect(headers["idempotency-key"]).toBeTruthy();
+    const receipt = await response.json() as CanonicalIntakeReceipt;
+    expect(receipt).toMatchObject({ intake_method: "URL", processing_state: "SUBMITTED", version: 1 });
+    await expect(page.getByTestId("intake-detail-id")).toHaveText(receipt.intake_id);
+    await expect(page.getByTestId("intake-detail-stage")).toHaveText("已送出");
+    const selected = new URL(page.url());
+    expect(selected.pathname).toBe(`/intake/${receipt.intake_id}`);
+    expect(selected.searchParams.get("intakeKind")).toBe("canonical");
+    expect(posts).toEqual(["/api/v1/canonical-intakes"]);
+    const command = { receipt, body, key: headers["idempotency-key"] };
+    // The owning Python harness independently verifies these actual receipts
+    // and one complete SQL graph per accepted key, including replay absence.
+    writeFileSync(join(dirname(process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE!),
+      `native-url-command-${receipt.intake_id}.json`), JSON.stringify(command), { mode: 0o600 });
+    return command;
+  } finally { page.off("request", observe); }
+}
 
 export const PG_API = process.env.ODP_SCORE_BROWSER_API_URL ?? "http://127.0.0.1:38299";
 export const PG_WEB = process.env.ODP_SCORE_BROWSER_WEB_URL ?? "http://127.0.0.1:38300";
