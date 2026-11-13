@@ -236,12 +236,19 @@ export type NetworkScoringCompare = {
   empty: boolean;
 };
 
+// Reviewed residual knowledge of the current 2.1.0 configuration: only the
+// accepted engineering/fitout residual is known; the rest stays explicit null.
+export type NetworkTargetFormatResidual = {
+  equipment_salvage_ratio: null; fitout_salvage_ratio: number;
+  recover_lease_deposit: null; decommissioning_and_reinstatement_cost: null;
+};
+
 // Read-only exact-version registry projection, never report assumptions or
 // current scoring admission. Unknown measurements/policies remain explicit.
+// 2.0.0 is retained read compatibility only, not a current-calculation fallback.
 export type NetworkTargetFormat = {
   format_code: "ODAY_G2";
   format_name: string;
-  format_version: "2.0.0";
   package_total_untaxed: number;
   unallocated_package_cost: number;
   daily_operating_hours: number;
@@ -260,8 +267,11 @@ export type NetworkTargetFormat = {
   }>;
   fitout_spec: { base_fitout_cost: number; fitout_useful_life_months: number };
   utilities_spec: null; maintenance_spec: null; financing_spec: null; tax_spec: null;
-  residual_spec: null; ramp_spec: null; seasonality_spec: null;
-};
+  ramp_spec: null; seasonality_spec: null;
+} & (
+  | { format_version: "2.1.0"; residual_spec: NetworkTargetFormatResidual }
+  | { format_version: "2.0.0"; residual_spec: null }
+);
 
 export type NetworkScoringSnapshot = {
   source?: "api" | "canonical" | "fixture";

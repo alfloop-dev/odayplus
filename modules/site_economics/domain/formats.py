@@ -378,6 +378,8 @@ def _require_g2_numeric_payload(data: Mapping[str, Any]) -> None:
         for field, value in subspec.items():
             if field in {"spec_id", "version", "depreciation_method"}:
                 identity(value)
+            elif key == "residual_spec" and value is None:
+                continue  # An explicit residual policy unknown, refused at calculation.
             elif field == "recover_lease_deposit":
                 if type(value) is not bool:
                     raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: deposit recovery must be boolean")
@@ -420,6 +422,12 @@ def require_oday_g2_configuration(spec: TargetFormatSpec) -> None:
         spec.utilities_spec, spec.maintenance_spec, spec.financing_spec, spec.tax_spec,
         spec.residual_spec, spec.ramp_spec, spec.seasonality_spec,
     )) or any(asset.monthly_fixed_operating_cost is None for asset in spec.capital_assets):
+        refuse()
+    residual = spec.residual_spec
+    if any(value is None for value in (
+        residual.equipment_salvage_ratio, residual.fitout_salvage_ratio,
+        residual.recover_lease_deposit, residual.decommissioning_and_reinstatement_cost,
+    )):
         refuse()
     for item in spec.machine_mix.items:
         model = item.machine_model
@@ -540,13 +548,21 @@ def build_default_g2_standard_v1() -> TargetFormatSpec:
     )
 
 
-def build_accepted_g2_v2() -> TargetFormatSpec:
+def build_accepted_g2_v2(format_version: str = "2.0.0") -> TargetFormatSpec:
     """Accepted costs only, not a complete financial scenario or admission.
 
     Original contract 1-KgkrnZdoq8_f2Aeg-K01pKYRTyAalKlcRVdmKA7kk4;
     seven-row discount decision 2026-10-21. No throughput observations follow
     from theoretical 24h / 55-minute capacity.
+
+    2.0.0 is the immutable original snapshot. 2.1.0 changes only the typed
+    residual policy: engineering/fitout residual 0 (user decision
+    G2-FITOUT-INFRASTRUCTURE-DEPRECIATION-BASIS-USER-013); every other residual
+    policy stays an explicit unknown, so calculation is still refused.
     """
+    if format_version not in ("2.0.0", "2.1.0"):
+        raise ValueError(f"TARGET_FORMAT_VERSION_UNKNOWN: no accepted G2 configuration {format_version}")
+    # Unchanged components keep their original 2.0.0 identities and versions.
     version = "2.0.0"
     items = tuple(MachineMixItem(MachineModelSpec(
         model_id=f"G2-COMBO-{kg}KG-V2", machine_class=MachineClass.COMBO,
@@ -565,9 +581,20 @@ def build_accepted_g2_v2() -> TargetFormatSpec:
     ) for kind, cost in ((CapitalAssetKind.PAYMENT_SYSTEM, 100_000),
         (CapitalAssetKind.KIOSK, 160_000), (CapitalAssetKind.VENDING, 40_000),
         (CapitalAssetKind.CAMERA_SYSTEM, 29_122), (CapitalAssetKind.FURNITURE, 21_633)))
+    residual = None
+    description_suffix = ""
+    if format_version == "2.1.0":
+        residual = ResidualValueSpec(spec_id="RES-G2-ACCEPTED-V2", version=format_version,
+            equipment_salvage_ratio=None, fitout_salvage_ratio=0.0,
+            recover_lease_deposit=None, decommissioning_and_reinstatement_cost=None)
+        description_suffix = (
+            " 2.1.0: decision G2-FITOUT-INFRASTRUCTURE-DEPRECIATION-BASIS-USER-013 "
+            "fitout/signage/water tank/pipes/electrical/gas engineering residual 0; "
+            "equipment salvage, deposit recovery and reinstatement policies unknown."
+        )
     return TargetFormatSpec(
         format_code="ODAY_G2", format_name="ODay G2 accepted untaxed package",
-        format_version=version,
+        format_version=format_version,
         description=(
             "Accepted contract 1-KgkrnZdoq8_f2Aeg-K01pKYRTyAalKlcRVdmKA7kk4; "
             "TWD untaxed 5546000 = classified 5346000 + unallocated 200000 "
@@ -582,7 +609,7 @@ def build_accepted_g2_v2() -> TargetFormatSpec:
             "premises leases at least five years. 24h/55min is theoretical capacity, "
             "not customer turns. Site area, consumption, maintenance, operating inputs "
             "and financial policies remain unknown; not calculable or production admitted."
-        ),
+        ) + description_suffix,
         target_area_ping_min=None, target_area_ping_max=None, recommended_area_ping=None,
         machine_mix=MachineMixSpec(spec_id="MIX-G2-ACCEPTED-V2", version=version,
             items=items, installation_and_delivery_fee=0),
@@ -591,7 +618,7 @@ def build_accepted_g2_v2() -> TargetFormatSpec:
             electrical_upgrade_cost=0, gas_piping_upgrade_cost=0, facade_signage_cost=0,
             telemetry_smart_hub_cost=0, fitout_useful_life_months=60),
         utilities_spec=None, maintenance_spec=None, financing_spec=None, tax_spec=None,
-        residual_spec=None, ramp_spec=None, seasonality_spec=None, capital_assets=assets,
+        residual_spec=residual, ramp_spec=None, seasonality_spec=None, capital_assets=assets,
         package_total_untaxed=5_546_000, unallocated_package_cost=200_000,
         daily_operating_hours=24,
     )
@@ -720,6 +747,7 @@ class TargetFormatRegistry:
     def _register_defaults(self) -> None:
         self.register(build_default_g2_standard_v1())
         self.register(build_accepted_g2_v2())
+        self.register(build_accepted_g2_v2("2.1.0"))
         self.register(build_default_g3_compact_v1())
         self.register(build_default_flagship_v1())
 

@@ -226,8 +226,11 @@ export function StandardFormatAssumptions({ format }: { format: NetworkTargetFor
         </div>)}
         {format.capital_assets.map((asset) => <div key={asset.asset_id}><dt>{assetLabels[asset.asset_kind]}</dt>
           <dd>{asset.quantity} 件 × {money(asset.unit_capex)}；{asset.useful_life_months} 月／殘值比 {asset.residual_value_ratio}；每月營運成本 {amount(asset.monthly_fixed_operating_cost)}</dd></div>)}
-        <div><dt>工程裝修（未稅）</dt><dd>{money(format.fitout_spec.base_fitout_cost)}；{format.fitout_spec.fitout_useful_life_months} 月或較短租期</dd></div>
-        <div><dt>財務政策與營運輸入</dt><dd>水電費率、維護、融資、稅、殘值政策、爬坡與季節性：未知。未計算 ROI、折舊或報告 CAPEX。</dd></div>
+        <div><dt>工程裝修（未稅）</dt><dd>{money(format.fitout_spec.base_fitout_cost)}；{format.fitout_spec.fitout_useful_life_months} 月或較短租期
+          {format.residual_spec ? <>／已確認工程殘值比 {format.residual_spec.fitout_salvage_ratio}</> : null}</dd></div>
+        <div><dt>財務政策與營運輸入</dt><dd>{format.residual_spec
+          ? "水電費率、維護、融資、稅、設備整體殘值、押金回收、復原成本、爬坡與季節性：未知。"
+          : "水電費率、維護、融資、稅、殘值政策、爬坡與季節性：未知。"}未計算 ROI、折舊或報告 CAPEX。</dd></div>
       </dl>
     </section>
   );

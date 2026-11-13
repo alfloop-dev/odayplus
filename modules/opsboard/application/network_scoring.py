@@ -644,13 +644,24 @@ class NetworkScoringService:
                 ))):
             return None
         try:
-            spec = self._format_registry.get("ODAY_G2", "2.0.0").to_dict()
-            if (spec["format_code"], spec["format_version"]) != ("ODAY_G2", "2.0.0"):
+            spec = self._format_registry.get("ODAY_G2", "2.1.0").to_dict()
+            if (spec["format_code"], spec["format_version"]) != ("ODAY_G2", "2.1.0"):
                 raise ValueError("unexpected target format identity")
             policies = ("utilities_spec", "maintenance_spec", "financing_spec", "tax_spec",
-                        "residual_spec", "ramp_spec", "seasonality_spec")
+                        "ramp_spec", "seasonality_spec")
             if any(spec[key] is not None for key in policies):
                 raise ValueError("target format policy projection requires review")
+            # Reviewed residual knowledge: only the accepted fitout residual is
+            # known; any other known residual policy needs a new review.
+            residual_fields = ("equipment_salvage_ratio", "fitout_salvage_ratio",
+                               "recover_lease_deposit", "decommissioning_and_reinstatement_cost")
+            residual = spec["residual_spec"]
+            if (set(residual) != {"spec_id", "version", *residual_fields}
+                    or any(residual[key] is not None for key in residual_fields
+                           if key != "fitout_salvage_ratio")
+                    or type(residual["fitout_salvage_ratio"]) not in (int, float)
+                    or not 0 <= residual["fitout_salvage_ratio"] <= 1):
+                raise ValueError("target format residual projection requires review")
             # Explicit read allowlist: no description, source contract, internal
             # spec ids, derived aggregates or future financial policy bodies.
             return {
@@ -658,6 +669,7 @@ class NetworkScoringService:
                     "format_code", "format_name", "format_version", "package_total_untaxed",
                     "unallocated_package_cost", "daily_operating_hours", *policies,
                 )},
+                "residual_spec": {key: residual[key] for key in residual_fields},
                 "machine_mix": {"items": [{
                     "quantity": item["quantity"],
                     "machine_model": {key: item["machine_model"][key] for key in (

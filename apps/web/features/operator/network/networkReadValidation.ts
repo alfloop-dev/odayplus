@@ -150,7 +150,14 @@ function validTargetFormat(value: unknown): boolean {
   const count = (x: unknown) => positive(x) && Number.isSafeInteger(x);
   const ratio = (x: unknown) => nonnegative(x) && (x as number) <= 1;
   const unknownAmount = (x: unknown) => x === null || nonnegative(x);
-  if (!readObject(value) || value.format_code !== "ODAY_G2" || value.format_version !== "2.0.0"
+  // Current 2.1.0 carries only the reviewed fitout residual; retained 2.0.0 has none.
+  const residualFields = ["equipment_salvage_ratio", "fitout_salvage_ratio", "recover_lease_deposit",
+    "decommissioning_and_reinstatement_cost"];
+  const reviewedResidual = (x: unknown) => readObject(x) && Object.keys(x).length === residualFields.length
+    && residualFields.every((key) => key === "fitout_salvage_ratio" ? ratio(x[key]) : x[key] === null);
+  if (!readObject(value) || value.format_code !== "ODAY_G2"
+    || !(value.format_version === "2.1.0" ? reviewedResidual(value.residual_spec)
+      : value.format_version === "2.0.0" && value.residual_spec === null)
     || !readId(value.format_name) || !nonnegative(value.package_total_untaxed)
     || !nonnegative(value.unallocated_package_cost) || !positive(value.daily_operating_hours)
     || (value.daily_operating_hours as number) > 24
@@ -158,7 +165,7 @@ function validTargetFormat(value: unknown): boolean {
     || !Array.isArray(value.capital_assets) || !value.capital_assets.length
     || !readObject(value.fitout_spec) || !nonnegative(value.fitout_spec.base_fitout_cost)
     || !count(value.fitout_spec.fitout_useful_life_months)
-    || !["utilities_spec", "maintenance_spec", "financing_spec", "tax_spec", "residual_spec", "ramp_spec", "seasonality_spec"]
+    || !["utilities_spec", "maintenance_spec", "financing_spec", "tax_spec", "ramp_spec", "seasonality_spec"]
       .every((key) => value[key] === null)) return false;
   const items = value.machine_mix.items;
   if (!items.every((item) => readObject(item) && count(item.quantity) && readObject(item.machine_model)
