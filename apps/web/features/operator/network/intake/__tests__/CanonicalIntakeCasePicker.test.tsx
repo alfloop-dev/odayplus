@@ -6,6 +6,7 @@ import { CanonicalIntakeCasePicker as CasePicker, CanonicalIntakeCommandStatus }
 import { CanonicalIntakeCommandProvider } from "../useCanonicalIntakeCommand";
 import type { CanonicalIntakeReadContext } from "../canonicalIntakeReadClient";
 import type { CanonicalIdentityPlanningContext } from "@oday-plus/openapi-client";
+import { buildInboxReturnHref, parseUrlState } from "../urlState";
 
 vi.mock("next/navigation", async () => {
   const { useSyncExternalStore } = await import("react");
@@ -222,6 +223,84 @@ describe("sole native owner reference after complete provider replacement", () =
 });
 
 describe("native Intake and case selection", () => {
+  it("restores the native add URL through the existing collection, submits explicit input and follows only its native reader", async () => {
+    const params = new URLSearchParams(`ws=network&selected=IN-old&dialog=decide&decision=create&extra=a&extra=b&heatZoneId=HZ-old`);
+    const href = buildInboxReturnHref({ ...parseUrlState(params), intakeKind: "canonical", canonicalCursor: "",
+      selectedId: null, dialog: "add", fixFieldKey: null, decisionKind: null, receiptId: null }, params, "#intake/IN-old");
+    window.history.replaceState(null, "", href);
+    const pending = deferred<Response>();
+    const receipt = reloadReceipt();
+    const saved = { ...intake(95), intake_method: "URL", processing_state: "SUBMITTED", version: 1,
+      processing_history: { ...intake(95).processing_history, intake_version: 1 },
+      processing_evidence: { ...intake(95).processing_evidence, intake_version: 1 } };
+    const context = makeContext((path, init) => {
+      if (init?.method === "POST") return json(receipt, 201);
+      if (path.startsWith("/api/v1/canonical-intakes?")) return pending.promise;
+      if (path.endsWith("/match-case")) return json({ detail: "CANONICAL_MATCH_CASE_NOT_FOUND" }, 404);
+      return json(saved);
+    });
+    render(<CanonicalIntakeCasePicker context={context} />);
+    expect(screen.getByText("正在讀取收件…")).toBeVisible();
+    expect(screen.queryByTestId("intake-add-dialog")).not.toBeInTheDocument();
+    expect(posts(context)).toHaveLength(0);
+    await act(async () => pending.resolve(json({ items: [intake(1)], next_cursor: null })));
+    await screen.findByTestId("intake-add-dialog");
+    expect(screen.getByLabelText("正式收件範圍")).toHaveValue("");
+    expect(screen.getByLabelText("送件原因")).toHaveValue("");
+    expect(screen.queryByTestId("intake-area-select")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://source.example/explicit-url" } });
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    expect(posts(context)).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "明確選取範圍後提交這個正式來源頁" } });
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    await screen.findByTestId("intake-detail-id");
+    await screen.findByText("這筆收件目前沒有比對案件。");
+    expect(screen.getByTestId("intake-detail-id")).toHaveTextContent(id(95));
+    expect(screen.getByTestId("intake-detail-stage")).toHaveTextContent("已送出");
+    expect(screen.queryByTestId("intake-add-dialog")).not.toBeInTheDocument();
+    const sent = posts(context);
+    expect(sent).toHaveLength(1);
+    expect(sent[0][0]).toBe("/api/v1/canonical-intakes");
+    expect(JSON.parse(String(sent[0][1]?.body))).toEqual({ intake_method: "URL", original_url: "https://source.example/explicit-url",
+      reason: "明確選取範圍後提交這個正式來源頁", scope: intake(1).scope });
+    expect(new Headers(sent[0][1]?.headers).has("if-match")).toBe(false);
+    expect(vi.mocked(context.fetchImpl).mock.calls.map(([path]) => String(path)).every((path) => !path.includes("network-listings"))).toBe(true);
+    const current = new URL(window.location.href);
+    expect(current.pathname).toBe(`/intake/${id(95)}`);
+    expect(current.searchParams.get("intakeKind")).toBe("canonical");
+    expect(current.searchParams.get("dialog")).toBe("detail");
+    expect(current.searchParams.getAll("extra")).toEqual(["a", "b"]);
+    expect(current.hash).toBe("");
+  });
+
+  it.each([401, 403, 503])("does not expose the URL form when a native add collection read returns %s", async (status) => {
+    // An add deep link without a cursor still opens the same first collection.
+    window.history.replaceState(null, "", "/operator?ws=network&tab=radar&intakeKind=canonical&dialog=add");
+    const context = makeContext(() => json({ detail: "current native reader refused" }, status));
+    render(<CanonicalIntakeCasePicker context={context} />);
+    expect(await screen.findByRole("alert")).toBeVisible();
+    expect(screen.queryByTestId("intake-add-dialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("目前可讀範圍沒有收件。")).not.toBeInTheDocument();
+    expect(posts(context)).toHaveLength(0);
+  });
+
+  it("records native form open and close in the existing URL and restores it through history without submitting", async () => {
+    const context = makeContext();
+    render(<CanonicalIntakeCasePicker context={context} />); open();
+    fireEvent.click(await screen.findByRole("button", { name: "從網址建立正式收件" }));
+    await screen.findByTestId("intake-add-dialog");
+    const addHref = window.location.href;
+    expect(new URL(addHref).searchParams.get("dialog")).toBe("add");
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.queryByTestId("intake-add-dialog")).not.toBeInTheDocument();
+    expect(new URL(window.location.href).searchParams.get("dialog")).toBe("detail");
+    act(() => { window.history.replaceState(null, "", addHref); window.dispatchEvent(new PopStateEvent("popstate")); });
+    await screen.findByTestId("intake-add-dialog");
+    expect(posts(context)).toHaveLength(0);
+    expect(vi.mocked(context.fetchImpl)).toHaveBeenCalledTimes(1);
+  });
+
   it("restores exact URL selections across history and refuses late detail JSON from a departed selection", async () => {
     const firstHref = "/intake/" + id(1) + "?intakeKind=canonical&unrelated=a&unrelated=b#identity";
     const secondHref = "/intake/" + id(2) + "?intakeKind=canonical&unrelated=a&unrelated=b#identity";

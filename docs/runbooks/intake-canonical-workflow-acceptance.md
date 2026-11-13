@@ -77,9 +77,17 @@ version precondition; it must not inherit this decision header.
 
 This is preparation for `ODP-URL-CREATE-CANONICAL-CUTOVER-261111`, not the URL
 writer cutover itself. Both existing legacy fresh endpoints and the old UI
-producer remain enabled at this intermediate checkpoint. Their retirement,
-historical receipt/fixture conversion, native-only UI navigation and complete
-owned PostgreSQL/browser regression are still pending. Offline HTTP/service
+producer remain enabled at this intermediate checkpoint. The existing native
+picker now represents its URL form with `intakeKind=canonical&dialog=add` in the
+original navigation serializer. That link first reads the canonical collection;
+loading or denied reads do not expose a submit form. The user must explicitly
+select scope and enter a reason. Its SUBMITTED receipt navigates only to the
+native detail reader, never the legacy presentation aggregate. Closing the form
+returns to the same collection, and browser history can reopen it without a POST.
+
+Retiring the old producer/endpoints, converting historical receipt/fixtures,
+wiring the legacy Inbox opener to this native link, and complete owned
+PostgreSQL/browser regression are still pending. Offline HTTP/service
 controls do not execute or authorize the non-dispatchable live business
 acceptance, source admission, deployment, Human UAT or GO.
 
