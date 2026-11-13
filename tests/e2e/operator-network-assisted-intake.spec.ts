@@ -280,7 +280,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(
       page.getByTestId("intake-timeline-audit-section"),
     ).toContainText("實地確認樓層");
-    await page.reload();
+    const restored = await reloadPgIntake(page, scenario);
+    expect(restored).toMatchObject({ id: scenario.intake_id, version: 2, stage: "READY" });
     await expect(page.getByTestId("intake-detail-stage")).toHaveText("可決策");
     expect(await getIntakeApi(scenario.intake_id, scenario)).toMatchObject({
       id: scenario.intake_id, stage: "READY", version: 2, matchResult: { outcome: "NEW" },
@@ -563,7 +564,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     const before = await getIntakeApi(scenario.intake_id, scenario);
     expect(before).toMatchObject({ policy: "POLICY_UNKNOWN", stage: "QUARANTINED", version: 1,
       rawSnapshot: null, snapshotId: null, parserVersion: null, capturedAt: null });
-    await page.reload();
+    expect(await reloadPgIntake(page, scenario)).toEqual(before);
     await expect(page.getByTestId("intake-detail-stage")).toHaveText("已隔離");
     expect(await getIntakeApi(scenario.intake_id, scenario)).toEqual(before);
     } finally { await api.dispose(); }
@@ -592,7 +593,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("error-action-retry")).toBeVisible();
     await page.getByTestId("error-toggle-preserved-input").click();
     await expect(page.getByTestId("error-preserved-input-json")).toContainText(scenario.original_url);
-    await page.reload();
+    const restored = await reloadPgIntake(page, scenario);
+    expect(restored).toMatchObject({ id: scenario.intake_id, version: 1, stage: "FAILED" });
     await expect(page.getByTestId("error-code")).toHaveText("[ODP-INTAKE-RETRIEVAL-TIMEOUT]");
     expect(await getIntakeApi(scenario.intake_id, scenario)).toMatchObject({ stage: "FAILED", version: 1,
       originalUrl: scenario.original_url, rawSnapshot: null, parserVersion: null });
@@ -633,7 +635,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       timeout: 15_000,
     });
     await expect(page.getByTestId("intake-detail-id")).toHaveText(id);
-    await page.reload();
+    const restored = await reloadPgIntake(page, scenario);
+    expect(restored).toMatchObject({ id, stage: "READY", version: 1 });
     // Reload, like the initial deep link above, waits for the real detail
     // mount within the original 15-second UI bound before inspecting its ID.
     await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({ timeout: 15_000 });

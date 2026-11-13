@@ -744,7 +744,8 @@ test("canonical 3: retained possible match requires explicit reason and risk ack
   await expect(page.getByTestId("intake-timeline-audit-section")).toContainText(
     "現場確認樓層",
   );
-  await page.reload();
+  const restored = await reloadPgIntake(page, scenario);
+  expect(restored).toMatchObject({ id: scenario.intake_id, version: 2, stage: "READY" });
   await expect(page.getByTestId("intake-detail-stage")).toHaveText("可決策");
   const read = await api.get(`/api/v1/operator/network-listings/intake/${scenario.intake_id}`, {
     headers: { ...MANAGER_HEADERS, "x-tenant-id": scenario.tenant_id, "x-subject-id": scenario.proposer_id },
@@ -861,7 +862,22 @@ test("canonical 4: independent reviewer completes promotion with durable Candida
     await expect(page.getByTestId("promotion-receipt-reviewer")).toContainText(scenario.reviewer_id);
     await expect(page.getByTestId("promotion-audit-event-id")).not.toHaveText("");
     await expect(page.getByTestId("promotion-correlation-id")).not.toHaveText("");
-    await page.reload();
+    // The Intake GET, promotion lookup and job GET are separate protected
+    // reads. A document load (or just the Intake response) proves none of
+    // the later hydration. Bind all three without retrying any refusal.
+    const [promotionRead, jobRead, restored] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "GET"
+        && new URL(response.url()).pathname === `/api/v1/intakes/${scenario.intake_id}/promotion-decision`),
+      page.waitForResponse((response) => response.request().method() === "GET"
+        && new URL(response.url()).pathname === `/api/v1/jobs/${receipt.site_score_job_id}/receipt`),
+      reloadPgIntake(page, scenario),
+    ]);
+    expect(restored.id).toBe(scenario.intake_id);
+    expect(promotionRead.status(), await promotionRead.text()).toBe(200);
+    expect(await promotionRead.json()).toMatchObject({ promotion_decision_id: receipt.promotion_decision_id,
+      candidate_site_id: receipt.candidate_site_id, site_score_job_id: receipt.site_score_job_id, status: "COMPLETED" });
+    expect(jobRead.status(), await jobRead.text()).toBe(200);
+    expect(await jobRead.json()).toMatchObject({ job_id: receipt.site_score_job_id, status: "SUCCEEDED" });
     await expect(page.getByTestId("sitescore-job-id")).toHaveText(receipt.site_score_job_id);
     await expect(page.getByTestId("sitescore-job-state")).toContainText("SUCCEEDED");
     for (const [width, height] of [[1440, 1000], [1024, 900], [390, 844]]) {
@@ -1036,7 +1052,8 @@ test("retained retryable retrieval failure exposes code, correlation, recovery a
   await expect(page.getByTestId("error-action-retry")).toBeVisible();
   await page.getByTestId("error-toggle-preserved-input").click();
   await expect(page.getByTestId("error-preserved-input-json")).toContainText(scenario.original_url);
-  await page.reload();
+  const restored = await reloadPgIntake(page, scenario);
+  expect(restored).toMatchObject({ id: scenario.intake_id, version: 1, stage: "FAILED" });
   await expect(page.getByTestId("error-code")).toHaveText("[ODP-INTAKE-RETRIEVAL-TIMEOUT]");
   await expect(page.getByTestId("error-correlation-id")).not.toHaveText("UNAVAILABLE");
   } finally { await api.dispose(); }
