@@ -584,20 +584,23 @@ def ready_scenario(database_url, bundle, client, *,
         # Reuse the existing explicit synthetic archive's field layout, without
         # calling retrieve(), storing a raw capture or producing a parser run.
         # The comparison target is an actual tenant Listing, not a UI stub.
+        revision = retained_history == "revision"
+        parsed = parse_snapshot(RETRIEVAL_CORPUS["https://www.synthetic.example/detail-88520242.html"
+            if revision else "https://www.synthetic.example/detail-99310418.html"])
         listing_id = str(uuid4())
-        listing = Listing(listing_id=listing_id, source_listing_id="retained-target-" + scenario_id,
+        listing = Listing(listing_id=listing_id,
+            source_listing_id=parsed["providerListingId"]["normalizedValue"] if revision else "retained-target-" + scenario_id,
             source_id=source_id, address_id=str(uuid4()), listing_status="watching",
-            rent_amount=53000, area_ping=22, floor="1F")
+            rent_amount=58000 if revision else 53000, area_ping=18 if revision else 22, floor="1F")
         address = AddressLocation(address_id=listing.address_id,
-            raw_address="新北市板橋區府中路 52 號 1F", normalized_address="新北市板橋區府中路 52 號 1F")
+            raw_address=parsed["address"]["sourceValue"] if revision else "新北市板橋區府中路 52 號 1F",
+            normalized_address=parsed["address"]["normalizedValue"] if revision else "新北市板橋區府中路 52 號 1F")
         target_seed = (listing, address, ListingDedupKey(
             source_id=source_id, source_listing_id=listing.source_listing_id,
-            normalized_address=address.normalized_address, rent_amount=53000, area_ping=22))
-        revision = retained_history == "revision"
+            normalized_address=address.normalized_address, rent_amount=listing.rent_amount, area_ping=listing.area_ping))
         history = {
             "stage": "READY" if revision else "NEEDS_REVIEW",
-            "parsedFields": parse_snapshot(RETRIEVAL_CORPUS["https://www.synthetic.example/detail-88520242.html"
-                if revision else "https://www.synthetic.example/detail-99310418.html"]),
+            "parsedFields": parsed,
             "matchResult": MatchResult("REVISION" if revision else "POSSIBLE_MATCH", 0.95 if revision else 0.55, listing_id, (
                 MatchSignal("normalizedAddress", "正規化地址", True, "Explicit retained synthetic comparison"),
                 MatchSignal("rent", "租金", False, "Retained commercial revision compared with actual target") if revision else

@@ -263,6 +263,12 @@ def test_browser_retained_review_and_failure_keep_real_guards(intake_blank_db, m
             assert initial["matchResult"]["targetListingId"] == case["listing_id"]
             assert initial["matchResult"]["agreeingSignals"] and initial["matchResult"]["contradictingSignals"]
             assert initial["parsedFields"]["address"]["sourceValue"]
+            if revision:
+                target = bundle.listing_repository_for_tenant(TENANT).get_listing(case["listing_id"])
+                address = bundle.listing_repository_for_tenant(TENANT).get_address(target.address_id)
+                assert target.source_listing_id == initial["parsedFields"]["providerListingId"]["normalizedValue"]
+                assert address.normalized_address == initial["parsedFields"]["address"]["normalizedValue"]
+                assert target.rent_amount == 58000
             body = {"action": "revise" if revision else "create", "reason": "Explicit retained browser human decision",
                     "riskSummary": "Retained ambiguous history; no new source acquisition", "riskAcknowledged": True}
             for precondition, status in ((None, 428), ('W/"9"', 409)):
@@ -285,7 +291,7 @@ def test_browser_retained_review_and_failure_keep_real_guards(intake_blank_db, m
                 target = bundle.listing_repository_for_tenant(TENANT).get_listing(case["listing_id"])
                 assert target.rent_amount == initial["parsedFields"]["rent"]["normalizedValue"]
                 assert record["auditEvents"][0]["metadata"]["beforeAfter"]["target_rent"] == {
-                    "before": 53000, "after": target.rent_amount,
+                    "before": 58000, "after": target.rent_amount,
                 }
             else:
                 assert record["matchResult"]["targetListingId"] != case["listing_id"]

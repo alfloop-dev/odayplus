@@ -1212,7 +1212,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(auditRevise.metadata.beforeAfter.stage.after).toBe("READY");
     expect(auditRevise.metadata.beforeAfter.target_rent).toBeDefined();
     expect(auditRevise.metadata.targetListingId).toBe(scenario.listing_id);
-    expect(auditRevise.metadata.beforeAfter.target_rent).toEqual({ before: 53000,
+    expect(auditRevise.metadata.beforeAfter.target_rent).toEqual({ before: 58000,
       after: beforeRevise.parsedFields.rent.normalizedValue });
     await page.reload();
     expect(await getIntakeApi(id2, scenario)).toEqual(data2);
