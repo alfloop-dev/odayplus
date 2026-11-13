@@ -259,7 +259,10 @@ export function AssistedIntakeSection({
     if (generation !== refreshGeneration.current || client !== activeClient.current) return;
     if (result.ok) {
       setRecords((current) => {
-        if (dialog !== "detail" || !selectedId) return result.value.items;
+        // A directly read selection may be outside the filtered inbox. Keep
+        // it mounted throughout correction/decision dialogs too, so a pending
+        // list response cannot discard the draft or its same-key retry.
+        if (!["detail", "fix", "decide", "assignmentSla"].includes(dialog ?? "") || !selectedId) return result.value.items;
         if (result.value.items.some((item) => item.id === selectedId)) {
           return result.value.items;
         }

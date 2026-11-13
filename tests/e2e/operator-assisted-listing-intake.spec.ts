@@ -755,7 +755,9 @@ test("canonical 3: retained possible match requires explicit reason and risk ack
   );
   await page.reload();
   await expect(page.getByTestId("intake-detail-stage")).toHaveText("可決策");
-  const read = await page.request.get(`/api/v1/operator/network-listings/intake/${scenario.intake_id}`);
+  const read = await api.get(`/api/v1/operator/network-listings/intake/${scenario.intake_id}`, {
+    headers: { ...MANAGER_HEADERS, "x-tenant-id": scenario.tenant_id, "x-subject-id": scenario.proposer_id },
+  });
   expect(read.status(), await read.text()).toBe(200);
   expect(await read.json()).toMatchObject({ id: scenario.intake_id, version: 2, stage: "READY",
     matchResult: { outcome: "NEW" } });

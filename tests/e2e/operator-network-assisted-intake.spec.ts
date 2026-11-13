@@ -432,13 +432,25 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       .getByTestId("intake-fix-reason")
       .fill("與房東電話確認門牌為 26 號");
     await page.getByTestId("intake-fix-risk-ack").check();
-    await page.getByTestId("intake-fix-submit").click();
+    const [unavailable] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST"
+        && new URL(response.url()).pathname === `/api/v1/operator/network-listings/intake/${scenario.intake_id}/correct`),
+      page.getByTestId("intake-fix-submit").click(),
+    ]);
+    expect(unavailable.status()).toBe(503);
     await expect(page.getByTestId("intake-fix-error")).toBeVisible();
     await expect(page.getByTestId("intake-fix-reason")).toHaveValue(
       "與房東電話確認門牌為 26 號",
     );
+    await expect(page.getByTestId("intake-fix-value")).toHaveValue("新北市板橋區府中路 26 號 1F");
+    await expect(page.getByTestId("intake-fix-risk-ack")).toBeChecked();
 
-    await page.getByTestId("intake-fix-submit").click();
+    const [corrected] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST"
+        && new URL(response.url()).pathname === `/api/v1/operator/network-listings/intake/${scenario.intake_id}/correct`),
+      page.getByTestId("intake-fix-submit").click(),
+    ]);
+    expect(corrected.status(), await corrected.text()).toBe(200);
     await expect(page.getByTestId("intake-fix-dialog")).toBeHidden({
       timeout: 15_000,
     });
@@ -452,13 +464,24 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       .getByTestId("intake-decide-reason")
       .fill("實地確認樓層與提供者 ID 為不同物件，判定為新物件。");
     await page.getByTestId("intake-decide-risk-ack").check();
-    await page.getByTestId("intake-decide-submit").click();
+    const [decisionUnavailable] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST"
+        && new URL(response.url()).pathname === `/api/v1/operator/network-listings/intake/${scenario.intake_id}/decide`),
+      page.getByTestId("intake-decide-submit").click(),
+    ]);
+    expect(decisionUnavailable.status()).toBe(503);
     await expect(page.getByTestId("intake-decide-error")).toBeVisible();
     await expect(page.getByTestId("intake-decide-reason")).toHaveValue(
       "實地確認樓層與提供者 ID 為不同物件，判定為新物件。",
     );
 
-    await page.getByTestId("intake-decide-submit").click();
+    const [decided] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST"
+        && new URL(response.url()).pathname === `/api/v1/operator/network-listings/intake/${scenario.intake_id}/decide`),
+      page.getByTestId("intake-decide-submit").click(),
+    ]);
+    expect(decided.status(), await decided.text()).toBe(200);
+    expect(decided.request().headers()["if-match"]).toBe('W/"2"');
     await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({
       timeout: 15_000,
     });
