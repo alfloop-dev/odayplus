@@ -219,6 +219,18 @@ jobs:
     # No `environment:` and no `vars.*` by design -- see the header. This job is
     # pure input validation and must stay reachable without a deploy approval.
     steps:
+      # Below this Git, actions/checkout silently falls back to a REST archive
+      # that ignores the sparse deny, so the runner must refuse first.
+      - name: Require sparse-capable Git before checkout
+        run: |
+          set -euo pipefail
+          reported="$(git version)"
+          # The action parses one line only; extra output sends it to the archive.
+          test "$reported" = "${reported%%$'\n'*}"
+          version="$(printf '%s\n' "$reported" | sed -n 's/^git version \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')"
+          test -n "$version"
+          test "$(printf '2.28\n%s\n' "$version" | sort -V | head -n1)" = 2.28
+
       - uses: actions/checkout@v4
         with:
           # Auto policy code comes from the workflow's own dev commit, never an
@@ -226,6 +238,14 @@ jobs:
           # that candidate equals this trusted checkout before running Python.
           ref: ${{ inputs.phase == 'auto' && github.sha || inputs.release_sha }}
           fetch-depth: 0
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !**/tests/sources
+            !**/tests/sources/**
+            !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       - name: Assert exact release SHA is checked out
         env:
@@ -237,6 +257,77 @@ jobs:
             echo "Error: checked out HEAD (${head_sha}) does not match inputs.release_sha (${RELEASE_SHA})." >&2
             exit 1
           fi
+
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
+      # The deny is the shared protected body domain of worktree_cleanliness: the
+      # root prefix stays refused when tracked, and every embedded copy of it (or
+      # of a named asset) stays tracked but skip-worktree, absent, and identical
+      # at both compared commits, proven from index flags and lstat alone.
+      # Host Git config is excluded because hosted runners ship a global LFS
+      # filter that is unrelated to this checkout and would always be refused.
+      - name: Prove protected path stayed out of checkout
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+        run: |
+          python3 -I - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          sys.path.append(".orchestrator")
+          import worktree_cleanliness as wc
+
+          denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
+
+
+          def git(*args):
+              return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+
+
+          patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
+          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)
+          domains = [wc.protected_body_tree_entries(root, sha, (denied,)) for sha in endpoints]
+          failures = [
+              label
+              for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
+                  ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
+                  ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
+                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,)))),
+                  ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
+                  ("denied path in index", any(index)),
+                  ("denied path materialized", os.path.lexists(denied)),
+                  (f"protected body domain: {body}", body is not None),
+                  ("protected body domain unreadable at a compared commit", None in domains),
+                  ("protected body domain differs between compared commits", len(set(domains)) > 1),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
+              )
+              if failed
+          ]
+          if failures:
+              raise SystemExit(f"Protected checkout denial failed: {failures}")
+          PY
 
       # The lease reaches this step only as a presence bit. Nothing here reads
       # its contents, and the receipt records `lease_supplied` rather than the
@@ -345,10 +436,30 @@ jobs:
       SBOM_PATH: docs/evidence/sbom.json
       HANDOFF_DIR: .odp_data/release/runtime-release-handoff
     steps:
+      # Below this Git, actions/checkout silently falls back to a REST archive
+      # that ignores the sparse deny, so the runner must refuse first.
+      - name: Require sparse-capable Git before checkout
+        run: |
+          set -euo pipefail
+          reported="$(git version)"
+          # The action parses one line only; extra output sends it to the archive.
+          test "$reported" = "${reported%%$'\n'*}"
+          version="$(printf '%s\n' "$reported" | sed -n 's/^git version \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')"
+          test -n "$version"
+          test "$(printf '2.28\n%s\n' "$version" | sort -V | head -n1)" = 2.28
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_sha }}
           fetch-depth: 0
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !**/tests/sources
+            !**/tests/sources/**
+            !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       - name: Assert exact release SHA is checked out
         run: |
@@ -358,6 +469,77 @@ jobs:
             echo "Error: checked out HEAD (${head_sha}) does not match ODAY_RELEASE_SHA (${ODAY_RELEASE_SHA})." >&2
             exit 1
           fi
+
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
+      # The deny is the shared protected body domain of worktree_cleanliness: the
+      # root prefix stays refused when tracked, and every embedded copy of it (or
+      # of a named asset) stays tracked but skip-worktree, absent, and identical
+      # at both compared commits, proven from index flags and lstat alone.
+      # Host Git config is excluded because hosted runners ship a global LFS
+      # filter that is unrelated to this checkout and would always be refused.
+      - name: Prove protected path stayed out of checkout
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+        run: |
+          python3 -I - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          sys.path.append(".orchestrator")
+          import worktree_cleanliness as wc
+
+          denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
+
+
+          def git(*args):
+              return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+
+
+          patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
+          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)
+          domains = [wc.protected_body_tree_entries(root, sha, (denied,)) for sha in endpoints]
+          failures = [
+              label
+              for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
+                  ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
+                  ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
+                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,)))),
+                  ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
+                  ("denied path in index", any(index)),
+                  ("denied path materialized", os.path.lexists(denied)),
+                  (f"protected body domain: {body}", body is not None),
+                  ("protected body domain unreadable at a compared commit", None in domains),
+                  ("protected body domain differs between compared commits", len(set(domains)) > 1),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
+              )
+              if failed
+          ]
+          if failures:
+              raise SystemExit(f"Protected checkout denial failed: {failures}")
+          PY
 
       # First real gate in the build phase. If `<environment>-build` does not
       # exist, GitHub silently creates an empty one rather than failing, so an
@@ -755,10 +937,30 @@ jobs:
     # the lease, the images, the transported manifest, its expected SHA, and the
     # deploy itself -- stays bound to C.
     steps:
+      # Below this Git, actions/checkout silently falls back to a REST archive
+      # that ignores the sparse deny, so the runner must refuse first.
+      - name: Require sparse-capable Git before checkout
+        run: |
+          set -euo pipefail
+          reported="$(git version)"
+          # The action parses one line only; extra output sends it to the archive.
+          test "$reported" = "${reported%%$'\n'*}"
+          version="$(printf '%s\n' "$reported" | sed -n 's/^git version \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')"
+          test -n "$version"
+          test "$(printf '2.28\n%s\n' "$version" | sort -V | head -n1)" = 2.28
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !**/tests/sources
+            !**/tests/sources/**
+            !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       - name: Assert the dispatch event SHA is checked out
         env:
@@ -774,6 +976,78 @@ jobs:
             echo "Error: checked out HEAD (${head_sha}) does not match the dispatch event SHA (${EVENT_SHA})." >&2
             exit 1
           fi
+
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
+      # The deny is the shared protected body domain of worktree_cleanliness: the
+      # root prefix stays refused when tracked, and every embedded copy of it (or
+      # of a named asset) stays tracked but skip-worktree, absent, and identical
+      # at both compared commits, proven from index flags and lstat alone.
+      # Host Git config is excluded because hosted runners ship a global LFS
+      # filter that is unrelated to this checkout and would always be refused.
+      - name: Prove protected path stayed out of checkout
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          PROTECTED_COMPARE_SHAS: ${{ inputs.release_sha }} ${{ github.sha }}
+        run: |
+          python3 -I - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          sys.path.append(".orchestrator")
+          import worktree_cleanliness as wc
+
+          denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
+
+
+          def git(*args):
+              return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+
+
+          patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
+          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)
+          domains = [wc.protected_body_tree_entries(root, sha, (denied,)) for sha in endpoints]
+          failures = [
+              label
+              for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
+                  ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
+                  ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
+                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,)))),
+                  ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
+                  ("denied path in index", any(index)),
+                  ("denied path materialized", os.path.lexists(denied)),
+                  (f"protected body domain: {body}", body is not None),
+                  ("protected body domain unreadable at a compared commit", None in domains),
+                  ("protected body domain differs between compared commits", len(set(domains)) > 1),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
+              )
+              if failed
+          ]
+          if failures:
+              raise SystemExit(f"Protected checkout denial failed: {failures}")
+          PY
 
       # The Supervisor already refused to sign a lease whose dispatch_ref tip
       # was not an evidence-only descendant of C. This re-derives that verdict
@@ -1144,14 +1418,105 @@ jobs:
       manifest_digest: ${{ steps.admit.outputs.manifest_digest }}
       release_profile: ${{ steps.admit.outputs.release_profile }}
     steps:
+      # Below this Git, actions/checkout silently falls back to a REST archive
+      # that ignores the sparse deny, so the runner must refuse first.
+      - name: Require sparse-capable Git before checkout
+        run: |
+          set -euo pipefail
+          reported="$(git version)"
+          # The action parses one line only; extra output sends it to the archive.
+          test "$reported" = "${reported%%$'\n'*}"
+          version="$(printf '%s\n' "$reported" | sed -n 's/^git version \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')"
+          test -n "$version"
+          test "$(printf '2.28\n%s\n' "$version" | sort -V | head -n1)" = 2.28
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_sha }}
           fetch-depth: 0
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !**/tests/sources
+            !**/tests/sources/**
+            !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
       - name: Assert automatic admission checkout identity
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
         run: test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"
+
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
+      # The deny is the shared protected body domain of worktree_cleanliness: the
+      # root prefix stays refused when tracked, and every embedded copy of it (or
+      # of a named asset) stays tracked but skip-worktree, absent, and identical
+      # at both compared commits, proven from index flags and lstat alone.
+      # Host Git config is excluded because hosted runners ship a global LFS
+      # filter that is unrelated to this checkout and would always be refused.
+      - name: Prove protected path stayed out of checkout
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+        run: |
+          python3 -I - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          sys.path.append(".orchestrator")
+          import worktree_cleanliness as wc
+
+          denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
+
+
+          def git(*args):
+              return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+
+
+          patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
+          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)
+          domains = [wc.protected_body_tree_entries(root, sha, (denied,)) for sha in endpoints]
+          failures = [
+              label
+              for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
+                  ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
+                  ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
+                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,)))),
+                  ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
+                  ("denied path in index", any(index)),
+                  ("denied path materialized", os.path.lexists(denied)),
+                  (f"protected body domain: {body}", body is not None),
+                  ("protected body domain unreadable at a compared commit", None in domains),
+                  ("protected body domain differs between compared commits", len(set(domains)) > 1),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
+              )
+              if failed
+          ]
+          if failures:
+              raise SystemExit(f"Protected checkout denial failed: {failures}")
+          PY
       - uses: astral-sh/setup-uv@v5
       - run: uv python install 3.12
       - run: uv sync --frozen
@@ -1340,10 +1705,30 @@ jobs:
       ODP_NEW_SCHEDULER_STATE: ${{ vars.ODP_NEW_SCHEDULER_STATE || 'PAUSED' }}
       ODP_DEPLOY_BY_DIGEST: "true"
     steps:
+      # Below this Git, actions/checkout silently falls back to a REST archive
+      # that ignores the sparse deny, so the runner must refuse first.
+      - name: Require sparse-capable Git before checkout
+        run: |
+          set -euo pipefail
+          reported="$(git version)"
+          # The action parses one line only; extra output sends it to the archive.
+          test "$reported" = "${reported%%$'\n'*}"
+          version="$(printf '%s\n' "$reported" | sed -n 's/^git version \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')"
+          test -n "$version"
+          test "$(printf '2.28\n%s\n' "$version" | sort -V | head -n1)" = 2.28
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_sha }}
           fetch-depth: 0
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !**/tests/sources
+            !**/tests/sources/**
+            !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       - name: Assert exact release SHA is checked out
         run: |
@@ -1353,6 +1738,77 @@ jobs:
             echo "Error: checked out HEAD (${head_sha}) does not match ODAY_RELEASE_SHA (${ODAY_RELEASE_SHA})." >&2
             exit 1
           fi
+
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
+      # The deny is the shared protected body domain of worktree_cleanliness: the
+      # root prefix stays refused when tracked, and every embedded copy of it (or
+      # of a named asset) stays tracked but skip-worktree, absent, and identical
+      # at both compared commits, proven from index flags and lstat alone.
+      # Host Git config is excluded because hosted runners ship a global LFS
+      # filter that is unrelated to this checkout and would always be refused.
+      - name: Prove protected path stayed out of checkout
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+        run: |
+          python3 -I - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          sys.path.append(".orchestrator")
+          import worktree_cleanliness as wc
+
+          denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
+
+
+          def git(*args):
+              return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+
+
+          patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
+          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)
+          domains = [wc.protected_body_tree_entries(root, sha, (denied,)) for sha in endpoints]
+          failures = [
+              label
+              for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
+                  ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
+                  ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
+                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,)))),
+                  ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
+                  ("denied path in index", any(index)),
+                  ("denied path materialized", os.path.lexists(denied)),
+                  (f"protected body domain: {body}", body is not None),
+                  ("protected body domain unreadable at a compared commit", None in domains),
+                  ("protected body domain differs between compared commits", len(set(domains)) > 1),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
+              )
+              if failed
+          ]
+          if failures:
+              raise SystemExit(f"Protected checkout denial failed: {failures}")
+          PY
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -1952,10 +2408,30 @@ jobs:
       MANIFEST_DIGEST: ${{ needs.deploy.outputs.manifest_digest }}
       ODP_DEPLOY_ENV: staging
     steps:
+      # Below this Git, actions/checkout silently falls back to a REST archive
+      # that ignores the sparse deny, so the runner must refuse first.
+      - name: Require sparse-capable Git before checkout
+        run: |
+          set -euo pipefail
+          reported="$(git version)"
+          # The action parses one line only; extra output sends it to the archive.
+          test "$reported" = "${reported%%$'\n'*}"
+          version="$(printf '%s\n' "$reported" | sed -n 's/^git version \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')"
+          test -n "$version"
+          test "$(printf '2.28\n%s\n' "$version" | sort -V | head -n1)" = 2.28
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_sha }}
           fetch-depth: 0
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !**/tests/sources
+            !**/tests/sources/**
+            !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       - name: Assert exact release SHA is checked out
         run: |
@@ -1965,6 +2441,77 @@ jobs:
             echo "Error: checked out HEAD (${head_sha}) does not match ODAY_RELEASE_SHA (${ODAY_RELEASE_SHA})." >&2
             exit 1
           fi
+
+      # Git path, tree and index metadata only; no denied body is ever opened.
+      # Sparse checkout only stops materialization: rename detection could still
+      # lazily fetch a tracked body, so a tracked entry at HEAD or at a commit this
+      # job compares is refused here, before anything downstream can read it.
+      # The deny is the shared protected body domain of worktree_cleanliness: the
+      # root prefix stays refused when tracked, and every embedded copy of it (or
+      # of a named asset) stays tracked but skip-worktree, absent, and identical
+      # at both compared commits, proven from index flags and lstat alone.
+      # Host Git config is excluded because hosted runners ship a global LFS
+      # filter that is unrelated to this checkout and would always be refused.
+      - name: Prove protected path stayed out of checkout
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+        run: |
+          python3 -I - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          sys.path.append(".orchestrator")
+          import worktree_cleanliness as wc
+
+          denied = "tests/sources"
+          root = Path.cwd()
+          compare = os.environ.get("PROTECTED_COMPARE_SHAS")
+          endpoints = [] if compare is None else compare.split()
+
+
+          def git(*args):
+              return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+
+
+          patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
+          index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
+          verdicts = [
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+          ]
+          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)
+          domains = [wc.protected_body_tree_entries(root, sha, (denied,)) for sha in endpoints]
+          failures = [
+              label
+              for label, failed in (
+                  ("compared commits unresolved", compare is not None and (
+                      len(endpoints) != 2 or not all(re.fullmatch("[0-9a-f]{40}", sha) for sha in endpoints)
+                  )),
+                  ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
+                  ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
+                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,)))),
+                  ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
+                  ("denied path in index", any(index)),
+                  ("denied path materialized", os.path.lexists(denied)),
+                  (f"protected body domain: {body}", body is not None),
+                  ("protected body domain unreadable at a compared commit", None in domains),
+                  ("protected body domain differs between compared commits", len(set(domains)) > 1),
+                  *((f"{verdict.reason}: {verdict.detail}", not verdict.ok) for verdict in verdicts),
+                  *(
+                      (f"denied path tracked at {verdict.detail}", wc._tree_entry(root, verdict.detail, denied) is not None)
+                      for verdict in verdicts
+                      if verdict.ok
+                  ),
+              )
+              if failed
+          ]
+          if failures:
+              raise SystemExit(f"Protected checkout denial failed: {failures}")
+          PY
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5

@@ -19,6 +19,7 @@ if str(MIGRATION_DIR) not in sys.path:
     sys.path.insert(0, str(MIGRATION_DIR))
 
 import capacity_controller
+import common
 import migrate_worker_worktree_config as migration
 import supervisor
 import task_archive
@@ -475,6 +476,232 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
                     self.assertEqual(outcomes[name].reason, "protected_metadata_refused", name)
                 self.assertFalse((self.root / ".orchestrator" / "worktree-dirt-backups").exists())
 
+    # --- the shared protected body domain, which binds every task
+
+    DOMAIN_COPY = "archive/untracked/vault/copies/body.py.txt"
+
+    def _enter_body_domain(self, *, tracked: bool = True) -> None:
+        """A synthetic domain; with ``tracked`` the base also archives one copy of it."""
+        for patcher in (
+            mock.patch.object(worktree_cleanliness, "PROTECTED_BODY_PREFIXES", ("vault/copies",)),
+            mock.patch.object(worktree_cleanliness, "PROTECTED_BODY_NAMES", ("synthetic_asset.py",)),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        if tracked:
+            (self.repo / self.DOMAIN_COPY).parent.mkdir(parents=True)
+            (self.repo / self.DOMAIN_COPY).write_text("synthetic archived copy\n", encoding="utf-8")
+            self._git(self.repo, "add", self.DOMAIN_COPY)
+            self._git(self.repo, "commit", "-m", "archive a synthetic copy")
+            self.base = self._rev(self.repo, "HEAD")
+
+    def test_creation_excludes_the_body_domain_before_materializing_for_an_unprotected_task(self) -> None:
+        self._enter_body_domain()
+        worktree = (self.root / "worktrees" / "pantheon" / "dom-create-001").resolve()
+        order: list[str] = []
+        real_install = worktree_cleanliness.install_protected_body_sparse
+        real_run = subprocess.run
+
+        def recording_install(path, *a, **kw):
+            order.append("exclude")
+            return real_install(path, *a, **kw)
+
+        def recording_run(args, *a, **kw):
+            if list(args[:2]) == ["git", "read-tree"]:
+                order.append("materialize")
+            return real_run(args, *a, **kw)
+
+        with mock.patch.object(worker_workspace, "install_protected_body_sparse", side_effect=recording_install), \
+             mock.patch("subprocess.run", side_effect=recording_run):
+            ok, error = supervisor._create_worker_worktree(self.repo, worktree, "task/DOM-CREATE-001", self.base)
+
+        self.assertTrue(ok, error)
+        self.assertEqual(order, ["exclude", "materialize"])
+        self.assertTrue((worktree / "README.md").is_file())
+        self.assertFalse(os.path.lexists(worktree / self.DOMAIN_COPY))
+        self.assertEqual(self._git(worktree, "ls-files", "-t", "--", self.DOMAIN_COPY).stdout.split()[0], "S")
+        ok, status = supervisor._refresh_reused_worker_worktree(self.repo, worktree, self.base, "task/DOM-CREATE-001")
+        self.assertTrue(ok, status)
+        self.assertEqual(worker_workspace.compute_worktree_state_identity(worktree), f"clean:{self.base}")
+
+    def test_creation_keeps_every_denied_name_spelling_out(self) -> None:
+        self._enter_body_domain(tracked=False)
+        control = "archive/vault/copiesx/keep.txt"
+        (self.repo / control).parent.mkdir(parents=True)
+        (self.repo / control).touch()
+        self._git(self.repo, "add", control)
+        base = self._domain_introducing_base()
+        worktree = (self.root / "worktrees" / "pantheon" / "dom-spell-001").resolve()
+        ok, error = supervisor._create_worker_worktree(self.repo, worktree, "task/DOM-SPELL-001", base)
+        self.assertTrue(ok, error)
+        for name in (self.DOMAIN_COPY, "archive/vault/copies", *self.DOMAIN_SPELLINGS):
+            with self.subTest(path=name):
+                self.assertTrue(worktree_cleanliness.in_protected_body_domain(name))
+                self.assertFalse(os.path.lexists(worktree / name))
+                self.assertEqual(self._git(worktree, "ls-files", "-t", "--", name).stdout.split()[0], "S")
+        self.assertTrue((worktree / control).is_file())
+        self.assertTrue((worktree / "README.md").is_file())
+        self.assertIsNone(worktree_cleanliness.protected_body_checkout_refusal(worktree, require_sparse=True))
+        self.assertEqual(worker_workspace.compute_worktree_state_identity(worktree), f"clean:{base}")
+
+    def test_creation_still_refuses_a_task_protected_tree_before_any_exclusion(self) -> None:
+        self._enter_body_domain()
+        worktree = self.root / "wt-dom-tracked"
+        with mock.patch.object(worker_workspace, "install_protected_body_sparse") as excluded:
+            ok, error = supervisor._create_worker_worktree(
+                self.repo, worktree, "task/DOM-TRACKED-001", self._tracked_protected_commit(), protected_paths=PROTECTED
+            )
+        self.assertFalse(ok)
+        self.assertIn("protected_entry_tracked", error or "")
+        excluded.assert_not_called()
+
+    def test_failed_exclusion_abandons_the_unmaterialized_registration(self) -> None:
+        self._enter_body_domain()
+        worktree = self.root / "wt-dom-fail"
+        with mock.patch.object(worker_workspace, "install_protected_body_sparse", return_value="sparse_exclusion_failed: x"):
+            ok, error = supervisor._create_worker_worktree(self.repo, worktree, "task/DOM-FAIL-001", self.base)
+        self.assertFalse(ok)
+        self.assertIn("sparse_exclusion_failed", error or "")
+        self.assertFalse(worktree.exists())
+
+    # POSIX Git keeps a backslash inside one name, where the domain reads a separator.
+    DOMAIN_SPELLINGS = ("archive/vault\\copies/body.txt", "archive\\vault/copies/body.txt")
+
+    def _domain_introducing_base(self) -> str:
+        """Advance dev with generic empty domain entries: a copy, its exact-prefix twin, backslash spellings."""
+        for name in (self.DOMAIN_COPY, "archive/vault/copies", *self.DOMAIN_SPELLINGS):
+            (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / name).touch()
+            self._git(self.repo, "add", name)
+        self._git(self.repo, "commit", "-m", "archive generic domain entries")
+        return self._rev(self.repo, "HEAD")
+
+    def test_reuse_refuses_a_target_bringing_the_domain_into_an_unexcluded_checkout(self) -> None:
+        """Empty task protection, no current domain entry: the target alone needs the exclusion."""
+        self._enter_body_domain(tracked=False)
+        old_base = self.base
+        worktree = (self.root / "wt-dom-reuse-legacy").resolve()
+        # A registered, same-common-dir checkout made before the exclusion existed.
+        self._git(self.repo, "worktree", "add", "-b", "task/DOM-REUSE-001", str(worktree), old_base)
+        self.assertIsNone(worktree_cleanliness.protected_body_checkout_refusal(worktree))
+        new_base = self._domain_introducing_base()
+        merges: list[list[str]] = []
+        real_run = subprocess.run
+
+        def recording_run(args, *a, **kw):
+            if list(args[:2]) in (["git", "merge"], ["git", "checkout"], ["git", "read-tree"]):
+                merges.append(list(args))
+            return real_run(args, *a, **kw)
+
+        for label, kwargs in (("base fast-forward", {}), ("review pin", {"required_head": new_base})):
+            with self.subTest(path=label):
+                merges.clear()
+                with mock.patch("subprocess.run", side_effect=recording_run):
+                    ok, status = supervisor._refresh_reused_worker_worktree(
+                        self.repo, worktree, new_base, "task/DOM-REUSE-001", protected_paths=(), **kwargs
+                    )
+                self.assertFalse(ok)
+                self.assertIn("protected_metadata_refused", status)
+                self.assertIn("sparse checkout is not enabled", status)
+                self.assertEqual(merges, [], "refused before Git could write a file")
+                self.assertEqual(self._rev(worktree, "HEAD"), old_base)
+                self.assertEqual(self._git(worktree, "symbolic-ref", "--short", "HEAD").stdout.strip(), "task/DOM-REUSE-001")
+                for name in (self.DOMAIN_COPY, "archive/vault/copies", "archive", *self.DOMAIN_SPELLINGS):
+                    self.assertFalse(os.path.lexists(worktree / name), name)
+
+    def test_reuse_of_an_excluded_checkout_keeps_target_domain_entries_out(self) -> None:
+        self._enter_body_domain(tracked=False)
+        worktree = (self.root / "worktrees" / "pantheon" / "dom-reuse-002").resolve()
+        ok, error = supervisor._create_worker_worktree(self.repo, worktree, "task/DOM-REUSE-002", self.base)
+        self.assertTrue(ok, error)
+        new_base = self._domain_introducing_base()
+        ok, status = supervisor._refresh_reused_worker_worktree(
+            self.repo, worktree, new_base, "task/DOM-REUSE-002", protected_paths=()
+        )
+        self.assertTrue(ok, status)
+        self.assertEqual(status, f"ff_to_{new_base[:12]}")
+        self.assertEqual(self._rev(worktree, "HEAD"), new_base)
+        for name in (self.DOMAIN_COPY, "archive/vault/copies", *self.DOMAIN_SPELLINGS):
+            with self.subTest(path=name):
+                self.assertFalse(os.path.lexists(worktree / name))
+                self.assertEqual(self._git(worktree, "ls-files", "-t", "--", name).stdout.split()[0], "S")
+        self.assertIsNone(worktree_cleanliness.protected_body_checkout_refusal(worktree, require_sparse=True))
+        self.assertEqual(worker_workspace.compute_worktree_state_identity(worktree), f"clean:{new_base}")
+
+    def test_checkout_holding_a_domain_copy_is_refused_by_every_reader_and_left_in_place(self) -> None:
+        self._enter_body_domain()
+        worktree, branch, config, worker, task = self._protected_checkout("DOM-LEGACY-001")
+        self.assertTrue((worktree / self.DOMAIN_COPY).is_file(), "a checkout made without the exclusion")
+        (worktree / "owner-wip.txt").write_text("keep me\n", encoding="utf-8")
+        commands: list[list[str]] = []
+        real_run = subprocess.run
+
+        def recording_run(args, *a, **kw):
+            commands.append(list(args))
+            return real_run(args, *a, **kw)
+
+        with mock.patch("subprocess.run", side_effect=recording_run):
+            outcomes = self._read_through_every_entry(worktree, branch, config, worker, task)
+
+        self.assertEqual([c for c in commands if "status" in c or "diff" in c], [])
+        self.assertFalse(outcomes["refresh"][0])
+        self.assertIn("protected_body_not_excluded", outcomes["refresh"][1])
+        self.assertTrue(outcomes["identity"].startswith("protected_metadata_refused:"), outcomes["identity"])
+        self.assertEqual(
+            (outcomes["observer"]["status"], outcomes["observer"]["reason"]),
+            ("unverifiable", "protected_metadata_refused"),
+        )
+        self.assertEqual((outcomes["seal"].accepted, outcomes["seal"].reason), (False, "protected_metadata_refused"))
+        self.assertEqual(outcomes["continuation"], (False, "protected_metadata_refused"))
+        self.assertFalse(outcomes["preempt"])
+        for name in ("quarantine", "preserve"):
+            self.assertEqual(outcomes[name].reason, "protected_metadata_refused", name)
+        self.assertFalse((self.root / ".orchestrator" / "worktree-dirt-backups").exists())
+        self.assertTrue((worktree / self.DOMAIN_COPY).is_file(), "refusal never deletes the copy")
+        self.assertEqual((worktree / "owner-wip.txt").read_text(encoding="utf-8"), "keep me\n")
+
+    def test_untracked_domain_dirt_is_neither_hashed_backed_up_nor_sealed(self) -> None:
+        self._enter_body_domain(tracked=False)
+        worktree, branch, config, worker, task = self._protected_checkout("DOM-DIRT-001")
+        copy = worktree / "notes" / "vault" / "copies" / "copy.txt"
+        copy.parent.mkdir(parents=True)
+        copy.write_text("synthetic stray copy\n", encoding="utf-8")
+        (worktree / "owner-wip.txt").write_text("keep me\n", encoding="utf-8")
+        opened: list[str] = []
+        real_open = open
+
+        def recording_open(path, *a, **kw):
+            opened.append(str(path))
+            return real_open(path, *a, **kw)
+
+        with mock.patch("builtins.open", side_effect=recording_open), \
+             mock.patch.object(worker_workspace.shutil, "copy2") as copied:
+            outcome = worker_workspace._quarantine_and_preserve_dirty_worktree(
+                config, {"workers": {}}, worktree, task["id"], expected_branch=branch, run_id=worker["run_id"],
+                owning_repo_root=self.repo,
+            )
+        # The shared domain guard refuses from untracked names before status,
+        # so the dirt is never listed, hashed, backed up or sealed.
+        self.assertEqual(outcome.reason, "protected_metadata_refused")
+        self.assertIn("notes/vault/copies/copy.txt is untracked domain content", outcome.detail)
+        copied.assert_not_called()
+        self.assertFalse([name for name in opened if "vault/copies" in name])
+        inspection = worktree_cleanliness.inspect_worktree(worktree, materialized_paths=["notes"])
+        self.assertEqual(inspection.kind, "protected_metadata_refused")
+        self.assertIn("untracked domain content", inspection.detail)
+        self.assertFalse(inspection.handoff_clean)
+        self.assertEqual(inspection.fingerprint, "")
+        # Were such an entry ever listed, the merge seal still refuses to bind it.
+        listed = worktree_cleanliness.WorktreeInspection(
+            kind="owner_dirty",
+            entries=(("??", "notes/vault/copies/copy.txt"),),
+            blocking_entries=(("??", "notes/vault/copies/copy.txt"),),
+            fingerprint="x",
+            detail="",
+        )
+        self.assertIsNone(worker_workspace._interrupted_merge_worktree_fingerprint(worktree, listed))
+        self.assertTrue(copy.is_file())
+
     def test_empty_mount_point_of_a_real_protected_launch_stays_a_healthy_checkout(self) -> None:
         worktree, branch, config, worker, task = self._protected_checkout("PROT-MOUNT-001")
         for name, ready in (
@@ -926,6 +1153,77 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         self.assertEqual(self._git(worktree, "symbolic-ref", "--short", "HEAD").stdout.strip(), "task/PROT-ATT-001")
         self.assertEqual(self._rev(worktree, "HEAD"), ahead)
 
+    def test_refresh_and_quarantine_bind_repository_identity_by_common_dir(self) -> None:
+        """Refresh and quarantine share the common-dir identity rule.
+
+        A separate clone holding the same HEAD on the same named branch is a
+        different repository; both entries refuse it before any status,
+        checkout or backup, while a registered worktree still passes.
+        """
+        branch = "task/PROT-IDENTITY-001"
+        registered = self.root / "wt-registered"
+        self._git(self.repo, "worktree", "add", "-b", branch, str(registered), self.base)
+        foreign = self.root / "foreign-clone"
+        self._git(self.root, "clone", "-q", "--no-local", str(self.repo), str(foreign))
+        self._git(foreign, "switch", "-q", "-c", branch, self.base)
+        self.assertEqual(self._rev(foreign, "HEAD"), self._rev(registered, "HEAD"))
+        for checkout in (registered, foreign):
+            (checkout / "owner-wip.txt").write_text("keep me\n", encoding="utf-8")
+        status_file = self.root / "fleet" / "ai-status.json"
+        status_file.parent.mkdir()
+        config = {"paths": {
+            "status_file": str(status_file),
+            "activity_log": str(self.root / "fleet" / "activity.jsonl"),
+            "state_file": str(self.root / "fleet" / "state.json"),
+        }}
+        backups = status_file.parent / ".orchestrator" / "worktree-dirt-backups"
+
+        ok, status = supervisor._refresh_reused_worker_worktree(
+            self.repo, foreign, self.base, branch, protected_paths=PROTECTED
+        )
+        self.assertEqual((ok, status), (False, "wrong_worktree: path is not the expected repository worktree"))
+        outcome = worker_workspace._quarantine_and_preserve_dirty_worktree(
+            config, {"workers": {}}, foreign, "PROT-IDENTITY-001", expected_branch=branch,
+            owning_repo_root=self.repo, protected_paths=PROTECTED,
+        )
+        self.assertFalse(outcome)
+        self.assertEqual(outcome.reason, "worktree_belongs_to_another_repository")
+        self.assertFalse(backups.exists())
+        self.assertEqual((foreign / "owner-wip.txt").read_text(encoding="utf-8"), "keep me\n")
+        self.assertEqual(self._rev(foreign, "HEAD"), self.base)
+
+        # A subdirectory of the registered worktree is not its top level.
+        (registered / "sub").mkdir()
+        ok, status = supervisor._refresh_reused_worker_worktree(
+            self.repo, registered / "sub", self.base, branch, protected_paths=PROTECTED
+        )
+        self.assertEqual((ok, status), (False, "wrong_worktree: path is not the expected repository worktree"))
+
+        # The registered worktree of the same repository passes identity in both.
+        ok, status = supervisor._refresh_reused_worker_worktree(
+            self.repo, registered, self.base, branch, protected_paths=PROTECTED
+        )
+        self.assertFalse(ok)
+        self.assertIn("owner-wip.txt", status)
+        outcome = worker_workspace._quarantine_and_preserve_dirty_worktree(
+            config, {"workers": {}}, registered, "PROT-IDENTITY-001", expected_branch=branch,
+            owning_repo_root=self.repo, protected_paths=PROTECTED,
+        )
+        self.assertTrue(outcome, getattr(outcome, "reason", ""))
+        self.assertEqual(len(list(backups.glob("prot-identity-001-*"))), 1)
+
+        # Unanswerable identity metadata refuses rather than passing.
+        with mock.patch.object(worker_workspace, "shares_git_common_dir", return_value=False):
+            ok, status = supervisor._refresh_reused_worker_worktree(
+                self.repo, registered, self.base, branch, protected_paths=PROTECTED
+            )
+            outcome = worker_workspace._quarantine_and_preserve_dirty_worktree(
+                config, {"workers": {}}, registered, "PROT-IDENTITY-001", expected_branch=branch,
+                owning_repo_root=self.repo, protected_paths=PROTECTED,
+            )
+        self.assertEqual(status, "wrong_worktree: path is not the expected repository worktree")
+        self.assertEqual(outcome.reason, "worktree_belongs_to_another_repository")
+
     def test_symbolic_ref_drift_after_precheck_refuses_before_mutation(self) -> None:
         worktree = self.root / "wt-drift"
         self._git(self.repo, "worktree", "add", "-b", "task/PROT-DRIFT-001", str(worktree), self.base)
@@ -1262,6 +1560,324 @@ class ProtectedContextSeedingTests(unittest.TestCase):
                 copied.assert_not_called()
             self.assertFalse((workspace / "guarded").exists())
             self.assertFalse((workspace / "docs").exists())
+
+    def test_body_domain_context_is_refused_for_an_unprotected_task(self) -> None:
+        with tempfile.TemporaryDirectory() as raw, \
+             mock.patch.object(worktree_cleanliness, "PROTECTED_BODY_PREFIXES", ("vault/copies",)):
+            root = Path(raw)
+            status_root = root / "status"
+            (status_root / "archive" / "vault" / "copies").mkdir(parents=True)
+            (status_root / "archive" / "vault" / "copies" / "copy.txt").write_text("synthetic\n", encoding="utf-8")
+            (status_root / "archive" / "plain.md").write_text("plain\n", encoding="utf-8")
+            (status_root / "ai-status.json").write_text(json.dumps({"tasks": [{"id": "SEED-2"}]}), encoding="utf-8")
+            workspace = root / "workspace"
+            workspace.mkdir()
+            subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+            for context in ("archive/vault/copies/copy.txt", "archive"):
+                request = supervisor.DeliveryRequest(
+                    agent_id="claude",
+                    provider="claude",
+                    delivery_mode="claude",
+                    message="wake",
+                    task_id="SEED-2",
+                    context_files=[context],
+                    metadata={},
+                )
+                with (
+                    self.subTest(context=context),
+                    mock.patch.object(supervisor, "_file_or_dir_hash") as hashed,
+                    mock.patch.object(supervisor, "_atomic_copy_context_file") as copied,
+                    self.assertRaisesRegex(ValueError, "protected body domain"),
+                ):
+                    supervisor.materialize_worker_context_files(config, request, workspace)
+                hashed.assert_not_called()
+                copied.assert_not_called()
+            self.assertFalse((workspace / "archive").exists())
+
+    def test_ancestor_alias_into_body_domain_is_refused_for_an_unprotected_task(self) -> None:
+        # The alias target alone ("vault", "archive") lies outside the domain;
+        # the resolved context path does not. Generic empty files only.
+        with tempfile.TemporaryDirectory() as raw, \
+             mock.patch.object(worktree_cleanliness, "PROTECTED_BODY_PREFIXES", ("vault/copies",)):
+            root = Path(raw)
+            status_root = root / "status"
+            (status_root / "vault" / "copies").mkdir(parents=True)
+            (status_root / "vault" / "copies" / "copy.txt").touch()
+            (status_root / "docs").mkdir()
+            (status_root / "docs" / "plain.md").touch()
+            (status_root / "docs" / "alias").symlink_to("../vault", target_is_directory=True)
+            (status_root / "docs" / "top").symlink_to("..", target_is_directory=True)
+            (status_root / "ai-status.json").write_text(json.dumps({"tasks": [{"id": "SEED-3"}]}), encoding="utf-8")
+            workspace = root / "workspace"
+            workspace.mkdir()
+            subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+
+            def request(context: str) -> supervisor.DeliveryRequest:
+                return supervisor.DeliveryRequest(
+                    agent_id="claude",
+                    provider="claude",
+                    delivery_mode="claude",
+                    message="wake",
+                    task_id="SEED-3",
+                    context_files=[context],
+                    metadata={"protected_paths": []},
+                )
+
+            for context in ("docs/alias/copies/copy.txt", "docs/top/vault/copies/copy.txt", "docs/alias", "docs/top"):
+                with (
+                    self.subTest(context=context),
+                    mock.patch.object(supervisor, "_file_or_dir_hash") as hashed,
+                    mock.patch.object(supervisor, "_atomic_copy_context_file") as copied,
+                    self.assertRaisesRegex(ValueError, "protected body domain"),
+                ):
+                    supervisor.materialize_worker_context_files(config, request(context), workspace)
+                hashed.assert_not_called()
+                copied.assert_not_called()
+            self.assertFalse((workspace / "docs").exists())
+            self.assertFalse((workspace / "vault").exists())
+
+            with (
+                mock.patch.object(supervisor, "_file_or_dir_hash", return_value="a" * 64),
+                mock.patch.object(supervisor, "_atomic_copy_context_file") as copied,
+            ):
+                supervisor.materialize_worker_context_files(config, request("docs/plain.md"), workspace)
+            copied.assert_called_once_with(status_root / "docs" / "plain.md", workspace / "docs" / "plain.md")
+
+    def test_selected_task_brief_candidate_is_judged_before_it_is_read(self) -> None:
+        """The compatibility candidate actually read, not only the requested brief path."""
+        task_id = "SEED-BRIEF-4"
+        requested = ".orchestrator/task-briefs/seed_brief_4.md"
+        fallback = ".orchestrator/task-briefs/seed-brief-4.md"
+        with tempfile.TemporaryDirectory() as raw, \
+             mock.patch.object(worktree_cleanliness, "PROTECTED_BODY_PREFIXES", ("vault/copies",)):
+            root = Path(raw)
+            status_root = root / "status"
+            (status_root / "vault" / "copies").mkdir(parents=True)
+            (status_root / "vault" / "copies" / "empty.md").touch()
+            briefs = status_root / ".orchestrator" / "task-briefs"
+            briefs.mkdir(parents=True)
+            (status_root / "ai-status.json").write_text(json.dumps({"tasks": [{"id": task_id}]}), encoding="utf-8")
+            workspace = root / "workspace"
+            workspace.mkdir()
+            subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+            request = supervisor.DeliveryRequest(
+                agent_id="claude",
+                provider="claude",
+                delivery_mode="claude",
+                message="wake",
+                task_id=task_id,
+                context_files=[requested],
+                metadata={"protected_paths": []},
+            )
+            self.assertEqual(worker_workspace._task_brief_context_candidates(task_id, requested)[:2], [requested, fallback])
+            denied = (status_root / "vault" / "copies" / "empty.md").resolve()
+            reads: list[Path] = []
+            real_read_text = Path.read_text
+
+            def guarded_read_text(path: Path, *a, **kw):
+                if Path(path).resolve() == denied:
+                    reads.append(Path(path))
+                    raise AssertionError(f"denied body read through {path}")
+                return real_read_text(path, *a, **kw)
+
+            # Requested path absent; the hyphen fallback is an alias into the domain.
+            (briefs / "seed-brief-4.md").symlink_to("../../vault/copies/empty.md")
+            with (
+                mock.patch.object(Path, "read_text", autospec=True, side_effect=guarded_read_text),
+                mock.patch.object(supervisor, "_file_or_dir_hash") as hashed,
+                mock.patch.object(supervisor, "_atomic_copy_context_file") as copied,
+                mock.patch.object(supervisor, "_generated_worker_task_brief") as generated,
+                self.assertRaisesRegex(ValueError, "protected body domain"),
+            ):
+                supervisor.materialize_worker_context_files(config, request, workspace)
+            self.assertEqual(reads, [])
+            hashed.assert_not_called()
+            copied.assert_not_called()
+            generated.assert_not_called()
+            self.assertFalse(os.path.lexists(workspace / requested))
+
+            # Legitimate fallback: a fresh regular compatibility brief is still selected and copied.
+            fresh = (
+                "# Task Brief\n"
+                f"- SHA256: {common.task_brief_canonical_hash({'id': task_id})}\n"
+                "\n## Source Documents\n- none\n"
+            )
+            (briefs / "seed-brief-4.md").unlink()
+            (briefs / "seed-brief-4.md").write_text(fresh, encoding="utf-8")
+            with (
+                mock.patch.object(Path, "read_text", autospec=True, side_effect=guarded_read_text),
+                mock.patch.object(supervisor, "_file_or_dir_hash", return_value="a" * 64),
+                mock.patch.object(supervisor, "_atomic_copy_context_file") as copied,
+            ):
+                self.assertEqual(supervisor.materialize_worker_context_files(config, request, workspace), [requested])
+            copied.assert_called_once_with(briefs / "seed-brief-4.md", workspace / requested)
+
+            # Generation: with no candidate on disk the brief is generated and written back.
+            (briefs / "seed-brief-4.md").unlink()
+            with (
+                mock.patch.object(Path, "read_text", autospec=True, side_effect=guarded_read_text),
+                mock.patch.object(supervisor, "_generated_worker_task_brief", return_value="# Generated\n"),
+                mock.patch.object(supervisor, "_atomic_copy_context_file") as copied,
+            ):
+                self.assertEqual(supervisor.materialize_worker_context_files(config, request, workspace), [requested])
+            copied.assert_not_called()
+            self.assertEqual((workspace / requested).read_text(encoding="utf-8"), "# Generated\n")
+            self.assertEqual((status_root / requested).read_text(encoding="utf-8"), "# Generated\n")
+            self.assertEqual(reads, [])
+
+            # Direct control: the requested brief itself aliased into the domain is
+            # refused before any read, generation or canonical write-back.
+            (status_root / requested).unlink()
+            (workspace / requested).unlink()
+            (briefs / "seed_brief_4.md").symlink_to("../../vault/copies/empty.md")
+            with (
+                mock.patch.object(Path, "read_text", autospec=True, side_effect=guarded_read_text),
+                mock.patch.object(supervisor, "_file_or_dir_hash") as hashed,
+                mock.patch.object(supervisor, "_atomic_copy_context_file") as copied,
+                mock.patch.object(supervisor, "_generated_worker_task_brief") as generated,
+                self.assertRaisesRegex(ValueError, "protected body domain"),
+            ):
+                supervisor.materialize_worker_context_files(config, request, workspace)
+            self.assertEqual(reads, [])
+            hashed.assert_not_called()
+            copied.assert_not_called()
+            generated.assert_not_called()
+            self.assertFalse(os.path.lexists(workspace / requested))
+
+    def test_directory_child_metadata_uses_the_filesystem_spelling_that_is_copied(self) -> None:
+        """A literal-backslash child name is judged as the entry rglob yields and the copy opens.
+
+        Generic domain ``guarded/zone`` and empty files only; real hash/copy run
+        behind interceptors that refuse the denied body before it is opened.
+        """
+
+        class DeniedSink(Exception):
+            pass
+
+        def run_case(
+            name: str,
+            *,
+            source_child: str | None = None,
+            source_alias: bool = False,
+            workspace_child: str | None = None,
+            workspace_dir_alias: str | None = None,
+            requested: str = "docs/context",
+            phase: str = "Unassigned",
+        ) -> tuple[object, list[tuple[str, str]], Path, Path]:
+            holder = tempfile.TemporaryDirectory(prefix=f"context-spelling-{name}-")
+            self.addCleanup(holder.cleanup)
+            root = Path(holder.name)
+            status_root = root / "status"
+            context = status_root / "docs" / "context"
+            context.mkdir(parents=True)
+            (status_root / "guarded" / "zone").mkdir(parents=True)
+            (status_root / "guarded" / "zone" / "empty.md").touch()
+            (context / "manifest.json").write_text("{}\n", encoding="utf-8")
+            if source_child is not None:
+                if source_alias:
+                    (context / source_child).symlink_to("../../guarded/zone/empty.md")
+                else:
+                    (context / source_child).write_text("ordinary\n", encoding="utf-8")
+            task = {"id": "SEED-SPELL-5", "phase": phase, "source_docs": ["docs/context"]}
+            (status_root / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+            workspace = root / "workspace"
+            workspace.mkdir()
+            subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
+            if workspace_child is not None or workspace_dir_alias is not None:
+                (workspace / "guarded" / "zone").mkdir(parents=True)
+                (workspace / "guarded" / "zone" / "empty.md").touch()
+                (workspace / "docs" / "other").mkdir(parents=True)
+                (workspace / "docs" / "context").mkdir()
+                if workspace_child is not None:
+                    (workspace / "docs" / "context" / workspace_child).symlink_to("../../guarded/zone/empty.md")
+                if workspace_dir_alias is not None:
+                    (workspace / "docs" / "context" / workspace_dir_alias).symlink_to(
+                        "../other", target_is_directory=True
+                    )
+            denied = {
+                (status_root / "guarded" / "zone" / "empty.md").resolve(),
+                (workspace / "guarded" / "zone" / "empty.md").resolve(),
+            }
+            sinks: list[tuple[str, str]] = []
+            real_copy = supervisor._atomic_copy_context_file
+            real_hash = supervisor._file_or_dir_hash
+
+            def copy(source: Path, destination: Path):
+                if Path(source).resolve() in denied or Path(destination).resolve() in denied:
+                    sinks.append(("copy", str(source)))
+                    raise DeniedSink(str(source))
+                return real_copy(source, destination)
+
+            def hashed(path: Path):
+                target = Path(path)
+                walked = [target, *target.rglob("*")] if target.is_dir() else [target]
+                if any(item.resolve() in denied for item in walked):
+                    sinks.append(("hash", str(path)))
+                    raise DeniedSink(str(path))
+                return real_hash(path)
+
+            request = supervisor.DeliveryRequest(
+                agent_id="claude",
+                provider="claude",
+                delivery_mode="claude",
+                message="wake",
+                task_id=task["id"],
+                context_files=[requested],
+                metadata={"protected_paths": []},
+            )
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+            with (
+                mock.patch.object(worktree_cleanliness, "PROTECTED_BODY_PREFIXES", ("guarded/zone",)),
+                mock.patch.object(supervisor, "_atomic_copy_context_file", side_effect=copy),
+                mock.patch.object(supervisor, "_file_or_dir_hash", side_effect=hashed),
+            ):
+                try:
+                    outcome: object = supervisor.materialize_worker_context_files(config, request, workspace)
+                except (ValueError, DeniedSink) as error:
+                    outcome = error
+            return outcome, sinks, status_root, workspace
+
+        # Source child spelled with a literal backslash, aliasing the domain.
+        for child in ("alias\\leaf.md", "alias.md"):
+            with self.subTest(source_alias=child):
+                outcome, sinks, _, workspace = run_case("source", source_child=child, source_alias=True)
+                self.assertIsInstance(outcome, ValueError)
+                self.assertIn("symlink alias into the protected body domain", str(outcome))
+                self.assertEqual(sinks, [])
+                self.assertFalse(os.path.lexists(workspace / "docs"))
+
+        # Existing destination child spelled with a literal backslash, aliasing
+        # the domain: refused before the destination directory is hashed.
+        outcome, sinks, _, _ = run_case("destination", source_child="plain.md", workspace_child="alias\\leaf.md")
+        self.assertIsInstance(outcome, ValueError)
+        self.assertIn("symlink alias into the protected body domain", str(outcome))
+        self.assertEqual(sinks, [])
+
+        # Legitimate control: a logical Windows-style request still materializes
+        # an ordinary directory child, also on the strict (mutating) path.
+        for phase in ("Unassigned", "Build"):
+            with self.subTest(phase=phase):
+                outcome, sinks, _, workspace = run_case(
+                    "positive", source_child="plain.md", requested="docs\\context", phase=phase
+                )
+                self.assertEqual(outcome, ["docs/context"])
+                self.assertEqual(sinks, [])
+                self.assertEqual(
+                    (workspace / "docs" / "context" / "plain.md").read_text(encoding="utf-8"), "ordinary\n"
+                )
+
+        # The projected (slash-normalized) destination through an existing
+        # workspace directory alias stays rejected by the destination validator.
+        outcome, sinks, _, workspace = run_case(
+            "projected", source_child="alias\\leaf.md", workspace_dir_alias="alias", phase="Build"
+        )
+        self.assertIsInstance(outcome, ValueError)
+        self.assertIn("is a symlink", str(outcome))
+        self.assertEqual(sinks, [])
+        self.assertFalse(os.path.lexists(workspace / "docs" / "other" / "leaf.md"))
 
 
 class WorktreeAuthorityShapeTests(unittest.TestCase):

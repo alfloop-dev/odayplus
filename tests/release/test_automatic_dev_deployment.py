@@ -278,7 +278,9 @@ def test_ci_dispatches_only_dev_and_does_not_claim_live_success(monkeypatch, con
 def test_workflow_keeps_one_deployment_implementation_and_manual_gate():
     release = yaml.safe_load((ROOT / auto.WORKFLOW).read_text())
     jobs = release["jobs"]
-    policy_checkout = jobs["release_phase"]["steps"][0]["with"]["ref"]
+    policy_checkout = next(
+        step for step in jobs["release_phase"]["steps"] if str(step.get("uses", "")).startswith("actions/checkout@")
+    )["with"]["ref"]
     assert "inputs.phase == 'auto' && github.sha" in policy_checkout
     manual = jobs["admission"]
     assert "inputs.phase == 'deploy'" in manual["if"]

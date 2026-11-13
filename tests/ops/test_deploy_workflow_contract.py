@@ -610,7 +610,9 @@ def test_admission_checks_out_the_dispatch_event_sha_and_proves_it() -> None:
     jobs = _release_jobs()
     steps = _job_steps(jobs["admission"])
 
-    checkout = steps[0]
+    # Only the checkout boundary's Git preflight may precede the checkout.
+    checkout = steps[1]
+    assert steps[0].get("name") == "Require sparse-capable Git before checkout"
     assert str(checkout.get("uses", "")).startswith("actions/checkout@")
     assert checkout["with"]["ref"] == ADMISSION_EVENT_SHA_EXPRESSION
     assert checkout["with"]["fetch-depth"] == 0, (

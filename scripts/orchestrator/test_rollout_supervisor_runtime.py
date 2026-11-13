@@ -52,6 +52,12 @@ def fake_git(repo: Path, *args: str) -> str:
     raise AssertionError((repo, args))
 
 
+def same_repository(source: Path, target: Path) -> bool:
+    # The stand-in source and runtimes are plain directories; repository identity
+    # is proven with real Git in ProtectedRolloutPreflightTests.
+    return True
+
+
 def rollout_args(source: Path, parent: Path, link: Path, status_root: Path) -> list[str]:
     return [
         "--source-root",
@@ -92,6 +98,7 @@ class RolloutSupervisorRuntimeTests(unittest.TestCase):
 
             with mock.patch.object(rollout, "git", fake_git), \
                  mock.patch.object(rollout, "clean", lambda _repo: True), \
+                 mock.patch.object(rollout.worktree_cleanliness, "shares_git_common_dir", same_repository), \
                  mock.patch.object(rollout.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0)):
                 self.assertEqual(rollout.main(rollout_args(source, parent, link, status_root)), 0)
 
@@ -112,6 +119,7 @@ class RolloutSupervisorRuntimeTests(unittest.TestCase):
 
             with mock.patch.object(rollout, "git", fake_git), \
                  mock.patch.object(rollout, "clean", lambda _repo: True), \
+                 mock.patch.object(rollout.worktree_cleanliness, "shares_git_common_dir", same_repository), \
                  mock.patch.object(rollout.subprocess, "run", lambda *args, **kwargs: next(restarts)):
                 with self.assertRaisesRegex(SystemExit, "restored previous runtime and status launcher"):
                     rollout.main(rollout_args(source, parent, link, status_root))
@@ -179,6 +187,7 @@ class WatchdogRolloutTests(unittest.TestCase):
         for patcher in (
             mock.patch.object(rollout, "git", fake_git),
             mock.patch.object(rollout, "clean", lambda _repo: True),
+            mock.patch.object(rollout.worktree_cleanliness, "shares_git_common_dir", same_repository),
             mock.patch.object(rollout, "LOADED_RUNTIME_PROOF_POLL_SECONDS", 0.05),
             mock.patch.object(rollout, "LOADED_RUNTIME_PROOF_TIMEOUT_SECONDS", 20.0),
         ):
@@ -727,6 +736,14 @@ class WatchdogRolloutTests(unittest.TestCase):
         admission.assert_not_called()
         self.assert_untouched(old, config, None)
 
+    def test_reused_target_holding_a_protected_body_refuses_before_the_switch(self) -> None:
+        old = self.spawn_supervisor(self.previous)
+        config = self.config_file.read_text()
+        with mock.patch.object(rollout, "clean", lambda repo: repo != self.target):
+            with self.assertRaisesRegex(SystemExit, "existing target is not the expected clean runtime"):
+                self.roll_out()
+        self.assert_untouched(old, config, None)
+
     def test_proof_accepts_what_the_real_supervisor_stamps(self) -> None:
         """The proof reads the fields the stand-in writes; hold both to the real writer."""
         import supervisor
@@ -858,6 +875,223 @@ class ProtectedRolloutPreflightTests(unittest.TestCase):
         self.assertEqual((target / ".orchestrator" / "profiles" / "bwrap").read_bytes(), self.PROFILE)
         self.assertTrue(rollout.clean(target))
 
+    # --- the shared protected body domain, on the original rollout path
+
+    DOMAIN_COPY = "archive/untracked/vault/copies/body.py.txt"
+
+    def _enter_body_domain(self) -> None:
+        for patcher in (
+            mock.patch.object(rollout.worktree_cleanliness, "PROTECTED_BODY_PREFIXES", ("vault/copies",)),
+            mock.patch.object(rollout.worktree_cleanliness, "PROTECTED_BODY_NAMES", ("synthetic_asset.py",)),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        (self.source / self.DOMAIN_COPY).parent.mkdir(parents=True)
+        (self.source / self.DOMAIN_COPY).write_text("synthetic archived copy\n", encoding="utf-8")
+        self._git("add", self.DOMAIN_COPY)
+        self._git("commit", "-q", "-m", "archive a synthetic copy")
+        self.target_sha = self._git("rev-parse", "HEAD")
+
+    def test_runtime_excludes_the_body_domain_before_materializing_it(self) -> None:
+        self._enter_body_domain()
+        target = self.root / "runtime"
+        order: list[str] = []
+        real_install = rollout.worktree_cleanliness.install_protected_body_sparse
+        real_git = rollout.git
+
+        def recording_install(path: Path, *a: object, **kw: object) -> str | None:
+            order.append("exclude")
+            return real_install(path, *a, **kw)
+
+        def recording_git(repo: Path, *args: str) -> str:
+            if args[:1] == ("read-tree",):
+                order.append("materialize")
+            return real_git(repo, *args)
+
+        with mock.patch.object(rollout.worktree_cleanliness, "install_protected_body_sparse", recording_install), \
+             mock.patch.object(rollout, "git", recording_git):
+            rollout.add_runtime_worktree(self.source, target, "runtime-live-dom", self.target_sha)
+
+        self.assertEqual(order, ["exclude", "materialize"])
+        self.assertFalse(os.path.lexists(target / self.DOMAIN_COPY))
+        self.assertEqual((target / ".orchestrator" / "profiles" / "bwrap").read_bytes(), self.PROFILE)
+        self.assertEqual(real_git(target, "ls-files", "-t", "--", self.DOMAIN_COPY).split()[0], "S")
+        self.assertEqual(real_git(target, "rev-parse", "HEAD"), self.target_sha)
+        self.assertEqual(real_git(target, "symbolic-ref", "--quiet", "HEAD"), "refs/heads/runtime-live-dom")
+        self.assertTrue(rollout.clean(target))
+
+    def test_runtime_excludes_entries_named_by_the_prefix_itself(self) -> None:
+        """A regular file tracked at the prefix path, at the root and nested; empty, metadata only."""
+        self._enter_body_domain()
+        for name in ("vault/copies", "archive/vault/copies"):
+            (self.source / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.source / name).touch()
+            self._git("add", name)
+        self._git("commit", "-q", "-m", "track generic files at the prefix path")
+        self.target_sha = self._git("rev-parse", "HEAD")
+        self.assertTrue(all(rollout.worktree_cleanliness.in_protected_body_domain(n) for n in ("vault/copies", "archive/vault/copies")))
+        target = self.root / "runtime"
+
+        rollout.add_runtime_worktree(self.source, target, "runtime-live-exact", self.target_sha)
+
+        for name in ("vault/copies", "archive/vault/copies", self.DOMAIN_COPY):
+            with self.subTest(path=name):
+                self.assertFalse(os.path.lexists(target / name))
+                self.assertEqual(rollout.git(target, "ls-files", "-t", "--", name).split()[0], "S")
+        self.assertEqual((target / ".orchestrator" / "profiles" / "bwrap").read_bytes(), self.PROFILE)
+        self.assertIsNone(rollout.worktree_cleanliness.protected_body_checkout_refusal(target, require_sparse=True))
+        self.assertTrue(rollout.clean(target))
+
+    def test_runtime_keeps_every_denied_name_spelling_out_before_materializing(self) -> None:
+        """POSIX Git keeps a backslash inside one name, where the domain reads a separator.
+
+        Original entry from a sparse source that passes the shared proof and ``clean``;
+        generic empty blobs staged from index metadata only, so no source body exists.
+        Ordinary slash descendant and exact-prefix entries are the excluded controls,
+        sibling names the materialized ones.
+        """
+        wc = rollout.worktree_cleanliness
+        for patcher in (
+            mock.patch.object(wc, "PROTECTED_BODY_PREFIXES", ("guarded/zone",)),
+            mock.patch.object(wc, "PROTECTED_BODY_NAMES", ("synthetic_asset.py",)),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        excluded = (
+            "archive/guarded/zone/body.txt",
+            "other/guarded/zone",
+            "archive/guarded\\zone/body.txt",
+            "archive\\guarded/zone/body.txt",
+            "dotted\\.\\guarded\\zone",
+            "named\\synthetic_asset.py.txt",
+        )
+        materialized = ("archive/guarded/zonex/body.txt", "other/guarded/sibling.txt", "keep.txt")
+        source = self.root / "spelling-source"
+        source.mkdir()
+
+        def staged(*args: str, stdin: bytes | None = None) -> str:
+            return subprocess.run(
+                ["git", *args], cwd=source, input=stdin, capture_output=True, check=True
+            ).stdout.decode().strip()
+
+        staged("init", "--quiet")
+        self.assertIsNone(wc.install_protected_body_sparse(source))
+        empty = staged("hash-object", "-w", "--stdin", stdin=b"")
+        for name in (*excluded, *materialized):
+            staged("update-index", "--add", "--cacheinfo", f"100644,{empty},{name}")
+        sha = staged(
+            "-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid",
+            "commit-tree", staged("write-tree"), stdin=b"synthetic spellings\n",
+        )
+        staged("update-ref", "HEAD", sha)
+        staged("update-index", "--skip-worktree", "--", *excluded, *materialized)
+        self.assertTrue(all(wc.in_protected_body_domain(name) for name in excluded))
+        self.assertFalse(any(wc.in_protected_body_domain(name) for name in materialized))
+        self.assertIsNone(wc.protected_body_checkout_refusal(source, require_sparse=True))
+        self.assertTrue(rollout.clean(source))
+        target = self.root / "spelling-runtime"
+
+        rollout.add_runtime_worktree(source, target, "runtime-live-spelling", sha)
+
+        flags = dict(
+            (record[2:], record[0]) for record in rollout.git(target, "ls-files", "-t", "-z").split("\0") if record
+        )
+        for name in excluded:
+            with self.subTest(path=name):
+                self.assertEqual(flags[name], "S")
+                self.assertFalse(os.path.lexists(target / name))
+        for name in materialized:
+            with self.subTest(path=name):
+                self.assertEqual(flags[name], "H")
+                self.assertTrue((target / name).is_file())
+        self.assertIsNone(wc.protected_body_checkout_refusal(target, require_sparse=True))
+        self.assertTrue(rollout.clean(target))
+
+    def test_source_holding_a_body_copy_is_never_clean_and_never_status_read(self) -> None:
+        self._enter_body_domain()
+        self.assertTrue((self.source / self.DOMAIN_COPY).is_file())
+        commands: list[list[str]] = []
+        real_run = subprocess.run
+
+        def recording_run(args, *a, **kw):
+            commands.append(list(args))
+            return real_run(args, *a, **kw)
+
+        with mock.patch("subprocess.run", side_effect=recording_run):
+            self.assertFalse(rollout.clean(self.source))
+        self.assertFalse([command for command in commands if "status" in command])
+        self.assertTrue((self.source / self.DOMAIN_COPY).is_file(), "refusal never deletes the copy")
+
+    def test_untracked_or_drifted_domain_entries_keep_source_and_reused_target_unclean(self) -> None:
+        """HEAD/index union and untracked names, on the source and on a reused runtime."""
+        self._enter_body_domain()
+        target = self.root / "runtime"
+        rollout.add_runtime_worktree(self.source, target, "runtime-live-dom", self.target_sha)
+        self.assertTrue(rollout.clean(target))
+        real_run = subprocess.run
+
+        def refused_without_status(repo: Path) -> None:
+            commands: list[list[str]] = []
+
+            def recording_run(args, *a, **kw):
+                commands.append(list(args))
+                return real_run(args, *a, **kw)
+
+            with mock.patch("subprocess.run", side_effect=recording_run):
+                self.assertFalse(rollout.clean(repo))
+            self.assertFalse([command for command in commands if "status" in command])
+            self.assertFalse([command for command in commands if any(f.startswith("--exclude") for f in command)])
+
+        # Reused target: an untracked .gitignore inside the domain that status would open.
+        ignore = target / "other" / "vault" / "copies" / ".gitignore"
+        ignore.parent.mkdir(parents=True)
+        ignore.write_text("hidden.ban\n", encoding="utf-8")
+        (ignore.parent / "hidden.ban").write_text("synthetic ignored\n", encoding="utf-8")
+        refused_without_status(target)
+        self.assertIn("untracked domain content", rollout.worktree_cleanliness.protected_body_checkout_refusal(target))
+        shutil.rmtree(target / "other")
+        self.assertTrue(rollout.clean(target))
+
+        # Reused target: the archived copy dropped from the index while its body is back.
+        rollout.git(target, "update-index", "--force-remove", self.DOMAIN_COPY)
+        (target / self.DOMAIN_COPY).parent.mkdir(parents=True, exist_ok=True)
+        (target / self.DOMAIN_COPY).write_text("synthetic leftover\n", encoding="utf-8")
+        refused_without_status(target)
+        self.assertIn("in HEAD but not in the index", rollout.worktree_cleanliness.protected_body_checkout_refusal(target))
+
+        # Source: an untracked domain entry beside an otherwise unremarkable checkout.
+        self._git("rm", "-q", "--cached", self.DOMAIN_COPY)
+        self._git("commit", "-q", "-m", "drop the synthetic copy from the tree")
+        self.assertTrue((self.source / self.DOMAIN_COPY).is_file())
+        refused_without_status(self.source)
+        self.assertIn("untracked domain content", rollout.worktree_cleanliness.protected_body_checkout_refusal(self.source))
+
+    def test_failed_exclusion_or_proof_stops_before_or_after_materializing(self) -> None:
+        self._enter_body_domain()
+        with mock.patch.object(rollout.worktree_cleanliness, "install_protected_body_sparse", return_value="sparse_exclusion_failed: x"):
+            with self.assertRaisesRegex(RuntimeError, "protected body exclusion failed"):
+                rollout.add_runtime_worktree(self.source, self.root / "runtime-a", "runtime-live-a", self.target_sha)
+        self.assertFalse((self.root / "runtime-a" / "README").exists())
+        self.assertFalse((self.root / "runtime-a" / ".orchestrator").exists(), "nothing was materialized")
+        with mock.patch.object(rollout.worktree_cleanliness, "protected_body_checkout_refusal", return_value="protected_body_present: x"):
+            with self.assertRaisesRegex(RuntimeError, "materialized protected body domain"):
+                rollout.add_runtime_worktree(self.source, self.root / "runtime-b", "runtime-live-b", self.target_sha)
+
+    def test_source_with_unreadable_metadata_refuses_before_any_fetch(self) -> None:
+        main_root = self.root / "main"
+        main_root.mkdir()
+        source, parent, _target, _previous, link, status_root = prepare_rollout(main_root)
+        calls: list[tuple[str, ...]] = []
+
+        def tracking_git(repo: Path, *args: str) -> str:
+            calls.append(args)
+            return fake_git(repo, *args)
+
+        with mock.patch.object(rollout, "git", tracking_git):
+            with self.assertRaisesRegex(SystemExit, "dirty source checkout"):
+                rollout.main(rollout_args(source, parent, link, status_root))
+        self.assertEqual(calls, [])
+
     def test_main_refuses_before_preparing_any_runtime(self) -> None:
         main_root = self.root / "main"
         main_root.mkdir()
@@ -881,6 +1115,84 @@ class ProtectedRolloutPreflightTests(unittest.TestCase):
         self.assertEqual(gate.call_args.args[2], ("guarded/zone",))
         self.assertFalse(any(call[:1] == ("worktree",) for call in calls))
         self.assertFalse(target.exists())
+
+    # --- existing target repository identity, through the real entry and real Git
+
+    def _existing_target_rollout(self) -> tuple[Path, Path, Path, Path, list[str]]:
+        """A source exactly at origin/dev and the runtime slot main would reuse."""
+        origin = self.root / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(origin)], capture_output=True, check=True)
+        self._git("remote", "add", "origin", str(origin))
+        self._git("push", "-q", "origin", "dev")
+        self._git("fetch", "-q", "origin")
+        parent = self.root / "runtimes"
+        parent.mkdir()
+        previous = self.root / "previous"
+        previous.mkdir()
+        link = self.root / "runtime-current"
+        link.symlink_to(previous)
+        status_root = self.root / "status"
+        (status_root / "scripts").mkdir(parents=True)
+        (status_root / ".orchestrator").mkdir()
+        (status_root / ".orchestrator" / "config.json").write_text("{}\n")
+        (status_root / "scripts" / "ai-status.sh").write_text("old writer\n")
+        short = self.target_sha[:12]
+        target = parent / f"oday-plus-supervisor-runtime-{short}"
+        args = rollout_args(self.source, parent, link, status_root)
+        return target, link, previous, status_root, args
+
+    def _main_until_first_mutation(self, args: list[str], target: Path) -> tuple[BaseException, list[list[str]]]:
+        """Run the real main; stop it at the launcher snapshot that precedes the switch."""
+        target_commands: list[list[str]] = []
+        real_run = subprocess.run
+
+        def recording_run(command, *a, **kw):
+            cwd = kw.get("cwd")
+            if cwd is not None and Path(cwd).resolve() == target.resolve():
+                target_commands.append(list(command))
+            return real_run(command, *a, **kw)
+
+        class ReachedSwitch(Exception):
+            pass
+
+        with mock.patch("subprocess.run", side_effect=recording_run), \
+             mock.patch.object(rollout, "snapshot_file", side_effect=ReachedSwitch), \
+             contextlib.redirect_stdout(io.StringIO()):
+            try:
+                rollout.main(args)
+            except (ReachedSwitch, SystemExit) as outcome:
+                return outcome, target_commands
+        self.fail("main returned without reaching the switch or refusing")
+
+    def test_registered_existing_target_is_reused(self) -> None:
+        target, link, previous, status_root, args = self._existing_target_rollout()
+        rollout.add_runtime_worktree(self.source, target, f"runtime-live-{self.target_sha[:12]}", self.target_sha)
+
+        outcome, _commands = self._main_until_first_mutation(args, target)
+
+        self.assertNotIsInstance(outcome, SystemExit, outcome)
+        self.assertEqual(link.resolve(), previous.resolve())
+        self.assertEqual((status_root / "scripts" / "ai-status.sh").read_text(), "old writer\n")
+
+    def test_foreign_clone_with_same_head_and_branch_refuses_before_reading_or_switching(self) -> None:
+        target, link, previous, status_root, args = self._existing_target_rollout()
+        branch = f"runtime-live-{self.target_sha[:12]}"
+        subprocess.run(["git", "clone", "-q", "--no-checkout", str(self.source), str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "checkout", "-q", "-b", branch, self.target_sha], cwd=target, capture_output=True, check=True)
+        self.assertEqual(rollout.git(target, "rev-parse", "HEAD"), self.target_sha)
+        self.assertEqual(rollout.git(target, "rev-parse", "--abbrev-ref", "HEAD"), branch)
+        self.assertFalse(rollout.worktree_cleanliness.shares_git_common_dir(self.source, target))
+        head_before = (target / ".git" / "HEAD").read_bytes()
+
+        outcome, commands = self._main_until_first_mutation(args, target)
+
+        self.assertIsInstance(outcome, SystemExit)
+        self.assertIn("not a worktree of the source repository", str(outcome))
+        self.assertFalse([command for command in commands if "status" in command], commands)
+        self.assertTrue(all(command[:2] == ["git", "rev-parse"] for command in commands), commands)
+        self.assertEqual(link.resolve(), previous.resolve())
+        self.assertEqual((status_root / "scripts" / "ai-status.sh").read_text(), "old writer\n")
+        self.assertEqual((target / ".git" / "HEAD").read_bytes(), head_before)
 
 
 if __name__ == "__main__":

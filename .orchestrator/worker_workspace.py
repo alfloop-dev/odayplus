@@ -24,8 +24,12 @@ from worktree_cleanliness import (
     ProtectedPathPolicyError,
     WorktreeInspection,
     context_path_protection_error,
+    in_protected_body_domain,
     inspect_protected_git_metadata,
+    install_protected_body_sparse,
     normalize_protected_paths,
+    protected_body_checkout_refusal,
+    shares_git_common_dir,
     task_protected_paths,
     _git_metadata,
     _tree_entry,
@@ -377,32 +381,7 @@ def _detached_head_is_merged(repo_root: Path, worktree_path: Path, base_refs: li
 
 @_entrypoint
 def _worktree_matches_repo_common_dir(repo_root: Path, path: Path) -> bool:
-    try:
-        path = path.resolve()
-        repo_common_rc, repo_common = _git_output(repo_root, "rev-parse", "--git-common-dir")
-        if repo_common_rc != 0:
-            return False
-        expected_common = Path(repo_common)
-        if not expected_common.is_absolute():
-            expected_common = (repo_root / expected_common).resolve()
-        else:
-            expected_common = expected_common.resolve()
-
-        top_level_rc, top_level = _git_output(path, "rev-parse", "--show-toplevel")
-        if top_level_rc != 0 or Path(top_level).resolve() != path:
-            return False
-
-        worktree_common_rc, worktree_common = _git_output(path, "rev-parse", "--git-common-dir")
-        if worktree_common_rc != 0:
-            return False
-        resolved_worktree_common = Path(worktree_common)
-        if not resolved_worktree_common.is_absolute():
-            resolved_worktree_common = (path / resolved_worktree_common).resolve()
-        else:
-            resolved_worktree_common = resolved_worktree_common.resolve()
-    except (OSError, RuntimeError, ValueError):
-        return False
-    return resolved_worktree_common == expected_common
+    return shares_git_common_dir(repo_root, path)
 
 
 @_entrypoint
@@ -464,6 +443,7 @@ def _protected_commit_refusal(
     *,
     worktree_path: Path | None = None,
     check_index: bool = False,
+    checkout_into: Path | None = None,
 ) -> str | None:
     """Why Git may not materialize or read ``commit`` for a protected task, if it may not.
 
@@ -478,7 +458,22 @@ def _protected_commit_refusal(
     prefix, is refused before they run, as is any error proving neither.  The one
     entry a healthy checkout holds is the empty directory its own protected
     launch mounts the mask on (``plan_protected_execution``).
+
+    The checkout itself is also held to the shared protected body domain, for
+    every task, before any caller's status, hash, copy, checkout or merge.
+    ``checkout_into`` names the existing checkout ``commit`` is about to be
+    checked out or merged into: that checkout is held to the same domain for
+    what it holds now and for what ``commit`` would bring, so a target that
+    introduces a domain entry needs the exclusion before Git writes a file.
     """
+    if worktree_path is not None and check_index:
+        body_refusal = protected_body_checkout_refusal(worktree_path)
+        if body_refusal:
+            return f"protected_metadata_refused: {body_refusal}"
+    if checkout_into is not None:
+        body_refusal = protected_body_checkout_refusal(checkout_into, target=commit)
+        if body_refusal:
+            return f"protected_metadata_refused: {body_refusal}"
     if not protected:
         return None
     verdict = inspect_protected_git_metadata(
@@ -600,6 +595,11 @@ def _create_worker_worktree(
     refusal = _protected_commit_refusal(path, created_sha, protected, worktree_path=path)
     if refusal:
         return _abandon(refusal)
+    # Nothing is on disk yet: the protected body domain is excluded first, so
+    # neither this read-tree nor any later checkout/merge here writes a body.
+    excluded = install_protected_body_sparse(path)
+    if excluded:
+        return _abandon(f"protected_metadata_refused: {excluded}")
     materialize = subprocess.run(
         ["git", "read-tree", "--reset", "-u", created_sha],
         cwd=path,
@@ -613,6 +613,10 @@ def _create_worker_worktree(
     ref_rc, attached = _git_output(path, "symbolic-ref", "--quiet", "HEAD")
     if ref_rc != 0 or attached != f"refs/heads/{branch}" or _git_commit_oid(path, "HEAD") != created_sha:
         return False, f"Worker worktree {path} HEAD drifted from {created_sha} during materialization"
+    body_refusal = protected_body_checkout_refusal(path, require_sparse=True)
+    if body_refusal:
+        # Left in place, unread: every later lease refuses it the same way.
+        return False, f"Refusing worker worktree {path} for {branch}: protected_metadata_refused: {body_refusal}"
     return True, None
 
 def _classify_worktree_dirt(
@@ -796,6 +800,9 @@ def _interrupted_merge_worktree_fingerprint(
     path_root = Path(worktree_path)
     entries: list[dict[str, Any]] = []
     for code, path in inspection.entries:
+        if in_protected_body_domain(path):
+            # Its body could be neither bound nor preserved without reading it.
+            return None
         candidate = path_root / path
         try:
             metadata = candidate.lstat()
@@ -1349,25 +1356,14 @@ def _refresh_reused_worker_worktree(
     to the supplied SHA; a branch containing or diverging from that base stays
     untouched and the relation is returned for the worker/review workflow.
     """
-    worktree_path = worktree_path.resolve()
-    repo_root = repo_root.resolve()
-
-    top_rc, top_level = _git_output(worktree_path, "rev-parse", "--show-toplevel")
-    worktree_common_rc, worktree_common = _git_output(worktree_path, "rev-parse", "--git-common-dir")
-    repo_common_rc, repo_common = _git_output(repo_root, "rev-parse", "--git-common-dir")
     try:
-        resolved_top = Path(top_level).resolve()
-        resolved_worktree_common = (worktree_path / worktree_common).resolve()
-        resolved_repo_common = (repo_root / repo_common).resolve()
+        worktree_path = worktree_path.resolve()
+        repo_root = repo_root.resolve()
     except (OSError, RuntimeError, ValueError):
         return False, "wrong_worktree: unable to resolve repository identity"
-    if (
-        top_rc != 0
-        or worktree_common_rc != 0
-        or repo_common_rc != 0
-        or resolved_top != worktree_path
-        or resolved_worktree_common != resolved_repo_common
-    ):
+    # The shared repository-identity rule (exact top level, same resolved Git
+    # common directory); any unanswerable metadata is a refusal.
+    if not shares_git_common_dir(repo_root, worktree_path):
         return False, "wrong_worktree: path is not the expected repository worktree"
 
     if _git_operation_in_progress(worktree_path):
@@ -1379,12 +1375,15 @@ def _refresh_reused_worker_worktree(
         return False, f"protected_metadata_refused: {error}"
 
     def _metadata_refusal(commit: str, *, current: bool = False) -> str | None:
+        # A target is judged for this very checkout too: its domain entries
+        # need the exclusion in place before any checkout/merge writes them.
         return _protected_commit_refusal(
             worktree_path,
             commit,
             protected,
             worktree_path=worktree_path if current else None,
             check_index=current,
+            checkout_into=None if current else worktree_path,
         )
 
     # Status, hashing and every later checkout/merge happen only after the
@@ -2340,26 +2339,31 @@ def materialize_worker_context_files(
     except ProtectedPathPolicyError as error:
         raise ValueError(f"Fail-closed on workspace materialization for task {request.task_id}: {error}") from error
 
-    def _protection_refusal(rel_path: str) -> None:
-        """Judge source and destination metadata before any hash, listing or copy."""
-        if not protected_paths:
-            return
-        for root in (status_root, workspace_path):
+    def _protection_refusal(rel_path: str, roots: tuple[Path, ...] | None = None) -> None:
+        """Judge source and destination metadata before any hash, listing or copy.
+
+        The protected body domain applies to every task, so this always runs.
+        ``roots`` narrows it to the side actually touched, for a path other than
+        the requested one (a task-brief compatibility candidate, which is read
+        from, or generated into, the status root only).
+        """
+        for root in roots or (status_root, workspace_path):
             error = context_path_protection_error(root, rel_path, protected_paths)
             if error:
                 raise ValueError(f"Fail-closed on workspace materialization for task {request.task_id}: {error}")
             base = root / rel_path
             try:
-                is_tree = base.is_dir() and not base.is_symlink()
+                is_tree = base.is_dir()
             except OSError as os_error:
                 raise ValueError(
                     f"Fail-closed on workspace materialization for task {request.task_id}: "
                     f"context metadata for {rel_path!r} is unreadable ({os_error})"
                 ) from os_error
             if is_tree:
-                # A context directory is not protected (checked above), so
-                # listing its entry names is safe; each child is judged by
-                # metadata before the directory is hashed or copied.
+                # A context directory is not protected (checked above, through
+                # any alias to its resolved path), so listing its entry names
+                # is safe; each child is judged by metadata, through the same
+                # aliases the copy follows, before anything is hashed or copied.
                 for child in base.rglob("*"):
                     child_rel = (Path(rel_path) / child.relative_to(base)).as_posix()
                     error = context_path_protection_error(root, child_rel, protected_paths)
@@ -2411,6 +2415,9 @@ def materialize_worker_context_files(
             copied = False
             found_src = None
             for candidate in _task_brief_context_candidates(request.task_id, rel_value):
+                # The selected candidate, not only the requested path, is what
+                # is read and copied: judge it before its first metadata probe.
+                _protection_refusal(candidate, (status_root,))
                 source = status_root / candidate
                 if not source.exists() or not source.is_file():
                     continue
@@ -2432,6 +2439,9 @@ def materialize_worker_context_files(
                     continue
                 _atomic_write_context_text(destination, text)
                 for candidate in _task_brief_context_candidates(request.task_id, rel_value):
+                    # Generating into the canonical brief writes there: judged
+                    # again here, immediately before that write.
+                    _protection_refusal(candidate, (status_root,))
                     canon_brief = status_root / candidate
                     try:
                         canon_brief.parent.mkdir(parents=True, exist_ok=True)
@@ -4229,28 +4239,21 @@ def _quarantine_and_preserve_dirty_worktree(
         return _quarantine_refused("not_a_worktree")
 
     wt_git_rc, wt_git_dir = _git_output(worktree_path, "rev-parse", "--git-dir")
-    repo_git_rc, _repo_git_dir = _git_output(repo_root, "rev-parse", "--git-dir")
-    top_rc, top_level = _git_output(worktree_path, "rev-parse", "--show-toplevel")
-    worktree_common_rc, worktree_common = _git_output(worktree_path, "rev-parse", "--git-common-dir")
-    repo_common_rc, repo_common = _git_output(repo_root, "rev-parse", "--git-common-dir")
+    repo_git_rc, repo_git_dir = _git_output(repo_root, "rev-parse", "--git-dir")
     try:
-        resolved_top = Path(top_level).resolve()
-        wt_gd = Path(wt_git_dir) if Path(wt_git_dir).is_absolute() else (worktree_path / wt_git_dir)
-        wt_cd = Path(worktree_common) if Path(worktree_common).is_absolute() else (wt_gd / worktree_common)
-        repo_cd = Path(repo_common) if Path(repo_common).is_absolute() else (repo_root / repo_common)
-
-        resolved_worktree_common = wt_cd.resolve()
-        resolved_repo_common = repo_cd.resolve()
+        # Both sides must name a readable Git directory of their own.
+        for base, git_dir in ((worktree_path, wt_git_dir), (repo_root, repo_git_dir)):
+            (base / git_dir).resolve()
     except (OSError, RuntimeError, ValueError):
         return _quarantine_refused("unreadable_git_metadata")
+    # Repository identity is the shared rule (exact top level, same resolved
+    # Git common directory); unanswerable metadata refuses.
     if (
-        top_rc != 0
-        or worktree_common_rc != 0
-        or repo_common_rc != 0
-        or wt_git_rc != 0
+        wt_git_rc != 0
         or repo_git_rc != 0
-        or resolved_top != worktree_path
-        or resolved_worktree_common != resolved_repo_common
+        or not wt_git_dir
+        or not repo_git_dir
+        or not shares_git_common_dir(repo_root, worktree_path)
     ):
         return _quarantine_refused("worktree_belongs_to_another_repository")
 
@@ -4329,6 +4332,9 @@ def _quarantine_and_preserve_dirty_worktree(
         orig_path = os.fsdecode(orig_path_bytes) if orig_path_bytes is not None else None
         if not rel_path:
             continue
+        if in_protected_body_domain(rel_path) or (orig_path and in_protected_body_domain(orig_path)):
+            # Hashing or backing it up would read the body; it stays where it is.
+            return _quarantine_refused("protected_metadata_refused", f"protected body domain dirt: {rel_path}")
         full_p = worktree_path / rel_path
 
         is_symlink = os.path.islink(full_p) or (hasattr(full_p, "is_symlink") and full_p.is_symlink())
