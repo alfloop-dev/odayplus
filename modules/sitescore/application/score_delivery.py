@@ -519,12 +519,19 @@ class ScoreExecutionJobRepository(IntakeScoreJobRepository):
     def _settle_failed(self, job: Any, row: dict, intake: dict, promotion: dict, candidate: Any, current: Any,
                        error_code: str, retryable: bool, *, exhausted: bool = False) -> None:
         exhausted = exhausted or row["attempt"] >= row["max_attempts"]
+        dead_lettered_at = self._now() if exhausted else None
         self._update(row, status="DEAD_LETTER" if exhausted else "FAILED", last_error={"code": error_code, "retryable": retryable}, lease_expires_at=None, lease_owner=None,
-                     dead_lettered_at=self._now() if exhausted else None, next_attempt_at=None)
+                     dead_lettered_at=dead_lettered_at, next_attempt_at=None)
         self.queue.update_status(job.job_id, JobStatus.FAILED, expected_version=current.version, fence_token=current.fence_token, error_message=error_code,
                                  delivery_state=JobDeliveryState.DEAD_LETTER if exhausted else None)
         self._schedule_delivery(current, None, after_status_update=True)
         self._event(row, "sitescore.failed", "sitescore_worker", "SiteScoreFailedV1", {"candidate_site_id": row["payload"]["candidate_site_id"], "site_score_job_id": job.job_id, "error_code": error_code, "retryable": retryable, "attempt": row["attempt"]})
+        if exhausted:
+            self._event(row, "job.dead_lettered", "job_platform", "JobDeadLetteredV1", {
+                "job_id": job.job_id, "job_type": self.job_type,
+                "checkpoint": row["checkpoint"], "attempt": row["attempt"],
+                "error_code": error_code, "dead_lettered_at": dead_lettered_at.isoformat(),
+            }, job_event=True)
         self._audit(row, intake, "sitescore.failed", row["payload"]["actor_id"], result="FAILED")
 
     def _event(self, row: dict, event: str, producer: str, schema: str, payload: dict,

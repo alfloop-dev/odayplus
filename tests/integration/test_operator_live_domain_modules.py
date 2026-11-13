@@ -22,6 +22,7 @@ from modules.opsboard.application.store_ops import (
     DurableStoreOpsRepository,
     InMemoryStoreOpsRepository,
 )
+from shared.api.errors import install_error_handlers
 from shared.infrastructure.persistence import (
     DurableAVMRepository,
     DurableListingRepository,
@@ -903,7 +904,13 @@ def test_live_router_rejects_every_network_reset(tmp_path: Path) -> None:
         bundle.engine.close()
 
 
-def test_live_operator_repository_failure_returns_503_instead_of_empty_200() -> None:
+@pytest.mark.parametrize(("path", "operation"), [
+    ("today", "operator.envelope"),
+    ("shell/home", "operator.shell.get_home"),
+])
+def test_live_operator_repository_failure_returns_503_instead_of_empty_200(
+    tmp_path: Path, path: str, operation: str,
+) -> None:
     class BrokenLiveRepository:
         @property
         def data_origin(self) -> dict[str, Any]:
@@ -914,31 +921,34 @@ def test_live_operator_repository_failure_returns_503_instead_of_empty_200() -> 
             }
 
         def load_state(self, **_kwargs: Any) -> dict[str, Any]:
-            raise OperatorLiveRepositoryError("database unavailable")
+            raise OperatorLiveRepositoryError(
+                "database unavailable: password=synthetic-db-only; synthetic-unclassified-503-value-9012"
+            )
 
-    app = FastAPI()
-    app.include_router(
-        create_operator_router(
-            live_repository=BrokenLiveRepository(),
-            require_live_data=True,
-            persistence_mode="postgresql",
-            provider_mode="live",
-        ),
-        prefix="/api/v1",
+    app, bundle = _live_app(
+        tmp_path / "public-error.sqlite3", live_repository=BrokenLiveRepository(),
     )
-
-    with TestClient(app) as client:
-        response = client.get(
-            f"{BASE}/today",
-            headers=_headers("tenant-live-failure"),
-        )
+    # Exercise the mounted live router with the same additive error handlers
+    # create_app installs; this is not a production IAM/provider qualification.
+    install_error_handlers(app)
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"{BASE}/{path}", headers=_headers("tenant-live-failure"))
+    finally:
+        bundle.engine.close()
 
     assert response.status_code == 503
-    assert response.json()["detail"] == {
+    assert "synthetic-db-only" not in response.text
+    assert "synthetic-unclassified-503-value-9012" not in response.text
+    body = response.json()
+    assert body["detail"] == {
         "code": "OPERATOR_LIVE_DATA_UNAVAILABLE",
-        "operation": "operator.envelope",
-        "message": "database unavailable",
+        "operation": operation,
+        "message": "Operator data is temporarily unavailable. Please try again later.",
     }
+    assert body["error"]["message"] == body["detail"]["message"]
+    assert body["error"]["details"] == [body["detail"]]
+    assert body["error"]["correlation_id"] == "corr-tenant-live-failure"
 
 
 def test_live_operator_without_repository_returns_503_not_fixture() -> None:
@@ -1245,10 +1255,16 @@ def test_live_governance_export_refuses_metadata_only_success_after_restart(tmp_
 ])
 @pytest.mark.requires_live_env
 def test_live_network_viewer_scope_is_projected_after_tenant_resolution(bridge_database, monkeypatch, header, axis, allowed):
+    from modules.listing.domain.models import CandidateSiteDraft, ListingDedupKey
+    from shared.domain.models import AddressLocation, CandidateSite, Listing
+    from shared.infrastructure.persistence.operator_network_listings import (
+        DurableAssistedIntakeRepository,
+    )
+
     app, bundle = _postgres_live_app(bridge_database, monkeypatch)
     store = bundle.assisted_intake_store._store
     state_repository = DurableOperatorDomainStateRepository(store, "network-listings")
-    state_repository.save(TENANT, {
+    state = {
         "heatZones": [{"id": "ZONE-A", "label": "A"}, {"id": "ZONE-B", "label": "B"}],
         "listings": [
             {"id": "LISTING-A", "tenantId": TENANT, "heatZoneId": "ZONE-A", axis: allowed},
@@ -1261,7 +1277,31 @@ def test_live_network_viewer_scope_is_projected_after_tenant_resolution(bridge_d
         "siteReviews": [{"id": "REVIEW-A", "candidateId": "CANDIDATE-A"},
                         {"id": "REVIEW-B", "candidateId": "CANDIDATE-B"}],
         "assistedIntakes": [], "listingSources": [], "auditEvents": [],
-    })
+    }
+    # A domain snapshot cannot supply resources missing from their durable
+    # owner. Seed the exact controlled rows and links this projection reads.
+    resources = bundle.listing_repository_for_tenant(TENANT)
+    metadata = DurableAssistedIntakeRepository(TenantScopedDocumentStore(store, TENANT))
+    persisted = {}
+    for row in state["listings"]:
+        address = AddressLocation(address_id=f"address-{row['id']}", raw_address="Synthetic scope record")
+        listing = Listing(listing_id=row["id"], tenant_id=TENANT, address_id=address.address_id,
+                          source_id="synthetic-scope", source_listing_id=row["id"])
+        resources.save_listing(listing, address, ListingDedupKey(
+            source_id=listing.source_id, source_listing_id=listing.source_listing_id,
+            normalized_address=f"Synthetic scope record {row['id']}",
+            rent_amount=listing.rent_amount, area_ping=listing.area_ping,
+        ))
+        metadata.save_listing_metadata(row["id"], row)
+        persisted[row["id"]] = (listing, address, row["heatZoneId"])
+    for row in state["candidates"]:
+        listing, address, zone = persisted[row["listingId"]]
+        resources.save_candidate(CandidateSiteDraft(
+            listing=listing, address=address, heat_zone_id=zone,
+            candidate_site=CandidateSite(candidate_site_id=row["id"], listing_id=row["listingId"],
+                                         address_id=address.address_id),
+        ))
+    state_repository.save(TENANT, state)
     headers = {"x-subject-id": MANAGER, "x-roles": "platform_admin,operator_viewer",
                "x-operator-role": "pm-audit", "x-tenant-id": TENANT, header: allowed}
     try:

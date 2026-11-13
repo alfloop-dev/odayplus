@@ -614,3 +614,72 @@ def test_sql_identity_store_get_account_scope_no_scope_dict_row(pool: _FakePool)
 
     assert scope.tenant_id == str(tid)
 
+
+
+# --- Pooled connection liveness (ODP-DB-POOL-CHECK-CONNECTION-001) ----------
+#
+# A database restart, failover or network cut closes the pooled connections
+# on the server side only. Without a borrow-time check the pool keeps lending
+# them and every health probe on them fails until each one is discarded.
+
+
+def _single_connection_engine(database_url: str) -> Any:
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+    # One pooled connection makes "the next borrow" exactly the connection
+    # the server just terminated.
+    return PostgresEngine(
+        database_url,
+        min_pool_size=1,
+        max_pool_size=1,
+        bootstrap=False,
+        validate_schema=False,
+    )
+
+
+def _terminate_pooled_backend(database: Any, engine: Any) -> int:
+    pid = engine.query_one("SELECT pg_backend_pid() AS pid")["pid"]
+    with database.connect() as admin:
+        # The timeout form waits until the backend has actually exited, so
+        # the next borrow cannot race a still-closing server process.
+        terminated = admin.execute(
+            "SELECT pg_terminate_backend(%s, 5000)", (pid,)
+        ).fetchone()[0]
+    assert terminated is True
+    return int(pid)
+
+
+def test_postgres_pool_replaces_server_terminated_connection(intake_blank_db: Any):
+    engine = _single_connection_engine(intake_blank_db.url())
+    try:
+        terminated_pid = _terminate_pooled_backend(intake_blank_db, engine)
+
+        # Same probe as /platform/health's database_health().
+        assert engine.query("SELECT 1 AS ok") == [{"ok": 1}]
+        replacement_pid = engine.query_one("SELECT pg_backend_pid() AS pid")["pid"]
+        assert replacement_pid != terminated_pid
+    finally:
+        engine.close()
+
+
+def test_postgres_pool_without_check_lends_server_terminated_connection(
+    intake_blank_db: Any, monkeypatch: pytest.MonkeyPatch
+):
+    """Mutation guard: drop ``check`` and the same scenario fails the probe."""
+
+    psycopg = pytest.importorskip("psycopg")
+    import psycopg_pool
+
+    class _UncheckedPool(psycopg_pool.ConnectionPool):
+        def __init__(self, *args: Any, check: Any = None, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(psycopg_pool, "ConnectionPool", _UncheckedPool)
+    engine = _single_connection_engine(intake_blank_db.url())
+    try:
+        _terminate_pooled_backend(intake_blank_db, engine)
+
+        with pytest.raises(psycopg.OperationalError):
+            engine.query("SELECT 1 AS ok")
+    finally:
+        engine.close()

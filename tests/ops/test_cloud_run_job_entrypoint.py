@@ -175,6 +175,24 @@ def test_scheduler_requires_persisted_enqueue_receipt(monkeypatch) -> None:
     assert bundle.job_queue.count_active_jobs() == 1
 
 
+def test_scheduler_reports_native_configuration_failure_without_leaking_values(monkeypatch, capsys):
+    from modules.external_data.application.native_parser_deployments import DEPLOYMENTS_ENV
+
+    bundle = build_persistence()
+    monkeypatch.setattr(entrypoint, "bootstrap_runtime", lambda: bundle)
+    monkeypatch.setenv("ODP_SCHEDULED_INGESTION_TENANT_ID", "tenant-ops")
+    monkeypatch.setenv(FACADE_MODE_ENV, CUTOVER_MODE_LEGACY_ONLY)
+    monkeypatch.setenv(DEPLOYMENTS_ENV, "private malformed configuration must not appear")
+    assert entrypoint.run_scheduler() == entrypoint.EXIT_FAILED
+    output = capsys.readouterr().out
+    receipt = json.loads(output.splitlines()[-1])
+    assert receipt["reason"] == "native_intake_handoff_incomplete"
+    assert receipt["jobs_enqueued"] == 1 and receipt["active_jobs_after"] == 1
+    assert receipt["native_intake"]["errors"] == [{"phase": "configuration",
+        "error_class": "NativeParserDeploymentConfigurationRejected"}]
+    assert "private malformed" not in output
+
+
 def test_migration_receipt_propagates_failure(monkeypatch) -> None:
     def fail_migration(**_kwargs):
         raise entrypoint.OpsPlanError("migration failed")

@@ -68,17 +68,21 @@ if str(DELIVERY_GOVERNANCE_DIR) not in sys.path:
     sys.path.insert(0, str(DELIVERY_GOVERNANCE_DIR))
 
 import common as orchestrator_common
-from check_task_delivery_identity import validate_delivery_identity
+from check_task_delivery_identity import inspect_delivery_identity
 from classify_change_review_scope import classify_paths
 from common import (
     classify_reopen_reason,
+)
+from dispatch_policy import (
+    delivery_merge_target_branch,
+    task_branch_name,
+    task_explicit_branch,
 )
 from multi_repo_registry import (
     canonical_repository_id_for_root,
     cross_repo_delivery_requirements,
     repository_local_path,
     repository_slug,
-    resolve_repository,
     resolve_task_repository,
     task_artifact_repository_ids,
     task_repository_id,
@@ -2378,16 +2382,6 @@ def classify_push_status(ahead: int, behind: int) -> str:
     return "diverged"
 
 
-def delivery_merge_target_branch(config: dict[str, Any], repository_id: str) -> str:
-    if repository_id == "pantheon":
-        branch = str((config.get("branch_workflow") or {}).get("dev_branch") or "").strip()
-        if branch:
-            return branch
-    repo = resolve_repository(config, repository_id)
-    branch = str(repo.get("default_branch") or "").strip()
-    return branch or "main"
-
-
 PR_PROVENANCE_JSON_FIELDS = (
     "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url,"
     "headRefOid,headRefName,baseRefName,statusCheckRollup"
@@ -2544,42 +2538,23 @@ def clear_ai_status_caches() -> None:
     _TASK_SHA_CACHE.clear()
 
 
-_UNUSABLE_BRANCH_CHARS = re.compile(r"[\s~^:?*\[\\]")
+def loaded_task_record(task_id: str, task: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """The record a per-task reader binds to: the caller's, or the board's.
 
-
-def task_explicit_branch(
-    task: dict[str, Any] | None = None,
-    branch: str | None = None,
-) -> str | None:
-    """The branch explicitly recorded on the task, or None if absent/invalid.
-
-    Reuses the validity rules from ``task_branch_name`` (rejecting whitespace,
-    git ref metacharacters, and empty strings) without falling back to the
-    derived ``task/<id>`` default name.
+    Readers asked once per task in a loop (`resolve_task_sha`,
+    `task_pr_lookup_scope`) only need the task's own record for its branch and
+    repository binding. A caller that already holds that record passes it, so
+    a dispatch tick does not reload and re-normalize the whole state per task.
+    A record for any other id is not this task's binding and is ignored.
     """
-    candidate = branch if branch is not None else (task or {}).get("branch")
-    recorded = str(candidate or "").strip()
-    if recorded and not _UNUSABLE_BRANCH_CHARS.search(recorded) and ".." not in recorded:
-        return recorded
-    return None
+    if isinstance(task, dict) and task.get("id") == task_id:
+        return task
+    return get_task(load_state(), task_id)
 
 
-def task_branch_name(task: dict[str, Any] | None, task_id: str | None = None) -> str:
-    """The task's branch as recorded, falling back to the derived name.
-
-    Building `task/<id>` unconditionally invented a branch for every task
-    reimported from an existing GitHub PR, whose branch does not follow that
-    convention. Looking a task up by an invented ref finds nothing, and the
-    caller reads that as missing work rather than as a wrong question.
-    """
-    explicit = task_explicit_branch(task)
-    if explicit:
-        return explicit
-    resolved_id = str(task_id or (task or {}).get("id") or "").strip()
-    return f"task/{resolved_id}"
-
-
-def task_pr_lookup_scope(task_id: str) -> tuple[Path, list[str], int | None]:
+def task_pr_lookup_scope(
+    task_id: str, task: dict[str, Any] | None = None
+) -> tuple[Path, list[str], int | None]:
     """Where to ask GitHub about a task's PR: checkout, `--repo` args, number.
 
     A task is not necessarily in this repository. `gh pr view <branch>` run from
@@ -2596,7 +2571,7 @@ def task_pr_lookup_scope(task_id: str) -> tuple[Path, list[str], int | None]:
     pr_number: int | None = None
     try:
         config = status_runtime_config()
-        task = get_task(load_state(), task_id)
+        task = loaded_task_record(task_id, task)
         if task:
             try:
                 pr_number = int(task.get("pr_number") or 0) or None
@@ -2616,6 +2591,7 @@ def task_pr_ci_status(
     task_id: str,
     repository_root: Path | None = None,
     max_age_seconds: float = 10.0,
+    task: dict[str, Any] | None = None,
 ) -> tuple[str | None, str]:
     now = time.time()
     cache_key = f"{task_id}:{repository_root}"
@@ -2624,7 +2600,7 @@ def task_pr_ci_status(
         if now - ts < max_age_seconds:
             return val
 
-    root, repo_args, pr_number = task_pr_lookup_scope(task_id)
+    root, repo_args, pr_number = task_pr_lookup_scope(task_id, task)
     if repository_root is not None:
         root = repository_root
     # The recorded PR number is exact; the branch names are the fallback for
@@ -3864,6 +3840,30 @@ def collect_done_delivery_metadata(
         )
 
     return delivery
+
+
+# Fields that record what the review lifecycle did: who signed which head, the
+# freeze, the reviewer's notes and reopen, the submitted source range, and the
+# status they add up to. Only `submit_review`, `approve`, `reopen`,
+# `restore_approved_head` and their kin write them, each after its own checks.
+# `restore_approved` re-grants authority from exactly these records, so an
+# assignment -- which any registered caller may invoke for a task it owns --
+# must not be able to write one: naming a different signer would make an old
+# same-source or unsigned approval look independent without anyone reviewing.
+# `merge_route` is the dispatch engine's record, and it freezes a closeout just
+# as `approved_head` does: writing one would exempt an actor from the policy.
+REVIEW_PROVENANCE_FIELDS = frozenset(
+    {
+        "status",
+        "approved_head",
+        "last_approved_head",
+        "last_approved_by",
+        "merge_route",
+        "review_notes_zh",
+        "review_submission",
+        "last_reopened_by",
+    }
+)
 
 
 def task_metadata_from_env() -> dict[str, Any]:
@@ -6290,6 +6290,214 @@ def mark_handoffs_done_for_actor(state: dict[str, Any], task_id: str, actor: str
             handoff["resolved_at"] = iso_now()
 
 
+MERGE_GROUP_FAILURE_HANDOFF_REASON = "merge_group_failure"
+MERGE_GROUP_QUEUE_REF_PATTERN = re.compile(
+    r"^(?:refs/heads/)?gh-readonly-queue/[^/]+/pr-(?P<pr>\d+)-[0-9a-fA-F]+$",
+    re.IGNORECASE,
+)
+
+
+def parse_merge_group_pr_number(queue_ref: str | None) -> int | None:
+    """Extract the PR number from a merge_group queue ref.
+
+    Accepts ``refs/heads/gh-readonly-queue/<base>/pr-<number>-<base_sha>`` and
+    the same ref without ``refs/heads/``.
+    """
+    if not queue_ref or not isinstance(queue_ref, str):
+        return None
+    match = MERGE_GROUP_QUEUE_REF_PATTERN.fullmatch(queue_ref.strip())
+    if not match:
+        return None
+    try:
+        return int(match.group("pr"))
+    except (TypeError, ValueError):
+        return None
+
+
+def merge_group_recovery_cause(
+    task: dict[str, Any],
+    handoffs: Any,
+    *,
+    require_source_head: bool = True,
+) -> dict[str, Any] | None:
+    """The one committed merge-group failure cause bound to this task's routed head.
+
+    The merge_group recovery producer demotes an approved task to `review`
+    through the canonical CAS, resolves every earlier handoff of the task and
+    records the failure as one pending `merge_group_failure` handoff to the
+    reviewer, leaving `task.merge_route` untouched. This is the single
+    identity rule every later step reads that cause through: the task's
+    submitted head and PR equal the route's, the task's own `pr_number` is that
+    same PR, the cause is the task's only
+    pending handoff, names the assigned reviewer, the same PR (also through
+    its queue ref), a run id, a group commit distinct from the source head,
+    postdates the route, and -- unless `require_source_head` is False, which
+    only the producer's own completion of a pre-field cause uses -- proves the
+    exact source head. Anything missing, unknown or ambiguous returns None.
+
+    The task's lifecycle phase (review, owner publication, seal retry) is not
+    part of the identity; each caller checks its own phase.
+    """
+    if not isinstance(task, dict):
+        return None
+    task_id = str(task.get("id") or "").strip()
+    normalize = orchestrator_common.normalize_agent_id
+    reviewer = normalize(str(task.get("reviewer") or ""))
+    if not task_id or not reviewer:
+        return None
+    submission = task.get("review_submission")
+    route = task.get("merge_route")
+    if not isinstance(submission, dict) or not isinstance(route, dict):
+        return None
+    source_head = str(submission.get("remote_sha") or "").strip().lower()
+    if not source_head or str(route.get("head") or "").strip().lower() != source_head:
+        return None
+    try:
+        pr_number = int(submission.get("pr_number"))
+        route_pr = int(route.get("pr_number"))
+    except (TypeError, ValueError):
+        return None
+    if pr_number <= 0 or route_pr != pr_number:
+        return None
+    # The task's own PR is what every later read resolves (CI, provenance,
+    # reality probe through `task_pr_lookup_scope`); it has to be this PR too,
+    # or a recovery for one PR would be judged on another PR's checks.
+    try:
+        task_pr = int(task.get("pr_number"))
+    except (TypeError, ValueError):
+        return None
+    if task_pr != pr_number:
+        return None
+    routed_at = orchestrator_common.parse_utc_timestamp(route.get("at"))
+    if routed_at is None:
+        return None
+
+    pending = [
+        handoff
+        for handoff in handoffs or []
+        if isinstance(handoff, dict)
+        and str(handoff.get("task_id") or "").strip() == task_id
+        and str(handoff.get("status") or "").strip().lower() == "pending"
+    ]
+    # Recovery resolves every earlier handoff of the task in the same commit,
+    # so its cause is the only pending one. Anything else pending means the
+    # recovery was superseded or is ambiguous.
+    if len(pending) != 1:
+        return None
+    cause = pending[0]
+    if str(cause.get("reason") or "") != MERGE_GROUP_FAILURE_HANDOFF_REASON:
+        return None
+    if normalize(str(cause.get("to") or "")) != reviewer:
+        return None
+    try:
+        if int(cause.get("pr_number")) != pr_number:
+            return None
+    except (TypeError, ValueError):
+        return None
+    group_head = str(cause.get("head_sha") or "").strip().lower()
+    if not group_head or group_head == source_head:
+        return None
+    if cause.get("run_id") in (None, ""):
+        return None
+    if parse_merge_group_pr_number(str(cause.get("queue_ref") or "")) != pr_number:
+        return None
+    created_at = orchestrator_common.parse_utc_timestamp(cause.get("created_at"))
+    # The failure has to postdate the admission that put this head in the
+    # queue; an older cause cannot explain the current route.
+    if created_at is None or created_at < routed_at:
+        return None
+    if require_source_head and str(cause.get("source_head") or "").strip().lower() != source_head:
+        return None
+    return cause
+
+
+MERGE_ROUTE_RECOVERY_BOUND = "recovery"
+MERGE_ROUTE_RECOVERY_UNRESOLVED = "unresolved"
+
+
+def merge_group_route_recovery_hold(task: dict[str, Any], handoffs: Any) -> str:
+    """Does a merge_group recovery still hold `task.merge_route`?
+
+    `recovery`: the route is bound to the committed cause (the identity rule
+    above; a cause recorded before `source_head` existed counts until its
+    producer has judged it). `unresolved`: the cause rule refuses every
+    pending `merge_group_failure` handoff of the task, yet none of them is
+    proven to concern another PR or another source head -- a damaged or
+    partially recorded recovery, whose route is the evidence the cause is
+    judged against and must not be released as an ordinary merge. `""`: no
+    recovery holds the route; it is released like any other.
+    """
+    if not isinstance(task, dict):
+        return ""
+    route = task.get("merge_route")
+    if not isinstance(route, dict):
+        return ""
+    route_head = str(route.get("head") or "").strip().lower()
+    cause = merge_group_recovery_cause(task, handoffs, require_source_head=False)
+    if cause is not None:
+        if "source_head" not in cause or (
+            str(cause.get("source_head") or "").strip().lower() == route_head
+        ):
+            return MERGE_ROUTE_RECOVERY_BOUND
+        return ""
+
+    task_id = str(task.get("id") or "").strip()
+    failures = [
+        handoff
+        for handoff in handoffs or []
+        if isinstance(handoff, dict)
+        and str(handoff.get("task_id") or "").strip() == task_id
+        and str(handoff.get("status") or "").strip().lower() == "pending"
+        and str(handoff.get("reason") or "") == MERGE_GROUP_FAILURE_HANDOFF_REASON
+    ]
+    if not task_id or not failures:
+        return ""
+    submission = task.get("review_submission")
+    source_head = (
+        str(submission.get("remote_sha") or "").strip().lower() if isinstance(submission, dict) else ""
+    )
+    if source_head and route_head and source_head != route_head:
+        # The task has since submitted another head: the route belongs to an
+        # earlier attempt, and the merge of the current PR releases it.
+        return ""
+
+    def positive_int(value: Any) -> int | None:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return None
+        return number if number > 0 else None
+
+    route_pr = positive_int(route.get("pr_number")) or positive_int(task.get("pr_number"))
+
+    def concerns_another_attempt(handoff: dict[str, Any]) -> bool:
+        named_source = str(handoff.get("source_head") or "").strip().lower()
+        if named_source and route_head and named_source != route_head:
+            return True
+        handoff_pr = positive_int(handoff.get("pr_number"))
+        return bool(handoff_pr and route_pr and handoff_pr != route_pr)
+
+    if all(concerns_another_attempt(handoff) for handoff in failures):
+        return ""
+    return MERGE_ROUTE_RECOVERY_UNRESOLVED
+
+
+def merge_group_recovery_publication_pending(task: dict[str, Any], handoffs: Any) -> bool:
+    """An owner-returned recovery whose merged PR still awaits the owner's publisher.
+
+    Only the merge_group owner-return produces this: `in_progress`, no
+    approval, and the committed cause still bound to the routed head. It is
+    the one in-progress state whose reviewer cause and route survive
+    `normalize_handoffs`, a rejected closeout seal and the publisher itself.
+    """
+    return (
+        isinstance(task, dict)
+        and str(task.get("status") or "").strip().lower() == "in_progress"
+        and not str(task.get("approved_head") or "").strip()
+        and merge_group_recovery_cause(task, handoffs) is not None
+    )
+
+
 def normalize_handoffs(state: dict[str, Any]) -> None:
     task_map = {task["id"]: task for task in state["tasks"]}
     pending_by_task: dict[str, list[dict[str, Any]]] = {}
@@ -6302,7 +6510,22 @@ def normalize_handoffs(state: dict[str, Any]) -> None:
         task = task_map.get(task_id)
         if task:
             task_status = task.get("status")
+            if task_status in {"review", "in_progress"} and (
+                merge_group_route_recovery_hold(task, pending) == MERGE_ROUTE_RECOVERY_UNRESOLVED
+            ):
+                # Several merge_group failure causes (or a cause beside another
+                # pending handoff) that the cause rule cannot resolve to one,
+                # none proven to concern another PR or source head. Collapsing
+                # them to the last would turn list order into the one licensed
+                # recovery; they stay pending, ambiguous, and nothing is
+                # dispatched or released from them.
+                continue
             if task_status in {"in_progress", "blocked", "done"}:
+                # The merge_group owner-return keeps its one committed cause:
+                # the same reviewer decision is still owed once the owner's
+                # publisher has verified the merged PR.
+                if merge_group_recovery_publication_pending(task, pending):
+                    continue
                 for handoff in pending:
                     handoff["status"] = "done"
                     handoff["resolved_at"] = iso_now()
@@ -7275,6 +7498,45 @@ def _validate_assign_optional_pin_removal(
     return prior_pin
 
 
+def validate_assignment_protected_paths(
+    task_id: str,
+    task: dict[str, Any] | None,
+    metadata: dict[str, Any],
+) -> None:
+    """Accept only a literal deny-only list, and never shrink a recorded one.
+
+    The list is normalized in place so every later reader sees the same
+    canonical form.  Once a task records protection, an assignment may keep
+    or extend it but cannot drop or narrow any entry.
+    """
+    from worktree_cleanliness import (
+        PROTECTED_PATHS_FIELD,
+        ProtectedPathPolicyError,
+        normalize_protected_paths,
+        protected_paths_reduction,
+    )
+
+    recorded = (task or {}).get(PROTECTED_PATHS_FIELD)
+    if PROTECTED_PATHS_FIELD not in metadata:
+        return
+    try:
+        if recorded is not None:
+            normalize_protected_paths(recorded)
+        proposed = normalize_protected_paths(metadata[PROTECTED_PATHS_FIELD])
+    except ProtectedPathPolicyError as exc:
+        raise SystemExit(f"Cannot assign {task_id}: {exc}。未寫入任何 assignment。") from exc
+    removed = protected_paths_reduction(recorded, list(proposed))
+    if removed:
+        raise SystemExit(
+            f"Cannot assign {task_id}: protected_paths may not be removed or narrowed once recorded "
+            f"(would drop {list(removed)})。未寫入任何 assignment。"
+        )
+    if not proposed and recorded is None:
+        metadata.pop(PROTECTED_PATHS_FIELD)
+        return
+    metadata[PROTECTED_PATHS_FIELD] = list(proposed)
+
+
 def command_assign(state: dict[str, Any], args: list[str]) -> None:
     from wave_guards import WaveGuardError, check_wave_assign
 
@@ -7291,6 +7553,23 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
     metadata = task_metadata_from_env()
+    provenance_fields = sorted(REVIEW_PROVENANCE_FIELDS.intersection(metadata))
+    if provenance_fields:
+        raise SystemExit(
+            f"Cannot assign {task_id}: TASK_METADATA_JSON may not set review provenance "
+            f"{provenance_fields}; those record what a reviewer or submission actually did and "
+            "are written only by the review lifecycle commands. Run `re_review` so an "
+            "independent reviewer signs the head. 未寫入任何 assignment。"
+        )
+    # The arguments name the task and its actors, and every check below judges
+    # them. Metadata is merged over the record afterwards, so a different value
+    # here would be written in place of what was judged.
+    for field, argument in (("id", task_id), ("owner", owner), ("reviewer", reviewer)):
+        if field in metadata and metadata[field] != argument:
+            raise SystemExit(
+                f"Cannot assign {task_id}: TASK_METADATA_JSON may not set a different {field} "
+                f"({metadata[field]!r}, argument is {argument!r}). 未寫入任何 assignment。"
+            )
     requested_dependencies = parse_csv_env("TASK_DEPENDS_ON")
     task = get_task(state, task_id)
     if task is not None and "TASK_DEPENDS_ON" in os.environ:
@@ -7316,6 +7595,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
             metadata=metadata,
         )
     effective_metadata = {} if clearing_optional_pin else metadata
+    validate_assignment_protected_paths(task_id, task, effective_metadata)
     # Do this before priority checks, timestamping, or any task/agent mutation.
     # An invalid source document must fail at assignment time rather than leave
     # a board record that the dispatcher can only reject repeatedly later.
@@ -7353,7 +7633,8 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     # `non_dispatchable`, `human_required_roles`. Creating a human gate would
     # otherwise be judged against a task that does not exist yet, and re-classing
     # an existing one against the class it is being moved off.
-    effective_task = {**(task or {}), **effective_metadata, "owner": owner, "reviewer": reviewer}
+    # A brand-new task has no stored id, and the policy can select by task id.
+    effective_task = {**(task or {}), **effective_metadata, "id": task_id, "owner": owner, "reviewer": reviewer}
     if clearing_optional_pin:
         effective_task.pop("frozen_evidence_base_sha", None)
     if effective_task_class:
@@ -7868,6 +8149,83 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def review_submission_source_evidence(identity: Any) -> dict[str, Any]:
+    """The source-author provenance a review submission carries.
+
+    Bound to the exact validated range: the resolved base and head commits and
+    every distinct `LLM-Agent` of its non-merge commits, exactly as written.
+    `submitted_by` is recorded separately by the caller, because the account
+    that finalizes -- often only merging a base into someone else's commits --
+    is not thereby an author of them.
+    """
+    return {
+        "source_base": identity.base_sha,
+        "source_head": identity.head_sha,
+        "source_authors": list(identity.source_agents),
+    }
+
+
+def declared_owned_scope_admission_error(task: dict[str, Any], repository_root: Path, identity: Any) -> str | None:
+    """Refuse a submitted range whose net change leaves the task's declared scope.
+
+    The trusted scope is the task's own canonical ``owned_paths`` -- never the
+    PR body, a worker ``--scope`` or caller-chosen metadata -- and the range is
+    the one ``identity`` already validated. Its net paths are the tree diff
+    from that base's merge-base with the exact head, so neither a base advance
+    nor a merged-in base counts as task work, while a corrective commit that
+    restores the scope admits a range still holding the offending ancestor.
+
+    Only an already-declared nonempty list is enforced. A legacy task with a
+    missing, empty or non-list ``owned_paths`` keeps its preexisting admission:
+    no policy or owner fallback is invented for it here.
+    """
+    from check_commit_scope import files_outside_scope, net_changed_files, validate_scope
+
+    declared = task.get("owned_paths")
+    if not isinstance(declared, list) or not declared:
+        return None
+    if not all(isinstance(entry, str) for entry in declared):
+        return "declared owned_paths must be a list of literal repo-relative path strings"
+    problems = validate_scope(declared)
+    if problems:
+        return "declared owned_paths is not a usable literal scope: " + "; ".join(problems)
+    base_sha = str(getattr(identity, "base_sha", "") or "").strip()
+    head_sha = str(getattr(identity, "head_sha", "") or "").strip()
+    if not base_sha or not head_sha:
+        return "the validated range has no immutable base and head to check owned_paths against"
+    merge_base = run_git_command(["merge-base", base_sha, head_sha], cwd=repository_root, required=False)
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", merge_base):
+        return f"the merge-base of {base_sha[:12]} and {head_sha[:12]} cannot be resolved"
+    try:
+        changed = net_changed_files(merge_base, head_sha, cwd=str(repository_root))
+    except (subprocess.CalledProcessError, OSError) as exc:
+        return f"net changed paths of {merge_base[:12]}..{head_sha[:12]} cannot be read ({exc})"
+    leaks = files_outside_scope(changed, declared)
+    if leaks:
+        return (
+            f"{len(leaks)} net changed path(s) of {merge_base[:12]}..{head_sha[:12]} fall outside the "
+            "declared owned_paths: " + ", ".join(repr(path) for path in leaks)
+        )
+    return None
+
+
+def review_source_independence_block_reason(
+    task: dict[str, Any],
+    reviewer: str | None,
+    head: str,
+) -> str | None:
+    """Judge a reviewer signature on `head` by the one `dispatch_policy` rule.
+
+    That rule re-reads the submitted range's authors from Git rather than from
+    the board's record, exactly as every dispatch path does, so the approval
+    cannot admit a reviewer the queue would refuse -- nor the queue one the
+    approval would.
+    """
+    from dispatch_policy import review_source_block_reason
+
+    return review_source_block_reason(merged_orchestrator_config(), task, reviewer, head=head)
+
+
 def review_submission_for_task(
     task: dict[str, Any],
     pr_number: str,
@@ -7971,6 +8329,35 @@ def review_submission_for_task(
             f"Cannot submit {task_id} for review: PR #{pr_number} has invalid head commit SHA '{head_oid}'."
         )
 
+    # The same submitted head keeps the range it was submitted with. Once the
+    # integration branch has merged in part of that range, rescanning from its
+    # new tip reads fewer commits and would drop their authors from the record
+    # -- and from every pool a reviewer has to avoid -- with nothing in the
+    # submission changed; for a head that is only a merge, it reads no commits
+    # at all. Merging the unchanged head does not change it either: the first
+    # merged recovery of a head submitted while open keeps that range, since
+    # the merge commit's first parent may be just such a tip. So that range is
+    # what is scanned again here, not merely copied after a narrower scan
+    # succeeded. Only a head first submitted already merged reads the range
+    # from that parent; `task_review_source_identity` re-validates either base
+    # from Git before anything is recorded.
+    prior = task.get("review_submission")
+
+    def submitted_range_base(merge_commit: str = "") -> str | None:
+        if not (
+            isinstance(prior, dict)
+            and prior.get("pr_number") == int(pr_number)
+            and str(prior.get("branch") or "").strip() == branch
+            and str(prior.get("remote_sha") or "").strip().lower() == head_oid.lower()
+            and str(prior.get("source_head") or "").strip().lower() == head_oid.lower()
+            and str(prior.get("merge_commit") or "").strip() in ("", merge_commit)
+        ):
+            return None
+        source_base = str(prior.get("source_base") or "").strip()
+        if not (re.fullmatch(r"[0-9a-fA-F]{40}", source_base) or re.fullmatch(r"[0-9a-fA-F]{64}", source_base)):
+            return None
+        return source_base
+
     if pr_state == "OPEN":
         try:
             remote_sha = resolve_task_sha(task_id, force_refresh=True)
@@ -7989,19 +8376,22 @@ def review_submission_for_task(
                 f"Cannot submit {task_id} for review: PR #{pr_number} remote head {head_oid[:8]} "
                 f"does not match origin/{branch} ({remote_sha[:8]})."
             )
-        identity_errors = validate_delivery_identity(
+        identity = inspect_delivery_identity(
             repository_root,
             task_id=task_id,
-            base=base_branch,
+            base=submitted_range_base() or base_branch,
             head=remote_sha,
             expected_branch=branch,
             actual_branch=head_branch,
         )
-        if identity_errors:
-            details = "; ".join(identity_errors)
+        if identity.errors:
+            details = "; ".join(identity.errors)
             raise SystemExit(
                 f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
             )
+        scope_error = declared_owned_scope_admission_error(task, repository_root, identity)
+        if scope_error:
+            raise SystemExit(f"Cannot submit {task_id} for review: {scope_error}.")
         return {
             "pr_number": int(pr_number),
             "pr_url": pr_url,
@@ -8009,6 +8399,7 @@ def review_submission_for_task(
             "remote_sha": remote_sha,
             "base_branch": base_branch,
             "verified_at": iso_now(),
+            **review_submission_source_evidence(identity),
         }
 
     if pr_state == "MERGED":
@@ -8067,19 +8458,22 @@ def review_submission_for_task(
         if not git_command_succeeds(["rev-parse", "--verify", f"{pre_merge_base}^{{commit}}"], cwd=repository_root):
             pre_merge_base = base_branch
 
-        identity_errors = validate_delivery_identity(
+        identity = inspect_delivery_identity(
             repository_root,
             task_id=task_id,
-            base=pre_merge_base,
+            base=submitted_range_base(merge_commit) or pre_merge_base,
             head=head_oid,
             expected_branch=branch,
             actual_branch=head_branch,
         )
-        if identity_errors:
-            details = "; ".join(identity_errors)
+        if identity.errors:
+            details = "; ".join(identity.errors)
             raise SystemExit(
                 f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
             )
+        scope_error = declared_owned_scope_admission_error(task, repository_root, identity)
+        if scope_error:
+            raise SystemExit(f"Cannot submit {task_id} for review: {scope_error}.")
         return {
             "pr_number": int(pr_number),
             "pr_url": pr_url,
@@ -8091,6 +8485,7 @@ def review_submission_for_task(
             "merge_commit": merge_commit,
             "ci_status": "success",
             "ci_checks": checks,
+            **review_submission_source_evidence(identity),
         }
 
     raise SystemExit(
@@ -8118,11 +8513,12 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"{task_id} has no assigned reviewer")
 
     submission = review_submission_for_task(task, pr_number, actor=actor)
-    # Who authored what is now under review. The owner field can legitimately be
-    # rewritten later -- by an operator, or by a reconcile pass -- and once it is,
-    # nothing else on the record still names the account whose commits the
-    # reviewer is supposed to be independent of. Recorded here, at the one moment
-    # it is certain, so the independence check keeps working afterwards.
+    # Who submitted is recorded here, at the one moment it is certain. It is the
+    # finalizer, kept distinct from the source authors the submission already
+    # carries: the owner field can legitimately be rewritten later, and a
+    # finalizer that only merged a base into another account's commits must
+    # not be mistaken for their author -- nor its pool for the only one the
+    # reviewer has to avoid.
     submission["submitted_by"] = actor
 
     existing_sub = task.get("review_submission")
@@ -8132,13 +8528,37 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
         and str(existing_sub.get("remote_sha") or "").strip() == str(submission.get("remote_sha") or "").strip()
         and str(existing_sub.get("branch") or "").strip() == str(submission.get("branch") or "").strip()
     )
+    if is_same_submission and "submitted_by" in existing_sub:
+        submission["submitted_by"] = existing_sub["submitted_by"]
+    # The owner publishing the merged PR of an owner-returned merge_group
+    # recovery: the same immutable PR/head/branch, now verified merged by the
+    # checks above. Its committed cause is the reviewer handoff still owed,
+    # and its route is the admission record; both are kept. Any other
+    # submission -- a new head, an open PR, no bound cause -- is ordinary.
+    merge_group_recovery_publication = bool(
+        is_same_submission
+        and submission.get("merged_at")
+        and submission.get("merge_commit")
+        and merge_group_recovery_publication_pending(task, state.get("handoffs"))
+    )
+
+    # Every actor of the submitted work has to resolve to a registered account
+    # before review can start: an unknown author is not an independent one, so
+    # submission refuses rather than recording a range nobody can review.
+    from dispatch_policy import task_review_source_identity
+
+    source = task_review_source_identity(
+        merged_orchestrator_config(), {**task, "review_submission": submission}
+    )
+    if source.error:
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: {source.error}. No review submission was recorded."
+        )
 
     if is_same_submission:
         # Stable submission provenance: preserve earlier verified_at, submitted_by, recovery_at, recovery_by
         if "verified_at" in existing_sub:
             submission["verified_at"] = existing_sub["verified_at"]
-        if "submitted_by" in existing_sub:
-            submission["submitted_by"] = existing_sub["submitted_by"]
         if "recovery_at" in existing_sub:
             submission["recovery_at"] = existing_sub["recovery_at"]
         if "recovery_by" in existing_sub:
@@ -8193,21 +8613,23 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     task["pr_number"] = submission["pr_number"]
     task["pr_url"] = submission["pr_url"]
     task.pop("approved_head", None)
-    task.pop("merge_route", None)
+    if not merge_group_recovery_publication:
+        task.pop("merge_route", None)
     task.pop("handoff_seal", None)
     task.pop("helper_execution_lease", None)
     mark_handoffs_done_for_actor(state, task_id, actor)
     mark_blockers_resolved(state, task_id)
-    state.setdefault("handoffs", []).append(
-        {
-            "task_id": task_id,
-            "from": actor,
-            "to": reviewer,
-            "message": message,
-            "status": "pending",
-            "created_at": timestamp,
-        }
-    )
+    if not merge_group_recovery_publication:
+        state.setdefault("handoffs", []).append(
+            {
+                "task_id": task_id,
+                "from": actor,
+                "to": reviewer,
+                "message": message,
+                "status": "pending",
+                "created_at": timestamp,
+            }
+        )
     append_log(
         {
             "ts": timestamp,
@@ -8216,6 +8638,11 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
             "task_id": task_id,
             "message": f"Submitted PR #{submission['pr_number']} to {reviewer}: {message}",
             "submission": submission,
+            **(
+                {"merge_group_recovery_publication": True}
+                if merge_group_recovery_publication
+                else {}
+            ),
         }
     )
 
@@ -8617,6 +9044,8 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
     - actor is the owner
     - current status is in_progress
     - task has review_notes_zh (evidence of a prior approval)
+    - the reviewer who signed `last_approved_head` is recorded and still
+      independent of the submitted work
     """
     if len(args) < 2:
         raise SystemExit("Usage: restore_approved <task-id> <message>")
@@ -8685,6 +9114,26 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
             f"Run `re_review {task_id} <reason>` so the reviewer stamps the new head. "
             "No restore was recorded."
         )
+    # Restoring re-grants the earlier approval's authority, so that approval has
+    # to pass what `approve` checks today: an approval a same-source reviewer
+    # signed, or one a human gate has since overtaken, is not restored. It is
+    # judged by the reviewer who signed it -- assigning a different reviewer
+    # since does not make someone else's old signature independent -- and an
+    # approval that does not record its signer cannot be judged at all.
+    gate_reason = task_unresolved_human_or_independent_gate_reason(task)
+    if gate_reason:
+        raise SystemExit(f"Cannot restore {task_id}: {gate_reason}. No restore was recorded.")
+    signer = canonical_agent_name(task.get("last_approved_by"))
+    if not signer:
+        raise SystemExit(
+            f"Cannot restore {task_id}: the approval of {last_approved_head[:8]} does not record "
+            "which reviewer signed it, so its independence cannot be checked. Run "
+            f"`re_review {task_id} <reason>` so an independent reviewer signs the head. "
+            "No restore was recorded."
+        )
+    source_reason = review_source_independence_block_reason(task, signer, last_approved_head)
+    if source_reason:
+        raise SystemExit(f"Cannot restore {task_id}: {source_reason}. No restore was recorded.")
 
     timestamp = iso_now()
     task["status"] = "review_approved"
@@ -8773,10 +9222,23 @@ def command_restore_approved_head(state: dict[str, Any], args: list[str]) -> Non
             f"does not match the task branch head ({current_sha[:8]}). Only the exact current head "
             f"can be restored; run `re_review {task_id} <reason>` if the branch has moved."
         )
+    # The attestation is a reviewer signature on one head, so it is held to the
+    # same gates as `approve`.
+    gate_reason = task_unresolved_human_or_independent_gate_reason(task)
+    if gate_reason:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: {gate_reason}. Nothing was recorded."
+        )
+    source_reason = review_source_independence_block_reason(task, actor, requested_sha)
+    if source_reason:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: {source_reason}. Nothing was recorded."
+        )
 
     timestamp = iso_now()
     task["approved_head"] = requested_sha
     task["last_approved_head"] = requested_sha
+    task["last_approved_by"] = actor
     task["last_update"] = timestamp
     task["next"] = message
     append_log(
@@ -9052,6 +9514,12 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         )
     if task.get("status") != "review":
         raise SystemExit(f"{task_id} must be in review before it can move to review_approved")
+    # The same gate that refuses submission refuses the signature: a human or
+    # independent gate raised while the task sat in review is not cleared by an
+    # automated reviewer approving the head.
+    gate_reason = task_unresolved_human_or_independent_gate_reason(task)
+    if gate_reason:
+        raise SystemExit(f"Cannot approve task {task_id}: {gate_reason}. No approval was recorded.")
 
     # B20: the approved head is the whole basis of the post-review freeze.
     # command_done and both supervisor dispatch gates are guarded by
@@ -9107,6 +9575,16 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
             "No approval was recorded."
         )
 
+    # Independence of the owner is not independence of the work. The reviewer
+    # has to share no account pool with any source author of the exact head,
+    # with its genuine submitter or with the owner, and those authors are read
+    # from Git again here rather than taken from the board's record.
+    source_reason = review_source_independence_block_reason(task, actor, approved_sha)
+    if source_reason:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: {source_reason}. No approval was recorded."
+        )
+
     # Required CI terminal success check on exact head
     try:
         pr_status, ci_status = task_pr_ci_status(task_id)
@@ -9133,7 +9611,10 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     # `last_approved_head` is the durable record of the last commit a reviewer
     # actually stamped: it is never popped, so `restore_approved` can re-freeze a
     # spurious supervisor downgrade without the owner getting to name the head.
+    # The reviewer who signed it is recorded with it: a restore re-grants that
+    # signature, not one from whoever is assigned to review later.
     task["last_approved_head"] = approved_sha
+    task["last_approved_by"] = actor
 
     review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     if review_notes:
@@ -10731,7 +11212,14 @@ def resolve_task_sha(
     max_age_seconds: float = 5.0,
     force_refresh: bool = False,
     fresh: bool = False,
+    task: dict[str, Any] | None = None,
 ) -> str | None:
+    """The task branch head on origin, or None when origin confirms it absent.
+
+    `task` is the caller's loaded record for `task_id` (see
+    `loaded_task_record`); it only spares the board reload. Origin is still
+    read whenever `force_refresh`/`fresh` asks for it.
+    """
     now = time.time()
     if not (force_refresh or fresh) and max_age_seconds > 0:
         if task_id in _TASK_SHA_CACHE:
@@ -10743,8 +11231,7 @@ def resolve_task_sha(
     recorded_branch: str | None = None
     try:
         config = status_runtime_config()
-        state = load_state()
-        task = get_task(state, task_id)
+        task = loaded_task_record(task_id, task)
         if task:
             recorded_branch = task_explicit_branch(task)
             binding = resolve_task_repository(config, task)
@@ -10865,7 +11352,7 @@ def resolve_task_checkout_sha(
         return None
 
     try:
-        remote_sha = resolve_task_sha(task_id, force_refresh=force_refresh)
+        remote_sha = resolve_task_sha(task_id, force_refresh=force_refresh, task=task_dict)
     except RuntimeError:
         remote_sha = None
     if remote_sha:

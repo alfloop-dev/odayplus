@@ -272,7 +272,14 @@ class CanonicalPostgresAuditLog:
     def get_event(self, tenant_id: str, audit_event_id: str) -> dict[str, Any] | None:
         _uuid(audit_event_id)
         with self._tenant(tenant_id):
-            row = _decode(self.engine.query_one(_READ_ONE, (tenant_id, audit_event_id)))
+            # Native historical proof keeps this writer's complete immutable
+            # hash and original ::text codec. Ordinary audit readers retain
+            # their existing acquisition and transaction behavior.
+            raw = (self.engine.native_query(_READ_ONE, (tenant_id, audit_event_id),
+                columns=(*IMMUTABLE_COLUMNS, "event_sha256", "worm_object_uri"), one=True)
+                if isinstance(self.engine, PostgresEngine) and self.engine.native_acquisition_active()
+                else self.engine.query_one(_READ_ONE, (tenant_id, audit_event_id)))
+            row = _decode(raw)
             if row is not None and sha256_hex(_payload(row)) != row["event_sha256"]:
                 raise AuditIntegrityError("Canonical audit record is corrupt")
             return row

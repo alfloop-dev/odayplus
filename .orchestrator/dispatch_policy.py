@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from typing import Any
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, NamedTuple
 
 from common import normalize_agent_id
+from multi_repo_registry import repository_local_path, resolve_repository, task_repository_id
 from provider_runtime import provider_config, provider_config_entry
 
 REASON_REVIEW_READY = "review_ready_dispatch"
@@ -95,6 +100,10 @@ DISPATCH_REASON_ROLES = {
 UNCLASSIFIED_ALLOW = "allow"
 UNCLASSIFIED_DENY = "deny"
 
+#: What a literal `task_ids` entry may look like. A task id is matched exactly,
+#: so `*` or `ODP-*` could only ever be a rule that silently selects nothing.
+_POLICY_TASK_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
 #: Statuses whose actors are frozen no matter how the fleet is configured.
 #: Entering `review_approved` pins an exact reviewed PR head, and closeout from
 #: there is read-only with respect to the branch.
@@ -132,46 +141,445 @@ def task_closeout_is_frozen(config: dict[str, Any], task: dict[str, Any] | None)
 #: should build something and has become a claim about who already did.
 DEFAULT_SUBMITTED_AUTHOR_STATUSES = ("review", "review_approved")
 
+_SHA_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
-def task_submitted_author(config: dict[str, Any], task: dict[str, Any] | None) -> str:
-    """The agent whose already-submitted work this task record attests to.
 
-    Empty when nothing has been submitted yet. Once a branch is in review the
-    owner names the author of the commits under review, and the review is only
-    independent as long as that name survives. Rewriting it -- for any reason,
-    including a newly enabled provider policy -- does not merely relabel the
-    record: the replacement's account pool becomes the pool the reviewer search
-    excludes, which frees the original author's own pool to review its own
-    commits. So the author is read once, here, and every path that could
-    reassign an actor consults it rather than deciding for itself.
+def is_human_gate_agent(agent_name: str | None) -> bool:
+    """Whether a name is a human gate rather than an automated account.
+
+    The leaf implementation; `worker_failure_policy` imports it for the
+    supervisor scope, so the source rule below and every selector agree on
+    which names have no account pool by design.
+    """
+    name = str(agent_name or "").strip().casefold()
+    if not name:
+        return False
+    return name in {"human/ops", "human", "ops"} or name.startswith("human/")
+
+
+class ReviewSourceIdentity(NamedTuple):
+    """Who a review of this task has to be independent of.
+
+    `submitted` says whether already-submitted work fixes these actors at all.
+    `submitter` is the genuine `submitted_by` -- the finalizer, which is not
+    necessarily anyone who wrote a commit -- and is what pins the owner field.
+    `source_authors` are the immutable `LLM-Agent` actors of the submitted
+    range exactly as recorded. `agents` and `pools` are every one of those,
+    plus the submitter and the current owner, resolved through the registered
+    agent/account-pool configuration. `error` is set when any of that cannot be
+    established, and then no reviewer is independent.
+    """
+
+    submitted: bool = False
+    submitter: str = ""
+    source_authors: tuple[str, ...] = ()
+    agents: frozenset[str] = frozenset()
+    pools: frozenset[str] = frozenset()
+    error: str | None = None
+
+    def pins_owner(self, owner: str | None) -> bool:
+        """Whether the owner field is the finalizer of submitted work.
+
+        The owner that submitted -- or a submitted record that does not say who
+        did -- is not a slot the reconciler may re-fill: replacing it would
+        relabel the finalizer of a pinned head, and a missing submitter is not
+        evidence that someone else did it.
+        """
+        if not self.submitted:
+            return False
+        return not self.submitter or normalize_agent_id(self.submitter) == normalize_agent_id(owner or "")
+
+
+def _registered_actor_id(config: dict[str, Any], name: str, *, source_author: bool = False) -> str:
+    """The configured agent id a recorded actor name refers to, or empty.
+
+    A name is registered when it is an agent id, the configured display name of
+    a logical (non-slot) agent, or both -- provided every one of those matches
+    is the same agent. Adapters record `LLM-Agent` as the display name, so an
+    id match does not outrank a display-name match: `Codex` naming agent
+    `codex` by id and agent `writer` by display name is two actors, and picking
+    either would drop the other's pool. Such a conflict, and anything else --
+    including a label that merely resembles a registered one -- is unknown, not
+    guessed.
+
+    `source_author` is for a name just read from immutable Git and nothing else:
+    it also counts the literal `source_aliases` a logical agent declares for
+    labels it once wrote under. They join the same matches without precedence.
+    Only the exact spelling is admitted, and a name that differs from a declared
+    alias by case alone is a conflict rather than a miss. A slot's declaration
+    and any malformed declaration leave the catalog unable to say who wrote the
+    range, so nothing resolves.
+    """
+    agents = config.get("agents", {}) or {}
+    literal = str(name or "").strip()
+    wanted = literal.casefold()
+    if not wanted:
+        return ""
+    agent_id = normalize_agent_id(name)
+    matches = {agent_id} if agent_id and isinstance(agents.get(agent_id), dict) else set()
+    for key, agent in agents.items():
+        if not isinstance(agent, dict):
+            continue
+        is_slot = bool(str(agent.get("dispatch_slot_for") or agent.get("dispatch_slot_for_pool") or "").strip())
+        if not is_slot and str(agent.get("display_name") or agent.get("name") or "").strip().casefold() == wanted:
+            matches.add(normalize_agent_id(str(key)))
+        if not source_author or "source_aliases" not in agent:
+            continue
+        aliases = agent["source_aliases"]
+        if not isinstance(aliases, list) or not all(
+            isinstance(alias, str) and alias and alias == alias.strip() for alias in aliases
+        ):
+            return ""
+        if wanted in {alias.casefold() for alias in aliases}:
+            if is_slot or literal not in aliases:
+                return ""
+            matches.add(normalize_agent_id(str(key)))
+    return next(iter(matches)) if len(matches) == 1 else ""
+
+
+def _registered_actor_pool(config: dict[str, Any], name: str, *, source_author: bool = False) -> str:
+    """The account pool of a registered agent, or empty for an unknown name.
+
+    `agent_account_pool_id` answers for any string -- an unregistered label
+    falls through to a provider group spelled like the label itself, which is
+    always "independent" of every real pool. Registration is therefore checked
+    first, so an unknown actor is unresolvable rather than conveniently foreign.
+    """
+    agent_id = _registered_actor_id(config, name, source_author=source_author)
+    return agent_account_pool_id(config, agent_id) if agent_id else ""
+
+
+def delivery_merge_target_branch(config: dict[str, Any], repository_id: str) -> str:
+    if repository_id == "pantheon":
+        branch = str((config.get("branch_workflow") or {}).get("dev_branch") or "").strip()
+        if branch:
+            return branch
+    repo = resolve_repository(config, repository_id)
+    branch = str(repo.get("default_branch") or "").strip()
+    return branch or "main"
+
+
+_UNUSABLE_BRANCH_CHARS = re.compile(r"[\s~^:?*\[\\]")
+
+
+def task_explicit_branch(
+    task: dict[str, Any] | None = None,
+    branch: str | None = None,
+) -> str | None:
+    """The branch explicitly recorded on the task, or None if absent/invalid.
+
+    Reuses the validity rules from ``task_branch_name`` (rejecting whitespace,
+    git ref metacharacters, and empty strings) without falling back to the
+    derived ``task/<id>`` default name.
+    """
+    candidate = branch if branch is not None else (task or {}).get("branch")
+    recorded = str(candidate or "").strip()
+    if recorded and not _UNUSABLE_BRANCH_CHARS.search(recorded) and ".." not in recorded:
+        return recorded
+    return None
+
+
+def task_branch_name(task: dict[str, Any] | None, task_id: str | None = None) -> str:
+    """The task's branch as recorded, falling back to the derived name.
+
+    Building `task/<id>` unconditionally invented a branch for every task
+    reimported from an existing GitHub PR, whose branch does not follow that
+    convention. Looking a task up by an invented ref finds nothing, and the
+    caller reads that as missing work rather than as a wrong question.
+    """
+    explicit = task_explicit_branch(task)
+    if explicit:
+        return explicit
+    resolved_id = str(task_id or (task or {}).get("id") or "").strip()
+    return f"task/{resolved_id}"
+
+
+def _git_succeeds(repo_root: Path, *args: str) -> bool:
+    try:
+        proc = subprocess.run(["git", *args], cwd=repo_root, capture_output=True, text=True, check=False)
+    except OSError:
+        return False
+    return proc.returncode == 0
+
+
+def _git_output(repo_root: Path, *args: str) -> str | None:
+    try:
+        proc = subprocess.run(["git", *args], cwd=repo_root, capture_output=True, text=True, check=False)
+    except OSError:
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def _is_integration_point(repo_root: Path, commit: str, target_ref: str) -> bool:
+    """Whether `commit` was itself a tip of `target_ref`, not merely merged into it.
+
+    Once a branch is merged, every one of its commits is in the target's
+    history, so ancestry alone would accept a commit from the middle of the
+    delivered range as its base. The integration line is the target's
+    first-parent chain: walking it back from the tip, stopping at whatever
+    `commit` already contains, must end exactly on `commit`.
+    """
+    chain = _git_output(repo_root, "rev-list", "--first-parent", "--parents", target_ref, "--not", commit)
+    if chain is None:
+        return False
+    if not chain:
+        return _git_output(repo_root, "rev-parse", "--verify", "--quiet", f"{target_ref}^{{commit}}") == commit
+    last = chain.splitlines()[-1].split()
+    return len(last) > 1 and last[1].lower() == commit
+
+
+def _inspect_delivery_identity(repo_root: Path, **kwargs: Any) -> Any:
+    """The delivery-identity scanner `submit_review` validates a range with."""
+    git_dir = Path(__file__).resolve().parents[1] / "delivery_toolchain" / "git"
+    if str(git_dir) not in sys.path:
+        sys.path.insert(0, str(git_dir))
+    from check_task_delivery_identity import inspect_delivery_identity
+
+    return inspect_delivery_identity(repo_root, **kwargs)
+
+
+#: Ranges whose Git authorship has already been established. Commits are
+#: immutable and a commit the integration line stood on stays on it, so a
+#: positive answer cannot go stale; a refusal is not cached and is asked again.
+_IMMUTABLE_SOURCE_AUTHORS: dict[tuple[str, ...], tuple[str, ...]] = {}
+
+
+def immutable_review_source_authors(
+    config: dict[str, Any], task: dict[str, Any], submission: dict[str, Any]
+) -> tuple[tuple[str, ...], str | None]:
+    """Re-derive the submitted range's source authors from Git, or say why not.
+
+    The board's `review_submission` is a record anyone with write access to the
+    status file could edit, so no reviewer path takes its `source_authors` on
+    trust -- not the approval, and not the queue that decides which reviewer is
+    dispatched in the first place. The recorded base must be a commit the
+    integration branch itself stood on -- and, for a merged submission, one it
+    stood on no later than the first parent of its recorded merge commit --
+    otherwise it could be moved up to hide earlier commits.
+    Nor may it be a later tip that merged in part of the range: wherever it
+    meets the head has to be on the integration line too. The range from it
+    to the recorded head is scanned again with the same
+    delivery-identity scanner submission used. The recorded authors must be
+    exactly what that scan finds.
+    """
+    task_id = str(task.get("id") or "").strip()
+    source_base = str(submission.get("source_base") or "").strip().lower()
+    source_head = str(submission.get("source_head") or "").strip().lower()
+    repository_id = task_repository_id(config, task) or "pantheon"
+    repo_root = repository_local_path(config, repository_id)
+    if repo_root is None or not repo_root.exists():
+        return (), f"no local checkout of {repository_id} to read the submitted range's authorship from"
+    base_branch = delivery_merge_target_branch(config, repository_id)
+    expected_branch = task_branch_name(task, task_id)
+    actual_branch = str(submission.get("branch") or "").strip() or None
+    merge_commit = str(submission.get("merge_commit") or "").strip().lower()
+    key = (
+        str(repo_root), base_branch, task_id, source_base, source_head, expected_branch, actual_branch or "",
+        merge_commit,
+    )
+    actual = _IMMUTABLE_SOURCE_AUTHORS.get(key)
+    if actual is None:
+        target_ref = f"origin/{base_branch}"
+        if not _git_succeeds(repo_root, "rev-parse", "--verify", "--quiet", f"{target_ref}^{{commit}}"):
+            target_ref = base_branch
+        if not _git_succeeds(repo_root, "merge-base", "--is-ancestor", source_base, target_ref):
+            return (), f"the recorded source base {source_base[:12]} is not in {target_ref} history"
+        # After a merge, a commit from inside the delivered range is in that
+        # history too; only a commit the integration line itself stood on is
+        # a base submission could have read the range from.
+        if not _is_integration_point(repo_root, source_base, target_ref):
+            return (), (
+                f"the recorded source base {source_base[:12]} is not a commit {target_ref} stood on; "
+                "a commit merged in from a branch cannot be the range's base"
+            )
+        # A merged submission's base is a tip the line stood on before its
+        # merge commit: that commit's first parent, which a first merged
+        # recovery reads the range from, or an earlier tip on the same line,
+        # which an unchanged head submitted while open keeps. It can be neither
+        # the merge itself nor a tip from after it.
+        if merge_commit:
+            pre_merge_base = (
+                _git_output(repo_root, "rev-parse", "--verify", "--quiet", f"{merge_commit}^1^{{commit}}")
+                if _SHA_RE.fullmatch(merge_commit)
+                else None
+            )
+            if not pre_merge_base or not _is_integration_point(repo_root, source_base, pre_merge_base.lower()):
+                return (), (
+                    f"the recorded source base {source_base[:12]} is not a pre-merge base of the "
+                    f"recorded merge commit {merge_commit[:12]}"
+                )
+        # The base is also wrong when the integration line reached it by
+        # merging in only part of the submitted work: a later tip that took
+        # the source commit `C` but not the head `H` reads `base..H` without
+        # `C`, and its author drops out of every excluded pool. The head joins
+        # a faithful base where that base's own line stood, so every point
+        # where they meet has to be an integration point as well. Commits Git
+        # cannot relate at all are left to the scan below, which refuses a
+        # head it cannot read and drops no author from unrelated history.
+        merge_bases = _git_output(repo_root, "merge-base", "--all", source_base, source_head)
+        for merge_base in (merge_bases or "").split():
+            if not _is_integration_point(repo_root, merge_base.lower(), target_ref):
+                return (), (
+                    f"the recorded source base {source_base[:12]} already contains part of the submitted "
+                    f"range to {source_head[:12]} through a merged branch, so it would drop that part's "
+                    + (
+                        "authors; only the range this head was submitted with while open names them all"
+                        if merge_commit
+                        else f"authors; merge {target_ref} into the task branch before submitting"
+                    )
+                )
+        scan = _inspect_delivery_identity(
+            repo_root,
+            task_id=task_id,
+            base=source_base,
+            head=source_head,
+            expected_branch=expected_branch,
+            actual_branch=actual_branch,
+        )
+        if scan.errors:
+            return (), "the submitted range fails delivery identity: " + "; ".join(scan.errors)
+        # The authors are only those of the recorded range if the scan read
+        # that range: a base or head that resolved to some other commit scanned
+        # other commits, and its authors are not an answer to cache.
+        scanned_base = str(scan.base_sha or "").strip().lower()
+        scanned_head = str(scan.head_sha or "").strip().lower()
+        if (scanned_base, scanned_head) != (source_base, source_head):
+            return (), (
+                f"the delivery scan read {scanned_base[:12]}..{scanned_head[:12]}, not the recorded "
+                f"range {source_base[:12]}..{source_head[:12]}"
+            )
+        actual = tuple(scan.source_agents)
+        _IMMUTABLE_SOURCE_AUTHORS[key] = actual
+    recorded = tuple(str(author).strip() for author in submission.get("source_authors") or ())
+    if recorded != actual:
+        return (), (
+            f"the recorded source authors {list(recorded)!r} are not the immutable Git authors "
+            f"{list(actual)!r} of {source_base[:12]}..{source_head[:12]}"
+        )
+    return actual, None
+
+
+def task_review_source_identity(
+    config: dict[str, Any], task: dict[str, Any] | None, head: str | None = None
+) -> ReviewSourceIdentity:
+    """The single source-author/account-pool rule for reviewer independence.
+
+    A review is independent of the work, not of a label. The work is the
+    immutable non-merge range `review_submission` was validated against, whose
+    commits each name their source actor; the account that merged a base into
+    the branch and ran the finalizer is a different fact, recorded separately
+    as `submitted_by`. Both matter, and so does the current owner: a reviewer
+    must share no account pool with any of them. Reading only the submitter --
+    or only one author of a multi-author range -- frees every other source
+    pool to review its own commits.
 
     A reopen returns the task to `in_progress` while `review_submission` and
     `approved_head` stay on the record, so status alone is not enough: the
-    submission evidence is checked too, and it is read in preference to the
-    owner field because it is the only part of the record an owner rewrite
-    cannot erase.
+    submission evidence is read whenever it exists. A record in review or
+    frozen without that evidence, or whose evidence is unbound, incomplete or
+    names an actor that is not a registered agent, has not established who
+    wrote it, and the answer is an error rather than a fallback to the owner.
+
+    The authors are read from Git, through `immutable_review_source_authors`,
+    every time this is asked: a recorded list that differs from the range it
+    claims to describe is refused here, before any queue selects a reviewer
+    against it. `head`, when given, is the exact head being signed, and the
+    provenance has to be bound to it as well.
     """
     if not isinstance(task, dict):
-        return ""
+        return ReviewSourceIdentity()
     owner = str(task.get("owner") or "").strip()
     submission = task.get("review_submission")
-    if isinstance(submission, dict) and submission:
-        # The recorded submitter outranks the owner field: it is the one name
-        # that still identifies the author after the owner has been rewritten,
-        # which is exactly the state this has to keep working in. Records written
-        # before it was captured fall back to the owner.
-        return str(submission.get("submitted_by") or "").strip() or owner
-    if not owner:
-        return ""
-    if task_closeout_is_frozen(config, task):
-        return owner
-    statuses = normalized_status_set(
-        ready_dispatch_settings(config).get("review_statuses"), list(DEFAULT_REVIEW_STATUSES)
+    if not (isinstance(submission, dict) and submission):
+        if not owner:
+            return ReviewSourceIdentity()
+        statuses = normalized_status_set(
+            ready_dispatch_settings(config).get("review_statuses"), list(DEFAULT_REVIEW_STATUSES)
+        )
+        statuses.update(DEFAULT_SUBMITTED_AUTHOR_STATUSES)
+        if not task_closeout_is_frozen(config, task) and str(task.get("status") or "").strip().lower() not in statuses:
+            return ReviewSourceIdentity()
+        return ReviewSourceIdentity(
+            submitted=True,
+            error="the task is in review without a validated review submission naming its source authors",
+        )
+
+    submitter = str(submission.get("submitted_by") or "").strip()
+    raw_authors = submission.get("source_authors")
+    authors = (
+        tuple(str(author).strip() for author in raw_authors)
+        if isinstance(raw_authors, (list, tuple))
+        else ()
     )
-    statuses.update(DEFAULT_SUBMITTED_AUTHOR_STATUSES)
-    if str(task.get("status") or "").strip().lower() in statuses:
-        return owner
-    return ""
+    identity = ReviewSourceIdentity(submitted=True, submitter=submitter, source_authors=authors)
+    remote_sha = str(submission.get("remote_sha") or "").strip().lower()
+    source_head = str(submission.get("source_head") or "").strip().lower()
+    source_base = str(submission.get("source_base") or "").strip().lower()
+    if not submitter:
+        return identity._replace(error="the review submission does not record its genuine submitter")
+    if not authors or any(not author for author in authors):
+        return identity._replace(error="the review submission names no immutable source authors")
+    if not _SHA_RE.fullmatch(source_head) or source_head != remote_sha:
+        return identity._replace(error="the recorded source authors are not bound to the submitted head")
+    if not _SHA_RE.fullmatch(source_base):
+        return identity._replace(error="the recorded source authors are not bound to a validated base")
+    if head is not None and source_head != str(head or "").strip().lower():
+        return identity._replace(error="the recorded source authors are not bound to the head being approved")
+    authors, git_error = immutable_review_source_authors(config, task, submission)
+    if git_error:
+        return identity._replace(error=git_error)
+
+    agents: set[str] = set()
+    pools: set[str] = set()
+    actors = [("source author", author) for author in authors]
+    actors.append(("submitter", submitter))
+    if owner:
+        actors.append(("owner", owner))
+    for role, name in actors:
+        if role != "source author" and is_human_gate_agent(name):
+            agents.add(normalize_agent_id(name))
+            continue
+        # Only the authors just read from Git may name a declared historical
+        # label. The submitter and owner are live actors and stay strict.
+        source_author = role == "source author"
+        pool = _registered_actor_pool(config, name, source_author=source_author)
+        if not pool:
+            return identity._replace(
+                error=f"{role} {name!r} is not a registered agent with an account pool"
+            )
+        agents.update({normalize_agent_id(name), _registered_actor_id(config, name, source_author=source_author)})
+        pools.add(pool)
+    return identity._replace(agents=frozenset(agents), pools=frozenset(pools))
+
+
+def review_source_block_reason(
+    config: dict[str, Any], task: dict[str, Any] | None, reviewer: str | None, head: str | None = None
+) -> str | None:
+    """Why `reviewer` may not review this task's submitted work, or None.
+
+    The one question every reviewer path asks -- the normalizer, failover,
+    dispatch readiness and the canonical approval -- so that none of them can
+    admit a reviewer another would refuse.
+    """
+    identity = task_review_source_identity(config, task, head)
+    if not identity.submitted:
+        return None
+    if identity.error:
+        return identity.error
+    if is_human_gate_agent(reviewer):
+        return None
+    reviewer_ids = {normalize_agent_id(reviewer or ""), _registered_actor_id(config, reviewer or "")}
+    if reviewer_ids & identity.agents:
+        return f"reviewer {reviewer} is itself a source author, submitter or owner of the submitted work"
+    pool = _registered_actor_pool(config, reviewer or "")
+    if not pool:
+        return f"reviewer {reviewer!r} is not a registered agent with an account pool"
+    if pool in identity.pools:
+        return (
+            f"reviewer {reviewer} shares account pool {pool} with a source author, "
+            "submitter or owner of the submitted work"
+        )
+    return None
 
 
 def dispatch_reason_role(reason: str | None) -> str | None:
@@ -349,6 +757,41 @@ def _normalized_id_list(values: Any) -> list[str] | None:
     return normalized
 
 
+def _literal_policy_ids(values: Any) -> list[str] | None:
+    """A rule's literal id list exactly as written, or None when it is malformed.
+
+    Unlike a provider or role list, `task_ids` and `agent_ids` name one exact
+    thing each, so there is no bare-string form and no spelling to normalize.
+    """
+    if not isinstance(values, list) or not values:
+        return None
+    if not all(isinstance(value, str) and value and value == value.strip() for value in values):
+        return None
+    return values
+
+
+def _task_policy_id(task: dict[str, Any] | None) -> str:
+    """The id a task-scoped rule is asked about, or empty when there is none."""
+    value = task.get("id") if isinstance(task, dict) else None
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _policy_agent_id_is_logical(config: dict[str, Any], agent_id: str) -> bool:
+    """Whether `agent_ids` may name this: one registered logical agent, by its id.
+
+    A display name, a provider, an account pool or a source-only alias is not an
+    id, a slot is capacity rather than an actor, and an id or display name that
+    another agent also answers to could not be told apart from it at dispatch.
+    """
+    agent = (config.get("agents", {}) or {}).get(agent_id)
+    if not isinstance(agent, dict) or agent_id != normalize_agent_id(agent_id):
+        return False
+    if str(agent.get("dispatch_slot_for") or agent.get("dispatch_slot_for_pool") or "").strip():
+        return False
+    display = str(agent.get("display_name") or agent.get("name") or agent_id)
+    return _registered_actor_id(config, agent_id) == agent_id == _registered_actor_id(config, display)
+
+
 def role_provider_policy_settings(config: dict[str, Any]) -> dict[str, Any] | None:
     """The configured role/task-class provider policy, or None when unset.
 
@@ -413,6 +856,20 @@ def role_provider_policy_error(config: dict[str, Any]) -> str | None:
             task_classes = _normalized_id_list(rule.get("task_classes"))
             if not task_classes:
                 return f"{where}.task_classes must be a list of non-empty task_class names"
+        if "task_ids" in rule:
+            task_ids = _literal_policy_ids(rule.get("task_ids"))
+            if not task_ids or not all(_POLICY_TASK_ID_RE.fullmatch(value) for value in task_ids):
+                return f"{where}.task_ids must be a non-empty list of literal task ids"
+        if "agent_ids" in rule:
+            agent_ids = _literal_policy_ids(rule.get("agent_ids"))
+            if not agent_ids:
+                return f"{where}.agent_ids must be a non-empty list of registered logical agent ids"
+            unknown_agents = sorted(value for value in agent_ids if not _policy_agent_id_is_logical(config, value))
+            if unknown_agents:
+                return (
+                    f"{where}.agent_ids names what is not one registered logical agent id: "
+                    f"{', '.join(unknown_agents)}"
+                )
         error = provider_list_error(rule.get("providers"), f"{where}.providers")
         if error:
             return error
@@ -434,11 +891,49 @@ def role_provider_policy_error(config: dict[str, Any]) -> str | None:
     return None
 
 
+def _role_rules(settings: dict[str, Any], role: str | None) -> list[dict[str, Any]]:
+    """The configured rules that speak about this role at all."""
+    normalized_role = normalize_agent_id(role or "")
+    return [
+        rule
+        for rule in settings.get("rules") or []
+        if normalized_role in (_normalized_id_list(rule.get("roles")) or [])
+    ]
+
+
+def _matching_role_rules(
+    settings: dict[str, Any],
+    *,
+    role: str | None,
+    task_class: str | None,
+    task_id: str | None,
+) -> list[dict[str, Any]]:
+    """The one reading of which rules reach this role, class and task.
+
+    A selector the caller cannot answer does not match. That is the same for a
+    class and for a task id: a generic question is answered from the rules that
+    need neither, and `role_provider_block_reason` is what refuses to treat a
+    known task with no id as a generic question.
+    """
+    normalized_class = normalize_agent_id(task_class or "")
+    matching: list[dict[str, Any]] = []
+    for rule in _role_rules(settings, role):
+        if "task_classes" in rule and (
+            not normalized_class or normalized_class not in (_normalized_id_list(rule.get("task_classes")) or [])
+        ):
+            continue
+        if "task_ids" in rule and (not task_id or task_id not in (_literal_policy_ids(rule.get("task_ids")) or [])):
+            continue
+        matching.append(rule)
+    return matching
+
+
 def allowed_role_provider_ids(
     config: dict[str, Any],
     *,
     role: str | None,
     task_class: str | None,
+    task_id: str | None = None,
 ) -> set[str] | None:
     """Provider ids allowed to hold `role` on a task of `task_class`.
 
@@ -452,6 +947,10 @@ def allowed_role_provider_ids(
     `unclassified_owned_work` governs; `None` means "the caller cannot show a
     task at all", where only role-wide rules can be applied and the unclassified
     disposition must not be guessed at.
+
+    A rule selecting `task_id` narrows whatever the rest of the policy says about
+    that task, the unclassified disposition included. It never replaces it: naming
+    one task is not how a lane the fleet rules exclude gets let back in.
     """
     settings = role_provider_policy_settings(config)
     if settings is None:
@@ -462,35 +961,50 @@ def allowed_role_provider_ids(
     normalized_class = normalize_agent_id(task_class or "") if task_class is not None else None
 
     allowed: set[str] | None = None
-    matched_class_rule = False
-    for rule in settings.get("rules") or []:
-        roles = _normalized_id_list(rule.get("roles")) or []
-        if normalized_role not in roles:
-            continue
-        if "task_classes" in rule:
-            if not normalized_class:
-                continue
-            if normalized_class not in (_normalized_id_list(rule.get("task_classes")) or []):
-                continue
-            matched_class_rule = True
+    targeted: set[str] | None = None
+    for rule in _matching_role_rules(settings, role=role, task_class=task_class, task_id=task_id):
         providers = set(_normalized_id_list(rule.get("providers")) or [])
         # Two rules reaching the same (role, task_class) both constrain it, so
         # the allowed set is their intersection: a lane must satisfy every rule
         # that speaks about it, not merely one of them.
-        allowed = providers if allowed is None else (allowed & providers)
+        if "task_ids" in rule:
+            targeted = providers if targeted is None else (targeted & providers)
+        else:
+            allowed = providers if allowed is None else (allowed & providers)
 
-    if (
-        allowed is None
-        and not matched_class_rule
-        and normalized_class == ""
-        and normalized_role in {ROLE_OWNER, ROLE_HELPER}
-    ):
+    if allowed is None and normalized_class == "" and normalized_role in {ROLE_OWNER, ROLE_HELPER}:
         unclassified = settings.get("unclassified_owned_work")
-        if isinstance(unclassified, str):
-            if normalize_agent_id(unclassified) == UNCLASSIFIED_DENY:
-                return set()
-            return None
-        return set(_normalized_id_list(unclassified) or [])
+        if not isinstance(unclassified, str):
+            allowed = set(_normalized_id_list(unclassified) or [])
+        elif normalize_agent_id(unclassified) == UNCLASSIFIED_DENY:
+            allowed = set()
+    if targeted is None:
+        return allowed
+    return targeted if allowed is None else (allowed & targeted)
+
+
+def allowed_role_agent_ids(
+    config: dict[str, Any],
+    *,
+    role: str | None,
+    task_class: str | None,
+    task_id: str | None = None,
+) -> set[str] | None:
+    """Logical agent ids allowed to hold `role` here, or None when no rule names any.
+
+    This is a separate fact from `allowed_role_provider_ids`, read from the same
+    rules: `Claude` and `Claude2` run on one provider and one account, so no
+    provider list can tell them apart, and a listed agent whose provider the
+    policy excludes is still excluded. A lane has to satisfy both.
+    """
+    settings = role_provider_policy_settings(config)
+    if settings is None:
+        return None
+    allowed: set[str] | None = None
+    for rule in _matching_role_rules(settings, role=role, task_class=task_class, task_id=task_id):
+        if "agent_ids" in rule:
+            agent_ids = set(_literal_policy_ids(rule.get("agent_ids")) or [])
+            allowed = agent_ids if allowed is None else (allowed & agent_ids)
     return allowed
 
 
@@ -522,8 +1036,15 @@ def role_provider_block_reason(
     be given something it does not have yet": a different agent written onto an
     approved task, or a fresh approval signature. A pinned head is no
     justification for either, so the exemption does not apply to those.
+
+    Rules may also name literal `task_ids` and exact `agent_ids`. A task record
+    without a usable id, or new authority with no task to name, cannot be shown
+    to be some other task, so while a rule for this role selects by task id those
+    two fail closed. Only a question that is not about a task at all -- no task
+    and nothing being granted -- is answered from the rules that need none.
     """
-    if role_provider_policy_settings(config) is None:
+    settings = role_provider_policy_settings(config)
+    if settings is None:
         return None
     error = role_provider_policy_error(config)
     if error:
@@ -541,7 +1062,17 @@ def role_provider_block_reason(
             return None
     if task_class is None and isinstance(task, dict):
         task_class = str(task.get("task_class") or "")
-    allowed = allowed_role_provider_ids(config, role=role, task_class=task_class)
+    task_id = _task_policy_id(task)
+    if (
+        not task_id
+        and (isinstance(task, dict) or grants_new_authority)
+        and any("task_ids" in rule for rule in _role_rules(settings, role))
+    ):
+        return (
+            f"role_provider_policy selects role {normalize_agent_id(role or '')} by task id "
+            "but this request carries no task id, so it fails closed"
+        )
+    allowed = allowed_role_provider_ids(config, role=role, task_class=task_class, task_id=task_id)
     if allowed is None:
         return None
     name = str(agent_name or "").strip()
@@ -573,6 +1104,17 @@ def role_provider_block_reason(
             f"{label} provider {', '.join(sorted(identities))} is not permitted for "
             f"{scope} (allowed: {', '.join(sorted(allowed))})"
         )
+    allowed_agents = allowed_role_agent_ids(config, role=role, task_class=task_class, task_id=task_id)
+    if allowed_agents is not None:
+        # Matched strictly: no source-only alias, and a name two agents answer
+        # to resolves to nobody rather than to whichever is listed.
+        actor_id = _registered_actor_id(config, name)
+        if actor_id not in allowed_agents:
+            target = f"{scope} on task {task_id}" if task_id else scope
+            return (
+                f"{label} (agent id {actor_id or 'unresolved'}) is not a named actor for "
+                f"{target} (allowed: {', '.join(sorted(allowed_agents)) or 'none'})"
+            )
     return None
 
 

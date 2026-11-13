@@ -13,6 +13,8 @@ Rules:
     ``.orchestrator/auto_commit_archive.py`` are written against).
   * Required trailers: ``LLM-Agent``, ``Task-ID``, ``Reviewer``.
   * ``Reviewer`` must differ from ``LLM-Agent``.
+  * Each of those trailers names one identity: repeating one with a different
+    value is rejected rather than resolved by whichever line comes last.
   * ``Cross-Dir: yes`` is required when the commit spans more than 3
     top-level directories (only checked when the file list is supplied).
   * Subjects with a maintenance prefix (``Merge ``, ``Revert ``, ``promote:``,
@@ -73,21 +75,48 @@ def subject_of(message: str) -> str:
     return ""
 
 
-def parse_trailers(message: str) -> dict[str, str]:
-    """Collect ``Key: value`` pairs from the message body.
+def parse_trailer_values(message: str) -> dict[str, list[str]]:
+    """Collect every ``Key: value`` occurrence from the message body, in order.
 
     Scans the whole body rather than only the last paragraph: workers
     routinely append a ``Verified:`` line or an extra note after the trailer
     block, and rejecting an otherwise correct commit for that is noise.
     """
-    trailers: dict[str, str] = {}
+    trailers: dict[str, list[str]] = {}
     for line in strip_comments(message).split("\n")[1:]:
         match = _TRAILER_RE.match(line.rstrip())
         if match:
             key, value = match.group(1), match.group(2).strip()
             if value:
-                trailers[key.lower()] = value
+                trailers.setdefault(key.lower(), []).append(value)
     return trailers
+
+
+def parse_trailers(message: str) -> dict[str, str]:
+    """Collect ``Key: value`` pairs from the message body; the last one wins."""
+    return {key: values[-1] for key, values in parse_trailer_values(message).items()}
+
+
+def conflicting_identity_trailers(message: str) -> list[str]:
+    """Identity trailers that name more than one value in the same commit.
+
+    ``parse_trailers`` keeps the last occurrence, so a commit carrying both
+    ``LLM-Agent: Codex`` and ``LLM-Agent: Claude`` would otherwise be read as
+    whichever line happened to come last -- which lets the author of a commit
+    be chosen by appending a line. A commit has exactly one author, one task
+    and one reviewer, so two different answers are a rejected commit, not a
+    tie to break. Repeating the same value is harmless and accepted.
+    """
+    errors: list[str] = []
+    values_by_key = parse_trailer_values(message)
+    for name in REQUIRED_TRAILERS:
+        values = values_by_key.get(name.lower(), [])
+        distinct = list(dict.fromkeys(value.strip().lower() for value in values))
+        if len(distinct) > 1:
+            errors.append(
+                f"conflicting '{name}:' trailers name more than one identity ({', '.join(map(repr, values))})"
+            )
+    return errors
 
 
 def top_level_dirs(files: list[str]) -> set[str]:
@@ -127,6 +156,7 @@ def validate_message(
     for name in REQUIRED_TRAILERS:
         if not trailers.get(name.lower()):
             errors.append(f"missing required trailer '{name}:'")
+    errors.extend(conflicting_identity_trailers(body))
 
     owner = trailers.get("llm-agent", "")
     reviewer = trailers.get("reviewer", "")

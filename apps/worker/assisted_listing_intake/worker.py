@@ -556,26 +556,11 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
 
         # Check required fields
         from modules.external_data.application.assisted_intake import (
-            ASSISTED_ENTRY_REQUIRED_FIELDS,
             effective_fields,
+            missing_assisted_entry_fields,
         )
 
         effective_vals = effective_fields(parsed_fields)
-        has_all_required = True
-        for rf in ASSISTED_ENTRY_REQUIRED_FIELDS:
-            val = effective_vals.get(rf)
-            if val in (None, ""):
-                has_all_required = False
-                break
-            if rf in ("rent", "areaPing"):
-                try:
-                    if float(val) <= 0:
-                        has_all_required = False
-                        break
-                except (ValueError, TypeError):
-                    has_all_required = False
-                    break
-
         intake = service.get_intake(intake_id)
         intake["rawSnapshot"] = raw_snapshot
         intake["snapshotId"] = snapshot_id
@@ -583,7 +568,7 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
         intake["lastObservedAt"] = observed_at
         intake["parsedFields"] = parsed_fields
 
-        if not has_all_required:
+        if missing_assisted_entry_fields(effective_vals):
             intake["stage"] = "AWAITING_ASSISTED_ENTRY"
             save_progress(intake)
             return
@@ -614,9 +599,6 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
         match_res = run_stage("MATCHING", do_matching)
 
         intake["matchResult"] = match_res.to_dict()
-        if match_res.outcome == "POSSIBLE_MATCH":
-            intake["stage"] = "NEEDS_REVIEW"
-        else:
-            intake["stage"] = "READY"
+        intake["stage"] = match_res.intake_stage
 
         save_progress(intake)

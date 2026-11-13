@@ -99,7 +99,7 @@ export function OperatorPasswordChange({
             新密碼
             <input
               autoComplete="new-password"
-              minLength={12}
+              minLength={8}
               onChange={(e) => setNewPassword(e.target.value)}
               required
               type="password"
@@ -110,7 +110,7 @@ export function OperatorPasswordChange({
             確認新密碼
             <input
               autoComplete="new-password"
-              minLength={12}
+              minLength={8}
               onChange={(e) => setConfirmPassword(e.target.value)}
               required
               type="password"

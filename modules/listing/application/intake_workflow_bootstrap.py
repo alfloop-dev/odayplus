@@ -75,7 +75,7 @@ def schedule_from_record(record: Mapping[str, Any]) -> SlaSchedule:
         for name in ("started_at", "due_soon_at", "due_at", "breach_at"):
             fields[name] = datetime.fromisoformat(fields[name].replace("Z", "+00:00"))
         return SlaSchedule(**fields)
-    except (KeyError, TypeError, ValueError) as exc:
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
         raise IntakeWorkflowUnavailable("Resolved SLA schedule is invalid") from exc
 
 
@@ -127,13 +127,17 @@ def enqueue_workflow_event(store: Any, intake: Mapping[str, Any], *, event_type:
 
 
 def initialize_intake_workflow(
-    store: Any, intake: dict[str, Any], policy: IntakeWorkflowPolicy | None
+    store: Any, intake: dict[str, Any], policy: IntakeWorkflowPolicy | None,
+    *, record_submission: bool = True,
 ) -> tuple[str, str]:
     """Create one unassigned task, SLA and evidence inside the caller's unit of work.
 
     The caller must enclose this function, the Intake/job writes and the replay
     receipt in ``store.transaction()``. Resolve everything before changing state.
     Policy inputs are copied so a provider cannot rewrite the authorized scope.
+    The native SQL submission owner already records its Intake creation evidence
+    in this transaction and passes ``record_submission=False``. Operator/v1
+    callers retain this helper's existing submission evidence.
     """
     if policy is None:
         raise IntakeWorkflowUnavailable("Intake workflow policy/calendar is unavailable")
@@ -259,16 +263,17 @@ def initialize_intake_workflow(
         "assignment_id": assignment_id,
         "sla_instance_id": sla_id,
     })
-    record_workflow_change(store, intake, resource_type="intake", before=None,
-                           after=intake, action="intake.create", actor_id=intake["submitted_by"])
-    enqueue_workflow_event(
-        store, intake, event_type="intake.submitted", producer="listing_intake_service",
-        aggregate_type="intake", aggregate_id=intake_id, aggregate_version=1,
-        payload={
-            "intake_id": intake_id, "intake_method": intake["intake_method"],
-            "submitter_subject_id": intake["submitted_by"], "submitted_at": ts,
-            "original_url": intake.get("original_url"), "source_id": intake.get("source_id"),
-            "scope": deepcopy(intake["scope"]),
-        },
-    )
+    if record_submission:
+        record_workflow_change(store, intake, resource_type="intake", before=None,
+                               after=intake, action="intake.create", actor_id=intake["submitted_by"])
+        enqueue_workflow_event(
+            store, intake, event_type="intake.submitted", producer="listing_intake_service",
+            aggregate_type="intake", aggregate_id=intake_id, aggregate_version=1,
+            payload={
+                "intake_id": intake_id, "intake_method": intake["intake_method"],
+                "submitter_subject_id": intake["submitted_by"], "submitted_at": ts,
+                "original_url": intake.get("original_url"), "source_id": intake.get("source_id"),
+                "scope": deepcopy(intake["scope"]),
+            },
+        )
     return assignment_id, sla_id

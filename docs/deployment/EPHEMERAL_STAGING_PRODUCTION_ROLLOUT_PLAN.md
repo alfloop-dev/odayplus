@@ -283,9 +283,17 @@ Gate 0–6 可以保留為證據分類，但 registry 必須額外記錄 `stage`
 1. 確認 API contract 對舊 Web backward compatible。
 2. API 從 blue 100% 原子切到 green 100%，立即跑 authenticated smoke。
 3. Web 從 blue 100% 原子切到 green 100%，立即跑 E2E。
-4. 將 worker、scheduler job target 更新為 green digest。
-5. 先 one-shot 驗證，再恢復內部 scheduler triggers。
+4. 透過既有 `cloud_run_release_traffic.sh` 將 worker、scheduler triggers 指向各自 release-scoped Job 的 `:run` URI；兩個 image 分別綁定完整 `@sha256`，HTTP body 為 `{}`。讀回實際 Job image、OAuth、headers、cron、timezone 及 PAUSED state。
+5. 先 one-shot 與 live gate 驗證，再依同 release / Job / image 的 jobs-smoke 回條及即時 Job、execution、trigger 讀回恢復原本 ENABLED 的排程；原本 PAUSED 的維持暫停。
 6. 開始 watch window（30 分鐘）；blue revisions 與舊 job definitions 暫不刪除。
+
+實際部署入口為 `deploy_cloud_run_waji.sh`；手動 `bluegreen_release.py switch` 與 `rollback` 呼叫相同 mutation owner。`capture-state` 必須於變更前提供 `--release-sha` 與 `--scheduler-jobs`，保存兩個 Scheduler snapshots、原本 state 及實際舊 Job image 綁定；snapshot 路徑相對於 `release-state.json`，可隨 artifact 一起下載。`switch` 必須分別提供 `--worker-trigger/--worker-job/--worker-image/--worker-cron` 與 scheduler 對應參數、`--time-zone`、`--service-account`、`--new-trigger-state`，完成後維持 PAUSED。再以相同 `--state-file`、API/Web service 與 `resume-schedulers --worker-receipt ... --scheduler-receipt ...` 恢復經驗證且原本允許啟用的排程。回條須由既有 `jobs-smoke` 以 `--expected-image`、`--expected-job` 產生；舊缺 image/execution binding 的回條拒絕啟用，必須重做 one-shot 取得回條。舊 `switch-digests`、`--green-job-digest`、`--blue-job-digest` 已移除。
+
+Recovery artifacts 保留可完整還原的必要 URI、auth reference、headers、body、排程設定及 identity/image binding；這些是受限恢復資料，不是已移除全部秘密的公開報告。無關 status、attempt 與 provider metadata 不保存；必要欄位若含既有秘密規則辨識出的實際敏感值，capture 會明確拒絕，不能遮掉後假稱仍可完整還原。舊版只有 traffic 的 state 不足以恢復排程，也不能以事後 capture 冒充發佈前 snapshot。
+
+相同回條的 resume 可安全重送：先重新驗證實際 Job、execution 及完整排程配置，若已到達該 trigger 明確允許的 desired state，直接視為完成；原本 PAUSED 的 trigger 遇到 ENABLED 仍拒絕並要求維持暫停。已開始但技術上未完成的發布仍以整批原 snapshot 補償，並同時保留原始失敗與補償失敗；SLO rollback 判斷仍由 Human/Ops 負責。
+
+首次建立的 trigger 預設保持 PAUSED；`ODP_NEW_SCHEDULER_STATE` 在既有 preflight、任何 runtime mutation 前驗證，部署必須明確設定 `ENABLED` 才會在驗證後啟用，手動 CLI 則以必填 `--new-trigger-state` 決定。Scheduler 的 state 是 output-only，且 [create http 沒有 create-paused 旗標](https://docs.cloud.google.com/sdk/gcloud/reference/scheduler/jobs/create/http)。共用 owner 先建立無 body 的 GET target、pause 並讀回 PAUSED，再安裝 POST target；依 [Cloud Run jobs.run 僅接受 POST 的契約](https://docs.cloud.google.com/run/docs/reference/rest/v1/namespaces.jobs/run)，初始 GET 不會執行 Job。這是依 API 契約的推論與 mock 流程驗證，尚未做雲端封包或 live 驗證。
 
 **營運觀察與 SLO 參數（PROD-OPS-05）**：
 
@@ -312,7 +320,7 @@ Gate 0–6 可以保留為證據分類，但 registry 必須額外記錄 `stage`
 
 1. 暫停 scheduler triggers。
 2. Web 與 API 流量切回 blue 100%。
-3. worker、scheduler target 回到 blue digest。
+3. worker、scheduler target 與 cron、timezone、OAuth、headers、retry、原本 PAUSED/ENABLED state 由發佈前 Scheduler snapshots 回復；讀回設定並驗證舊 Job image 未漂移。原本不存在的 trigger 刪除並讀回確認。
 4. data platform service selector與 snapshot pointer 回到上一個已核准版本。
 5. 驗證舊版仍可讀取 expand migration 後 schema。
 6. 執行 rollback smoke 與資料一致性檢查。

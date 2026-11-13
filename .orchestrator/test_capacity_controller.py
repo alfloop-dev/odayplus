@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -7,8 +10,12 @@ import capacity_controller
 import pytest
 import supervisor
 import task_archive
+import worker_workspace
 
 NOW = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
+# Set per test by the autouse fixture: the creator now resolves each parent's source,
+# and an unbound config would resolve it to the checkout running these tests.
+OWNED_STATUS_ROOT = Path("/nonexistent/unbound-status-root")
 
 
 @pytest.fixture(autouse=True)
@@ -23,12 +30,21 @@ def scoped_task_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     monkeypatch.setattr(task_archive, "ARCHIVE_DIR", archive_dir)
     monkeypatch.setattr(task_archive, "ARCHIVE_TASKS_DIR", tasks_dir)
     monkeypatch.setattr(task_archive, "ARCHIVE_INDEX_FILE", index_file)
+    # Relative registry paths hang off the status file, so even the default registry's
+    # siblings stay inside this test's root, and no host override can name a checkout.
+    monkeypatch.setitem(globals(), "OWNED_STATUS_ROOT", test_status_root)
+    for name in [name for name in os.environ if name.endswith("_LOCAL_PATHS")]:
+        monkeypatch.delenv(name)
     return test_status_root
 
 
 
 def config(slot_count: int = 8) -> dict:
     return {
+        "paths": {
+            "status_file": str(OWNED_STATUS_ROOT / "ai-status.json"),
+            "activity_log": str(OWNED_STATUS_ROOT / "activity.jsonl"),
+        },
         "agents": {
             "Claude": {"provider": "claude", "slot_id": "slot-0"},
             "Codex": {"provider": "codex", "slot_id": "slot-1"},
@@ -101,7 +117,8 @@ def test_chair_approves_bounded_sidecars_after_sustained_idle_capacity() -> None
     assert {candidate["helper_parent"] for candidate in candidates} == {"BLOCKED-0", "BLOCKED-1"}
     assert all(candidate["task_class"] == "sidecar" for candidate in candidates)
     assert all(candidate["mutates_canonical"] is False for candidate in candidates)
-    assert all(candidate["owner"] == "AUTO_ASSIGN" for candidate in candidates)
+    assert all(candidate["owner"] == "Claude" for candidate in candidates)
+    assert all(candidate["reviewer"] == "DIFFERENT_AGENT_REQUIRED" for candidate in candidates)
     assert all(candidate["expires_at"] == "2026-08-20T14:00:00Z" for candidate in candidates)
 
 
@@ -1263,3 +1280,332 @@ def test_mixed_archived_and_fresh_candidates_preserves_full_wave_budget_for_fres
     assert len(candidates) == 2
     assert {c["helper_parent"] for c in candidates} == {"FRESH-BLOCKED-PARENT-001", "FRESH-BLOCKED-PARENT-002"}
 
+
+APPROVED_WAVE = {
+    "capacity_controller": {
+        "chair_decision": {
+            "issued_at": "2026-08-20T11:50:00Z",
+            "valid_until": "2026-08-20T12:30:00Z",
+            "sidecar_wave": {"approved": True},
+        },
+    }
+}
+
+
+def blocked_parent(parent_id: str = "PARENT-1", **fields: object) -> dict:
+    return {"id": parent_id, "status": "blocked", "owner": "Claude", "reviewer": "Codex", **fields}
+
+
+def candidates_for(*parents: dict) -> list[dict]:
+    return capacity_controller.sidecar_candidates(
+        config(), APPROVED_WAVE, list(parents), runnable_tasks=set(), now=NOW
+    )
+
+
+def source_config(tmp_path: Path) -> dict:
+    """The original registry and resolver, with its checkouts at owned paths.
+
+    These are empty directories. The resolver accepts a checkout with no origin, so they
+    exercise which source is chosen and say nothing about its provenance; the real Git
+    checkouts are in test_worktree_authority and test_worker_failure_policy.
+    """
+    home, platform, front = tmp_path / "home", tmp_path / "platform", tmp_path / "front"
+    for checkout in (home, platform, front):
+        checkout.mkdir()
+    return {
+        **config(),
+        "coordination": {
+            "repositories": {
+                "pantheon": {"repo": None, "local_path": str(home)},
+                "oday_data_platform": {"local_path": str(platform)},
+                "front_ai_trading_system": {"local_path": str(front)},
+                "absent_checkout": {"repo": None, "local_path": str(tmp_path / "absent")},
+            }
+        },
+    }
+
+
+def source_candidates(cfg: dict, *parents: dict) -> list[dict]:
+    return capacity_controller.sidecar_candidates(cfg, APPROVED_WAVE, list(parents), runnable_tasks=set(), now=NOW)
+
+
+def test_artifact_inferred_parent_source_reaches_the_child_and_its_launch(tmp_path: Path) -> None:
+    cfg = source_config(tmp_path)
+    parent = blocked_parent(artifacts=["oday-data-platform/diag.md"], protected_paths=["guarded/zone"])
+    assert supervisor.worker_task_repository_binding(cfg, {"artifacts": ["support/sidecars/x.md"]}).repo_id == "pantheon"
+
+    [child] = source_candidates(cfg, parent)
+
+    assert child["repository"] == "alfloop-dev/oday-data-platform"
+    assert child["artifacts"][0].startswith("support/sidecars/"), "the child's own artifacts name no source"
+    assert supervisor.worker_task_repository_binding(cfg, child).root == tmp_path / "platform"
+    Path(cfg["paths"]["status_file"]).write_text(json.dumps({"tasks": [parent, child]}), encoding="utf-8")
+    prepared = {"protected_paths": ["guarded/zone"], "repository_id": "oday_data_platform"}
+    assert supervisor.launch_protection_refusal(cfg, child, prepared) is None
+    # A request carries what it was prepared in; the current source cannot stand in for it.
+    for recorded, expected in (("pantheon", "prepared in pantheon"), (None, "no recorded source")):
+        refusal = supervisor.launch_protection_refusal(cfg, child, {**prepared, "repository_id": recorded})
+        assert refusal and expected in refusal
+    # A child persisted before it could carry this resolves somewhere else, and may not act.
+    refusal = supervisor.launch_protection_refusal(cfg, {**child, "repository": None}, prepared)
+    assert refusal and "not its parent's current source" in refusal
+
+
+def test_parent_source_that_cannot_be_resolved_refuses_the_child(tmp_path: Path) -> None:
+    cfg = source_config(tmp_path)
+    mismatched = tmp_path / "mismatched"
+    subprocess.run(["git", "init", "--quiet", str(mismatched)], check=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://github.com/else/where.git"], cwd=mismatched, check=True
+    )
+    cfg["coordination"]["repositories"]["mismatched"] = {"repo": "org/expected", "local_path": str(mismatched)}
+    for fields, expected in (
+        ({"repository": "org/unregistered"}, "unknown_repository"),
+        ({"artifacts": ["oday-data-platform/a.md", "front-ai-trading-system/b.md"]}, "ambiguous_repository"),
+        ({"repository": "absent_checkout"}, "repository_checkout_unavailable"),
+        ({"repository": "mismatched"}, "repository_checkout_mismatch"),
+    ):
+        parent = blocked_parent(**fields)
+        assert source_candidates(cfg, parent) == [], fields
+        refusal = capacity_controller.parent_sidecar_refusal(cfg, parent)
+        assert refusal and "source is unresolved" in refusal and expected in refusal, fields
+    # The refused parent does not cost a resolvable one its child.
+    ok = blocked_parent("PARENT-2", repository="oday_data_platform")
+    assert [c["helper_parent"] for c in source_candidates(cfg, blocked_parent(repository="org/x"), ok)] == ["PARENT-2"]
+
+
+def test_child_is_declared_by_registry_id_when_nothing_else_reaches_its_parent_source(tmp_path: Path) -> None:
+    cfg = source_config(tmp_path)
+    # Registered and resolvable, with no slug to write. The resolver accepts its id.
+    (tmp_path / "unslugged").mkdir()
+    cfg["coordination"]["repositories"]["unslugged"] = {
+        "repo": None,
+        "local_path": str(tmp_path / "unslugged"),
+        "artifact_prefixes": ["unslugged/"],
+    }
+    [child] = source_candidates(cfg, blocked_parent(artifacts=["unslugged/diag.md"]))
+    assert child["repository"] == "unslugged"
+    assert supervisor.worker_task_repository_binding(cfg, child).root == tmp_path / "unslugged"
+
+    # The catalog names the child's artifacts, which an undeclared record resolves from.
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(
+        json.dumps(
+            {
+                "templates": [
+                    {
+                        "kind": "elsewhere",
+                        "parent_statuses": ["blocked"],
+                        "artifact_targets": ["oday-data-platform/{{sidecar_task_id}}.md"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg["sidecar_catalog_path"] = str(catalog)
+    [child] = source_candidates(cfg, blocked_parent())
+    assert child["repository"] == "pantheon"
+    assert supervisor.worker_task_repository_binding(cfg, child).root == tmp_path / "home"
+
+
+def test_a_checkout_gone_after_the_parent_check_is_no_source_at_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = source_config(tmp_path)
+    parent = blocked_parent(repository="absent_checkout")
+    child = {
+        "id": "SC",
+        "task_class": "sidecar",
+        "auto_created_by": "capacity-controller",
+        "helper_parent": parent["id"],
+        "owner": "Claude",
+        "repository": "absent_checkout",
+    }
+    Path(cfg["paths"]["status_file"]).write_text(json.dumps({"tasks": [parent, child]}), encoding="utf-8")
+    prepared = {"repository_id": "absent_checkout"}
+    # Passed a moment ago, and unresolved at every later read: two missing roots are not a match.
+    monkeypatch.setattr(capacity_controller, "parent_sidecar_refusal", lambda *_: None)
+    assert source_candidates(cfg, parent) == []
+    monkeypatch.setattr(worker_workspace, "parent_sidecar_refusal", lambda *_: None)
+    refusal = supervisor.launch_protection_refusal(cfg, child, prepared)
+    assert refusal and "is not its parent's current source" in refusal
+    monkeypatch.setattr(worker_workspace, "_capacity_sidecar_authority_refusal", lambda *_: None)
+    refusal = supervisor.launch_protection_refusal(cfg, child, prepared)
+    assert refusal and "source is unresolved" in refusal
+
+
+def test_valid_parent_source_keeps_its_declaration_and_checkout(tmp_path: Path) -> None:
+    cfg = source_config(tmp_path)
+    for fields, repository, root in (
+        # The default source has no slug. Its child keeps the plain record, because a
+        # declared `pantheon` is what the merge route refuses to address.
+        ({}, None, "home"),
+        ({"repository": "   "}, None, "home"),
+        ({"repository": "pantheon"}, "pantheon", "home"),
+        ({"repository": "alfloop-dev/oday-data-platform"}, "alfloop-dev/oday-data-platform", "platform"),
+        ({"repository": "oday_data_platform"}, "oday_data_platform", "platform"),
+        # An explicit declaration is stronger than artifacts, on the parent as everywhere.
+        ({"repository": "pantheon", "artifacts": ["oday-data-platform/a.md"]}, "pantheon", "home"),
+    ):
+        parent = blocked_parent(**fields)
+        [child] = source_candidates(cfg, parent)
+        assert child["repository"] == repository, fields
+        assert supervisor.worker_task_repository_binding(cfg, child).root == tmp_path / root, fields
+        assert supervisor.worker_task_repository_binding(cfg, parent).root == tmp_path / root, fields
+
+
+def test_sidecar_inherits_normalized_parent_protection_as_its_own_list() -> None:
+    declared = ["zeta/deny/", "alpha/deny", "alpha/deny"]
+    parent = blocked_parent(protected_paths=declared, repository="pantheon", base_branch="dev")
+
+    [child] = candidates_for(parent)
+
+    assert child["protected_paths"] == ["alpha/deny", "zeta/deny"]
+    assert child["repository"] == "pantheon" and child["base_branch"] == "dev"
+    child["protected_paths"].append("mutated")
+    assert parent["protected_paths"] == declared
+
+
+def test_unprotected_parent_keeps_the_previous_candidate_shape() -> None:
+    [child] = candidates_for(blocked_parent())
+    assert "protected_paths" not in child
+    assert "source_docs" not in child
+
+
+def test_malformed_parent_protection_never_yields_an_unprotected_child() -> None:
+    for bad in ("guarded/zone", ["../escape"], ["guarded/*"], [7]):
+        assert candidates_for(blocked_parent(protected_paths=bad)) == [], bad
+    assert [c["helper_parent"] for c in candidates_for(blocked_parent(protected_paths="x"), blocked_parent("PARENT-2"))] == [
+        "PARENT-2"
+    ]
+
+
+def test_sidecar_keeps_the_selected_owner_and_an_independent_reviewer_placeholder() -> None:
+    [child] = candidates_for(blocked_parent(owner="Claude2", source_docs=["github://org/repo@abc/AGENTS.md"]))
+    assert child["owner"] == "Claude2"
+    assert child["reviewer"] == "DIFFERENT_AGENT_REQUIRED"
+    assert child["source_docs"] == ["github://org/repo@abc/AGENTS.md"]
+    assert capacity_controller.is_capacity_sidecar(child)
+
+
+def test_parent_authority_that_cannot_be_carried_refuses_the_child() -> None:
+    for parent in (
+        blocked_parent(owner="AUTO_ASSIGN"),
+        blocked_parent(owner=""),
+        blocked_parent(owner="Human/Ops"),
+        blocked_parent(owner="UnregisteredLane"),
+        blocked_parent(frozen_evidence_base_sha="a" * 40),
+    ):
+        assert candidates_for(parent) == [], parent
+
+
+def test_structured_parent_gate_refuses_the_child_without_any_marker_prose() -> None:
+    for fields in (
+        {"gate_status": "pending_human_signoff"},
+        {"task_class": "human_gate"},
+        {"human_required_roles": ["Human/Ops"]},
+        {"non_dispatchable": True},
+        {"waiting_for": "Human/Ops"},
+        {"requires_human_approval": True},
+        {"credentials_gate": "pending"},
+    ):
+        parent = blocked_parent(blocked_reason="upstream API defect", **fields)
+        assert candidates_for(parent) == [], fields
+        assert capacity_controller.parent_sidecar_refusal(config(), parent), fields
+
+
+def test_ordinary_blocked_parent_keeps_its_sidecar() -> None:
+    for fields in (
+        {},
+        {"waiting_for": "Codex"},
+        {"gate_status": "passed"},
+        {"non_dispatchable": False, "human_required_roles": [], "requires_human_approval": False},
+    ):
+        parent = blocked_parent(blocked_reason="upstream API defect", **fields)
+        assert [child["helper_parent"] for child in candidates_for(parent)] == ["PARENT-1"], fields
+        assert capacity_controller.parent_sidecar_refusal(config(), parent) is None, fields
+
+
+def test_capacity_sidecar_owner_lane_cannot_move_but_reviewers_keep_their_pools() -> None:
+    cfg = {
+        "agents": {
+            "claude": {"display_name": "Claude", "provider": "claude"},
+            "antigravity3": {"display_name": "Antigravity3", "provider": "antigravity"},
+            "codex": {"display_name": "Codex", "provider": "codex"},
+        },
+    }
+    sidecar = {"id": "SC", "task_class": "sidecar", "auto_created_by": "capacity-controller", "owner": "Claude"}
+    assert supervisor.agent_can_take_task(cfg, "Claude", sidecar, role="owner") is True
+    assert supervisor.agent_can_take_task(cfg, "Antigravity3", sidecar, role="owner") is False
+    assert supervisor.agent_can_take_task(cfg, "Antigravity3", sidecar, role="helper") is False
+    assert supervisor.agent_can_take_task(cfg, "Codex", sidecar, role="reviewer") is True
+    ordinary = {**sidecar, "auto_created_by": None}
+    assert supervisor.agent_can_take_task(cfg, "Antigravity3", ordinary, role="owner") is True
+
+
+def test_integrity_repair_cannot_move_an_unavailable_sidecar_owner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cfg = {
+        "paths": {"status_file": str(tmp_path / "status.json"), "activity_log": str(tmp_path / "activity.jsonl")},
+        "agents": {
+            "claude": {"display_name": "Claude", "provider": "claude", "account_pool": "claude"},
+            "antigravity3": {"display_name": "Antigravity3", "provider": "antigravity", "account_pool": "antigravity"},
+            "codex": {"display_name": "Codex", "provider": "codex", "account_pool": "codex"},
+        },
+        "worker_reassignment": {"owner_fallbacks": {"Claude": ["Antigravity3"]}},
+    }
+    child = {
+        "id": "SC",
+        "status": "todo",
+        "priority": "P3",
+        "task_class": "sidecar",
+        "auto_created_by": "capacity-controller",
+        "owner": "Claude",
+        "reviewer": "Codex",
+    }
+    persisted: list[dict] = []
+    monkeypatch.setattr(supervisor, "task_assignment_integrity_issues", lambda *_: ["owner_unavailable:paused"])
+    monkeypatch.setattr(supervisor, "persist_task_reassignment", lambda *_a, **kw: persisted.append(kw) or True)
+
+    assert supervisor.normalize_task_assignment_integrity(cfg, {}, {"tasks": [child]}, child) is False
+    assert persisted == []
+    assert child["owner"] == "Claude"
+
+    # The same record without controller provenance is free to move: the refusal
+    # above comes from the lane rule, not from this fixture.
+    ordinary = {**child, "auto_created_by": None}
+    assert supervisor.normalize_task_assignment_integrity(cfg, {}, {"tasks": [ordinary]}, ordinary) is True
+    assert persisted[0]["new_owner"] == "Antigravity3"
+
+
+def test_reconcile_persists_the_inherited_authority_through_the_original_commit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    parent = blocked_parent(protected_paths=["guarded/zone"], artifacts=["oday-data-platform/diag.md"])
+    status = {"tasks": [parent]}
+    committed: list[dict] = []
+    monkeypatch.setattr(supervisor, "load_status", lambda _cfg: status)
+    monkeypatch.setattr(supervisor, "release_dead_helper_claims", lambda *_a: ([], True))
+    monkeypatch.setattr(supervisor, "canonical_dispatchable_task_ids", lambda *_a: set())
+    monkeypatch.setattr(supervisor, "write_activity_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        supervisor,
+        "commit_canonical_task_transition",
+        lambda _cfg, payload: committed.append(payload) or True,
+    )
+    state = {"capacity_controller": dict(APPROVED_WAVE["capacity_controller"])}
+    state["capacity_controller"]["chair_decision"] = {
+        **APPROVED_WAVE["capacity_controller"]["chair_decision"],
+        "valid_until": "2999-01-01T00:00:00Z",
+    }
+    monkeypatch.setattr(
+        capacity_controller, "evaluate_chair", lambda _cfg, st, *_a, **_k: (st["capacity_controller"], False)
+    )
+
+    supervisor.reconcile_capacity_controller(source_config(tmp_path), state, provider_report={})
+
+    [payload] = committed
+    child = next(task for task in payload["tasks"] if task.get("helper_parent") == "PARENT-1")
+    assert child["protected_paths"] == ["guarded/zone"]
+    assert child["owner"] == "Claude"
+    assert child["repository"] == "alfloop-dev/oday-data-platform"

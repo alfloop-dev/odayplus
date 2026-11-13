@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -812,7 +814,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             )
             # Patch _run_terraform inside executor
             import unittest.mock as mock
-            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"):
+            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"), mock.patch("product_ops.deployment.staging_lifecycle._live_gcloud"):
                 # First run at 12:00:00Z
                 executor(cfg, planned_first)
                 self.assertTrue(vars_p.is_file())
@@ -1096,7 +1098,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
                 initialize=False,
             )
 
-            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"):
+            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"), mock.patch("product_ops.deployment.staging_lifecycle._live_gcloud"):
                 # First run succeeds and writes initial tfvars/inventory
                 executor(cfg1, planned_first)
                 self.assertTrue(vars_p.is_file())
@@ -1157,7 +1159,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
                 initialize=False,
             )
 
-            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"):
+            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"), mock.patch("product_ops.deployment.staging_lifecycle._live_gcloud"):
                 executor(cfg1, planned)
 
                 # Same candidate, but different manifest digest
@@ -1196,7 +1198,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
                 initialize=False,
             )
 
-            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"):
+            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"), mock.patch("product_ops.deployment.staging_lifecycle._live_gcloud"):
                 executor(cfg1, planned)
 
                 # Changed api_image
@@ -1254,22 +1256,144 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
                 initialize=False,
             )
 
-            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform") as mock_tf:
+            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform") as mock_tf, mock.patch("product_ops.deployment.staging_lifecycle._live_gcloud"):
                 # First run
                 res1 = executor(cfg, planned)
                 self.assertTrue(res1)
-                self.assertEqual(mock_tf.call_count, 1)  # apply only since initialize=False
+                # initialize=False: the migration-job apply and the full apply
+                self.assertEqual(mock_tf.call_count, 2)
 
                 # Second run with same config and empty created_at
                 cfg_rerun = dataclasses_replace(cfg, created_at="")
                 res2 = executor(cfg_rerun, planned)
                 self.assertTrue(res2)
-                self.assertEqual(mock_tf.call_count, 2)  # 2 applies total
+                self.assertEqual(mock_tf.call_count, 4)
 
                 persisted = json.loads(vars_p.read_text(encoding="utf-8"))
                 self.assertEqual(persisted["created_at"], "2026-08-24T12:00:00Z")
                 self.assertEqual(persisted["candidate_sha"], cfg.candidate_sha)
                 self.assertEqual(persisted["manifest_digest"], cfg.manifest_digest)
+
+    def test_create_runs_the_migration_job_before_applying_the_services(self) -> None:
+        """The API refuses an unmigrated database, and Terraform waits for it to start."""
+        import tempfile
+        import unittest.mock as mock
+
+        from product_ops.deployment.staging_lifecycle import (
+            STAGING_MIGRATION_JOB_ADDRESS,
+            get_ephemeral_resource_names,
+            make_terraform_creation_executor,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cfg = dataclasses_replace(self.valid_config, release_id="odp-migrate-first-001")
+            planned = plan_staging_resources(cfg, created_at=datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC))
+            executor = make_terraform_creation_executor(
+                module_dir=MODULE_DIR,
+                state_dir=Path(tmp_dir),
+                initialize=False,
+                gcloud_bin="/opt/gcloud",
+            )
+            calls: list[tuple[str, list[str]]] = []
+            with (
+                mock.patch(
+                    "product_ops.deployment.staging_lifecycle._run_terraform",
+                    side_effect=lambda **kw: calls.append(("terraform", list(kw["arguments"]))),
+                ),
+                mock.patch(
+                    "product_ops.deployment.staging_lifecycle._live_gcloud",
+                    side_effect=lambda args, **kw: calls.append(("gcloud", [kw["gcloud_bin"], *args])),
+                ),
+            ):
+                executor(cfg, planned)
+
+        job = get_ephemeral_resource_names(cfg.release_id, cfg.project_id, tenant_id=cfg.tenant_id)[
+            "cloud_run_migration_job"
+        ]
+        self.assertEqual([kind for kind, _ in calls], ["terraform", "gcloud", "terraform"])
+        self.assertEqual(calls[0][1][0], "apply")
+        self.assertIn(f"-target={STAGING_MIGRATION_JOB_ADDRESS}", calls[0][1])
+        self.assertEqual(
+            calls[1][1],
+            [
+                "/opt/gcloud", "run", "jobs", "execute", job,
+                f"--region={cfg.region}", f"--project={cfg.project_id}", "--wait", "--quiet",
+            ],
+        )
+        self.assertEqual(calls[2][1][0], "apply")
+        self.assertFalse(any(arg.startswith("-target=") for arg in calls[2][1]))
+
+    def test_create_does_not_apply_the_services_when_the_migration_fails(self) -> None:
+        import tempfile
+        import unittest.mock as mock
+
+        from product_ops.deployment.staging_lifecycle import make_terraform_creation_executor
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cfg = dataclasses_replace(self.valid_config, release_id="odp-migrate-fails-001")
+            planned = plan_staging_resources(cfg, created_at=datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC))
+            executor = make_terraform_creation_executor(
+                module_dir=MODULE_DIR, state_dir=Path(tmp_dir), initialize=False
+            )
+            with (
+                mock.patch("product_ops.deployment.staging_lifecycle._run_terraform") as run_tf,
+                mock.patch(
+                    "product_ops.deployment.staging_lifecycle._live_gcloud",
+                    side_effect=RuntimeError("gcloud run jobs execute failed with exit status 1"),
+                ) as cloud,
+                mock.patch("product_ops.deployment.staging_lifecycle.time.sleep") as sleep,
+                self.assertRaises(RuntimeError),
+            ):
+                executor(cfg, planned)
+        self.assertEqual(run_tf.call_count, 1)
+        self.assertEqual(cloud.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_create_retries_a_migration_refused_while_its_grants_propagate(self) -> None:
+        import tempfile
+        import unittest.mock as mock
+
+        from product_ops.deployment.staging_lifecycle import make_terraform_creation_executor
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cfg = dataclasses_replace(self.valid_config, release_id="odp-migrate-retry-001")
+            planned = plan_staging_resources(cfg, created_at=datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC))
+            executor = make_terraform_creation_executor(
+                module_dir=MODULE_DIR, state_dir=Path(tmp_dir), initialize=False
+            )
+            with (
+                mock.patch("product_ops.deployment.staging_lifecycle._run_terraform") as run_tf,
+                mock.patch(
+                    "product_ops.deployment.staging_lifecycle._live_gcloud",
+                    side_effect=[RuntimeError("cloudsql connect refused"), ""],
+                ) as cloud,
+                mock.patch("product_ops.deployment.staging_lifecycle.time.sleep") as sleep,
+            ):
+                executor(cfg, planned)
+        self.assertEqual(cloud.call_count, 2)
+        self.assertEqual(sleep.call_count, 1)
+        self.assertEqual(run_tf.call_count, 2)
+
+    def test_live_egress_readback_follows_the_dev_release_rule(self) -> None:
+        from product_ops.deployment.staging_lifecycle import _live_cloud_run_egress
+
+        annotation = "run.googleapis.com/vpc-access-egress"
+        # gcloud describe returns the v1 shape: egress is an annotation.
+        service_v1 = {"spec": {"template": {"metadata": {"annotations": {annotation: "all-traffic"}},
+                                            "spec": {"containers": [{"image": "x"}]}}}}
+        job_v1 = {"spec": {"template": {"metadata": {"annotations": {annotation: "all-traffic"}}}}}
+        job_v2 = {"template": {"template": {"vpcAccess": {"egress": "ALL_TRAFFIC"}}}}
+        for payload in (service_v1, job_v1, job_v2):
+            self.assertEqual(_live_cloud_run_egress(payload, field_name="egress"), "ALL_TRAFFIC")
+        private = {"spec": {"template": {"metadata": {"annotations": {annotation: "private-ranges-only"}}}}}
+        self.assertEqual(_live_cloud_run_egress(private, field_name="egress"), "PRIVATE_RANGES_ONLY")
+        with self.assertRaisesRegex(RuntimeError, "missing"):
+            _live_cloud_run_egress({"spec": {"template": {}}}, field_name="egress")
+        with self.assertRaisesRegex(RuntimeError, "not a recognised"):
+            _live_cloud_run_egress({"metadata": {"annotations": {annotation: "everything"}}}, field_name="egress")
+        contradictory = {**job_v1, "template": {"template": {"vpcAccess": {"egress": "PRIVATE_RANGES_ONLY"}}}}
+        with self.assertRaisesRegex(RuntimeError, "contradictory"):
+            _live_cloud_run_egress(contradictory, field_name="egress")
 
     def test_create_conflict_does_not_trigger_failure_cleanup_of_existing_release(self) -> None:
         """Verify that a rejected create rerun due to immutable identity conflict does NOT destroy existing release."""
@@ -2907,6 +3031,370 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         self.assertEqual([argv[1:4] for argv in sql_calls], [
             ["export", "sql", "oday-staging-pg"], ["import", "sql", "oday-staging-pg"],
         ])
+        # Restoring into the same release database: the dump drops before it creates.
+        self.assertIn("--clean", sql_calls[0])
+        self.assertIn("--if-exists", sql_calls[0])
+
+    @contextmanager
+    def _rollback_rehearsal_runtime(
+        self, *, failure: str = "", failed_service: str = "api", restore_failure: str = ""
+    ) -> Any:
+        """Exercise the real executor; only the Cloud Run and HTTP boundaries are doubles."""
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
+
+        outputs = self._valid_outputs()
+        failed_name = outputs[f"staging_{failed_service}_service_name"]
+        baseline = {
+            outputs[f"staging_{kind}_service_name"]: [
+                {"revisionName": f"{outputs[f'staging_{kind}_service_name']}-a", "percent": 70},
+                {"revisionName": f"{outputs[f'staging_{kind}_service_name']}-b", "percent": 30},
+            ]
+            for kind in ("api", "web")
+        }
+        traffic = {name: [dict(route) for route in routes] for name, routes in baseline.items()}
+        trace: list[tuple[str, str]] = []
+
+        def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
+            trace.append(("read", name))
+            if name == failed_name and ("restore", name) in trace and restore_failure == "readback":
+                raise RuntimeError("restore readback unavailable")
+            if name == failed_name and failure == "switch-unreadable" and (
+                ("switch", name) in trace and ("restore", name) not in trace
+            ):
+                raise RuntimeError("switched allocation readback unavailable")
+            return {"status": {"traffic": [dict(route) for route in traffic[name]]}}
+
+        def cloud(argv: list[str], **_kwargs: Any) -> str:
+            if argv[0] == "iam":
+                return argv[3]
+            name = argv[3]
+            if argv[:3] == ["run", "services", "update"]:
+                trace.append(("create", name))
+                if name == failed_name and failure == "create":
+                    raise RuntimeError("probe creation failed")
+                traffic[name].append({"revisionName": f"{name}-probe", "tag": "rollback-probe"})
+            if argv[:3] == ["run", "services", "update-traffic"]:
+                shares = dict(item.split("=") for item in argv[4].removeprefix("--to-revisions=").split(","))
+                switching = f"{name}-probe" in shares
+                trace.append(("switch" if switching else "restore", name))
+                if name == failed_name:
+                    if switching and failure == "switch-before":
+                        raise subprocess.TimeoutExpired(["gcloud", *argv], 900)
+                    if not switching and restore_failure == "command":
+                        raise RuntimeError("restore command failed")
+                    if not switching and restore_failure == "mismatch":
+                        return ""  # A successful CLI exit is not proof of restored traffic.
+                    # A successful switch exit is not proof of the probe allocation either.
+                    probe = {"revisionName": f"{name}-probe", "tag": "rollback-probe"}
+                    a, b = (f"{name}-a", f"{name}-b")
+                    switched_readback = {
+                        "switch-unchanged": None,
+                        "switch-partial": [{"revisionName": a, "percent": 50}, {**probe, "percent": 50}],
+                        "switch-wrong-revision": [{"revisionName": a, "percent": 100}, probe],
+                        "switch-malformed": [{**probe, "percent": "all"}],
+                        "switch-missing": [],
+                        # Legitimate: the former targets stay listed at 0% and the
+                        # tag remains a separate tag-only route on the probe.
+                        "switch-zero-percent-routes": [
+                            {"revisionName": a, "percent": 0},
+                            {"revisionName": b, "percent": 0},
+                            {"revisionName": f"{name}-probe", "percent": 100},
+                            probe,
+                        ],
+                    }
+                    if switching and failure in switched_readback:
+                        if switched_readback[failure] is not None:
+                            traffic[name] = switched_readback[failure]
+                        return ""
+                traffic[name] = [
+                    {**route, "percent": int(shares[route["revisionName"]])}
+                    if route["revisionName"] in shares
+                    else {key: value for key, value in route.items() if key != "percent"}
+                    for route in traffic[name]
+                    # An untagged revision left out of the allocation drops off.
+                    if route["revisionName"] in shares or route.get("tag")
+                ]
+                listed = {route["revisionName"] for route in traffic[name]}
+                traffic[name] += [
+                    {"revisionName": revision, "percent": int(share)}
+                    for revision, share in shares.items()
+                    if revision not in listed
+                ]
+                if name == failed_name and switching and failure == "switch-after":
+                    raise subprocess.TimeoutExpired(["gcloud", *argv], 900)
+            return ""
+
+        def health(kind: str) -> None:
+            trace.append(("health", outputs[f"staging_{kind}_service_name"]))
+            if kind == failed_service and failure == "health":
+                raise RuntimeError("probe health failed")
+
+        def api_health(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+            health("api")
+            return {"status": "ok"}
+
+        def web_health(*_args: Any, **_kwargs: Any) -> tuple[bool, str]:
+            health("web")
+            return True, ""
+
+        with patch(
+            "product_ops.deployment.staging_lifecycle._live_gcloud", side_effect=cloud
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_cloud_run_description", side_effect=describe
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_identity_token", return_value="token"
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_json_get", side_effect=api_health
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_web_operator_requires_login", side_effect=web_health
+        ):
+            executor = make_live_rehearsal_executor(
+                outputs,
+                project_id=self.project_id,
+                region="asia-east1",
+                operator_identity=outputs["staging_runtime_service_account"],
+            )
+            yield executor, traffic, baseline, trace
+
+    def test_rollback_restore_ignores_the_tag_only_probe_route(self) -> None:
+        """gcloud keeps the probe as a tag-only route (no percent) after restore."""
+        with self._rollback_rehearsal_runtime() as (executor, traffic, baseline, trace):
+            result = executor("rollback_rehearsal", {})
+        self.assertTrue(result["success"])
+        self.assertEqual(len(result["rollback_targets"]), 2)
+        for name, routes in traffic.items():
+            self.assertIn({"revisionName": f"{name}-probe", "tag": "rollback-probe"}, routes)
+            self.assertCountEqual([r for r in routes if r.get("percent")], baseline[name])
+            restore_index = trace.index(("restore", name))
+            self.assertEqual(trace[restore_index + 1], ("read", name))
+
+    def test_rollback_reads_back_probe_allocation_before_health(self) -> None:
+        for service in ("api", "web"):
+            for failure in ("", "switch-zero-percent-routes"):
+                with self.subTest(service=service, failure=failure):
+                    with self._rollback_rehearsal_runtime(
+                        failure=failure, failed_service=service
+                    ) as (executor, traffic, baseline, trace):
+                        result = executor("rollback_rehearsal", {})
+                    self.assertTrue(result["success"])
+                    for name in traffic:
+                        switch_index = trace.index(("switch", name))
+                        self.assertEqual(
+                            trace[switch_index + 1 : switch_index + 3], [("read", name), ("health", name)]
+                        )
+                        self.assertCountEqual([r for r in traffic[name] if r.get("percent")], baseline[name])
+
+    def test_rollback_switch_without_probe_allocation_fails_before_health(self) -> None:
+        for service in ("api", "web"):
+            for failure in (
+                "switch-unchanged",
+                "switch-partial",
+                "switch-wrong-revision",
+                "switch-malformed",
+                "switch-missing",
+                "switch-unreadable",
+            ):
+                with self.subTest(service=service, failure=failure):
+                    with self._rollback_rehearsal_runtime(
+                        failure=failure, failed_service=service
+                    ) as (executor, traffic, baseline, trace):
+                        with self.assertRaisesRegex(RuntimeError, "rollback rehearsal switch readback"):
+                            executor("rollback_rehearsal", {})
+                    name = self._valid_outputs()[f"staging_{service}_service_name"]
+                    self.assertNotIn(("health", name), trace)
+                    self.assertEqual(trace[-2:], [("restore", name), ("read", name)])
+                    for name, routes in traffic.items():
+                        self.assertCountEqual([r for r in routes if r.get("percent")], baseline[name])
+
+    def test_rollback_restores_after_uncertain_switch_result(self) -> None:
+        for service in ("api", "web"):
+            for failure in ("switch-before", "switch-after"):
+                with self.subTest(service=service, failure=failure):
+                    with self._rollback_rehearsal_runtime(
+                        failure=failure, failed_service=service
+                    ) as (executor, traffic, baseline, trace):
+                        with self.assertRaises(subprocess.TimeoutExpired):
+                            executor("rollback_rehearsal", {})
+                    name = self._valid_outputs()[f"staging_{service}_service_name"]
+                    self.assertIn(("restore", name), trace)
+                    self.assertNotIn(("health", name), trace)
+                    self.assertEqual(trace[-2:], [("restore", name), ("read", name)])
+                    for name, routes in traffic.items():
+                        self.assertCountEqual([r for r in routes if r.get("percent")], baseline[name])
+
+    def test_rollback_reads_restored_allocation_even_when_health_fails(self) -> None:
+        for service in ("api", "web"):
+            with self.subTest(service=service):
+                with self._rollback_rehearsal_runtime(
+                    failure="health", failed_service=service
+                ) as (executor, traffic, baseline, trace):
+                    with self.assertRaisesRegex(RuntimeError, "probe health failed"):
+                        executor("rollback_rehearsal", {})
+                name = self._valid_outputs()[f"staging_{service}_service_name"]
+                self.assertEqual(trace[-2:], [("restore", name), ("read", name)])
+                self.assertCountEqual([r for r in traffic[name] if r.get("percent")], baseline[name])
+
+    def test_rollback_restore_failure_is_not_hidden_by_probe_failure(self) -> None:
+        for service in ("api", "web"):
+            for failure in ("switch-after", "health", ""):
+                for restore_failure in ("command", "mismatch", "readback"):
+                    with self.subTest(service=service, failure=failure, restore=restore_failure):
+                        with self._rollback_rehearsal_runtime(
+                            failure=failure, failed_service=service, restore_failure=restore_failure
+                        ) as (executor, _traffic, _baseline, trace):
+                            with self.assertRaisesRegex(RuntimeError, "rollback target (restore failed|readback)"):
+                                executor("rollback_rehearsal", {})
+                        name = self._valid_outputs()[f"staging_{service}_service_name"]
+                        self.assertIn(("restore", name), trace)
+
+    def test_rollback_does_not_restore_before_any_traffic_switch_attempt(self) -> None:
+        for service in ("api", "web"):
+            with self.subTest(service=service):
+                with self._rollback_rehearsal_runtime(
+                    failure="create", failed_service=service
+                ) as (executor, traffic, baseline, trace):
+                    with self.assertRaisesRegex(RuntimeError, "probe creation failed"):
+                        executor("rollback_rehearsal", {})
+                name = self._valid_outputs()[f"staging_{service}_service_name"]
+                self.assertNotIn(("switch", name), trace)
+                self.assertNotIn(("restore", name), trace)
+                self.assertEqual(traffic[name], baseline[name])
+
+    def test_uncertain_rollback_fails_verification_and_preserves_holdable_state(self) -> None:
+        for failure, service, error in (
+            ("switch-after", "api", "TimeoutExpired"),
+            ("switch-unchanged", "api", "switch readback does not serve the probe revision"),
+            ("switch-unchanged", "web", "switch readback does not serve the probe revision"),
+        ):
+            with self.subTest(failure=failure, service=service):
+                self._assert_rollback_failure_holds_verification(failure, service, error)
+
+    def _assert_rollback_failure_holds_verification(self, failure: str, service: str, error: str) -> None:
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        outputs = self._valid_outputs()
+        with tempfile.TemporaryDirectory() as tmpdir, self._rollback_rehearsal_runtime(
+            failure=failure, failed_service=service
+        ) as (executor, traffic, baseline, _trace):
+            state_dir = Path(tmpdir)
+            self._seed_live_state(state_dir)
+            marker_path = lifecycle._lifecycle_state_path(self.release_id, state_dir)
+            seeded = json.loads(marker_path.read_text(encoding="utf-8"))
+            marker_path.write_text(json.dumps({**seeded, "outputs": outputs}), encoding="utf-8")
+            receipt_path = state_dir / "receipt.json"
+            receipt = lifecycle.verify_ephemeral_staging(
+                release_id=self.release_id,
+                candidate_sha=self.candidate_sha,
+                manifest_digest=self.manifest_digest,
+                project_id=self.project_id,
+                state_dir=state_dir,
+                operator_identity=outputs["staging_runtime_service_account"],
+                lifecycle_outputs=outputs,
+                stage_executor=lambda stage, context: (
+                    executor(stage, context) if stage == "rollback_rehearsal" else {"success": True}
+                ),
+                release_profile="core-ops",
+                now=self.now,
+                receipt_path=receipt_path,
+            )
+            self.assertFalse(receipt.success)
+            self.assertTrue(receipt.remediation_required)
+            self.assertEqual(json.loads(marker_path.read_text())["status"], "verification_failed")
+            self.assertFalse(json.loads(receipt_path.read_text())["success"])
+            stage = next(r for r in receipt.resources if r["stage"] == "rollback_rehearsal")
+            self.assertEqual(stage["status"], "failed")
+            self.assertNotIn("proof", stage)
+            self.assertTrue(any("rollback_rehearsal" in item and error in item for item in receipt.errors))
+            for name, routes in traffic.items():
+                self.assertCountEqual([r for r in routes if r.get("percent")], baseline[name])
+
+    def test_provider_readback_uses_the_live_gate_consumer_only_rule(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
+
+        outputs = self._valid_outputs()
+        disabled = {"mode": "disabled", "configurationValid": True, "connectivityHealthy": False, "live": False}
+
+        def run(provider: dict[str, Any]) -> Any:
+            readiness = {"status": "ready", "details": {"provider": provider}}
+            with patch(
+                "product_ops.deployment.staging_lifecycle._live_gcloud",
+                side_effect=lambda argv, **kwargs: argv[3] if argv[0] == "iam" else "",
+            ), patch(
+                "product_ops.deployment.staging_lifecycle._live_identity_token", return_value="token"
+            ), patch(
+                "product_ops.deployment.staging_lifecycle._live_json_get",
+                side_effect=lambda url, _token, **_kw: readiness if url.endswith("/readiness") else {},
+            ):
+                executor = make_live_rehearsal_executor(
+                    outputs,
+                    project_id=self.project_id,
+                    region="asia-east1",
+                    operator_identity=outputs["staging_runtime_service_account"],
+                )
+                return executor("external_providers_disabled_readback", {"release_profile": "core-ops"})
+
+        self.assertTrue(run(disabled)["success"])
+        with self.assertRaisesRegex(RuntimeError, "external providers are disabled"):
+            run({**disabled, "mode": "live", "live": True})
+
+    def test_rehearsal_refreshes_tokens_after_long_running_stage(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
+
+        outputs = self._valid_outputs()
+        clock = 0
+        expires_at: dict[str, int] = {}
+
+        def cloud(argv: list[str], **_kwargs: Any) -> str:
+            nonlocal clock
+            if argv[0] == "iam":
+                return argv[3]
+            if argv[:3] in (["sql", "export", "sql"], ["sql", "import", "sql"]):
+                clock += 800  # Each command stays within its 900-second timeout.
+            return ""
+
+        def identity_token(**_kwargs: Any) -> str:
+            token = f"test-token-{len(expires_at)}"
+            expires_at[token] = clock + 3600
+            return token
+
+        def get(url: str, token: str, **_kwargs: Any) -> dict[str, Any]:
+            if clock >= expires_at[token]:
+                raise RuntimeError("expired staging transport credential")
+            return {
+                "status": "ok",
+                "details": {"provider": {
+                    "mode": "disabled", "configurationValid": True,
+                    "connectivityHealthy": False, "live": False,
+                }},
+            }
+
+        with patch(
+            "product_ops.deployment.staging_lifecycle._live_gcloud", side_effect=cloud
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_identity_token", side_effect=identity_token
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_json_get", side_effect=get
+        ):
+            executor = make_live_rehearsal_executor(
+                outputs,
+                project_id=self.project_id,
+                region="asia-east1",
+                operator_identity=outputs["staging_runtime_service_account"],
+                cloud_sql_instance=outputs["staging_cloud_sql_instance"],
+            )
+            self.assertTrue(executor("data_platform_snapshot", {})["success"])
+            clock += 2200  # Elapsed worker/scheduler execution before the backup.
+            self.assertTrue(executor("backup_restore_drill", {})["success"])
+            self.assertGreater(clock, 3600)
+            result = executor("external_providers_disabled_readback", {"release_profile": "core-ops"})
+        self.assertTrue(result["success"])
+        self.assertEqual(len(expires_at), 2)
 
     def test_sql_rehearsal_rejects_a_different_instance_before_any_api_call(self) -> None:
         from unittest.mock import patch
@@ -3371,6 +3859,9 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             return_value="token",
         ), patch(
             "product_ops.deployment.staging_lifecycle._live_json_get", side_effect=json_get
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_web_operator_requires_login",
+            return_value=(True, ""),
         ), patch(
             "product_ops.deployment.staging_lifecycle._live_http_get", side_effect=http_get
         ):
@@ -4091,7 +4582,8 @@ class StagingLiveE2EGateTests(unittest.TestCase):
             self.assertNotIn(forbidden, main_text)
             self.assertNotIn(forbidden, variables_text)
         self.assertNotRegex(variables_text, r'variable\s+"[^"]*(smoke|principal)[^"]*"')
-        # The release-scoped secrets and IAM grants are unchanged.
+        # The release-scoped secrets are unchanged. The only IAM additions are the
+        # release-scoped verify grants from ODP-STAGING-REHEARSAL-NETWORK-IDENTITY-001.
         self.assertEqual(
             re.findall(r'resource "google_secret_manager_secret" "(\w+)"', main_text),
             ["staging_database_url", "staging_cursor_signing_key", "staging_web_session"],
@@ -4103,11 +4595,16 @@ class StagingLiveE2EGateTests(unittest.TestCase):
                 "staging_runtime_cloudsql",
                 "staging_runtime_db_url",
                 "staging_runtime_data",
+                # Cloud SQL instance SA, release bucket only: backup/restore drill.
+                "staging_sql_backup_drill",
                 "deployer_sa_user_runtime",
                 "deployer_sa_user_web",
                 "deployer_sa_user_worker",
+                "deployer_id_token_runtime",
                 "staging_web_invokes_api",
                 "staging_worker_invokes_api",
+                "staging_runtime_invokes_api",
+                "staging_runtime_invokes_web",
                 "staging_runtime_publisher",
                 "staging_worker_subscriber",
                 "staging_runtime_cursor_key",
@@ -4297,6 +4794,8 @@ class StagingSmokeAudienceIntegrationTests(unittest.TestCase):
             ("_live_cloud_run_description", {"side_effect": describe}),
             ("_live_identity_token", {"side_effect": lambda *, audience, **kw: edge.token(audience)}),
             ("_live_gate_clients", {"side_effect": clients}),
+            # Web is judged by the gate's own redirect rule, as in `clients`.
+            ("_live_web_operator_requires_login", {"return_value": (True, "")}),
             ("_live_gate_worker_driver", {"return_value": self.fx.base.FakeWorkerDriver()}),
             ("_live_gate_correlation_id", {"return_value": self.fx.base.CORRELATION_ID}),
             ("STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS", {"new": 0.001}),
@@ -4421,6 +4920,227 @@ class StagingSmokeAudienceIntegrationTests(unittest.TestCase):
         self.assertEqual((refused[0], refused[1]), (401, {"detail": "audience_mismatch"}))
         self.assertEqual((served[0], served[1]), (status, models))
         self.assertEqual(no_transport[0], 403)
+
+
+class StagingWorkerIdempotencyStageTests(unittest.TestCase):
+    """ODP-STAGING-WORKER-IDEMPOTENCY-SELF-ENQUEUE-001: the worker stage feeds itself.
+
+    The fake worker job behaves like ``--max-jobs 1 --require-job``: it fails
+    when nothing has been enqueued and otherwise moves the probe job to
+    ``succeeded``. Nothing earlier in these tests enqueues.
+    """
+
+    SMOKE_TOKEN = StagingLiveE2EGateTests.SMOKE_TOKEN
+    API_TOKEN = StagingLiveE2EGateTests.API_TOKEN
+    WEB_TOKEN = StagingLiveE2EGateTests.WEB_TOKEN
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.fx = _load_gate_fixtures()
+
+    def setUp(self) -> None:
+        StagingLiveE2EGateTests.setUp(self)
+        self.worker = {"queued": 0, "executions": 0}
+
+    def _routes(self, *, processed_status: str = "succeeded", **overrides: Any) -> dict[str, Any]:
+        base = self.fx.base
+        worker = self.worker
+
+        def job_readback(_body: Any, _headers: Any) -> Any:
+            status = processed_status if worker["executions"] else "queued"
+            return base.terminal_job(base.JOB_ID, status=status)
+
+        return StagingLiveE2EGateTests._core_ops_routes(self, **{
+            f"GET /api/v1/jobs/{base.JOB_ID}": job_readback,
+            **overrides,
+        })
+
+    def _run_stage(
+        self, routes: dict[str, Any] | None = None, *, claims: bool = True
+    ) -> tuple[Mapping[str, Any], dict[str, Any]]:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        seen: dict[str, Any] = {"events": [], "tokens": [], "correlation": []}
+        routes = routes if routes is not None else self._routes()
+        tokens = {
+            lifecycle.staging_smoke_token_audience(self.release_id): self.SMOKE_TOKEN,
+            self.outputs["staging_api_uri"]: self.API_TOKEN,
+            self.outputs["staging_web_uri"]: self.WEB_TOKEN,
+        }
+        base_http = self.fx.base.FakeHttp
+
+        class RecordingHttp(base_http):
+            def request(self, method: str, path: str, **kwargs: Any) -> Any:
+                result = super().request(method, path, **kwargs)
+                seen["events"].append(self.calls[-1])
+                if method == "POST" and path == "/api/v1/jobs" and result.payload.get("created"):
+                    worker_state["queued"] += 1
+                return result
+
+        worker_state = self.worker
+
+        def gcloud(argv: Sequence[str], **_kwargs: Any) -> str:
+            if argv[0] == "iam":
+                return argv[3]
+            if list(argv[:3]) == ["run", "jobs", "execute"]:
+                seen["events"].append("gcloud " + " ".join(argv))
+                if not claims or worker_state["queued"] == 0:
+                    # --require-job: an empty queue is a failed execution.
+                    raise RuntimeError(f"gcloud run jobs execute {argv[3]} failed with exit status 1")
+                worker_state["queued"] -= 1
+                worker_state["executions"] += 1
+            return ""
+
+        def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
+            return {"template": {"template": {
+                "containers": [{"image": self.outputs["staging_worker_image"]}],
+                "vpcAccess": {"egress": "ALL_TRAFFIC"},
+            }}}
+
+        def mint(*, audience: str, operator_identity: str, gcloud_bin: str) -> str:
+            seen["tokens"].append(audience)
+            return tokens[audience]
+
+        def clients(config: Any, *, web_transport_token: str, correlation_id: str) -> Any:
+            seen["config"] = config
+            seen["web_transport_token"] = web_transport_token
+            return RecordingHttp(routes), None
+
+        def correlation(expected_sha: str, **kwargs: Any) -> str:
+            seen["correlation"].append(kwargs)
+            return self.fx.base.CORRELATION_ID
+
+        with patch.object(lifecycle, "_live_gcloud", side_effect=gcloud), \
+                patch.object(lifecycle, "_live_cloud_run_description", side_effect=describe), \
+                patch.object(lifecycle, "_live_identity_token", side_effect=mint), \
+                patch.object(lifecycle, "_live_gate_clients", side_effect=clients), \
+                patch.object(lifecycle, "_live_gate_correlation_id", side_effect=correlation), \
+                patch.object(lifecycle, "STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS", 0.001), \
+                patch.object(lifecycle, "STAGING_LIVE_E2E_WORKER_DEADLINE_SECONDS", 0.05):
+            executor = lifecycle.make_live_rehearsal_executor(
+                self.outputs,
+                project_id=self.project_id,
+                region="asia-east1",
+                operator_identity=self.outputs["staging_runtime_service_account"],
+            )
+            result = executor(
+                "worker_idempotency",
+                {"release_profile": "core-ops", "manifest_digest": self.manifest_digest},
+            )
+        return result, seen
+
+    def test_the_stage_enqueues_and_replays_its_probe_before_running_the_worker(self) -> None:
+        from product_ops.deployment.staging_lifecycle import staging_smoke_token_audience
+
+        result, seen = self._run_stage()
+
+        self.assertTrue(result["success"], result.get("detail"))
+        proof = result["worker_idempotency"]
+        self.assertTrue(proof["ok"])
+        self.assertEqual(
+            (proof["terminal_status"], proof["expected_terminal_status"]), ("succeeded", "succeeded")
+        )
+        self.assertTrue({
+            "worker:enqueue",
+            "worker:idempotent_replay",
+            "worker:drain_trigger",
+            "worker:terminal_disabled",
+            "audit:durable_receipt",
+            "audit:idempotent_replay_receipt",
+        } <= {check["name"] for check in proof["checks"]})
+        events = seen["events"]
+        executes = [i for i, event in enumerate(events) if event.startswith("gcloud run jobs execute")]
+        enqueues = [i for i, event in enumerate(events) if event == "POST /api/v1/jobs"]
+        self.assertEqual(len(executes), 1, events)
+        self.assertEqual(len(enqueues), 2, events)
+        self.assertLess(max(enqueues), executes[0])
+        self.assertIn(f"GET /api/v1/jobs/{self.fx.base.JOB_ID}", events[executes[0]:])
+        # The worker job keeps its Terraform args (--max-jobs 1 --require-job).
+        self.assertNotIn("--args", events[executes[0]])
+        self.assertIn(self.outputs["staging_worker_job_name"], events[executes[0]])
+        self.assertEqual(self.worker, {"queued": 0, "executions": 1})
+        # The probe is the gate's provider-disabled external-fetch, with the
+        # smoke principal and API transport token of the release.
+        config = seen["config"]
+        self.assertEqual((config.external_provider_mode, config.required_provider_ids), ("disabled", ()))
+        self.assertEqual(config.probe_provider_id, "listing.partner_feed")
+        self.assertEqual((config.bearer_token, config.api_transport_token), (self.SMOKE_TOKEN, self.API_TOKEN))
+        self.assertEqual(
+            sorted(set(seen["tokens"])),
+            sorted([staging_smoke_token_audience(self.release_id), self.outputs["staging_api_uri"]]),
+        )
+        self.assertEqual(seen["web_transport_token"], "")
+        self.assertEqual(seen["correlation"], [{"purpose": "worker-idempotency"}])
+
+    def test_a_replay_that_creates_a_new_job_fails_the_stage(self) -> None:
+        base = self.fx.base
+
+        def always_new(_body: Any, _headers: Any) -> Any:
+            return base.response(202, base.enqueue_payload(created=True))
+
+        result, _ = self._run_stage(self._routes(**{"POST /api/v1/jobs": always_new}))
+
+        self.assertFalse(result["success"])
+        self.assertIn("worker:idempotent_replay", result["detail"])
+        self.assertIn("created=True", result["detail"])
+
+    def test_a_worker_that_claims_nothing_fails_the_stage(self) -> None:
+        result, seen = self._run_stage(claims=False)
+
+        self.assertFalse(result["success"])
+        failed = {check["name"] for check in result["worker_idempotency"]["checks"] if not check["ok"]}
+        self.assertEqual(failed, {"worker:drain_trigger", "worker:terminal_disabled"})
+        self.assertIn("worker job execution failed", result["detail"])
+        self.assertIn("status=queued", result["detail"])
+        self.assertEqual(result["worker_idempotency"]["terminal_status"], "queued")
+
+    def test_an_unexpected_terminal_state_fails_the_stage(self) -> None:
+        result, _ = self._run_stage(self._routes(processed_status="failed"))
+
+        self.assertFalse(result["success"])
+        self.assertIn("worker:terminal_disabled", result["detail"])
+        self.assertIn("status=failed", result["detail"])
+
+    def test_a_runtime_not_confirming_disabled_providers_is_never_enqueued(self) -> None:
+        readiness = self.fx.missing_model_readiness("core-ops")
+        readiness["details"]["provider"]["mode"] = "live"
+        result, seen = self._run_stage(self._routes(**{
+            "anon GET /readiness": self.fx.base.response(200, readiness),
+        }))
+
+        self.assertFalse(result["success"])
+        self.assertIn("worker:provider_mode_alignment", result["detail"])
+        self.assertNotIn("POST /api/v1/jobs", seen["events"])
+        self.assertFalse(any(event.startswith("gcloud") for event in seen["events"]))
+
+    def test_tokens_never_reach_the_stage_result(self) -> None:
+        base = self.fx.base
+        echo = {"detail": f"Bearer {self.SMOKE_TOKEN} {self.API_TOKEN}"}
+        result, _ = self._run_stage(self._routes(**{"POST /api/v1/jobs": base.response(500, echo)}))
+
+        self.assertFalse(result["success"])
+        self.assertIn("worker:enqueue", result["detail"])
+        for secret in (self.SMOKE_TOKEN, self.API_TOKEN, self.WEB_TOKEN):
+            self.assertNotIn(secret, json.dumps(result))
+
+    def test_the_stage_proof_reaches_the_verify_receipt(self) -> None:
+        stage_result, _ = self._run_stage()
+
+        from product_ops.deployment.staging_lifecycle import verify_ephemeral_staging
+
+        receipt = verify_ephemeral_staging(
+            release_id=self.release_id,
+            candidate_sha=self.candidate_sha,
+            manifest_digest=self.manifest_digest,
+            project_id=self.project_id,
+            dry_run=True,
+            stage_executor=lambda stage, _c: stage_result if stage == "worker_idempotency" else True,
+            now=self.now,
+        )
+        stage = next(r for r in receipt.resources if r["stage"] == "worker_idempotency")
+        self.assertTrue(stage["proof"]["worker_idempotency"]["ok"])
 
 
 def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:

@@ -5,6 +5,20 @@ import styles from "../networkFindAreas.module.css";
 import { type CanonicalBuilder, type LifecycleOperation, type NetPlanBuilderApi, type RecordedOutcome } from "./netplanBuilderClient";
 
 const transitions = { approved: ["execute", "登錄方案執行"], executed: ["outcome", "登錄實際結果"], outcome_observed: ["close", "結案"] } as const;
+const pad = (value: number) => String(value).padStart(2, "0");
+/** Explicit device-local offset for a datetime-local value; never assumes a fixed zone. */
+function explicitExecutionInstant(local: string): { instant: string; offset: string } | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(local);
+  if (!match) return null;
+  const [year, month, day, hour, minute, second] = match.slice(1).map(value => Number(value ?? 0));
+  const date = new Date(year, month - 1, day, hour, minute, second);
+  // Rejects impossible calendar dates and local times skipped by a DST change.
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day
+    || date.getHours() !== hour || date.getMinutes() !== minute || date.getSeconds() !== second) return null;
+  const minutes = -date.getTimezoneOffset();
+  const offset = `${minutes < 0 ? "-" : "+"}${pad(Math.floor(Math.abs(minutes) / 60))}:${pad(Math.abs(minutes) % 60)}`;
+  return { instant: `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${pad(second)}${offset}`, offset };
+}
 export function NetPlanLifecycleSection({ storeId, builder, api, onRecorded }: {
   storeId: string; builder: CanonicalBuilder; api: NetPlanBuilderApi;
   onRecorded: (builder: CanonicalBuilder, audit?: string) => void;
@@ -13,34 +27,41 @@ export function NetPlanLifecycleSection({ storeId, builder, api, onRecorded }: {
   const [reason, setReason] = useState("");
   const [amount, setAmount] = useState("");
   const [snapshots, setSnapshots] = useState("");
+  const [executedAt, setExecutedAt] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const context = JSON.stringify([storeId, builder.scenarioId, builder.problemHash, builder.status]);
   const lease = useRef({ context, api, active: true });
   if (lease.current.context !== context || lease.current.api !== api) { lease.current.active = false; lease.current = { context, api, active: true }; }
   const retry = useRef<{ fingerprint: string; key: string } | null>(null);
-  useEffect(() => { setOpen(false); setBusy(false); setReason(""); setAmount(""); setSnapshots(""); setError(""); }, [context, api]);
+  useEffect(() => { setOpen(false); setBusy(false); setReason(""); setAmount(""); setSnapshots(""); setExecutedAt(""); setError(""); }, [context, api]);
   useEffect(() => { if (!lease.current.active) lease.current = { context, api, active: true };
     const current = lease.current; return () => { current.active = false; }; }, [context, api]);
   const currentTransition = transitions[builder.status as keyof typeof transitions];
   const lifecycle = builder.lifecycle;
   const outcome = lifecycle?.outcome;
   const execution = lifecycle?.execution;
+  const actual = executedAt ? explicitExecutionInstant(executedAt) : null;
   async function submit() {
     if (!currentTransition || !api.lifecycle || !lifecycle?.canExecute || busy || !reason.trim()) return;
     const operation: LifecycleOperation = currentTransition[0];
     let recorded: RecordedOutcome | undefined;
+    let instant: string | undefined;
+    if (operation === "execute") {
+      if (!actual) { setError("請填入有效的實際執行時間。"); return; }
+      instant = actual.instant;
+    }
     if (operation === "outcome") {
       if (!amount.trim() || !Number.isFinite(Number(amount))) { setError("請填入有限的實際毛利數值。"); return; }
       recorded = { actualGrossMargin: Number(amount), sourceSnapshotIds: snapshots.split(/[,\n]/).map(value => value.trim()).filter(Boolean) };
     }
-    const fingerprint = JSON.stringify([context, operation, reason.trim(), recorded]);
+    const fingerprint = JSON.stringify([context, operation, reason.trim(), recorded, instant]);
     if (retry.current?.fingerprint !== fingerprint) retry.current = { fingerprint, key: crypto.randomUUID() };
     const captured = lease.current;
     const current = () => captured.active && captured === lease.current;
     setBusy(true); setError("");
     try {
-      const result = await api.lifecycle(storeId, operation, builder, reason.trim(), retry.current.key, recorded);
+      const result = await api.lifecycle(storeId, operation, builder, reason.trim(), retry.current.key, recorded, instant);
       if (!current()) return;
       if (result.ok) { retry.current = null; setOpen(false); onRecorded(result.builder, result.auditEventId); }
       else if (!("superseded" in result)) setError(result.message);
@@ -51,7 +72,7 @@ export function NetPlanLifecycleSection({ storeId, builder, api, onRecorded }: {
     <h4>執行與結果</h4>
     {!lifecycle ? <p>尚未取得執行與結果紀錄。</p> : <>
       {execution ? <><h5>執行紀錄</h5><dl><dt>紀錄</dt><dd>{execution.execution_id}</dd>
-        <dt>登錄人</dt><dd>{execution.executed_by}</dd><dt>登錄時間</dt><dd>{execution.executed_at}</dd></dl>
+        <dt>登錄人</dt><dd>{execution.executed_by}</dd><dt>實際執行時間</dt><dd>{execution.executed_at}</dd></dl>
         <ul>{execution.actions.map((row, index) => <li key={`${row.entity_id}-${index}`}>{row.entity_id} · {row.action}</li>)}</ul></> : <p>尚無方案執行紀錄。</p>}
       {outcome ? <><h5>預期與實際比較</h5><dl><dt>預期毛利</dt><dd>{outcome.expected_gross_margin}</dd>
         <dt>已登錄實際毛利</dt><dd>{outcome.actual_gross_margin}</dd>
@@ -67,10 +88,14 @@ export function NetPlanLifecycleSection({ storeId, builder, api, onRecorded }: {
     </>}
     {currentTransition ? <Modal key={context} open={open} title={currentTransition[1]} closeDisabled={busy}
       onClose={() => { if (!busy) setOpen(false); }} primaryAction={{ id: "record-netplan-lifecycle", label: "確認送出", loading: busy,
-        permitted: Boolean(reason.trim()) && !busy, onSelect: () => { void submit(); } }}>
+        permitted: Boolean(reason.trim()) && (currentTransition[0] !== "execute" || Boolean(actual)) && !busy, onSelect: () => { void submit(); } }}>
       <p>情境 {builder.scenarioId} · {builder.status}</p><p>即將影響的實體：</p>
       <ul>{Object.keys(builder.optionsByEntity).map(id => <li key={id}>{id}</li>)}</ul>
-      {currentTransition[0] === "execute" ? <p>確認原核准方案的執行登錄；後端會再次核對核准與功能旗標。</p> : null}
+      {currentTransition[0] === "execute" ? <><p>確認原核准方案的執行登錄；後端會再次核對核准與功能旗標。</p>
+        <label className="odp-field"><span>實際執行時間</span>
+          <input className={styles.inputField} type="datetime-local" step={1} value={executedAt} onChange={event => setExecutedAt(event.target.value)} disabled={busy} /></label>
+        <p>{actual ? `將以此裝置時區 UTC${actual.offset} 登錄為 ${actual.instant}；90／180／365 日追蹤由此時間起算。`
+          : "請填入方案實際執行的日期與時間（非登錄當下），90／180／365 日追蹤由此時間起算。"}</p></> : null}
       {currentTransition[0] === "outcome" ? <><label className="odp-field"><span>實際毛利</span>
         <input className={styles.inputField} inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value)} disabled={busy} /></label>
         <label className="odp-field"><span>填報來源識別（逗號或換行分隔）</span><textarea className={styles.textareaField} value={snapshots} onChange={event => setSnapshots(event.target.value)} disabled={busy} /></label>

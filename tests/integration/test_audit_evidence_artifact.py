@@ -228,12 +228,18 @@ def test_download_binds_verified_subject_tenant_and_archive_digest():
 
 
 @pytest.mark.parametrize("format", ["zip", "pdf"])
-def test_sensitive_download_requires_verified_authority_not_body_strings(format):
+@pytest.mark.parametrize(
+    ("sensitive", "classification"),
+    [(True, "restricted"), (False, "restricted"), (False, " Restricted ")],
+)
+def test_sensitive_download_requires_verified_authority_not_body_strings(
+    format, sensitive, classification
+):
     client, _, body, _ = _client()
     body.update(
         {
-            "sensitive": True,
-            "data_classification": "restricted",
+            "sensitive": sensitive,
+            "data_classification": classification,
             "purpose_scope": "synthetic-test",
             "authorized_by": "caller-invented-approver",
             "authorization_id": "caller-invented-receipt",

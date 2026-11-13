@@ -63,3 +63,27 @@ body:has(.operatorIntakeDetailOpen) {
     overflow-x: hidden !important;
   }
 }
+
+/*
+ * Keep the console (top navigation included) at one width whether or not the
+ * active workspace overflows. Without this, switching from a tall workspace
+ * (e.g. 今日工作, 44 items) to a short one (a no-data store/growth card) adds or
+ * removes a classic scrollbar and shifts the whole shell horizontally on every
+ * tab change.
+ *
+ * Lay the document out at the full viewport width (100vw includes the
+ * scrollbar) and let a present scrollbar overlay the 20px desktop page margin,
+ * instead of reserving a gutter: `scrollbar-gutter: stable` would shrink every
+ * non-overflowing workspace by the scrollbar width and break the Package 10
+ * viewport geometry (content = viewport - 40). Clipping x hides only that
+ * scrollbar-covered strip; the console has no horizontal page overflow.
+ * Phones use overlay scrollbars and a 12px topbar margin, so this stays at
+ * desktop widths. Kept last so it also wins over the intake-detail
+ * `width: 100%` above, keeping /intake and /operator on the same width.
+ */
+@media (min-width: 769px) {
+  html:has([data-testid="operator-console"]) {
+    width: 100vw;
+    overflow-x: hidden;
+  }
+}

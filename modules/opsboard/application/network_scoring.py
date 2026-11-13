@@ -899,6 +899,7 @@ class NetworkScoringService:
         return {
             "id": candidate.candidate_site_id,
             "listingId": listing.listing_id,
+            "canonicalSiteStatus": getattr(candidate, "site_status", None),
             "heatZoneId": heat_zone_id,
             "title": normalized_address or candidate.candidate_site_id,
             "zoneLabel": address.district or heat_zone_id,
@@ -1006,8 +1007,8 @@ class NetworkScoringService:
                 "rentReasonableness": report.rent_reasonableness,
                 "cannibalization": report.cannibalization_risk,
             },
-            "capex": None,
-            "rentAssumption": None,
+            "capex": f"NT${value:,.0f}" if (value := getattr(report, "buildout_capex", None)) is not None else None,
+            "rentAssumption": f"月租 NT${value:,.0f}" if (value := getattr(report, "monthly_rent", None)) is not None else None,
             "drivers": list(report.key_positive_factors),
             "reasons": list(report.key_positive_factors),
             "risks": list(report.key_negative_factors),
@@ -1162,7 +1163,10 @@ class NetworkScoringService:
             model_version = scorecard["modelVersion"] if scorecard else None
             if not isinstance(model_version, str) or not model_version.strip():
                 model_version = None
-        if scorecard is not None:
+        if self._require_canonical:
+            persisted_status = candidate.get("canonicalSiteStatus")
+            stage = persisted_status if isinstance(persisted_status, str) and persisted_status.strip() else "unknown"
+        elif scorecard is not None:
             stage = "rejected" if scorecard["recommendation"] == "REJECT" else "evaluated"
             if candidate.get("reviewId") and scorecard["recommendation"] != "REJECT":
                 stage = "pendingreview"
@@ -1190,6 +1194,8 @@ class NetworkScoringService:
         }
         if "currentAdmission" in candidate:
             result["currentAdmission"] = _copy(candidate["currentAdmission"])
+        if self._require_canonical:
+            result["canonicalSiteStatus"] = persisted_status if stage != "unknown" else None
         if "readEvidence" in candidate:
             result["readEvidence"] = _copy(candidate["readEvidence"])
             if read_principal is not None:
@@ -1258,7 +1264,8 @@ class NetworkScoringService:
                 "key": key,
                 "label": label,
                 "values": [
-                    {"id": card["id"], "text": str(pick(card)), "isBest": bool(best and card["id"] == best["id"])}
+                    {"id": card["id"], "text": "—" if (value := pick(card)) is None else str(value),
+                     "isBest": bool(best and card["id"] == best["id"])}
                     for card in selected
                 ],
             }

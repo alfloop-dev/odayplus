@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
 import { responseForRequest } from "./storeOpsPersistedReviews.fixtures";
@@ -25,6 +25,126 @@ const liveIssue: StoreOpsWorkflowIssue = {
 
 describe("StoreOpsWorkflowDialogs production guards", () => {
   beforeEach(() => { vi.stubGlobal("crypto", webcrypto); vi.stubGlobal("fetch", vi.fn((url, init) => Promise.resolve(responseForRequest(liveIssue, url, init)))); });
+  it("pins the captured verified principal and retains the request across a failed before or after session check", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const guard = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true).mockResolvedValueOnce(false).mockResolvedValue(true);
+    const onClose = vi.fn(), onTriage = vi.fn();
+    render(<StoreOpsWorkflowDialogs activeDialog="triage" issue={liveIssue} callbacks={{ onTriage }} onClose={onClose}
+      commandScope="verified-A/tenant/persona" commandPrincipal={{ subject: "verified-A", tenantId: "verified-tenant" }}
+      createAuthenticatedReadGuard={(current) => async () => current() && await guard()} />);
+    const form = screen.getByRole("dialog").querySelector("form")!;
+    window.sessionStorage.setItem("oday.operator.subject", "untrusted-browser-B");
+    window.sessionStorage.setItem("oday.operator.tenant", "untrusted-browser-tenant-B");
+    fireEvent.submit(form);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("登入範圍尚未重新核對"));
+    expect(fetch).not.toHaveBeenCalled();
+    fireEvent.submit(form);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("尚未確認送出結果"));
+    expect(fetch).toHaveBeenCalledOnce(); expect(onClose).not.toHaveBeenCalled(); expect(onTriage).not.toHaveBeenCalled();
+    const first = new Headers(vi.mocked(fetch).mock.calls[0][1]?.headers);
+    expect(first.get("If-Actor-Match")).toBe("verified-A");
+    expect(first.get("If-Tenant-Match")).toBe("verified-tenant");
+    expect(first.has("X-Subject-Id")).toBe(false);
+    fireEvent.submit(form);
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(fetch).toHaveBeenCalledTimes(2); expect(onTriage).toHaveBeenCalledOnce();
+    expect(new Headers(vi.mocked(fetch).mock.calls[1][1]?.headers).get("Idempotency-Key")).toBe(first.get("Idempotency-Key"));
+  });
+  it("does not POST after the mounted owner is removed while the real guard callback waits", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    let finish!: (verified: boolean) => void;
+    let started = false;
+    const view = render(<StoreOpsWorkflowDialogs activeDialog="triage" issue={liveIssue} onClose={vi.fn()}
+      commandScope="verified-A/tenant/persona" commandPrincipal={{ subject: "verified-A", tenantId: "verified-tenant" }}
+      createAuthenticatedReadGuard={(current) => async () => {
+        if (!current()) return false;
+        started = true;
+        const verified = await new Promise<boolean>((resolve) => { finish = resolve; });
+        return current() && verified;
+      }} />);
+    fireEvent.submit(screen.getByRole("dialog").querySelector("form")!);
+    await waitFor(() => expect(started).toBe(true));
+    view.unmount();
+    await act(async () => { finish(true); });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("keeps an unsent draft owned by the original account and hides it from a different account", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const onClose = vi.fn(), onTriage = vi.fn();
+    const props = { activeDialog: "triage" as const, issue: liveIssue, callbacks: { onTriage }, onClose };
+    const view = render(<StoreOpsWorkflowDialogs {...props} commandScope="verified-A/tenant/persona" />);
+    const form = screen.getByRole("dialog").querySelector("form")!;
+    fireEvent.change(screen.getByLabelText("根因分類"), { target: { value: "payment" } });
+    view.rerender(<StoreOpsWorkflowDialogs {...props} commandScope="verified-B/tenant/persona" />);
+    expect(screen.queryByText(liveIssue.id)).not.toBeInTheDocument();
+    expect(form).not.toBeVisible();
+    fireEvent.submit(form);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("登入範圍已變更"));
+    expect(fetch).not.toHaveBeenCalled(); expect(onTriage).not.toHaveBeenCalled(); expect(onClose).not.toHaveBeenCalled();
+    view.rerender(<StoreOpsWorkflowDialogs {...props} commandScope="verified-A/tenant/persona" />);
+    expect(screen.getByRole("dialog").querySelector("form")).toBe(form);
+    expect(screen.getByLabelText("根因分類")).toHaveValue("payment");
+    fireEvent.submit(form);
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(fetch).toHaveBeenCalledOnce(); expect(onTriage).toHaveBeenCalledOnce();
+  });
+  it("reports actual storage denial without a POST, success callback, dismissal or stuck pending form", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const onClose = vi.fn(), onTriage = vi.fn(), onStorageFailure = vi.fn();
+    render(<StoreOpsWorkflowDialogs activeDialog="triage" issue={liveIssue} callbacks={{ onTriage }} onClose={onClose} onStorageFailure={onStorageFailure} />);
+    const form = screen.getByRole("dialog").querySelector("form")!;
+    const denied = vi.spyOn(window.sessionStorage, "getItem").mockImplementation(() => { throw new DOMException("Denied", "SecurityError"); });
+    try {
+      fireEvent.submit(form);
+      await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("瀏覽器無法核對"));
+      expect(fetch).not.toHaveBeenCalled(); expect(onClose).not.toHaveBeenCalled(); expect(onTriage).not.toHaveBeenCalled();
+      expect(onStorageFailure).toHaveBeenCalledOnce();
+      expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "false");
+      expect(screen.getByLabelText("根因分類")).not.toBeDisabled();
+      denied.mockRestore();
+      onStorageFailure.mock.calls[0][0]();
+      fireEvent.submit(form);
+      await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+      expect(fetch).toHaveBeenCalledOnce(); expect(onTriage).toHaveBeenCalledOnce();
+    } finally { denied.mockRestore(); }
+  });
+
+  it("retains the original unknown intent across storage blocking and refuses a different recovered account scope", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const fetchMock = vi.fn().mockRejectedValueOnce(new Error("connection lost"))
+      .mockImplementation((url, init) => Promise.resolve(responseForRequest(liveIssue, url, init)));
+    vi.stubGlobal("fetch", fetchMock);
+    const onClose = vi.fn(), onTriage = vi.fn(), onStorageFailure = vi.fn();
+    const props = { activeDialog: "triage" as const, issue: liveIssue, callbacks: { onTriage }, onClose, onStorageFailure };
+    const view = render(<StoreOpsWorkflowDialogs {...props} commandScope="verified-account-A/tenant/persona" />);
+    const form = screen.getByRole("dialog").querySelector("form")!;
+    fireEvent.change(screen.getByLabelText("根因分類"), { target: { value: "payment" } });
+    fireEvent.submit(form);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("尚未確認"));
+    const originalKey = fetchMock.mock.calls[0][1].headers["Idempotency-Key"];
+    const denied = vi.spyOn(window.sessionStorage, "getItem").mockImplementation(() => { throw new DOMException("Denied", "SecurityError"); });
+    try {
+      fireEvent.submit(form);
+      await waitFor(() => expect(onStorageFailure).toHaveBeenCalledOnce());
+      expect(fetchMock).toHaveBeenCalledOnce();
+      view.rerender(<StoreOpsWorkflowDialogs {...props} browserStorageBlocked commandScope="verified-account-A/tenant/persona" />);
+      expect(screen.getByLabelText("根因分類")).toHaveValue("payment");
+      expect(screen.getByLabelText("根因分類")).toBeDisabled();
+      denied.mockRestore();
+      view.rerender(<StoreOpsWorkflowDialogs {...props} commandScope="verified-account-B/tenant/persona" />);
+      fireEvent.submit(form);
+      await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("登入範圍已變更"));
+      expect(fetchMock).toHaveBeenCalledOnce(); expect(onClose).not.toHaveBeenCalled(); expect(onTriage).not.toHaveBeenCalled();
+      view.rerender(<StoreOpsWorkflowDialogs {...props} commandScope="verified-account-A/tenant/persona" />);
+      expect(screen.getByRole("dialog").querySelector("form")).toBe(form);
+      expect(screen.getByLabelText("根因分類")).toHaveValue("payment");
+      fireEvent.submit(form);
+      await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[1][1].headers["Idempotency-Key"]).toBe(originalKey);
+      expect(onTriage).toHaveBeenCalledOnce();
+    } finally { denied.mockRestore(); }
+  });
   it("keeps escalation metadata and target enums behind the compact choice cards", async () => {
     const onEscalate = vi.fn();
     render(<StoreOpsWorkflowDialogs activeDialog="escalate" issue={liveIssue} callbacks={{ onEscalate }} onClose={vi.fn()} />);
@@ -169,6 +289,7 @@ describe("StoreOpsWorkflowDialogs production guards", () => {
 
   afterEach(() => {
     cleanup();
+    window.sessionStorage.clear();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });

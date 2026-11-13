@@ -278,7 +278,9 @@ def test_ci_dispatches_only_dev_and_does_not_claim_live_success(monkeypatch, con
 def test_workflow_keeps_one_deployment_implementation_and_manual_gate():
     release = yaml.safe_load((ROOT / auto.WORKFLOW).read_text())
     jobs = release["jobs"]
-    policy_checkout = jobs["release_phase"]["steps"][0]["with"]["ref"]
+    policy_checkout = next(
+        step for step in jobs["release_phase"]["steps"] if str(step.get("uses", "")).startswith("actions/checkout@")
+    )["with"]["ref"]
     assert "inputs.phase == 'auto' && github.sha" in policy_checkout
     manual = jobs["admission"]
     assert "inputs.phase == 'deploy'" in manual["if"]
@@ -1050,6 +1052,27 @@ def test_live_readback_refuses_unproven_or_mixed_state(monkeypatch, context, tmp
     receipt = tmp_path / auto.RESTORE_FILE
     assert auto.main(["live-readback", "--baseline", str(baseline), "--output", str(receipt)]) == 1
     assert not receipt.exists()
+
+
+def test_serving_release_reads_per_attempt_candidate_tags():
+    """ODP-CLOUD-RUN-REVISION-SUFFIX-PER-ATTEMPT-001: the tag names the attempt too.
+
+    Revisions deployed before the change keep their bare ``candidate-<sha16>``
+    tag, so both forms identify the release; anything else is no release tag.
+    """
+    def service(tag):
+        return {"status": {"traffic": [
+            {"revisionName": "rev-a2", "percent": 100},
+            {"revisionName": "rev-a1", "tag": f"candidate-{A_SHA[:16]}-0b1c", "percent": 0},
+            {"revisionName": "rev-a2", "tag": tag, "percent": 0},
+        ]}}
+
+    assert auto.serving_release(service(f"candidate-{A_SHA[:16]}-9f3e")) == A_SHA[:16]
+    assert auto.serving_release(service(f"candidate-{A_SHA[:16]}")) == A_SHA[:16]
+    for malformed in (f"candidate-{A_SHA[:16]}-9f3", f"candidate-{A_SHA[:16]}-9F3E",
+                      f"candidate-{A_SHA[:16]}-r1-a2"):
+        with pytest.raises(auto.Refused, match="no unique release tag"):
+            auto.serving_release(service(malformed))
 
 
 def test_live_readback_empty_target_requires_full_absence_probe(monkeypatch, context, tmp_path):

@@ -17,6 +17,7 @@ from common import (
     claude_model_selection_args,
     load_json,
     parse_iso_timestamp,
+    protected_execution_paths,
     spawn_background_process,
     substantive_review_reopen_count,
 )
@@ -27,10 +28,15 @@ from dispatch_policy import (
     dispatch_reason_role,
     role_provider_block_reason,
 )
-from dispatch_policy import DEFAULT_FROZEN_CLOSEOUT_STATUSES, task_closeout_is_frozen, task_submitted_author
+from dispatch_policy import DEFAULT_FROZEN_CLOSEOUT_STATUSES, task_closeout_is_frozen, task_review_source_identity
+from dispatch_policy import review_source_block_reason
+from dispatch_policy import is_human_gate_agent
 from dispatch_policy import agent_provider_identity_ids as dispatch_policy_agent_provider_identity_ids
 from provider_runtime import configured_provider_binary, provider_config_entry
 import status_transition
+from capacity_controller import is_capacity_sidecar
+from runtime_state import queue_event_moved_from_worker
+from worktree_cleanliness import ProtectedExecutionUnavailable
 
 
 def _supervisor_module():
@@ -45,13 +51,16 @@ def _sync_supervisor_scope() -> None:
         "__name__", "__doc__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__",
         "Any", "_supervisor_module", "_sync_supervisor_scope", "_entrypoint", "_sync_scope_guard", "status_transition",
         "claude_model_selection_args", "configured_provider_binary", "provider_config_entry", "spawn_background_process",
+        "protected_execution_paths", "ProtectedExecutionUnavailable",
         # The role/provider policy is a leaf that both this module and the
         # supervisor import from `dispatch_policy`. Listing the names keeps this
         # module's own bindings authoritative rather than depending on the two
         # copies happening to be the same object.
         "ROLE_HELPER", "ROLE_OWNER", "ROLE_REVIEWER", "dispatch_reason_role",
         "role_provider_block_reason", "dispatch_policy_agent_provider_identity_ids",
-        "task_closeout_is_frozen", "DEFAULT_FROZEN_CLOSEOUT_STATUSES", "task_submitted_author",
+        "task_closeout_is_frozen", "DEFAULT_FROZEN_CLOSEOUT_STATUSES", "task_review_source_identity",
+        "review_source_block_reason",
+        "is_human_gate_agent",
         "worker_writer_pids", "worker_writers_are_alive", "terminate_worker_writers",
         "_settle_fenced_sibling_worker", "fence_account_pool_workers",
         "BACKGROUND_TASK_TERMINATED_PATTERN", "worker_has_terminated_background_tasks",
@@ -2063,8 +2072,15 @@ def successful_worker_exit_outcome(
     current_task: dict[str, Any] | None,
     *,
     terminal_statuses: set[str],
+    local_handoff_verified: bool = False,
 ) -> str:
-    """Classify a zero-exit worker by its durable task-board postcondition."""
+    """Classify a zero-exit worker by its durable task-board postcondition.
+
+    Task progress is read from origin, so a sealed unpublished commit is
+    invisible to it; only the caller's ``terminal_local_handoff`` proof can
+    credit one. It sits after the ready-without-submission refusal and never
+    reaches a reviewer or a board status, and the boot path does not pass it.
+    """
     task = current_task if isinstance(current_task, dict) else {}
     status = str(task.get("status") or "").strip().lower()
     terminal_statuses = {str(value).lower() for value in terminal_statuses}
@@ -2083,7 +2099,7 @@ def successful_worker_exit_outcome(
         return "no_progress"
     if task_progress_fingerprint(dispatched) != task_progress_fingerprint(task):
         return "incremental_progress"
-    return "no_progress"
+    return "incremental_progress" if local_handoff_verified else "no_progress"
 
 @_entrypoint
 def worker_retry_settings(config: dict[str, Any], provider: str | None) -> dict[str, Any]:
@@ -2176,12 +2192,6 @@ def review_churn_settings(config: dict[str, Any]) -> dict[str, Any]:
     return settings
 
 @_entrypoint
-def is_human_gate_agent(agent_name: str | None) -> bool:
-    name = str(agent_name or "").strip().casefold()
-    if not name:
-        return False
-    return name in {"human/ops", "human", "ops"} or name.startswith("human/")
-
 @_entrypoint
 def get_agent_reassignment_candidates(
     config: dict[str, Any],
@@ -2383,6 +2393,15 @@ def agent_can_take_task(
     # would mean one of those paths could still hand review to a lane the
     # policy excludes.
     if role_provider_block_reason(config, name, role=role, task=task):
+        return False
+    # A capacity sidecar works only in the owner lane selected for its parent,
+    # which is the owner it was created with. If that lane is unavailable the
+    # sidecar waits; no repair or failover may move it to an unselected provider.
+    if (
+        role != "reviewer"
+        and is_capacity_sidecar(task)
+        and normalize_agent_id(name) != normalize_agent_id(str(task.get("owner") or ""))
+    ):
         return False
     if task_is_sidecar(task):
         return True
@@ -2805,6 +2824,13 @@ def first_viable_agent(
                 continue
             if task is not None and not agent_can_take_task(config, name, task, role=role):
                 continue
+            # The pool exclusions above are the caller's; whether this name may
+            # review the submitted work at all is the common source rule's, the
+            # same one dispatch readiness and the approval ask. A raw pool
+            # lookup resolves an id that another agent also displays as its
+            # name to one pool and admits it; the common rule refuses it.
+            if task is not None and role == "reviewer" and review_source_block_reason(config, task, name):
+                continue
             viable.append(name)
 
     if not viable:
@@ -2866,6 +2892,8 @@ def has_configured_reassignment_candidates(
             if agent_account_pool_id(config, name) in excluded_pool_ids:
                 continue
             if not agent_can_take_task(config, name, task, role=role):
+                continue
+            if task is not None and role == "reviewer" and review_source_block_reason(config, task, name):
                 continue
             return True
     return False
@@ -3322,12 +3350,14 @@ def reassign_tasks_after_review_churn(
                 changed = True
             continue
 
-        submitted_author = task_submitted_author(config, snapshot)
-        author_pool_exclusions = (
-            {agent_account_pool_id(config, submitted_author)}
-            if submitted_author and not is_human_gate_agent(submitted_author)
-            else set()
-        )
+        # The reviewer has to stay independent of every source author of the
+        # submitted range, its genuine submitter and the current owner, not
+        # only of the owner being rotated in. When that set cannot be
+        # established the rotation waits: no reviewer can be shown independent.
+        source = task_review_source_identity(config, snapshot)
+        if source.error:
+            continue
+        author_pool_exclusions = set(source.pools)
         reviewer_candidates: list[str] = []
         if is_human_gate_agent(reviewer):
             new_reviewer = reviewer
@@ -3336,7 +3366,7 @@ def reassign_tasks_after_review_churn(
                 first_viable_agent(
                     config,
                     [reviewer],
-                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
+                    exclude={new_owner} | set(source.agents),
                     state=state,
                     task=snapshot,
                     provider_report=provider_report,
@@ -3355,7 +3385,7 @@ def reassign_tasks_after_review_churn(
                 new_reviewer = first_viable_agent(
                     config,
                     reviewer_candidates,
-                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
+                    exclude={new_owner} | set(source.agents),
                     state=state,
                     task=snapshot,
                     provider_report=provider_report,
@@ -3369,7 +3399,7 @@ def reassign_tasks_after_review_churn(
             if has_configured_reassignment_candidates(
                 config,
                 all_reviewer_candidates,
-                exclude={new_owner} | ({submitted_author} if submitted_author else set()),
+                exclude={new_owner} | set(source.agents),
                 task=snapshot,
                 exclude_pools=reviewer_pool_exclusions,
                 role=ROLE_REVIEWER,
@@ -3474,6 +3504,11 @@ def maybe_reassign_task_after_worker_failure(
     settings = worker_reassignment_settings(config)
     if not settings.get("enabled", True):
         return None
+    # A run that lost its event no longer answers for the task. process_queue's
+    # pre-launch failure record has no lifecycle status: its event is still queued
+    # because it is the attempt being made, not because the attempt moved away.
+    if worker.get("status") and queue_event_moved_from_worker(state, worker):
+        return None
 
     attempt_number = failure_count if failure_count is not None else int(worker.get("retry_count", 0)) + 1
     if not force and (not terminal or respect_threshold) and attempt_number < int(settings.get("after_attempts", 2)):
@@ -3514,15 +3549,11 @@ def maybe_reassign_task_after_worker_failure(
     reviewer = str(task.get("reviewer") or "")
     failed_pool = agent_account_pool_id(config, failing_agent)
     quota_exclusions = {failed_pool} if is_terminal_quota_failure_kind(str(failure.get("kind") or "")) and failed_pool else set()
-    submitted_author = task_submitted_author(config, task)
-    author_pool_exclusions = (
-        {agent_account_pool_id(config, submitted_author)}
-        if submitted_author and not is_human_gate_agent(submitted_author)
-        else set()
-    )
+    source = task_review_source_identity(config, task)
+    author_pool_exclusions = set(source.pools)
 
     if task_status in review_statuses and reviewer == failing_agent:
-        if is_human_gate_agent(reviewer):
+        if is_human_gate_agent(reviewer) or source.error:
             return None
         candidates = get_agent_reassignment_candidates(config, failing_agent, role="reviewer", task=task)
         failed_reviewers = {
@@ -3533,7 +3564,7 @@ def maybe_reassign_task_after_worker_failure(
         new_reviewer = first_viable_agent(
             config,
             candidates,
-            exclude={owner, reviewer} | failed_reviewers | ({submitted_author} if submitted_author else set()),
+            exclude={owner, reviewer} | failed_reviewers | set(source.agents),
             state=state,
             task=task,
             role="reviewer",
@@ -3599,6 +3630,10 @@ def maybe_reassign_task_after_worker_failure(
         # agent. Carry the reviewer through untouched instead.
         if is_human_gate_agent(reviewer):
             new_reviewer = reviewer
+        elif source.error:
+            # The reviewer that would carry the new owner's task cannot be shown
+            # independent of the submitted work, so ownership does not move.
+            return None
         else:
             # Only the owner failed. A reviewer that is still viable keeps the task:
             # load balancing is for picking a replacement, not a reason to churn a
@@ -3607,7 +3642,7 @@ def maybe_reassign_task_after_worker_failure(
                 first_viable_agent(
                     config,
                     [reviewer],
-                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
+                    exclude={new_owner} | set(source.agents),
                     state=state,
                     task=task,
                     balance_load=False,
@@ -3623,7 +3658,7 @@ def maybe_reassign_task_after_worker_failure(
                 new_reviewer = first_viable_agent(
                     config,
                     reviewer_candidates,
-                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
+                    exclude={new_owner} | set(source.agents),
                     state=state,
                     task=task,
                     role="reviewer",
@@ -4163,10 +4198,7 @@ def requeue_stale_manual_pending_worker(
     state.setdefault("workers", {}).pop(run_id, None)
     if queue_event_id:
         record = queue_event_record(state, queue_event_id)
-        record["status"] = "queued"
-        record.pop("processed_at", None)
-        record.pop("error", None)
-        record.pop("run_id", None)
+        _reset_queue_record_for_redispatch(record, reason=reason)
     write_activity_log(
         config,
         {
@@ -4204,6 +4236,155 @@ def existing_file_inbox_fallback_run_id(state: dict[str, Any], queue_event_id: s
     return None
 
 @_entrypoint
+def supersede_worker_without_queue_event(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any]) -> bool:
+    """End a run whose event was requeued or taken, before it can launch a successor.
+
+    Parking it would not hold: process_queue waits for an active run, so the
+    event would never be dispatched again.
+    """
+    if not queue_event_moved_from_worker(state, worker):
+        return False
+    _mark_parked_worker_superseded(
+        config, worker, "Worker superseded after its queue event was requeued or moved to another run."
+    )
+    return True
+
+
+def _mark_parked_worker_superseded(config: dict[str, Any], worker: dict[str, Any], message: str) -> None:
+    worker["status"] = "superseded"
+    worker["next_retry_at"] = None
+    worker["last_error"] = message
+    worker["last_event_at"] = utc_now()
+    write_activity_log(
+        config,
+        {
+            "type": "worker_superseded",
+            "provider": worker.get("provider"),
+            "task_id": worker.get("task_id"),
+            "message": message,
+            "worker_run_id": worker.get("run_id"),
+            "queue_event_id": worker.get("queue_event_id"),
+        },
+    )
+
+
+@_entrypoint
+def worker_slot_left_logical_pool(config: dict[str, Any], worker: dict[str, Any]) -> bool:
+    """Whether this run's physical slot is outside its logical agent's account pool."""
+    logical_id = worker_logical_dispatch_agent_id(config, worker)
+    logical_pool = agent_account_pool_id(config, logical_id)
+    physical = normalize_agent_id(str(worker.get("agent_id") or worker.get("provider") or ""))
+    if not logical_id or not physical or not logical_pool:
+        return True
+    if logical_pool != agent_account_pool_id(config, physical):
+        return True
+    agents = config.get("agents") if isinstance(config.get("agents"), dict) else {}
+    if agents:
+        if logical_id not in agents or physical not in agents:
+            return True
+        if agent_is_dispatch_slot(agents.get(logical_id)):
+            return True
+        if physical != logical_id and physical not in set(logical_worker_slot_ids(config, logical_id)):
+            return True
+    snapshot = worker.get("request_snapshot") if isinstance(worker.get("request_snapshot"), dict) else {}
+    metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+    pools = config.get("account_pools") if isinstance(config.get("account_pools"), dict) else {}
+    if pools and (
+        (agents.get(logical_id) or {}).get("account_pool") is not None
+        or worker.get("account_pool") is not None
+        or metadata.get("account_pool") is not None
+    ):
+        pool_cfg = pools.get(logical_pool)
+        if not isinstance(pool_cfg, dict) or pool_cfg.get("enabled") is False or str(
+            pool_cfg.get("state") or ""
+        ).lower() == "disabled":
+            return True
+    for raw_pool in (worker.get("account_pool"), metadata.get("account_pool")):
+        if raw_pool is not None and normalize_agent_id(str(raw_pool)) != logical_pool:
+            return True
+    for raw_slot in (
+        worker.get("dispatch_slot_id"),
+        worker.get("slot_id"),
+        metadata.get("dispatch_slot_id"),
+        metadata.get("slot_id"),
+    ):
+        if raw_slot is not None:
+            norm_slot = normalize_agent_id(str(raw_slot))
+            if (
+                norm_slot != physical
+                or (agents and norm_slot not in agents)
+                or (norm_slot != logical_id and norm_slot not in set(logical_worker_slot_ids(config, logical_id)))
+            ):
+                return True
+    snapshot_agent = normalize_agent_id(str(snapshot.get("agent_id") or ""))
+    if snapshot_agent and snapshot_agent != physical:
+        return True
+    for raw_logical in (worker.get("logical_agent_id"), metadata.get("logical_agent_id")):
+        if raw_logical is not None and normalize_agent_id(str(raw_logical)) != logical_id:
+            return True
+    return False
+
+
+def _execution_authority_refusal(config: dict[str, Any], worker: dict[str, Any]) -> str | None:
+    """Why the board, read now, forbids this run from starting execution again.
+
+    What it relaunches or resumes is the old dispatch's snapshot, and neither a
+    failure nor an answered approval grants anything, so it needs what a new
+    dispatch needs at its own launch: the assignment predicate, the dispatcher's
+    eligibility predicate and the final-launch gate. Queue custody is a separate
+    check and answers none of this.
+
+    The event key stays out of that gate. It records the branch head, which this
+    lineage may have pushed itself, and a retry must keep its budget through that.
+    Every role in the key is still compared, against the snapshot being relaunched.
+    """
+    task_map = task_index_from_status(config, load_status(config))
+    if worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker):
+        return None
+    if worker_slot_left_logical_pool(config, worker):
+        return "the run's physical slot is outside its logical agent's account pool"
+    event = worker_dispatch_event(config, worker)
+    reason = event["reason"]
+    if reason in OWNER_NOTIFICATION_QUEUE_REASONS:
+        return stale_dispatch_skip_message(config, event, task_map) or launch_protection_refusal(
+            config, task_map.get(event["task_id"]) or {}, event["metadata"]
+        )
+    if not worker_matches_current_assignment(config, worker, task_map):
+        return "task responsibility moved to another agent or status"
+    task_id = event["task_id"]
+    task = task_map[task_id]
+    metadata = event["metadata"]
+    dispatched = metadata.get("task") if isinstance(metadata.get("task"), dict) else {}
+    schema = config.get("schema") or {}
+    for field in (schema.get("assignee_field", "owner"), schema.get("reviewer_field", "reviewer")):
+        if field in dispatched and normalize_agent_id(str(dispatched[field] or "")) != normalize_agent_id(
+            str(task.get(field) or "")
+        ):
+            return f"task {field} changed since this run was dispatched"
+    target = display_name_for(config, worker_logical_dispatch_agent_id(config, worker))
+    if not agent_can_take_task(config, target, task, role=dispatch_reason_role(reason)):
+        return f"{target} may no longer take this task"
+    return stale_dispatch_skip_message(
+        config,
+        event,
+        task_map,
+    ) or launch_protection_refusal(config, task, metadata)
+
+
+@_entrypoint
+def supersede_worker_without_execution_authority(
+    config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any]
+) -> bool:
+    """End a run the board no longer lets execute; its event is still its own to close."""
+    refusal = _execution_authority_refusal(config, worker)
+    if not refusal:
+        return False
+    _mark_parked_worker_superseded(config, worker, f"Worker superseded instead of starting execution: {refusal}")
+    finalize_queue_event_record(config, state, worker, "completed", worker["last_error"])
+    return True
+
+
+@_entrypoint
 def maybe_trigger_retry_or_fallback(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -4211,6 +4392,8 @@ def maybe_trigger_retry_or_fallback(
     worker: dict[str, Any],
     reason: str,
 ) -> tuple[bool, bool]:
+    if supersede_worker_without_queue_event(config, state, worker):
+        return True, True
     retry = worker_retry_settings(config, worker.get("provider"))
     failure = classify_worker_failure(config, worker, reason)
     max_attempts = int(retry.get("max_attempts", 5))
@@ -4264,6 +4447,8 @@ def maybe_trigger_retry_or_fallback(
             worker["last_event_at"] = utc_now()
             return True, True
         if not worker.get("fallback_run_id"):
+            if supersede_worker_without_execution_authority(config, state, worker):
+                return True, True
             ok, outcome, _ = start_worker_for_request(
                 config,
                 state,
@@ -4304,15 +4489,17 @@ def retry_due_workers(
             continue
         if worker.get("status") != "retry_backoff":
             continue
+        # Ahead of the due check: a run waiting out its backoff would otherwise
+        # hold the reset event back from dispatch until its retry falls due.
+        if supersede_worker_without_queue_event(config, state, worker):
+            changed = True
+            continue
         next_retry_at = _parse_iso_utc(worker.get("next_retry_at"))
         if next_retry_at is None or next_retry_at > now:
             continue
-        if model_rotation.has_dispatch_cooldown_wait(worker):
-            # poll_workers reconciles responsibility only after this call.
-            # Do not launch a due wait from an obsolete assignment first.
-            task_map = task_index_from_status(config, load_status(config))
-            if not worker_matches_current_assignment(config, worker, task_map):
-                continue
+        # poll_workers settles an approval opened on this run only after this call.
+        if any(item.get("worker_run_id") == run_id for item in load_approval_state(config).get("pending", [])):
+            continue
         request = request_for_worker(config, worker)
         if request is None:
             worker["status"] = "failed"
@@ -4327,6 +4514,11 @@ def retry_due_workers(
                     "worker_run_id": worker["run_id"],
                 },
             )
+            changed = True
+            continue
+        # poll_workers reconciles responsibility only after this call, and only
+        # for what its own assignment predicate covers.
+        if supersede_worker_without_execution_authority(config, state, worker):
             changed = True
             continue
         ok, outcome, delivery = start_worker_for_request(
@@ -4579,15 +4771,37 @@ def resume_claude_worker(
         }
     )
     runtime_paths = worker_runtime_paths(config, worker["run_id"])
-    process, _ = spawn_background_process(
-        command,
-        cwd=workspace_root,
-        log_path=log_path,
-        env=env,
-        run_id=worker["run_id"],
-        heartbeat_path=runtime_paths["heartbeat_path"],
-        status_path=runtime_paths["status_path"],
-    )
+    # Resume is the same native launch: it reconfirms the canonical
+    # protection against what the original lease enforced, and never resumes
+    # a protected session outside the sandbox.
+    try:
+        protected = protected_execution_paths(
+            config, worker.get("task_id"), request_metadata.get("protected_paths")
+        )
+        process, _ = spawn_background_process(
+            command,
+            cwd=workspace_root,
+            log_path=log_path,
+            env=env,
+            run_id=worker["run_id"],
+            heartbeat_path=runtime_paths["heartbeat_path"],
+            status_path=runtime_paths["status_path"],
+            protected_paths=protected,
+            protected_alias_roots=(status_root,) if protected else (),
+        )
+    except ProtectedExecutionUnavailable as error:
+        write_activity_log(
+            config,
+            {
+                "type": "worker_resume_protected_execution_refused",
+                "provider": provider_id,
+                "task_id": worker.get("task_id"),
+                "worker_run_id": worker.get("run_id"),
+                "message": f"Protected resume refused: {error}",
+            },
+        )
+        worker["protected_resume_refused"] = str(error)
+        return None
     previous_logs = list(worker.get("previous_log_paths") or [])
     if worker.get("log_path"):
         previous_logs.append(worker["log_path"])

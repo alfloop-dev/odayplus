@@ -1,7 +1,7 @@
 """密碼政策檢查。
 
 Contract: ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001 §6.2
-- 長度 ≥ 12 且 ≤ 1024 字元
+- 長度 ≥ 8 且 ≤ 1024 字元
 - 輸入先做 Unicode NFKC 正規化
 - 不得強制組成規則（大小寫/符號/數字）（NIST 800-63B）
 - 必須比對弱密碼拒絕清單
@@ -73,7 +73,7 @@ class PasswordPolicyResult:
 @dataclass(frozen=True)
 class PasswordPolicyConfig:
     """密碼政策可調參數。"""
-    min_length: int = 12
+    min_length: int = 8
     max_length: int = 1024
     similarity_threshold: float = 0.7  # Jaccard 字元 bigram 相似度門檻
     weak_passwords: frozenset[str] = field(default_factory=lambda: _DEFAULT_WEAK_PASSWORDS)

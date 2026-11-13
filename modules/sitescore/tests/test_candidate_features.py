@@ -43,6 +43,10 @@ def test_candidate_feature_builder_preserves_recorded_time_and_measurements() ->
     assert feature.h3_index == draft.address.h3_res_9
     assert feature.source_snapshot_ids == (draft.listing.snapshot_id,)
     assert feature.average_confidence == 0.9
+    # Candidate evidence does not contain approved financial assumptions.
+    assert feature.buildout_capex is None
+    assert feature.gross_margin_ratio is None
+    assert feature.monthly_rent == 40000
 
 
 def test_candidate_feature_builder_keeps_absent_evidence_absent() -> None:

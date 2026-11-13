@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
+import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -39,11 +42,14 @@ from dispatch_policy import (
     ROLE_HELPER,
     ROLE_OWNER,
     ROLE_REVIEWER,
+    ReviewSourceIdentity,
     allowed_role_provider_ids,
     dispatch_reason_role,
+    review_source_block_reason,
     role_provider_block_reason,
     role_provider_policy_error,
     role_provider_policy_settings,
+    task_review_source_identity,
 )
 
 #: The policy this fleet is being configured with, and the exact shape
@@ -80,6 +86,11 @@ CLASS_SCOPED_POLICY: dict[str, Any] = {
     ],
     "unclassified_owned_work": "allow",
 }
+
+
+#: The per-test status and event-queue files `build_config` binds its fleet to.
+#: Configs built while a test runs read nothing outside its own tmp directory.
+_OWNED_PATHS: dict[str, Path] = {}
 
 
 def build_config(policy: Any = POLICY, **overrides: Any) -> dict[str, Any]:
@@ -153,8 +164,8 @@ def build_config(policy: Any = POLICY, **overrides: Any) -> dict[str, Any]:
             },
         },
         "paths": {
-            "event_queue": "/tmp/pantheon-test-empty-event-queue.jsonl",
-            "status_file": "/tmp/pantheon-test-ai-status.json",
+            "event_queue": str(_OWNED_PATHS.get("event_queue", "/tmp/pantheon-test-empty-event-queue.jsonl")),
+            "status_file": str(_OWNED_PATHS.get("status_file", "/tmp/pantheon-test-ai-status.json")),
         },
         "account_pools": {
             "agy_main": {"enabled": True, "max_concurrent": 2},
@@ -192,6 +203,93 @@ UNCLASSIFIED_TASK = {"id": "T-3", "status": "todo"}
 #: pick the wrong lane: the excluded provider is offered first every time.
 REVIEWER_POOL = ["Antigravity", "Claude", "Codex", "Codex2"]
 OWNER_POOL = ["Codex", "Antigravity", "Claude"]
+
+#: The per-test synthetic repository `_source_submission` writes ranges into.
+_SOURCE_GIT: dict[str, Path] = {}
+
+
+@pytest.fixture(autouse=True)
+def _source_git_root(tmp_path: Path) -> Any:
+    _SOURCE_GIT["root"] = tmp_path / "source-git"
+    _OWNED_PATHS["status_file"] = tmp_path / "ai-status.json"
+    _OWNED_PATHS["event_queue"] = tmp_path / "event-queue.jsonl"
+    _OWNED_PATHS["event_queue"].write_text("", encoding="utf-8")
+    yield
+    _SOURCE_GIT.clear()
+    _OWNED_PATHS.clear()
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", *args], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _source_repo() -> Path:
+    """A real local repository with a `dev` integration branch and `origin/dev`."""
+    repo = _SOURCE_GIT["root"]
+    if not (repo / ".git").exists():
+        repo.mkdir(parents=True)
+        _git(repo, "init", "-q", "-b", "dev")
+        _git(repo, "config", "user.email", "worker@pantheon.local")
+        _git(repo, "config", "user.name", "Worker")
+        (repo / "base.txt").write_text("base\n", encoding="utf-8")
+        _git(repo, "add", "base.txt")
+        _git(repo, "commit", "-q", "-m", "bootstrap")
+        _git(repo, "update-ref", "refs/remotes/origin/dev", "dev")
+    return repo
+
+
+def _source_commit(repo: Path, task_id: str, agent: str, label: str) -> str:
+    reviewer = "Claude" if agent == "Codex2" else "Codex2"
+    (repo / f"{label}.txt").write_text(label + "\n", encoding="utf-8")
+    _git(repo, "add", f"{label}.txt")
+    _git(
+        repo, "commit", "-q", "-m",
+        f"{task_id}: {label}\n\nLLM-Agent: {agent}\nTask-ID: {task_id}\nReviewer: {reviewer}\n",
+    )
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _source_submission(
+    config: dict[str, Any], task_id: str, *authors: str, submitted_by: str, **extra: Any
+) -> dict[str, Any]:
+    """A review submission for a real synthetic range, as `submit_review` records it.
+
+    Each of `authors` commits on the task branch, `dev` then advances, and the
+    branch takes it back in a merge -- the finalizer's base advance, which is
+    not a source commit. The submission records the resolved base and head and
+    the authors exactly as the scanner finds them, and `config` is bound to the
+    repository so the common rule reads the same range from Git.
+    """
+    repo = _source_repo()
+    repositories = config.setdefault("coordination", {}).setdefault("repositories", {})
+    repositories.setdefault("pantheon", {})["local_path"] = str(repo)
+    config.setdefault("branch_workflow", {})["dev_branch"] = "dev"
+    serial = len(_git(repo, "rev-list", "--all").splitlines())
+    _git(repo, "checkout", "-q", "-b", f"work/{task_id}-{serial}", "dev")
+    for index, author in enumerate(authors):
+        _source_commit(repo, task_id, author, f"{task_id}-{serial}-{index}")
+    _git(repo, "checkout", "-q", "dev")
+    (repo / f"dev-{serial}.txt").write_text("dev\n", encoding="utf-8")
+    _git(repo, "add", f"dev-{serial}.txt")
+    _git(repo, "commit", "-q", "-m", f"OTHER-{serial}: unrelated dev work")
+    _git(repo, "update-ref", "refs/remotes/origin/dev", "dev")
+    base = _git(repo, "rev-parse", "dev")
+    _git(repo, "checkout", "-q", f"work/{task_id}-{serial}")
+    _git(repo, "merge", "--no-ff", "-q", "-m", f"Merge dev into task/{task_id}\n\nLLM-Agent: {submitted_by}\n", "dev")
+    head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "dev")
+    submission: dict[str, Any] = {
+        "pr_number": 1221,
+        "remote_sha": head,
+        "source_head": head,
+        "source_base": base,
+        "source_authors": list(authors),
+        "submitted_by": submitted_by,
+    }
+    submission.update(extra)
+    return submission
 
 
 # --------------------------------------------------------------------------- #
@@ -1026,7 +1124,10 @@ def _run_repair(config: dict[str, Any], task: dict[str, Any], *, pin_author: boo
         ),
     ]
     if not pin_author:
-        patches.append(mock.patch.object(supervisor, "task_submitted_author", lambda *a: ""))
+        patches.append(
+            mock.patch.object(supervisor, "task_review_source_identity", lambda *a: ReviewSourceIdentity())
+        )
+        patches.append(mock.patch.object(supervisor, "review_source_block_reason", lambda *a: None))
     for patch in patches:
         patch.start()
     try:
@@ -1061,7 +1162,7 @@ def test_repair_does_not_launder_a_submitted_codex_author_into_a_self_review(
     policy at every step.
     """
     config = build_config()
-    assert supervisor.task_submitted_author(config, dict(task)) == "Codex"
+    assert supervisor.task_review_source_identity(config, dict(task)).pins_owner("Codex")
 
     # The defect, reproduced: unpin the author and the owner is rewritten off the
     # account that actually wrote the branch.
@@ -1113,9 +1214,11 @@ def test_the_authors_pool_stays_excluded_even_after_the_owner_already_moved() ->
         id="T-LAUNDERED",
         owner="Claude",
         reviewer="Antigravity",
-        review_submission={"pr_number": 1221, "head": "e" * 40, "submitted_by": "Codex"},
+        review_submission=_source_submission(config, "T-LAUNDERED", "Codex", submitted_by="Codex"),
     )
-    assert supervisor.task_submitted_author(config, laundered) == "Codex"
+    source = supervisor.task_review_source_identity(config, laundered)
+    assert source.error is None and author_pool in source.pools
+    assert not source.pins_owner("Claude")
     # The reviewer is policy-excluded, so the repair pass does have a reviewer to
     # replace, and every Codex lane is a legitimate answer to the reviewer rule.
     with mock.patch.object(
@@ -1141,7 +1244,7 @@ def test_an_unsubmitted_task_is_still_repaired_normally() -> None:
         "owner": "Codex",
         "reviewer": "Codex2",
     }
-    assert supervisor.task_submitted_author(config, live) == ""
+    assert not supervisor.task_review_source_identity(config, live).submitted
     assert (
         worker_failure_policy.first_viable_agent(
             config,
@@ -1745,11 +1848,9 @@ def test_reassign_unavailable_reviewers_excludes_submitted_author_and_pool() -> 
                 "owner": "Claude",
                 "reviewer": "Codex2",
                 "task_class": "implementation",
-                "review_submission": {
-                    "submitted_by": "Codex",
-                    "pr_number": 100,
-                    "branch": "task/T-AUTH-POOL",
-                },
+                "review_submission": _source_submission(
+                    config, "T-AUTH-POOL", "Codex", submitted_by="Codex", pr_number=100, branch="task/T-AUTH-POOL"
+                ),
             }
         ]
     }
@@ -1781,11 +1882,9 @@ def test_reassign_unavailable_reviewers_picks_independent_pool_over_author_pool(
                 "owner": "Claude",
                 "reviewer": "Codex2",
                 "task_class": "implementation",
-                "review_submission": {
-                    "submitted_by": "Codex",
-                    "pr_number": 100,
-                    "branch": "task/T-AUTH-POOL-2",
-                },
+                "review_submission": _source_submission(
+                    config, "T-AUTH-POOL-2", "Codex", submitted_by="Codex", pr_number=100, branch="task/T-AUTH-POOL-2"
+                ),
             }
         ]
     }
@@ -1820,10 +1919,9 @@ def test_worker_failure_reviewer_fallback_excludes_submitted_author_and_pool() -
                 "owner": "Claude",
                 "reviewer": "Codex",  # invalid: same pool as author
                 "task_class": "implementation",
-                "review_submission": {
-                    "submitted_by": "Codex",
-                    "pr_number": 101,
-                },
+                "review_submission": _source_submission(
+                    config, "T-FAIL-AUTH", "Codex", submitted_by="Codex", pr_number=101
+                ),
             }
         ]
     }
@@ -1877,6 +1975,7 @@ def test_worker_failure_on_frozen_task_enforces_candidate_policy() -> None:
     Counterexample for F2/F5: Recovery selects an eligible owner (Claude2), not an ineligible one.
     """
     config = build_config()
+    submission = _source_submission(config, "T-FROZEN-FAIL", "Claude", submitted_by="Claude")
     state: dict[str, Any] = {}
     worker: dict[str, Any] = {
         "task_id": "T-FROZEN-FAIL",
@@ -1891,7 +1990,10 @@ def test_worker_failure_on_frozen_task_enforces_candidate_policy() -> None:
                 "owner": "Claude",
                 "reviewer": "Codex",
                 "task_class": "implementation",
-                "approved_head": "abc1234",
+                "approved_head": submission["source_head"],
+                # An approved head always carries the submission it approved;
+                # without it the carried reviewer could not be re-validated.
+                "review_submission": submission,
             }
         ]
     }
@@ -2004,3 +2106,1864 @@ def test_ghost_provider_without_config_entry_fails_closed_and_not_known() -> Non
     assert "ghost_provider" in error
     assert "names provider(s) not configured in this fleet" in error
 
+
+
+# --------------------------------------------------------------------------- #
+# Source-author review independence
+# --------------------------------------------------------------------------- #
+
+
+def _finalized_by_claude(config: dict[str, Any], *authors: str, **overrides: Any) -> dict[str, Any]:
+    """The shape that motivated the rule, over a real synthetic Git range.
+
+    Codex wrote the commits; Claude only merged a base and ran the finalizer, so
+    Claude is the genuine owner and submitter. Codex is still the author.
+    """
+    task: dict[str, Any] = {
+        "id": "T-SOURCE",
+        "status": "review",
+        "task_class": "implementation",
+        "priority": "P2",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": _source_submission(
+            config, "T-SOURCE", *(authors or ("Codex",)), submitted_by="Claude"
+        ),
+    }
+    task.update(overrides)
+    return task
+
+
+def test_the_finalizer_does_not_stand_in_for_the_source_author() -> None:
+    """Excluding only the submitter's pool frees the author's pool to review itself."""
+    config = _pool_alias_config()
+    task = _finalized_by_claude(config, "Codex")
+
+    source = task_review_source_identity(config, task)
+    assert source.error is None
+    assert source.submitter == "Claude"
+    assert source.source_authors == ("Codex",)
+    assert source.pools == frozenset({"codex_bjoe", "claude_main"})
+
+    assert "is itself a source author" in str(review_source_block_reason(config, task, "Codex"))
+    # An alias over the author's credential is the same reviewer.
+    assert "codex_bjoe" in str(review_source_block_reason(config, task, "Codex3"))
+    # The finalizer's own pool stays excluded as well.
+    assert review_source_block_reason(config, task, "Claude2") is not None
+    assert review_source_block_reason(config, task, "Codex2") is None
+
+
+def test_every_pool_of_a_multi_author_range_is_excluded() -> None:
+    """No one author is "the" author; a complete independent reviewer still exists."""
+    config = build_config()
+    task = _finalized_by_claude(config, "Codex", "Antigravity")
+
+    source = task_review_source_identity(config, task)
+    assert source.pools == frozenset({"codex_bjoe", "agy_main", "claude_main"})
+    for reviewer in ("Codex", "Antigravity", "Antigravity2", "Claude", "Claude2"):
+        assert review_source_block_reason(config, task, reviewer) is not None, reviewer
+    assert review_source_block_reason(config, task, "Codex2") is None
+
+    # Reordering the range changes nothing: neither the first nor the last
+    # author is privileged.
+    reordered = _finalized_by_claude(config, "Antigravity", "Codex")
+    assert task_review_source_identity(config, reordered).pools == source.pools
+    assert review_source_block_reason(config, reordered, "Codex") is not None
+
+
+@pytest.mark.parametrize(
+    ("submission_patch", "expected"),
+    [
+        # Rewriting the recorded authors -- to a registered actor or not -- is
+        # refused against the range's actual immutable Git authorship.
+        ({"source_authors": ["Claude"]}, "are not the immutable Git authors ['Codex']"),
+        ({"source_authors": ["Antigravity"]}, "are not the immutable Git authors ['Codex']"),
+        ({"source_authors": ["Codex-Root"]}, "are not the immutable Git authors ['Codex']"),
+        ({"source_authors": ["Codex", "Codex-Root"]}, "are not the immutable Git authors ['Codex']"),
+        ({"source_authors": []}, "names no immutable source authors"),
+        ({"source_authors": ["Codex", ""]}, "names no immutable source authors"),
+        ({"source_authors": None}, "names no immutable source authors"),
+        ({"submitted_by": ""}, "does not record its genuine submitter"),
+        ({"submitted_by": "Claude-Root"}, "submitter 'Claude-Root' is not a registered agent"),
+        ({"source_head": "f" * 40}, "not bound to the submitted head"),
+        ({"source_head": None}, "not bound to the submitted head"),
+        ({"source_base": "dev"}, "not bound to a validated base"),
+        # A head and remote that agree with each other but name no commit of
+        # this repository bind nothing.
+        ({"source_head": "f" * 40, "remote_sha": "f" * 40}, "fails delivery identity"),
+        ({"source_base": "c" * 40}, "is not in origin/dev history"),
+    ],
+)
+def test_unresolvable_source_evidence_admits_no_reviewer(
+    submission_patch: dict[str, Any], expected: str
+) -> None:
+    """Unknown, missing or unbound provenance fails closed for every reviewer.
+
+    The range itself is real and Codex-authored, so each refusal is caused by
+    the patched field alone. A submitter label that is not registered is not
+    guessed to be an existing agent either.
+    """
+    config = build_config()
+    task = _finalized_by_claude(config, "Codex")
+    task["review_submission"].update(submission_patch)
+
+    source = task_review_source_identity(config, task)
+    assert source.submitted
+    assert expected in str(source.error)
+    for reviewer in ("Codex", "Codex2", "Antigravity"):
+        assert review_source_block_reason(config, task, reviewer) == source.error
+
+
+def test_review_without_submission_is_unresolved_and_unsubmitted_work_is_unconstrained() -> None:
+    config = build_config()
+    in_review = {"id": "T-NOSUB", "status": "review", "owner": "Claude", "reviewer": "Codex2"}
+    source = task_review_source_identity(config, in_review)
+    assert source.submitted and source.error
+    assert source.pins_owner("Claude")
+    assert review_source_block_reason(config, in_review, "Codex2") is not None
+
+    todo = dict(in_review, status="todo")
+    assert task_review_source_identity(config, todo) == ReviewSourceIdentity()
+    assert review_source_block_reason(config, todo, "Codex2") is None
+
+
+def test_normalizer_replaces_a_same_source_reviewer_and_keeps_the_finalizer() -> None:
+    """Owner and reviewer are independent; reviewer and author are not."""
+    config = _pool_alias_config()
+    task = _finalized_by_claude(config, "Codex")
+    assert supervisor.review_is_independent(config, "Claude", "Codex")
+    issues = supervisor.task_assignment_integrity_issues(config, {}, dict(task))
+    assert "reviewer_shares_source_account_pool" in issues
+
+    with mock.patch.object(
+        supervisor,
+        "get_agent_reassignment_candidates",
+        lambda *a, **k: ["Codex3", "Codex", "Codex2"],
+    ):
+        changes = _run_repair(config, task, pin_author=True)
+    assert changes == [("Claude", "Codex2")], changes
+
+
+def test_normalizer_does_not_repair_a_review_whose_source_is_unknown() -> None:
+    config = build_config()
+    task = _finalized_by_claude(config, "Codex-Root")
+    issues = supervisor.task_assignment_integrity_issues(config, {}, dict(task))
+    assert any(issue.startswith("review_source_unresolved:") for issue in issues), issues
+
+    with mock.patch.object(
+        supervisor, "get_agent_reassignment_candidates", lambda *a, **k: ["Codex2", "Codex"]
+    ):
+        assert _run_repair(config, task, pin_author=True) == []
+
+
+def test_a_reassigned_reviewer_does_not_inherit_an_old_source_author_approval() -> None:
+    """Reopen, normalizer, restore: the approval is still the one its signer gave.
+
+    Codex wrote the range and Claude finalized it. An approval an older build
+    recorded -- signed by Codex, naming no signer -- survives the owner's
+    reopen together with the submission. The normalizer then replaces Codex
+    with independent Codex2, which is right for the next review, but Codex2
+    has signed nothing: restoring has to refuse before any write. Codex2
+    actually approving the same head, and the owner restoring that after a
+    spurious reopen, still works.
+    """
+    import ai_status
+
+    config = _pool_alias_config()
+    task = _finalized_by_claude(config, "Codex", status="review_approved", review_notes_zh=["舊核准"])
+    head = task["review_submission"]["remote_sha"]
+    task.update(approved_head=head, last_approved_head=head)
+    state = {"tasks": [task], "handoffs": [], "blockers": []}
+
+    def as_actor(actor: str) -> ExitStack:
+        # `_run_repair` stops every active patch when it returns, so each CLI
+        # step enters its own.
+        stack = ExitStack()
+        for patch in (
+            mock.patch.object(ai_status, "current_actor_validated", return_value=actor),
+            mock.patch.object(ai_status, "merged_orchestrator_config", return_value=config),
+            mock.patch.object(ai_status, "resolve_task_sha", return_value=head),
+            mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+            mock.patch.object(ai_status, "append_log"),
+            mock.patch.object(ai_status, "sync_all"),
+        ):
+            stack.enter_context(patch)
+        return stack
+
+    with as_actor("Claude"):
+        ai_status.command_reopen(state, [task["id"], "spurious downgrade"])
+    assert task["status"] == "in_progress"
+    assert task["last_approved_head"] == head and task["review_submission"]["remote_sha"] == head
+
+    changes = _run_repair(config, task, pin_author=True)
+    assert changes == [("Claude", "Codex2")], changes
+    task["reviewer"] = changes[0][1]
+
+    for signer, pattern in ((None, "does not record which reviewer signed it"), ("Codex", "is itself a source author")):
+        if signer:
+            task["last_approved_by"] = signer
+        before = json.loads(json.dumps(state))
+        with as_actor("Claude"), pytest.raises(SystemExit, match=pattern):
+            ai_status.command_restore_approved(state, [task["id"], "restore"])
+        assert state == before
+
+    # The genuine path: Codex2 signs the head itself, then a spurious reopen
+    # is restored on that signature.
+    task.pop("last_approved_by")
+    task["status"] = "review"
+    with as_actor("Codex2"):
+        ai_status.command_approve(state, [task["id"], "independent review"])
+    assert task["last_approved_by"] == "Codex2"
+    with as_actor("Claude"):
+        ai_status.command_reopen(state, [task["id"], "spurious downgrade"])
+    assert _run_repair(config, task, pin_author=True) == []
+    with as_actor("Claude"):
+        ai_status.command_restore_approved(state, [task["id"], "restore"])
+    assert task["status"] == "review_approved"
+    assert task["approved_head"] == head
+    assert task["owner"] == "Claude"
+
+
+def test_reviewer_failover_skips_the_author_pool_alias_for_a_finalized_branch() -> None:
+    config = _pool_alias_config()
+    config["account_pools"]["codex_lupin"]["state"] = "paused"
+    config["account_pools"]["codex_charlie"] = {"enabled": True, "max_concurrent": 1}
+    config["agents"]["codex4"] = {
+        "display_name": "Codex4",
+        "account_pool": "codex_charlie",
+        "provider": "codex",
+        "adapter": "codex",
+    }
+    task = _finalized_by_claude(config, "Codex", reviewer="Codex2")
+    status: dict[str, Any] = {"tasks": [task]}
+    state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+    with (
+        mock.patch("supervisor.persist_task_reassignment", return_value=True),
+        mock.patch("supervisor.write_activity_log"),
+    ):
+        changed = dispatch_engine.reassign_unavailable_reviewers(config, state, status)
+    assert changed is True
+    assert status["tasks"][0]["reviewer"] == "Codex4"
+
+    unknown = _finalized_by_claude(config, "Codex-Root", reviewer="Codex2")
+    status = {"tasks": [unknown]}
+    with mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist:
+        assert dispatch_engine.reassign_unavailable_reviewers(config, state, status) is False
+    persist.assert_not_called()
+
+
+def test_worker_failure_reviewer_failover_excludes_every_source_pool_and_refuses_unknown() -> None:
+    config = _pool_alias_config()
+    config["account_pools"]["codex_charlie"] = {"enabled": True, "max_concurrent": 1}
+    config["agents"]["codex4"] = {
+        "display_name": "Codex4",
+        "account_pool": "codex_charlie",
+        "provider": "codex",
+        "adapter": "codex",
+    }
+    worker = {"task_id": "T-SOURCE", "agent_id": "codex2", "retry_count": 2}
+    for authors, expected in ((("Codex",), "Codex4"), (("Codex-Root",), None)):
+        task = _finalized_by_claude(config, *authors, reviewer="Codex2")
+        with (
+            mock.patch("supervisor.load_status", return_value={"tasks": [task]}),
+            mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+            mock.patch("supervisor.write_activity_log"),
+            mock.patch.object(
+                supervisor,
+                "get_agent_reassignment_candidates",
+                lambda *a, **k: ["Codex", "Codex3", "Codex4"],
+            ),
+        ):
+            reassigned = worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                config, {}, worker, "terminal error", terminal=True
+            )
+        assert reassigned == expected, authors
+        if expected is None:
+            persist.assert_not_called()
+        else:
+            assert persist.call_args.kwargs["new_owner"] == "Claude"
+            assert persist.call_args.kwargs["new_reviewer"] == expected
+
+
+def _sha_shadowed_submission(config: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """A genuine Codex-then-Claude range whose base SHA is also a ref name.
+
+    `B` is the integration base, Codex writes `C` on it and Claude -- the
+    finalizer -- writes `D` on top. A ref spelled `origin/<B>` is then pointed
+    at `C`. Nothing recorded changes; the only question is whether `B` is read
+    as the commit it names or as the branch that happens to share its spelling.
+    """
+    repo = _source_repo()
+    repositories = config.setdefault("coordination", {}).setdefault("repositories", {})
+    repositories.setdefault("pantheon", {})["local_path"] = str(repo)
+    config.setdefault("branch_workflow", {})["dev_branch"] = "dev"
+    base = _git(repo, "rev-parse", "dev")
+    _git(repo, "checkout", "-q", "-b", "work/T-SOURCE-shadow", "dev")
+    codex = _source_commit(repo, "T-SOURCE", "Codex", "T-SOURCE-shadow-codex")
+    head = _source_commit(repo, "T-SOURCE", "Claude", "T-SOURCE-shadow-claude")
+    _git(repo, "checkout", "-q", "dev")
+    _git(repo, "update-ref", f"refs/remotes/origin/{base}", codex)
+    submission = {
+        "pr_number": 1221,
+        "remote_sha": head,
+        "source_head": head,
+        "source_base": base,
+        "source_authors": ["Codex", "Claude"],
+        "submitted_by": "Claude",
+    }
+    return submission, {"repo": str(repo), "base": base, "codex": codex, "head": head}
+
+
+def test_a_sha_named_ref_cannot_move_the_recorded_base_on_a_cold_cache() -> None:
+    """The recorded base is the commit it names, not a branch of that spelling.
+
+    Same genuine base, head, remote and Claude finalizer; the record only drops
+    Codex from its authors. Nothing has asked about this range before, so no
+    earlier genuine scan can have answered for it. Had `origin/<B>` been read
+    as the base, the range would be `C..D`, its only author Claude, and the
+    forged record would match it -- admitting Codex to review its own commit.
+    """
+    import dispatch_policy
+
+    config = _pool_alias_config()
+    genuine, shape = _sha_shadowed_submission(config)
+    repo = Path(shape["repo"])
+    assert _git(repo, "rev-parse", f"origin/{shape['base']}") == shape["codex"]
+    assert not [key for key in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS if key[0] == shape["repo"]]
+
+    forged = {
+        "id": "T-SOURCE",
+        "status": "review",
+        "task_class": "implementation",
+        "priority": "P2",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": dict(genuine, source_authors=["Claude"]),
+    }
+    source = task_review_source_identity(config, forged)
+    assert "are not the immutable Git authors ['Codex', 'Claude']" in str(source.error)
+    assert not source.pools
+    for reviewer in ("Codex", "Codex3", "Codex2"):
+        assert review_source_block_reason(config, forged, reviewer) == source.error
+    issues = supervisor.task_assignment_integrity_issues(config, {}, dict(forged))
+    assert any(issue.startswith("review_source_unresolved:") for issue in issues), issues
+    with mock.patch.object(
+        supervisor, "get_agent_reassignment_candidates", lambda *a, **k: ["Codex", "Codex3", "Codex2"]
+    ):
+        assert _run_repair(config, forged, pin_author=True) == []
+    config["account_pools"]["codex_lupin"]["state"] = "paused"
+    unavailable = dict(forged, reviewer="Codex2")
+    state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+    with mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist:
+        assert dispatch_engine.reassign_unavailable_reviewers(config, state, {"tasks": [unavailable]}) is False
+    persist.assert_not_called()
+    config["account_pools"]["codex_lupin"]["state"] = "active"
+
+    # The genuine record of the same range: every source pool is excluded and
+    # an independent registered reviewer still passes.
+    task = dict(forged, review_submission=genuine)
+    assert task_review_source_identity(config, task).pools == frozenset({"codex_bjoe", "claude_main"})
+    assert "is itself a source author" in str(review_source_block_reason(config, task, "Codex"))
+    assert "codex_bjoe" in str(review_source_block_reason(config, task, "Codex3"))
+    assert review_source_block_reason(config, task, "Codex2") is None
+
+
+def test_authors_of_a_scan_that_read_another_range_are_neither_used_nor_cached() -> None:
+    """The scan has to have read the recorded range before its authors count.
+
+    The counterfactual reads the base through the SHA-named ref, as the
+    resolver once did, with the real scanner over the real repository. The
+    scan itself is clean and finds exactly the forged author -- only the range
+    it reports gives it away, and that is refused before anything is cached.
+    """
+    import dispatch_policy
+
+    config = _pool_alias_config()
+    genuine, shape = _sha_shadowed_submission(config)
+    forged = {
+        "id": "T-SOURCE",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": dict(genuine, source_authors=["Claude"]),
+    }
+    real_scan = dispatch_policy._inspect_delivery_identity
+
+    def through_the_shadow(repo_root: Path, **kwargs: Any) -> Any:
+        return real_scan(repo_root, **{**kwargs, "base": f"origin/{kwargs['base']}"})
+
+    with mock.patch.object(dispatch_policy, "_inspect_delivery_identity", through_the_shadow):
+        shadowed = through_the_shadow(
+            Path(shape["repo"]), task_id="T-SOURCE", base=shape["base"], head=shape["head"]
+        )
+        assert shadowed.errors == []
+        assert shadowed.source_agents == ("Claude",)
+        assert shadowed.base_sha == shape["codex"]
+        source = task_review_source_identity(config, forged)
+        assert "not the recorded range" in str(source.error)
+        assert review_source_block_reason(config, forged, "Codex") == source.error
+        assert not [key for key in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS if key[0] == shape["repo"]]
+
+
+def test_a_rewritten_source_record_is_refused_before_any_queue_selects_a_reviewer() -> None:
+    """The queue boundary does not take `source_authors` on trust.
+
+    Same real head, base and remote, genuine finalizer and owner; only the
+    recorded authors are rewritten from the actual Codex to another registered
+    actor. Read from the record, Codex would then look independent of every
+    excluded pool. The normalizer, the unavailable-reviewer failover and the
+    worker-failure failover all ask the one rule, which reads the range from
+    Git, so none of them may select Codex -- or anyone -- against that record.
+    """
+    config = _pool_alias_config()
+    genuine = _finalized_by_claude(config, "Codex")
+    assert "reviewer_shares_source_account_pool" in supervisor.task_assignment_integrity_issues(
+        config, {}, dict(genuine)
+    )
+
+    forged = json.loads(json.dumps(genuine))
+    forged["review_submission"]["source_authors"] = ["Antigravity"]
+    for field in ("source_head", "source_base", "remote_sha", "submitted_by"):
+        assert forged["review_submission"][field] == genuine["review_submission"][field]
+    source = task_review_source_identity(config, forged)
+    assert "are not the immutable Git authors ['Codex']" in str(source.error)
+    assert not source.pools
+    for reviewer in ("Codex", "Codex3", "Codex2"):
+        assert review_source_block_reason(config, forged, reviewer) == source.error
+
+    issues = supervisor.task_assignment_integrity_issues(config, {}, dict(forged))
+    assert any(issue.startswith("review_source_unresolved:") for issue in issues), issues
+    with mock.patch.object(
+        supervisor, "get_agent_reassignment_candidates", lambda *a, **k: ["Codex", "Codex3", "Codex2"]
+    ):
+        assert _run_repair(config, forged, pin_author=True) == []
+
+    config["account_pools"]["codex_lupin"]["state"] = "paused"
+    unavailable = dict(forged, reviewer="Codex2")
+    state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+    with mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist:
+        assert dispatch_engine.reassign_unavailable_reviewers(config, state, {"tasks": [unavailable]}) is False
+    persist.assert_not_called()
+
+    worker = {"task_id": "T-SOURCE", "agent_id": "codex2", "retry_count": 2}
+    with (
+        mock.patch("supervisor.load_status", return_value={"tasks": [unavailable]}),
+        mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+        mock.patch("supervisor.write_activity_log"),
+        mock.patch.object(
+            supervisor, "get_agent_reassignment_candidates", lambda *a, **k: ["Codex", "Codex3"]
+        ),
+    ):
+        assert (
+            worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                config, {}, worker, "terminal error", terminal=True
+            )
+            is None
+        )
+    persist.assert_not_called()
+
+
+def _display_name_collision_config() -> dict[str, Any]:
+    """A valid fleet in which `Codex` is one agent's id and another's display name.
+
+    Adapters record `LLM-Agent` as the display name, so a commit signed `Codex`
+    here may come from `writer`, which runs in `codex_lupin` -- the pool of the
+    independently registered `Codex2`. Agent `codex` itself is `Primary`.
+    """
+    config = build_config()
+    config["agents"]["codex"]["display_name"] = "Primary"
+    config["agents"]["writer"] = {
+        "display_name": "Codex",
+        "provider": "codex",
+        "adapter": "codex",
+        "account_pool": "codex_lupin",
+    }
+    return config
+
+
+def test_an_actor_named_by_one_agent_id_and_another_display_name_is_refused_before_any_queue() -> None:
+    """An id match does not silently outrank a conflicting display-name match.
+
+    Genuine range, head, base and remote; Codex wrote it and Claude finalized.
+    Resolving `Codex` to agent `codex` alone would leave out `writer`'s pool,
+    and Codex2 in that pool would then pass as independent. Both readings are
+    registered, so the actor is ambiguous: no pool is chosen, every reviewer is
+    refused, and neither the normalizer nor either failover selects one.
+    """
+    config = _display_name_collision_config()
+    task = _finalized_by_claude(config, "Codex")
+    for field in ("source_head", "source_base", "remote_sha"):
+        assert task["review_submission"][field]
+    assert task["review_submission"]["submitted_by"] == "Claude"
+
+    source = task_review_source_identity(config, task)
+    assert "source author 'Codex' is not a registered agent" in str(source.error)
+    assert source.source_authors == ("Codex",)
+    assert not source.pools
+    for reviewer in ("Codex2", "Primary", "writer", "Codex", "Antigravity"):
+        assert review_source_block_reason(config, task, reviewer) == source.error, reviewer
+
+    issues = supervisor.task_assignment_integrity_issues(config, {}, dict(task))
+    assert any(issue.startswith("review_source_unresolved:") for issue in issues), issues
+    with mock.patch.object(
+        supervisor, "get_agent_reassignment_candidates", lambda *a, **k: ["Codex2", "Antigravity", "Primary"]
+    ):
+        assert _run_repair(config, task, pin_author=True) == []
+
+    config["account_pools"]["codex_bjoe"]["state"] = "paused"
+    unavailable = dict(task, reviewer="Primary")
+    state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+    with mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist:
+        assert dispatch_engine.reassign_unavailable_reviewers(config, state, {"tasks": [unavailable]}) is False
+    persist.assert_not_called()
+
+    worker = {"task_id": "T-SOURCE", "agent_id": "codex", "retry_count": 2}
+    with (
+        mock.patch("supervisor.load_status", return_value={"tasks": [unavailable]}),
+        mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+        mock.patch("supervisor.write_activity_log"),
+        mock.patch.object(
+            supervisor, "get_agent_reassignment_candidates", lambda *a, **k: ["Codex2", "Antigravity"]
+        ),
+    ):
+        assert (
+            worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                config, {}, worker, "terminal error", terminal=True
+            )
+            is None
+        )
+    persist.assert_not_called()
+
+
+def test_unambiguous_ids_and_display_aliases_still_resolve_beside_a_collision() -> None:
+    """Only the colliding label is refused; every unique spelling keeps its pool."""
+    config = _display_name_collision_config()
+
+    by_alias = _finalized_by_claude(config, "Primary")
+    source = task_review_source_identity(config, by_alias)
+    assert source.error is None
+    assert source.pools == frozenset({"codex_bjoe", "claude_main"})
+    assert review_source_block_reason(config, by_alias, "Codex2") is None
+    assert "codex_bjoe" in str(review_source_block_reason(config, by_alias, "codex_bjoe_slot_1"))
+
+    by_id = _finalized_by_claude(config, "writer")
+    source = task_review_source_identity(config, by_id)
+    assert source.error is None
+    assert source.pools == frozenset({"codex_lupin", "claude_main"})
+    assert "codex_lupin" in str(review_source_block_reason(config, by_id, "Codex2"))
+    assert review_source_block_reason(config, by_id, "Primary") is None
+
+    # Without the collision, the same `Codex` range has its one genuine pool.
+    plain = build_config()
+    task = _finalized_by_claude(plain, "Codex")
+    assert task_review_source_identity(plain, task).pools == frozenset({"codex_bjoe", "claude_main"})
+    assert review_source_block_reason(plain, task, "Codex2") is None
+
+
+def _ambiguous_reviewer_candidate_config() -> dict[str, Any]:
+    """The collision fleet with an unambiguous source and a colliding fallback.
+
+    `Codex` is agent `codex`'s id (pool `codex_bjoe`) and `writer`'s display
+    name (pool `codex_lupin`, the pool of source author Codex2). Codex4 is the
+    current reviewer in its own pool; its configured fallback names `Codex`
+    first and the genuinely independent Codex5 second.
+    """
+    config = _display_name_collision_config()
+    config["account_pools"]["codex_charlie"] = {"enabled": True, "max_concurrent": 1}
+    config["account_pools"]["codex_delta"] = {"enabled": True, "max_concurrent": 1}
+    for agent_id, display, pool in (("codex4", "Codex4", "codex_charlie"), ("codex5", "Codex5", "codex_delta")):
+        config["agents"][agent_id] = {
+            "display_name": display,
+            "provider": "codex",
+            "adapter": "codex",
+            "account_pool": pool,
+        }
+    config["worker_reassignment"] = {
+        "enabled": True,
+        "reviewer_fallbacks": {"Codex4": ["Codex", "Codex5"]},
+        "owner_fallbacks": {"Claude": ["Claude2", "Antigravity"]},
+        "review_churn": {"enabled": True, "reassign_after_reopens": 2},
+    }
+    return config
+
+
+def test_failover_applies_the_common_rule_to_an_ambiguous_reviewer_candidate() -> None:
+    """A reviewer candidate is admitted by the common rule, not a raw pool lookup.
+
+    Genuine range, head, base and remote; Codex2 wrote it and Claude finalized,
+    so the source is unambiguous and excludes `codex_lupin` and `claude_main`.
+    The raw lookup resolves the fallback `Codex` to agent `codex` in
+    `codex_bjoe` and admits it, yet the common rule refuses `Codex` because
+    `writer` -- in the source pool -- answers to it too. Worker-failure
+    failover, review churn and both normalizers must pass over it before
+    anything is persisted and select the independent Codex5; with Codex5 gone
+    from the fallbacks nothing is persisted at all.
+    """
+    config = _ambiguous_reviewer_candidate_config()
+    task = _finalized_by_claude(config, "Codex2", reviewer="Codex4")
+    source = task_review_source_identity(config, task)
+    assert source.error is None
+    assert source.pools == frozenset({"codex_lupin", "claude_main"})
+    assert task["review_submission"]["submitted_by"] == "Claude"
+    # The raw lookup alone would admit `Codex`; the common rule does not.
+    assert supervisor.agent_account_pool_id(config, "Codex") == "codex_bjoe"
+    assert "is not a registered agent" in str(review_source_block_reason(config, task, "Codex"))
+    assert review_source_block_reason(config, task, "Codex5") is None
+
+    def worker_failover(candidate_task: dict[str, Any]) -> tuple[Any, Any]:
+        worker = {"task_id": "T-SOURCE", "agent_id": "codex4", "retry_count": 2}
+        with (
+            mock.patch("supervisor.load_status", return_value={"tasks": [candidate_task]}),
+            mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+            mock.patch("supervisor.write_activity_log"),
+        ):
+            reassigned = worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                config, {}, worker, "terminal error", terminal=True
+            )
+        return reassigned, persist
+
+    reassigned, persist = worker_failover(dict(task))
+    assert reassigned == "Codex5"
+    assert persist.call_args.kwargs["new_owner"] == "Claude"
+    assert persist.call_args.kwargs["new_reviewer"] == "Codex5"
+    assert persist.call_args.kwargs["handoff_to"] == "Codex5"
+
+    # Review churn rotates the owner; Codex4 is paused, so the reviewer moves
+    # through the same configured fallbacks.
+    config["account_pools"]["codex_charlie"]["state"] = "paused"
+    churning = dict(task, status="in_progress", review_reopen_count=2)
+    with (
+        mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+        mock.patch.object(supervisor, "write_activity_log"),
+    ):
+        assert supervisor.reassign_tasks_after_review_churn(config, {}, {"tasks": [churning]}) is True
+    assert persist.call_args.kwargs["new_owner"] == "Antigravity"
+    assert persist.call_args.kwargs["new_reviewer"] == "Codex5"
+
+    # The unavailable-reviewer normalizer reaches the same answer.
+    state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+    unavailable = dict(task)
+    with (
+        mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+        mock.patch("supervisor.write_activity_log"),
+    ):
+        assert dispatch_engine.reassign_unavailable_reviewers(config, state, {"tasks": [unavailable]}) is True
+    assert persist.call_args.kwargs["new_reviewer"] == "Codex5"
+
+    # With the ambiguous name the only candidate left, no path persists a reviewer.
+    config["account_pools"]["codex_charlie"].pop("state")
+    config["worker_reassignment"]["reviewer_fallbacks"] = {"Codex4": ["Codex"]}
+    del config["agents"]["codex5"]
+    reassigned, persist = worker_failover(dict(task))
+    assert reassigned is None
+    persist.assert_not_called()
+
+    config["account_pools"]["codex_charlie"]["state"] = "paused"
+    with (
+        mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+        mock.patch.object(supervisor, "write_activity_log"),
+    ):
+        supervisor.reassign_tasks_after_review_churn(config, {}, {"tasks": [dict(churning)]})
+    assert all(call.kwargs.get("new_reviewer") != "Codex" for call in persist.call_args_list)
+    with mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist:
+        assert dispatch_engine.reassign_unavailable_reviewers(config, state, {"tasks": [dict(task)]}) is False
+    persist.assert_not_called()
+    assert worker_failure_policy.first_viable_agent(
+        config, ["Codex"], set(), task=task, role="reviewer"
+    ) is None
+    assert not worker_failure_policy.has_configured_reassignment_candidates(
+        config, ["Codex"], set(), task=task, role="reviewer"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Historical source-author aliases
+# --------------------------------------------------------------------------- #
+
+#: The two literal labels the user confirmed are the existing Codex/codex_bjoe.
+HISTORICAL_LABELS = ("Codex foreground", "Codex-foreground")
+
+
+def _historical_alias_config() -> dict[str, Any]:
+    """The pool-alias fleet with only agent `codex` declaring both labels.
+
+    Codex4 is a second independent lane, so a failover that has to leave
+    unavailable Codex2 still has a genuine target.
+    """
+    config = _pool_alias_config()
+    config["agents"]["codex"]["source_aliases"] = list(HISTORICAL_LABELS)
+    config["account_pools"]["codex_charlie"] = {"enabled": True, "max_concurrent": 1}
+    config["agents"]["codex4"] = {
+        "display_name": "Codex4",
+        "account_pool": "codex_charlie",
+        "provider": "codex",
+        "adapter": "codex",
+    }
+    return config
+
+
+def _scanned_authors(config: dict[str, Any], task: dict[str, Any]) -> tuple[str, ...]:
+    """What the unchanged delivery scanner itself reads from the task's real range."""
+    import dispatch_policy
+
+    submission = task["review_submission"]
+    scan = dispatch_policy._inspect_delivery_identity(
+        Path(config["coordination"]["repositories"]["pantheon"]["local_path"]),
+        task_id=task["id"],
+        base=submission["source_base"],
+        head=submission["source_head"],
+    )
+    assert scan.errors == []
+    return scan.source_agents
+
+
+def _alias_overlap(config: dict[str, Any]) -> None:
+    config["agents"]["codex2"]["source_aliases"] = ["Codex foreground"]
+
+
+def _alias_names_another_agent_id(config: dict[str, Any]) -> None:
+    config["agents"]["codex_foreground"] = {
+        "display_name": "Lane",
+        "provider": "codex",
+        "adapter": "codex",
+        "account_pool": "codex_lupin",
+    }
+
+
+def _alias_names_another_display_name(config: dict[str, Any]) -> None:
+    config["agents"]["codex2"]["display_name"] = "Codex foreground"
+
+
+def _case_variant_alias_on_another_agent(config: dict[str, Any]) -> None:
+    config["agents"]["codex2"]["source_aliases"] = ["CODEX FOREGROUND"]
+
+
+def _alias_on_a_slot_as_well(config: dict[str, Any]) -> None:
+    config["agents"]["codex_lupin_slot_1"]["source_aliases"] = ["Codex foreground"]
+
+
+def _alias_on_a_slot_only(config: dict[str, Any]) -> None:
+    del config["agents"]["codex"]["source_aliases"]
+    config["agents"]["codex_bjoe_slot_1"]["source_aliases"] = ["Codex foreground"]
+
+
+def _no_alias_declared(config: dict[str, Any]) -> None:
+    del config["agents"]["codex"]["source_aliases"]
+
+
+def _malformed_aliases(value: Any, agent: str = "codex") -> Any:
+    def apply(config: dict[str, Any]) -> None:
+        config["agents"][agent]["source_aliases"] = value
+
+    return apply
+
+
+#: Every catalog that cannot say who wrote a `Codex foreground` commit.
+_UNRESOLVABLE_ALIAS_CATALOGS: dict[str, Any] = {
+    "undeclared": _no_alias_declared,
+    "overlap across logical agents": _alias_overlap,
+    "alias is another agent's normalized id": _alias_names_another_agent_id,
+    "alias is another agent's display name": _alias_names_another_display_name,
+    "alias differs from another's by case": _case_variant_alias_on_another_agent,
+    "slot declares it beside the logical agent": _alias_on_a_slot_as_well,
+    "only a slot declares it": _alias_on_a_slot_only,
+    "bare string": _malformed_aliases("Codex foreground"),
+    "null": _malformed_aliases(None),
+    "non-string item": _malformed_aliases(["Codex foreground", 1]),
+    "blank item": _malformed_aliases(["Codex foreground", "  "]),
+    "padded item": _malformed_aliases(["Codex foreground", " Codex-foreground"]),
+    "another agent's list is malformed": _malformed_aliases("Codex foreground", agent="claude"),
+}
+
+
+class HistoricalSourceAliasTests(unittest.TestCase):
+    """A declared historical label names its agent for source authorship only.
+
+    Every range here is a real synthetic Git range read by the unchanged
+    scanner. The reviewer paths are the original ones; what changes per case is
+    the catalog and the literal label on the commits.
+    """
+
+    def test_each_literal_alias_resolves_to_the_existing_pool_and_stays_raw(self) -> None:
+        config = _historical_alias_config()
+        for label in HISTORICAL_LABELS:
+            with self.subTest(label=label):
+                task = _finalized_by_claude(config, label, reviewer="Codex2")
+                before = json.loads(json.dumps(task))
+
+                source = task_review_source_identity(config, task)
+
+                assert source.error is None
+                # The evidence keeps the label; only the answer is resolved.
+                assert _scanned_authors(config, task) == (label,)
+                assert source.source_authors == (label,)
+                assert task["review_submission"]["source_authors"] == [label]
+                assert source.submitter == "Claude"
+                assert source.pools == frozenset({"codex_bjoe", "claude_main"})
+                assert "codex" in source.agents
+                assert task == before
+
+                assert "is itself a source author" in str(review_source_block_reason(config, task, "Codex"))
+                assert "codex_bjoe" in str(review_source_block_reason(config, task, "Codex3"))
+                assert "codex_bjoe" in str(review_source_block_reason(config, task, "codex_bjoe_slot_1"))
+                assert "claude_main" in str(review_source_block_reason(config, task, "Claude2"))
+                assert review_source_block_reason(config, task, "Codex2") is None
+
+    def test_canonical_and_multi_author_ranges_exclude_every_pool(self) -> None:
+        config = _historical_alias_config()
+
+        canonical = _finalized_by_claude(config, "Codex")
+        assert task_review_source_identity(config, canonical).pools == frozenset({"codex_bjoe", "claude_main"})
+        assert review_source_block_reason(config, canonical, "Codex2") is None
+
+        authors = ("Codex foreground", "Codex", "Antigravity", "Codex-foreground")
+        mixed = _finalized_by_claude(config, *authors)
+        source = task_review_source_identity(config, mixed)
+        assert source.error is None
+        assert _scanned_authors(config, mixed) == authors
+        assert source.source_authors == authors
+        assert source.pools == frozenset({"codex_bjoe", "agy_main", "claude_main"})
+        for reviewer in ("Codex", "Codex3", "Antigravity", "Antigravity2", "Claude", "Claude2"):
+            assert review_source_block_reason(config, mixed, reviewer) is not None, reviewer
+        assert review_source_block_reason(config, mixed, "Codex2") is None
+
+        # A label beside a genuine Codex2 commit: no first author is privileged.
+        for ordered in (("Codex foreground", "Codex2"), ("Codex2", "Codex-foreground")):
+            both = _finalized_by_claude(config, *ordered)
+            assert task_review_source_identity(config, both).pools == frozenset(
+                {"codex_bjoe", "codex_lupin", "claude_main"}
+            )
+            for reviewer in ("Codex", "Codex2", "Codex3"):
+                assert review_source_block_reason(config, both, reviewer) is not None, reviewer
+            assert review_source_block_reason(config, both, "Codex4") is None
+
+    def test_a_label_resembling_a_declared_alias_is_not_inferred(self) -> None:
+        """Exact declared spellings only: no case, prefix, fuzzy or punctuation family."""
+        config = _historical_alias_config()
+        for label in (
+            "codex foreground",
+            "CODEX-FOREGROUND",
+            "Codex_foreground",
+            "Codex  foreground",
+            "Codexforeground",
+            "Codex foreground 2",
+            "Codex-foreground-root",
+            "Codex fore",
+            "Codex-Root",
+        ):
+            with self.subTest(label=label):
+                task = _finalized_by_claude(config, label)
+                source = task_review_source_identity(config, task)
+                assert f"source author {label!r} is not a registered agent" in str(source.error)
+                assert source.source_authors == (label,)
+                assert not source.pools
+                for reviewer in ("Codex", "Codex2", "Antigravity"):
+                    assert review_source_block_reason(config, task, reviewer) == source.error
+
+    def test_an_unresolvable_catalog_admits_no_reviewer(self) -> None:
+        for name, damage in _UNRESOLVABLE_ALIAS_CATALOGS.items():
+            with self.subTest(catalog=name):
+                config = _historical_alias_config()
+                damage(config)
+                task = _finalized_by_claude(config, "Codex foreground", reviewer="Codex2")
+                source = task_review_source_identity(config, task)
+                assert "source author 'Codex foreground' is not a registered agent" in str(source.error)
+                assert not source.pools
+                for reviewer in ("Codex", "Codex2", "Codex4", "Antigravity"):
+                    assert review_source_block_reason(config, task, reviewer) == source.error, reviewer
+
+    def test_an_alias_cannot_collide_with_a_canonical_author_either(self) -> None:
+        """Another agent claiming `Codex` makes `Codex` two actors, by any spelling."""
+        for claimed in ("Codex", "CODEX", "codex"):
+            with self.subTest(claimed=claimed):
+                config = _historical_alias_config()
+                config["agents"]["codex2"]["source_aliases"] = [claimed]
+                task = _finalized_by_claude(config, "Codex", reviewer="Codex2")
+                source = task_review_source_identity(config, task)
+                assert "source author 'Codex' is not a registered agent" in str(source.error)
+                assert review_source_block_reason(config, task, "Codex2") == source.error
+
+        # A malformed list says nothing reliable about any name, canonical ones included.
+        config = _historical_alias_config()
+        config["agents"]["claude"]["source_aliases"] = "Codex"
+        task = _finalized_by_claude(config, "Codex", reviewer="Codex2")
+        assert "source author 'Codex' is not a registered agent" in str(
+            task_review_source_identity(config, task).error
+        )
+
+    def test_a_label_declared_by_one_other_agent_resolves_to_that_agent(self) -> None:
+        """The answer comes from the catalog, not from the label's spelling."""
+        config = _historical_alias_config()
+        del config["agents"]["codex"]["source_aliases"]
+        config["agents"]["antigravity"]["source_aliases"] = ["Codex foreground"]
+        task = _finalized_by_claude(config, "Codex foreground")
+        assert task_review_source_identity(config, task).pools == frozenset({"agy_main", "claude_main"})
+        assert "agy_main" in str(review_source_block_reason(config, task, "Antigravity2"))
+        assert review_source_block_reason(config, task, "Codex") is None
+
+    def test_owner_submitter_and_reviewer_stay_strict(self) -> None:
+        import dispatch_policy
+
+        config = _historical_alias_config()
+        for label in HISTORICAL_LABELS:
+            with self.subTest(label=label):
+                assert dispatch_policy._registered_actor_id(config, label) == ""
+                assert dispatch_policy._registered_actor_pool(config, label) == ""
+                assert dispatch_policy._registered_actor_id(config, label, source_author=True) == "codex"
+                assert dispatch_policy._registered_actor_pool(config, label, source_author=True) == "codex_bjoe"
+
+                as_owner = _finalized_by_claude(config, "Antigravity", owner=label)
+                assert f"owner {label!r} is not a registered agent" in str(
+                    task_review_source_identity(config, as_owner).error
+                )
+                as_submitter = _finalized_by_claude(config, "Antigravity")
+                as_submitter["review_submission"]["submitted_by"] = label
+                assert f"submitter {label!r} is not a registered agent" in str(
+                    task_review_source_identity(config, as_submitter).error
+                )
+                # Independent work, so only the reviewer's own registration can refuse.
+                independent = _finalized_by_claude(config, "Antigravity")
+                assert review_source_block_reason(config, independent, "Codex") is None
+                assert f"reviewer {label!r} is not a registered agent" in str(
+                    review_source_block_reason(config, independent, label)
+                )
+                # A label is no reviewer of its own commits either.
+                own = _finalized_by_claude(config, label)
+                assert review_source_block_reason(config, own, label) is not None
+
+    def test_a_forged_record_is_not_rewritten_into_passing(self) -> None:
+        """Git keeps the label; a record claiming a resolved or other name is refused."""
+        config = _historical_alias_config()
+        label, other = HISTORICAL_LABELS
+        genuine = _finalized_by_claude(config, label, reviewer="Codex2")
+        assert review_source_block_reason(config, genuine, "Codex2") is None
+
+        for forged_authors in (["Codex"], [other], ["Antigravity"], [label, "Codex"]):
+            with self.subTest(forged=forged_authors):
+                forged = json.loads(json.dumps(genuine))
+                forged["review_submission"]["source_authors"] = forged_authors
+                before = json.loads(json.dumps(forged))
+                source = task_review_source_identity(config, forged)
+                assert f"are not the immutable Git authors [{label!r}]" in str(source.error)
+                assert not source.pools
+                for reviewer in ("Codex", "Codex3", "Codex2", "Codex4"):
+                    assert review_source_block_reason(config, forged, reviewer) == source.error
+                assert forged == before
+
+        # A canonical range recorded under a declared label is just as forged.
+        canonical = _finalized_by_claude(config, "Codex", reviewer="Codex2")
+        canonical["review_submission"]["source_authors"] = [label]
+        assert "are not the immutable Git authors ['Codex']" in str(
+            task_review_source_identity(config, canonical).error
+        )
+
+    def test_cached_git_evidence_never_caches_the_resolved_identity(self) -> None:
+        """The same immutable range is re-resolved against whatever the catalog says now."""
+        import dispatch_policy
+
+        config = _historical_alias_config()
+        label = "Codex foreground"
+        task = _finalized_by_claude(config, label, reviewer="Codex2")
+        repo = config["coordination"]["repositories"]["pantheon"]["local_path"]
+
+        def answers() -> tuple[Any, ...]:
+            source = task_review_source_identity(config, task)
+            return (source.error, source.pools, review_source_block_reason(config, task, "Codex2"))
+
+        def cached() -> list[tuple[str, ...]]:
+            return [value for key, value in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.items() if key[0] == repo]
+
+        def reset_cache(warm: bool) -> None:
+            if not warm:
+                for key in [key for key in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS if key[0] == repo]:
+                    del dispatch_policy._IMMUTABLE_SOURCE_AUTHORS[key]
+
+        pools = frozenset({"codex_bjoe", "claude_main"})
+        assert answers() == (None, pools, None)
+        assert cached() == [(label,)]
+
+        for warm in (True, False):
+            with self.subTest(cache="warm" if warm else "cold"):
+                # The same label now declared by the reviewer's own account.
+                config["agents"]["codex"]["source_aliases"] = []
+                config["agents"]["codex2"]["source_aliases"] = [label]
+                reset_cache(warm)
+                error, moved, block = answers()
+                assert error is None
+                assert moved == frozenset({"codex_lupin", "claude_main"})
+                assert "is itself a source author" in str(block)
+
+                # Declared by both, then by nobody: no stale answer survives.
+                config["agents"]["codex"]["source_aliases"] = [label]
+                reset_cache(warm)
+                error, conflicted, block = answers()
+                assert "is not a registered agent" in str(error)
+                assert not conflicted
+                assert block == error
+
+                config["agents"]["codex"]["source_aliases"] = []
+                config["agents"]["codex2"]["source_aliases"] = []
+                reset_cache(warm)
+                error, _, block = answers()
+                assert "is not a registered agent" in str(error)
+                assert block == error
+
+                # The pool is read from the agent's current record, not remembered.
+                config["agents"]["codex"]["source_aliases"] = [label]
+                config["agents"]["codex"]["account_pool"] = "codex_lupin"
+                reset_cache(warm)
+                error, repooled, block = answers()
+                assert error is None
+                assert repooled == frozenset({"codex_lupin", "claude_main"})
+                assert "codex_lupin" in str(block)
+
+                config["agents"]["codex"]["account_pool"] = "codex_bjoe"
+                config["agents"]["codex"]["source_aliases"] = list(HISTORICAL_LABELS)
+                reset_cache(warm)
+                assert answers() == (None, pools, None)
+                # Only the literal Git label ever enters the cache.
+                assert cached() == [(label,)]
+
+    def test_normalizer_replaces_the_same_source_reviewer_and_keeps_the_finalizer(self) -> None:
+        for label in HISTORICAL_LABELS:
+            with self.subTest(label=label):
+                config = _historical_alias_config()
+                task = _finalized_by_claude(config, label)
+                assert supervisor.review_is_independent(config, "Claude", "Codex")
+                issues = supervisor.task_assignment_integrity_issues(config, {}, dict(task))
+                assert "reviewer_shares_source_account_pool" in issues
+                with mock.patch.object(
+                    supervisor,
+                    "get_agent_reassignment_candidates",
+                    lambda *a, **k: ["Codex3", "Codex", "Codex2"],
+                ):
+                    changes = _run_repair(config, task, pin_author=True)
+                assert changes == [("Claude", "Codex2")], changes
+
+    def test_both_failovers_exclude_the_alias_pool(self) -> None:
+        for label in HISTORICAL_LABELS:
+            with self.subTest(label=label):
+                config = _historical_alias_config()
+                # Codex2 goes away; Codex and Codex3 are the alias's own pool.
+                config["account_pools"]["codex_lupin"]["state"] = "paused"
+                task = _finalized_by_claude(config, label, reviewer="Codex2")
+                state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+                status: dict[str, Any] = {"tasks": [task]}
+                with (
+                    mock.patch("supervisor.persist_task_reassignment", return_value=True),
+                    mock.patch("supervisor.write_activity_log"),
+                ):
+                    assert dispatch_engine.reassign_unavailable_reviewers(config, state, status) is True
+                assert status["tasks"][0]["reviewer"] == "Codex4"
+                assert status["tasks"][0]["owner"] == "Claude"
+
+                config = _historical_alias_config()
+                task = _finalized_by_claude(config, label, reviewer="Codex2")
+                worker = {"task_id": "T-SOURCE", "agent_id": "codex2", "retry_count": 2}
+                with (
+                    mock.patch("supervisor.load_status", return_value={"tasks": [task]}),
+                    mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+                    mock.patch("supervisor.write_activity_log"),
+                    mock.patch.object(
+                        supervisor,
+                        "get_agent_reassignment_candidates",
+                        lambda *a, **k: ["Codex", "Codex3", "Codex4"],
+                    ),
+                ):
+                    assert (
+                        worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                            config, {}, worker, "terminal error", terminal=True
+                        )
+                        == "Codex4"
+                    )
+                assert persist.call_args.kwargs["new_owner"] == "Claude"
+                assert persist.call_args.kwargs["new_reviewer"] == "Codex4"
+
+    def test_no_reviewer_path_selects_anyone_against_an_unresolvable_source(self) -> None:
+        """Normalizer and both failovers, for every bad catalog and for a forged record."""
+
+        def forged_record(config: dict[str, Any]) -> dict[str, Any]:
+            task = _finalized_by_claude(config, "Codex foreground", reviewer="Codex2")
+            task["review_submission"]["source_authors"] = ["Antigravity"]
+            return task
+
+        def catalog_case(damage: Any) -> Any:
+            def build(config: dict[str, Any]) -> dict[str, Any]:
+                damage(config)
+                return _finalized_by_claude(config, "Codex foreground", reviewer="Codex2")
+
+            return build
+
+        cases = {name: catalog_case(damage) for name, damage in _UNRESOLVABLE_ALIAS_CATALOGS.items()}
+        cases["forged record"] = forged_record
+        candidates = ["Codex", "Codex3", "Codex4"]
+        for name, build in cases.items():
+            with self.subTest(case=name):
+                config = _historical_alias_config()
+                task = build(config)
+                issues = supervisor.task_assignment_integrity_issues(config, {}, dict(task))
+                assert any(issue.startswith("review_source_unresolved:") for issue in issues), issues
+                with mock.patch.object(
+                    supervisor, "get_agent_reassignment_candidates", lambda *a, **k: candidates
+                ):
+                    assert _run_repair(config, task, pin_author=True) == []
+
+                worker = {"task_id": "T-SOURCE", "agent_id": "codex2", "retry_count": 2}
+                with (
+                    mock.patch("supervisor.load_status", return_value={"tasks": [dict(task)]}),
+                    mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+                    mock.patch("supervisor.write_activity_log"),
+                    mock.patch.object(
+                        supervisor, "get_agent_reassignment_candidates", lambda *a, **k: candidates
+                    ),
+                ):
+                    assert (
+                        worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                            config, {}, worker, "terminal error", terminal=True
+                        )
+                        is None
+                    )
+                persist.assert_not_called()
+
+                config["account_pools"]["codex_lupin"]["state"] = "paused"
+                state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+                with mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist:
+                    assert (
+                        dispatch_engine.reassign_unavailable_reviewers(config, state, {"tasks": [dict(task)]})
+                        is False
+                    )
+                persist.assert_not_called()
+
+    def test_failover_paths_read_only_the_owned_event_queue(self) -> None:
+        """The fixture binding the failover cases above depend on."""
+        config = build_config()
+        queue = _OWNED_PATHS["event_queue"]
+        assert config["paths"]["event_queue"] == str(queue)
+        assert config["paths"]["status_file"] == str(_OWNED_PATHS["status_file"])
+        assert queue.read_text(encoding="utf-8") == ""
+        assert queue.parent == _SOURCE_GIT["root"].parent
+
+
+# --------------------------------------------------------------------------- #
+# Rules scoped to named tasks and exact logical actors
+# --------------------------------------------------------------------------- #
+
+TARGET_TASK_ID = "ODP-SCOPED-TARGET"
+UNRELATED_TASK_ID = "ODP-SCOPED-UNRELATED"
+
+#: The class-free fleet rules that must keep their meaning beside targeted ones.
+_FLEET_RULES: list[dict[str, Any]] = [
+    {"roles": ["reviewer"], "providers": ["codex"]},
+    {"roles": ["owner", "helper"], "providers": ["antigravity", "claude", "pi"]},
+]
+_TARGET_CLAUDE_AND_CODEX: list[dict[str, Any]] = [
+    {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["claude"], "providers": ["claude"]},
+    {"roles": ["reviewer"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["codex"], "providers": ["codex"]},
+]
+
+
+def _scoped_config(*rules: dict[str, Any], unclassified: Any = "allow") -> dict[str, Any]:
+    """The fleet with previously authorized Pi and a third Antigravity lane."""
+    config = build_config(
+        policy={
+            "enabled": True,
+            "rules": [*_FLEET_RULES, *rules],
+            "unclassified_owned_work": unclassified,
+        }
+    )
+    config["providers"]["pi"] = {"delivery_mode": "pi"}
+    config["account_pools"]["pi_main"] = {"enabled": True, "max_concurrent": 1}
+    config["agents"]["pi"] = {
+        "display_name": "Pi",
+        "provider": "pi",
+        "adapter": "pi",
+        "account_pool": "pi_main",
+    }
+    config["agents"]["antigravity3"] = {
+        "display_name": "Antigravity3",
+        "provider": "antigravity",
+        "adapter": "antigravity",
+        "account_pool": "agy_main",
+    }
+    return config
+
+
+def _scoped_task(task_id: str = TARGET_TASK_ID, **fields: Any) -> dict[str, Any]:
+    task: dict[str, Any] = {
+        "id": task_id,
+        "status": "todo",
+        "task_class": "implementation",
+        "priority": "P2",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [],
+    }
+    task.update(fields)
+    return task
+
+
+def _scoped_cli_patches(ai_status: Any, config: dict[str, Any]) -> list[Any]:
+    """The canonical CLI's patches with every actor of `_scoped_config` on the roster."""
+    return [
+        mock.patch.dict("os.environ", {"AI_NAME": "Codex"}, clear=False),
+        mock.patch.object(
+            ai_status,
+            "configured_agent_names",
+            return_value={"Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Pi"},
+        ),
+        mock.patch.object(ai_status, "merged_orchestrator_config", return_value=config),
+        mock.patch.object(ai_status, "append_log"),
+    ]
+
+
+class TaskScopedRoleProviderTests(unittest.TestCase):
+    """`task_ids` selects literal tasks and `agent_ids` restricts their exact actors.
+
+    The contact points are the original ones: the shared predicate, the queue
+    and its pre-launch recheck, owner failure, review churn, reviewer failover
+    and the canonical CLI. Nothing here asks a matcher in isolation whether a
+    rule applies; the evidence for a scoped rule is what those paths then do.
+    """
+
+    def test_the_selected_claude_is_not_interchangeable_with_claude2(self) -> None:
+        config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+        target = _scoped_task()
+
+        assert worker_failure_policy.agent_can_take_task(config, "Claude", target, role=ROLE_OWNER)
+        assert not worker_failure_policy.agent_can_take_task(config, "Claude2", target, role=ROLE_OWNER)
+        reason = str(role_provider_block_reason(config, "Claude2", role=ROLE_OWNER, task=target))
+        assert TARGET_TASK_ID in reason and "claude2" in reason
+        # The two share provider and pool, so only the actor constraint can tell
+        # them apart; the same fact also has to survive the common display name.
+        assert worker_failure_policy.agent_provider_identity_ids(
+            config, "Claude"
+        ) == worker_failure_policy.agent_provider_identity_ids(config, "Claude2")
+        assert role_provider_block_reason(config, "claude", role=ROLE_OWNER, task=target) is None
+
+        unrelated = _scoped_task(UNRELATED_TASK_ID)
+        assert worker_failure_policy.agent_can_take_task(config, "Claude2", unrelated, role=ROLE_OWNER)
+
+    def test_the_selected_codex_is_not_interchangeable_with_codex2(self) -> None:
+        for selected, refused in (("Codex", "Codex2"), ("Codex2", "Codex")):
+            with self.subTest(selected=selected):
+                config = _scoped_config(
+                    {
+                        "roles": ["reviewer"],
+                        "task_ids": [TARGET_TASK_ID],
+                        "agent_ids": [selected.lower()],
+                        "providers": ["codex"],
+                    }
+                )
+                target = _scoped_task(status="review")
+                assert worker_failure_policy.agent_can_take_task(config, selected, target, role=ROLE_REVIEWER)
+                assert not worker_failure_policy.agent_can_take_task(config, refused, target, role=ROLE_REVIEWER)
+                assert worker_failure_policy.agent_can_take_task(
+                    config, refused, _scoped_task(UNRELATED_TASK_ID, status="review"), role=ROLE_REVIEWER
+                )
+
+        # The same provider and the same pool: an alias of one account is still
+        # a different logical actor when the rule names the actor.
+        config = _pool_alias_config()
+        config["ready_dispatcher"]["role_provider_policy"] = {
+            "enabled": True,
+            "rules": [
+                {
+                    "roles": ["reviewer"],
+                    "task_ids": [TARGET_TASK_ID],
+                    "agent_ids": ["codex"],
+                    "providers": ["codex"],
+                }
+            ],
+            "unclassified_owned_work": "allow",
+        }
+        assert supervisor.agent_account_pool_id(config, "Codex") == supervisor.agent_account_pool_id(config, "Codex3")
+        target = _scoped_task(status="review")
+        assert worker_failure_policy.agent_can_take_task(config, "Codex", target, role=ROLE_REVIEWER)
+        assert not worker_failure_policy.agent_can_take_task(config, "Codex3", target, role=ROLE_REVIEWER)
+
+    def test_actor_and_provider_restrictions_are_both_kept(self) -> None:
+        """Being listed does not excuse the provider, nor the provider the listing."""
+        config = _scoped_config(
+            {
+                "roles": ["owner"],
+                "task_ids": [TARGET_TASK_ID],
+                "agent_ids": ["claude", "antigravity"],
+                "providers": ["claude"],
+            }
+        )
+        target = _scoped_task()
+        assert worker_failure_policy.agent_can_take_task(config, "Claude", target, role=ROLE_OWNER)
+        # Listed, but its provider is outside the targeted intersection.
+        assert "is not permitted" in str(role_provider_block_reason(config, "Antigravity", role=ROLE_OWNER, task=target))
+        # Its provider is inside, but the actor is not listed.
+        assert not worker_failure_policy.agent_can_take_task(config, "Claude2", target, role=ROLE_OWNER)
+
+        narrowed = _scoped_config(
+            {
+                "roles": ["owner"],
+                "task_ids": [TARGET_TASK_ID],
+                "agent_ids": ["claude", "claude2"],
+                "providers": ["claude"],
+            },
+            {
+                "roles": ["owner"],
+                "task_ids": [TARGET_TASK_ID],
+                "agent_ids": ["claude2"],
+                "providers": ["claude", "antigravity"],
+            },
+        )
+        assert not worker_failure_policy.agent_can_take_task(narrowed, "Claude", target, role=ROLE_OWNER)
+        assert worker_failure_policy.agent_can_take_task(narrowed, "Claude2", target, role=ROLE_OWNER)
+
+        # A targeted rule narrows the fleet rule; it cannot widen it to a provider
+        # the role is otherwise closed to.
+        widening = _scoped_config(
+            {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["codex"], "providers": ["codex"]}
+        )
+        assert not worker_failure_policy.agent_can_take_task(widening, "Codex", target, role=ROLE_OWNER)
+
+        # Disjoint listings are a rule nobody can satisfy, and it stays one.
+        disjoint = _scoped_config(
+            {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["claude"], "providers": ["claude"]},
+            {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["claude2"], "providers": ["claude"]},
+        )
+        for agent in ("Claude", "Claude2"):
+            assert not worker_failure_policy.agent_can_take_task(disjoint, agent, target, role=ROLE_OWNER)
+
+    def test_task_and_class_selectors_must_both_match(self) -> None:
+        config = _scoped_config(
+            {
+                "roles": ["owner"],
+                "task_ids": [TARGET_TASK_ID],
+                "task_classes": ["remediation"],
+                "agent_ids": ["claude"],
+                "providers": ["claude"],
+            }
+        )
+        assert worker_failure_policy.agent_can_take_task(config, "Pi", _scoped_task(), role=ROLE_OWNER)
+        assert not worker_failure_policy.agent_can_take_task(
+            config, "Pi", _scoped_task(task_class="remediation"), role=ROLE_OWNER
+        )
+        assert worker_failure_policy.agent_can_take_task(
+            config, "Pi", _scoped_task(UNRELATED_TASK_ID, task_class="remediation"), role=ROLE_OWNER
+        )
+
+    def test_a_rule_without_task_ids_can_constrain_actors_on_its_own_scope(self) -> None:
+        """The two fields are independent: `agent_ids` needs no `task_ids`."""
+        config = _scoped_config(
+            {"roles": ["owner"], "task_classes": ["remediation"], "agent_ids": ["claude"], "providers": ["claude"]}
+        )
+        remediation = _scoped_task(UNRELATED_TASK_ID, task_class="remediation")
+        assert worker_failure_policy.agent_can_take_task(config, "Claude", remediation, role=ROLE_OWNER)
+        assert not worker_failure_policy.agent_can_take_task(config, "Claude2", remediation, role=ROLE_OWNER)
+        assert worker_failure_policy.agent_can_take_task(
+            config, "Claude2", _scoped_task(UNRELATED_TASK_ID), role=ROLE_OWNER
+        )
+
+    def test_unrelated_previously_authorized_work_keeps_its_exact_answer(self) -> None:
+        """No implicit Claude-only rule: only the named task's eligibility moves."""
+        fleet = _scoped_config()
+        scoped = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+        unrelated = [
+            _scoped_task(UNRELATED_TASK_ID),
+            _scoped_task(UNRELATED_TASK_ID, task_class="remediation"),
+            _scoped_task(UNRELATED_TASK_ID, task_class=""),
+            _scoped_task(f"{TARGET_TASK_ID}-2"),
+            _scoped_task(TARGET_TASK_ID.lower()),
+        ]
+        agents = ("Pi", "Antigravity", "Antigravity2", "Antigravity3", "Claude", "Claude2", "Codex", "Codex2")
+        for task in unrelated:
+            for agent in agents:
+                for role in (ROLE_OWNER, ROLE_REVIEWER, ROLE_HELPER):
+                    with self.subTest(task=task["id"], agent=agent, role=role):
+                        assert role_provider_block_reason(scoped, agent, role=role, task=task) == (
+                            role_provider_block_reason(fleet, agent, role=role, task=task)
+                        )
+        for agent in ("Pi", "Antigravity", "Antigravity3", "Claude2"):
+            assert worker_failure_policy.agent_can_take_task(scoped, agent, unrelated[0], role=ROLE_OWNER)
+        # The role the rule does not name is not narrowed either.
+        target = _scoped_task()
+        assert worker_failure_policy.agent_can_take_task(scoped, "Pi", target, role=ROLE_HELPER)
+
+    def test_malformed_or_unregistered_selectors_fail_closed(self) -> None:
+        def targeted(**fields: Any) -> dict[str, Any]:
+            return {"roles": ["owner"], "providers": ["claude"], "task_ids": [TARGET_TASK_ID], **fields}
+
+        cases: dict[str, tuple[dict[str, Any], str]] = {
+            "empty task_ids": (targeted(task_ids=[]), "task_ids"),
+            "null task_ids": (targeted(task_ids=None), "task_ids"),
+            "bare string task_ids": (targeted(task_ids=TARGET_TASK_ID), "task_ids"),
+            "non-string task id": (targeted(task_ids=[TARGET_TASK_ID, 7]), "task_ids"),
+            "blank task id": (targeted(task_ids=["  "]), "task_ids"),
+            "padded task id": (targeted(task_ids=[f" {TARGET_TASK_ID}"]), "task_ids"),
+            "wildcard task id": (targeted(task_ids=["*"]), "task_ids"),
+            "prefix task id": (targeted(task_ids=["ODP-*"]), "task_ids"),
+            "regex task id": (targeted(task_ids=["ODP-.+"]), "task_ids"),
+            "empty agent_ids": (targeted(agent_ids=[]), "agent_ids"),
+            "null agent_ids": (targeted(agent_ids=None), "agent_ids"),
+            "bare string agent_ids": (targeted(agent_ids="claude"), "agent_ids"),
+            "non-string agent id": (targeted(agent_ids=["claude", 7]), "agent_ids"),
+            "blank agent id": (targeted(agent_ids=[" "]), "agent_ids"),
+            "unknown agent id": (targeted(agent_ids=["claude9"]), "claude9"),
+            "display name, not id": (targeted(agent_ids=["Claude"]), "Claude"),
+            "non-canonical spelling": (targeted(agent_ids=["CLAUDE"]), "CLAUDE"),
+            "padded agent id": (targeted(agent_ids=[" claude"]), "agent_ids"),
+            "inferred family": (targeted(agent_ids=["claude*"]), "claude*"),
+            "provider, not agent": (targeted(agent_ids=["claude_cli"]), "claude_cli"),
+            "account pool, not agent": (targeted(agent_ids=["claude_main"]), "claude_main"),
+            "physical slot": (targeted(agent_ids=["codex_bjoe_slot_1"]), "codex_bjoe_slot_1"),
+            "source alias": (targeted(agent_ids=["Codex foreground"]), "Codex foreground"),
+            "normalized source alias": (targeted(agent_ids=["codex_foreground"]), "codex_foreground"),
+        }
+        for name, (rule, fragment) in cases.items():
+            with self.subTest(name):
+                config = _scoped_config(rule)
+                config["agents"]["codex"]["source_aliases"] = ["Codex foreground"]
+                error = str(role_provider_policy_error(config))
+                assert fragment in error, error
+                # An unreadable rule denies every lane, on every task.
+                for task in (_scoped_task(), _scoped_task(UNRELATED_TASK_ID)):
+                    for agent in ("Claude", "Pi"):
+                        assert "malformed" in str(role_provider_block_reason(config, agent, role=ROLE_OWNER, task=task))
+                        assert not worker_failure_policy.agent_can_take_task(config, agent, task, role=ROLE_OWNER)
+
+    def test_an_actor_whose_id_or_display_name_collides_is_not_nameable(self) -> None:
+        rule = {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["claude"], "providers": ["claude"]}
+
+        id_collides = _scoped_config(rule)
+        id_collides["agents"]["writer"] = {
+            "display_name": "claude",
+            "provider": "claude",
+            "adapter": "claude_cli",
+            "account_pool": "claude_main",
+        }
+        assert "claude" in str(role_provider_policy_error(id_collides))
+
+        display_collides = _scoped_config(rule)
+        display_collides["agents"]["claude2"]["display_name"] = "Claude"
+        assert "claude" in str(role_provider_policy_error(display_collides))
+
+        for config in (id_collides, display_collides):
+            assert not worker_failure_policy.agent_can_take_task(config, "Claude", _scoped_task(), role=ROLE_OWNER)
+
+        # An unrelated lane may use its own id even with that collision elsewhere.
+        elsewhere = _scoped_config(
+            {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["pi"], "providers": ["pi"]}
+        )
+        elsewhere["agents"]["writer"] = dict(id_collides["agents"]["writer"])
+        assert role_provider_policy_error(elsewhere) is None
+        assert worker_failure_policy.agent_can_take_task(elsewhere, "Pi", _scoped_task(), role=ROLE_OWNER)
+
+    def test_the_normal_loader_refuses_a_malformed_shape_and_accepts_the_declared_one(self) -> None:
+        import common
+
+        def load(rule: dict[str, Any]) -> dict[str, Any]:
+            path = _OWNED_PATHS["status_file"].parent / "scoped-config.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "ready_dispatcher": {
+                            "role_provider_policy": {
+                                "enabled": True,
+                                "rules": [rule],
+                                "unclassified_owned_work": "allow",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return common.load_config(path)
+
+        valid = {"roles": ["owner"], "providers": ["claude"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["claude"]}
+        loaded = load(valid)["ready_dispatcher"]["role_provider_policy"]["rules"][0]
+        assert loaded["task_ids"] == [TARGET_TASK_ID]
+        assert loaded["agent_ids"] == ["claude"]
+
+        for name, change in {
+            "empty task_ids": {"task_ids": []},
+            "bare task_ids": {"task_ids": TARGET_TASK_ID},
+            "wildcard task id": {"task_ids": ["ODP-*"]},
+            "empty agent_ids": {"agent_ids": []},
+            "bare agent_ids": {"agent_ids": "claude"},
+            "display-shaped agent id": {"agent_ids": ["Claude"]},
+            "misspelled field": {"task_id": [TARGET_TASK_ID]},
+        }.items():
+            with self.subTest(name), pytest.raises(common.ConfigError):
+                load({**valid, **change})
+
+    def test_no_task_context_is_not_a_grant_for_a_known_task(self) -> None:
+        config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+
+        # A generic question about a role cannot evaluate a named task, so it is
+        # answered from the role-wide rules exactly as a class-scoped one is.
+        assert worker_failure_policy.agent_can_take_task(config, "Claude2", None, role=ROLE_OWNER)
+        assert not worker_failure_policy.agent_can_take_task(config, "Codex", None, role=ROLE_OWNER)
+        assert role_provider_block_reason(config, "Claude2", role=ROLE_OWNER, task_class="implementation") is None
+
+        # ...while a role-wide actor constraint has no task to wait for.
+        role_wide = _scoped_config({"roles": ["owner"], "agent_ids": ["claude"], "providers": ["claude"]})
+        assert not worker_failure_policy.agent_can_take_task(role_wide, "Claude2", None, role=ROLE_OWNER)
+
+        # A real task record without its id is not "some other task", and handing
+        # out new authority with no task at all is not a generic question.
+        for agent in ("Claude", "Claude2", "Pi"):
+            idless = {"status": "todo", "task_class": "implementation"}
+            for task in (idless, {**idless, "id": ""}, {**idless, "id": 7}):
+                reason = str(role_provider_block_reason(config, agent, role=ROLE_OWNER, task=task))
+                assert "no task id" in reason
+                assert not worker_failure_policy.agent_can_take_task(config, agent, task, role=ROLE_OWNER)
+            assert "no task id" in str(
+                role_provider_block_reason(config, agent, role=ROLE_OWNER, grants_new_authority=True)
+            )
+
+        # Only a rule selecting by task makes the id matter: the fleet with none
+        # reads an id-less record, and a grant with no task, exactly as before.
+        legacy = _scoped_config()
+        idless = {"status": "todo", "task_class": "implementation"}
+        assert role_provider_policy_error(legacy) is None
+        assert role_provider_block_reason(legacy, "Claude", role=ROLE_OWNER, task=idless) is None
+        assert role_provider_block_reason(legacy, "Claude2", role=ROLE_OWNER, grants_new_authority=True) is None
+        # A rule for another role does not reach this one.
+        assert role_provider_block_reason(
+            _scoped_config(_TARGET_CLAUDE_AND_CODEX[1]), "Claude2", role=ROLE_OWNER, task=idless
+        ) is None
+
+    def test_the_unclassified_disposition_is_not_lifted_by_a_targeted_rule(self) -> None:
+        rule = {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["claude"], "providers": ["claude"]}
+        unclassified_target = _scoped_task(task_class="")
+
+        def class_scoped(disposition: Any) -> dict[str, Any]:
+            config = _scoped_config(rule, unclassified=disposition)
+            config["ready_dispatcher"]["role_provider_policy"]["rules"] = [
+                {"roles": ["reviewer"], "providers": ["codex"]},
+                {"roles": ["owner"], "task_classes": ["implementation"], "providers": ["claude"]},
+                rule,
+            ]
+            return config
+
+        assert role_provider_block_reason(class_scoped("allow"), "Claude", role=ROLE_OWNER, task=unclassified_target) is None
+        assert role_provider_block_reason(class_scoped("allow"), "Pi", role=ROLE_OWNER, task=unclassified_target)
+        assert role_provider_block_reason(class_scoped("deny"), "Claude", role=ROLE_OWNER, task=unclassified_target)
+        assert role_provider_block_reason(class_scoped(["pi"]), "Claude", role=ROLE_OWNER, task=unclassified_target)
+        assert role_provider_block_reason(class_scoped(["claude"]), "Claude", role=ROLE_OWNER, task=unclassified_target) is None
+        # The disposition still answers the same question for unrelated work.
+        unrelated = _scoped_task(UNRELATED_TASK_ID, task_class="")
+        assert role_provider_block_reason(class_scoped("allow"), "Pi", role=ROLE_OWNER, task=unrelated) is None
+        assert role_provider_block_reason(class_scoped("deny"), "Pi", role=ROLE_OWNER, task=unrelated)
+        assert role_provider_block_reason(class_scoped(["pi"]), "Pi", role=ROLE_OWNER, task=unrelated) is None
+
+    def test_a_frozen_closeout_keeps_its_recorded_actors_and_grants_nothing_new(self) -> None:
+        config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+        frozen = _scoped_task(
+            status="review_approved", owner="Claude2", reviewer="Codex2", approved_head="a" * 40
+        )
+        before = json.loads(json.dumps(frozen))
+
+        # What the record already says is history, whoever the rule names today.
+        assert role_provider_block_reason(config, "Claude2", role=ROLE_OWNER, task=frozen) is None
+        assert role_provider_block_reason(config, "Codex2", role=ROLE_REVIEWER, task=frozen) is None
+        assert worker_failure_policy.agent_can_take_task(config, "Claude2", frozen, role=ROLE_OWNER)
+        event = {
+            "event_id": "evt-finalize",
+            "task_id": TARGET_TASK_ID,
+            "target_agent": "claude2",
+            "target_display_name": "Claude2",
+            "reason": "owned_finalize_dispatch",
+        }
+        message = dispatch_engine.stale_dispatch_skip_message(config, event, {TARGET_TASK_ID: frozen})
+        assert message is None or "role/provider policy" not in message
+
+        # Anything it would newly hand out is the rule's to answer.
+        for agent, role in (("Claude2", ROLE_OWNER), ("Codex2", ROLE_REVIEWER)):
+            assert role_provider_block_reason(config, agent, role=role, task=frozen, grants_new_authority=True)
+        assert role_provider_block_reason(config, "Pi", role=ROLE_OWNER, task=frozen)
+        assert role_provider_block_reason(config, "Claude", role=ROLE_OWNER, task=frozen, grants_new_authority=True) is None
+        assert frozen == before
+
+    def _ready_events(self, config: dict[str, Any], tasks: list[dict[str, Any]], agents: list[str]) -> list[dict[str, Any]]:
+        queued: list[dict[str, Any]] = []
+        config.setdefault("worker_runtime", {"heartbeat_stale_seconds": 300, "heartbeat_grace_seconds": 60})
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(
+                supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued.append(evt) or True
+            ),
+        ):
+            supervisor.dispatch_ready_tasks(config, {"workers": {}, "queue": {"events": {}}}, agent_ids_override=agents)
+        return queued
+
+    def test_the_ready_queue_dispatches_only_the_named_actor(self) -> None:
+        config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+
+        refused = self._ready_events(config, [_scoped_task(owner="Claude2")], ["claude2"])
+        assert not refused
+
+        queued = self._ready_events(config, [_scoped_task(owner="Claude")], ["claude"])
+        assert [(event["task_id"], event["target_agent"]) for event in queued] == [(TARGET_TASK_ID, "Claude")]
+
+        unrelated = self._ready_events(
+            _scoped_config(*_TARGET_CLAUDE_AND_CODEX), [_scoped_task(UNRELATED_TASK_ID, owner="Claude2")], ["claude2"]
+        )
+        assert [(event["task_id"], event["target_agent"]) for event in unrelated] == [(UNRELATED_TASK_ID, "Claude2")]
+
+    def test_a_queued_wake_is_rechecked_before_launch(self) -> None:
+        config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+
+        def wake(task_id: str, target: str) -> dict[str, Any]:
+            return {
+                "event_id": "evt-scoped",
+                "task_id": task_id,
+                "target_agent": target.lower(),
+                "target_display_name": target,
+                "reason": REASON_OWNED_READY,
+            }
+
+        def policy_message(task: dict[str, Any], target: str) -> str:
+            event = wake(task["id"], target)
+            return str(dispatch_engine.stale_dispatch_skip_message(config, event, {task["id"]: task}))
+
+        assert "role/provider policy no longer permits" in policy_message(_scoped_task(owner="Claude2"), "Claude2")
+        assert "role/provider policy" not in policy_message(_scoped_task(owner="Claude"), "Claude")
+        assert "role/provider policy" not in policy_message(_scoped_task(UNRELATED_TASK_ID, owner="Claude2"), "Claude2")
+
+    def test_a_scoped_helper_role_narrows_helper_claims(self) -> None:
+        config = _scoped_config(
+            {"roles": ["helper"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["antigravity"], "providers": ["antigravity"]}
+        )
+        assert worker_failure_policy.agent_can_take_task(config, "Antigravity", _scoped_task(), role=ROLE_HELPER)
+        assert not worker_failure_policy.agent_can_take_task(config, "Antigravity2", _scoped_task(), role=ROLE_HELPER)
+        assert worker_failure_policy.agent_can_take_task(
+            config, "Antigravity2", _scoped_task(UNRELATED_TASK_ID), role=ROLE_HELPER
+        )
+
+    def _owner_failure(
+        self, config: dict[str, Any], task: dict[str, Any], agent_id: str = "claude"
+    ) -> tuple[str | None, Any]:
+        worker = {"task_id": task["id"], "agent_id": agent_id, "retry_count": 2}
+        with (
+            mock.patch("supervisor.load_status", return_value={"tasks": [task]}),
+            mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+            mock.patch("supervisor.write_activity_log"),
+        ):
+            reassigned = worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                config, {}, worker, "terminal error", terminal=True
+            )
+        return reassigned, persist
+
+    def test_owner_failure_cannot_escape_the_named_actor(self) -> None:
+        restricted = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+        reassigned, persist = self._owner_failure(restricted, _scoped_task())
+        assert reassigned is None
+        persist.assert_not_called()
+
+        # The per-actor mapping knows nothing about tasks, and an empty entry
+        # falls back to the whole fleet; neither may reach past the rule.
+        for mapping in ({"Claude": []}, {"Claude": ["Claude2", "Pi", "Antigravity"]}):
+            config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+            config["worker_reassignment"] = {"owner_fallbacks": mapping}
+            reassigned, persist = self._owner_failure(config, _scoped_task())
+            assert reassigned is None, mapping
+            persist.assert_not_called()
+
+        # With a second named actor the same failure moves there, not to the
+        # same-family lane the unscoped search would have preferred.
+        moved = _scoped_config(
+            {
+                "roles": ["owner"],
+                "task_ids": [TARGET_TASK_ID],
+                "agent_ids": ["claude", "antigravity3"],
+                "providers": ["claude", "antigravity"],
+            }
+        )
+        reassigned, persist = self._owner_failure(moved, _scoped_task())
+        assert reassigned == "Antigravity3"
+        assert persist.call_args.kwargs["new_owner"] == "Antigravity3"
+        assert persist.call_args.kwargs["new_reviewer"] == "Codex"
+
+        # The candidates still come from the per-actor mapping, which the policy
+        # filters and does not extend: a named actor outside it is simply not
+        # reached, so the task stays put instead of moving to anyone else.
+        unmapped = _scoped_config(
+            {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["claude", "pi"], "providers": ["claude", "pi"]}
+        )
+        assert "Pi" not in supervisor.get_agent_reassignment_candidates(
+            unmapped, "Claude", role=ROLE_OWNER, task=_scoped_task()
+        )
+        reassigned, persist = self._owner_failure(unmapped, _scoped_task())
+        assert reassigned is None
+        persist.assert_not_called()
+        unmapped["worker_reassignment"] = {"owner_fallbacks": {"Claude": ["Claude2", "Pi"]}}
+        reassigned, _persist = self._owner_failure(unmapped, _scoped_task())
+        assert reassigned == "Pi"
+
+        # Unrelated work still reassigns through the unchanged search.
+        reassigned, _persist = self._owner_failure(
+            _scoped_config(*_TARGET_CLAUDE_AND_CODEX), _scoped_task(UNRELATED_TASK_ID)
+        )
+        assert reassigned == "Claude2"
+
+    def test_reviewer_failure_and_failover_cannot_escape_the_named_actor(self) -> None:
+        def submitted(config: dict[str, Any], task_id: str) -> dict[str, Any]:
+            return _scoped_task(
+                task_id,
+                status="review",
+                review_submission=_source_submission(config, task_id, "Claude", submitted_by="Claude"),
+            )
+
+        config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+        reassigned, persist = self._owner_failure(config, submitted(config, TARGET_TASK_ID), agent_id="codex")
+        assert reassigned is None
+        persist.assert_not_called()
+        reassigned, persist = self._owner_failure(config, submitted(config, UNRELATED_TASK_ID), agent_id="codex")
+        assert reassigned == "Codex2"
+        assert persist.call_args.kwargs["new_reviewer"] == "Codex2"
+
+        config["account_pools"]["codex_bjoe"]["state"] = "paused"
+        state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+        with mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist:
+            assert dispatch_engine.reassign_unavailable_reviewers(
+                config, state, {"tasks": [submitted(config, TARGET_TASK_ID)]}
+            ) is False
+        persist.assert_not_called()
+        with (
+            mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+            mock.patch("supervisor.write_activity_log"),
+        ):
+            assert dispatch_engine.reassign_unavailable_reviewers(
+                config, state, {"tasks": [submitted(config, UNRELATED_TASK_ID)]}
+            ) is True
+        assert persist.call_args.kwargs["new_reviewer"] == "Codex2"
+
+    def test_review_churn_rotates_only_inside_the_named_actors(self) -> None:
+        def churn(config: dict[str, Any], task: dict[str, Any]) -> Any:
+            with (
+                mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                supervisor.reassign_tasks_after_review_churn(config, {}, {"tasks": [task]})
+            return persist
+
+        churning = {"status": "in_progress", "review_reopen_count": 2}
+        persist = churn(_scoped_config(*_TARGET_CLAUDE_AND_CODEX), _scoped_task(**churning))
+        # Nobody else is named, so the rotation holds the owner and fails closed.
+        assert persist.call_args.kwargs["new_owner"] == "Claude"
+        assert persist.call_args.kwargs["new_status"] == "blocked"
+
+        persist = churn(
+            _scoped_config(
+                {
+                    "roles": ["owner"],
+                    "task_ids": [TARGET_TASK_ID],
+                    "agent_ids": ["claude", "antigravity3"],
+                    "providers": ["claude", "antigravity"],
+                }
+            ),
+            _scoped_task(**churning),
+        )
+        assert persist.call_args.kwargs["new_owner"] == "Antigravity3"
+        assert persist.call_args.kwargs.get("new_status") != "blocked"
+
+        persist = churn(_scoped_config(*_TARGET_CLAUDE_AND_CODEX), _scoped_task(UNRELATED_TASK_ID, **churning))
+        assert persist.call_args.kwargs["new_owner"] not in {"Claude", "Claude2"}
+        assert persist.call_args.kwargs.get("new_status") != "blocked"
+
+    def test_the_repair_pass_replaces_an_unnamed_actor_on_the_target_only(self) -> None:
+        config = _scoped_config(
+            {"roles": ["owner"], "task_ids": [TARGET_TASK_ID], "agent_ids": ["antigravity3"], "providers": ["antigravity"]}
+        )
+        target = _scoped_task()
+        assert "not eligible" in str(
+            supervisor.task_actor_assignment_block_reason(config, {}, target, "Claude", role=ROLE_OWNER)
+        )
+        assert (
+            supervisor.task_actor_assignment_block_reason(
+                config, {}, _scoped_task(UNRELATED_TASK_ID), "Claude", role=ROLE_OWNER
+            )
+            is None
+        )
+        assert worker_failure_policy.first_viable_agent(
+            config,
+            supervisor.get_agent_reassignment_candidates(config, "Claude", role=ROLE_OWNER, task=target),
+            {"Claude", "Codex"},
+            task=target,
+            balance_load=False,
+            role=ROLE_OWNER,
+        ) == "Antigravity3"
+
+    def test_assign_binds_the_rule_to_its_actual_task_argument(self) -> None:
+        import ai_status
+
+        def assign(task_id: str, owner: str, reviewer: str, **env: str) -> dict[str, Any]:
+            state = _cli_state()
+            config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+            with mock.patch.dict("os.environ", {"TASK_CLASS": "implementation", **env}, clear=False):
+                for patch in _scoped_cli_patches(ai_status, config):
+                    patch.start()
+                try:
+                    ai_status.command_assign(state, [task_id, owner, reviewer, "scoped"])
+                finally:
+                    mock.patch.stopall()
+            return state
+
+        # A brand-new task has no stored record to read an id from.
+        with pytest.raises(SystemExit) as excinfo:
+            assign(TARGET_TASK_ID, "Claude2", "Codex")
+        assert "owner Claude2" in str(excinfo.value)
+        with pytest.raises(SystemExit) as excinfo:
+            assign(TARGET_TASK_ID, "Claude", "Codex2")
+        assert "reviewer Codex2" in str(excinfo.value)
+
+        state = assign(TARGET_TASK_ID, "Claude", "Codex")
+        assert [task["id"] for task in state["tasks"]] == [TARGET_TASK_ID]
+        state = assign(UNRELATED_TASK_ID, "Claude2", "Codex2")
+        assert [task["id"] for task in state["tasks"]] == [UNRELATED_TASK_ID]
+
+    def test_assign_on_a_frozen_target_keeps_history_and_judges_new_grants(self) -> None:
+        import ai_status
+
+        config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+        frozen = _scoped_task(status="review_approved", owner="Antigravity", reviewer="Codex2", approved_head="a" * 40)
+
+        def assign(owner: str, reviewer: str) -> dict[str, Any]:
+            state = _cli_state()
+            state["tasks"] = [dict(frozen)]
+            for patch in _scoped_cli_patches(ai_status, config):
+                patch.start()
+            try:
+                ai_status.command_assign(state, [TARGET_TASK_ID, owner, reviewer])
+            finally:
+                mock.patch.stopall()
+            return state
+
+        recorded = assign("Antigravity", "Codex2")
+        assert recorded["tasks"][0]["owner"] == "Antigravity"
+        assert recorded["tasks"][0]["reviewer"] == "Codex2"
+        # The provider would be fine; it is the named actor this grant is not.
+        with pytest.raises(SystemExit) as excinfo:
+            assign("Claude2", "Codex2")
+        assert "owner Claude2" in str(excinfo.value)
+        assert assign("Claude", "Codex2")["tasks"][0]["owner"] == "Claude"
+
+    def test_approve_is_a_new_signature_the_scoped_rule_answers(self) -> None:
+        import ai_status
+
+        config = _scoped_config(*_TARGET_CLAUDE_AND_CODEX)
+        state = _cli_state()
+        state["tasks"] = [_scoped_task(status="review", reviewer="Codex2", approved_head="a" * 40)]
+        with (
+            mock.patch.dict("os.environ", {"AI_NAME": "Codex2"}, clear=False),
+            mock.patch.object(ai_status, "configured_agent_names", return_value={"Claude", "Codex2"}),
+            mock.patch.object(ai_status, "merged_orchestrator_config", return_value=config),
+            mock.patch.object(
+                ai_status, "resolve_task_sha", side_effect=AssertionError("must refuse before reading the head")
+            ),
+            pytest.raises(SystemExit) as excinfo,
+        ):
+            ai_status.command_approve(state, [TARGET_TASK_ID, "looks good"])
+        assert "role/provider" in str(excinfo.value)
+        assert state["tasks"][0]["status"] == "review"

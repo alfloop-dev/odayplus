@@ -112,7 +112,9 @@ def _validate_document(value):
         "payback_period", "payback_p50_months", "confidence", "confidence_status", "model_reference",
         "feature_reference", "feature_snapshot_time", "prediction_origin_time", "scored_at", "source_snapshot_ids"))
     if (prediction["status"] != "recorded" or type(prediction["report_version"]) is not int
-            or prediction["report_version"] < 1 or not _finite(prediction["payback_p50_months"])):
+            or prediction["report_version"] < 1
+            or (prediction["payback_p50_months"] is None) != (prediction["payback_period"] is None)
+            or (prediction["payback_p50_months"] is not None and not _finite(prediction["payback_p50_months"]))):
         raise _missing("recorded_chain_shape")
     for field in ("report_id", "model_reference", "feature_reference"):
         text(prediction[field])
@@ -120,7 +122,10 @@ def _validate_document(value):
     for field in ("feature_snapshot_time", "prediction_origin_time", "scored_at"):
         instant(prediction[field])
     keys(prediction["intervals"], ("m1", "m3", "m6", "m12"))
-    for interval in (*prediction["intervals"].values(), prediction["payback_period"]):
+    intervals = list(prediction["intervals"].values())
+    if prediction["payback_period"] is not None:
+        intervals.append(prediction["payback_period"])
+    for interval in intervals:
         keys(interval, ("p10", "p50", "p90"))
         if not all(_finite(v) for v in interval.values()) or not interval["p10"] <= interval["p50"] <= interval["p90"]:
             raise _missing("recorded_chain_shape")
@@ -264,12 +269,13 @@ class SiteScoreRecordedDecisionChainReader:
             if not isinstance(report, SiteScoreReport) or sha256_hex(report.to_dict()) != source.report_sha256:
                 raise _missing("recorded_chain_report_binding")
             intervals = {key: _interval(report.horizons[key]) for key in ("m1", "m3", "m6", "m12")}
-            payback = _interval(report.payback_period)
+            payback = _interval(report.payback_period) if report.payback_period is not None else None
             # Abstention/legacy unknown is absence, never measured 0 or 100%.
             confidence = report.confidence if report.confidence_status == "measured" else None
             if confidence is not None and (not _finite(confidence) or not 0 <= confidence <= 1):
                 raise _missing("recorded_prediction_confidence")
-            if not _finite(report.payback_p50_months):
+            if ((report.payback_p50_months is None) != (payback is None)
+                    or (report.payback_p50_months is not None and not _finite(report.payback_p50_months))):
                 raise _missing("recorded_prediction_shape")
             prediction = {"status": "recorded", "report_id": source.report_id,
                 "report_version": source.report_version, "report_sha256": source.report_sha256,

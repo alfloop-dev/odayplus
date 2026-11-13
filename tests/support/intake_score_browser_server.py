@@ -8,6 +8,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
@@ -20,6 +21,7 @@ from pydantic import BaseModel
 
 from apps.api.app.routes import listings
 from apps.api.app.routes.operator import create_operator_router
+from apps.api.oday_api.security.dependencies import bind_audit_log, bind_persistence
 from apps.worker.oday_worker.handlers import build_default_registry
 from apps.worker.oday_worker.main import ODayWorker
 from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
@@ -59,8 +61,12 @@ def create_app():
     if not database_url and os.environ.get("ODP_SCORE_BROWSER_DATABASE_URL_FILE"):
         database_url = Path(os.environ["ODP_SCORE_BROWSER_DATABASE_URL_FILE"]).read_text().strip()
     control_key = os.environ.get("ODP_SCORE_BROWSER_CONTROL_KEY", "")
+    database_info = conninfo_to_dict(database_url)
+    name = database_info.get("dbname", "")
+    native_owned = (re.fullmatch(r"oday_native_parser_p_[0-9a-f]{16}", name) is not None
+        and database_info.get("host") in {"127.0.0.1", "localhost"})
     if (os.environ.get("ODP_SCORE_BROWSER_MODE") != "isolated-synthetic"
-            or not conninfo_to_dict(database_url).get("dbname", "").startswith("odp_score_browser_")
+            or not (name.startswith("odp_score_browser_") or native_owned)
             or len(control_key) < 32 or os.environ.get("ODP_PRODUCT_MODE") != "poc"):
         raise RuntimeError("Explicit isolated synthetic browser configuration required")
     os.environ["ODAY_DATABASE_URL"] = database_url
@@ -72,6 +78,10 @@ def create_app():
     if initialized is None:
         prepare_database(database_url)
     bundle = build_persistence(mode="postgresql")
+    # Local JWTs resolve the actual SQL identity/session stores, just as in
+    # the normal API composition. Configured auth never trusts test personas.
+    bind_persistence(bundle)
+    bind_audit_log(bundle.audit_log)
     scenarios = {}
     observations = {}
     controls = Lock()
@@ -84,6 +94,7 @@ def create_app():
 
     app = FastAPI(lifespan=lifespan)
     app.state.persistence_bundle = bundle
+    app.state.audit_log = bundle.audit_log
     app.state.operator_intake_repository = bundle.operator_intake_repository
     app.state.job_queue = bundle.job_queue
     app.include_router(create_operator_router(
@@ -94,9 +105,12 @@ def create_app():
         avm_repository_for_tenant=lambda tenant: bundle._scoped_repository("avm_repository", tenant),
         netplan_repository_for_tenant=lambda tenant: bundle._scoped_repository("netplan_repository", tenant),
         priceops_repository_for_tenant=lambda tenant: bundle._scoped_repository("priceops_repository", tenant),
+        priceops_store_repository=bundle.store_repository,
+        priceops_brand_repository=bundle.brand_repository,
         intake_workflow_store=bundle.assisted_intake_store,
         intake_workflow_policy=bundle.assisted_intake_workflow_policy,
         model_runtime=read_runtime,
+        score_execution_service=bundle.score_execution_service(model_runtime=read_runtime),
         live_repository=OperatorLiveRepository(bundle), require_live_data=True,
         persistence_mode="postgresql", provider_mode="live", allow_test_reset=False,
     ), prefix="/api/v1")

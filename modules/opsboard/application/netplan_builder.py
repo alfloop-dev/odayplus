@@ -288,7 +288,8 @@ class CanonicalNetPlanBuilder:
         return self._projection(scenario)
 
     def command(self, store_id, *, operation, expected_problem_hash,
-                scenario_id, reason, idempotency_key, constraints=None, outcome=None, decision=None):
+                scenario_id, reason, idempotency_key, constraints=None, outcome=None, decision=None,
+                executed_at=None):
         scenario = self._scenario(store_id, scenario_id, enforce_active=False)
         action = (Action.APPROVE if operation == "decide" else
                   Action.CREATE if operation == "save" else Action.EXECUTE)
@@ -298,6 +299,11 @@ class CanonicalNetPlanBuilder:
             self._authorize(current, action)
         if not reason.strip() or not idempotency_key.strip():
             raise HTTPException(422, "NETPLAN_BUILDER_REASON_AND_IDEMPOTENCY_REQUIRED")
+        # The HTTP schema already parsed the native ISO instant once. Here
+        # only an aware execute instant may enter the original native owner.
+        if executed_at is not None and (operation != "execute" or not isinstance(executed_at, datetime)
+                                        or executed_at.utcoffset() is None):
+            raise HTTPException(422, "NETPLAN_BUILDER_COMMAND_INVALID")
         patch = (validate_builder_constraints(constraints) if operation == "save" else
                  validate_recorded_outcome(outcome) if operation == "outcome" else
                  validate_native_decision(decision) if operation == "decide" else None)
@@ -308,6 +314,9 @@ class CanonicalNetPlanBuilder:
             payload["outcome"] = patch
         elif operation == "decide":
             payload["decision"] = patch
+        if executed_at is not None:
+            # Same instant, same intent; a changed actual date is a new body.
+            payload["executedAt"] = executed_at.astimezone(UTC).isoformat()
         request_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, allow_nan=False).encode()).hexdigest()
         receipt_key = hashlib.sha256(json.dumps([self.principal.subject_id, operation, idempotency_key]).encode()).hexdigest()
         scope_denial = None
@@ -347,7 +356,7 @@ class CanonicalNetPlanBuilder:
                     store_id=store_id, operation=operation,
                     scenario_id=scenario_id, expected_problem_hash=expected_problem_hash,
                     reason=reason, patch=patch, request_hash=request_hash,
-                    receipt_key=receipt_key,
+                    receipt_key=receipt_key, executed_at=executed_at,
                 )
         assert scope_denial is not None
         raise scope_denial
@@ -364,7 +373,7 @@ class CanonicalNetPlanBuilder:
 
     def _apply_authorized_locked(self, state, scenario, version, current, *, store_id,
                                  operation, scenario_id, expected_problem_hash, reason,
-                                 patch, request_hash, receipt_key):
+                                 patch, request_hash, receipt_key, executed_at=None):
         # Only command() enters here, after current authorization under lock.
         receipts = state.setdefault("netPlanBuilderReceipts", {})
         receipt = receipts.get(receipt_key)
@@ -445,7 +454,8 @@ class CanonicalNetPlanBuilder:
                               reason=reason.strip(), decision=patch["decision"],
                               approval_receipt_id=patch["approvalReceiptId"])
             elif operation == "execute":
-                native.execute(scenario_id, executed_by=self.principal.subject_id)
+                native.execute(scenario_id, executed_by=self.principal.subject_id,
+                               executed_at=executed_at)
             elif operation == "outcome":
                 native.record_outcome(scenario_id, actual_gross_margin=patch["actualGrossMargin"],
                                       source_snapshot_ids=patch["sourceSnapshotIds"],
@@ -461,7 +471,8 @@ class CanonicalNetPlanBuilder:
             outcome="accepted", correlation_id=self.correlation_id,
             metadata={"tenant_id": self.principal.tenant_id, "store_id": store_id,
                       "previousScenarioId": scenario_id, "previousProblemHash": expected_problem_hash,
-                      "problemHash": result["problemHash"], "reason": reason.strip()},
+                      "problemHash": result["problemHash"], "reason": reason.strip(),
+                      **({"executedAt": executed_at.isoformat()} if executed_at is not None else {})},
         ))
         audit = {"event_id": event.event_id}
         if getattr(self.audit, "_worm_sink", None) is not None:

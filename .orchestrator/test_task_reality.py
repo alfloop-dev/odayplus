@@ -4,7 +4,14 @@ import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+# The same bootstrap the sibling orchestrator tests use: DriverTests imports
+# dispatch_engine, which imports `ai_status` from scripts/. Run alone, this
+# module must not depend on another module's collection having put it there.
+SCRIPTS_DIR = os.path.join(os.path.dirname(THIS_DIR), "scripts")
+for _path in (SCRIPTS_DIR, THIS_DIR):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 import task_reality  # noqa: E402
 
@@ -173,6 +180,63 @@ class MergeRouteTests(unittest.TestCase):
 
         self.assertEqual(findings, [])
         self.assertIn("merge_route", task)
+
+    def test_a_route_bound_to_a_merge_group_recovery_survives_the_merge(self) -> None:
+        """The route is the admission record the owed reviewer decision is bound
+        to; the merge does not release it, the reviewer's decision does."""
+        route = {"head": HEAD, "route": "queued", "attempts": 2, "at": "2026-09-06T01:20:00Z"}
+        task = _task(status="review", merge_route=dict(route))
+
+        findings = task_reality.task_reality_findings(
+            task, pull_request=_pr(state="MERGED", merged=True), branch_exists=True,
+            merge_group_recovery=True,
+        )
+        task_reality.apply_task_reality_repairs(task, findings)
+
+        self.assertEqual(findings, [])
+        self.assertEqual(task["merge_route"], route)
+
+        results = task_reality.reconcile_tasks(
+            [task],
+            probe=lambda _t: {
+                "pull_request": _pr(state="MERGED", merged=True),
+                "branch_exists": True,
+                "merge_group_recovery": True,
+            },
+        )
+        self.assertEqual(results, [])
+        self.assertEqual(task["merge_route"], route)
+
+    def test_an_unresolved_merge_group_recovery_keeps_the_route_and_reports_it(self) -> None:
+        """A pending failure cause the shared rule cannot resolve is not an
+        ordinary merge: the route is kept as its evidence and reported."""
+        route = {"head": HEAD, "route": "queued", "attempts": 2, "at": "2026-09-06T01:20:00Z"}
+        task = _task(status="review", merge_route=dict(route))
+
+        results = task_reality.reconcile_tasks(
+            [task],
+            probe=lambda _t: {
+                "pull_request": _pr(state="MERGED", merged=True),
+                "branch_exists": True,
+                "merge_group_recovery": "unresolved",
+            },
+        )
+
+        self.assertEqual([f["kind"] for f in results[0]["findings"]], ["merge_route_recovery_unresolved"])
+        self.assertFalse(results[0]["findings"][0]["repairable"])
+        self.assertEqual(results[0]["applied"], [])
+        self.assertIn("route is kept", results[0]["summary"])
+        self.assertEqual(task["merge_route"], route)
+
+        # The same record without a recovery hold is released as before.
+        for hold in ("", False, None):
+            with self.subTest(hold=hold):
+                ordinary = _task(status="review", merge_route=dict(route))
+                findings = task_reality.task_reality_findings(
+                    ordinary, pull_request=_pr(state="MERGED", merged=True), branch_exists=True,
+                    merge_group_recovery=hold or False,
+                )
+                self.assertEqual([f["kind"] for f in findings], ["merge_route_after_merge"])
 
 
 class ReviewGateTests(unittest.TestCase):

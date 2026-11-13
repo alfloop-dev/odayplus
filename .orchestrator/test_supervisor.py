@@ -35,13 +35,35 @@ os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 
 import ai_status
 import common
+import dispatch_policy
 import github_bus
+import pytest
 import runtime_state
 import supervisor
 import task_archive
 import watch_events
 import worker_failure_policy
 import worker_workspace
+
+#: The real Git reader behind the source-author rule. Tests about the rule
+#: itself restore it and run against a real synthetic repository.
+_READ_SOURCE_AUTHORS_FROM_GIT = dispatch_policy.immutable_review_source_authors
+
+
+def _git_finds_the_recorded_authors(_config: Any, _task: Any, submission: dict[str, Any]) -> tuple[Any, None]:
+    """Stand-in for the Git reader only, for tests about the Supervisor's other gates.
+
+    Their heads are synthetic SHAs with no repository behind them. The rest of
+    the source-author rule -- binding to the submitted (or approved) head and
+    base, registration and every account pool -- still judges each path.
+    """
+    return tuple(str(author).strip() for author in submission.get("source_authors") or ()), None
+
+
+@pytest.fixture(autouse=True)
+def _synthetic_heads_have_their_recorded_authors():
+    with mock.patch.object(dispatch_policy, "immutable_review_source_authors", _git_finds_the_recorded_authors):
+        yield
 
 
 def tearDownModule() -> None:
@@ -93,6 +115,1500 @@ def load_test_config() -> dict[str, Any]:
         str((_TEST_STATUS_ROOT / "workspace").resolve())
     ]
     return config
+
+
+class QueueCustodySupervisorOwnerTests(unittest.TestCase):
+    """reconcile, prune and the finalizer read one custody rule, not worker status."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.config = load_test_config()
+        self.config["paths"].update(
+            status_file=str(root / "ai-status.json"),
+            state_file=str(root / "state.json"),
+            event_queue=str(root / "queue.jsonl"),
+            activity_log=str(root / "activity.jsonl"),
+            approval_queue=str(root / "approval-queue.json"),
+        )
+        self.task = {"id": "T-CUSTODY", "title": "Custody", "owner": "Claude", "reviewer": "Codex", "status": "in_progress"}
+        self._write_board()
+        self.event = runtime_state.enqueue_event(
+            self.config,
+            {
+                "event_id": "evt-1",
+                "target_agent": "claude",
+                "provider": "claude",
+                "task_id": "T-CUSTODY",
+                "reason": "owned_in_progress_dispatch",
+                "message": "go",
+                "created_at": "2020-01-01T00:00:00Z",
+            },
+        )
+        self.record = {
+            "status": "started",
+            "attempt_count": 1,
+            "last_attempt_at": "2026-11-05T00:00:00Z",
+            "run_id": "run-old",
+            "lease_owner": "run-old",
+            "processed_at": "2026-11-05T00:00:00Z",
+        }
+        self.state = {
+            "workers": {"run-old": self._worker("failed", "run-old", last_error="old failure")},
+            "queue": {"events": {"evt-1": self.record}},
+        }
+
+    def _write_board(self) -> None:
+        Path(self.config["paths"]["status_file"]).write_text(json.dumps({"tasks": [self.task]}), encoding="utf-8")
+
+    def _worker(self, status: str, run_id: str, **fields: Any) -> dict[str, Any]:
+        return {
+            "run_id": run_id,
+            "task_id": "T-CUSTODY",
+            "provider": "claude",
+            "agent_id": "claude",
+            "queue_event_id": "evt-1",
+            "status": status,
+            "attempt_count": 1,
+            "last_event_at": "2026-11-05T00:00:01Z",
+            **fields,
+        }
+
+    def _bind_to_new_run(self, status: str = "running") -> dict[str, Any]:
+        self.state["workers"]["run-new"] = self._worker(status, "run-new", attempt_count=2)
+        self.record.update(run_id="run-new", lease_owner="run-new", attempt_count=2)
+        return self.state["workers"]["run-new"]
+
+    def _queue_ids(self) -> list[str]:
+        return [event["event_id"] for event in runtime_state.load_event_queue(self.config)]
+
+    def test_reconcile_does_not_finish_a_reset_event_from_its_old_runs(self) -> None:
+        supervisor._reset_queue_record_for_redispatch(self.record, reason="redispatch")
+        before = dict(self.record)
+        self.assertFalse(supervisor.reconcile_queue_records(self.config, self.state))
+        self.assertEqual(self.record, before)
+
+    def test_reconcile_reads_only_the_run_holding_the_event(self) -> None:
+        self._bind_to_new_run()
+        self.assertFalse(supervisor.reconcile_queue_records(self.config, self.state))
+        self.assertEqual(self.record["status"], "started")
+        self.state["workers"]["run-new"]["status"] = "completed"
+        self.assertTrue(supervisor.reconcile_queue_records(self.config, self.state))
+        self.assertEqual(self.record["status"], "completed", "the old failed run no longer decides it")
+
+    def test_reconcile_still_settles_an_event_its_own_run_finished(self) -> None:
+        self.assertTrue(supervisor.reconcile_queue_records(self.config, self.state))
+        self.assertEqual((self.record["status"], self.record["error"]), ("failed", "old failure"))
+
+    def test_prune_keeps_a_reset_event_even_past_the_orphan_grace(self) -> None:
+        supervisor._reset_queue_record_for_redispatch(self.record, reason="redispatch")
+        before = dict(self.record)
+        self.assertFalse(supervisor.prune_event_queue(self.config, self.state))
+        self.assertEqual(self._queue_ids(), ["evt-1"])
+        self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+
+    def _reset_resume_with_no_run_left(self) -> None:
+        self.task.update(status="blocked", waiting_for="Human/Ops")
+        self._write_board()
+        event = {**self.event, "reason": "github_retry"}
+        runtime_state.replace_event_queue(self.config, original_events=[self.event], retained_events=[event])
+        supervisor._reset_queue_record_for_redispatch(self.record, reason="redispatch")
+        self.state["workers"] = {}
+
+    def test_prune_keeps_a_reset_resume_with_no_run_left_only_while_its_task_supports_it(self) -> None:
+        self._reset_resume_with_no_run_left()
+        before = dict(self.record)
+        self.assertFalse(supervisor.prune_event_queue(self.config, self.state))
+        self.assertEqual(self._queue_ids(), ["evt-1"])
+        self.assertEqual(self.state["queue"]["events"]["evt-1"], before)
+
+        self.task["owner"] = "Codex2"
+        self._write_board()
+        self.assertTrue(supervisor.prune_event_queue(self.config, self.state))
+        self.assertEqual(self._queue_ids(), [])
+
+    def test_prune_returns_a_started_event_whose_holder_is_gone_with_real_reset_facts(self) -> None:
+        self.record.update(run_id="run-gone", lease_owner="run-gone")
+        self.assertTrue(supervisor.prune_event_queue(self.config, self.state))
+        self.assertEqual(self._queue_ids(), ["evt-1"])
+        self.assertEqual(self.record["status"], "queued")
+        self.assertIn("requeued_at", self.record)
+        self.assertNotIn("lease_owner", self.record)
+        self.assertTrue(runtime_state.queue_event_moved_from_worker(self.state, self.state["workers"]["run-old"]))
+
+    def test_prune_still_removes_a_settled_event_and_cancels_a_stale_one(self) -> None:
+        self.record["status"] = "completed"
+        self.assertTrue(supervisor.prune_event_queue(self.config, self.state))
+        self.assertEqual(self._queue_ids(), [])
+
+        runtime_state.enqueue_event(self.config, {**self.event, "created_at": supervisor.utc_now()})
+        fresh = dict(self.record, status="queued")
+        self.state["queue"]["events"]["evt-1"] = fresh
+        supervisor._reset_queue_record_for_redispatch(fresh, reason="redispatch")
+        self.task["status"] = "done"
+        self._write_board()
+        self.assertTrue(supervisor.prune_event_queue(self.config, self.state))
+        self.assertEqual(self._queue_ids(), [], "a genuinely stale reset event may still be cancelled")
+
+    def _assert_late_finalize_changes_nothing(self) -> None:
+        before = dict(self.record)
+        supervisor.finalize_queue_event_record(self.config, self.state, self.state["workers"]["run-old"], "failed", "late")
+        self.assertEqual(self.record, before)
+
+    def test_finalizer_leaves_a_reset_event_alone(self) -> None:
+        supervisor._reset_queue_record_for_redispatch(self.record, reason="redispatch")
+        self._assert_late_finalize_changes_nothing()
+
+    def test_finalizer_leaves_an_event_another_run_took(self) -> None:
+        self._bind_to_new_run()
+        self._assert_late_finalize_changes_nothing()
+
+    def test_old_active_run_does_not_hold_up_the_holders_settlement(self) -> None:
+        fresh = self._bind_to_new_run("completed")
+        self.state["workers"]["run-old"]["status"] = "running"
+        supervisor.finalize_queue_event_record(self.config, self.state, fresh, "completed")
+        self.assertEqual(self.record["status"], "completed")
+
+    def test_finalizer_still_waits_for_an_active_successor_of_the_same_lineage(self) -> None:
+        self.state["workers"]["run-old"].update(status="fallback", fallback_run_id="run-child")
+        self.state["workers"]["run-child"] = self._worker("running", "run-child", parent_run_id="run-old", pid=os.getpid())
+        supervisor.finalize_queue_event_record(self.config, self.state, self.state["workers"]["run-old"], "failed", "late")
+        self.assertEqual(self.record["status"], "started")
+
+    def _provider_report(self) -> dict[str, Any]:
+        return {
+            "providers": {
+                "claude": {"auth_ready": True, "local_cli_worker_supported": True, "supports_auto_approve": True},
+                "codex": {"auth_ready": True, "local_cli_worker_supported": True},
+            },
+            "agent_adapters": {
+                "claude": {"can_auto_deliver": True, "delivery_mode": "claude_cli", "supported": True},
+                "claude_slot_1": {"can_auto_deliver": True, "delivery_mode": "claude_cli", "supported": True},
+                "claude_slot_2": {"can_auto_deliver": True, "delivery_mode": "claude_cli", "supported": True},
+                "codex": {"can_auto_deliver": True, "delivery_mode": "codex_cli", "supported": True},
+                "codex_bjoe_slot_1": {"can_auto_deliver": True, "delivery_mode": "codex_cli", "supported": True},
+            },
+        }
+
+    def _deliver_blocked_owner_notification(
+        self,
+        **task_updates: Any,
+    ) -> tuple[dict[str, Any], dict[str, Any], str, list[Any], dict[str, Any]]:
+        self.task = {
+            "id": "T-CUSTODY",
+            "title": "Custody",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "blocked",
+            "waiting_for": "Human/Ops",
+            "task_class": "implementation",
+            "depends_on": [],
+            **task_updates,
+        }
+        self._write_board()
+        Path(self.config["paths"]["event_queue"]).unlink(missing_ok=True)
+        self.state = {"workers": {}, "queue": {"events": {}}}
+        self.assertTrue(github_bus.queue_resume_for_task(self.config, self.task))
+        events = runtime_state.load_event_queue(self.config)
+        self.assertEqual(len(events), 1)
+        event_id = str(events[0]["event_id"])
+        self.assertEqual(events[0]["reason"], "github_retry")
+
+        from adapters.base import DeliveryResult
+
+        launched: list[Any] = []
+        provider_report = self._provider_report()
+        tmp_root = Path(self.tmp.name)
+
+        def fake_prepare_workspace(
+            _cfg: dict[str, Any],
+            _st: dict[str, Any],
+            req: Any,
+            **_kwargs: Any,
+        ) -> tuple[bool, str | None]:
+            req.metadata["workspace_path"] = str(tmp_root / "worktree")
+            req.metadata["workspace_branch"] = f"task/{req.task_id}"
+            req.metadata["status_root"] = str(tmp_root)
+            return True, None
+
+        class FakeAdapter:
+            def deliver(self, req: Any) -> DeliveryResult:
+                launched.append(req)
+                idx = len(launched)
+                return DeliveryResult(
+                    ok=True,
+                    target=req.agent_id,
+                    adapter="claude_cli",
+                    mode="claude_cli",
+                    auto_delivered=True,
+                    manual_confirmation_required=False,
+                    run_id=f"run-notif-{idx}",
+                    session_id=f"sess-notif-{idx}",
+                    resume_token=f"sess-notif-{idx}",
+                    pid=41000 + idx,
+                    command=["claude", "-p", req.message],
+                    log_path=str(tmp_root / f"run-notif-{idx}.log"),
+                    notes="delivered",
+                    metadata={},
+                )
+
+        with (
+            mock.patch.object(supervisor, "prepare_worker_workspace", side_effect=fake_prepare_workspace),
+            mock.patch.object(supervisor, "build_adapter", return_value=FakeAdapter()),
+        ):
+            self.assertTrue(supervisor.process_queue(self.config, self.state, provider_report))
+
+        self.assertEqual(len(launched), 1)
+        worker = self.state["workers"]["run-notif-1"]
+        record = self.state["queue"]["events"][event_id]
+        self.assertIsNone(worker.get("reason"))
+        self.assertEqual(worker["request_snapshot"]["reason"], "github_retry")
+        self.assertEqual(worker["agent_id"], "claude_slot_1")
+        self.assertEqual(worker["logical_agent_id"], "claude")
+        self.assertEqual(worker["dispatch_slot_id"], "claude_slot_1")
+        self.assertEqual(worker["account_pool"], "claude_main")
+        self.assertEqual(worker["status"], "running")
+        self.assertIsNone(worker.get("last_heartbeat_at"))
+        self.assertEqual(record["status"], "started")
+        self.assertEqual(record["run_id"], "run-notif-1")
+        self.assertEqual(record["lease_owner"], "run-notif-1")
+        self.assertEqual(record["attempt_count"], 1)
+        self.assertEqual(supervisor.load_status(self.config)["tasks"][0]["status"], "blocked")
+        return worker, record, event_id, launched, provider_report
+
+    def test_owner_notification_process_queue_to_poll_workers_retains_running_custody_while_blocked_and_after_reopen(
+        self,
+    ) -> None:
+        worker, record, event_id, launched, provider_report = self._deliver_blocked_owner_notification()
+
+        for task_status, heartbeat in (
+            ("blocked", None),
+            ("blocked", supervisor.utc_now()),
+            ("in_progress", None),
+            ("in_progress", supervisor.utc_now()),
+        ):
+            self.task["status"] = task_status
+            if task_status == "in_progress":
+                self.task.pop("waiting_for", None)
+            self._write_board()
+            worker["last_heartbeat_at"] = heartbeat
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+                mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid,
+            ):
+                supervisor.poll_workers(self.config, self.state, provider_report=provider_report)
+            self.assertEqual(worker["status"], "running")
+            self.assertNotIn("supersede_deferred_since", worker)
+            self.assertEqual(record["status"], "started")
+            self.assertEqual(record["lease_owner"], worker["run_id"])
+            self.assertEqual(self._queue_ids(), [event_id])
+            terminate_pid.assert_not_called()
+            self.assertFalse(supervisor.reconcile_queue_records(self.config, self.state))
+            self.assertFalse(supervisor.prune_event_queue(self.config, self.state))
+            self.assertEqual(self._queue_ids(), [event_id])
+        self.assertEqual(len(launched), 1)
+
+    def test_blocked_owner_notification_parked_retry_fallback_and_approval_resume_positives(self) -> None:
+        worker, record, event_id, launched, provider_report = self._deliver_blocked_owner_notification()
+        self.assertIsNone(supervisor.worker_failure_policy._execution_authority_refusal(self.config, worker))
+        self.assertFalse(supervisor.supersede_worker_without_execution_authority(self.config, self.state, worker))
+
+        handled, changed = supervisor.maybe_trigger_retry_or_fallback(
+            self.config,
+            self.state,
+            provider_report,
+            worker,
+            "429 rate limit",
+        )
+        self.assertEqual((handled, changed), (True, True))
+        self.assertEqual(worker["status"], "retry_backoff")
+        self.assertEqual(worker["retry_count"], 1)
+        worker["next_retry_at"] = "2020-01-01T00:00:00Z"
+
+        from adapters.base import DeliveryResult
+
+        tmp_root = Path(self.tmp.name)
+
+        class RetryAdapter:
+            def __init__(self, delivery_mode: str) -> None:
+                self.delivery_mode = delivery_mode
+
+            def deliver(self, req: Any) -> DeliveryResult:
+                launched.append(req)
+                idx = len(launched)
+                return DeliveryResult(
+                    ok=True,
+                    target=req.agent_id,
+                    adapter=self.delivery_mode,
+                    mode=self.delivery_mode,
+                    auto_delivered=self.delivery_mode != "file_inbox",
+                    manual_confirmation_required=self.delivery_mode == "file_inbox",
+                    run_id=f"run-notif-{idx}",
+                    session_id=f"sess-notif-{idx}",
+                    resume_token=f"sess-notif-{idx}",
+                    pid=41000 + idx,
+                    command=["claude", "-p", req.message],
+                    log_path=str(tmp_root / f"run-notif-{idx}.log"),
+                    notes="delivered",
+                    metadata={},
+                )
+
+        with mock.patch.object(
+            supervisor,
+            "build_adapter",
+            side_effect=lambda mode, *_a, **_kw: RetryAdapter(mode),
+        ):
+            self.assertTrue(
+                supervisor.retry_due_workers(self.config, self.state, provider_report, datetime.now(UTC))
+            )
+        self.assertEqual(worker["status"], "retried")
+        self.assertEqual(worker["superseded_by_run_id"], "run-notif-2")
+        run_2 = self.state["workers"]["run-notif-2"]
+        self.assertEqual(run_2["status"], "running")
+        self.assertIsNone(run_2.get("reason"))
+        self.assertEqual(run_2["request_snapshot"]["reason"], "github_retry")
+
+        record = self.state["queue"]["events"][event_id]
+        record.update(run_id="run-notif-2", lease_owner="run-notif-2", status="started")
+        run_2["retry_count"] = 5
+        with mock.patch.object(
+            supervisor,
+            "build_adapter",
+            side_effect=lambda mode, *_a, **_kw: RetryAdapter(mode),
+        ):
+            handled, changed = supervisor.maybe_trigger_retry_or_fallback(
+                self.config,
+                self.state,
+                provider_report,
+                run_2,
+                "429 rate limit",
+            )
+        self.assertEqual((handled, changed), (True, True))
+        self.assertEqual(self.state["workers"]["run-notif-2"]["status"], "fallback")
+        self.assertEqual(self.state["workers"]["run-notif-2"]["fallback_run_id"], "run-notif-3")
+        run_3 = self.state["workers"]["run-notif-3"]
+        self.assertEqual(run_3["mode"], "file_inbox")
+        self.assertEqual(run_3["status"], "manual_pending")
+
+        run_3.update(mode="claude_cli", status="suspended_approval", session_id="sess-notif-3")
+        record = self.state["queue"]["events"][event_id]
+        record.update(run_id="run-notif-3", lease_owner="run-notif-3", status="manual_pending")
+        approval_state = {
+            "pending": [],
+            "history": [
+                {
+                    "approval_id": "appr-notif-1",
+                    "worker_run_id": "run-notif-3",
+                    "decision": "allow",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "git status"},
+                }
+            ],
+        }
+
+        def fake_resume(
+            _cfg: dict[str, Any],
+            target_worker: dict[str, Any],
+            _report: dict[str, Any],
+            *,
+            approval: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            target_worker["status"] = "running"
+            return {
+                "command": ["claude", "--resume", str(target_worker.get("session_id"))],
+                "log_path": str(Path(self.tmp.name) / "resume.log"),
+                "pid": 41999,
+                "allowed_tools": [f"Bash({(approval or {}).get('tool_input', {}).get('command', '')})"],
+            }
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value=approval_state),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "resume_claude_worker", side_effect=fake_resume) as resume_mock,
+        ):
+            self.assertTrue(supervisor.poll_workers(self.config, self.state, provider_report=provider_report))
+        resume_mock.assert_called_once()
+        self.assertEqual(self.state["workers"]["run-notif-3"]["status"], "running")
+        self.assertEqual(self.state["workers"]["run-notif-3"]["last_approval_id"], "appr-notif-1")
+
+    def test_owner_notification_poll_and_parked_authority_negatives_and_bounded_grace(self) -> None:
+        base_worker, _base_record, event_id, launched, provider_report = self._deliver_blocked_owner_notification()
+        base_task = deepcopy(self.task)
+        base_config = deepcopy(self.config)
+        base_state = deepcopy(self.state)
+        self.assertEqual(len(launched), 1)
+        self.assertIsNone(base_worker.get("reason"))
+
+        def mutate_case(
+            case_name: str,
+            cfg: dict[str, Any],
+            task: dict[str, Any],
+            worker: dict[str, Any],
+        ) -> None:
+            snap = worker["request_snapshot"]
+            snap_task = snap.setdefault("metadata", {}).setdefault("task", {})
+            if case_name == "owner_drift":
+                task["owner"] = "Codex"
+            elif case_name == "snapshot_owner_drift":
+                snap_task["owner"] = "Codex"
+            elif case_name == "snapshot_reviewer_drift":
+                snap_task["reviewer"] = "Claude2"
+            elif case_name == "dependency_drift":
+                task["depends_on"] = ["DEP-MISSING"]
+            elif case_name == "typed_human_gate_class":
+                task["task_class"] = "human_gate"
+            elif case_name == "typed_human_required_roles":
+                task["human_required_roles"] = ["owner"]
+            elif case_name == "typed_human_gate_status":
+                task["gate_status"] = "pending_human_approval"
+            elif case_name == "non_dispatchable_hold":
+                task["non_dispatchable"] = True
+            elif case_name == "status_review":
+                task["status"] = "review"
+            elif case_name == "status_done":
+                task["status"] = "done"
+            elif case_name == "frozen_approved_head":
+                task["approved_head"] = "b" * 40
+            elif case_name == "frozen_merge_route":
+                task["merge_route"] = {"head": "b" * 40, "route": "queued"}
+            elif case_name == "protected_paths_drift":
+                task["protected_paths"] = ["docs/protected_fixture"]
+            elif case_name == "isolated_worktree_source_drift":
+                snap["metadata"]["workspace_mode"] = "isolated_worktree"
+                snap["metadata"]["workspace_path"] = str(Path(self.tmp.name) / "foreign-worktree")
+            elif case_name == "review_churn_escalated":
+                task["review_churn_escalated_at"] = "2026-11-07T00:00:00Z"
+                task["review_churn_escalated_at_count"] = 6
+            elif case_name == "role_provider_policy_drift":
+                cfg.setdefault("ready_dispatcher", {})["role_provider_policy"] = {
+                    "implementation": {"owner": ["codex"]}
+                }
+            elif case_name == "disabled_agent_policy_drift":
+                cfg.setdefault("ready_dispatcher", {})["disabled_agents"] = ["Claude"]
+            elif case_name == "provider_drift":
+                worker["provider"] = "codex"
+                snap["provider"] = "codex"
+            elif case_name == "missing_provider":
+                worker["provider"] = None
+                snap["provider"] = None
+            elif case_name == "conflicting_provider":
+                worker["provider"] = "codex"
+            elif case_name == "unregistered_physical_slot":
+                worker["agent_id"] = "claude_slot_99"
+                worker["dispatch_slot_id"] = "claude_slot_99"
+                snap["agent_id"] = "claude_slot_99"
+                snap["metadata"]["dispatch_slot_id"] = "claude_slot_99"
+            elif case_name == "foreign_physical_slot":
+                worker["agent_id"] = "codex_bjoe_slot_1"
+                worker["dispatch_slot_id"] = "codex_bjoe_slot_1"
+                snap["agent_id"] = "codex_bjoe_slot_1"
+                snap["metadata"]["dispatch_slot_id"] = "codex_bjoe_slot_1"
+            elif case_name == "unregistered_account_pool":
+                worker["account_pool"] = "ghost_pool"
+                snap["metadata"]["account_pool"] = "ghost_pool"
+            elif case_name == "foreign_account_pool":
+                worker["account_pool"] = "codex_bjoe"
+                snap["metadata"]["account_pool"] = "codex_bjoe"
+            elif case_name == "disabled_account_pool":
+                cfg["account_pools"]["claude_main"]["enabled"] = False
+            elif case_name == "missing_reason":
+                worker.pop("reason", None)
+                snap["reason"] = None
+            elif case_name == "empty_reason":
+                worker.pop("reason", None)
+                snap["reason"] = ""
+            elif case_name == "wrong_reason":
+                worker.pop("reason", None)
+                snap["reason"] = "wrong_reason"
+            elif case_name == "conflicting_reason":
+                worker["reason"] = "owned_in_progress_dispatch"
+            elif case_name == "ordinary_blocked_execution":
+                worker.pop("reason", None)
+                snap["reason"] = "owned_in_progress_dispatch"
+            else:
+                raise AssertionError(f"unknown case {case_name}")
+
+        cases = (
+            "owner_drift",
+            "snapshot_owner_drift",
+            "snapshot_reviewer_drift",
+            "dependency_drift",
+            "typed_human_gate_class",
+            "typed_human_required_roles",
+            "typed_human_gate_status",
+            "non_dispatchable_hold",
+            "status_review",
+            "status_done",
+            "frozen_approved_head",
+            "frozen_merge_route",
+            "protected_paths_drift",
+            "isolated_worktree_source_drift",
+            "review_churn_escalated",
+            "role_provider_policy_drift",
+            "disabled_agent_policy_drift",
+            "provider_drift",
+            "missing_provider",
+            "conflicting_provider",
+            "unregistered_physical_slot",
+            "foreign_physical_slot",
+            "unregistered_account_pool",
+            "foreign_account_pool",
+            "disabled_account_pool",
+            "missing_reason",
+            "empty_reason",
+            "wrong_reason",
+            "conflicting_reason",
+            "ordinary_blocked_execution",
+        )
+
+        for case_name in cases:
+            with self.subTest(case=case_name):
+                # 1. Live poll with fresh heartbeat defers within grace, then supersedes after grace;
+                #    absent heartbeat supersedes immediately.
+                cfg = deepcopy(base_config)
+                state = deepcopy(base_state)
+                self.task = deepcopy(base_task)
+                worker = state["workers"]["run-notif-1"]
+                record = state["queue"]["events"][event_id]
+                mutate_case(case_name, cfg, self.task, worker)
+                self._write_board()
+
+                worker["last_heartbeat_at"] = supervisor.utc_now()
+                with (
+                    mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                    mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+                    mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid,
+                    mock.patch.object(supervisor, "build_adapter") as adapter_mock,
+                ):
+                    self.assertTrue(supervisor.poll_workers(cfg, state, provider_report=provider_report))
+                    self.assertEqual(worker["status"], "running")
+                    self.assertIn("supersede_deferred_since", worker)
+                    terminate_pid.assert_not_called()
+
+                    worker["supersede_deferred_since"] = "2020-01-01T00:00:00Z"
+                    self.assertTrue(supervisor.poll_workers(cfg, state, provider_report=provider_report))
+                    self.assertEqual(worker["status"], "superseded")
+                    self.assertNotIn("supersede_deferred_since", worker)
+                    self.assertEqual(record["status"], "completed")
+                    self.assertEqual(record["attempt_count"], 1)
+                    terminate_pid.assert_called_once_with(worker["pid"])
+                    adapter_mock.assert_not_called()
+
+                # 1b. Absent initial heartbeat supersedes immediately without grace deferral.
+                cfg_no_hb = deepcopy(base_config)
+                state_no_hb = deepcopy(base_state)
+                self.task = deepcopy(base_task)
+                worker_no_hb = state_no_hb["workers"]["run-notif-1"]
+                record_no_hb = state_no_hb["queue"]["events"][event_id]
+                mutate_case(case_name, cfg_no_hb, self.task, worker_no_hb)
+                worker_no_hb.pop("last_heartbeat_at", None)
+                self._write_board()
+                with (
+                    mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                    mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+                    mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid_no_hb,
+                    mock.patch.object(supervisor, "build_adapter") as adapter_mock_no_hb,
+                ):
+                    self.assertTrue(supervisor.poll_workers(cfg_no_hb, state_no_hb, provider_report=provider_report))
+                    self.assertEqual(worker_no_hb["status"], "superseded")
+                    self.assertNotIn("supersede_deferred_since", worker_no_hb)
+                    self.assertEqual(record_no_hb["status"], "completed")
+                    self.assertEqual(record_no_hb["attempt_count"], 1)
+                    terminate_pid_no_hb.assert_called_once_with(worker_no_hb["pid"])
+                    adapter_mock_no_hb.assert_not_called()
+
+                # 2. Parked retry_backoff / approval resume refusal with 0 extra native launches.
+                cfg_parked = deepcopy(base_config)
+                state_parked = deepcopy(base_state)
+                self.task = deepcopy(base_task)
+                parked_worker = state_parked["workers"]["run-notif-1"]
+                parked_record = state_parked["queue"]["events"][event_id]
+                mutate_case(case_name, cfg_parked, self.task, parked_worker)
+                self._write_board()
+
+                self.assertTrue(
+                    bool(supervisor.worker_failure_policy._execution_authority_refusal(cfg_parked, parked_worker))
+                )
+                parked_worker["status"] = "retry_backoff"
+                parked_worker["next_retry_at"] = "2020-01-01T00:00:00Z"
+                with mock.patch.object(supervisor, "build_adapter") as adapter_mock:
+                    self.assertTrue(
+                        supervisor.retry_due_workers(
+                            cfg_parked,
+                            state_parked,
+                            provider_report,
+                            datetime.now(UTC),
+                        )
+                    )
+                    adapter_mock.assert_not_called()
+                self.assertEqual(parked_worker["status"], "superseded")
+                self.assertEqual(parked_record["status"], "completed")
+                self.assertEqual(parked_record["attempt_count"], 1)
+                self.assertEqual(len(state_parked["workers"]), 1)
+
+    def test_final_launch_boundary_refuses_ordinary_dispatches_held_during_workspace_preparation(self) -> None:
+        from adapters.base import DeliveryResult
+
+        provider_report = self._provider_report()
+        now_iso = supervisor.utc_now()
+        lease_until = (datetime.now(UTC) + timedelta(minutes=30)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+        def make_scenario(reason: str) -> tuple[dict[str, Any], dict[str, Any]]:
+            task: dict[str, Any] = {
+                "id": "T-FINAL-GATE",
+                "title": "Final gate",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "status": "in_progress",
+                "task_class": "implementation",
+                "depends_on": [],
+            }
+            target_agent = "claude"
+            target_display = "Claude"
+            provider = "claude"
+            if reason == "owned_ready_dispatch":
+                task["status"] = "todo"
+            elif reason == "review_ready_dispatch":
+                task["status"] = "review"
+                task["review_submission"] = {
+                    "pr_number": 99,
+                    "pr_url": "https://github.com/example/repo/pull/99",
+                    "remote_sha": "a" * 40,
+                    "base_branch": "dev",
+                    "submitted_at": now_iso,
+                    "source_authors": ["Claude"],
+                }
+                target_agent = "codex"
+                target_display = "Codex"
+                provider = "codex"
+            elif reason == "helper_claim_dispatch":
+                task["status"] = "in_progress"
+                task["helper_execution_lease"] = {
+                    "claimed_by": "Codex",
+                    "original_owner": "Claude",
+                    "generation": 1,
+                    "claimed_at": now_iso,
+                    "lease_expires_at": lease_until,
+                }
+                target_agent = "codex"
+                target_display = "Codex"
+                provider = "codex"
+            task_map = {task["id"]: task}
+            with (
+                mock.patch.object(supervisor, "resolve_task_progress_head", return_value="a" * 40),
+                mock.patch.object(ai_status, "resolve_task_sha", return_value="a" * 40),
+                mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+                mock.patch.object(supervisor, "review_source_block_reason", return_value=None),
+            ):
+                built = supervisor.build_dispatch_event(task, target_display, reason, task_map)
+            event_payload = {
+                "event_key": built["key"],
+                "task_id": task["id"],
+                "target_agent": target_agent,
+                "target_display_name": target_display,
+                "provider": provider,
+                "reason": reason,
+                "message": "go",
+                "metadata": {"task": deepcopy(task)},
+            }
+            return task, event_payload
+
+        tmp_root = Path(self.tmp.name)
+        for reason in (
+            "owned_in_progress_dispatch",
+            "owned_ready_dispatch",
+            "review_ready_dispatch",
+            "helper_claim_dispatch",
+        ):
+            for hold_kind in ("non_dispatchable", "human_gate", "role_policy", "disabled_agent"):
+                with self.subTest(reason=reason, hold_kind=hold_kind):
+                    cfg = deepcopy(self.config)
+                    task, event_payload = make_scenario(reason)
+                    self.task = task
+                    self._write_board()
+                    Path(cfg["paths"]["event_queue"]).unlink(missing_ok=True)
+                    queued = runtime_state.enqueue_event(cfg, event_payload)
+                    event_id = str(queued["event_id"])
+                    state: dict[str, Any] = {"workers": {}, "queue": {"events": {}}}
+                    native_launches: list[Any] = []
+                    workspace_prepared: list[str] = []
+
+                    def hold_during_workspace(
+                        active_cfg: dict[str, Any],
+                        _st: dict[str, Any],
+                        req: Any,
+                        *,
+                        _hold: str = hold_kind,
+                        _reason: str = reason,
+                        _target_display: str = str(event_payload["target_display_name"]),
+                        _prepared: list[str] = workspace_prepared,
+                        **_kwargs: Any,
+                    ) -> tuple[bool, str | None]:
+                        _prepared.append(str(req.task_id))
+                        req.metadata["workspace_path"] = str(tmp_root / "worktree")
+                        req.metadata["workspace_branch"] = f"task/{req.task_id}"
+                        req.metadata["status_root"] = str(tmp_root)
+                        if _hold == "non_dispatchable":
+                            self.task["non_dispatchable"] = True
+                        elif _hold == "human_gate":
+                            self.task["task_class"] = "human_gate"
+                        elif _hold == "role_policy":
+                            role = supervisor.dispatch_reason_role(_reason)
+                            active_cfg.setdefault("ready_dispatcher", {})["role_provider_policy"] = {
+                                "implementation": {role: ["gemini"]}
+                            }
+                        elif _hold == "disabled_agent":
+                            active_cfg.setdefault("ready_dispatcher", {})["disabled_agents"] = [
+                                _target_display
+                            ]
+                        self._write_board()
+                        return True, None
+
+                    with (
+                        mock.patch.object(supervisor, "resolve_task_progress_head", return_value="a" * 40),
+                        mock.patch.object(ai_status, "resolve_task_sha", return_value="a" * 40),
+                        mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+                        mock.patch.object(supervisor, "review_source_block_reason", return_value=None),
+                        mock.patch.object(
+                            supervisor,
+                            "prepare_worker_workspace",
+                            side_effect=hold_during_workspace,
+                        ),
+                        mock.patch.object(supervisor, "build_adapter") as adapter_mock,
+                    ):
+                        self.assertTrue(supervisor.process_queue(cfg, state, provider_report))
+                        native_launches.extend(adapter_mock.call_args_list)
+
+                    self.assertEqual(workspace_prepared, ["T-FINAL-GATE"])
+                    record = state["queue"]["events"][event_id]
+                    self.assertEqual(record["status"], "completed")
+                    self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+                    self.assertEqual(record.get("attempt_count", 0), 0)
+                    self.assertEqual(state["workers"], {})
+                    self.assertEqual(native_launches, [])
+
+        # Unchanged positive: when eligible at both pre-workspace and final-launch boundaries, launch succeeds.
+        cfg_pos = deepcopy(self.config)
+        pos_task, pos_event = make_scenario("owned_in_progress_dispatch")
+        self.task = pos_task
+        self._write_board()
+        Path(cfg_pos["paths"]["event_queue"]).unlink(missing_ok=True)
+        queued_pos = runtime_state.enqueue_event(cfg_pos, pos_event)
+        pos_event_id = str(queued_pos["event_id"])
+        pos_state: dict[str, Any] = {"workers": {}, "queue": {"events": {}}}
+        pos_launches: list[Any] = []
+
+        class PosAdapter:
+            def deliver(self, req: Any) -> DeliveryResult:
+                pos_launches.append(req)
+                return DeliveryResult(
+                    ok=True,
+                    target=req.agent_id,
+                    adapter="claude_cli",
+                    mode="claude_cli",
+                    auto_delivered=True,
+                    manual_confirmation_required=False,
+                    run_id="run-pos-1",
+                    session_id="sess-pos-1",
+                    resume_token="sess-pos-1",
+                    pid=42001,
+                    command=["claude", "-p", req.message],
+                    log_path=str(tmp_root / "run-pos-1.log"),
+                    notes="delivered",
+                    metadata={},
+                )
+
+        with (
+            mock.patch.object(supervisor, "resolve_task_progress_head", return_value="a" * 40),
+            mock.patch.object(
+                supervisor,
+                "prepare_worker_workspace",
+                return_value=(True, None),
+            ),
+            mock.patch.object(supervisor, "build_adapter", return_value=PosAdapter()),
+        ):
+            self.assertTrue(supervisor.process_queue(cfg_pos, pos_state, provider_report))
+
+        self.assertEqual(len(pos_launches), 1)
+        self.assertEqual(pos_state["queue"]["events"][pos_event_id]["status"], "started")
+        self.assertEqual(pos_state["queue"]["events"][pos_event_id]["attempt_count"], 1)
+        self.assertIn("run-pos-1", pos_state["workers"])
+
+    def test_pinned_evidence_base_owner_notification_retains_poll_and_parked_authority_and_base_ancestry_gate(
+        self,
+    ) -> None:
+        from adapters.base import DeliveryResult
+
+        pinned_sha = "a" * 40
+        worker, record, event_id, launched, provider_report = self._deliver_blocked_owner_notification(
+            frozen_evidence_base_sha=pinned_sha,
+        )
+        self.assertFalse(supervisor.task_closeout_is_frozen(self.config, self.task))
+        self.assertEqual(self.task["frozen_evidence_base_sha"], pinned_sha)
+
+        for task_status, heartbeat in (
+            ("blocked", None),
+            ("blocked", supervisor.utc_now()),
+            ("in_progress", None),
+            ("in_progress", supervisor.utc_now()),
+        ):
+            self.task["status"] = task_status
+            if task_status == "in_progress":
+                self.task.pop("waiting_for", None)
+            else:
+                self.task["waiting_for"] = "Human/Ops"
+            self._write_board()
+            worker["last_heartbeat_at"] = heartbeat
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+                mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid,
+            ):
+                supervisor.poll_workers(self.config, self.state, provider_report=provider_report)
+            self.assertEqual(worker["status"], "running")
+            self.assertNotIn("supersede_deferred_since", worker)
+            self.assertEqual(record["status"], "started")
+            self.assertEqual(record["lease_owner"], worker["run_id"])
+            self.assertEqual(self._queue_ids(), [event_id])
+            terminate_pid.assert_not_called()
+
+        self.task["status"] = "blocked"
+        self.task["waiting_for"] = "Human/Ops"
+        self._write_board()
+        self.assertIsNone(supervisor.worker_failure_policy._execution_authority_refusal(self.config, worker))
+        self.assertFalse(supervisor.supersede_worker_without_execution_authority(self.config, self.state, worker))
+
+        worker["status"] = "retry_backoff"
+        worker["next_retry_at"] = "2020-01-01T00:00:00Z"
+        tmp_root = Path(self.tmp.name)
+
+        class PinnedRetryAdapter:
+            def deliver(self, req: Any) -> DeliveryResult:
+                launched.append(req)
+                idx = len(launched)
+                return DeliveryResult(
+                    ok=True,
+                    target=req.agent_id,
+                    adapter="claude_cli",
+                    mode="claude_cli",
+                    auto_delivered=True,
+                    manual_confirmation_required=False,
+                    run_id=f"run-notif-{idx}",
+                    session_id=f"sess-notif-{idx}",
+                    resume_token=f"sess-notif-{idx}",
+                    pid=41000 + idx,
+                    command=["claude", "-p", req.message],
+                    log_path=str(tmp_root / f"run-notif-{idx}.log"),
+                    notes="delivered",
+                    metadata={},
+                )
+
+        with mock.patch.object(supervisor, "build_adapter", return_value=PinnedRetryAdapter()):
+            self.assertTrue(
+                supervisor.retry_due_workers(self.config, self.state, provider_report, datetime.now(UTC))
+            )
+        self.assertEqual(worker["status"], "retried")
+        self.assertEqual(self.state["workers"]["run-notif-2"]["status"], "running")
+
+        # Base ancestry remains enforced by resolve_frozen_evidence_base: ancestor succeeds, non-ancestor fails.
+        repo_dir = tmp_root / "ancestry-repo"
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        for git_args in (
+            ["init", "-q", "-b", "dev"],
+            ["config", "user.name", "Test"],
+            ["config", "user.email", "test@example.invalid"],
+        ):
+            subprocess.run(["git", *git_args], cwd=repo_dir, check=True, capture_output=True, text=True)
+        (repo_dir / "a.txt").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "a.txt"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "commit", "-qm", "base"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        ancestor_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo_dir, check=True, capture_output=True, text=True
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "switch", "-q", "-c", "task/T-CUSTODY"],
+            cwd=repo_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        (repo_dir / "b.txt").write_text("task\n", encoding="utf-8")
+        subprocess.run(["git", "add", "b.txt"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "commit", "-qm", "task"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "switch", "-q", "dev"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        (repo_dir / "c.txt").write_text("diverged\n", encoding="utf-8")
+        subprocess.run(["git", "add", "c.txt"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "commit", "-qm", "diverged"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        non_ancestor_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo_dir, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+        resolved_ok, err_ok = supervisor.resolve_frozen_evidence_base(
+            repo_dir,
+            repository_id="pantheon",
+            default_branch="dev",
+            branch="task/T-CUSTODY",
+            sha=ancestor_sha,
+        )
+        self.assertIsNotNone(resolved_ok)
+        self.assertIsNone(err_ok)
+
+        resolved_bad, err_bad = supervisor.resolve_frozen_evidence_base(
+            repo_dir,
+            repository_id="pantheon",
+            default_branch="dev",
+            branch="task/T-CUSTODY",
+            sha=non_ancestor_sha,
+        )
+        self.assertIsNone(resolved_bad)
+        self.assertIn("frozen_evidence_base_not_task_ancestor", str(err_bad))
+
+    def test_review_churn_blocked_escalation_refuses_until_continuation_approval_is_consumed_to_todo(
+        self,
+    ) -> None:
+        from adapters.base import DeliveryResult
+
+        provider_report = self._provider_report()
+        tmp_root = Path(self.tmp.name)
+
+        def make_churn_task(**overrides: Any) -> dict[str, Any]:
+            task: dict[str, Any] = {
+                "id": "T-CUSTODY",
+                "title": "Custody",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "status": "blocked",
+                "waiting_for": "Human/Ops",
+                "task_class": "implementation",
+                "depends_on": [],
+                "review_reopen_count": 6,
+                "review_churn_escalated_at_count": 6,
+                "review_churn_escalated_at": "2026-08-30T00:00:00Z",
+                "next": "Escalated to Human/Ops after 6 reviewer reopens.",
+            }
+            task.update(overrides)
+            return task
+
+        def make_approval(**overrides: Any) -> dict[str, Any]:
+            approval: dict[str, Any] = {
+                "approval_id": "apr-custody-1",
+                "approval_type": "human_ops_continuation",
+                "status": "issued",
+                "task_id": "T-CUSTODY",
+                "task_scope": "T-CUSTODY",
+                "scope": {"task_id": "T-CUSTODY"},
+                "reason": "Human reviewed the churn evidence and authorized one continuation.",
+                "issued_by": "Human/Ops",
+                "issued_at": "2026-08-30T00:00:00Z",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "nonce": "nonce-custody-valid-1",
+                "review_reopen_count": 6,
+                "review_churn_escalated_at_count": 6,
+                "review_churn_escalated_at": "2026-08-30T00:00:00Z",
+                "consumed_at": None,
+                "consumed_by": None,
+                "consumption_reason": None,
+            }
+            approval.update(overrides)
+            return approval
+
+        negative_cases = (
+            "missing_approval",
+            "invalid_issuer",
+            "invalid_scope",
+            "invalid_epoch",
+            "expired_approval",
+            "not_yet_consumed_approval",
+            "replayed_consumed_permit",
+        )
+
+        for case_name in negative_cases:
+            with self.subTest(case=case_name):
+                if case_name == "missing_approval":
+                    self.task = make_churn_task()
+                elif case_name == "invalid_issuer":
+                    self.task = make_churn_task(human_continuation_approval=make_approval(issued_by="Claude"))
+                elif case_name == "invalid_scope":
+                    self.task = make_churn_task(
+                        human_continuation_approval=make_approval(
+                            task_id="OTHER-TASK",
+                            task_scope="OTHER-TASK",
+                            scope={"task_id": "OTHER-TASK"},
+                        )
+                    )
+                elif case_name == "invalid_epoch":
+                    self.task = make_churn_task(
+                        human_continuation_approval=make_approval(review_churn_escalated_at_count=5)
+                    )
+                elif case_name == "expired_approval":
+                    self.task = make_churn_task(
+                        human_continuation_approval=make_approval(expires_at="2020-01-01T00:00:00Z")
+                    )
+                elif case_name == "not_yet_consumed_approval":
+                    self.task = make_churn_task(human_continuation_approval=make_approval())
+                elif case_name == "replayed_consumed_permit":
+                    self.task = make_churn_task(
+                        human_continuation_approval=make_approval(
+                            approval_id="apr-custody-replay",
+                            nonce="nonce-custody-reused",
+                        ),
+                        human_continuation_approval_history=[
+                            make_approval(
+                                approval_id="apr-custody-old",
+                                nonce="nonce-custody-reused",
+                                status="consumed",
+                            )
+                        ],
+                    )
+                self._write_board()
+                self.state = {"workers": {}, "queue": {"events": {}}}
+
+                if case_name != "not_yet_consumed_approval":
+                    with (
+                        mock.patch.object(ai_status, "merged_orchestrator_config", return_value=self.config),
+                        mock.patch.object(
+                            supervisor,
+                            "commit_canonical_task_transition",
+                            side_effect=lambda _cfg, st: Path(self.config["paths"]["status_file"]).write_text(
+                                json.dumps(st), encoding="utf-8"
+                            )
+                            or True,
+                        ),
+                    ):
+                        supervisor.consume_human_continuation_approvals(self.config, self.state)
+
+                current_task = supervisor.load_status(self.config)["tasks"][0]
+                self.assertEqual(current_task["status"], "blocked")
+
+                Path(self.config["paths"]["event_queue"]).unlink(missing_ok=True)
+                self.assertTrue(github_bus.queue_resume_for_task(self.config, current_task))
+                events = runtime_state.load_event_queue(self.config)
+                self.assertEqual(len(events), 1)
+                event_id = str(events[0]["event_id"])
+                self.assertIn(
+                    "Human gate",
+                    str(
+                        supervisor.owner_notification_block_reason(
+                            self.config, events[0], {current_task["id"]: current_task}
+                        )
+                    ),
+                )
+                with (
+                    mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+                    mock.patch.object(supervisor, "build_adapter") as adapter_mock,
+                ):
+                    self.assertTrue(supervisor.process_queue(self.config, self.state, provider_report))
+                    adapter_mock.assert_not_called()
+                record = self.state["queue"]["events"][event_id]
+                self.assertEqual(record["status"], "completed")
+                self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+                self.assertEqual(record.get("attempt_count", 0), 0)
+                self.assertEqual(self.state["workers"], {})
+
+        # Legitimately consumed original approval completes transition to todo and remains eligible under normal gates.
+        self.task = make_churn_task(human_continuation_approval=make_approval())
+        self._write_board()
+        self.state = {"workers": {}, "queue": {"events": {}}}
+        with (
+            mock.patch.object(ai_status, "merged_orchestrator_config", return_value=self.config),
+            mock.patch.object(
+                supervisor,
+                "commit_canonical_task_transition",
+                side_effect=lambda _cfg, st: Path(self.config["paths"]["status_file"]).write_text(
+                    json.dumps(st), encoding="utf-8"
+                )
+                or True,
+            ),
+        ):
+            self.assertTrue(supervisor.consume_human_continuation_approvals(self.config, self.state))
+
+        resumed_task = supervisor.load_status(self.config)["tasks"][0]
+        self.assertEqual(resumed_task["status"], "todo")
+        self.assertNotIn("waiting_for", resumed_task)
+        self.assertNotIn("human_continuation_approval", resumed_task)
+        self.assertEqual(resumed_task["human_continuation_approval_history"][-1]["status"], "consumed")
+        self.assertEqual(resumed_task["review_churn_reassigned_at_count"], 6)
+
+        Path(self.config["paths"]["event_queue"]).unlink(missing_ok=True)
+        self.assertTrue(github_bus.queue_resume_for_task(self.config, resumed_task))
+        post_events = runtime_state.load_event_queue(self.config)
+        self.assertEqual(len(post_events), 1)
+        post_event_id = str(post_events[0]["event_id"])
+        self.assertIsNone(
+            supervisor.owner_notification_block_reason(
+                self.config, post_events[0], {resumed_task["id"]: resumed_task}
+            )
+        )
+
+        post_launched: list[Any] = []
+
+        class PostConsumeAdapter:
+            def deliver(self, req: Any) -> DeliveryResult:
+                post_launched.append(req)
+                return DeliveryResult(
+                    ok=True,
+                    target=req.agent_id,
+                    adapter="claude_cli",
+                    mode="claude_cli",
+                    auto_delivered=True,
+                    manual_confirmation_required=False,
+                    run_id="run-post-consume-1",
+                    session_id="sess-post-consume-1",
+                    resume_token="sess-post-consume-1",
+                    pid=43001,
+                    command=["claude", "-p", req.message],
+                    log_path=str(tmp_root / "run-post-consume-1.log"),
+                    notes="delivered",
+                    metadata={},
+                )
+
+        with (
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+            mock.patch.object(supervisor, "build_adapter", return_value=PostConsumeAdapter()),
+        ):
+            self.assertTrue(supervisor.process_queue(self.config, self.state, provider_report))
+
+        self.assertEqual(len(post_launched), 1)
+        post_worker = self.state["workers"]["run-post-consume-1"]
+        post_record = self.state["queue"]["events"][post_event_id]
+        self.assertEqual(post_worker["status"], "running")
+        self.assertEqual(post_record["status"], "started")
+        self.assertEqual(post_record["attempt_count"], 1)
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid,
+        ):
+            supervisor.poll_workers(self.config, self.state, provider_report=provider_report)
+        self.assertEqual(post_worker["status"], "running")
+        terminate_pid.assert_not_called()
+        self.assertIsNone(
+            supervisor.worker_failure_policy._execution_authority_refusal(self.config, post_worker)
+        )
+
+    def test_consumed_churn_epoch_and_completed_rotation_keep_ordinary_blocked_notification_through_poll(
+        self,
+    ) -> None:
+        # Fields exactly as the original consumer and the rotation policy leave them:
+        # history/escalation timestamps are retained and the reassignment checkpoint
+        # is advanced to the consumed epoch; a past rotation only sets the checkpoint.
+        consumed_epoch = {
+            "review_reopen_count": 6,
+            "review_churn_escalated_at_count": 6,
+            "review_churn_escalated_at": "2026-08-30T00:00:00Z",
+            "review_churn_reassigned_at_count": 6,
+            "review_churn_continuation_consumed_at": "2026-08-30T01:00:00Z",
+            "review_churn_continuation_consumed_by": "Human/Ops",
+            "human_continuation_approval_history": [
+                {
+                    "approval_id": "apr-custody-consumed",
+                    "status": "consumed",
+                    "task_id": "T-CUSTODY",
+                    "nonce": "nonce-custody-consumed",
+                    "issued_by": "Human/Ops",
+                    "consumed_at": "2026-08-30T01:00:00Z",
+                    "consumed_by": "Orchestrator",
+                }
+            ],
+            "next": "Waiting for Human/Ops answer on fixture question; review churn epoch already consumed.",
+        }
+        completed_rotation = {
+            "review_reopen_count": 2,
+            "review_churn_reassigned_at_count": 2,
+            "review_churn_previous_owner": "Antigravity",
+            "review_churn_last_reassigned_at": "2026-11-07T11:45:45Z",
+            "review_churn_epoch_failed_owners": ["Antigravity"],
+            "next": "Auto-reassigned ownership after 2 reviewer reopens; now waiting for an answer.",
+        }
+        for case_name, task_updates in (
+            ("consumed_epoch", consumed_epoch),
+            ("completed_rotation", completed_rotation),
+        ):
+            with self.subTest(case=case_name):
+                worker, record, event_id, launched, provider_report = self._deliver_blocked_owner_notification(
+                    **json.loads(json.dumps(task_updates))
+                )
+                for task_status, heartbeat in (
+                    ("blocked", None),
+                    ("blocked", supervisor.utc_now()),
+                    ("in_progress", None),
+                    ("in_progress", supervisor.utc_now()),
+                ):
+                    self.task["status"] = task_status
+                    if task_status == "in_progress":
+                        self.task.pop("waiting_for", None)
+                    self._write_board()
+                    worker["last_heartbeat_at"] = heartbeat
+                    with (
+                        mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                        mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+                        mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid,
+                    ):
+                        supervisor.poll_workers(self.config, self.state, provider_report=provider_report)
+                    self.assertEqual(worker["status"], "running")
+                    self.assertEqual(record["status"], "started")
+                    self.assertEqual(record["lease_owner"], worker["run_id"])
+                    self.assertEqual(self._queue_ids(), [event_id])
+                    terminate_pid.assert_not_called()
+                    self.assertIsNone(
+                        supervisor.worker_failure_policy._execution_authority_refusal(self.config, worker)
+                    )
+                self.assertEqual(len(launched), 1)
+                # Waking the owner changes no task truth: counters/history are untouched.
+                board_task = supervisor.load_status(self.config)["tasks"][0]
+                for field, value in task_updates.items():
+                    if field != "next":
+                        self.assertEqual(board_task[field], value)
+
+    def test_new_churn_after_consumed_epoch_and_pending_permit_still_refuse_blocked_notification(self) -> None:
+        provider_report = self._provider_report()
+        consumed = {
+            "id": "T-CUSTODY",
+            "title": "Custody",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "blocked",
+            "waiting_for": "Human/Ops",
+            "task_class": "implementation",
+            "depends_on": [],
+            "review_reopen_count": 6,
+            "review_churn_escalated_at_count": 6,
+            "review_churn_escalated_at": "2026-08-30T00:00:00Z",
+            "review_churn_reassigned_at_count": 6,
+            "review_churn_continuation_consumed_at": "2026-08-30T01:00:00Z",
+        }
+        cases = {
+            # A later reopen epoch escalated again and nobody consumed it yet.
+            "new_unconsumed_churn_epoch": {
+                "review_reopen_count": 12,
+                "review_churn_escalated_at_count": 12,
+                "review_churn_escalated_at": "2026-09-30T00:00:00Z",
+            },
+            # A permit is present but the sole consumer has not run (or rejected it).
+            "pending_permit_on_consumed_epoch": {
+                "human_continuation_approval": {
+                    "approval_id": "apr-custody-pending",
+                    "status": "issued",
+                    "task_id": "T-CUSTODY",
+                    "nonce": "nonce-custody-consumed",
+                    "issued_by": "Human/Ops",
+                },
+            },
+            "malformed_epoch_checkpoint": {"review_churn_reassigned_at_count": "six"},
+        }
+        for case_name, overrides in cases.items():
+            with self.subTest(case=case_name):
+                self.task = {**json.loads(json.dumps(consumed)), **overrides}
+                self._write_board()
+                Path(self.config["paths"]["event_queue"]).unlink(missing_ok=True)
+                self.state = {"workers": {}, "queue": {"events": {}}}
+                self.assertTrue(github_bus.queue_resume_for_task(self.config, self.task))
+                events = runtime_state.load_event_queue(self.config)
+                self.assertEqual(len(events), 1)
+                event_id = str(events[0]["event_id"])
+                self.assertIn(
+                    "Human gate",
+                    str(supervisor.owner_notification_block_reason(self.config, events[0], {"T-CUSTODY": self.task})),
+                )
+                with (
+                    mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+                    mock.patch.object(supervisor, "build_adapter") as adapter_mock,
+                ):
+                    self.assertTrue(supervisor.process_queue(self.config, self.state, provider_report))
+                    adapter_mock.assert_not_called()
+                record = self.state["queue"]["events"][event_id]
+                self.assertEqual(record["status"], "completed")
+                self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+                self.assertEqual(record.get("attempt_count", 0), 0)
+                self.assertEqual(self.state["workers"], {})
+
+    def _assert_blocked_notification_refused_before_launch(self, task: dict[str, Any]) -> None:
+        self.task = json.loads(json.dumps(task))
+        self._write_board()
+        Path(self.config["paths"]["event_queue"]).unlink(missing_ok=True)
+        self.state = {"workers": {}, "queue": {"events": {}}}
+        self.assertTrue(github_bus.queue_resume_for_task(self.config, self.task))
+        events = runtime_state.load_event_queue(self.config)
+        self.assertEqual(len(events), 1)
+        event_id = str(events[0]["event_id"])
+        self.assertEqual(events[0]["reason"], "github_retry")
+        self.assertIn(
+            "Human gate",
+            str(supervisor.owner_notification_block_reason(self.config, events[0], {"T-CUSTODY": self.task})),
+        )
+        with (
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+            mock.patch.object(supervisor, "build_adapter") as adapter_mock,
+        ):
+            self.assertTrue(supervisor.process_queue(self.config, self.state, self._provider_report()))
+            adapter_mock.assert_not_called()
+        record = self.state["queue"]["events"][event_id]
+        self.assertEqual(record["status"], "completed")
+        self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+        self.assertEqual(record.get("attempt_count", 0), 0)
+        self.assertEqual(self.state["workers"], {})
+        self.assertEqual(supervisor.load_status(self.config)["tasks"][0]["status"], "blocked")
+
+    def test_no_viable_alternative_owner_churn_block_refuses_notification_until_consumed_then_resumes(
+        self,
+    ) -> None:
+        # Produce the Human/Ops block with the original review-churn policy itself:
+        # Antigravity already failed this epoch, so Claude has no viable alternative.
+        producer_config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {"enabled": True, "reassign_after_reopens": 2, "require_different_account_pool": True},
+                "owner_fallbacks": {"Claude": ["Antigravity"], "Antigravity": ["Claude"]},
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity", "account_pool": "agy"},
+                "claude": {"display_name": "Claude", "provider": "claude", "account_pool": "claude_main"},
+                "codex": {"display_name": "Codex", "provider": "codex", "account_pool": "codex_main"},
+            },
+        }
+        before = {
+            "id": "T-CUSTODY",
+            "title": "Custody",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "in_progress",
+            "task_class": "implementation",
+            "depends_on": [],
+            "review_reopen_count": 4,
+            "review_churn_reassigned_at_count": 2,
+            "review_churn_previous_owner": "Antigravity",
+            "review_churn_last_reassigned_at": "2026-11-07T09:00:00Z",
+            "review_churn_epoch_failed_owners": ["Antigravity"],
+        }
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            self.assertTrue(
+                supervisor.reassign_tasks_after_review_churn(
+                    producer_config, {}, {"tasks": [json.loads(json.dumps(before))]}
+                )
+            )
+        produced = persist.call_args.kwargs
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "review_churn_blocked")
+        self.assertEqual(produced["new_owner"], "Claude")
+        self.assertEqual(produced["new_status"], "blocked")
+        self.assertEqual(produced["new_waiting_for"], "Human/Ops")
+        self.assertNotIn("review_churn_escalated_at_count", produced["task_updates"])
+        self.assertEqual(produced["task_updates"]["review_churn_previous_owner"], "Claude")
+        self.assertEqual(produced["task_updates"]["review_churn_reassigned_at_count"], 4)
+        blocked_task = {
+            **before,
+            **produced["task_updates"],
+            "owner": produced["new_owner"],
+            "reviewer": produced["new_reviewer"],
+            "status": produced["new_status"],
+            "waiting_for": produced["new_waiting_for"],
+            "next": produced["message"],
+        }
+        # The original continuation gate treats this shape as review-churn recovery,
+        # so only its sole consumer may release it.
+        self.assertIsNone(ai_status.continuation_approval_gate_error(blocked_task))
+        blocked_at = blocked_task["review_churn_last_reassigned_at"]
+
+        approval = {
+            "approval_id": "apr-custody-exhausted",
+            "approval_type": "human_ops_continuation",
+            "status": "issued",
+            "task_id": "T-CUSTODY",
+            "task_scope": "T-CUSTODY",
+            "scope": {"task_id": "T-CUSTODY"},
+            "reason": "Human reviewed the exhausted-owner churn and authorized one continuation.",
+            "issued_by": "Human/Ops",
+            "issued_at": "2026-08-30T00:00:00Z",
+            "expires_at": "2099-01-01T00:00:00Z",
+            "nonce": "nonce-custody-exhausted-1",
+            "review_reopen_count": 4,
+            "consumed_at": None,
+            "consumed_by": None,
+            "consumption_reason": None,
+        }
+        refused_cases = {
+            "unconsumed_no_alternative_block": {},
+            "pending_permit_not_yet_consumed": {"human_continuation_approval": dict(approval)},
+            # An earlier epoch was consumed, then the producer fail-closed again later.
+            "consumed_before_a_later_block": {"review_churn_continuation_consumed_at": "2026-11-07T08:00:00Z"},
+            "malformed_block_timestamp": {
+                "review_churn_last_reassigned_at": "not-a-time",
+                "review_churn_continuation_consumed_at": "2099-01-01T00:00:00Z",
+            },
+            "malformed_consumed_timestamp": {"review_churn_continuation_consumed_at": "not-a-time"},
+        }
+        for case_name, overrides in refused_cases.items():
+            with self.subTest(case=case_name):
+                self._assert_blocked_notification_refused_before_launch({**blocked_task, **overrides})
+
+        # The sole existing consumer releases it through its normal transition.
+        self.task = {**json.loads(json.dumps(blocked_task)), "human_continuation_approval": dict(approval)}
+        self._write_board()
+        self.state = {"workers": {}, "queue": {"events": {}}}
+        with (
+            mock.patch.object(ai_status, "merged_orchestrator_config", return_value=self.config),
+            mock.patch.object(
+                supervisor,
+                "commit_canonical_task_transition",
+                side_effect=lambda _cfg, st: Path(self.config["paths"]["status_file"]).write_text(
+                    json.dumps(st), encoding="utf-8"
+                )
+                or True,
+            ),
+        ):
+            self.assertTrue(supervisor.consume_human_continuation_approvals(self.config, self.state))
+        resumed = supervisor.load_status(self.config)["tasks"][0]
+        self.assertEqual(resumed["status"], "todo")
+        self.assertEqual(resumed["human_continuation_approval_history"][-1]["status"], "consumed")
+        self.assertEqual(resumed["review_churn_previous_owner"], "Claude")
+        self.assertEqual(resumed["review_churn_last_reassigned_at"], blocked_at)
+        self.assertGreaterEqual(
+            supervisor._parse_iso_utc(resumed["review_churn_continuation_consumed_at"]),
+            supervisor._parse_iso_utc(blocked_at),
+        )
+
+        # A later ordinary question on the consumed epoch still wakes the owner
+        # through real poll custody, without changing any churn counter/history.
+        churn_fields = {
+            key: value
+            for key, value in resumed.items()
+            if key.startswith("review_") or key.startswith("human_continuation_approval")
+        }
+        worker, record, event_id, launched, provider_report = self._deliver_blocked_owner_notification(
+            **json.loads(json.dumps(churn_fields)),
+            next="Waiting for Human/Ops answer on fixture question after consumed continuation.",
+        )
+        for task_status, heartbeat in (
+            ("blocked", None),
+            ("blocked", supervisor.utc_now()),
+            ("in_progress", None),
+            ("in_progress", supervisor.utc_now()),
+        ):
+            self.task["status"] = task_status
+            if task_status == "in_progress":
+                self.task.pop("waiting_for", None)
+            self._write_board()
+            worker["last_heartbeat_at"] = heartbeat
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+                mock.patch.object(supervisor, "terminate_worker_pid") as terminate_pid,
+            ):
+                supervisor.poll_workers(self.config, self.state, provider_report=provider_report)
+            self.assertEqual(worker["status"], "running")
+            self.assertEqual(record["status"], "started")
+            self.assertEqual(record["lease_owner"], worker["run_id"])
+            self.assertEqual(self._queue_ids(), [event_id])
+            terminate_pid.assert_not_called()
+            self.assertIsNone(supervisor.worker_failure_policy._execution_authority_refusal(self.config, worker))
+        self.assertEqual(len(launched), 1)
+        board_task = supervisor.load_status(self.config)["tasks"][0]
+        for field, value in churn_fields.items():
+            self.assertEqual(board_task[field], value)
 
 
 class TestConfigFixtureTests(unittest.TestCase):
@@ -257,7 +1773,7 @@ class RuntimeConfigTests(unittest.TestCase):
             pinned_resolver.call_args_list,
             [
                 mock.call("PINNED-RUNTIME-001"),
-                mock.call("PINNED-RUNTIME-001", force_refresh=True),
+                mock.call("PINNED-RUNTIME-001", force_refresh=True, task=mock.ANY),
             ],
         )
         stale_module.resolve_task_sha.assert_not_called()
@@ -536,6 +2052,41 @@ class AccountPoolSchedulingTests(unittest.TestCase):
         self.assertEqual(
             supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task),
             ["reviewer_unavailable:unregistered actor UnknownReviewer"],
+        )
+
+    def test_assignment_integrity_treats_pool_cooldown_as_momentary_capacity(self) -> None:
+        config = self._config()
+        config["account_pools"]["codex_exhausted"] = {
+            "max_concurrent": 1, "state": "cooldown", "reason": "quota_terminal",
+        }
+        task = {
+            "id": "BLOCKED-ON-CODEX",
+            "status": "blocked",
+            "priority": "P1",
+            "owner": "Antigravity",
+            "reviewer": "Codex",
+            "waiting_for": "Codex",
+        }
+
+        # A cooling pool re-probes on its own; moving the reviewer (or what a
+        # blocked task waits for) to the other pool is not a repair.
+        self.assertEqual(supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task), [])
+        task["status"] = "todo"
+        self.assertEqual(supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task), [])
+
+        config["account_pools"]["codex_exhausted"] = {"enabled": False, "reason": "known exhausted quota"}
+        self.assertEqual(
+            supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task),
+            ["reviewer_unavailable:account pool codex_exhausted is disabled"],
+        )
+
+        # Only the pool state counts; a reason that mentions cooldown does not.
+        config["account_pools"]["codex_exhausted"] = {
+            "max_concurrent": 1, "state": "exhausted", "reason": "pool is cooldown-exempt",
+        }
+        self.assertEqual(
+            supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task),
+            ["reviewer_unavailable:account pool codex_exhausted is exhausted: pool is cooldown-exempt"],
         )
 
     def test_assignment_integrity_does_not_reassign_human_gate(self) -> None:
@@ -2981,6 +4532,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
                 mock.patch.object(supervisor, "build_request", return_value=request),
                 mock.patch.object(supervisor, "prepare_worker_workspace", side_effect=prepare_workspace),
+                # The stubbed preparation names a plain directory, and the subject here is the worker guard.
+                mock.patch.object(supervisor, "launch_protection_refusal", return_value=None),
                 mock.patch.object(supervisor, "start_worker_for_request", return_value=(True, "run-123", {"manual_confirmation_required": False, "auto_delivered": True})),
                 mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
             ):
@@ -3754,7 +5307,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "reviewer": "Claude2",
             "depends_on": [],
             "last_update": "2026-04-13T14:20:00Z",
-            "review_submission": {"remote_sha": "a" * 40},
+            "review_submission": _bound_review_submission("Codex", submitted_by="Codex"),
         }
         provider_report = {
             "agent_adapters": {
@@ -4160,195 +5713,6 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_task_ids, ["BFF-CONSOL-01", "BFF-CONSOL-02", "BFF-CONSOL-03", "BFF-CONSOL-04"])
         self.assertTrue(all(call.args[1]["target_agent"] == "Codex" for call in queue_delivery_event.call_args_list))
 
-
-    def test_persisted_dispatch_cursor_prevents_review_starvation(self) -> None:
-        config = {
-            "schema": {
-                "tasks_path": "tasks",
-                "task_id_field": "id",
-                "assignee_field": "owner",
-                "reviewer_field": "reviewer",
-            },
-            "ready_dispatcher": {
-                "enabled": True,
-                "review_statuses": ["review"],
-                "owned_statuses": ["in_progress", "todo"],
-                "active_worker_statuses": ["running"],
-                "max_dispatches_per_tick": 1,
-            },
-            "agents": {
-                "antigravity": {
-                    "id": "antigravity",
-                    "display_name": "Antigravity",
-                    "provider": "antigravity",
-                },
-                "codex": {
-                    "id": "codex",
-                    "display_name": "Codex",
-                    "provider": "codex",
-                },
-            },
-            "providers": {},
-        }
-        status = {
-            "tasks": [
-                {
-                    "id": "OWNER-FIRST",
-                    "status": "todo",
-                    "owner": "Antigravity",
-                    "reviewer": "Codex",
-                    "depends_on": [],
-                },
-                {
-                    "id": "REVIEW-LATER",
-                    "status": "review",
-                    "owner": "Antigravity",
-                    "reviewer": "Codex",
-                    "depends_on": [],
-                    "review_submission": {"remote_sha": "a" * 40},
-                },
-            ]
-        }
-        state = runtime_state.default_state()
-        first_round: list[dict[str, Any]] = []
-        second_round: list[dict[str, Any]] = []
-
-        common_patches = (
-            mock.patch.object(supervisor, "load_status", return_value=status),
-            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
-            mock.patch.object(
-                supervisor,
-                "outstanding_delivery_indexes",
-                return_value=(set(), set(), set()),
-            ),
-            mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
-            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
-            mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
-            mock.patch.object(
-                supervisor,
-                "utc_now",
-                return_value="2026-07-31T12:00:00Z",
-            ),
-            mock.patch("ai_status.resolve_task_sha", return_value="a" * 40),
-            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
-        )
-        with contextlib.ExitStack() as stack:
-            for patcher in common_patches:
-                stack.enter_context(patcher)
-            stack.enter_context(
-                mock.patch.object(
-                    supervisor,
-                    "queue_delivery_event",
-                    side_effect=lambda _config, event: first_round.append(event) or True,
-                )
-            )
-            self.assertTrue(supervisor.dispatch_ready_tasks(config, state, provider_report={}))
-
-        self.assertEqual(first_round[0]["task_id"], "OWNER-FIRST")
-        self.assertEqual(state["ready_dispatcher"]["dispatch_cursor"], 1)
-        self.assertEqual(state["ready_dispatcher"]["dispatch_cursor_revision"], 1)
-
-        # Simulate the end-of-loop save/reload boundary that previously erased
-        # the cursor and restarted every round from Antigravity.
-        state = runtime_state.migrate_state(deepcopy(state))
-        with contextlib.ExitStack() as stack:
-            for patcher in (
-                mock.patch.object(supervisor, "load_status", return_value=status),
-                mock.patch.object(supervisor, "load_event_queue", return_value=[]),
-                mock.patch.object(
-                    supervisor,
-                    "outstanding_delivery_indexes",
-                    return_value=(set(), set(), set()),
-                ),
-                mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
-                mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
-                mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
-                mock.patch.object(
-                    supervisor,
-                    "utc_now",
-                    return_value="2026-07-31T12:00:00Z",
-                ),
-                mock.patch("ai_status.resolve_task_sha", return_value="a" * 40),
-                mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
-                mock.patch.object(
-                    supervisor,
-                    "queue_delivery_event",
-                    side_effect=lambda _config, event: second_round.append(event) or True,
-                ),
-            ):
-                stack.enter_context(patcher)
-            self.assertTrue(supervisor.dispatch_ready_tasks(config, state, provider_report={}))
-
-        self.assertEqual(second_round[0]["task_id"], "REVIEW-LATER")
-        self.assertEqual(second_round[0]["target_agent"], "Codex")
-        self.assertEqual(second_round[0]["reason"], "review_ready_dispatch")
-        self.assertEqual(state["ready_dispatcher"]["dispatch_cursor"], 0)
-        self.assertEqual(state["ready_dispatcher"]["dispatch_cursor_revision"], 2)
-        self.assertEqual(
-            state["ready_dispatcher"]["dispatch_cursor_updated_at"],
-            "2026-07-31T12:00:00Z",
-        )
-
-    def test_dispatcher_fails_closed_on_owner_self_review(self) -> None:
-        config = {
-            "schema": {
-                "tasks_path": "tasks",
-                "task_id_field": "id",
-                "assignee_field": "owner",
-                "reviewer_field": "reviewer",
-            },
-            "ready_dispatcher": {
-                "enabled": True,
-                "review_statuses": ["review"],
-                "active_worker_statuses": ["running"],
-                "helper_claim": {"enabled": False},
-            },
-            "agents": {
-                "codex": {
-                    "id": "codex",
-                    "display_name": "Codex",
-                    "provider": "codex",
-                }
-            },
-            "providers": {},
-        }
-        status = {
-            "tasks": [
-                {
-                    "id": "INVALID-SELF-REVIEW",
-                    "status": "review",
-                    "priority": "P1",
-                    "owner": "Codex",
-                    "reviewer": "Codex",
-                    "depends_on": [],
-                }
-            ]
-        }
-        state = runtime_state.default_state()
-
-        with (
-            mock.patch.object(supervisor, "load_status", return_value=status),
-            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
-            mock.patch.object(
-                supervisor,
-                "outstanding_delivery_indexes",
-                return_value=(set(), set(), set()),
-            ),
-            mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
-            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
-            mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
-            mock.patch.object(supervisor, "queue_delivery_event") as queue_delivery_event,
-        ):
-            changed = supervisor.dispatch_ready_tasks(
-                config,
-                state,
-                provider_report={},
-                agent_ids_override=["codex"],
-            )
-
-        self.assertFalse(changed)
-        queue_delivery_event.assert_not_called()
-
     def test_dispatcher_queues_owner_finalize_after_review_approved(self) -> None:
         current_task = {
             "id": "REG-002",
@@ -4652,7 +6016,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "owner": "Antigravity",
                     "reviewer": "Codex",
                     "depends_on": [],
-                    "review_submission": {"remote_sha": "a" * 40},
+                    "review_submission": _bound_review_submission("Antigravity", submitted_by="Antigravity"),
                 }
             ]
         }
@@ -4665,7 +6029,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "reviewer": "Antigravity2",
                     "depends_on": [],
                     "last_update": "2026-08-02T14:05:00Z",
-                    "review_submission": {"remote_sha": "a" * 40},
+                    "review_submission": _bound_review_submission("Antigravity", submitted_by="Antigravity"),
                 }
             ]
         }
@@ -4783,12 +6147,12 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         }
         initial_status = {
             "tasks": [
-                {"id": "WB-012", "status": "review", "owner": "Claude", "reviewer": "Helper", "depends_on": [], "review_submission": {"remote_sha": "a" * 40}},
+                {"id": "WB-012", "status": "review", "owner": "Claude", "reviewer": "Helper", "depends_on": [], "review_submission": _bound_review_submission("Claude", submitted_by="Claude")},
             ]
         }
         normalized_status = {
             "tasks": [
-                {"id": "WB-012", "status": "review", "owner": "Claude", "reviewer": "Codex", "depends_on": [], "review_submission": {"remote_sha": "a" * 40}},
+                {"id": "WB-012", "status": "review", "owner": "Claude", "reviewer": "Codex", "depends_on": [], "review_submission": _bound_review_submission("Claude", submitted_by="Claude")},
             ]
         }
 
@@ -6818,6 +8182,380 @@ class OrphanedQueueEventTests(unittest.TestCase):
         self.assertEqual(state["queue"]["events"], {})
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "queue_event_pruned")
 
+    RESUME_TASK_ID = "T-RESUME"
+
+    def _resume_task(self, **fields: object) -> dict[str, object]:
+        return {
+            "id": self.RESUME_TASK_ID,
+            "title": "Resume",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "blocked",
+            "waiting_for": "Human/Ops",
+            "task_class": "implementation",
+            "depends_on": [],
+            **fields,
+        }
+
+    def _write_board(self, *tasks: dict[str, object]) -> None:
+        (self.root / "ai-status.json").write_text(json.dumps({"tasks": list(tasks)}), encoding="utf-8")
+
+    def _queue_aged_resume(self, **task_fields: object) -> dict[str, Any]:
+        """Queue through the real producer and age the envelope past the grace."""
+        self.config["paths"]["state_file"] = str(self.root / "state.json")
+        self.config["agents"]["claude"] = {"id": "claude", "display_name": "Claude", "provider": "claude"}
+        task = self._resume_task(**task_fields)
+        self._write_board(task)
+        queue_path = self.root / "event-queue.jsonl"
+        queue_path.write_text("", encoding="utf-8")
+        self.assertTrue(github_bus.queue_resume_for_task(self.config, task))
+        event = json.loads(queue_path.read_text(encoding="utf-8"))
+        event["created_at"] = "2000-01-01T00:00:00Z"
+        self._write_event(event)
+        return event
+
+    def _load_state(self) -> dict[str, Any]:
+        return runtime_state.load_runtime_state(self.config)
+
+    def _activity_types(self) -> list[str]:
+        lines = (self.root / "activity-log.jsonl").read_text(encoding="utf-8").splitlines()
+        return [json.loads(line).get("type") for line in lines]
+
+    def _assert_retained_and_reserved(self, event: dict[str, Any], state: dict[str, Any]) -> None:
+        queue_before = (self.root / "event-queue.jsonl").read_bytes()
+        record = state["queue"]["events"][event["event_id"]]
+        self.assertFalse(supervisor.queue_event_is_orphaned(self.config, event, record, []))
+        self.assertEqual(
+            supervisor.outstanding_delivery_indexes(self.config, state),
+            ({"claude"}, {(self.RESUME_TASK_ID, "claude")}, {event["event_key"]}),
+        )
+        self.assertFalse(supervisor.prune_event_queue(self.config, state))
+        self.assertEqual((self.root / "event-queue.jsonl").read_bytes(), queue_before)
+        self.assertIn(event["event_id"], state["queue"]["events"])
+        self.assertNotIn("queue_event_pruned", self._activity_types())
+
+    def _assert_cancelled_as_orphan(self, event: dict[str, Any], state: dict[str, Any]) -> None:
+        record = state["queue"]["events"][event["event_id"]]
+        self.assertTrue(supervisor.queue_event_is_orphaned(self.config, event, record, []))
+        self.assertEqual(supervisor.outstanding_delivery_indexes(self.config, state), (set(), set(), set()))
+        with mock.patch.object(supervisor, "start_worker_for_request") as start_worker:
+            self.assertFalse(supervisor.process_queue(self.config, state, provider_report={}))
+        start_worker.assert_not_called()
+        self.assertTrue(supervisor.prune_event_queue(self.config, state))
+        self.assertEqual((self.root / "event-queue.jsonl").read_text(encoding="utf-8"), "")
+        self.assertEqual(state["queue"]["events"], {})
+        self.assertIn("queue_event_pruned", self._activity_types())
+
+    def _deliver(self, state: dict[str, Any], *, dispatch_agent: str | None = "claude") -> mock.Mock:
+        """Run the real queue consumer up to the launch call; no process starts."""
+
+        def launch(_config: Any, launch_state: dict[str, Any], _report: Any, _request: Any, **kwargs: Any) -> Any:
+            launch_state["workers"]["run-resume"] = {
+                "run_id": "run-resume",
+                "task_id": self.RESUME_TASK_ID,
+                "agent_id": "claude",
+                "provider": "claude",
+                "queue_event_id": kwargs["queue_event_id"],
+                "status": "running",
+            }
+            return True, "run-resume", {}
+
+        request = supervisor.DeliveryRequest(
+            agent_id="claude",
+            provider="claude",
+            delivery_mode="claude_cli",
+            message="fixture",
+            task_id=self.RESUME_TASK_ID,
+            reason="github_retry",
+        )
+        with (
+            mock.patch.object(supervisor, "build_request", return_value=request),
+            mock.patch.object(supervisor, "current_provider_dispatch_pause", return_value=None),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "select_dispatch_agent_id", return_value=dispatch_agent),
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+            mock.patch.object(supervisor, "launch_protection_refusal", return_value=None),
+            mock.patch.object(supervisor, "start_worker_for_request", side_effect=launch) as start_worker,
+        ):
+            supervisor.process_queue(self.config, state, provider_report={})
+        return start_worker
+
+    def test_resume_past_grace_stays_queued_until_its_owner_receives_it(self) -> None:
+        """evt-20261107T073404Z-d86975fc: queued, attempt 0, no worker, older than the grace."""
+        for status in ("blocked", "todo", "in_progress"):
+            with self.subTest(status=status):
+                (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
+                fields = {"waiting_for": "Human/Ops"} if status == "blocked" else {"waiting_for": None}
+                event = self._queue_aged_resume(status=status, **fields)
+                board_before = (self.root / "ai-status.json").read_bytes()
+                state = self._load_state()
+                self.assertEqual(state["queue"]["events"][event["event_id"]], {"attempt_count": 0, "status": "queued"})
+
+                self._assert_retained_and_reserved(event, state)
+
+                start_worker = self._deliver(state)
+                start_worker.assert_called_once()
+                self.assertEqual(start_worker.call_args.kwargs["queue_event_id"], event["event_id"])
+                self.assertEqual(start_worker.call_args.kwargs["attempt_count"], 1)
+                # Delivery wakes the owner; it is not a lifecycle transition.
+                self.assertEqual((self.root / "ai-status.json").read_bytes(), board_before)
+                self.assertEqual(
+                    [row["created_at"] for row in runtime_state.load_event_queue(self.config)],
+                    ["2000-01-01T00:00:00Z"],
+                )
+
+                self.assertFalse(supervisor.prune_event_queue(self.config, state))
+                worker = state["workers"]["run-resume"]
+                self.assertFalse(
+                    supervisor.queue_event_is_orphaned(
+                        self.config, event, state["queue"]["events"][event["event_id"]], [worker]
+                    )
+                )
+
+                worker["status"] = "completed"
+                supervisor.finalize_queue_event_record(self.config, state, worker, "completed")
+                self.assertTrue(supervisor.prune_event_queue(self.config, state))
+                self.assertEqual(runtime_state.load_event_queue(self.config), [])
+
+    def test_resume_past_grace_survives_a_capacity_wait_and_is_then_delivered(self) -> None:
+        event = self._queue_aged_resume()
+        state = self._load_state()
+
+        self._deliver(state, dispatch_agent=None).assert_not_called()
+
+        record = state["queue"]["events"][event["event_id"]]
+        self.assertEqual((record["status"], record["attempt_count"]), ("pending", 0))
+        self._assert_retained_and_reserved(event, state)
+        self._deliver(state).assert_called_once()
+        self.assertEqual(state["queue"]["events"][event["event_id"]]["attempt_count"], 1)
+
+    def test_resume_past_grace_is_cancelled_when_the_board_no_longer_supports_it(self) -> None:
+        cases: dict[str, dict[str, object] | None] = {
+            "deleted": None,
+            "done": {"status": "done"},
+            "approved": {"status": "review_approved"},
+            "with_independent_reviewer": {"status": "review"},
+            "unknown_status": {"status": "paused"},
+            "owner_moved": {"owner": "Codex2"},
+            "owner_and_reviewer_swapped": {"owner": "Codex", "reviewer": "Claude"},
+            "human_gate_class": {"task_class": "human_gate"},
+            "human_required_roles": {"human_required_roles": ["owner"]},
+            "pending_human_gate": {"gate_status": "pending_human_approval"},
+            "non_dispatchable": {"non_dispatchable": True},
+            "human_owner": {"owner": "Human/Ops"},
+            "approved_head_frozen": {"approved_head": "a" * 40},
+            "routed_to_merge": {"merge_route": {"route": "queued"}},
+            "dependency_incomplete": {"depends_on": ["T-UPSTREAM"]},
+        }
+        for name, change in cases.items():
+            with self.subTest(case=name):
+                (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
+                event = self._queue_aged_resume()
+                upstream = {"id": "T-UPSTREAM", "owner": "Codex2", "reviewer": "Codex", "status": "in_progress"}
+                self._write_board(*([] if change is None else [self._resume_task(**change), upstream]))
+                self._assert_cancelled_as_orphan(event, self._load_state())
+
+    def test_resume_past_grace_is_cancelled_when_its_envelope_no_longer_matches(self) -> None:
+        cases = {
+            "target_agent": {"target_agent": "codex2"},
+            "display_name": {"target_display_name": "Codex2"},
+            "provider": {"provider": "codex"},
+        }
+        for name, change in cases.items():
+            with self.subTest(field=name):
+                (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
+                event = {**self._queue_aged_resume(), **change}
+                self._write_event(event)
+                self._assert_cancelled_as_orphan(event, self._load_state())
+
+    def test_resume_past_grace_is_cancelled_when_role_policy_excludes_the_owner(self) -> None:
+        event = self._queue_aged_resume()
+        with mock.patch.object(supervisor, "role_provider_block_reason", return_value="policy moved"):
+            self._assert_cancelled_as_orphan(event, self._load_state())
+
+    def test_other_queued_envelopes_on_a_current_task_stay_orphans_through_the_real_loader(self) -> None:
+        # The loader writes the same queued record for all of these, and none of
+        # them is a resume its owner would otherwise never receive: the ready
+        # dispatcher rebuilds a dispatch from the board, and a coordination or
+        # planning wake is not addressed by this task's role.
+        for reason in ("owned_in_progress_dispatch", "coordination:ui-done", "discussion_planning_readout_dispatch"):
+            with self.subTest(reason=reason):
+                (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
+                event = {**self._queue_aged_resume(status="in_progress"), "reason": reason}
+                self._write_event(event)
+                self._assert_cancelled_as_orphan(event, self._load_state())
+
+    def test_only_a_never_started_resume_record_is_exempt_from_the_orphan_grace(self) -> None:
+        event = self._queue_aged_resume()
+        for status in ("started", "manual_pending", "retry_backoff", "stalled"):
+            with self.subTest(status=status):
+                self.assertTrue(supervisor.queue_event_is_orphaned(self.config, event, {"status": status}, []))
+        self.assertFalse(supervisor.queue_event_is_orphaned(self.config, event, {}, []))
+
+    def test_orphan_predicate_keeps_its_settled_child_and_cooldown_answers(self) -> None:
+        event = self._queue_aged_resume()
+        self._write_board()
+        queued = {"status": "queued"}
+        self.assertTrue(supervisor.queue_event_is_orphaned(self.config, event, queued, []))
+        self.assertFalse(
+            supervisor.queue_event_is_orphaned(self.config, event, queued, [{"run_id": "child", "status": "fallback"}])
+        )
+        for status in ("completed", "failed"):
+            self.assertFalse(supervisor.queue_event_is_orphaned(self.config, event, {"status": status}, []))
+        cooldown = {
+            "status": "retry_backoff",
+            "next_retry_at": "2999-01-01T00:00:00Z",
+            supervisor.model_rotation.DISPATCH_WAIT_KEY: {
+                "kind": "model_cooldown",
+                "model": "fixture-model",
+                "pool": "claude",
+                "retry_at": "2999-01-01T00:00:00Z",
+            },
+        }
+        self.assertFalse(supervisor.queue_event_is_orphaned(self.config, event, cooldown, []))
+        fresh = {**event, "created_at": supervisor.utc_now()}
+        self.assertFalse(supervisor.queue_event_is_orphaned(self.config, fresh, queued, []))
+
+    def _deliver_with_board_drift(self, state: dict[str, Any], *tasks: dict[str, object]) -> mock.Mock:
+        """Change the board during workspace preparation, as the final launch gate would see it."""
+
+        def change_board(*_args: Any, **_kwargs: Any) -> tuple[bool, None]:
+            self._write_board(*tasks)
+            return True, None
+
+        real_process_queue = supervisor.process_queue
+
+        def process_with_drift(*args: Any, **kwargs: Any) -> bool:
+            supervisor.prepare_worker_workspace.side_effect = change_board
+            return real_process_queue(*args, **kwargs)
+
+        with mock.patch.object(supervisor, "process_queue", side_effect=process_with_drift):
+            return self._deliver(state)
+
+    def test_resume_is_not_launched_when_the_board_stops_supporting_it_during_preparation(self) -> None:
+        upstream = {"id": "T-UPSTREAM", "owner": "Codex2", "reviewer": "Codex", "status": "in_progress"}
+        cases: dict[str, tuple[dict[str, object], ...]] = {
+            "deleted": (),
+            "owner_moved": (self._resume_task(owner="Codex2"),),
+            "dependency_added": (self._resume_task(depends_on=["T-UPSTREAM"]), upstream),
+            "pending_human_gate": (self._resume_task(gate_status="pending_human_approval"),),
+            "non_dispatchable": (self._resume_task(non_dispatchable=True),),
+            "terminal": (self._resume_task(status="done"),),
+            "with_independent_reviewer": (self._resume_task(status="review"),),
+            "approved_head_frozen": (self._resume_task(approved_head="a" * 40),),
+        }
+        for name, board in cases.items():
+            with self.subTest(case=name):
+                (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
+                event = self._queue_aged_resume()
+                state = self._load_state()
+
+                self._deliver_with_board_drift(state, *board).assert_not_called()
+
+                record = state["queue"]["events"][event["event_id"]]
+                self.assertEqual(record["status"], "completed")
+                self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+                self.assertEqual(record["attempt_count"], 0)
+                self.assertEqual(state["workers"], {})
+                self.assertEqual(self._activity_types(), ["github_resume_queued", "wake_skipped"])
+                self.assertTrue(supervisor.prune_event_queue(self.config, state))
+                self.assertEqual(runtime_state.load_event_queue(self.config), [])
+
+    def test_resume_is_still_launched_when_preparation_leaves_the_board_supporting_it(self) -> None:
+        event = self._queue_aged_resume()
+        state = self._load_state()
+
+        start_worker = self._deliver_with_board_drift(state, self._resume_task(next="owner note moved on"))
+
+        start_worker.assert_called_once()
+        self.assertEqual(state["queue"]["events"][event["event_id"]]["attempt_count"], 1)
+
+    def test_fresh_resume_faces_the_same_rule_as_an_aged_one(self) -> None:
+        event = {**self._queue_aged_resume(), "created_at": supervisor.utc_now()}
+        self._write_event(event)
+        self._write_board(self._resume_task(status="done"))
+        state = self._load_state()
+        self.assertFalse(supervisor.queue_event_is_orphaned(self.config, event, {"status": "queued"}, []))
+
+        self._deliver(state).assert_not_called()
+
+        record = state["queue"]["events"][event["event_id"]]
+        self.assertEqual((record["status"], record["skip_reason"]), ("completed", "stale_dispatch_event"))
+
+    def test_final_launch_gate_keeps_answering_for_other_reasons_through_the_original_rule(self) -> None:
+        event = {**self._queue_aged_resume(), "reason": "coordination:ui-done"}
+        task_map = {self.RESUME_TASK_ID: self._resume_task(status="done")}
+        with mock.patch.object(supervisor, "owner_notification_block_reason") as notification_rule:
+            self.assertIsNone(supervisor.stale_dispatch_skip_message(self.config, event, task_map))
+        notification_rule.assert_not_called()
+
+    def test_resume_past_grace_needs_its_envelope_to_name_a_provider(self) -> None:
+        event = self._queue_aged_resume()
+        del event["provider"]
+        self._write_event(event)
+        self._assert_cancelled_as_orphan(event, self._load_state())
+
+    def test_parked_resume_run_keeps_its_authority_only_while_the_board_supports_it(self) -> None:
+        self._queue_aged_resume(status="in_progress", waiting_for=None)
+        worker = {
+            "run_id": "run-resume",
+            "task_id": self.RESUME_TASK_ID,
+            "agent_id": "claude",
+            "provider": "claude",
+            "queue_event_id": "evt-parked",
+            "status": "suspended_approval",
+            "reason": "github_retry",
+            "request_snapshot": {"reason": "github_retry", "metadata": {"task": {"id": self.RESUME_TASK_ID}}},
+        }
+        with mock.patch.object(supervisor, "launch_protection_refusal", return_value=None):
+            state: dict[str, Any] = {"workers": {"run-resume": worker}, "queue": {"events": {}}}
+            self.assertFalse(supervisor.supersede_worker_without_execution_authority(self.config, state, worker))
+
+            # The assignment predicate has no answer for a frozen approval; only this rule does.
+            self._write_board(self._resume_task(status="in_progress", waiting_for=None, approved_head="a" * 40))
+            self.assertTrue(supervisor.supersede_worker_without_execution_authority(self.config, state, worker))
+        self.assertEqual(worker["status"], "superseded")
+        self.assertIn("approval is frozen", worker["last_error"])
+
+    def test_prune_leaves_a_stale_resume_to_its_running_child(self) -> None:
+        event = self._queue_aged_resume()
+        self._write_board(self._resume_task(status="done"))
+        state = self._load_state()
+        state["workers"]["child"] = {
+            "run_id": "child",
+            "task_id": self.RESUME_TASK_ID,
+            "queue_event_id": event["event_id"],
+            "status": "fallback",
+        }
+        state["queue"]["events"][event["event_id"]].update(status="started", run_id="child", lease_owner="child")
+
+        self.assertFalse(supervisor.prune_event_queue(self.config, state))
+
+        self.assertEqual([row["event_id"] for row in runtime_state.load_event_queue(self.config)], [event["event_id"]])
+        self.assertEqual(state["queue"]["events"][event["event_id"]]["status"], "started")
+
+    def test_cooldown_wait_keeps_a_supported_resume_and_cancels_an_unsupported_one(self) -> None:
+        event = self._queue_aged_resume()
+        state = self._load_state()
+        state["queue"]["events"][event["event_id"]].update(
+            {
+                "status": "retry_backoff",
+                "next_retry_at": "2999-01-01T00:00:00Z",
+                supervisor.model_rotation.DISPATCH_WAIT_KEY: {
+                    "kind": "model_cooldown",
+                    "model": "fixture-model",
+                    "pool": "claude",
+                    "retry_at": "2999-01-01T00:00:00Z",
+                },
+            }
+        )
+        self.assertFalse(supervisor.prune_event_queue(self.config, state))
+        self.assertEqual([row["event_id"] for row in runtime_state.load_event_queue(self.config)], [event["event_id"]])
+
+        self._write_board(self._resume_task(owner="Codex2"))
+        self.assertTrue(supervisor.prune_event_queue(self.config, state))
+        self.assertEqual(runtime_state.load_event_queue(self.config), [])
+
 
 class DeferredApprovalCorrelationTests(unittest.TestCase):
     task_id = "ODP-DEPLOY-JOB-SECRET-BINDING-SELECTION-001"
@@ -8807,8 +10545,12 @@ class SingleSupervisorGuardTests(unittest.TestCase):
                 alive[pid] = False
 
         with (
-            mock.patch.object(supervisor, "iter_matching_supervisor_pids", return_value=[101, 202, 404]),
-            mock.patch.object(supervisor, "pid_is_alive", side_effect=lambda pid: alive.get(pid, False)),
+            mock.patch.object(common, "iter_supervisor_pids", return_value=[101, 202, 404]),
+            mock.patch.object(
+                common,
+                "pid_is_supervisor_process",
+                side_effect=lambda pid, _root: alive.get(pid, False),
+            ),
             mock.patch.object(supervisor.os, "getpid", return_value=202),
             mock.patch.object(supervisor.os, "kill", side_effect=fake_kill),
             mock.patch.object(supervisor.time, "sleep"),
@@ -9741,6 +11483,62 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
         self.assertTrue(status.startswith("unverifiable_refs:"), status)
 
 
+def _bound_review_submission(*authors: str, submitted_by: str, head: str = "a" * 40) -> dict[str, Any]:
+    """A review submission carrying the source provenance `submit_review` binds.
+
+    `source_authors` are the immutable `LLM-Agent` actors of the validated
+    range and `submitted_by` is the finalizer; they are different facts.
+    """
+    return {
+        "pr_number": 7,
+        "remote_sha": head,
+        "source_head": head,
+        "source_base": "b" * 40,
+        "source_authors": list(authors),
+        "submitted_by": submitted_by,
+    }
+
+
+def _real_review_submission(repo: Path, task_id: str, *authors: str, submitted_by: str) -> dict[str, Any]:
+    """A review submission over a real synthetic range, as `submit_review` records it.
+
+    Each of `authors` commits on the task branch; `dev` then advances and
+    `submitted_by` merges it back -- the finalizer's base advance, which is not
+    a source commit.
+    """
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-c", "commit.gpgsign=false", *args], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    repo.mkdir(parents=True)
+    git("init", "-q", "-b", "dev")
+    git("config", "user.email", "worker@pantheon.local")
+    git("config", "user.name", "Worker")
+    git("commit", "-q", "--allow-empty", "-m", "bootstrap")
+    git("checkout", "-q", "-b", f"task/{task_id}")
+    for index, author in enumerate(authors):
+        reviewer = "Claude" if author != "Claude" else "Grok"
+        git(
+            "commit", "-q", "--allow-empty", "-m",
+            f"{task_id}: change {index}\n\nLLM-Agent: {author}\nTask-ID: {task_id}\nReviewer: {reviewer}\n",
+        )
+    git("checkout", "-q", "dev")
+    git("commit", "-q", "--allow-empty", "-m", "OTHER-1: unrelated dev work")
+    git("update-ref", "refs/remotes/origin/dev", "dev")
+    git("checkout", "-q", f"task/{task_id}")
+    git("merge", "--no-ff", "-q", "-m", f"Merge dev\n\nLLM-Agent: {submitted_by}\n", "dev")
+    head = git("rev-parse", "HEAD")
+    return {
+        "pr_number": 7,
+        "remote_sha": head,
+        "source_head": head,
+        "source_base": git("rev-parse", "dev"),
+        "source_authors": list(authors),
+        "submitted_by": submitted_by,
+    }
+
+
 class WorkerReassignmentTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = {
@@ -9777,6 +11575,7 @@ class WorkerReassignmentTests(unittest.TestCase):
                     "status": "review",
                     "owner": "Claude",
                     "reviewer": "Gemini",
+                    "review_submission": _bound_review_submission("Claude", submitted_by="Claude"),
                 }
             ]
         }
@@ -9801,6 +11600,71 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["handoff_to"], "Codex")
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "task_reassigned")
+
+    def _bind_real_source_repo(self) -> Path:
+        tmp = tempfile.TemporaryDirectory(prefix="test-source-author-")
+        self.addCleanup(tmp.cleanup)
+        repo = Path(tmp.name) / "source-git"
+        self.config["coordination"] = {"repositories": {"pantheon": {"local_path": str(repo)}}}
+        self.config["branch_workflow"] = {"dev_branch": "dev"}
+        real_reader = mock.patch.object(
+            dispatch_policy, "immutable_review_source_authors", _READ_SOURCE_AUTHORS_FROM_GIT
+        )
+        real_reader.start()
+        self.addCleanup(real_reader.stop)
+        return repo
+
+    def test_review_failover_skips_the_source_author_behind_a_different_finalizer(self) -> None:
+        """Codex wrote the range and Claude finalized it: Codex is not next."""
+        repo = self._bind_real_source_repo()
+        worker = {"task_id": "P3-001", "agent_id": "gemini", "retry_count": 1, "run_id": "gemini-run-1"}
+        status = {
+            "tasks": [
+                {
+                    "id": "P3-001",
+                    "status": "review",
+                    "owner": "Claude",
+                    "reviewer": "Gemini",
+                    "review_submission": _real_review_submission(repo, "P3-001", "Codex", submitted_by="Claude"),
+                }
+            ]
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(self.config, worker, "status: 429")
+        self.assertEqual(reassigned_to, "Grok")
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Claude")
+
+    def test_review_failover_refuses_a_review_without_source_provenance(self) -> None:
+        """A review that cannot say who wrote it has no independent reviewer."""
+        repo = self._bind_real_source_repo()
+        worker = {"task_id": "P3-001", "agent_id": "gemini", "retry_count": 1, "run_id": "gemini-run-1"}
+        genuine = _real_review_submission(repo, "P3-001", "Codex", submitted_by="Claude")
+        for label, submission in (
+            ("missing", None),
+            ("unknown", {**genuine, "source_authors": ["Codex-Root"]}),
+            ("empty", {**genuine, "source_authors": []}),
+            # Same real head, base and remote: only the recorded author is
+            # rewritten, to a registered actor, which would leave Codex next.
+            ("rewritten", {**genuine, "source_authors": ["Grok"]}),
+            ("stale base", {**genuine, "source_base": genuine["source_head"]}),
+        ):
+            task = {"id": "P3-001", "status": "review", "owner": "Claude", "reviewer": "Gemini"}
+            if submission is not None:
+                task["review_submission"] = submission
+            with (
+                self.subTest(label=label),
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                self.assertIsNone(
+                    supervisor.maybe_reassign_task_after_worker_failure(self.config, worker, "status: 429")
+                )
+                persist.assert_not_called()
 
     def test_review_churn_second_review_reopen_reassigns_owner_to_different_account_pool(self) -> None:
         config = {
@@ -10874,6 +12738,7 @@ class WorkerReassignmentTests(unittest.TestCase):
                     "id": "P3-002",
                     "status": "review",
                     "owner": "Codex",
+                    "review_submission": _bound_review_submission("Codex", submitted_by="Codex"),
                     "reviewer": "Claude",
                 }
             ]
@@ -10926,6 +12791,7 @@ class WorkerReassignmentTests(unittest.TestCase):
                     "id": "P3-003",
                     "status": "review",
                     "owner": "Codex",
+                    "review_submission": _bound_review_submission("Codex", submitted_by="Codex"),
                     "reviewer": "Claude",
                 }
             ]
@@ -11461,6 +13327,7 @@ class AutomaticRecoveryTests(unittest.TestCase):
             "status": "review",
             "owner": "Antigravity",
             "reviewer": "CodexCoordinator",
+            "review_submission": _bound_review_submission("Antigravity", submitted_by="Antigravity"),
             "depends_on": [],
         }
         with (
@@ -11853,6 +13720,7 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
                     "id": "RUN-001",
                     "status": "review_approved",
                     "owner": "Claude",
+                    "review_submission": _bound_review_submission("Claude", submitted_by="Claude"),
                     "reviewer": "Codex",
                 }
             ]
@@ -12094,7 +13962,7 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
                 "status": "review",
                 "owner": "Codex",
                 "reviewer": "Antigravity",
-                "review_submission": {"remote_sha": DISPATCHABLE_REVIEW_HEAD},
+                "review_submission": _bound_review_submission("Codex", submitted_by="Codex", head=DISPATCHABLE_REVIEW_HEAD),
                 "depends_on": [],
             },
         }
@@ -12159,7 +14027,7 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
                 "status": "review",
                 "owner": "Codex",
                 "reviewer": "Antigravity",
-                "review_submission": {"remote_sha": DISPATCHABLE_REVIEW_HEAD},
+                "review_submission": _bound_review_submission("Codex", submitted_by="Codex", head=DISPATCHABLE_REVIEW_HEAD),
                 "depends_on": [],
             },
         }
@@ -12477,7 +14345,7 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
                 "owner": "Codex",
                 "reviewer": "Antigravity",
                 "priority": "P1",
-                "review_submission": {"remote_sha": DISPATCHABLE_REVIEW_HEAD},
+                "review_submission": _bound_review_submission("Codex", submitted_by="Codex", head=DISPATCHABLE_REVIEW_HEAD),
                 "depends_on": [],
             },
         }
@@ -13826,9 +15694,22 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
         self.addCleanup(self._registry_patcher.stop)
         self.addCleanup(self._base_patcher.stop)
 
+    # The shared protected body domain proof that precedes status
+    # (worktree_cleanliness.protected_body_checkout_refusal), answered with
+    # metadata of a checkout holding no domain entry: an index, a HEAD tree and
+    # an untracked listing.  Exact commands, run in the worktree, bytes only.
+    _DOMAIN_METADATA = {
+        ("git", "ls-files", "-z", "-t", "--stage"): b"",
+        ("git", "rev-parse", "--verify", "--quiet", "HEAD^{commit}"): b"a" * 40 + b"\n",
+        ("git", "ls-tree", "-r", "-z", "--full-tree", "a" * 40): b"",
+        ("git", "ls-files", "-z", "--others"): b"",
+    }
+
     def _stub_subprocess_run(self, results):
         def fake_run(cmd, *args, **kwargs):
             cmd_tuple = tuple(str(c) for c in cmd)
+            if cmd_tuple in self._DOMAIN_METADATA and kwargs.get("cwd") is not None:
+                return subprocess.CompletedProcess(cmd, 0, self._DOMAIN_METADATA[cmd_tuple], b"")
             for key, value in results.items():
                 if cmd_tuple[: len(key)] == key:
                     return value
@@ -15099,6 +16980,24 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         ai_status.STATUS_FILE.write_text("{}", encoding="utf-8")
         ai_status.LOG_FILE.write_text("", encoding="utf-8")
         ai_status.clear_ai_status_caches()
+        # These tests are about the head freeze. Their synthetic heads go
+        # through the module's stand-in Git reader, so the source-author rule
+        # itself -- including binding to the head being approved -- still runs
+        # on every approval and restore here; its Git re-derivation is
+        # exercised against real synthetic repositories in
+        # scripts/test_ai_status.py.
+
+    @staticmethod
+    def _sourced(head: str, author: str = "Antigravity4", **extra: Any) -> dict[str, Any]:
+        """A review submission whose source provenance is bound to `head`."""
+        return {
+            "remote_sha": head,
+            "source_head": head,
+            "source_base": "b" * 40,
+            "source_authors": [author],
+            "submitted_by": author,
+            **extra,
+        }
 
     def tearDown(self) -> None:
         for name, value in self._original_paths.items():
@@ -15137,7 +17036,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                     "owner": "Antigravity4",
                     "reviewer": "Codex2",
                     "status": "review",
-                    "review_submission": {"remote_sha": "1111111122222222333333334444444455555555"},
+                    "review_submission": self._sourced("1111111122222222333333334444444455555555"),
                 },
                 {
                     "id": "FREEZE-TEST-002",
@@ -15466,91 +17365,6 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             res = supervisor.evaluate_finalize_gate(task)
             self.assertEqual(res.status, supervisor.READY)
 
-    def test_supervisor_merge_group_reconciliation_exports_and_behavior(self) -> None:
-        """Verify supervisor exports and delegates merge group reconciliation correctly."""
-        self.assertTrue(callable(supervisor.parse_merge_group_pr_number))
-        self.assertTrue(callable(supervisor.correlate_merge_group_task))
-        self.assertTrue(callable(supervisor.reconcile_merge_group_runs))
-        self.assertTrue(callable(supervisor.poll_merge_group_runs))
-
-        self.assertEqual(
-            supervisor.parse_merge_group_pr_number("refs/heads/gh-readonly-queue/dev/pr-555-abc"),
-            555,
-        )
-
-        approved_head = "abc123450000000000000000000000000000dead"
-        task = {
-            "id": "ODP-SUP-MG-001",
-            "status": "review_approved",
-            "owner": "Antigravity5",
-            "reviewer": "Claude2",
-            "pr_number": 555,
-            "approved_head": approved_head,
-        }
-        status = {"tasks": [task], "handoffs": []}
-        bus_state = {"processed_merge_group_run_ids": [], "tasks": {}}
-        # A merge group head is the temporary merge commit GitHub builds for the
-        # queue entry, never the PR head itself.
-        run = {
-            "id": 999111,
-            "head_branch": "gh-readonly-queue/dev/pr-555-abc",
-            "head_sha": "77aa11bb0000000000000000000000000000c0de",
-            "conclusion": "failure",
-            "status": "completed",
-            "name": "CI",
-            "workflow_id": 100,
-        }
-        pr_node = {
-            "number": 555,
-            "state": "OPEN",
-            "merged": False,
-            "mergedAt": None,
-            "headRefOid": approved_head,
-            "isInMergeQueue": False,
-            "mergeQueueEntry": None,
-        }
-
-        def fake_gh_json(args, **kwargs):
-            if args[:2] == ["api", "graphql"]:
-                return {"data": {"repository": {"pullRequest": pr_node}}}
-            if args[:1] == ["api"] and "actions/runs" in str(args[1]):
-                return {"total_count": 1, "workflow_runs": [run]}
-            if args[:1] == ["api"] and "/commits/" in str(args[1]):
-                return {
-                    "sha": run["head_sha"],
-                    "parents": [
-                        {"sha": "base000000000000000000000000000000000000"},
-                        {"sha": approved_head},
-                    ],
-                }
-            return None
-
-        with (
-            unittest.mock.patch("github_bus.gh_json", side_effect=fake_gh_json),
-            unittest.mock.patch("github_reconciliation.write_activity_log") as log,
-            unittest.mock.patch("status_transition.commit_canonical_task_transition", return_value=True),
-            unittest.mock.patch(
-                "github_reconciliation.runtime_ai_status.emit_task_review_status_check"
-            ),
-        ):
-            changed = supervisor.reconcile_merge_group_runs(
-                {"github_bus": {"enabled": True}},
-                bus_state,
-                status,
-                "o/r",
-                [run],
-            )
-
-        self.assertTrue(changed)
-        self.assertEqual(task["status"], "review")
-        self.assertIsNone(task.get("approved_head"))
-        self.assertEqual(len(status["handoffs"]), 1)
-        self.assertEqual(status["handoffs"][0]["to"], "Claude2")
-        self.assertEqual(status["handoffs"][0]["from"], "Antigravity5")
-        self.assertEqual(status["handoffs"][0]["reason"], "merge_group_failure")
-        log.assert_called_once()
-        self.assertEqual(log.call_args.args[1]["type"], "merge_group_failure_reconciled")
-
     def test_approve_fails_closed_when_approved_head_cannot_be_resolved(self) -> None:
         """B20: approving without freezing a head silently disables the freeze.
 
@@ -15567,7 +17381,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                         "owner": "Antigravity4",
                         "reviewer": "Codex2",
                         "status": "review",
-                        "review_submission": {"remote_sha": "1111111122222222333333334444444455555555"},
+                        "review_submission": self._sourced("1111111122222222333333334444444455555555"),
                     }
                 ]
             }
@@ -15625,7 +17439,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                     "reviewer": "Codex2",
                     "status": "review",
                     "approved_head": old_head,
-                    "review_submission": {"remote_sha": new_head},
+                    "review_submission": self._sourced(new_head),
                 }
             ]
         }
@@ -15641,7 +17455,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
 
         # Positive control: re-approving at the *same* head is not a conflict,
         # so the guard cannot be satisfied by rejecting every stale-head task.
-        state["tasks"][0]["review_submission"]["remote_sha"] = old_head
+        state["tasks"][0]["review_submission"] = self._sourced(old_head)
         with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex2"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=old_head), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
@@ -16236,7 +18050,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")):
             prio = supervisor.dispatch_priority_for_task(config, task, "Antigravity4")
             self.assertIsNotNone(prio)
-            mock_resolve.assert_called_with("FREEZE-TEST-FRESH-001", force_refresh=True)
+            mock_resolve.assert_called_with("FREEZE-TEST-FRESH-001", force_refresh=True, task=task)
 
     def test_task_review_gate_status_check_pending_on_head_mismatch(self) -> None:
         task = {
@@ -16376,7 +18190,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         head = "e0147acb22222222333333334444444455555555"
         merge = "4b32949322222222333333334444444455555555"
         task_id = "ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001"
-        state = {"tasks": [self._missing_head_task(task_id)]}
+        state = {"tasks": [{**self._missing_head_task(task_id), "review_submission": self._sourced(head)}]}
         task = ai_status.get_task(state, task_id)
         config = self._build_freeze_test_config()
         ai_status.clear_ai_status_caches()
@@ -16496,6 +18310,8 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             "review_notes_zh": "已審核通過",
         }
         task.update(task_extra)
+        if task.get("last_approved_head") and "review_submission" not in task:
+            task["review_submission"] = self._sourced(task["last_approved_head"])
         return {"tasks": [task]}
 
     def test_restore_approved_refuses_without_a_durable_approved_head(self) -> None:
@@ -16511,7 +18327,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                     "reviewer": "Codex2",
                     "status": "review",
                     "review_notes_zh": "已審核通過",
-                    "review_submission": {"remote_sha": approved},
+                    "review_submission": self._sourced(approved),
                 }
             ]
         }
@@ -16552,7 +18368,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         """Positive control for the two refusals above: a genuinely spurious
         downgrade still recovers, and it recovers *with* the freeze intact."""
         approved = "1111111122222222333333334444444455555555"
-        state = self._restore_state(id="FREEZE-TEST-021C", last_approved_head=approved)
+        state = self._restore_state(id="FREEZE-TEST-021C", last_approved_head=approved, last_approved_by="Claude")
         task = ai_status.get_task(state, "FREEZE-TEST-021C")
         ai_status.clear_ai_status_caches()
         with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
@@ -17280,7 +19096,10 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                 {
                     "id": "ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001",
                     "status": "review",
-                    "owner": "Codex6",
+                    # A registered owner: an unregistered one has no account
+                    # pool, so no reviewer could be shown independent of it.
+                    "owner": "Codex",
+                    "review_submission": _bound_review_submission("Codex", submitted_by="Codex"),
                     "reviewer": "Antigravity7",
                 }
             ]
@@ -17312,7 +19131,7 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
 
         self.assertIsNotNone(reassigned_to)
         self.assertNotEqual(reassigned_to, "Antigravity7")
-        self.assertNotEqual(reassigned_to, "Codex6")
+        self.assertNotEqual(reassigned_to, "Codex")
         self.assertEqual(persist.call_args.kwargs["new_reviewer"], reassigned_to)
 
     def test_fail_closed_human_ops_gate_never_auto_reassigned(self) -> None:
@@ -19363,7 +21182,15 @@ class BlockedTaskRoleReassignmentTests(unittest.TestCase):
 
     def test_blocked_reviewer_at_review_still_reassigns_the_reviewer(self) -> None:
         status = {
-            "tasks": [{"id": "T-3", "status": "review", "owner": "Antigravity", "reviewer": "Codex"}]
+            "tasks": [
+                {
+                    "id": "T-3",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "review_submission": _bound_review_submission("Antigravity", submitted_by="Antigravity"),
+                }
+            ]
         }
 
         persist = self._run(status)
@@ -19412,7 +21239,13 @@ class BlockedTaskRoleReassignmentTests(unittest.TestCase):
         }
         status = {
             "tasks": [
-                {"id": "T-7", "status": "review", "owner": "Antigravity", "reviewer": "Antigravity2"}
+                {
+                    "id": "T-7",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Antigravity2",
+                    "review_submission": _bound_review_submission("Antigravity", submitted_by="Antigravity"),
+                }
             ]
         }
 
@@ -19919,35 +21752,224 @@ class ClaudeResumeModelSelectionTests(unittest.TestCase):
         self.assertNotIn("--effort", command)
 
 
+class _FakeAdmissionGitHub:
+    """GitHub as merge admission sees it: one PR, its queue entry, and mutations.
+
+    Answers through `github_bus.run_gh`, which is the only `gh` entry both the
+    dispatcher and the bus use, so the real readback parsing and the real
+    mutation helpers run. `admission` is what GitHub currently holds for the
+    PR (`none`, `armed`, `queued`, `merged`); a `pr merge` moves it to `after`.
+    Any `--admin` mutation fails the test outright.
+
+    `graphql` overrides fields of the GraphQL PR node and `graphql_drop` removes
+    them, for partial or contradictory answers; `view` and `view_drop` do the
+    same to the `gh pr view` answer. `drift` is applied as attribute
+    changes when a `pr merge` lands, for a PR whose head, base or branch moves
+    between the initial check and the readback; `graphql_head` lets the queue
+    node alone name another head.
+
+    `run_gh_process` answers one level lower, as the `gh` process itself, so
+    the real `run_gh` classifies its exit and output. `mutation_exit` makes the
+    `pr merge` process exit `(code, stderr)`; `mutation_lands` says whether
+    GitHub applied the mutation anyway, as it can behind a 5xx or a dropped
+    response. `drift` is applied either way.
+
+    Branch protection is GitHub's, not the caller's: any `pr merge` on a draft
+    is refused, and a bare `--merge` is refused unless `merge_state` is one
+    `gh` treats as immediately mergeable. `--auto` on a BLOCKED or BEHIND PR
+    is accepted and becomes `after`. `pr ready` turns a DRAFT `merge_state`
+    into `ready_state`.
+    """
+
+    def __init__(
+        self,
+        *,
+        number: int,
+        branch: str,
+        head: str,
+        base: str = "dev",
+        state: str = "OPEN",
+        admission: str = "none",
+        merge_state: str = "CLEAN",
+        draft: bool = False,
+        after: str = "queued",
+        refuse: BaseException | None = None,
+        queue_readable: bool = True,
+        view_readable: bool = True,
+        has_queue: bool | None = True,
+        on_first_view=None,
+        graphql: dict | None = None,
+        graphql_drop: tuple[str, ...] = (),
+        view: dict | None = None,
+        view_drop: tuple[str, ...] = (),
+        drift: dict | None = None,
+        ready_state: str = "CLEAN",
+    ) -> None:
+        self.number = number
+        self.branch = branch
+        self.head = head
+        self.base = base
+        self.state = state
+        self.admission = admission
+        self.merge_state = merge_state
+        self.draft = draft
+        self.after = after
+        self.refuse = refuse
+        self.queue_readable = queue_readable
+        self.view_readable = view_readable
+        self.has_queue = has_queue
+        self.on_first_view = on_first_view
+        self.graphql = dict(graphql or {})
+        self.graphql_drop = tuple(graphql_drop)
+        self.view = dict(view or {})
+        self.view_drop = tuple(view_drop)
+        self.drift = dict(drift or {})
+        self.ready_state = ready_state
+        self.graphql_head: str | None = None
+        self.mutation_exit: tuple[int, str] | None = None
+        self.mutation_lands = False
+        self.mutations: list[list[str]] = []
+        self.reads: list[list[str]] = []
+
+    def run_gh_process(self, args, *, timeout_seconds, gh_binary="gh"):
+        import github_bus
+
+        args = list(args)
+        if args[:2] == ["pr", "merge"] and self.mutation_exit is not None:
+            assert "--admin" not in args, f"admission must never bypass protection: {args}"
+            self.mutations.append(args)
+            if self.mutation_lands:
+                self.admission = self.after
+            for field, value in self.drift.items():
+                setattr(self, field, value)
+            code, stderr = self.mutation_exit
+            return subprocess.CompletedProcess([gh_binary, *args], code, "", stderr)
+        try:
+            answer = self.run_gh(args)
+        except github_bus.GitHubBusError as exc:
+            return subprocess.CompletedProcess([gh_binary, *args], 1, "", str(exc))
+        return subprocess.CompletedProcess([gh_binary, *args], 0, answer.stdout, "")
+
+    def _out(self, payload) -> unittest.mock.Mock:
+        return unittest.mock.Mock(stdout=json.dumps(payload), returncode=0)
+
+    def run_gh(self, args, **kwargs):
+        args = list(args)
+        if args[:2] in (["pr", "merge"], ["pr", "ready"]):
+            assert "--admin" not in args, f"admission must never bypass protection: {args}"
+            self.mutations.append(args)
+            if self.refuse is not None:
+                raise self.refuse
+            if args[:2] == ["pr", "ready"]:
+                self.draft = False
+                if self.merge_state == "DRAFT":
+                    self.merge_state = self.ready_state
+            else:
+                import github_bus
+
+                if self.draft:
+                    raise github_bus.GitHubBusError("Pull Request is still a draft (HTTP 405)")
+                if "--auto" not in args and self.merge_state not in {"CLEAN", "HAS_HOOKS", "UNSTABLE"}:
+                    raise github_bus.GitHubBusError(
+                        "Pull Request is not mergeable: the base branch policy prohibits the merge (HTTP 405)"
+                    )
+                self.admission = self.after
+                for field, value in self.drift.items():
+                    setattr(self, field, value)
+            return self._out({})
+        self.reads.append(args)
+        if args[:2] == ["pr", "view"]:
+            if self.on_first_view is not None:
+                hook, self.on_first_view = self.on_first_view, None
+                hook()
+            if not self.view_readable:
+                return self._out({})
+            view = {
+                "number": self.number,
+                "state": "MERGED" if self.admission == "merged" else self.state,
+                "isDraft": self.draft,
+                "autoMergeRequest": (
+                    {"enabledAt": "2026-11-11T00:00:00Z"} if self.admission == "armed" else None
+                ),
+                "baseRefName": self.base,
+                "headRefName": self.branch,
+                "headRefOid": self.head,
+                "url": f"https://github.com/o/r/pull/{self.number}",
+                "mergeStateStatus": self.merge_state,
+            }
+            view.update(self.view)
+            for field in self.view_drop:
+                view.pop(field, None)
+            return self._out(view)
+        if args[:2] == ["api", "graphql"]:
+            query = " ".join(args)
+            if "mergeQueue(branch" in query:
+                present = {"id": "MQ_x"} if self.has_queue else None
+                return self._out({"data": {"repository": {"mergeQueue": present}}})
+            if not self.queue_readable:
+                import github_bus
+
+                raise github_bus.GitHubBusError("GraphQL: something went wrong")
+            queued = self.admission == "queued"
+            node = {
+                "number": self.number,
+                "state": "MERGED" if self.admission == "merged" else self.state,
+                "merged": self.admission == "merged",
+                "baseRefName": self.base,
+                "headRefName": self.branch,
+                "headRefOid": self.graphql_head or self.head,
+                "isInMergeQueue": queued,
+                "mergeQueueEntry": (
+                    {"position": 1, "state": "AWAITING_CHECKS"} if queued else None
+                ),
+            }
+            node.update(self.graphql)
+            for field in self.graphql_drop:
+                node.pop(field, None)
+            return self._out({"data": {"repository": {"pullRequest": node}}})
+        return self._out({})
+
+
 class ApprovedPrMergeRoutingTests(unittest.TestCase):
-    """A reviewed, CI-green PR must be enqueued for merge.
+    """A reviewed, CI-green PR must be admitted to merge, once per window.
 
     GitHub's merge queue only holds what is explicitly enqueued, so approved
     work used to stall indefinitely with nothing driving it to a merge.
     """
 
     HEAD = "1111111122222222333333334444444455555555"
+    SLUG = "alfloop-dev/odayplus"
+    CONFIG = {"github_bus": {"repo": "alfloop-dev/odayplus"},
+              "branch_workflow": {"enabled": True, "dev_branch": "dev",
+                                  "task_pr": {"target_branch": "dev", "auto_merge": True}}}
 
-    def _route(self, task, *, scope, merge_state="CLEAN", gh_side_effect=None):
+    def _gh(self, task, **overrides) -> _FakeAdmissionGitHub:
+        fields = {
+            "number": int(task.get("pr_number") or 0),
+            "branch": f"task/{task['id']}",
+            "head": self.HEAD,
+        }
+        fields.update(overrides)
+        return _FakeAdmissionGitHub(**fields)
+
+    def _route(self, task, *, scope, merge_state="CLEAN", gh_side_effect=None,
+               gh=None, ci_status="success", reserve=None):
         import dispatch_engine
 
-        calls: list[list[str]] = []
-
-        def fake_run_gh(args, **kwargs):
-            calls.append(list(args))
-            if gh_side_effect is not None:
-                raise gh_side_effect
-            return unittest.mock.Mock(stdout="{}")
-
+        gh = gh or self._gh(task, merge_state=merge_state, refuse=gh_side_effect)
         with unittest.mock.patch.object(
             dispatch_engine, "approved_pr_change_scope", return_value=scope
         ), unittest.mock.patch.object(
-            dispatch_engine, "_pr_merge_state", return_value=merge_state
-        ), unittest.mock.patch("github_bus.run_gh", side_effect=fake_run_gh), \
-                unittest.mock.patch.object(dispatch_engine, "write_activity_log", create=True), \
-                unittest.mock.patch.object(dispatch_engine, "utc_now", create=True, return_value="T"):
-            route, detail = dispatch_engine.route_approved_pr_to_merge({}, task)
-        return route, detail, calls
+            dispatch_engine, "repository_has_merge_queue", return_value=gh.has_queue
+        ), unittest.mock.patch("github_bus.run_gh", side_effect=gh.run_gh):
+            route, detail = dispatch_engine.route_approved_pr_to_merge(
+                self.CONFIG, task, ci_status=ci_status, reserve=reserve
+            )
+        self._last_gh = gh
+        return route, detail, gh.mutations
+
+    def _enqueue(self, number: int) -> list[str]:
+        return ["pr", "merge", str(number), "--repo", self.SLUG, "--auto", "--merge"]
 
     def test_every_scope_takes_the_same_queue_path(self) -> None:
         """`dev` requires the merge queue, so scope cannot select a route.
@@ -19962,7 +21984,7 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
                 route, _, calls = self._route(task, scope=scope)
 
                 self.assertEqual(route, "queued")
-                self.assertEqual(calls, [["pr", "merge", "42"]])
+                self.assertEqual(calls, [self._enqueue(42)])
 
     def test_scope_is_recorded_but_never_gates_the_enqueue(self) -> None:
         task = {"id": "T-1b", "pr_number": 46, "approved_head": self.HEAD}
@@ -19971,7 +21993,7 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
 
         self.assertEqual(route, "queued")
         self.assertEqual(task["merge_route"]["scope"], "development_tooling")
-        self.assertEqual(calls, [["pr", "merge", "46"]])
+        self.assertEqual(calls, [self._enqueue(46)])
 
     def test_unclassifiable_diff_is_still_enqueued(self) -> None:
         """An unreadable diff is a reason to say so, not to strand a reviewed
@@ -19982,7 +22004,7 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
 
         self.assertEqual(route, "queued")
         self.assertEqual(task["merge_route"]["scope"], "unknown")
-        self.assertEqual(calls, [["pr", "merge", "43"]])
+        self.assertEqual(calls, [self._enqueue(43)])
 
     def _routed_at(self, seconds_ago: float) -> str:
         stamp = datetime.now(UTC) - timedelta(seconds=seconds_ago)
@@ -20028,7 +22050,7 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
         route, _, calls = self._route(task, scope="product_or_mixed")
 
         self.assertEqual(route, "queued")
-        self.assertEqual(calls, [["pr", "merge", "46"]])
+        self.assertEqual(calls, [self._enqueue(46)])
         self.assertEqual(task["merge_route"]["attempts"], 2)
 
     def test_repeated_enqueues_stop_and_report_rather_than_continue(self) -> None:
@@ -20065,7 +22087,7 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
         route, _, calls = self._route(task, scope="product_or_mixed")
 
         self.assertEqual(route, "queued")
-        self.assertEqual(calls, [["pr", "merge", "48"]])
+        self.assertEqual(calls, [self._enqueue(48)])
         self.assertTrue(task["merge_route"]["at"])
 
     def test_queue_ejection_is_reported_rather_than_waited_on(self) -> None:
@@ -20103,7 +22125,7 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
 
         self.assertEqual(route, "blocked")
         self.assertIn("rule violations", detail)
-        self.assertEqual(calls, [["pr", "merge", "45"]])
+        self.assertEqual(calls, [self._enqueue(45)])
         self.assertNotIn("merge_route", task)
 
     def test_task_without_pr_number_is_left_alone(self) -> None:
@@ -20113,6 +22135,189 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
 
         self.assertEqual(route, "waiting")
         self.assertEqual(calls, [])
+        self.assertEqual(self._last_gh.reads, [], "nothing to read without a PR")
+
+
+    # -- Admission guards carried over from the bus's arming path ----------
+
+    def test_a_pr_github_already_holds_is_not_admitted_again(self) -> None:
+        """Armed and queued are GitHub's own answer for this head. Re-issuing
+        the mutation every poll was the bus's second admission path; it is
+        recorded as an observation, not as an attempt."""
+        for held in ("armed", "queued"):
+            with self.subTest(held=held):
+                task = {"id": "T-10", "pr_number": 50, "approved_head": self.HEAD}
+                gh = self._gh(task, admission=held)
+
+                route, _d, calls = self._route(task, scope="product_or_mixed", gh=gh)
+
+                self.assertEqual(route, held)
+                self.assertEqual(calls, [])
+                self.assertEqual(task["merge_route"]["route"], held)
+                self.assertEqual(task["merge_route"]["attempts"], 0)
+                self.assertEqual(task["merge_route"]["head"], self.HEAD)
+
+    def test_an_observed_admission_keeps_the_issued_counter(self) -> None:
+        task = {
+            "id": "T-11",
+            "pr_number": 51,
+            "approved_head": self.HEAD,
+            "merge_route": {"head": self.HEAD, "route": "unconfirmed",
+                            "at": self._routed_at(7200), "attempts": 3},
+        }
+        gh = self._gh(task, admission="queued")
+
+        route, _d, calls = self._route(task, scope="product_or_mixed", gh=gh)
+
+        self.assertEqual(route, "queued")
+        self.assertEqual(calls, [])
+        self.assertEqual(task["merge_route"]["attempts"], 3)
+        self.assertEqual(task["merge_route"]["route"], "queued")
+
+    def test_unreadable_pr_or_queue_is_unknown_not_unqueued(self) -> None:
+        """An offline or garbled readback must not look like an empty queue:
+        that is exactly the state in which a re-issue duplicates an entry."""
+        import github_bus
+
+        cases = {
+            "view": {"view_readable": False},
+            "queue": {"queue_readable": False},
+        }
+        for name, overrides in cases.items():
+            with self.subTest(unreadable=name):
+                task = {"id": "T-12", "pr_number": 52, "approved_head": self.HEAD}
+                gh = self._gh(task, **overrides)
+
+                route, detail, calls = self._route(task, scope="product_or_mixed", gh=gh)
+
+                self.assertEqual(route, "unknown")
+                self.assertIn("nothing was issued", detail)
+                self.assertEqual(calls, [])
+                self.assertNotIn("merge_route", task)
+
+        task = {"id": "T-12", "pr_number": 52, "approved_head": self.HEAD}
+        gh = self._gh(task)
+        gh.run_gh = unittest.mock.Mock(side_effect=github_bus.GitHubBusOffline("offline"))
+        route, _d, _calls = self._route(task, scope="product_or_mixed", gh=gh)
+        self.assertEqual(route, "unknown")
+        self.assertNotIn("merge_route", task)
+
+    def test_identity_guards_fail_closed_before_any_mutation(self) -> None:
+        """Repository, base, branch, exact approved head and PR state are all
+        checked on GitHub's answer, not on bus state. A moved head is new work
+        that nobody reviewed, so it is never admitted."""
+        cases = {
+            "wrong base": ({"base": "main"}, "not the task base"),
+            "foreign branch": ({"branch": "task/SOMEONE-ELSE"}, "does not name"),
+            "moved head": ({"head": "9" * 40}, "needs its own review"),
+            "closed": ({"state": "CLOSED"}, "closed"),
+        }
+        for name, (overrides, expected) in cases.items():
+            with self.subTest(guard=name):
+                task = {"id": "T-13", "pr_number": 53, "approved_head": self.HEAD}
+                gh = self._gh(task, **overrides)
+
+                route, detail, calls = self._route(task, scope="product_or_mixed", gh=gh)
+
+                self.assertEqual(route, "blocked")
+                self.assertIn(expected, detail)
+                self.assertEqual(calls, [])
+                self.assertNotIn("merge_route", task)
+
+    def test_unresolved_repository_is_not_read_or_admitted(self) -> None:
+        import dispatch_engine
+
+        task = {"id": "T-14", "pr_number": 54, "approved_head": self.HEAD}
+        gh = self._gh(task)
+        with unittest.mock.patch.object(dispatch_engine, "_task_repository_slug", return_value=""), \
+                unittest.mock.patch("github_bus.run_gh", side_effect=gh.run_gh):
+            route, _detail = dispatch_engine.route_approved_pr_to_merge({}, task)
+
+        self.assertEqual(route, "blocked")
+        self.assertEqual(gh.mutations, [])
+        self.assertEqual(gh.reads, [])
+
+    def test_a_conflicting_pr_that_was_never_routed_is_blocked_not_ejected(self) -> None:
+        task = {"id": "T-15", "pr_number": 55, "approved_head": self.HEAD}
+
+        route, detail, calls = self._route(task, scope="product_or_mixed", merge_state="CONFLICTING")
+
+        self.assertEqual(route, "blocked")
+        self.assertIn("advance the base", detail)
+        self.assertEqual(calls, [])
+
+    def test_mutation_ack_without_readback_is_counted_but_not_claimed(self) -> None:
+        """A zero exit is the CLI's acknowledgement, not an enqueue. The attempt
+        is counted, so the window and the cap still apply, but nothing says
+        queued."""
+        task = {"id": "T-16", "pr_number": 56, "approved_head": self.HEAD}
+        gh = self._gh(task, after="none")
+
+        route, _d, calls = self._route(task, scope="product_or_mixed", gh=gh)
+
+        self.assertEqual(route, "unconfirmed")
+        self.assertEqual(calls, [self._enqueue(56)])
+        self.assertEqual(task["merge_route"]["route"], "unconfirmed")
+        self.assertEqual(task["merge_route"]["attempts"], 1)
+
+        again, _d, calls = self._route(task, scope="product_or_mixed", gh=self._gh(task, after="none"))
+        self.assertEqual(again, "waiting")
+        self.assertEqual(calls, [])
+
+    def test_offline_during_the_mutation_keeps_the_attempt(self) -> None:
+        import github_bus
+
+        task = {"id": "T-17", "pr_number": 57, "approved_head": self.HEAD}
+        gh = self._gh(task, refuse=github_bus.GitHubBusOffline("connection reset"))
+
+        route, _d, calls = self._route(task, scope="product_or_mixed", gh=gh)
+
+        self.assertEqual(route, "unconfirmed")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(task["merge_route"]["attempts"], 1)
+
+    def test_a_rejected_reservation_issues_nothing(self) -> None:
+        """The attempt is committed before the mutation. If canonical status
+        refuses that write, nothing may reach GitHub: an admission the counter
+        does not know about is how the cap gets bypassed."""
+        task = {"id": "T-18", "pr_number": 58, "approved_head": self.HEAD}
+        seen: list[dict] = []
+
+        def reserve() -> bool:
+            seen.append(dict(task["merge_route"]))
+            return False
+
+        route, _d, calls = self._route(task, scope="product_or_mixed", reserve=reserve)
+
+        self.assertEqual(route, "deferred")
+        self.assertEqual(calls, [])
+        self.assertEqual(seen[0]["attempts"], 1)
+        self.assertEqual(seen[0]["route"], "issuing")
+
+    def test_a_draft_is_undrafted_before_it_is_armed(self) -> None:
+        task = {"id": "T-19", "pr_number": 59, "approved_head": self.HEAD}
+        gh = self._gh(task, draft=True)
+
+        route, _d, calls = self._route(task, scope="product_or_mixed", gh=gh)
+
+        self.assertEqual(route, "queued")
+        self.assertEqual(calls, [["pr", "ready", "59", "--repo", self.SLUG], self._enqueue(59)])
+
+    def test_pending_checks_are_armed_never_merged_directly(self) -> None:
+        """Arming while checks run is what the bus did; GitHub still waits for
+        every required check. Even without a queue it must not be `--merge`
+        alone, which would try to merge before the checks finish."""
+        for has_queue in (True, False):
+            with self.subTest(has_queue=has_queue):
+                task = {"id": "T-20", "pr_number": 60, "approved_head": self.HEAD}
+                gh = self._gh(task, has_queue=has_queue, after="armed")
+
+                route, _d, calls = self._route(
+                    task, scope="product_or_mixed", gh=gh, ci_status="pending"
+                )
+
+                self.assertEqual(route, "armed")
+                self.assertEqual(calls, [self._enqueue(60)])
 
 
 class ApprovedPrMergeAdvanceTests(unittest.TestCase):
@@ -20213,8 +22418,124 @@ class ApprovedPrMergeAdvanceTests(unittest.TestCase):
 
         import dispatch_engine
 
-        source = inspect.getsource(dispatch_engine)
-        self.assertEqual(source.count("route_approved_pr_to_merge(config, task)"), 1)
+        tree = ast.parse(inspect.getsource(dispatch_engine))
+        callers = [
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            for call in ast.walk(node)
+            if isinstance(call, ast.Call)
+            and getattr(call.func, "id", None) == "route_approved_pr_to_merge"
+        ]
+        self.assertEqual(callers, ["advance_approved_prs_to_merge"])
+
+    def _advance_with(self, task, route_impl, *, ci="success", config=None, commit=True):
+        import dispatch_engine
+
+        status = {"tasks": [task]}
+        routed: list[dict] = []
+        commits: list[dict] = []
+
+        def fake_route(cfg, t, **kwargs):
+            routed.append(kwargs)
+            return route_impl(t, **kwargs)
+
+        def fake_commit(cfg, st):
+            commits.append(deepcopy(st))
+            return commit
+
+        with unittest.mock.patch.object(
+            dispatch_engine.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", ci)
+        ), unittest.mock.patch.object(
+            dispatch_engine, "route_approved_pr_to_merge", side_effect=fake_route
+        ), unittest.mock.patch.object(
+            dispatch_engine, "commit_canonical_task_transition", side_effect=fake_commit
+        ), unittest.mock.patch.object(
+            dispatch_engine, "load_status", create=True, return_value={"tasks": [dict(task)]}
+        ), unittest.mock.patch.object(dispatch_engine, "write_activity_log", create=True):
+            changed = dispatch_engine.advance_approved_prs_to_merge(
+                config or {}, status, self.FINALIZE
+            )
+        return changed, routed, commits
+
+    def test_a_changed_counter_is_persisted_even_when_next_is_unchanged(self) -> None:
+        """The record is the window and the cap. Writing it only when the
+        explanation text changed lost it whenever the text happened to match."""
+        task = self._task()
+        task["next"] = (
+            "PR for task T-9 is CI-green and awaiting merge queue; "
+            "approved branch head remains immutable and finalize dispatch is deferred."
+        )
+
+        def route(t, **_kw):
+            t["merge_route"] = {"head": self.HEAD, "route": "unconfirmed", "attempts": 2, "at": "T"}
+            return "waiting", "unconfirmed"
+
+        changed, _routed, commits = self._advance_with(task, route)
+
+        self.assertTrue(changed)
+        self.assertEqual(commits[-1]["tasks"][0]["merge_route"]["attempts"], 2)
+
+    def test_a_refusal_after_a_committed_reservation_is_written_back(self) -> None:
+        """The reservation reached disk; a refused mutation restores the old
+        record in memory, which must be written back too or the refused
+        attempt would still count."""
+        task = self._task()
+
+        def route(t, *, reserve, **_kw):
+            t["merge_route"] = {"head": self.HEAD, "route": "issuing", "attempts": 1, "at": "T"}
+            self.assertTrue(reserve())
+            t.pop("merge_route")
+            return "blocked", "rule violations"
+
+        changed, _routed, commits = self._advance_with(task, route)
+
+        self.assertTrue(changed)
+        self.assertEqual(len(commits), 2)
+        self.assertEqual(commits[0]["tasks"][0]["merge_route"]["route"], "issuing")
+        self.assertNotIn("merge_route", commits[1]["tasks"][0])
+
+    def test_ci_gates_which_prs_are_routed_at_all(self) -> None:
+        def route(_t, **_kw):
+            return "waiting", ""
+
+        armed_config = {"branch_workflow": {"enabled": True, "task_pr": {"auto_merge": True}}}
+        cases = [
+            ("failure", armed_config, []),
+            ("none", armed_config, []),
+            ("unknown", armed_config, []),
+            ("pending", {}, []),
+            ("pending", armed_config, ["pending"]),
+            ("success", {}, ["success"]),
+        ]
+        for ci, config, expected in cases:
+            with self.subTest(ci=ci, auto_merge=bool(config)):
+                _changed, routed, _commits = self._advance_with(
+                    self._task(), route, ci=ci, config=config
+                )
+                self.assertEqual([kw["ci_status"] for kw in routed], expected)
+
+    def test_admission_outcomes_are_explained_once(self) -> None:
+        cases = {
+            "armed": "auto-merge armed",
+            "unconfirmed": "did not confirm",
+            "unknown": "could not be read",
+        }
+        for route_name, expected in cases.items():
+            with self.subTest(route=route_name):
+                task = self._task()
+
+                changed, _r, commits = self._advance_with(
+                    task, lambda _t, _n=route_name, **_kw: (_n, "detail")
+                )
+                self.assertTrue(changed)
+                self.assertIn(expected, task["next"])
+
+                repeat, _r, repeat_commits = self._advance_with(
+                    task, lambda _t, _n=route_name, **_kw: (_n, "detail")
+                )
+                self.assertFalse(repeat)
+                self.assertEqual(repeat_commits, [])
 
 
 class FleetDispatchLivelockTests(unittest.TestCase):
@@ -20967,25 +23288,33 @@ class MergeRouteWithoutQueueTests(unittest.TestCase):
 
     HEAD = "1111111122222222333333334444444455555555"
 
-    def _route(self, *, has_queue, repository="alfloop-dev/oday-data-platform"):
+    def _route(self, *, has_queue, repository="alfloop-dev/oday-data-platform",
+               ci_status="success", after=None, mutation_exit=None, mutation_lands=False, **fake):
         import dispatch_engine
-
-        calls = []
-
-        def fake_run_gh(args, **kwargs):
-            calls.append(list(args))
-            return unittest.mock.Mock(stdout="{}")
 
         task = {"id": "T-1", "pr_number": 42, "approved_head": self.HEAD,
                 "repository": repository, "base_branch": "dev"}
-        with unittest.mock.patch.object(dispatch_engine, "repository_has_merge_queue", return_value=has_queue), \
-                unittest.mock.patch.object(dispatch_engine, "approved_pr_change_scope", return_value="product_or_mixed"), \
-                unittest.mock.patch.object(dispatch_engine, "_pr_merge_state", return_value="CLEAN"), \
-                unittest.mock.patch("github_bus.run_gh", side_effect=fake_run_gh), \
-                unittest.mock.patch.object(dispatch_engine, "write_activity_log", create=True), \
-                unittest.mock.patch.object(dispatch_engine, "utc_now", create=True, return_value="T"):
-            route, detail = dispatch_engine.route_approved_pr_to_merge({}, task)
-        return route, detail, calls, task
+        if after is None:
+            after = "merged" if has_queue is False and ci_status == "success" else "queued"
+        gh = _FakeAdmissionGitHub(number=42, branch="task/T-1", head=self.HEAD,
+                                  has_queue=has_queue, after=after, **fake)
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(unittest.mock.patch.object(
+                dispatch_engine, "repository_has_merge_queue", return_value=has_queue))
+            stack.enter_context(unittest.mock.patch.object(
+                dispatch_engine, "approved_pr_change_scope", return_value="product_or_mixed"))
+            if mutation_exit is None:
+                stack.enter_context(unittest.mock.patch("github_bus.run_gh", side_effect=gh.run_gh))
+            else:
+                # The `gh` process answers and the real `run_gh` classifies it.
+                gh.mutation_exit = mutation_exit
+                gh.mutation_lands = mutation_lands
+                stack.enter_context(unittest.mock.patch("github_bus.resolve_gh_binary", return_value="gh"))
+                stack.enter_context(unittest.mock.patch("github_bus.run_gh_process", side_effect=gh.run_gh_process))
+            route, detail = dispatch_engine.route_approved_pr_to_merge(
+                {}, task, ci_status=ci_status
+            )
+        return route, detail, gh.mutations, task
 
     def test_a_repository_without_a_queue_is_merged_directly(self) -> None:
         route, _d, calls, task = self._route(has_queue=False)
@@ -20997,11 +23326,78 @@ class MergeRouteWithoutQueueTests(unittest.TestCase):
         )
         self.assertEqual(task["merge_route"]["route"], "merged")
 
+    def test_a_direct_merge_github_did_not_confirm_is_not_called_merged(self) -> None:
+        route, _d, calls, task = self._route(has_queue=False, after="none")
+
+        self.assertEqual(route, "unconfirmed")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(task["merge_route"]["route"], "unconfirmed")
+        self.assertEqual(task["merge_route"]["attempts"], 1)
+
+    def test_a_direct_merge_readback_on_a_moved_pr_is_not_called_merged(self) -> None:
+        # Branch refs are case-sensitive: `dev` -> `DEV` or `task/T-1` ->
+        # `TASK/t-1` is another base or branch, not this one in other letters.
+        for drift, after in (({"head": "f" * 40}, None), ({"base": "main"}, None),
+                             ({"branch": "task/OTHER"}, None), ({"base": "DEV"}, None),
+                             ({"branch": "TASK/t-1"}, None),
+                             # Only the GraphQL node moved, onto another base
+                             # or branch, and it is the one claiming the PR.
+                             ({"graphql": {"baseRefName": "main"}}, "queued"),
+                             ({"graphql": {"headRefName": "task/OTHER"}}, "queued")):
+            with self.subTest(drift=drift):
+                route, _d, calls, task = self._route(has_queue=False, drift=drift, after=after)
+
+                self.assertEqual(calls[0][:4], ["pr", "merge", "42", "--merge"])
+                self.assertEqual(route, "unconfirmed")
+                self.assertEqual(task["merge_route"]["route"], "unconfirmed")
+                self.assertEqual((task["merge_route"]["head"], task["merge_route"]["attempts"]),
+                                 (self.HEAD, 1))
+
+    def test_a_partial_queue_answer_merges_nothing_directly(self) -> None:
+        for drop in ("isInMergeQueue", "mergeQueueEntry", "merged", "state", "headRefOid",
+                     "baseRefName", "headRefName"):
+            with self.subTest(drop=drop):
+                route, _d, calls, task = self._route(has_queue=False, graphql_drop=(drop,))
+
+                self.assertEqual(route, "unknown")
+                self.assertEqual(calls, [])
+                self.assertNotIn("merge_route", task)
+
+    def test_a_failed_direct_merge_is_refunded_only_on_a_definite_refusal(self) -> None:
+        """The direct `--merge` follows the same rule as the queue admission:
+        a nonzero exit is read back, a lost ACK is the merge it was, an
+        unsettled outcome stays counted, and only a whole `not_admitted`
+        readback releases the attempt."""
+        gateway = (1, "HTTP 502: Bad Gateway (https://api.github.com/repos/o/r/pulls/42/merge)")
+        refused = (1, "Pull Request is not mergeable (HTTP 405)")
+        cases = {
+            "lost ack": dict(mutation_exit=gateway, mutation_lands=True, want=("merged", 1)),
+            "unsettled": dict(mutation_exit=gateway, drift={"queue_readable": False},
+                              want=("unconfirmed", 1)),
+            "refused": dict(mutation_exit=refused, want=None),
+        }
+        for name, case in cases.items():
+            with self.subTest(name):
+                want = case.pop("want")
+                route, detail, calls, task = self._route(has_queue=False, **case)
+
+                self.assertEqual(calls, [["pr", "merge", "42", "--merge", "--repo",
+                                          "alfloop-dev/oday-data-platform"]])
+                if want is None:
+                    self.assertEqual(route, "blocked")
+                    self.assertIn("not mergeable", detail)
+                    self.assertNotIn("merge_route", task)
+                else:
+                    self.assertEqual(route, want[0])
+                    self.assertEqual((task["merge_route"]["route"], task["merge_route"]["attempts"]), want)
+
     def test_a_repository_with_a_queue_is_still_enqueued(self) -> None:
         route, _d, calls, task = self._route(has_queue=True, repository="alfloop-dev/odayplus")
 
         self.assertEqual(route, "queued")
-        self.assertEqual(calls, [["pr", "merge", "42", "--repo", "alfloop-dev/odayplus"]])
+        self.assertEqual(
+            calls, [["pr", "merge", "42", "--repo", "alfloop-dev/odayplus", "--auto", "--merge"]]
+        )
         self.assertEqual(task["merge_route"]["route"], "queued")
 
     def test_an_unreadable_answer_enqueues_rather_than_merging(self) -> None:
@@ -21010,7 +23406,61 @@ class MergeRouteWithoutQueueTests(unittest.TestCase):
         route, _d, calls, _task = self._route(has_queue=None)
 
         self.assertEqual(route, "queued")
-        self.assertNotIn("--merge", calls[0])
+        self.assertIn("--auto", calls[0])
+
+    def test_no_queue_protected_auto_merge_arms_while_checks_run(self) -> None:
+        """The rollback contract: with the queue deleted, the same `--auto
+        --merge` is GitHub's protected auto-merge, and it still waits for the
+        required checks rather than merging early."""
+        route, _d, calls, task = self._route(
+            has_queue=False, repository="alfloop-dev/odayplus", ci_status="pending", after="armed"
+        )
+
+        self.assertEqual(route, "armed")
+        self.assertEqual(
+            calls, [["pr", "merge", "42", "--repo", "alfloop-dev/odayplus", "--auto", "--merge"]]
+        )
+        self.assertEqual(task["merge_route"]["route"], "armed")
+
+    def test_green_checks_that_protection_still_holds_are_armed_not_merged(self) -> None:
+        """Green CI is not the whole of branch protection. A no-queue PR still
+        BLOCKED by a required review or rule, or BEHIND under strict
+        protection, takes the protected `--auto --merge` - never a bare merge
+        GitHub refuses every tick, and never `--admin`."""
+        for state in ("BLOCKED", "BEHIND"):
+            with self.subTest(state=state):
+                route, _d, calls, task = self._route(
+                    has_queue=False, repository="alfloop-dev/odayplus", after="armed", merge_state=state
+                )
+
+                self.assertEqual(route, "armed")
+                self.assertEqual(
+                    calls, [["pr", "merge", "42", "--repo", "alfloop-dev/odayplus", "--auto", "--merge"]]
+                )
+                self.assertEqual((task["merge_route"]["route"], task["merge_route"]["attempts"]), ("armed", 1))
+
+    def test_a_merge_state_that_was_not_reported_is_armed_not_merged(self) -> None:
+        for view in ({"view_drop": ("mergeStateStatus",)}, {"view": {"mergeStateStatus": "UNKNOWN"}}):
+            with self.subTest(**view):
+                route, _d, calls, _task = self._route(has_queue=False, after="armed", **view)
+
+                self.assertEqual(route, "armed")
+                self.assertEqual([c for c in calls if "--auto" not in c], [])
+
+    def test_a_green_approved_draft_is_readied_before_its_admission(self) -> None:
+        """An approved PR converted back to draft (or an inherited approved
+        draft) is undrafted on the no-queue route too; a merge on a draft is
+        refused by GitHub, so skipping the undraft strands it."""
+        route, _d, calls, task = self._route(
+            has_queue=False, draft=True, merge_state="DRAFT", after="merged"
+        )
+
+        self.assertEqual(route, "merged")
+        self.assertEqual(calls, [
+            ["pr", "ready", "42", "--repo", "alfloop-dev/oday-data-platform"],
+            ["pr", "merge", "42", "--repo", "alfloop-dev/oday-data-platform", "--auto", "--merge"],
+        ])
+        self.assertEqual(task["merge_route"]["route"], "merged")
 
     def test_detection_is_cached_per_repository(self) -> None:
         import dispatch_engine
@@ -21071,12 +23521,7 @@ class MergeRouteRepositorySlugTests(unittest.TestCase):
     def _route(self, repository, *, config=None):
         import dispatch_engine
 
-        calls = []
         queue_probes = []
-
-        def fake_run_gh(args, **kwargs):
-            calls.append(list(args))
-            return unittest.mock.Mock(stdout="{}")
 
         def fake_has_queue(slug, base):
             queue_probes.append(slug)
@@ -21084,43 +23529,44 @@ class MergeRouteRepositorySlugTests(unittest.TestCase):
 
         task = {"id": "T-1", "pr_number": 7, "approved_head": self.HEAD,
                 "repository": repository, "base_branch": "dev"}
+        gh = _FakeAdmissionGitHub(number=7, branch="task/T-1", head=self.HEAD)
         with unittest.mock.patch.object(dispatch_engine, "repository_has_merge_queue", fake_has_queue), \
                 unittest.mock.patch.object(dispatch_engine, "approved_pr_change_scope", return_value="tooling"), \
-                unittest.mock.patch.object(dispatch_engine, "_pr_merge_state", return_value="CLEAN"), \
-                unittest.mock.patch("github_bus.run_gh", side_effect=fake_run_gh), \
-                unittest.mock.patch.object(dispatch_engine, "write_activity_log", create=True), \
-                unittest.mock.patch.object(dispatch_engine, "utc_now", create=True, return_value="T"):
+                unittest.mock.patch("github_bus.run_gh", side_effect=gh.run_gh):
             route, detail = dispatch_engine.route_approved_pr_to_merge(
                 self.CONFIG if config is None else config, task
             )
-        return route, detail, calls, queue_probes, task
+        self._reads = gh.reads
+        return route, detail, gh.mutations, queue_probes, task
+
+    @staticmethod
+    def _enqueue(slug: str) -> list[list[str]]:
+        return [["pr", "merge", "7", "--repo", slug, "--auto", "--merge"]]
 
     def test_a_declared_registry_id_is_resolved_to_its_slug(self) -> None:
         """The regression: `--repo pantheon` is not a repository `gh` can reach."""
         route, _d, calls, _probes, task = self._route("pantheon")
 
         self.assertEqual(route, "queued")
-        self.assertEqual(calls, [["pr", "merge", "7", "--repo", "alfloop-dev/odayplus"]])
+        self.assertEqual(calls, self._enqueue("alfloop-dev/odayplus"))
         self.assertEqual(task["merge_route"]["route"], "queued")
 
     def test_a_declared_alias_is_resolved_to_its_slug(self) -> None:
         """Display names and aliases route through the same registry lookup."""
         _r, _d, calls, _probes, _task = self._route("ODay Plus")
 
-        self.assertEqual(calls, [["pr", "merge", "7", "--repo", "alfloop-dev/odayplus"]])
+        self.assertEqual(calls, self._enqueue("alfloop-dev/odayplus"))
 
     def test_a_declared_owner_name_slug_is_preserved(self) -> None:
         _r, _d, calls, _probes, _task = self._route("alfloop-dev/oday-data-platform")
 
-        self.assertEqual(
-            calls, [["pr", "merge", "7", "--repo", "alfloop-dev/oday-data-platform"]]
-        )
+        self.assertEqual(calls, self._enqueue("alfloop-dev/oday-data-platform"))
 
     def test_a_slug_the_registry_does_not_carry_is_still_routed(self) -> None:
         """Direct addressing survives: only a name needs the registry."""
         _r, _d, calls, _probes, _task = self._route("some-org/some-repo")
 
-        self.assertEqual(calls, [["pr", "merge", "7", "--repo", "some-org/some-repo"]])
+        self.assertEqual(calls, self._enqueue("some-org/some-repo"))
 
     def test_the_merge_queue_probe_sees_the_resolved_slug(self) -> None:
         """The probe silently answers None for anything without a `/`, which is
@@ -21138,6 +23584,7 @@ class MergeRouteRepositorySlugTests(unittest.TestCase):
         self.assertEqual(route, "blocked")
         self.assertIn("not-a-registered-repo", detail)
         self.assertEqual(calls, [])
+        self.assertEqual(self._reads, [], "an unplaced repository is not even read")
         self.assertNotIn("merge_route", task)
 
     def test_a_registry_entry_without_a_slug_blocks_too(self) -> None:
@@ -21153,7 +23600,7 @@ class MergeRouteRepositorySlugTests(unittest.TestCase):
         route, _d, calls, _probes, _task = self._route("")
 
         self.assertEqual(route, "queued")
-        self.assertEqual(calls, [["pr", "merge", "7", "--repo", "alfloop-dev/odayplus"]])
+        self.assertEqual(calls, self._enqueue("alfloop-dev/odayplus"))
 
     def test_only_owner_name_counts_as_a_slug(self) -> None:
         import dispatch_engine
@@ -21161,6 +23608,729 @@ class MergeRouteRepositorySlugTests(unittest.TestCase):
         self.assertTrue(dispatch_engine._is_repository_slug("owner/name"))
         for bad in ["", None, "pantheon", "owner/", "/name", "https://github.com/o/n"]:
             self.assertFalse(dispatch_engine._is_repository_slug(bad), bad)
+
+
+class MergeAdmissionSingleOwnerTests(unittest.TestCase):
+    """Both tick entries, one admission owner, one counter on canonical disk.
+
+    The supervisor reaches approved PRs from two places each tick:
+    `dispatch_ready_tasks` -> `advance_approved_prs_to_merge` ->
+    `route_approved_pr_to_merge`, and `sync_github_bus` -> `sync_outbound`.
+    The second used to issue its own `gh pr merge --auto --merge` every poll
+    with no window and no cap, so the dispatcher's 30-minute window and
+    four-attempt cap bounded nothing. These run the real callers against one
+    fake GitHub and a real revisioned status file, and read the counter back
+    from disk between ticks.
+    """
+
+    HEAD = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+    TASK_ID = "ODP-ADMIT-001"
+    PR = 4242
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        self.config = {
+            "paths": {
+                "status_file": str(root / "ai-status.json"),
+                "activity_log": str(root / "activity.jsonl"),
+                "event_queue": str(root / "events.jsonl"),
+                "github_bus_state": str(root / "github-bus.json"),
+            },
+            "agents": {
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+            },
+            "ready_dispatcher": {
+                "enabled": True,
+                "finalize_statuses": ["review_approved"],
+                "helper_execution_lease": {"enabled": False},
+            },
+            "github_bus": {"enabled": True, "repo": "alfloop-dev/odayplus", "poll_interval_seconds": 0},
+            "branch_workflow": {
+                "enabled": True,
+                "dev_branch": "dev",
+                "task_pr": {"target_branch": "dev", "auto_merge": True},
+            },
+        }
+        self.status_path = Path(self.config["paths"]["status_file"])
+        self.status_path.write_text(json.dumps({
+            "_status_write_revision": "rev-0",
+            "tasks": [{
+                "id": self.TASK_ID,
+                "status": "review_approved",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "approved_head": self.HEAD,
+                "pr_number": self.PR,
+                "repository": "alfloop-dev/odayplus",
+                "base_branch": "dev",
+                "depends_on": [],
+                "next": "approved",
+            }],
+            "handoffs": [],
+            "blockers": [],
+        }))
+        # The bus already published this PR (its publishing pass is stubbed).
+        Path(self.config["paths"]["github_bus_state"]).write_text(json.dumps({
+            "tasks": {self.TASK_ID: {"review_pr": {
+                "number": self.PR, "branch": f"task/{self.TASK_ID}", "state": "open",
+                "url": f"https://github.com/alfloop-dev/odayplus/pull/{self.PR}",
+            }}},
+        }))
+        self.gh = _FakeAdmissionGitHub(number=self.PR, branch=f"task/{self.TASK_ID}", head=self.HEAD)
+        self.ci = "success"
+        # When set, `gh` is answered as a process and the real `run_gh`
+        # classifies exits, instead of the fake raising typed errors itself.
+        self.real_transport = False
+        # What the dispatcher's merge-queue probe answers for the base.
+        self.queue_present: bool | None = True
+        # When set, run once by the status sync that follows a committed
+        # write, i.e. between the reservation's CAS write and its reload.
+        self.on_sync = None
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _disk_task(self) -> dict:
+        return json.loads(self.status_path.read_text())["tasks"][0]
+
+    def _edit_disk(self, mutate) -> None:
+        disk = json.loads(self.status_path.read_text())
+        mutate(disk["tasks"][0])
+        disk["_status_write_revision"] = uuid.uuid4().hex
+        self.status_path.write_text(json.dumps(disk))
+
+    def _patches(self) -> contextlib.ExitStack:
+        import dispatch_engine
+
+        stack = contextlib.ExitStack()
+        for name in [
+            "repair_open_task_metadata",
+            "repair_unsubmitted_review_tasks",
+            "reassign_tasks_after_review_churn",
+            "normalize_task_assignment_integrity",
+            "normalize_mainline_task_assignment",
+            "reassign_unavailable_reviewers",
+        ]:
+            stack.enter_context(mock.patch.object(supervisor, name, return_value=False))
+        for name in ["recover_conflicted_review_prs", "recover_failed_ci_review_prs", "task_reality_reconcile_is_due"]:
+            stack.enter_context(mock.patch.object(dispatch_engine, name, return_value=False))
+        stack.enter_context(mock.patch.object(supervisor, "load_event_queue", return_value=[]))
+        stack.enter_context(mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None))
+        stack.enter_context(mock.patch.object(supervisor, "agent_dispatch_capacity", return_value=0))
+        stack.enter_context(mock.patch.object(supervisor, "sync_status_pipeline", side_effect=self._sync))
+        stack.enter_context(mock.patch.object(supervisor, "queue_delivery_event", return_value=True))
+        stack.enter_context(mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=self.HEAD))
+        stack.enter_context(mock.patch.object(
+            supervisor.runtime_ai_status, "task_pr_ci_status", side_effect=lambda *_a, **_k: ("OPEN", self.ci)
+        ))
+        stack.enter_context(mock.patch.object(
+            dispatch_engine, "repository_has_merge_queue", side_effect=lambda *_a, **_k: self.queue_present
+        ))
+        stack.enter_context(mock.patch.object(dispatch_engine, "approved_pr_change_scope", return_value="development_tooling"))
+        if self.real_transport:
+            stack.enter_context(mock.patch("github_bus.resolve_gh_binary", return_value="gh"))
+            stack.enter_context(mock.patch("github_bus.run_gh_process", side_effect=self.gh.run_gh_process))
+        else:
+            stack.enter_context(mock.patch("github_bus.run_gh", side_effect=self.gh.run_gh))
+        # The bus's own PR publishing and pollers are not under test here.
+        for name in [
+            "upsert_review_pr", "upsert_ops_issue", "poll_pr_reviews", "poll_merge_group_runs",
+            "poll_issue_comments", "poll_coordination_issue_comments",
+            "consume_cloud_relay_commands", "sync_coordination_outbound",
+        ]:
+            stack.enter_context(mock.patch.object(github_bus, name, return_value=False))
+        stack.enter_context(mock.patch.object(github_bus, "push_cloud_relay_digest", return_value=None))
+        return stack
+
+    def _sync(self, _config) -> bool:
+        if self.on_sync is not None:
+            hook, self.on_sync = self.on_sync, None
+            hook()
+        return True
+
+    def _tick(self, *, bus_polls: int = 2) -> None:
+        """One supervisor cycle: the dispatcher stage, then the bus stage polled
+        repeatedly, as a 30-second bus inside a longer tick would be."""
+        with self._patches():
+            supervisor.dispatch_ready_tasks(self.config, {"workers": {}, "queue": {"events": {}}})
+            for _ in range(bus_polls):
+                github_bus.sync_github_bus(self.config, {})
+
+    def _merges(self) -> list[list[str]]:
+        return [m for m in self.gh.mutations if m[:2] == ["pr", "merge"]]
+
+    def test_two_entries_admit_once_and_the_counter_lives_on_disk(self) -> None:
+        self._tick()
+
+        self.assertEqual(len(self._merges()), 1)
+        self.assertIn("--auto", self._merges()[0])
+        route = self._disk_task()["merge_route"]
+        self.assertEqual((route["head"], route["route"], route["attempts"]), (self.HEAD, "queued", 1))
+
+        bus = json.loads(Path(self.config["paths"]["github_bus_state"]).read_text())
+        projection = bus["tasks"][self.TASK_ID]["auto_merge"]
+        self.assertEqual(projection["state"], "queued")
+        self.assertEqual(projection["attempts"], 1)
+        self.assertEqual(projection["owner"], "dispatch_engine.route_approved_pr_to_merge")
+
+        # Still queued: neither entry re-issues, however often it polls.
+        for _ in range(3):
+            self._tick(bus_polls=3)
+        self.assertEqual(len(self._merges()), 1)
+        self.assertEqual(self._disk_task()["merge_route"]["attempts"], 1)
+
+    def test_window_and_cap_are_read_back_from_canonical_status(self) -> None:
+        self._tick()
+        self.gh.admission = "none"  # dropped from the queue without merging
+
+        self._tick()
+        self.assertEqual(len(self._merges()), 1, "inside the window nothing is re-issued")
+
+        stale = (datetime.now(UTC) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._edit_disk(lambda t: t["merge_route"].update({"at": stale}))
+        self._tick()
+        self.assertEqual(len(self._merges()), 2)
+        self.assertEqual(self._disk_task()["merge_route"]["attempts"], 2)
+
+        self.gh.admission = "none"
+        self._edit_disk(lambda t: t["merge_route"].update({"at": stale, "attempts": 4}))
+        self._tick()
+        self.assertEqual(len(self._merges()), 2, "no fifth admission past the cap")
+        self.assertIn("has not merged after being enqueued repeatedly", self._disk_task()["next"])
+
+    def test_a_concurrent_canonical_write_defers_the_admission(self) -> None:
+        """A writer that advances the revision while the route reads GitHub
+        makes the reservation stale. Nothing is issued from the stale snapshot,
+        the other writer's change survives, and the next tick admits once."""
+        self.gh.on_first_view = lambda: self._edit_disk(lambda t: t.update({"next": "operator note"}))
+
+        self._tick(bus_polls=1)
+
+        self.assertEqual(self._merges(), [])
+        disk = self._disk_task()
+        self.assertNotIn("merge_route", disk)
+        self.assertEqual(disk["next"], "operator note")
+
+        self._tick(bus_polls=1)
+        self.assertEqual(len(self._merges()), 1)
+        self.assertEqual(self._disk_task()["merge_route"]["attempts"], 1)
+
+    # Recorded by another canonical writer after the reservation's CAS write
+    # committed but before its reload: the write succeeded, yet the task it
+    # reloads no longer authorizes this PR at this approved head.
+    def _reopen(t: dict) -> None:
+        t.update({"status": "in_progress", "next": "reopened by reviewer"})
+        t.pop("approved_head", None)
+        t.pop("merge_route", None)
+
+    CHANGES_AFTER_RESERVATION = {
+        "reviewer reopen": _reopen,
+        "another approved head": lambda t: t.update({"approved_head": "e" * 40, "next": "new head approved"}),
+        "another PR": lambda t: t.update({"pr_number": t["pr_number"] + 1, "next": "PR replaced"}),
+        "another base": lambda t: t.update({"base_branch": "main", "next": "retargeted"}),
+        "another repository": lambda t: t.update({"repository": "alfloop-dev/other", "next": "moved"}),
+        "reservation replaced": lambda t: t.update({
+            "merge_route": {"head": t["approved_head"], "route": "queued", "attempts": 3,
+                            "pr_number": t["pr_number"], "at": t["merge_route"]["at"]},
+            "next": "another writer recorded the route",
+        }),
+        "left approved state": lambda t: t.update({"status": "blocked", "next": "blocked by operator"}),
+    }
+
+    def test_a_change_recorded_after_the_reservation_commits_admits_nothing(self) -> None:
+        for name, change in self.CHANGES_AFTER_RESERVATION.items():
+            with self.subTest(name):
+                self._fresh()
+
+                recorded: dict = {}
+
+                def interleave(change=change, recorded=recorded) -> None:
+                    # Only the reservation write is interleaved; the disk must
+                    # already hold it, or this is not the race under test.
+                    self.assertEqual(self._disk_task().get("merge_route", {}).get("route"), "issuing")
+                    self._edit_disk(change)
+                    recorded.update(self._disk_task())
+
+                self.on_sync = interleave
+
+                self._tick(bus_polls=3)
+                expected = recorded
+
+                self.assertIsNone(self.on_sync, "the reservation write was never committed")
+                self.assertEqual(self._merges(), [])
+                disk = self._disk_task()
+                # The other writer's record survives: no stale route, head or
+                # explanation is written back over it.
+                self.assertEqual(disk["next"], expected["next"])
+                self.assertEqual(disk.get("approved_head"), expected.get("approved_head"))
+                self.assertEqual(disk.get("status"), expected.get("status"))
+                self.assertEqual(disk.get("pr_number"), expected.get("pr_number"))
+                self.assertEqual(disk.get("base_branch"), expected.get("base_branch"))
+                self.assertEqual(disk.get("repository"), expected.get("repository"))
+                # The route is exactly what the other writer left: absent after
+                # a reopen, theirs when replaced, otherwise the counted
+                # reservation that was never turned into an admission.
+                self.assertEqual(disk.get("merge_route"), expected.get("merge_route"))
+                if name != "reservation replaced":
+                    self.assertNotEqual((disk.get("merge_route") or {}).get("route"), "queued")
+
+        # Unchanged after the commit, the same reservation is admitted once:
+        # the check reads what is recorded, it is not a new gate.
+        self._fresh()
+        self.on_sync = lambda: None
+        self._tick()
+        self.assertEqual(len(self._merges()), 1)
+        self.assertEqual(self._disk_task()["merge_route"]["attempts"], 1)
+
+    def test_an_unconfirmed_ack_is_counted_on_disk(self) -> None:
+        self.gh.after = "none"
+
+        self._tick()
+
+        route = self._disk_task()["merge_route"]
+        self.assertEqual((route["route"], route["attempts"]), ("unconfirmed", 1))
+        self._tick()
+        self.assertEqual(len(self._merges()), 1)
+
+    def test_unknown_readback_admits_nothing_from_either_entry(self) -> None:
+        self.gh.queue_readable = False
+
+        self._tick(bus_polls=3)
+
+        self.assertEqual(self.gh.mutations, [])
+        self.assertNotIn("merge_route", self._disk_task())
+
+    def test_failed_ci_and_moved_head_are_admitted_by_neither_entry(self) -> None:
+        self.ci = "failure"
+        self._tick(bus_polls=3)
+        self.assertEqual(self.gh.mutations, [])
+
+        self.ci = "success"
+        self.gh.head = "f" * 40
+        self._tick(bus_polls=3)
+        self.assertEqual(self.gh.mutations, [])
+        self.assertIn("needs its own review", self._disk_task()["next"])
+
+    def test_pending_checks_are_armed_once_by_the_dispatcher(self) -> None:
+        self.ci = "pending"
+        self.gh.after = "armed"
+
+        self._tick(bus_polls=3)
+        self._tick(bus_polls=3)
+
+        self.assertEqual(len(self._merges()), 1)
+        self.assertEqual(self._disk_task()["merge_route"]["route"], "armed")
+
+    def test_green_no_queue_prs_protection_still_holds_are_armed_once(self) -> None:
+        """No queue, green CI, but GitHub does not yet allow the merge: BLOCKED
+        by a required review or rule, BEHIND under strict protection, or an
+        approved PR back in draft. Through both real tick entries, GitHub's
+        own refusal classified by the real `run_gh`, and the canonical CAS,
+        each is admitted once with `--auto --merge` (a draft readied first),
+        recorded on disk, and not re-issued on the next tick."""
+        cases = {
+            "blocked": dict(merge_state="BLOCKED", after="armed", ready=False),
+            "behind": dict(merge_state="BEHIND", after="armed", ready=False),
+            "draft": dict(merge_state="DRAFT", draft=True, after="merged", ready=True),
+        }
+        for name, case in cases.items():
+            with self.subTest(name):
+                self._fresh()
+                self.real_transport = True
+                self.queue_present = False
+                self.gh.merge_state = case["merge_state"]
+                self.gh.draft = case.get("draft", False)
+                self.gh.after = case["after"]
+
+                self._tick(bus_polls=2)
+                self._tick(bus_polls=2)
+
+                merges = self._merges()
+                self.assertEqual(len(merges), 1, merges)
+                self.assertIn("--auto", merges[0])
+                readies = [m for m in self.gh.mutations if m[:2] == ["pr", "ready"]]
+                self.assertEqual(len(readies), 1 if case["ready"] else 0)
+                if case["ready"]:
+                    self.assertLess(self.gh.mutations.index(readies[0]), self.gh.mutations.index(merges[0]))
+                self.assertEqual(self.gh.admission, case["after"])
+                route = self._disk_task()["merge_route"]
+                self.assertEqual((route["head"], route["route"], route["attempts"]),
+                                 (self.HEAD, case["after"], 1))
+
+        # Control: a clean, green no-queue PR is still merged directly, once.
+        self._fresh()
+        self.real_transport = True
+        self.queue_present = False
+        self.gh.after = "merged"
+        self._tick()
+        self._tick()
+        self.assertEqual(self._merges(), [["pr", "merge", str(self.PR), "--merge", "--repo", "alfloop-dev/odayplus"]])
+        self.assertEqual(self._disk_task()["merge_route"]["route"], "merged")
+
+    def _fresh(self) -> None:
+        """A new status file, bus state and GitHub for the next sub-case."""
+        self.tearDown()
+        self.setUp()
+
+    # Each is an answer that is not a whole, consistent statement about this
+    # PR and head. `not_admitted` would license a new mutation, so all of them
+    # must read as unknown on both tick entries.
+    UNKNOWN_QUEUE_ANSWERS = {
+        "flag missing": {"drop": ("isInMergeQueue",)},
+        "entry missing": {"drop": ("mergeQueueEntry",)},
+        "state missing": {"drop": ("state",)},
+        "merged missing": {"drop": ("merged",)},
+        "head missing": {"drop": ("headRefOid",)},
+        "flag null": {"set": {"isInMergeQueue": None}},
+        "entry beside a false flag": {"set": {"mergeQueueEntry": {"position": 1}}},
+        "MERGED state, merged false": {"set": {"state": "MERGED"}},
+        "merged true, OPEN state": {"set": {"merged": True}},
+        "another PR": {"set": {"number": PR + 1}},
+        "another head": {"set": {"headRefOid": "f" * 40}},
+        # The node must also be on the base and source branch the CLI read
+        # showed: a PR retargeted between the two reads is not this one.
+        "another base": {"set": {"baseRefName": "main"}},
+        "another branch": {"set": {"headRefName": "task/SOMEONE-ELSE"}},
+        "base case": {"set": {"baseRefName": "DEV"}},
+        "base missing": {"drop": ("baseRefName",)},
+        "branch missing": {"drop": ("headRefName",)},
+    }
+
+    def test_a_partial_or_mismatched_queue_answer_is_not_absence(self) -> None:
+        for name, answer in self.UNKNOWN_QUEUE_ANSWERS.items():
+            with self.subTest(name):
+                self._fresh()
+                self.gh.graphql = dict(answer.get("set") or {})
+                self.gh.graphql_drop = tuple(answer.get("drop") or ())
+
+                self._tick(bus_polls=3)
+
+                self.assertEqual(self.gh.mutations, [])
+                self.assertNotIn("merge_route", self._disk_task())
+
+        # The same PR with a whole answer is admitted: the guard is the
+        # answer's completeness, not a new gate in front of admission.
+        self._fresh()
+        self._tick()
+        self.assertEqual(len(self._merges()), 1)
+
+    # The PR checked before the mutation, then moved before the readback.
+    IDENTITY_DRIFTS = {
+        "head": {"head": "f" * 40},
+        "base": {"base": "main"},
+        "branch": {"branch": "task/SOMEONE-ELSE"},
+        # Case-only moves: git refs are case-sensitive, so these are another
+        # base and another source branch, never the approved PR's.
+        "base case": {"base": "DEV"},
+        "branch case": {"branch": "Task/ODP-ADMIT-001"},
+        "queue node head": {"graphql_head": "f" * 40},
+        # Only the GraphQL node moved: the PR view still matches, but the
+        # queue answer now describes a PR on another base or branch.
+        "queue node base": {"graphql": {"baseRefName": "main"}},
+        "queue node branch": {"graphql": {"headRefName": "task/SOMEONE-ELSE"}},
+    }
+
+    def test_an_admission_readback_on_a_moved_pr_is_not_the_approved_heads(self) -> None:
+        for name, drift in self.IDENTITY_DRIFTS.items():
+            for after in ("queued", "armed", "merged"):
+                with self.subTest(drift=name, after=after):
+                    self._fresh()
+                    self.gh.after = after
+                    self.gh.drift = drift
+
+                    self._tick(bus_polls=2)
+
+                    self.assertEqual(len(self._merges()), 1)
+                    route = self._disk_task()["merge_route"]
+                    # A readback that no longer describes the approved head
+                    # is never recorded as its success; the attempt stays
+                    # spent so the window and cap still see it.
+                    if name.startswith("queue node") and after != "queued":
+                        # Armed and merged are read from the PR view, which
+                        # did not move; the queue node is not consulted.
+                        self.assertEqual(route["route"], after)
+                    else:
+                        self.assertEqual(route["route"], "unconfirmed")
+                    self.assertEqual((route["head"], route["attempts"]), (self.HEAD, 1))
+
+                    # The next tick sees the moved PR on its initial check and
+                    # issues nothing for it.
+                    self._tick(bus_polls=2)
+                    self.assertEqual(len(self._merges()), 1)
+
+    # A queue flag is only enrollment on a node that is OPEN and unmerged; any
+    # other node carrying it contradicts itself and is not a queued answer.
+    CONTRADICTORY_QUEUED_NODES = {
+        "CLOSED, merged false": {"state": "CLOSED"},
+        "state null, merged false": {"state": None},
+        "OPEN, merged null": {"merged": None},
+        "OPEN, merged missing": {"merged": "<drop>"},
+        "OPEN, entry field missing": {"mergeQueueEntry": "<drop>"},
+    }
+
+    def _node_answer(self, answer: dict) -> tuple[dict, tuple[str, ...]]:
+        return (
+            {k: v for k, v in answer.items() if v != "<drop>"},
+            tuple(k for k, v in answer.items() if v == "<drop>"),
+        )
+
+    def test_a_contradictory_queued_answer_is_neither_queued_nor_absence(self) -> None:
+        for name, answer in self.CONTRADICTORY_QUEUED_NODES.items():
+            graphql, drop = self._node_answer(answer)
+            for entry in (None, {"position": 1, "state": "AWAITING_CHECKS"}):
+                with self.subTest(node=name, entry=entry, read="before the mutation"):
+                    self._fresh()
+                    self.gh.admission = "queued"
+                    self.gh.graphql = {**graphql, "mergeQueueEntry": entry}
+                    self.gh.graphql_drop = drop
+
+                    self._tick(bus_polls=3)
+
+                    # Not certified queued, and not read as absence either.
+                    self.assertEqual(self.gh.mutations, [])
+                    self.assertNotIn("merge_route", self._disk_task())
+
+                with self.subTest(node=name, entry=entry, read="after the mutation"):
+                    self._fresh()
+                    self.gh.after = "queued"
+                    self.gh.drift = {
+                        "graphql": {**graphql, "mergeQueueEntry": entry},
+                        "graphql_drop": drop,
+                    }
+
+                    self._tick(bus_polls=2)
+
+                    self.assertEqual(len(self._merges()), 1)
+                    route = self._disk_task()["merge_route"]
+                    self.assertEqual(
+                        (route["head"], route["route"], route["attempts"]), (self.HEAD, "unconfirmed", 1)
+                    )
+                    self._tick(bus_polls=2)
+                    self.assertEqual(len(self._merges()), 1)
+                    self.assertEqual(self._disk_task()["merge_route"]["attempts"], 1)
+
+        # A whole OPEN, unmerged node with the flag set is queued with or
+        # without entry detail: the guard is consistency, not a filled entry.
+        for entry in (None, {"position": 2, "state": "QUEUED"}):
+            with self.subTest(control=entry):
+                self._fresh()
+                self.gh.after = "queued"
+                self.gh.drift = {"graphql": {"mergeQueueEntry": entry}}
+
+                self._tick(bus_polls=2)
+
+                self.assertEqual(len(self._merges()), 1)
+                route = self._disk_task()["merge_route"]
+                self.assertEqual((route["route"], route["attempts"]), ("queued", 1))
+
+    def test_an_auto_merge_request_on_a_closed_pr_is_not_armed(self) -> None:
+        """The PR view after the mutation shows the same PR, CLOSED, still
+        carrying an `autoMergeRequest`. That is not this head's armed
+        admission, whether the mutation exited zero or failed."""
+        for exit_ in (None, self.UNKNOWN_MUTATION_EXITS["bad gateway"]):
+            with self.subTest(mutation_exit=exit_):
+                self._fresh()
+                if exit_ is not None:
+                    self.real_transport = True
+                    self.gh.mutation_exit = exit_
+                    self.gh.mutation_lands = True
+                self.gh.after = "armed"
+                self.gh.drift = {"state": "CLOSED"}
+
+                self._tick(bus_polls=2)
+
+                self.assertEqual(len(self._merges()), 1)
+                route = self._disk_task()["merge_route"]
+                self.assertEqual(
+                    (route["head"], route["route"], route["attempts"]), (self.HEAD, "unconfirmed", 1)
+                )
+                self._tick(bus_polls=2)
+                self.assertEqual(len(self._merges()), 1)
+                self.assertEqual(self._disk_task()["merge_route"]["attempts"], 1)
+
+        # The same readback on the OPEN PR is armed.
+        self._fresh()
+        self.gh.after = "armed"
+        self._tick(bus_polls=2)
+        route = self._disk_task()["merge_route"]
+        self.assertEqual((route["route"], route["attempts"]), ("armed", 1))
+
+
+    # `gh pr view` answers that do not say whether the PR is armed: the field
+    # the view asked for is missing, or not GitHub's nullable object. The
+    # GraphQL node beside them is a whole not-queued answer, which says
+    # nothing about arming.
+    UNREPORTED_ARMING = {
+        "field missing": {"view_drop": ("autoMergeRequest",)},
+        "true": {"view": {"autoMergeRequest": True}},
+        "list": {"view": {"autoMergeRequest": [{"enabledAt": "2026-11-11T00:00:00Z"}]}},
+        "string": {"view": {"autoMergeRequest": ""}},
+    }
+
+    def test_an_unreported_arming_state_is_neither_armed_nor_absence(self) -> None:
+        """Before the mutation it issues nothing on either tick entry; after it
+        - a zero exit, an unsettled failure or a refusal message - the attempt
+        is `unconfirmed` and stays counted on canonical disk, never refunded."""
+        refusal = (1, "GraphQL: Repository rule violations found for refs/heads/dev (mergePullRequest)")
+        for name, answer in self.UNREPORTED_ARMING.items():
+            with self.subTest(name, read="before the mutation"):
+                self._fresh()
+                for field, value in answer.items():
+                    setattr(self.gh, field, value)
+
+                self._tick(bus_polls=3)
+
+                self.assertEqual(self.gh.mutations, [])
+                self.assertNotIn("merge_route", self._disk_task())
+
+            for exit_name, exit_ in (
+                ("acknowledged", None),
+                ("bad gateway", self.UNKNOWN_MUTATION_EXITS["bad gateway"]),
+                ("refusal message", refusal),
+            ):
+                with self.subTest(name, read="after the mutation", exit=exit_name):
+                    self._fresh()
+                    if exit_ is not None:
+                        self.real_transport = True
+                        self.gh.mutation_exit = exit_
+                    self.gh.after = "none"
+                    self.gh.drift = dict(answer)
+
+                    self._tick(bus_polls=2)
+
+                    self.assertEqual(len(self._merges()), 1)
+                    route = self._disk_task()["merge_route"]
+                    self.assertEqual(
+                        (route["head"], route["route"], route["attempts"]), (self.HEAD, "unconfirmed", 1)
+                    )
+                    # The view still does not report arming: inside the window
+                    # neither entry re-issues and the counter stays spent.
+                    self._tick(bus_polls=2)
+                    self.assertEqual(len(self._merges()), 1)
+                    self.assertEqual(self._disk_task()["merge_route"]["attempts"], 1)
+
+        # Controls. An explicit null beside a whole not-queued node is absence:
+        # a refusal is released, uncounted. GitHub's object is armed.
+        self._fresh()
+        self.real_transport = True
+        self.gh.mutation_exit = refusal
+        self.gh.after = "none"
+        self._tick(bus_polls=1)
+        self.assertEqual(len(self._merges()), 1)
+        self.assertNotIn("merge_route", self._disk_task())
+
+        self._fresh()
+        self.gh.after = "armed"
+        self._tick(bus_polls=2)
+        route = self._disk_task()["merge_route"]
+        self.assertEqual((route["route"], route["attempts"]), ("armed", 1))
+
+
+    # Exits the real `run_gh` reports as a plain `GitHubBusError`, none of
+    # which says whether GitHub applied the mutation before failing.
+    UNKNOWN_MUTATION_EXITS = {
+        "bad gateway": (1, "HTTP 502: Bad Gateway (https://api.github.com/graphql)"),
+        "stream reset": (1, "stream error: stream ID 5; INTERNAL_ERROR; received from peer"),
+        "silent exit": (1, ""),
+    }
+
+    def test_an_unknown_mutation_outcome_keeps_its_counted_reservation(self) -> None:
+        """A failed `gh pr merge` whose readback cannot settle the outcome is
+        `unconfirmed`, and the attempt stays spent on canonical disk through
+        reload, the window and the next window's retry."""
+        for name, exit_ in self.UNKNOWN_MUTATION_EXITS.items():
+            with self.subTest(name):
+                self._fresh()
+                self.real_transport = True
+                self.gh.mutation_exit = exit_
+                self.gh.drift = {"queue_readable": False}
+
+                self._tick()
+
+                self.assertEqual(len(self._merges()), 1)
+                route = self._disk_task()["merge_route"]
+                self.assertEqual((route["head"], route["route"], route["attempts"]), (self.HEAD, "unconfirmed", 1))
+
+                # GitHub is readable again and holds nothing: inside the window
+                # neither entry re-issues, and the counter is not refunded.
+                self.gh.queue_readable = True
+                self.gh.drift = {}
+                self._tick(bus_polls=3)
+                self.assertEqual(len(self._merges()), 1)
+                self.assertEqual(self._disk_task()["merge_route"]["attempts"], 1)
+
+                # Past the window it is retried once, and a second unsettled
+                # failure adds to the same counter rather than replacing it.
+                stale = (datetime.now(UTC) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                self._edit_disk(lambda t, at=stale: t["merge_route"].update({"at": at}))
+                self.gh.drift = {"queue_readable": False}
+                self._tick()
+                self.assertEqual(len(self._merges()), 2)
+                route = self._disk_task()["merge_route"]
+                self.assertEqual((route["route"], route["attempts"]), ("unconfirmed", 2))
+
+                # At the cap nothing more is issued, however the failures read.
+                self.gh.queue_readable = True
+                self.gh.drift = {}
+                self._edit_disk(lambda t, at=stale: t["merge_route"].update({"at": at, "attempts": 4}))
+                self._tick()
+                self.assertEqual(len(self._merges()), 2)
+
+    def test_a_failed_mutation_github_applied_is_its_admission(self) -> None:
+        """A lost acknowledgement: the process failed, GitHub enqueued it. The
+        readback says so, and nothing is issued again."""
+        for after in ("queued", "armed"):
+            with self.subTest(after=after):
+                self._fresh()
+                self.real_transport = True
+                self.gh.mutation_exit = self.UNKNOWN_MUTATION_EXITS["bad gateway"]
+                self.gh.mutation_lands = True
+                self.gh.after = after
+
+                self._tick()
+                self._tick(bus_polls=3)
+
+                self.assertEqual(len(self._merges()), 1)
+                route = self._disk_task()["merge_route"]
+                self.assertEqual((route["route"], route["attempts"]), (after, 1))
+
+    def test_a_definite_refusal_spends_no_attempt(self) -> None:
+        """GitHub refused and a whole readback shows it holds nothing: the
+        reservation is released and the reason is reported. The same refusal
+        with an unreadable readback cannot be told from a lost ACK, so it
+        stays counted - and is never recorded as an admission."""
+        refusal = (1, "GraphQL: Repository rule violations found for refs/heads/dev (mergePullRequest)")
+        self.real_transport = True
+        self.gh.mutation_exit = refusal
+
+        self._tick(bus_polls=1)
+
+        self.assertEqual(len(self._merges()), 1)
+        disk = self._disk_task()
+        self.assertNotIn("merge_route", disk)
+        self.assertIn("rule violations", disk["next"])
+
+        self._fresh()
+        self.real_transport = True
+        self.gh.mutation_exit = refusal
+        self.gh.drift = {"queue_readable": False}
+
+        self._tick(bus_polls=1)
+
+        route = self._disk_task()["merge_route"]
+        self.assertEqual((route["route"], route["attempts"]), ("unconfirmed", 1))
+
+    def test_a_transport_failure_run_gh_names_offline_keeps_the_attempt(self) -> None:
+        self.real_transport = True
+        self.gh.mutation_exit = (1, "error connecting to api.github.com\ncheck your internet connection")
+
+        self._tick(bus_polls=1)
+
+        self.assertEqual(len(self._merges()), 1)
+        route = self._disk_task()["merge_route"]
+        self.assertEqual((route["route"], route["attempts"]), ("unconfirmed", 1))
 
 
 class QuarantineCrossRepositoryTests(unittest.TestCase):
@@ -21522,9 +24692,18 @@ class CapacityControllerReconciliationTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.archive_root = archive_root
+        (archive_root / "fleet").mkdir()
+        environment = mock.patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in [name for name in os.environ if name.endswith("_LOCAL_PATHS")]:
+            del os.environ[name]
 
     def _config(self, slot_count: int = 2) -> dict[str, Any]:
         return {
+            # The creator resolves each parent's source. One level down, so the registry's
+            # relative siblings stay inside this root too.
+            "paths": {"status_file": str(self.archive_root / "fleet" / "ai-status.json")},
             "schema": {"tasks_path": "tasks"},
             "agents": {
                 "claude": {"provider": "claude", "slot_id": "slot-0"},

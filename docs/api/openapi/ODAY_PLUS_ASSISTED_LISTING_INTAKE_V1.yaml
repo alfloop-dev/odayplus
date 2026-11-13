@@ -92,6 +92,7 @@ paths:
         '409': {$ref: '#/components/responses/IdempotencyConflict'}
         '422': {$ref: '#/components/responses/ValidationError'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
   /v1/intake-batches:
     post:
       tags: [Intake]

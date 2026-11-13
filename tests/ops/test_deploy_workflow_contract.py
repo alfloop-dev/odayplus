@@ -610,7 +610,9 @@ def test_admission_checks_out_the_dispatch_event_sha_and_proves_it() -> None:
     jobs = _release_jobs()
     steps = _job_steps(jobs["admission"])
 
-    checkout = steps[0]
+    # Only the checkout boundary's Git preflight may precede the checkout.
+    checkout = steps[1]
+    assert steps[0].get("name") == "Require sparse-capable Git before checkout"
     assert str(checkout.get("uses", "")).startswith("actions/checkout@")
     assert checkout["with"]["ref"] == ADMISSION_EVENT_SHA_EXPRESSION
     assert checkout["with"]["fetch-depth"] == 0, (
@@ -1021,6 +1023,54 @@ def test_staging_uses_release_scoped_remote_backend_and_persists_recovery_sideca
     assert "MANIFEST_DIGEST" in closeout_run
 
 
+def test_every_staging_lifecycle_job_installs_the_ci_pinned_terraform_first() -> None:
+    """staging_lifecycle.py shells out to `terraform`; hosted runners do not ship it.
+
+    Runtime Release run 41387164145 died on `FileNotFoundError: 'terraform'`
+    in the staging create step because no job installed it. Every job that
+    invokes the lifecycle must install the same Terraform that ci.yml tests
+    the module with, before the first invocation, under the same gate, with
+    the wrapper off because the lifecycle parses `terraform output -json`.
+    """
+    jobs = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    ci_jobs = yaml.safe_load((WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8"))["jobs"]
+    ci_pins = [
+        str(step.get("with", {}).get("terraform_version", ""))
+        for job in ci_jobs.values()
+        for step in _job_steps(job)
+        if str(step.get("uses", "")).startswith("hashicorp/setup-terraform")
+    ]
+    assert len(ci_pins) == 1 and ci_pins[0]
+
+    lifecycle_jobs = {
+        job_id: job
+        for job_id, job in jobs.items()
+        if any("staging_lifecycle.py" in str(step.get("run", "")) for step in _job_steps(job))
+    }
+    assert set(lifecycle_jobs) == {"deploy", "staging_closeout"}
+
+    for job_id, job in lifecycle_jobs.items():
+        steps = _job_steps(job)
+        setups = [
+            index
+            for index, step in enumerate(steps)
+            if str(step.get("uses", "")).startswith("hashicorp/setup-terraform")
+        ]
+        assert len(setups) == 1, f"{job_id} must install terraform exactly once"
+        setup = steps[setups[0]]
+        assert str(setup["with"]["terraform_version"]) == ci_pins[0]
+        assert setup["with"]["terraform_wrapper"] is False
+        first_lifecycle = next(
+            index for index, step in enumerate(steps) if "staging_lifecycle.py" in str(step.get("run", ""))
+        )
+        assert setups[0] < first_lifecycle, f"{job_id} invokes the lifecycle before terraform exists"
+        lifecycle_gate = steps[first_lifecycle].get("if")
+        if lifecycle_gate == "${{ inputs.environment == 'staging' }}":
+            assert setup.get("if") == lifecycle_gate
+        else:
+            assert setup.get("if") is None
+
+
 def test_staging_recovery_bundle_storage_boundary_contract() -> None:
     """Staging recovery bundle storage must be strictly separated from Terraform state bucket across deploy and closeout."""
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
@@ -1051,7 +1101,13 @@ def test_staging_recovery_bundle_storage_boundary_contract() -> None:
         step for step in deploy_steps if step.get("name") == "Persist staging hold state to protected recovery storage"
     )
     assert persist_hold.get("if") == "${{ always() && inputs.environment == 'staging' }}"
-    assert 'gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"' in str(persist_hold["run"])
+    # The recovery bucket's retention policy forbids overwriting the
+    # create-time sidecar, so each run's hold state gets its own object name.
+    assert (
+        'gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/hold-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(basename "${sidecar}")"'
+        in str(persist_hold["run"])
+    )
+    assert '"${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"' not in str(persist_hold["run"])
 
     # 3. closeout job environment exports and path preparation checks
     closeout_job = parsed["jobs"]["staging_closeout"]
@@ -1177,7 +1233,13 @@ def test_build_once_job_exists_and_precedes_deploy() -> None:
         f"inputs.{name} == ''" in build_if
         for name in ("api_image", "web_image", "worker_image", "scheduler_image")
     )
-    assert "gcloud artifacts docker images describe" in "\n".join(build_runs)
+    build_text = "\n".join(build_runs)
+    assert "source product_ops/deployment/cloud_run_release_traffic.sh" in build_text
+    assert "resolve_image_digest()" not in build_text
+    assert "resolve_image_digest" in build_text
+    assert "gcloud artifacts docker images describe" in (
+        ROOT / "product_ops/deployment/cloud_run_release_traffic.sh"
+    ).read_text(encoding="utf-8")
     assert "GITHUB_OUTPUT" in "\n".join(build_runs)
     assert set(jobs["build"]["outputs"]) == {
         "api_image",
@@ -1541,6 +1603,8 @@ case "$1 $2 $3" in
     exit 0 ;;
   "run services describe")
     cat "${FAKE_DESCRIBE_DIR}/$4.json"; exit 0 ;;
+  "scheduler jobs list")
+    exit 0 ;;
   "sql backups create")
     [ -n "${FAKE_BACKUP_CREATE_FAIL:-}" ] && { echo "operation failed" >&2; exit 1; }
     for arg in "$@"; do
@@ -1629,6 +1693,8 @@ def fake_cloud(tmp_path: Path) -> dict[str, object]:
         "GCP_CLOUD_SQL_INSTANCE": "oday-prod:asia-east1:oday-prod-sql",
         "API_SERVICE": "odp-api",
         "WEB_SERVICE": "odp-web",
+        "WORKER_SCHEDULE_NAME": "worker-trigger",
+        "SCHEDULER_SCHEDULE_NAME": "scheduler-trigger",
     }
     return {"env": env, "tmp": tmp_path, "receipts": receipts, "describe_dir": describe_dir}
 
@@ -2137,7 +2203,7 @@ def test_the_build_phase_signs_and_attests_every_published_image() -> None:
         jobs["build"], "Build, publish, sign, and attest immutable container images"
     )["run"]
 
-    assert 'sign_images.sh sign "${tagged}"' in run
+    assert 'sign_images.sh sign "${digest_ref}"' in run
     assert 'sign_images.sh attest "${digest_ref}" "${SBOM_PATH}"' in run
     helper = (ROOT / "delivery_toolchain/security/sign_images.sh").read_text(encoding="utf-8")
     assert 'cosign_with_oidc_retry sign --yes "${IMAGE}"' in helper

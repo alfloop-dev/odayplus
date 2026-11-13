@@ -1,7 +1,7 @@
 ---
 doc_id: ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001
 title: 帳密預設、OIDC 可選的單一身份契約
-version: 1.0.0
+version: 2.0.0
 status: proposed
 document_class: interface-contract
 project: ODay Plus
@@ -23,7 +23,7 @@ source_documents:
   - docs/design/ODAY_PLUS_R0_SCREEN_INVENTORY.md
 amends:
   - docs/adr/ADR-0003-user-role-principal-map-linkage.md
-updated_at: 2026-08-30
+updated_at: 2026-11-10
 ---
 
 # 帳密預設、OIDC 可選的單一身份契約
@@ -280,7 +280,7 @@ OIDC issuer → JWKS；service issuer → Google JWKS）。這是**同一個驗�
 
 ### 6.2 密碼政策
 
-- 長度 ≥ 12 且 ≤ 1024 字元；輸入先做 Unicode NFKC 正規化。
+- 長度 ≥ 8 且 ≤ 1024 字元；輸入先做 Unicode NFKC 正規化。（2.0.0：負責人 2026-11-10 指示由 12 降為 8，對齊 NIST 800-63B 使用者自選密碼最低長度。）
 - **不得**強制組成規則（大小寫/符號/數字）或週期性強制更換（依 NIST 800-63B）。
 - 必須比對弱密碼拒絕清單（離線清單即可），並拒絕與 username / email 高度相同者。
 - **不得**設定密碼提示問答、密碼歷史明文保存或密碼寄送。

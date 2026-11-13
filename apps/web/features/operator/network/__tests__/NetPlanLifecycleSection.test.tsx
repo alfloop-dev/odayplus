@@ -50,6 +50,7 @@ it("discards a stale response when the same scenario receives a new API context"
   let finish!: (value: BuilderResult) => void; const call = vi.fn(() => new Promise<BuilderResult>(resolve => { finish = resolve; }));
   const onRecorded = vi.fn(); const value = builder("approved"); const view = render(<NetPlanLifecycleSection storeId="store-owned" builder={value} api={api(call)} onRecorded={onRecorded} />);
   fireEvent.click(screen.getByRole("button", { name: "登錄方案執行" })); fireEvent.change(screen.getByLabelText("登錄理由"), { target: { value: "Confirm execution record" } });
+  fireEvent.change(screen.getByLabelText("實際執行時間"), { target: { value: "2026-10-01T09:30" } });
   fireEvent.click(screen.getByRole("button", { name: "確認送出" })); await waitFor(() => expect(call).toHaveBeenCalledOnce());
   view.rerender(<NetPlanLifecycleSection storeId="store-owned" builder={value} api={api(vi.fn())} onRecorded={onRecorded} />);
   await act(async () => finish({ ok: true, builder: builder(), auditEventId: "old-audit" })); expect(onRecorded).not.toHaveBeenCalled();
@@ -65,4 +66,53 @@ it("sends the canonical scenario/hash and manual facts through the captured guar
   const init = fetcher.mock.calls[0][1]; expect(init.method).toBe("POST"); expect(init.headers["Idempotency-Key"]).toBe("same-key");
   expect(JSON.parse(init.body)).toEqual({ scenarioId: "owned", expectedProblemHash: "a".repeat(64), reason: "Actual ledger source", outcome: payload });
   expect(changed).toHaveBeenCalledOnce();
+});
+
+function localOffset(year: number, month: number, day: number, hour: number, minute: number) {
+  const minutes = -new Date(year, month - 1, day, hour, minute).getTimezoneOffset();
+  const abs = Math.abs(minutes);
+  return `${minutes < 0 ? "-" : "+"}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`;
+}
+
+it("requires an explicit actual execution time, sends it with the device offset and keys retries by that date", async () => {
+  const call = vi.fn<NonNullable<NetPlanBuilderApi["lifecycle"]>>()
+    .mockResolvedValueOnce({ ok: false, message: "409 current source changed" })
+    .mockResolvedValueOnce({ ok: false, message: "503 still unavailable" })
+    .mockResolvedValue({ ok: true, builder: builder(), auditEventId: "audit-executed" });
+  const recorded = vi.fn();
+  render(<NetPlanLifecycleSection storeId="store-owned" builder={builder("approved")} api={api(call)} onRecorded={recorded} />);
+  fireEvent.click(screen.getByRole("button", { name: "登錄方案執行" })); const dialog = screen.getByRole("dialog");
+  fireEvent.change(screen.getByLabelText("登錄理由"), { target: { value: "Delayed record of actual execution" } });
+  expect(within(dialog).getByRole("button", { name: "確認送出" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("實際執行時間"), { target: { value: "2026-02-30T09:30" } });
+  expect(within(dialog).getByRole("button", { name: "確認送出" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("實際執行時間"), { target: { value: "2026-09-01T09:30" } });
+  const first = `2026-09-01T09:30:00${localOffset(2026, 9, 1, 9, 30)}`;
+  expect(within(dialog).getByText(new RegExp(`UTC\\${localOffset(2026, 9, 1, 9, 30)} 登錄為 ${first.replace("+", "\\+")}`))).toBeVisible();
+  fireEvent.click(within(dialog).getByRole("button", { name: "確認送出" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("409");
+  expect(call.mock.calls[0][1]).toBe("execute"); expect(call.mock.calls[0][6]).toBe(first);
+  expect(screen.getByLabelText("實際執行時間")).toHaveValue("2026-09-01T09:30"); expect(recorded).not.toHaveBeenCalled();
+  const firstKey = call.mock.calls[0][4];
+  fireEvent.change(screen.getByLabelText("實際執行時間"), { target: { value: "2026-09-02T09:30" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "確認送出" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("503");
+  const second = `2026-09-02T09:30:00${localOffset(2026, 9, 2, 9, 30)}`;
+  expect(call.mock.calls[1][6]).toBe(second); expect(call.mock.calls[1][4]).not.toBe(firstKey);
+  fireEvent.click(within(dialog).getByRole("button", { name: "確認送出" }));
+  await waitFor(() => expect(recorded).toHaveBeenCalledWith(expect.objectContaining({ status: "executed" }), "audit-executed"));
+  expect(call.mock.calls[2][4]).toBe(call.mock.calls[1][4]); expect(call.mock.calls[2][6]).toBe(second);
+});
+
+it("sends executedAt only on the execute command body, never an actor or tenant", async () => {
+  const value = builder("approved"); const executed = builder();
+  const fetcher = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ builder: executed, audit: { event_id: "actual-audit" } }), { status: 200 }));
+  vi.stubGlobal("fetch", fetcher);
+  const client = createNetPlanBuilderApi({}, () => async () => true, vi.fn(async () => undefined));
+  expect((await client.lifecycle!("store-owned", "execute", value, "Delayed actual record", "execute-key", undefined, "2026-09-01T09:30:00+08:00")).ok).toBe(true);
+  expect(fetcher.mock.calls[0][0]).toBe("/api/v1/operator/network-rebalance/stores/store-owned/netplan/builder/execute");
+  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ scenarioId: "owned", expectedProblemHash: "a".repeat(64),
+    reason: "Delayed actual record", executedAt: "2026-09-01T09:30:00+08:00" });
+  await client.lifecycle!("store-owned", "close", { ...value, status: "outcome_observed" }, "Close", "close-key", undefined, "2026-09-01T09:30:00+08:00");
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).not.toHaveProperty("executedAt");
 });

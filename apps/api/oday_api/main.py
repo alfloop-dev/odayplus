@@ -99,7 +99,16 @@ def production_feature_schema_versions() -> dict[str, str]:
 
 
 try:
-    from fastapi import APIRouter, FastAPI, Header, HTTPException, Request, Response, status
+    from fastapi import (
+        APIRouter,
+        Depends,
+        FastAPI,
+        Header,
+        HTTPException,
+        Request,
+        Response,
+        status,
+    )
     from fastapi.responses import JSONResponse
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover - dependency added by backend task
@@ -1344,7 +1353,11 @@ else:
                     outcome="accepted" if created else "idempotent_replay",
                     correlation_id=request.state.correlation_id,
                     job_id=job.job_id,
-                    metadata={"idempotency_key": effective_idempotency_key, "created": created},
+                    metadata={
+                        "idempotency_key": effective_idempotency_key,
+                        "created": created,
+                        "tenant_id": principal_from_headers(request.headers).tenant_id,
+                    },
                 )
             )
             return {
@@ -1399,21 +1412,20 @@ else:
                 from apps.api.app.routes.operator_modules.network_scoring import (
                     execution_http_error,
                 )
-                from modules.sitescore.application.score_delivery import ScoreExecutionJobRepository
-                from modules.sitescore.application.score_execution import SiteScoreExecutionService
                 principal = principal_from_headers(request.headers)
                 if not principal.authenticated:
                     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "AUTHENTICATION_REQUIRED")
                 if not principal.tenant_id or job_tenant != principal.tenant_id:
                     raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
                 try:
-                    owner = ScoreExecutionJobRepository(bundle)
+                    service = bundle.score_execution_service(model_runtime=model_runtime)
+                    owner = service.repository
                     with bundle.engine.lock:
                         owner._tenant(principal.tenant_id)
                         row = owner._row(job.job_id, principal.tenant_id)
                         if row is None or not row["payload"].get("execution_request_id"):
                             raise HTTPException(404, "job not found")
-                        receipt = SiteScoreExecutionService(owner).get(row["payload"]["execution_request_id"], principal=principal)
+                        receipt = service.get(row["payload"]["execution_request_id"], principal=principal)
                         if receipt is None or receipt["jobId"] != job.job_id or receipt["candidateSiteId"] != row["payload"]["candidate_site_id"]:
                             raise HTTPException(404, "job not found")
                         return receipt
@@ -1886,7 +1898,11 @@ else:
                     outcome="accepted",
                     correlation_id=correlation_id,
                     job_id=job.job_id,
-                    metadata={"retry_scope": retry_scope, "retried_items_count": retried_count},
+                    metadata={
+                        "retry_scope": retry_scope,
+                        "retried_items_count": retried_count,
+                        "tenant_id": principal.tenant_id,
+                    },
                 )
             )
 
@@ -1933,14 +1949,52 @@ else:
                 "roles": sorted(role.value for role in principal.roles),
             }
 
+        from apps.api.oday_api.security.dependencies import (
+            _operator_access_request,
+            _record_denial,
+            build_engine,
+            require_permission,
+        )
+        from shared.auth import Action, Decision, Principal, ResourceDescriptor
+
+        audit_view_engine = build_engine(audit_log=audit_log)
+        audit_view_principal = Depends(
+            require_permission("audit", Action.VIEW, engine=audit_view_engine)
+        )
+
         @platform_router.get("/audit/events", tags=["audit"])
         def list_audit_events(
+            request: Request,
             correlation_id: str | None = None,
+            principal: Principal = audit_view_principal,
         ) -> dict[str, Any]:
+            # require_permission is a type-level check; the rows are scoped to
+            # the verified principal's tenant. A principal with no server-granted
+            # tenant (human or service) has no row scope and is refused rather
+            # than reading every tenant's events (contract §8.1). The refusal
+            # follows the type-level allow, so it is audited as its own deny.
+            tenant_id = principal.tenant_id
+            if not isinstance(tenant_id, str) or not tenant_id.strip():
+                _record_denial(
+                    audit_view_engine,
+                    _operator_access_request(
+                        request, principal, Action.VIEW, ResourceDescriptor(type="audit")
+                    ),
+                    Decision.deny("TENANT_SCOPE_REQUIRED", policy_id="tenant.isolation"),
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "TENANT_SCOPE_REQUIRED",
+                        "message": "Audit events require an authenticated tenant scope",
+                    },
+                )
             return {
                 "events": [
                     event.to_dict()
-                    for event in audit_log.list_events(correlation_id=correlation_id)
+                    for event in audit_log.list_events(
+                        tenant_id=tenant_id.strip(), correlation_id=correlation_id
+                    )
                 ]
             }
 

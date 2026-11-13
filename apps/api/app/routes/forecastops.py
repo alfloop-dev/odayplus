@@ -609,9 +609,10 @@ else:
             caller_actor = body.actor or getattr(
                 getattr(request.state, "operator_principal", None), "subject_id", "operator"
             )
+            active_tenant_id = tenant_id(request)
             try:
                 result = service.backfill_alert_precision(
-                    tenant_id(request),
+                    active_tenant_id,
                     store_id=body.store_id,
                     as_of=body.as_of,
                     evaluation_horizon_days=body.evaluation_horizon_days,
@@ -643,6 +644,7 @@ else:
                         "precision": result["metrics"].get("precision"),
                         "true_positives": result["metrics"].get("true_positive_count"),
                         "false_positives": result["metrics"].get("false_positive_count"),
+                        "tenant_id": active_tenant_id,
                     },
                 )
             )
@@ -659,9 +661,10 @@ else:
         def acknowledge_alert(
             alert_id: str, body: ForecastOpsAlertAcknowledgePayload, request: Request
         ) -> dict[str, Any]:
+            active_tenant_id = tenant_id(request)
             try:
                 alert = service.acknowledge_alert(
-                    tenant_id(request),
+                    active_tenant_id,
                     alert_id,
                     actor=body.actor,
                     note=body.note,
@@ -684,6 +687,7 @@ else:
                         "alert_level": alert.alert_level.value,
                         "store_id": alert.store_id,
                         "note": body.note,
+                        "tenant_id": active_tenant_id,
                     },
                 )
             )
@@ -711,9 +715,10 @@ else:
         def execute_handoff(
             handoff_id: str, body: ForecastOpsHandoffExecutePayload, request: Request
         ) -> dict[str, Any]:
+            active_tenant_id = tenant_id(request)
             try:
                 handoff = service.execute_handoff(
-                    tenant_id(request),
+                    active_tenant_id,
                     handoff_id,
                     actor=body.actor,
                     intervention_id=body.intervention_id,
@@ -736,6 +741,7 @@ else:
                         "store_id": handoff.store_id,
                         "intervention_type": handoff.intervention_type,
                         "intervention_id": body.intervention_id,
+                        "tenant_id": active_tenant_id,
                     },
                 )
             )

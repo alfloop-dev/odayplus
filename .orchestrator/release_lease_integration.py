@@ -566,20 +566,26 @@ def _commit_result(
         # Publish only our field on the refreshed task. Concurrent history and
         # unrelated task updates belong to their writer and must be retained.
         live_task[ISSUANCE_FIELD] = record
-        return bool(commit_status(config, status))
-
-    task[ISSUANCE_FIELD] = record
-    if target_id and isinstance(status.get(tasks_path), list):
-        for live_task in status[tasks_path]:
-            if isinstance(live_task, dict) and str(live_task.get(task_id_field, live_task.get("id")) or "").strip() == target_id:
-                if live_task is not task:
-                    live_task[ISSUANCE_FIELD] = record
-                    if ISSUANCE_HISTORY_FIELD in task:
-                        live_task[ISSUANCE_HISTORY_FIELD] = list(task[ISSUANCE_HISTORY_FIELD])
-                else:
-                    live_task[ISSUANCE_FIELD] = record
-                break
-    return bool(commit_status(config, status))
+    else:
+        task[ISSUANCE_FIELD] = record
+        if target_id and isinstance(status.get(tasks_path), list):
+            for live_task in status[tasks_path]:
+                if isinstance(live_task, dict) and str(live_task.get(task_id_field, live_task.get("id")) or "").strip() == target_id:
+                    if live_task is not task:
+                        live_task[ISSUANCE_FIELD] = record
+                        if ISSUANCE_HISTORY_FIELD in task:
+                            live_task[ISSUANCE_HISTORY_FIELD] = list(task[ISSUANCE_HISTORY_FIELD])
+                    else:
+                        live_task[ISSUANCE_FIELD] = record
+                    break
+    if commit_status(config, status):
+        return True
+    # The Supervisor commit writes the revision-checked snapshot before it runs
+    # the status sync, and reports False when only that sync fails. The record
+    # is then already canonical, so a False here proves nothing by itself; only
+    # the exact record being absent from disk means this write did not land.
+    landed = _task_index(load_status(config), target_id, config=config)
+    return isinstance(landed, dict) and landed.get(ISSUANCE_FIELD) == record
 
 
 def _read_release_inputs(root: Path, candidate_sha: str) -> tuple[Any, dict[str, Any] | None, list[str]]:

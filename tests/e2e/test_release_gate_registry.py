@@ -835,6 +835,153 @@ def test_is_evidence_path_accepts_generated_boundary_inventory() -> None:
     assert not module.is_evidence_path("delivery_toolchain/release/release_manifest.py")
 
 
+def test_is_evidence_path_exempts_only_the_supervisor_control_plane() -> None:
+    """Control-plane merges must not void a candidate; release tooling must."""
+    module = load_checker_module()
+    for path in (
+        ".orchestrator/supervisor.py",
+        ".orchestrator/dispatch_engine.py",
+        ".orchestrator/task-briefs/ODP-X.md",
+        "scripts/ai_status.py",
+        "scripts/test_ai_status.py",
+        "scripts/ai-status.sh",
+        "scripts/orchestrator/rollout_supervisor_runtime.py",
+    ):
+        assert module.is_evidence_path(path), path
+    # What the Runtime Release jobs read from the dispatch ref, or ship.
+    for path in (
+        ".github/workflows/deploy-dev.yml",
+        ".github/actions/setup/action.yml",
+        "delivery_toolchain/e2e/check_release_gate_registry.py",
+        "delivery_toolchain/release/check_runtime_admission.py",
+        "product_ops/deployment/staging_lifecycle.py",
+        "infra/terraform/modules/ephemeral_staging/main.tf",
+        "pyproject.toml",
+        "uv.lock",
+        "scripts/ops/grant_dev_operations_manager.cjs",
+        "scripts/ai_status_helper.py",
+        "apps/api/oday_api/main.py",
+    ):
+        assert not module.is_evidence_path(path), path
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [".orchestrator/gate.py", "scripts/orchestrator/gate.py", "docs/evidence/gate.py"],
+)
+def test_candidate_ancestry_refuses_refused_path_renamed_under_exemption(
+    tmp_path: Path, destination: str
+) -> None:
+    """Moving a refused file under an exempt prefix still touches its source."""
+    module = load_checker_module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run_git(*args: str) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+        return res.stdout.strip()
+
+    run_git("init")
+    run_git("config", "user.email", "test@example.com")
+    run_git("config", "user.name", "Test")
+
+    source = "delivery_toolchain/release/gate.py"
+    (repo / source).parent.mkdir(parents=True)
+    (repo / source).write_text("def gate():\n    return 'refuse'\n" * 8, encoding="utf-8")
+    run_git("add", ".")
+    run_git("commit", "-m", "candidate")
+    candidate_sha = run_git("rev-parse", "HEAD")
+
+    (repo / destination).parent.mkdir(parents=True, exist_ok=True)
+    run_git("mv", source, destination)
+    run_git("commit", "-m", "move the gate")
+    head_sha = run_git("rev-parse", "HEAD")
+
+    errors = module.check_candidate_ancestry(candidate_sha, head_sha, repo)
+
+    assert any(source in err for err in errors), errors
+
+
+@pytest.mark.parametrize(
+    "detour",
+    [".orchestrator/gate.py", "scripts/orchestrator/gate.py", "docs/evidence/gate.py"],
+)
+def test_candidate_ancestry_refuses_rename_out_and_back(
+    tmp_path: Path, detour: str
+) -> None:
+    """A refused file moved out under an exempt prefix and back leaves an empty
+    net diff, but the intervening first-parent commits still touched it."""
+    module = load_checker_module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run_git(*args: str) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+        return res.stdout.strip()
+
+    run_git("init")
+    run_git("config", "user.email", "test@example.com")
+    run_git("config", "user.name", "Test")
+
+    source = "delivery_toolchain/release/gate.py"
+    (repo / source).parent.mkdir(parents=True)
+    (repo / source).write_text("def gate():\n    return 'refuse'\n" * 8, encoding="utf-8")
+    run_git("add", ".")
+    run_git("commit", "-m", "candidate")
+    candidate_sha = run_git("rev-parse", "HEAD")
+
+    (repo / detour).parent.mkdir(parents=True, exist_ok=True)
+    run_git("mv", source, detour)
+    run_git("commit", "-m", "move the gate out")
+    run_git("mv", detour, source)
+    run_git("commit", "-m", "move the gate back")
+    head_sha = run_git("rev-parse", "HEAD")
+
+    assert run_git("diff", "--name-only", candidate_sha, head_sha) == ""
+
+    errors = module.check_candidate_ancestry(candidate_sha, head_sha, repo)
+
+    assert any("intervening commits touch non-evidence paths" in err for err in errors), errors
+    assert any(source in err for err in errors), errors
+
+
+def test_candidate_ancestry_passes_rename_within_evidence(tmp_path: Path) -> None:
+    """Disabling rename detection must not refuse a move between evidence paths."""
+    module = load_checker_module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run_git(*args: str) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+        return res.stdout.strip()
+
+    run_git("init")
+    run_git("config", "user.email", "test@example.com")
+    run_git("config", "user.name", "Test")
+
+    (repo / "app.py").write_text("print('v1')\n", encoding="utf-8")
+    (repo / "docs" / "evidence").mkdir(parents=True)
+    (repo / "docs" / "evidence" / "receipt.md").write_text("receipt\n" * 8, encoding="utf-8")
+    run_git("add", ".")
+    run_git("commit", "-m", "candidate")
+    candidate_sha = run_git("rev-parse", "HEAD")
+
+    (repo / "docs" / "release").mkdir(parents=True)
+    run_git("mv", "docs/evidence/receipt.md", "docs/release/receipt.md")
+    run_git("commit", "-m", "move the receipt")
+    head_sha = run_git("rev-parse", "HEAD")
+
+    errors = module.check_candidate_ancestry(candidate_sha, head_sha, repo)
+
+    assert errors == []
+
+
 def test_cli_expected_sha_ancestry_inventory_only_merge_descendant_passes(
     tmp_path: Path,
 ) -> None:

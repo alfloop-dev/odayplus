@@ -19,9 +19,10 @@ from dispatch_policy import (
     ROLE_OWNER,
     dispatch_priority_reason,
     dispatch_reason_role,
+    review_source_block_reason,
     role_provider_block_reason,
     task_priority_rank,
-    task_submitted_author,
+    task_review_source_identity,
     worker_logical_dispatch_agent_id,
 )
 from status_transition import commit_canonical_task_transition, sync_status_snapshot_dict
@@ -142,23 +143,6 @@ def _pr_changed_paths(pr_number: int) -> list[str] | None:
     # from an unreadable diff, so it was classified "unknown" and parked
     # forever instead of being routed.
     return [path for path in paths if path]
-
-
-def _pr_merge_state(pr_number: int) -> str | None:
-    """Return GitHub's own mergeStateStatus, or None when it cannot be read."""
-    import json as _json
-
-    from github_bus import GitHubBusError, GitHubBusOffline, run_gh
-
-    try:
-        proc = run_gh(["pr", "view", str(pr_number), "--json", "mergeStateStatus"])
-    except (GitHubBusError, GitHubBusOffline):
-        return None
-    try:
-        payload = _json.loads(proc.stdout or "{}")
-    except ValueError:
-        return None
-    return str(payload.get("mergeStateStatus") or "").strip().upper() or None
 
 
 def _review_pr_facts(slug: str, pr_number: int) -> tuple[str, str, str] | None:
@@ -425,15 +409,36 @@ def _remote_branch_names() -> set[str] | None:
     return names
 
 
-def _pull_request_record(pr_number: int) -> dict[str, Any] | None:
-    """The PR's state, or None when there is no readable PR."""
+def _pull_request_record(pr_number: int, repository: str) -> dict[str, Any] | None:
+    """The PR's state, or None when there is no readable PR.
+
+    `gh pr view` has no `merged` field (asking for it fails the whole call),
+    so the record is read with `mergedAt` and `merged` is derived: true only
+    when GitHub says MERGED and names when. A MERGED state without a merge
+    time is not proof of a merge.
+
+    The read is bound to the verified `repository` slug: without `--repo`,
+    `gh` answers for whatever repository the supervisor's cwd points at, and
+    a same-numbered PR there is not this task's PR. An answer for any other
+    number is not an answer either.
+    """
     import json as _json
 
     from github_bus import GitHubBusError, GitHubBusOffline, run_gh
 
+    if not _is_repository_slug(repository):
+        return None
     try:
         proc = run_gh(
-            ["pr", "view", str(pr_number), "--json", "number,state,merged,headRefName"]
+            [
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                str(repository).strip(),
+                "--json",
+                "number,state,mergedAt,headRefName",
+            ]
         )
     except (GitHubBusError, GitHubBusOffline):
         return None
@@ -441,7 +446,14 @@ def _pull_request_record(pr_number: int) -> dict[str, Any] | None:
         payload = _json.loads(proc.stdout or "{}")
     except ValueError:
         return None
-    return payload if payload.get("number") else None
+    if not isinstance(payload, dict):
+        return None
+    number = payload.get("number")
+    if isinstance(number, bool) or not isinstance(number, int) or number != pr_number:
+        return None
+    state = str(payload.get("state") or "").strip().upper()
+    payload["merged"] = state == "MERGED" and bool(str(payload.get("mergedAt") or "").strip())
+    return payload
 
 
 def task_reality_reconcile_is_due(
@@ -508,14 +520,29 @@ def reconcile_task_reality(config: dict[str, Any], status: dict[str, Any]) -> bo
     # were present in `oday-data-platform`. Reporting a false drift is worse
     # than reporting none, so anything not belonging to this repository is left
     # to whatever reconciles that one.
+    #
+    # Which repository a task belongs to is the registry's answer
+    # (`resolve_task_repository`): an explicit declaration wins, and the
+    # artifact-prefix inference for tasks that declare nothing lives only
+    # there. Comparing the declared string alone let an undeclared task whose
+    # artifacts name another repository through, and its same-numbered PR in
+    # this checkout then cleared its merge route. Unknown, ambiguous, missing
+    # checkout, a binding with no slug, or an unreadable local origin cannot be
+    # shown to be this repository, and are declined the same way.
+    from multi_repo_registry import normalized_repository_slug, resolve_task_repository
+
     this_repo = _this_repository_slug()
+    wanted = normalized_repository_slug(this_repo)
+    if not wanted:
+        # Cannot tell whose repository this is; declining is the safe half.
+        return False
     tasks = []
     for task in all_tasks:
-        declared = str(task.get("repository") or "").strip()
-        if declared and this_repo and declared.lower() != this_repo.lower():
+        try:
+            binding = resolve_task_repository(config, task)
+        except Exception:
             continue
-        if declared and not this_repo:
-            # Cannot tell whose repository this is; declining is the safe half.
+        if not binding.resolved or normalized_repository_slug(binding.slug) != wanted:
             continue
         tasks.append(task)
     if not tasks:
@@ -533,9 +560,15 @@ def reconcile_task_reality(config: dict[str, Any], status: dict[str, Any]) -> bo
             pr_number = int(task.get("pr_number") or 0)
         except (TypeError, ValueError):
             pr_number = 0
+        # A route bound to a committed merge_group recovery cause is that
+        # recovery's admission record, not a stale merge attempt; a recovery
+        # the cause rule cannot resolve keeps it as evidence, fail-closed.
         return {
-            "pull_request": _pull_request_record(pr_number) if pr_number > 0 else None,
+            "pull_request": _pull_request_record(pr_number, str(this_repo)) if pr_number > 0 else None,
             "branch_exists": str(task.get("branch") or "") in remote_branches,
+            "merge_group_recovery": runtime_ai_status.merge_group_route_recovery_hold(
+                task, status.get("handoffs")
+            ),
         }
 
     results = task_reality.reconcile_tasks(tasks, probe=probe)
@@ -705,25 +738,71 @@ def repository_has_merge_queue(slug: str | None, base: str) -> bool | None:
     return present
 
 
+def _merge_route_attempts(record: dict[str, Any]) -> int:
+    """Admissions issued for a record's head. Legacy records without the field
+    were written by an issued enqueue, so they count as one; an observation-only
+    record (an armed or queued PR this route never had to touch) carries 0."""
+    try:
+        return max(0, int(record.get("attempts", 1)))
+    except (TypeError, ValueError):
+        return 1
+
+
 @_entrypoint
-def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> tuple[str, str]:
-    """Enqueue a reviewed, CI-green PR for merge.
+def route_approved_pr_to_merge(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    *,
+    ci_status: str = "success",
+    reserve: Any = None,
+) -> tuple[str, str]:
+    """Admit a reviewed PR to merge: the one owner of the enqueue/arming mutation.
 
     The merge queue only ever contains what was explicitly enqueued, so a green
-    PR that nobody enqueues waits forever. Enqueueing is the whole job: `dev`
-    carries a ruleset that requires it ("Changes must be made through the merge
-    queue"), so there is no second path to choose between and nothing here
-    decides policy. An earlier version branched on change scope and took
-    `--admin` for development tooling; the ruleset rejects that outright, and
-    every tooling PR failed once per tick until it was removed. Review scope
-    still governs whether the workflow auto-stamps `task-review-gate` - that is
-    the workflow's decision, upstream of this and not repeated here.
+    PR that nobody enqueues waits forever. Nothing here decides policy: an
+    earlier version branched on change scope and took `--admin` for development
+    tooling; the ruleset rejects that outright, and every tooling PR failed once
+    per tick until it was removed. Branch protection and required checks
+    (`task-review-gate` included) still decide when anything merges.
 
-    Returns ``(route, detail)`` where route is ``queued``, ``waiting`` (recently
-    routed, or nothing to do), ``stalled`` (enqueued repeatedly and still not
-    merged), ``ejected`` or ``blocked``.
+    The GitHub bus used to arm the same PRs a second time from its own poll,
+    with `gh pr merge --auto --merge` and no counter. Its base/branch guards,
+    its same-PR readback and its no-queue auto-merge all live here now, on the
+    one path that keeps `task.merge_route` under the canonical revision CAS.
+
+    Before any mutation the PR is read back, bound to the task's repository,
+    and must be OPEN, on the task's base, from a branch naming the task, and at
+    exactly `approved_head` - a moved head is new, unreviewed work. A PR GitHub
+    already reports armed or queued is not touched again; an unreadable answer
+    is `unknown`, never "not queued".
+
+    `reserve`, when given, persists the incremented attempt record before the
+    mutation is issued and returns whether that canonical write committed and
+    the reloaded status still holds the task for admission. A rejected
+    reservation issues nothing (`deferred`), so a CAS conflict can never turn
+    into an admission the counter does not know about. A committed one is
+    checked again against the reloaded task, which a reopen or a new approval
+    recorded between the write and the reload may have changed: unless it is
+    still this task, repository, PR, base and approved head carrying this
+    reservation, nothing is issued and nothing stale is written back.
+
+    Returns ``(route, detail)`` where route is ``queued`` / ``armed`` /
+    ``merged`` (GitHub confirmed it), ``unconfirmed`` (issued, readback did not
+    confirm), ``waiting`` (recently routed, or nothing to do), ``unknown``
+    (PR unreadable), ``deferred`` (reservation rejected), ``stalled``
+    (admitted repeatedly and still not merged), ``ejected`` or ``blocked``.
     """
-    from github_bus import GitHubBusError, GitHubBusOffline, run_gh
+    from github_bus import (
+        AUTO_MERGE_BLOCKING_MERGE_STATES,
+        IMMEDIATELY_MERGEABLE_STATES,
+        GitHubBusError,
+        GitHubBusOffline,
+        issue_pr_merge_admission,
+        pr_merge_admission,
+        read_pr_merge_admission,
+        task_id_matches_branch,
+        task_pr_base_branch,
+    )
 
     try:
         pr_number = int(task.get("pr_number") or 0)
@@ -733,43 +812,12 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
         return "waiting", "no PR number recorded"
 
     approved_head = str(task.get("approved_head") or "").strip()
+    if not approved_head:
+        return "waiting", "no approved head recorded"
+    task_id = str(task.get("id") or "").strip()
     previous = task.get(MERGE_ROUTE_FIELD)
-    if isinstance(previous, dict) and str(previous.get("head") or "") == approved_head:
-        # Already actioned for this exact reviewed head; re-issuing the command
-        # every tick would spam GitHub and re-queue an entry already in flight.
-        # An entry can still be ejected afterwards - when an earlier PR merges
-        # first and leaves this one conflicting - and the queue does not put it
-        # back.  Report that instead of waiting on an entry that no longer
-        # exists; only the owner can advance the base.
-        if _pr_merge_state(pr_number) == "DIRTY":
-            return "ejected", "conflicts with base after an earlier merge"
+    same_head = isinstance(previous, dict) and str(previous.get("head") or "") == approved_head
 
-        # The record is evidence that an enqueue was issued, not that the PR is
-        # in the queue. Nothing here can observe the queue directly, and on
-        # 2026-08-19 four reviewed, CI-green PRs each carried `route: queued`
-        # while the dev queue was empty; the guard suppressed every retry and
-        # they sat for hours until an operator cleared the field by hand.
-        #
-        # So trust it for a window and then try again - re-enqueueing something
-        # already queued is harmless, whereas never retrying is what stalled
-        # them. Bounded, because retrying forever is its own failure: past
-        # MERGE_ROUTE_MAX_ATTEMPTS the enqueue is demonstrably not the missing
-        # step and the caller reports that instead of issuing a fifth.
-        attempts = int(previous.get("attempts") or 1)
-        if attempts >= MERGE_ROUTE_MAX_ATTEMPTS:
-            return "stalled", (
-                f"enqueued {attempts} times for this reviewed head without merging"
-            )
-        routed_at = parse_runtime_timestamp(str(previous.get("at") or "") or None)
-        if (
-            routed_at is not None
-            and (datetime.now(UTC) - routed_at).total_seconds() < MERGE_ROUTE_RETRY_AFTER_SECONDS
-        ):
-            return "waiting", str(previous.get("route") or "already routed")
-
-    # A repository without a merge queue cannot be enqueued into; `gh pr merge`
-    # with no strategy has nothing to do there. Ask once per repository and pick
-    # the only route that repository actually has.
     slug = _task_repository_slug(config, task)
     declared_repository = str(task.get("repository") or "").strip()
     if declared_repository and not slug:
@@ -781,53 +829,197 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
             f"declared repository {declared_repository!r} does not resolve to an "
             "owner/name slug in the repository registry"
         )
-    base = str(task.get("base_branch") or "dev").strip() or "dev"
-    queued_repo = repository_has_merge_queue(slug, base)
-    if queued_repo is False:
-        args, route = ["pr", "merge", str(pr_number), "--merge"], "merged"
-    else:
-        # None means unreadable. Enqueueing is the conservative choice: it is
-        # what a queue-protected repository requires, and a direct merge there
-        # would be the bypass this routing exists to avoid.
-        args, route = ["pr", "merge", str(pr_number)], "queued"
-    if slug:
-        args += ["--repo", slug]
+    if not slug:
+        return "blocked", (
+            "the task's repository does not resolve to an owner/name slug, so the PR "
+            "cannot be read back or admitted against a known repository"
+        )
+    base = str(task.get("base_branch") or "").strip() or task_pr_base_branch(config)
 
     try:
-        run_gh(args)
-    except (GitHubBusError, GitHubBusOffline) as exc:
-        return "blocked", str(exc)
+        pr = read_pr_merge_admission(slug, pr_number)
+        if pr is None:
+            return "unknown", f"PR #{pr_number} could not be read back; nothing was issued"
+        pr_state = str(pr.get("state") or "").upper()
+        if pr_state == "MERGED":
+            return "merged", f"PR #{pr_number} is already merged"
+        if pr_state != "OPEN":
+            return "blocked", f"PR #{pr_number} is {pr_state.lower() or 'in an unknown state'}, not open"
+        pr_base = str(pr.get("baseRefName") or "")
+        if pr_base != base:
+            return "blocked", f"PR #{pr_number} targets `{pr_base}`, not the task base `{base}`"
+        pr_branch = str(pr.get("headRefName") or "")
+        if task_id and not task_id_matches_branch(task_id, pr_branch):
+            return "blocked", f"PR #{pr_number} is open from `{pr_branch}`, which does not name {task_id}"
+        pr_head = str(pr.get("headRefOid") or "").strip().lower()
+        if not pr_head:
+            return "unknown", f"PR #{pr_number} readback carried no head commit; nothing was issued"
+        if pr_head != approved_head.lower():
+            # Not the head the reviewer approved: whatever is there now needs its
+            # own review, and admitting it would merge unreviewed work.
+            return "blocked", (
+                f"PR #{pr_number} head {pr_head[:12]} is not the approved head "
+                f"{approved_head[:12]}; the new head needs its own review"
+            )
+        admission, _queue = pr_merge_admission(slug, pr_number, pr)
+    except GitHubBusOffline:
+        # Kept free of the exception text: the explanation is written to the
+        # task only when it changes, and a varying error string would rewrite
+        # canonical status on every tick of an outage.
+        return "unknown", f"PR #{pr_number} readback is offline; nothing was issued"
+    except GitHubBusError:
+        return "unknown", f"PR #{pr_number} readback failed; nothing was issued"
+
+    if admission == "merged":
+        return "merged", f"PR #{pr_number} is already merged"
+    if admission == "unknown":
+        return "unknown", (
+            f"merge queue enrollment of PR #{pr_number} could not be read; "
+            "not treated as unqueued and nothing was issued"
+        )
+    if admission in {"armed", "queued"}:
+        # Already in GitHub's hands for this exact head: never re-issued. The
+        # observation is recorded so the window and cap see it, but it is not
+        # an attempt.
+        if same_head:
+            if previous.get("route") != admission:
+                task[MERGE_ROUTE_FIELD] = {**previous, "route": admission}
+        else:
+            task[MERGE_ROUTE_FIELD] = {
+                "head": approved_head,
+                "route": admission,
+                "pr_number": pr_number,
+                "at": utc_now(),
+                "attempts": 0,
+            }
+        return admission, f"GitHub reports PR #{pr_number} {admission}"
+
+    if str(pr.get("mergeStateStatus") or "").upper() in AUTO_MERGE_BLOCKING_MERGE_STATES:
+        if same_head:
+            # Routed for this head and now conflicting: an earlier PR merged
+            # first and the queue dropped this one, and it does not put it back.
+            # Only the owner can advance the base.
+            return "ejected", "conflicts with base after an earlier merge"
+        return "blocked", f"PR #{pr_number} conflicts with `{base}`; the owner must advance the base"
+
+    attempts = _merge_route_attempts(previous) if same_head else 0
+    if same_head:
+        # The record is evidence that an admission was issued, not that the PR
+        # is in the queue - the readback above just said it is not. On
+        # 2026-08-19 four reviewed, CI-green PRs each carried `route: queued`
+        # while the dev queue was empty and sat for hours. So trust the record
+        # for a window and then try again, but bounded: past
+        # MERGE_ROUTE_MAX_ATTEMPTS the admission is demonstrably not the
+        # missing step and the caller reports that instead of issuing another.
+        if attempts >= MERGE_ROUTE_MAX_ATTEMPTS:
+            return "stalled", (
+                f"enqueued {attempts} times for this reviewed head without merging"
+            )
+        routed_at = parse_runtime_timestamp(str(previous.get("at") or "") or None)
+        if (
+            routed_at is not None
+            and (datetime.now(UTC) - routed_at).total_seconds() < MERGE_ROUTE_RETRY_AFTER_SECONDS
+        ):
+            return "waiting", str(previous.get("route") or "already routed")
+
+    # A repository without a merge queue whose checks have passed and whose PR
+    # GitHub reports immediately mergeable is merged directly (`--merge`, never
+    # `--admin`); everything else goes through the single `--auto --merge`
+    # admission, which GitHub treats as an enqueue on a queue-protected base
+    # and as protected auto-merge without one. Green checks alone do not make
+    # a protected PR mergeable: BLOCKED (a required review or other rule),
+    # BEHIND (strict up-to-date) and a draft are armed, so GitHub merges them
+    # once protection is satisfied, rather than refusing a bare merge every
+    # tick. A queue answer of None (unreadable) takes the auto path too: a
+    # direct merge on a queue-protected repository would be the bypass this
+    # routing exists to avoid.
+    direct = (
+        ci_status == "success"
+        and not pr.get("isDraft")
+        and str(pr.get("mergeStateStatus") or "").upper() in IMMEDIATELY_MERGEABLE_STATES
+        and repository_has_merge_queue(slug, base) is False
+    )
 
     # Recorded for the audit trail only. Classification must never gate the
-    # enqueue: an unreadable diff is a reason to say so, not to strand a
+    # admission: an unreadable diff is a reason to say so, not to strand a
     # reviewed PR that the queue would have accepted.
     scope = approved_pr_change_scope(pr_number) or "unknown"
-    previous_attempts = 0
-    if isinstance(previous, dict) and str(previous.get("head") or "") == approved_head:
-        previous_attempts = int(previous.get("attempts") or 1)
-    task[MERGE_ROUTE_FIELD] = {
+    reservation = {
         "head": approved_head,
         "scope": scope,
-        "route": route,
+        "route": "issuing",
         "pr_number": pr_number,
         "at": utc_now(),
-        "attempts": previous_attempts + 1,
+        "attempts": attempts + 1,
     }
+    task[MERGE_ROUTE_FIELD] = reservation
+    if reserve is not None:
+        if not reserve():
+            return "deferred", (
+                "canonical merge_route reservation was not committed, or the reloaded "
+                "status no longer holds this task for admission; nothing was issued"
+            )
+        # A committed write is not yet permission: the canonical writer syncs
+        # and reloads after releasing its lock, so a reviewer reopen, a newly
+        # approved head or a retargeted PR recorded in between is what `task`
+        # now holds. Only the exact task, repository, PR, base and approved
+        # head this reservation was made for, still carrying the reservation,
+        # is admitted; anything else is left as recorded and nothing is issued.
+        try:
+            held_pr = int(task.get("pr_number") or 0)
+        except (TypeError, ValueError):
+            held_pr = 0
+        if (
+            task.get(MERGE_ROUTE_FIELD) != reservation
+            or str(task.get("id") or "").strip() != task_id
+            or str(task.get("approved_head") or "").strip() != approved_head
+            or held_pr != pr_number
+            or _task_repository_slug(config, task) != slug
+            or (str(task.get("base_branch") or "").strip() or task_pr_base_branch(config)) != base
+        ):
+            return "deferred", (
+                "canonical status changed after the merge_route reservation committed; "
+                "the reloaded task no longer authorizes this admission and nothing was issued"
+            )
+
+    try:
+        # Read back bound to the PR checked above: a readback whose head, base
+        # or branch moved since is another PR's outcome, never this approved
+        # head's. A failed mutation is read back too, because a nonzero exit
+        # does not prove GitHub applied nothing.
+        result, _info = issue_pr_merge_admission(slug, pr_number, pr, direct=direct)
+    except GitHubBusOffline as exc:
+        # The command may or may not have reached GitHub. Keep the attempt.
+        task[MERGE_ROUTE_FIELD] = {**reservation, "route": "unconfirmed"}
+        return "unconfirmed", f"GitHub went offline during admission ({exc})"
+    except GitHubBusError as exc:
+        # A definite refusal: GitHub rejected the mutation and the readback
+        # shows it holds nothing for this PR, or the undraft before it failed
+        # so nothing was issued. The attempt is not spent and the next tick may
+        # retry once the reason is resolved. An error whose outcome the
+        # readback could not settle never reaches here; it is `unconfirmed`
+        # and keeps its counted reservation.
+        if isinstance(previous, dict):
+            task[MERGE_ROUTE_FIELD] = previous
+        else:
+            task.pop(MERGE_ROUTE_FIELD, None)
+        return "blocked", str(exc)
+
+    task[MERGE_ROUTE_FIELD] = {**reservation, "route": result}
     if config and (config.get("paths") or {}).get("activity_log"):
+        how = "merged directly" if direct else "admitted with --auto --merge"
         write_activity_log(
             config,
             {
                 "type": "merge_route_applied",
-                "task_id": str(task.get("id") or ""),
+                "task_id": task_id,
                 "message": (
-                    f"PR #{pr_number} {'merged directly' if route == 'merged' else 'enqueued for merge'} "
-                    f"(scope {scope}; repository has no merge queue)."
-                    if route == "merged"
-                    else f"PR #{pr_number} enqueued for merge (scope {scope})."
+                    f"PR #{pr_number} {how}; GitHub readback: {result} "
+                    f"(scope {scope}; attempt {attempts + 1})."
                 ),
             },
         )
-    return route, f"scope={scope}"
+    return result, f"scope={scope}"
 
 
 def advance_approved_prs_to_merge(
@@ -835,7 +1027,7 @@ def advance_approved_prs_to_merge(
     status: dict[str, Any],
     finalize_statuses: set[str],
 ) -> bool | None:
-    """Route every reviewed, CI-green PR onto the merge path its scope requires.
+    """Route every reviewed PR onto its merge path - the only caller that does.
 
     This deliberately runs outside the per-agent dispatch loop.  That loop skips
     any owner already at worker capacity, and owners reach the cap precisely
@@ -843,14 +1035,52 @@ def advance_approved_prs_to_merge(
     inside it deadlocks: the PRs cannot be merged because the owner is full, and
     the owner stays full because the PRs are never merged.  Routing issues a
     `gh` call rather than starting a worker, so it needs no slot.
+
+    CI-green PRs are always routed. A PR whose checks are still running is
+    routed only when `branch_workflow.task_pr.auto_merge` asks for it, and then
+    only armed (`--auto`), so GitHub still waits for every required check.
+
+    A changed `merge_route` is persisted on its own account, not only when the
+    `next` text changes: the record is the retry window and attempt cap, and a
+    counter that rode along with an unchanged explanation would be lost.
     """
+    from github_bus import task_pr_auto_merge_enabled
+
     schema = config.get("schema", {})
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
+    arm_pending = task_pr_auto_merge_enabled(config)
 
     changed = False
     advisory_changed = False
+    reload_failed = False
+    reserved = False
     processed_ids: set[str] = set()
+
+    def reserve() -> bool:
+        # The attempt is committed before the mutation goes out. A rejected or
+        # unconfirmed commit reloads canonical status, which drops the
+        # reservation from memory, so the caller issues nothing.
+        nonlocal reload_failed, reserved
+        if commit_canonical_task_transition(config, status):
+            reserved = True
+            # The commit reloaded canonical status into `status` in place. A
+            # task that has since left the list or its approved state is no
+            # longer this route's to admit, whatever its stale copy still says.
+            return any(t is task for t in status.get(tasks_path, [])) and (
+                str(task.get("status") or "").lower() in finalize_statuses
+            )
+        try:
+            fresh = load_status(config)
+        except Exception:
+            reload_failed = True
+            return False
+        if not isinstance(fresh, dict) or tasks_path not in fresh:
+            reload_failed = True
+            return False
+        sync_status_snapshot_dict(config, status, fresh)
+        return False
+
     while True:
         tasks = [t for t in status.get(tasks_path, []) if isinstance(t, dict) and t.get(task_id_field)]
         unprocessed = [t for t in tasks if str(t.get(task_id_field)) not in processed_ids]
@@ -865,64 +1095,84 @@ def advance_approved_prs_to_merge(
         if not str(task.get("approved_head") or "").strip():
             continue
         try:
-            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id, task=task)
         except Exception:
             continue
-        if ci_status != "success" or str(pr_status or "").strip().upper() == "MERGED":
+        if str(pr_status or "").strip().upper() == "MERGED":
+            continue
+        if ci_status != "success" and not (ci_status == "pending" and arm_pending):
             continue
 
-        route, detail = route_approved_pr_to_merge(config, task)
+        before = task.get(MERGE_ROUTE_FIELD)
+        before = dict(before) if isinstance(before, dict) else before
+        reserved = False
+        route, detail = route_approved_pr_to_merge(
+            config, task, ci_status=ci_status, reserve=reserve
+        )
+        if reload_failed:
+            return None
+        if route == "deferred":
+            # Status was reloaded from canonical; this task is re-evaluated on
+            # the next tick from what is actually recorded.
+            continue
+        if reserved or task.get(MERGE_ROUTE_FIELD) != before:
+            # After a committed reservation the outcome differs from what is on
+            # disk even when it equals `before` (a refused admission restores
+            # the previous record), so it is always written back.
+            advisory_changed = True
+        checks = "is CI-green" if ci_status == "success" else "has required checks pending"
+        msg = ""
+        log_type = ""
         if route == "queued":
-            task["next"] = (
+            msg = (
                 f"PR for task {task_id} was enqueued in the dev merge queue ({detail}); "
                 "approved branch head remains immutable until the queue merges it."
             )
-            advisory_changed = True
+        elif route == "armed":
+            msg = (
+                f"PR for task {task_id} has auto-merge armed ({detail}); GitHub admits it "
+                "once required checks pass, and the approved branch head remains immutable."
+            )
+        elif route == "unconfirmed":
+            msg = (
+                f"PR for task {task_id} {checks}; a merge admission was issued but GitHub's "
+                f"readback did not confirm it ({detail}). The attempt is counted and retried "
+                "after the routing window."
+            )
+            log_type = "merge_route_unconfirmed"
+        elif route == "unknown":
+            msg = (
+                f"PR for task {task_id} {checks} but its merge admission could not be read "
+                f"back ({detail}); it is not treated as unqueued and nothing was issued."
+            )
         elif route == "blocked":
             # Reported here rather than left silent: a PR GitHub refuses to
             # enqueue is parked indefinitely, and the operator needs the reason.
             msg = (
-                f"PR for task {task_id} is CI-green but could not be routed to a merge path "
+                f"PR for task {task_id} {checks} but could not be routed to a merge path "
                 f"({detail}); finalize dispatch is deferred until that resolves."
             )
-            if task.get("next") == msg:
-                continue
-            task["next"] = msg
-            advisory_changed = True
-            write_activity_log(
-                config,
-                {"type": "merge_route_blocked", "task_id": task_id, "message": msg},
-            )
+            log_type = "merge_route_blocked"
         elif route == "stalled":
-            # Terminal until the head changes: the enqueue has been issued
+            # Terminal until the head changes: the admission has been issued
             # repeatedly and the PR has still not merged, so whatever is missing
             # is not another `gh pr merge`. Same shape as an escalated worktree
             # lease - stop, and say so where an owner looks.
             msg = (
-                f"PR for task {task_id} is CI-green but has not merged after being enqueued "
+                f"PR for task {task_id} {checks} but has not merged after being enqueued "
                 f"repeatedly ({detail}); enqueueing again will not resolve it and an owner "
                 "must look at the merge queue."
             )
-            if task.get("next") == msg:
-                continue
-            task["next"] = msg
-            advisory_changed = True
-            write_activity_log(
-                config,
-                {"type": "merge_route_stalled", "task_id": task_id, "message": msg},
-            )
-        elif route == "waiting":
-            # Nothing to route - already in the queue, or no PR to enqueue.
-            # This lane still owns the explanation, because the finalize lane
-            # below deliberately no longer re-routes and so has nothing to say.
+            log_type = "merge_route_stalled"
+        elif route == "waiting" and ci_status == "success":
+            # Nothing to route - recently admitted, or no PR to admit. This lane
+            # still owns the explanation, because the finalize lane below
+            # deliberately no longer re-routes and so has nothing to say. While
+            # checks are still running there is nothing new to explain.
             msg = (
-                f"PR for task {task_id} is CI-green and awaiting merge queue; "
+                f"PR for task {task_id} {checks} and awaiting merge queue; "
                 "approved branch head remains immutable and finalize dispatch is deferred."
             )
-            if task.get("next") == msg:
-                continue
-            task["next"] = msg
-            advisory_changed = True
         elif route == "ejected":
             # The queue dropped it and will not retry on its own.  Advancing the
             # base rewrites the reviewed head, so this has to go back to the
@@ -952,8 +1202,16 @@ def advance_approved_prs_to_merge(
                 sync_status_snapshot_dict(config, status, fresh)
                 advisory_changed = False
             continue
-        else:
+
+        if not msg or task.get("next") == msg:
             continue
+        task["next"] = msg
+        advisory_changed = True
+        if log_type:
+            write_activity_log(
+                config,
+                {"type": log_type, "task_id": task_id, "message": msg},
+            )
 
     if advisory_changed:
         if not _commit_advisory_status_transition(config, status):
@@ -1048,7 +1306,7 @@ def recover_conflicted_review_prs(
         # drop the many tasks that are obviously not this shape without paying
         # for a `gh` call each tick, not to authorise the transition.
         try:
-            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id, task=task)
         except Exception:
             continue
         if ci_status != "none" or str(pr_status or "").strip().upper() != "OPEN":
@@ -1074,7 +1332,7 @@ def recover_conflicted_review_prs(
         # including a read that fails - waits for the next tick.
         try:
             fresh_pr_status, fresh_ci_status = runtime_ai_status.task_pr_ci_status(
-                task_id, max_age_seconds=0
+                task_id, max_age_seconds=0, task=task
             )
         except Exception:
             continue
@@ -1210,7 +1468,7 @@ def recover_failed_ci_review_prs(
         # Cheapest disqualifier first, through the canonical CI reader.
         # Any answer other than failure on an open PR ends this lane's business.
         try:
-            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id, task=task)
         except Exception:
             continue
         if ci_status != "failure" or str(pr_status or "").strip().upper() != "OPEN":
@@ -1226,7 +1484,7 @@ def recover_failed_ci_review_prs(
         # Fresh uncached CI read to ensure CI failure is current.
         try:
             fresh_pr_status, fresh_ci_status = runtime_ai_status.task_pr_ci_status(
-                task_id, max_age_seconds=0
+                task_id, max_age_seconds=0, task=task
             )
         except Exception:
             continue
@@ -1365,6 +1623,75 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
 
 
 @_entrypoint
+def committed_merge_group_review_recovery(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    target_agent: str,
+) -> bool:
+    """True only for a committed merge-group failure recovery of this routed head.
+
+    `github_reconciliation.reconcile_merge_group_runs` demotes an approved task
+    back to `review` through the canonical CAS and records the cause as one
+    pending `merge_group_failure` handoff. It deliberately leaves
+    `task.merge_route` alone, so the same-head route would otherwise keep the
+    reviewer from ever being dispatched. This reads the cause from the
+    canonical store -- never from the caller's snapshot or `next` text -- and
+    accepts it only when every identity it names matches exactly
+    (`ai_status.merge_group_recovery_cause`), including the proof that it
+    failed a group that enrolled exactly this source head. Missing, unknown,
+    duplicated or superseded facts fail closed.
+    """
+    schema = config.get("schema", {}) or {}
+    task_id_field = schema.get("task_id_field", "id")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    task_id = str(task.get(task_id_field) or task.get("id") or "").strip()
+    reviewer = normalize_agent_id(str(task.get(reviewer_field) or ""))
+    if not task_id or not reviewer or normalize_agent_id(target_agent or "") != reviewer:
+        return False
+
+    try:
+        canonical = load_status(config)
+    except Exception:
+        return False
+    if not isinstance(canonical, dict):
+        return False
+    canonical_task = next(
+        (
+            candidate
+            for candidate in canonical.get(schema.get("tasks_path", "tasks"), []) or []
+            if isinstance(candidate, dict)
+            and str(candidate.get(task_id_field) or "").strip() == task_id
+        ),
+        None,
+    )
+    # The caller's task must be the committed one: same status, reviewer,
+    # submitted head, route, PR and repository, so a stale or locally edited snapshot cannot
+    # borrow a recovery it does not carry.
+    if not isinstance(canonical_task, dict):
+        return False
+    for field in (
+        "status",
+        reviewer_field,
+        "approved_head",
+        "review_submission",
+        MERGE_ROUTE_FIELD,
+        # The CI read after this check resolves the task's own PR and
+        # repository, so those must be the committed ones as well.
+        "pr_number",
+        "repository",
+    ):
+        if canonical_task.get(field) != task.get(field):
+            return False
+
+    # Reviewer phase: the demoted, unapproved review the cause was written for.
+    if str(canonical_task.get("status") or "").strip().lower() != "review":
+        return False
+    if str(canonical_task.get("approved_head") or "").strip():
+        return False
+    return runtime_ai_status.merge_group_recovery_cause(canonical_task, canonical.get("handoffs")) is not None
+
+
+@_entrypoint
 def is_task_review_dispatch_eligible(
     config: dict[str, Any],
     task: dict[str, Any],
@@ -1423,6 +1750,11 @@ def is_task_review_dispatch_eligible(
         return False
     if not review_is_independent(config, task_owner, target_agent):
         return False
+    # The owner is the finalizer, not necessarily the author. The reviewer has
+    # to be independent of every source author of the submitted range as well,
+    # and a submission that cannot say who those are is not reviewable here.
+    if review_source_block_reason(config, task, target_agent):
+        return False
 
     # Review submission & exact head integrity check
     submission = task.get("review_submission")
@@ -1435,11 +1767,18 @@ def is_task_review_dispatch_eligible(
     # Merge route on current submitted head suppresses redundant review dispatch.
     # Stale merge route records from prior/repaired heads must not block new head review.
     # Malformed/unknown route metadata or routes missing an explicit head fail closed.
+    # The one exception is a committed merge-group failure recovery for exactly
+    # this routed head: the route stays untouched (head/at/attempts), and the
+    # canonical recovery handoff is what licenses one fresh reviewer decision.
     route = task.get("merge_route")
     if route is not None:
         if isinstance(route, dict):
             route_head = str(route.get("head") or "").strip()
-            if not route_head or route_head == submitted_sha:
+            if not route_head:
+                return False
+            if route_head == submitted_sha and not committed_merge_group_review_recovery(
+                config, task, target_agent
+            ):
                 return False
         else:
             return False
@@ -1447,7 +1786,7 @@ def is_task_review_dispatch_eligible(
     task_id = str(task.get(schema.get("task_id_field", "id")) or task.get("id") or "")
     try:
         current_head = runtime_ai_status.resolve_task_sha(
-            task_id, force_refresh=readiness_force_refresh
+            task_id, force_refresh=readiness_force_refresh, task=task
         )
     except Exception:
         return False
@@ -1468,7 +1807,7 @@ def is_task_review_dispatch_eligible(
 
     # Exact head required CI terminal success check
     try:
-        pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+        pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id, task=task)
     except Exception:
         return False
     if ci_status != "success":
@@ -1534,7 +1873,7 @@ def dispatch_priority_for_task(
         except Exception:
             return None
         try:
-            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(str(task.get("id") or ""))
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(str(task.get("id") or ""), task=task)
             if str(pr_status or "").strip().upper() != "MERGED" or ci_status not in {"success", "none"}:
                 return None
         except Exception:
@@ -1745,12 +2084,7 @@ def reassign_unavailable_reviewers(
         else:
             continue
 
-        submitted_author = task_submitted_author(config, task)
-        author_pool_exclusions = (
-            {agent_account_pool_id(config, submitted_author)}
-            if submitted_author and not is_human_gate_agent(submitted_author)
-            else set()
-        )
+        source = task_review_source_identity(config, task)
 
         claimed_agent = str(task.get(claimed_field) or "").strip()
         if not claimed_agent or is_human_gate_agent(claimed_agent):
@@ -1768,6 +2102,7 @@ def reassign_unavailable_reviewers(
             else:
                 claimed_block_reason = None
             reviewer_same_pool = False
+            source_block_reason = None
         else:
             claimed_block_reason = agent_auto_dispatch_block_reason(
                 config,
@@ -1775,16 +2110,17 @@ def reassign_unavailable_reviewers(
                 normalize_agent_id(claimed_agent),
                 provider_report,
             )
+            source_block_reason = review_source_block_reason(config, task, claimed_agent)
             reviewer_same_pool = bool(
                 counterpart
                 and not is_human_gate_agent(counterpart)
                 and not review_is_independent(config, counterpart, claimed_agent)
-            ) or bool(
-                submitted_author
-                and not is_human_gate_agent(submitted_author)
-                and not review_is_independent(config, submitted_author, claimed_agent)
-            )
+            ) or bool(source_block_reason)
         if not claimed_block_reason and not reviewer_same_pool:
+            continue
+        # No reviewer can be shown independent of work whose authors are
+        # unknown, so there is nothing to fail over to.
+        if claimed_role == "reviewer" and source.error:
             continue
 
         replacement = ""
@@ -1810,7 +2146,6 @@ def reassign_unavailable_reviewers(
             if (
                 not candidate
                 or candidate in {claimed_agent, counterpart}
-                or (claimed_role == "reviewer" and submitted_author and candidate == submitted_author)
                 or candidate_id in reserved_agents
                 or not isinstance(candidate_config, dict)
                 or agent_is_dispatch_slot(candidate_config)
@@ -1822,12 +2157,7 @@ def reassign_unavailable_reviewers(
                 )
                 or (
                     claimed_role == "reviewer"
-                    and bool(submitted_author and not is_human_gate_agent(submitted_author))
-                    and not review_is_independent(config, submitted_author, candidate)
-                )
-                or (
-                    claimed_role == "reviewer"
-                    and agent_account_pool_id(config, candidate) in author_pool_exclusions
+                    and bool(review_source_block_reason(config, task, candidate))
                 )
                 or agent_auto_dispatch_block_reason(config, state, candidate_id, provider_report)
             ):
@@ -1839,15 +2169,16 @@ def reassign_unavailable_reviewers(
             continue
 
         if reviewer_same_pool:
-            violator = (
-                f"owner {counterpart}"
-                if counterpart and not review_is_independent(config, counterpart, claimed_agent)
-                else f"submitted author {submitted_author}"
-            )
-            message = (
-                f"Reassigned review to {replacement}: {claimed_agent} shares account pool "
-                f"with {violator}, so independent review requires a different pool."
-            )
+            if counterpart and not review_is_independent(config, counterpart, claimed_agent):
+                message = (
+                    f"Reassigned review to {replacement}: {claimed_agent} shares account pool "
+                    f"with owner {counterpart}, so independent review requires a different pool."
+                )
+            else:
+                message = (
+                    f"Reassigned review to {replacement}: {source_block_reason}, "
+                    "so independent review requires a different pool."
+                )
         else:
             message = (
                 f"Automatically reassigned {claimed_role} to {replacement} while {claimed_role} {claimed_agent} "
@@ -2680,7 +3011,7 @@ def dispatch_ready_tasks(
     metadata_repaired = repair_open_task_metadata(config, status)
     if metadata_repaired:
         status = load_status(config)
-    review_states_repaired = repair_unsubmitted_review_tasks(config, status)
+    review_states_repaired = repair_unsubmitted_review_tasks(config, status, state)
     if review_states_repaired:
         status = load_status(config)
 
@@ -2930,14 +3261,16 @@ def dispatch_ready_tasks(
                         )
                         current_head = None
                         try:
-                            current_head = runtime_ai_status.resolve_task_sha(task_id, force_refresh=True)
+                            current_head = runtime_ai_status.resolve_task_sha(
+                                task_id, force_refresh=True, task=task
+                            )
                         except Exception:
                             current_head = None
 
                         pr_status = None
                         ci_status = "unknown"
                         try:
-                            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+                            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id, task=task)
                         except Exception:
                             pass
 
@@ -3076,7 +3409,7 @@ def dispatch_ready_tasks(
                         pr_status = "UNKNOWN"
                         ci_status = "unknown"
                         try:
-                            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+                            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id, task=task)
                         except Exception as err:
                             console_log(f"Failed to check CI status for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
 
@@ -3253,6 +3586,14 @@ def dispatch_ready_tasks(
                             and not bool(task.get("non_dispatchable"))
                             and not is_human_gate_agent(str(task.get("waiting_for") or ""))
                             and not is_human_gate_agent(str(task_owner or ""))
+                            # Publishing the merged PR of an owner-returned
+                            # merge_group recovery is owner-only (the publisher
+                            # refuses any helper), so a helper lease on it could
+                            # only fail and hold the task's lock against its
+                            # owner. The owner keeps waiting for capacity.
+                            and not runtime_ai_status.merge_group_recovery_publication_pending(
+                                task, status.get("handoffs")
+                            )
                             and dependencies_satisfied(task, task_map, dependency_done_statuses)
                             and independent
                             and (

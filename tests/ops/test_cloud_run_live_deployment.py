@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -8,6 +9,7 @@ import socket
 import subprocess
 import sys
 import time
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -76,6 +78,12 @@ def test_preflight_does_not_require_unselected_listing_partner_config() -> None:
     assert "config:ODP_LISTING_PROVIDER_FEED_URL" not in by_name
     assert "config:ODP_LISTING_PROVIDER_AUTH_STATUS" not in by_name
     assert "secret-reference:ODP_LISTING_PROVIDER_API_KEY_SECRET" not in by_name
+
+
+def test_preflight_rejects_invalid_first_create_scheduler_state() -> None:
+    env = {**complete_env(), "ODP_NEW_SCHEDULER_STATE": "enabled"}
+    checks = validator.preflight_checks(env=env, expected_environment="dev", expected_sha=EXPECTED_SHA, root=ROOT)
+    assert next(check for check in checks if check.name == "config:ODP_NEW_SCHEDULER_STATE").ok is False
 
 
 def test_preflight_requires_listing_config_when_listing_is_selected() -> None:
@@ -818,6 +826,8 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
     missing_provider_id = ""
     failed_provider_id = ""
     probe_age_seconds = 0
+    operator_section_meta: dict[str, object] = {}
+    operator_tenant_meta: dict[str, object] = {"tenantId": "tenant-live"}
 
     @classmethod
     def _operator_origin(cls) -> dict[str, object]:
@@ -927,6 +937,8 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
                                 else "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE"
                             ),
                         },
+                        **self.operator_tenant_meta,
+                        **self.operator_section_meta,
                     },
                     "today": {"queue": []},
                 }
@@ -965,7 +977,7 @@ def start_server() -> tuple[ThreadingHTTPServer, str]:
     return server, f"http://{host}:{port}"
 
 
-def run_smoke(url: str):
+def run_smoke(url: str, *, operator_tenant: object = "tenant-live"):
     return validator.smoke_checks(
         api_url=url,
         web_url=url,
@@ -973,7 +985,7 @@ def run_smoke(url: str):
         bearer_token="smoke-token",
         operator_role="ops-lead",
         operator_subject="smoke-operator",
-        operator_tenant="tenant-live",
+        operator_tenant=operator_tenant,
         correlation_id="corr-cloud-run-test",
         timeout=2,
     )
@@ -2217,6 +2229,278 @@ def test_deterministic_smoke_requires_ready_operator_live_repository_probe() -> 
     assert by_name["smoke:/api/v1/operator/bootstrap:provenance"].ok is True
 
 
+def _degraded_operator_sections() -> dict[str, object]:
+    # Shape emitted by OperatorStateService from OperatorLiveRepository: one
+    # unavailable section degrades the whole bootstrap.
+    return {
+        "sections": {
+            "stores": {"state": "available", "source": "postgresql", "recordCount": 3},
+            "storeOpsIssues": {
+                "state": "unavailable",
+                "source": "store_ops_issue_repository",
+                "recordCount": None,
+                "reasonCode": "OPERATOR_STOREOPSISSUES_UNAVAILABLE",
+                "message": (
+                    "connection to postgresql://odp_app:hunter2-db-pass@10.0.0.5:5432/odp "
+                    "failed: password=hunter2-db-pass api_key='sk-live-abc123' "
+                    "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig "
+                )
+                + "x" * 600,
+            },
+            "interventions": {
+                "state": "degraded",
+                "source": "intervention_store",
+                "recordCount": 1,
+                "reasonCode": "OPERATOR_INTERVENTIONS_PARTIAL",
+                "message": "store s-2: timeout",
+            },
+        },
+        "unavailableSections": ["storeOpsIssues"],
+        "degradedSections": ["interventions"],
+    }
+
+
+def test_deterministic_smoke_records_degraded_operator_sections_and_reason_codes() -> None:
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _degraded_operator_sections()
+    server, url = start_server()
+    try:
+        checks, report = run_smoke(url)
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    bootstrap = report["operator_bootstrap"]
+    assert bootstrap["data_mode"] == "degraded"
+    assert bootstrap["origin_kind"] == "degraded"
+    assert bootstrap["unavailable_sections"] == ["storeOpsIssues"]
+    assert bootstrap["degraded_sections"] == ["interventions"]
+    sections = bootstrap["non_available_sections"]
+    # Available sections are not listed; only the ones that degraded the bootstrap.
+    assert set(sections) == {"storeOpsIssues", "interventions"}
+    assert sections["storeOpsIssues"]["state"] == "unavailable"
+    assert sections["storeOpsIssues"]["reason_code"] == "OPERATOR_STOREOPSISSUES_UNAVAILABLE"
+    assert sections["interventions"] == {
+        "state": "degraded",
+        "reason_code": "OPERATOR_INTERVENTIONS_PARTIAL",
+        "message": "store s-2: timeout",
+    }
+
+    # The pass/fail verdict is unchanged: degraded is still not live.
+    by_name = {check.name: check for check in checks}
+    for name in (
+        "smoke:/api/v1/operator/bootstrap:provenance",
+        "smoke:/api/v1/operator/bootstrap:read_provenance",
+    ):
+        assert by_name[name].ok is False
+        assert "storeOpsIssues:OPERATOR_STOREOPSISSUES_UNAVAILABLE" in by_name[name].detail
+        assert "interventions:OPERATOR_INTERVENTIONS_PARTIAL" in by_name[name].detail
+
+
+def test_deterministic_smoke_masks_suspected_secrets_in_operator_section_messages() -> None:
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _degraded_operator_sections()
+    server, url = start_server()
+    try:
+        _, report = run_smoke(url)
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    message = report["operator_bootstrap"]["non_available_sections"]["storeOpsIssues"]["message"]
+    rendered = json.dumps(report)
+    for leaked in ("hunter2-db-pass", "sk-live-abc123", "eyJhbGciOiJIUzI1NiJ9", "odp_app"):
+        assert leaked not in rendered
+    assert "postgresql://<redacted>@10.0.0.5:5432/odp" in message
+    assert "password=<redacted>" in message
+    assert "api_key=<redacted>" in message
+    assert "Bearer <redacted>" in message
+    assert len(message) <= validator.OPERATOR_SECTION_MESSAGE_MAX_CHARS
+    assert message.endswith("...")
+
+
+def _quoted_credential_operator_sections() -> dict[str, object]:
+    # Repository errors are ``str(exc)``: a driver may print a JSON body or a dict
+    # repr, and an API error may echo the invoker token near the length cap.
+    return {
+        "sections": {
+            "survey_assignments": {
+                "state": "unavailable",
+                "reasonCode": "OPERATOR_SURVEY_ASSIGNMENTS_UNAVAILABLE",
+                "message": 'db rejected {"password": "synthetic-db-secret", "user": "odp"}',
+            },
+            "providers": {
+                "state": "unavailable",
+                "reasonCode": "OPERATOR_PROVIDERS_UNAVAILABLE",
+                "message": "provider config {'api_key': 'synthetic-provider-key'}",
+            },
+            "notices": {
+                "state": "degraded",
+                "reasonCode": "OPERATOR_NOTICES_PARTIAL",
+                "message": r"upstream body {\"token\": \"synthetic-escaped-token\"}",
+            },
+            # The known token straddles the 240-character cap.
+            "storeOpsIssues": {
+                "state": "unavailable",
+                "reasonCode": "OPERATOR_STOREOPSISSUES_UNAVAILABLE",
+                "message": "x" * 225 + SMOKE_API_INVOKER + "y" * 20,
+            },
+        },
+        "unavailableSections": ["survey_assignments", "providers", "storeOpsIssues"],
+        "degradedSections": ["notices"],
+    }
+
+
+def _quoted_credential_leaks() -> tuple[str, ...]:
+    return (
+        "synthetic-db-secret",
+        "synthetic-provider-key",
+        "synthetic-escaped-token",
+        SMOKE_API_INVOKER[:8],
+    )
+
+
+def _assert_quoted_credentials_masked(bootstrap: dict[str, object]) -> None:
+    sections = bootstrap["non_available_sections"]
+    assert sections["survey_assignments"]["message"] == (
+        'db rejected {"password": <redacted>, "user": "odp"}'
+    )
+    assert sections["providers"]["message"] == "provider config {'api_key': <redacted>}"
+    assert sections["notices"]["message"] == r"upstream body {\"token\": <redacted>}"
+    # Known-token redaction runs before the cut, so no prefix of it survives.
+    assert sections["storeOpsIssues"]["message"] == "x" * 225 + "<redacted>" + "yy..."
+    assert sections["storeOpsIssues"]["reason_code"] == "OPERATOR_STOREOPSISSUES_UNAVAILABLE"
+
+
+def test_deterministic_smoke_masks_quoted_and_boundary_secrets_in_operator_sections() -> None:
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _quoted_credential_operator_sections()
+    server, url = start_server()
+    try:
+        checks, report = validator.smoke_checks(
+            api_url=url,
+            web_url=url,
+            expected_sha=EXPECTED_SHA,
+            bearer_token=SMOKE_BEARER,
+            operator_role="ops-lead",
+            operator_subject="smoke-operator",
+            operator_tenant="tenant-live",
+            correlation_id="corr-operator-quoted-secrets",
+            timeout=2,
+            api_invoker_token=SMOKE_API_INVOKER,
+        )
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    rendered = json.dumps(report) + json.dumps([[c.name, c.detail] for c in checks])
+    for leaked in _quoted_credential_leaks():
+        assert leaked not in rendered
+    _assert_quoted_credentials_masked(report["operator_bootstrap"])
+    by_name = {check.name: check for check in checks}
+    assert by_name["smoke:/api/v1/operator/bootstrap:provenance"].ok is False
+
+
+def test_smoke_cli_report_masks_quoted_and_boundary_secrets_in_operator_sections(
+    tmp_path: Path,
+) -> None:
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _quoted_credential_operator_sections()
+    server, url = start_server()
+    report_path = tmp_path / "cloud-run-smoke.json"
+    runtime_env_path = tmp_path / "api-env.json"
+    runtime_env_path.write_text(
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-live"}), encoding="utf-8"
+    )
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(VALIDATOR_PATH),
+                "smoke",
+                "--runtime-env-file",
+                str(runtime_env_path),
+                "--api-url",
+                url,
+                "--web-url",
+                url,
+                "--expected-sha",
+                EXPECTED_SHA,
+                "--smoke-retry-attempts",
+                "1",
+                "--output",
+                str(report_path),
+            ],
+            cwd=ROOT,
+            env=_smoke_cli_env(),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    # Degraded stays fail-closed; the report says which sections and why.
+    assert result.returncode == 1, result.stdout + result.stderr
+    text = report_path.read_text(encoding="utf-8")
+    for leaked in _quoted_credential_leaks():
+        assert leaked not in text
+        assert leaked not in result.stdout + result.stderr
+    report = json.loads(text)
+    assert report["ok"] is False
+    _assert_quoted_credentials_masked(report["operator_bootstrap"])
+    provenance = next(
+        check
+        for check in report["checks"]
+        if check["name"] == "smoke:/api/v1/operator/bootstrap:provenance"
+    )
+    assert "providers:OPERATOR_PROVIDERS_UNAVAILABLE" in provenance["detail"]
+    assert "notices:OPERATOR_NOTICES_PARTIAL" in provenance["detail"]
+
+
+def test_deterministic_smoke_live_operator_bootstrap_report_is_unchanged() -> None:
+    DeterministicRuntimeHandler.operator_section_meta = {
+        "sections": {
+            "stores": {"state": "available", "source": "postgresql", "recordCount": 3},
+        },
+        "unavailableSections": [],
+        "degradedSections": [],
+    }
+    server, url = start_server()
+    try:
+        checks, report = run_smoke(url)
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    assert all(check.ok for check in checks)
+    assert set(report["operator_bootstrap"]) == {
+        "status",
+        "data_mode",
+        "data_source",
+        "origin_kind",
+        "tenant_scope",
+    }
+    by_name = {check.name: check for check in checks}
+    assert by_name["smoke:/api/v1/operator/bootstrap:provenance"].detail == (
+        "data_mode=live data_source=postgresql"
+    )
+    assert "sections=" not in by_name["smoke:/api/v1/operator/bootstrap:read_provenance"].detail
+
+
 def test_workflows_do_not_reference_secrets_in_step_if() -> None:
     for workflow in WORKFLOWS:
         text = workflow.read_text(encoding="utf-8")
@@ -2298,7 +2582,8 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     assert 'gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}"' in text
     assert 'execute_job "worker" "${WORKER_CANDIDATE_JOB}"' in text
     assert 'execute_job "scheduler" "${SCHEDULER_CANDIDATE_JOB}"' in text
-    assert "gcloud scheduler jobs" in text
+    assert 'source product_ops/deployment/cloud_run_release_traffic.sh' in text
+    assert "gcloud scheduler jobs" in TRAFFIC_SHELL_HELPER.read_text(encoding="utf-8")
     assert "jobs-smoke" in text
     assert "validate_cloud_run_live_deployment.py smoke" in text
     assert "validate_cloud_run_live_deployment.py compatibility-smoke" in text
@@ -2317,6 +2602,13 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     web_cut = text.index('promote_service_traffic "${WEB_SERVICE}"')
     committed = text.index("DEPLOYMENT_COMMITTED=true")
     assert migration_gate < candidate_smoke < api_cut < web_cut < committed
+    assert text.index('pause_scheduler_trigger "${SCHEDULER_SCHEDULE_NAME}"') < text.index(
+        'execute_job "scheduler" "${SCHEDULER_CANDIDATE_JOB}"'
+    )
+    assert text.index('--output "${LIVE_E2E_REPORT}"') < text.index(
+        'resume_scheduler_trigger "${SCHEDULER_SCHEDULE_NAME}"'
+    ) < committed
+    assert "upsert_scheduler_trigger()" not in text
     assert '--set-secrets="${API_SECRET_BINDINGS}"' in text
     assert '--set-secrets="${WEB_SECRET_BINDINGS}"' in text
     assert "ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}" in text
@@ -2364,6 +2656,263 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     assert result.returncode == 0, result.stderr
 
 
+REVISION_RELEASE_SHA = "4fc05643b17165d54ef841d5d1343bafed94a02f"
+REVISION_NAME_PATTERN = re.compile(r"[a-z]([-a-z0-9]*[a-z0-9])?")
+
+
+def _run_release_naming(
+    name: str, *args: str, **env: str
+) -> subprocess.CompletedProcess[str]:
+    """Execute one of the deploy script's own revision-naming functions."""
+    function = _extract_shell_function(DEPLOY_SCRIPT.read_text(encoding="utf-8"), name)
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"GITHUB_ACTIONS", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"}
+    }
+    environment.update({"ODAY_RELEASE_SHA": REVISION_RELEASE_SHA, **env})
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'set -euo pipefail\n{function}{name} "$@"',
+            "bash",
+            *args,
+        ],
+        cwd=ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_release_revision_suffix(*services: str, **env: str) -> subprocess.CompletedProcess[str]:
+    return _run_release_naming("release_revision_suffix", *services, **env)
+
+
+def _run_release_revision_tag(
+    suffix: str, *services: str, **env: str
+) -> subprocess.CompletedProcess[str]:
+    return _run_release_naming("release_revision_tag", suffix, *services, **env)
+
+
+def test_revision_suffix_is_defined_once_and_shared_by_api_and_web() -> None:
+    """ODP-CLOUD-RUN-REVISION-SUFFIX-PER-ATTEMPT-001: one definition, both deploys."""
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assignments = re.findall(r"^\s*REVISION_SUFFIX=.*$", text, flags=re.MULTILINE)
+    assert assignments == [
+        'REVISION_SUFFIX="$(release_revision_suffix "${API_SERVICE}" "${WEB_SERVICE}")"'
+    ]
+    assert text.count('--revision-suffix="${REVISION_SUFFIX}"') == 2
+    assert "--revision-suffix=" not in text.replace('--revision-suffix="${REVISION_SUFFIX}"', "")
+    tags = re.findall(r"^\s*(?:API_|WEB_)?REVISION_TAG=.*$", text, flags=re.MULTILINE)
+    assert tags == [
+        'REVISION_TAG="$(release_revision_tag "${REVISION_SUFFIX}" "${API_SERVICE}" "${WEB_SERVICE}")"',
+        'API_REVISION_TAG="${REVISION_TAG}"',
+        'WEB_REVISION_TAG="${REVISION_TAG}"',
+    ]
+    assert text.count('--tag="${API_REVISION_TAG}"') == 1
+    assert text.count('--tag="${WEB_REVISION_TAG}"') == 1
+    # Both candidates are checked against the pre-deploy snapshot after it is
+    # captured and before the first Cloud Run mutation (the migration job).
+    guards = [
+        'assert_candidate_unused "${API_TRAFFIC_SNAPSHOT}" "${API_REVISION_TAG}" '
+        '"${API_SERVICE}-${REVISION_SUFFIX}"',
+        'assert_candidate_unused "${WEB_TRAFFIC_SNAPSHOT}" "${WEB_REVISION_TAG}" '
+        '"${WEB_SERVICE}-${REVISION_SUFFIX}"',
+    ]
+    for guard in guards:
+        assert text.count(guard) == 1
+        assert text.index('capture_service_traffic "${WEB_SERVICE}"') < text.index(guard)
+        assert text.index(guard) < text.index('gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}"')
+    # Resolved after the read-only preflight and before the first Cloud Run mutation.
+    assignment = text.index(assignments[0])
+    assert text.index("validate_cloud_run_live_deployment.py preflight") < assignment
+    assert assignment < text.index('gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}"')
+    assert assignment < text.index('gcloud run deploy "${API_SERVICE}"')
+
+
+def test_revision_suffix_differs_per_github_run_attempt_for_the_same_sha() -> None:
+    first = _run_release_revision_suffix(
+        "oday-api",
+        "oday-web",
+        GITHUB_ACTIONS="true",
+        GITHUB_RUN_ID="40598998837",
+        GITHUB_RUN_ATTEMPT="1",
+    )
+    retry = _run_release_revision_suffix(
+        "oday-api",
+        "oday-web",
+        GITHUB_ACTIONS="true",
+        GITHUB_RUN_ID="40598998837",
+        GITHUB_RUN_ATTEMPT="2",
+    )
+    rerun = _run_release_revision_suffix(
+        "oday-api",
+        "oday-web",
+        GITHUB_ACTIONS="true",
+        GITHUB_RUN_ID="40611111111",
+        GITHUB_RUN_ATTEMPT="1",
+    )
+
+    assert (first.returncode, retry.returncode, rerun.returncode) == (0, 0, 0), (
+        first.stderr + retry.stderr + rerun.stderr
+    )
+    assert first.stdout == "4fc05643b171-r40598998837-a1"
+    assert retry.stdout == "4fc05643b171-r40598998837-a2"
+    assert rerun.stdout == "4fc05643b171-r40611111111-a1"
+    # The failed attempt-2 name from Runtime Release run 40598998837 is gone.
+    assert "oday-api-release-4fc05643b171" not in {
+        f"oday-api-{result.stdout}" for result in (first, retry, rerun)
+    }
+
+
+def test_revision_suffix_outside_github_actions_is_explicit_and_time_bound() -> None:
+    before = int(time.time())
+    result = _run_release_revision_suffix("oday-api", "oday-web")
+    after = int(time.time())
+
+    assert result.returncode == 0, result.stderr
+    match = re.fullmatch(r"4fc05643b171-l([0-9]+)-p([0-9]+)", result.stdout)
+    assert match, result.stdout
+    assert before <= int(match.group(1)) <= after
+    # A local name can never take the form an Actions attempt uses.
+    assert "-r" not in result.stdout
+
+
+def test_local_revision_suffixes_started_in_the_same_second_differ(tmp_path: Path) -> None:
+    """Two local attempts in one fixed second are told apart by the deploy shell."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_date = bin_dir / "date"
+    fake_date.write_text("#!/bin/sh\necho 1793180000\n", encoding="utf-8")
+    fake_date.chmod(0o755)
+    path = f"{bin_dir}:{os.environ.get('PATH', '')}"
+
+    first = _run_release_revision_suffix("oday-api", "oday-web", PATH=path)
+    second = _run_release_revision_suffix("oday-api", "oday-web", PATH=path)
+
+    assert (first.returncode, second.returncode) == (0, 0), first.stderr + second.stderr
+    for result in (first, second):
+        assert re.fullmatch(r"4fc05643b171-l1793180000-p[0-9]+", result.stdout), result.stdout
+    assert first.stdout != second.stdout
+    tags = [_run_release_revision_tag(r.stdout, "oday-api", "oday-web") for r in (first, second)]
+    assert all(tag.returncode == 0 for tag in tags), [tag.stderr for tag in tags]
+
+
+def test_candidate_tag_names_the_attempt_and_keeps_the_release_prefix() -> None:
+    suffixes = [
+        "4fc05643b171-r40598998837-a1",
+        "4fc05643b171-r40598998837-a2",
+        "4fc05643b171-r40611111111-a1",
+        "4fc05643b171-l1793180000-p4242",
+    ]
+    tags = [_run_release_revision_tag(suffix, "oday-api", "oday-web") for suffix in suffixes]
+
+    assert all(tag.returncode == 0 for tag in tags), [tag.stderr for tag in tags]
+    for suffix, tag in zip(suffixes, tags, strict=True):
+        digest = hashlib.sha256(suffix.encode()).hexdigest()[:4]
+        assert tag.stdout == f"candidate-4fc05643b17165d5-{digest}"
+        assert REVISION_NAME_PATTERN.fullmatch(tag.stdout)
+    assert len({tag.stdout for tag in tags}) == len(suffixes)
+    # Deterministic: the same attempt always names the same tag.
+    again = _run_release_revision_tag(suffixes[1], "oday-api", "oday-web")
+    assert again.stdout == tags[1].stdout
+
+
+@pytest.mark.parametrize(
+    ("service", "fits"),
+    [
+        ("oday-api", True),
+        ("oday-prod-api", True),  # infra/terraform/cloud_run.tf, environment=prod
+        ("oday-prod-web", True),
+        ("s" * 15, True),
+        ("s" * 16, False),
+    ],
+)
+def test_candidate_tag_fits_the_tagged_url_host(service: str, fits: bool) -> None:
+    result = _run_release_revision_tag("4fc05643b171-r40598998837-a2", "oday-api", service)
+
+    if fits:
+        assert result.returncode == 0, result.stderr
+        # <tag>---<service>-<10-character hash>-<2-character region> is one DNS label.
+        assert len(f"{result.stdout}---{service}-abcdefghij-de") <= 63
+    else:
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert "exceed the 46 characters" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"GITHUB_ACTIONS": "true"},
+        {"GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "40598998837"},
+        {"GITHUB_RUN_ID": "40598998837"},
+        {"GITHUB_RUN_ATTEMPT": "2"},
+        {"GITHUB_RUN_ID": "40598998837", "GITHUB_RUN_ATTEMPT": "0"},
+        {"GITHUB_RUN_ID": "4059899883x", "GITHUB_RUN_ATTEMPT": "1"},
+    ],
+)
+def test_revision_suffix_refuses_partial_github_attempt_identity(env: dict[str, str]) -> None:
+    result = _run_release_revision_suffix("oday-api", "oday-web", **env)
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("api_service", "web_service"),
+    [
+        ("oday-api", "oday-web"),  # dev (Runtime Release run 40598998837)
+        ("oday-prod-api", "oday-prod-web"),  # infra/terraform/cloud_run.tf, environment=prod
+    ],
+)
+def test_revision_names_for_deployed_services_fit_cloud_run_limit(
+    api_service: str, web_service: str
+) -> None:
+    # A two-digit attempt and a run id one digit longer than today's leave headroom.
+    result = _run_release_revision_suffix(
+        api_service,
+        web_service,
+        GITHUB_ACTIONS="true",
+        GITHUB_RUN_ID="405989988370",
+        GITHUB_RUN_ATTEMPT="50",
+    )
+
+    assert result.returncode == 0, result.stderr
+    for service in (api_service, web_service):
+        revision = f"{service}-{result.stdout}"
+        assert len(revision) <= 63, revision
+        assert REVISION_NAME_PATTERN.fullmatch(revision), revision
+
+
+def test_revision_suffix_refuses_a_name_cloud_run_would_reject() -> None:
+    longest = "s" * 34
+    attempt = {"GITHUB_RUN_ID": "40598998837", "GITHUB_RUN_ATTEMPT": "2"}
+
+    fits = _run_release_revision_suffix("oday-api", longest, **attempt)
+    too_long = _run_release_revision_suffix("oday-api", longest + "s", **attempt)
+    uppercase = _run_release_revision_suffix("Oday-api", "oday-web", **attempt)
+
+    assert fits.returncode == 0, fits.stderr
+    assert len(f"{longest}-{fits.stdout}") == 63
+    assert too_long.returncode == 1
+    assert too_long.stdout == ""
+    assert f"'{longest}s-4fc05643b171-r40598998837-a2' (64 characters)" in too_long.stderr
+    assert uppercase.returncode == 1
+    assert "Oday-api-4fc05643b171-r40598998837-a2" in uppercase.stderr
+
+
+def test_release_traffic_check_still_accepts_the_deploy_script() -> None:
+    checks = {check.name: check for check in validator.repository_capability_checks(ROOT)}
+
+    assert checks["repository:release_traffic"].ok, checks["repository:release_traffic"].detail
+
+
 def _traffic_description(
     *,
     service_url: str = "https://service.example.test",
@@ -2379,6 +2928,38 @@ def _traffic_description(
             ],
         }
     }
+
+
+def test_traffic_helper_refuses_a_candidate_the_service_already_has() -> None:
+    description = _traffic_description(
+        traffic=[
+            {"revisionName": "oday-api-4fc05643b171-r1-a1", "percent": 100},
+            {
+                "revisionName": "oday-api-4fc05643b171-r1-a1",
+                "tag": "candidate-4fc05643b17165d5-aaaa",
+                "url": "https://candidate-4fc05643b17165d5-aaaa---oday-api.example.test",
+            },
+        ]
+    )
+
+    traffic_helper.assert_candidate_unused(
+        description, "candidate-4fc05643b17165d5-bbbb", "oday-api-4fc05643b171-r1-a2"
+    )
+    traffic_helper.assert_candidate_unused(
+        traffic_helper.absent_snapshot("oday-api"),
+        "candidate-4fc05643b17165d5-aaaa",
+        "oday-api-4fc05643b171-r1-a1",
+    )
+    with pytest.raises(ValueError, match="would move it off"):
+        traffic_helper.assert_candidate_unused(
+            description, "candidate-4fc05643b17165d5-aaaa", "oday-api-4fc05643b171-r1-a2"
+        )
+    with pytest.raises(ValueError, match="already exists"):
+        traffic_helper.assert_candidate_unused(
+            description, "candidate-4fc05643b17165d5-bbbb", "oday-api-4fc05643b171-r1-a1"
+        )
+    with pytest.raises(ValueError, match="missing status.traffic"):
+        traffic_helper.assert_candidate_unused({"status": {}}, "tag", "revision")
 
 
 def test_traffic_helper_resolves_tagged_revision_and_exact_restore_split() -> None:
@@ -2493,7 +3074,7 @@ fi
     calls = gcloud_log.read_text(encoding="utf-8").splitlines()
     assert any("update-traffic api-service" in call for call in calls)
     assert any("update-traffic web-service" in call for call in calls)
-    assert all("--to-revisions=service-old-a=80,service-old-b=20" in call for call in calls)
+    assert all("--to-revisions=service-old-a=80,service-old-b=20" in call for call in calls if "update-traffic" in call)
 
 
 def test_bootstrap_rollback_deletes_service_that_was_previously_absent(
@@ -2512,7 +3093,10 @@ def test_bootstrap_rollback_deletes_service_that_was_previously_absent(
     fake_gcloud.write_text(
         """#!/usr/bin/env bash
 printf '%s\n' "$*" >>"${GCLOUD_LOG}"
-if [ "${1:-} ${2:-} ${3:-}" = "run services list" ]; then
+if [ "${1:-} ${2:-} ${3:-}" = "run services delete" ]; then
+  touch "${GCLOUD_LOG}.deleted"
+fi
+if [ "${1:-} ${2:-} ${3:-}" = "run services list" ] && [ ! -e "${GCLOUD_LOG}.deleted" ]; then
   printf '%s\n' "api-service"
 fi
 """,
@@ -2547,6 +3131,37 @@ fi
     assert all("update-traffic" not in call for call in calls)
 
 
+def _scheduler_restore_spy(
+    tmp_path: Path, snapshot: Path, *, fail_readback: bool = False,
+) -> tuple[dict[str, str], Path, Path]:
+    from tests.ops.test_bluegreen_release import FAKE_RELEASE_GCLOUD
+    payload = json.loads(snapshot.read_text())
+    trigger = payload["name"].rsplit("/", 1)[-1]
+    state_path = tmp_path / "scheduler-state.json"
+    state_path.write_text(json.dumps({
+        "triggers": {trigger: payload}, "jobs": {}, "executions": {},
+        "control": {"fail_describe_purpose": "verify_scheduler_snapshot"} if fail_readback else {},
+    }))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(f"#!{sys.executable}\n" + FAKE_RELEASE_GCLOUD.split("\n", 1)[1])
+    fake_gcloud.chmod(0o755)
+    log = tmp_path / "gcloud.log"
+    return {
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "RELEASE_CLOUD_STATE": str(state_path), "RELEASE_CLOUD_LOG": str(log),
+        "ODP_TEST_GCLOUD_BIN": str(fake_gcloud),
+    }, state_path, log
+
+
+_SCHEDULER_RESTORE_SPY = r'''
+gcloud() {
+  ODP_TEST_GCLOUD_PURPOSE="${FUNCNAME[*]}" "$ODP_TEST_GCLOUD_BIN" "$@"
+}
+'''
+
+
 def test_scheduler_trigger_restore_uses_recorded_target_and_schedule(
     tmp_path: Path,
 ) -> None:
@@ -2554,10 +3169,12 @@ def test_scheduler_trigger_restore_uses_recorded_target_and_schedule(
     snapshot.write_text(
         json.dumps(
             {
+                "name": "projects/test-project/locations/test-region/jobs/worker-trigger",
                 "schedule": "17 * * * *",
                 "timeZone": "Asia/Taipei",
+                "state": "PAUSED",
                 "httpTarget": {
-                    "uri": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/old-job:run",
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/old-job:run",
                     "oauthToken": {
                         "serviceAccountEmail": "scheduler@example.test",
                         "scope": "https://www.googleapis.com/auth/cloud-platform",
@@ -2567,29 +3184,18 @@ def test_scheduler_trigger_restore_uses_recorded_target_and_schedule(
         ),
         encoding="utf-8",
     )
-    gcloud_log = tmp_path / "gcloud.log"
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_gcloud = fake_bin / "gcloud"
-    fake_gcloud.write_text(
-        '#!/usr/bin/env bash\n'
-        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
-        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
-        f'  cat "{snapshot}"\n'
-        'fi\n',
-        encoding="utf-8",
-    )
-    fake_gcloud.chmod(0o755)
+    cloud_env, state_path, gcloud_log = _scheduler_restore_spy(tmp_path, snapshot)
     command = (
         f'source "{TRAFFIC_SHELL_HELPER}"\n'
-        f'restore_scheduler_trigger "worker-trigger" "{snapshot}"\n'
+        + _SCHEDULER_RESTORE_SPY
+        + f'restore_scheduler_trigger "worker-trigger" "{snapshot}"\n'
     )
     result = subprocess.run(
         ["bash", "-c", command],
         cwd=ROOT,
         env={
             **os.environ,
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            **cloud_env,
             "GCLOUD_LOG": str(gcloud_log),
             "GCP_PROJECT": "test-project",
             "GCP_REGION": "test-region",
@@ -2601,10 +3207,13 @@ def test_scheduler_trigger_restore_uses_recorded_target_and_schedule(
     )
 
     assert result.returncode == 0, result.stderr
-    call = gcloud_log.read_text(encoding="utf-8")
+    call = "\n".join(" ".join(json.loads(line)) for line in gcloud_log.read_text(encoding="utf-8").splitlines())
     assert "scheduler jobs update http worker-trigger" in call
     assert "--schedule=17 * * * *" in call
     assert "/jobs/old-job:run" in call
+    actual = json.loads(state_path.read_text())["triggers"]["worker-trigger"]
+    assert actual["schedule"] == "17 * * * *" and actual["timeZone"] == "Asia/Taipei"
+    assert actual["httpTarget"]["uri"].endswith("/jobs/old-job:run")
 
 
 def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
@@ -2612,11 +3221,12 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
     snapshot.write_text(
         json.dumps(
             {
+                "name": "projects/test-project/locations/test-region/jobs/worker-trigger",
                 "schedule": "0 * * * *",
                 "timeZone": "Asia/Taipei",
                 "state": "ENABLED",
                 "httpTarget": {
-                    "uri": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker-job:run",
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/worker-job:run",
                     "httpMethod": "POST",
                     "headers": {
                         "Content-Type": "application/json",
@@ -2625,7 +3235,7 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
                     "body": "e30=",
                     "oidcToken": {
                         "serviceAccountEmail": "scheduler-sa@example.test",
-                        "audience": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker-job:run",
+                        "audience": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/worker-job:run",
                     },
                 },
                 "retryConfig": {
@@ -2644,11 +3254,23 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
     fake_bin.mkdir()
     fake_gcloud = fake_bin / "gcloud"
     fake_gcloud.write_text(
-        '#!/usr/bin/env bash\n'
-        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
-        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
-        f'  cat "{snapshot}"\n'
-        'fi\n',
+        f"""#!/usr/bin/env bash
+printf '%s\\n' "$*" >>"${{GCLOUD_LOG}}"
+if [[ "$*" == *"scheduler jobs list"* ]]; then
+  echo "projects/test-project/locations/test-region/jobs/worker-trigger"
+fi
+if [[ "$*" == *"scheduler jobs pause"* ]]; then touch "${{GCLOUD_LOG}}.paused"; fi
+if [[ "$*" == *"scheduler jobs resume"* ]]; then rm -f "${{GCLOUD_LOG}}.paused"; fi
+if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then
+  python3 - "{snapshot}" "${{GCLOUD_LOG}}.paused" <<'PY'
+import json, os, sys
+payload = json.load(open(sys.argv[1]))
+if os.path.exists(sys.argv[2]):
+    payload["state"] = "PAUSED"
+print(json.dumps(payload))
+PY
+fi
+""",
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
@@ -2675,7 +3297,7 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     call = gcloud_log.read_text(encoding="utf-8")
     assert "--oidc-service-account-email=scheduler-sa@example.test" in call
-    assert "--oidc-token-audience=https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker-job:run" in call
+    assert "--oidc-token-audience=https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/worker-job:run" in call
     assert "--max-retry-attempts=3" in call
     assert "--min-backoff=10s" in call
     assert "--max-backoff=600s" in call
@@ -2685,7 +3307,78 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
         "--update-headers=Content-Type=application/json,User-Agent=Google-Cloud-Scheduler"
         in call
     )
-    assert "--headers=Content-Type=application/json" not in call
+    assert all("--headers=" not in line for line in call.splitlines() if "scheduler jobs update" in line)
+
+
+@pytest.mark.parametrize(
+    ("listed", "admitted"),
+    [
+        ("worker-trigger", True),
+        ("projects/test-project/locations/test-region/jobs/worker-trigger", True),
+        ("worker-trigger\nworker-trigger-old", False),
+        ("other-trigger", False),
+    ],
+)
+def test_scheduler_trigger_capture_accepts_one_exact_job_name(
+    tmp_path: Path, listed: str, admitted: bool
+) -> None:
+    """gcloud prints the job ID for value(name); only one exact match is admitted."""
+    snapshot = tmp_path / "scheduler.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "name": "projects/test-project/locations/test-region/jobs/worker-trigger",
+                "schedule": "0 * * * *",
+                "timeZone": "Asia/Taipei",
+                "state": "ENABLED",
+                "httpTarget": {
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/worker-job:run",
+                    "httpMethod": "POST",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    listing = tmp_path / "listing.txt"
+    listing.write_text(listed + "\n", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(
+        f"""#!/usr/bin/env bash
+if [[ "$*" == *"scheduler jobs list"* ]]; then cat "{listing}"; fi
+if [[ "$*" == *"scheduler jobs describe"* ]]; then cat "{snapshot}"; fi
+""",
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+    output = tmp_path / "captured.json"
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{TRAFFIC_SHELL_HELPER}"\n'
+            f'capture_scheduler_trigger "worker-trigger" "{output}" identity-only\n',
+        ],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "GCP_PROJECT": "test-project",
+            "GCP_REGION": "test-region",
+            "ODP_SCHEDULER_HELPER": str(SCHEDULER_HELPER_PATH),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    if admitted:
+        assert result.returncode == 0, result.stderr
+        assert json.loads(output.read_text(encoding="utf-8"))["name"].endswith("/jobs/worker-trigger")
+    else:
+        assert result.returncode != 0
+        assert "ambiguous scheduler lookup for worker-trigger" in result.stderr
 
 
 def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
@@ -2693,11 +3386,12 @@ def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
     snapshot.write_text(
         json.dumps(
             {
+                "name": "projects/test-project/locations/test-region/jobs/paused-trigger",
                 "schedule": "0 12 * * *",
                 "timeZone": "UTC",
                 "state": "PAUSED",
                 "httpTarget": {
-                    "uri": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/scheduler-job:run",
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/scheduler-job:run",
                     "oidcToken": {
                         "serviceAccountEmail": "scheduler-sa@example.test",
                     },
@@ -2706,29 +3400,25 @@ def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    gcloud_log = tmp_path / "gcloud.log"
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_gcloud = fake_bin / "gcloud"
-    fake_gcloud.write_text(
-        '#!/usr/bin/env bash\n'
-        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
-        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
-        f'  cat "{snapshot}"\n'
-        'fi\n',
-        encoding="utf-8",
+    cloud_env, state_path, gcloud_log = _scheduler_restore_spy(tmp_path, snapshot)
+    cloud = json.loads(state_path.read_text())
+    current = cloud["triggers"]["paused-trigger"]
+    current.update(schedule="5 * * * *", timeZone="Asia/Taipei")
+    current["httpTarget"]["uri"] = (
+        "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/candidate-job:run"
     )
-    fake_gcloud.chmod(0o755)
+    state_path.write_text(json.dumps(cloud))
     command = (
         f'source "{TRAFFIC_SHELL_HELPER}"\n'
-        f'restore_scheduler_trigger "paused-trigger" "{snapshot}"\n'
+        + _SCHEDULER_RESTORE_SPY
+        + f'restore_scheduler_trigger "paused-trigger" "{snapshot}"\n'
     )
     result = subprocess.run(
         ["bash", "-c", command],
         cwd=ROOT,
         env={
             **os.environ,
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            **cloud_env,
             "GCLOUD_LOG": str(gcloud_log),
             "GCP_PROJECT": "test-project",
             "GCP_REGION": "test-region",
@@ -2740,13 +3430,19 @@ def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    call = gcloud_log.read_text(encoding="utf-8")
-    assert "scheduler jobs pause paused-trigger" in call
+    call = "\n".join(" ".join(json.loads(line)) for line in gcloud_log.read_text(encoding="utf-8").splitlines())
+    assert "scheduler jobs update http paused-trigger" in call
+    assert "--schedule=0 12 * * *" in call and "--time-zone=UTC" in call
+    assert "scheduler jobs resume paused-trigger" not in call
+    actual = json.loads(state_path.read_text())["triggers"]["paused-trigger"]
+    assert actual["state"] == "PAUSED"
+    assert actual["schedule"] == "0 12 * * *" and actual["timeZone"] == "UTC"
+    assert actual["httpTarget"]["uri"].endswith("/jobs/scheduler-job:run")
 
 
 def test_scheduler_trigger_restore_deletes_absent_pre_deploy_trigger(tmp_path: Path) -> None:
     snapshot = tmp_path / "scheduler.json"
-    snapshot.write_text('{"exists": false}\n', encoding="utf-8")
+    snapshot.write_text('{"exists": false, "name": "projects/test-project/locations/test-region/jobs/absent-trigger"}\n', encoding="utf-8")
     gcloud_log = tmp_path / "gcloud.log"
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -2778,7 +3474,9 @@ def test_scheduler_trigger_restore_deletes_absent_pre_deploy_trigger(tmp_path: P
 
     assert result.returncode == 0, result.stderr
     call = gcloud_log.read_text(encoding="utf-8")
-    assert "scheduler jobs delete absent-trigger" in call
+    # Already absent is a verified no-op, not a swallowed delete failure.
+    assert "scheduler jobs list" in call
+    assert "scheduler jobs delete absent-trigger" not in call
 
 
 def test_scheduler_trigger_restore_partial_failure_continues_and_reports_diagnostics(
@@ -2788,10 +3486,12 @@ def test_scheduler_trigger_restore_partial_failure_continues_and_reports_diagnos
     snap1.write_text(
         json.dumps(
             {
+                "name": "projects/test-project/locations/test-region/jobs/trigger1",
                 "schedule": "0 * * * *",
                 "timeZone": "UTC",
+                "state": "PAUSED",
                 "httpTarget": {
-                    "uri": "https://example.test/1",
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/job1:run",
                     "oidcToken": {"serviceAccountEmail": "sa1@example.test"},
                 },
             }
@@ -2802,10 +3502,12 @@ def test_scheduler_trigger_restore_partial_failure_continues_and_reports_diagnos
     snap2.write_text(
         json.dumps(
             {
+                "name": "projects/test-project/locations/test-region/jobs/trigger2",
                 "schedule": "0 * * * *",
                 "timeZone": "UTC",
+                "state": "PAUSED",
                 "httpTarget": {
-                    "uri": "https://example.test/2",
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/job2:run",
                     "oidcToken": {"serviceAccountEmail": "sa2@example.test"},
                 },
             }
@@ -2869,40 +3571,30 @@ def test_scheduler_trigger_restore_fails_closed_when_readback_describe_fails(
     snapshot.write_text(
         json.dumps(
             {
+                "name": "projects/test-project/locations/test-region/jobs/worker-trigger",
                 "schedule": "0 * * * *",
                 "timeZone": "Asia/Taipei",
+                "state": "PAUSED",
                 "httpTarget": {
-                    "uri": "https://example.test/job:run",
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/job:run",
                     "oidcToken": {"serviceAccountEmail": "sa@example.test"},
                 },
             }
         ),
         encoding="utf-8",
     )
-    gcloud_log = tmp_path / "gcloud.log"
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_gcloud = fake_bin / "gcloud"
-    fake_gcloud.write_text(
-        '#!/usr/bin/env bash\n'
-        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
-        '  echo "gcloud describe error" >&2\n'
-        '  exit 1\n'
-        'fi\n'
-        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n',
-        encoding="utf-8",
-    )
-    fake_gcloud.chmod(0o755)
+    cloud_env, state_path, gcloud_log = _scheduler_restore_spy(tmp_path, snapshot, fail_readback=True)
     command = (
         f'source "{TRAFFIC_SHELL_HELPER}"\n'
-        f'restore_scheduler_trigger "worker-trigger" "{snapshot}"\n'
+        + _SCHEDULER_RESTORE_SPY
+        + f'restore_scheduler_trigger "worker-trigger" "{snapshot}"\n'
     )
     result = subprocess.run(
         ["bash", "-c", command],
         cwd=ROOT,
         env={
             **os.environ,
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            **cloud_env,
             "GCLOUD_LOG": str(gcloud_log),
             "GCP_PROJECT": "test-project",
             "GCP_REGION": "test-region",
@@ -2915,6 +3607,7 @@ def test_scheduler_trigger_restore_fails_closed_when_readback_describe_fails(
 
     assert result.returncode != 0
     assert "Error: failed to capture or validate readback snapshot for Cloud Scheduler trigger 'worker-trigger'." in result.stderr
+    assert json.loads(state_path.read_text())["triggers"]["worker-trigger"]["state"] == "PAUSED"
 
 
 def test_scheduler_trigger_restore_fails_closed_when_readback_drift_detected(
@@ -2924,10 +3617,12 @@ def test_scheduler_trigger_restore_fails_closed_when_readback_drift_detected(
     snapshot.write_text(
         json.dumps(
             {
+                "name": "projects/test-project/locations/test-region/jobs/worker-trigger",
                 "schedule": "0 * * * *",
                 "timeZone": "Asia/Taipei",
+                "state": "PAUSED",
                 "httpTarget": {
-                    "uri": "https://example.test/job:run",
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/job:run",
                     "oidcToken": {"serviceAccountEmail": "sa@example.test"},
                 },
             }
@@ -2938,10 +3633,12 @@ def test_scheduler_trigger_restore_fails_closed_when_readback_drift_detected(
     drifted_snapshot.write_text(
         json.dumps(
             {
+                "name": "projects/test-project/locations/test-region/jobs/worker-trigger",
                 "schedule": "0 * * * *",
                 "timeZone": "UTC",  # drifted timeZone
+                "state": "PAUSED",
                 "httpTarget": {
-                    "uri": "https://example.test/job:run",
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/job:run",
                     "oidcToken": {"serviceAccountEmail": "sa@example.test"},
                 },
             }
@@ -3044,6 +3741,25 @@ def test_scheduler_trigger_compare_verifies_redacted_equality_and_detects_drift(
 
     assert helper.compare_snapshots(before, after_same) is True
     assert helper.compare_snapshots(before, after_drift) is False
+
+
+def test_scheduler_describe_omitted_zero_and_default_fields_equal_explicit_defaults() -> None:
+    from product_ops.deployment.cloud_scheduler_trigger import compare_snapshots
+    observed = {
+        "name": "projects/p/locations/r/jobs/worker-trigger", "schedule": "17 * * * *",
+        "timeZone": "Asia/Taipei", "state": "PAUSED",
+        "httpTarget": {"uri": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker:run",
+                       "body": "e30=", "httpMethod": "POST", "headers": {"Content-Type": "application/json"},
+                       "oauthToken": {"serviceAccountEmail": "scheduler@example.test"}},
+        "retryConfig": {"minBackoffDuration": "5s", "maxBackoffDuration": "3600s", "maxDoublings": 5},
+    }
+    explicit = json.loads(json.dumps(observed))
+    explicit["retryConfig"].update(retryCount=0, maxRetryDuration="0s")
+    explicit.update(attemptDeadline="180s", description="")
+    assert compare_snapshots(explicit, observed)
+    assert compare_snapshots(observed, explicit)
+    explicit["retryConfig"]["retryCount"] = 1
+    assert not compare_snapshots(explicit, observed)
 
 
 def test_web_image_carries_release_and_live_binding_metadata() -> None:
@@ -5034,6 +5750,40 @@ def test_job_smoke_supports_migration_worker_and_scheduler_schemas(kind: str) ->
     )
 
 
+@pytest.mark.parametrize("kind", ["migration", "worker", "scheduler"])
+@pytest.mark.parametrize("dialect", ["knative", "v2"])
+def test_job_smoke_binds_exact_job_execution_and_immutable_image(kind: str, dialect: str) -> None:
+    name = f"oday-{kind}"
+    image = f"registry/{kind}@sha256:" + "b" * 64
+    execution = _succeeded_execution(name + "-execution")
+    if dialect == "knative":
+        job = _knative_job(kind=kind, name=name)
+        job["spec"]["template"]["spec"]["template"]["spec"]["containers"][0]["image"] = image
+        execution["metadata"]["labels"] = {"run.googleapis.com/job": name}
+        execution["spec"] = {"template": {"spec": {"containers": [{"image": image}]}}}
+    else:
+        job = _v2_job(kind=kind)
+        job["template"]["template"]["containers"][0]["image"] = image
+        execution["job"] = f"projects/oday/locations/asia-east1/jobs/{name}"
+        execution["template"] = {"containers": [{"image": image}]}
+    checks, report = validator.cloud_run_job_checks(
+        kind=kind, job_description=job, execution=execution,
+        expected_sha=RUN_30376737123_SHA, expected_image=image,
+        expected_job=f"projects/oday/locations/asia-east1/jobs/{name}",
+    )
+    assert all(check.ok for check in checks), _failed_names(checks)
+    assert report["job_image"] == report["execution_image"] == image
+    assert report["execution_name"] == name + "-execution"
+    execution["status"]["failedCount"] = 1
+    checks, _ = validator.cloud_run_job_checks(
+        kind=kind, job_description=job, execution=execution,
+        expected_sha=RUN_30376737123_SHA, expected_image=image,
+        expected_job=f"projects/oday/locations/asia-east1/jobs/{name}",
+    )
+    assert f"jobs-smoke:{kind}:execution" in _failed_names(checks)
+    assert f"jobs-smoke:{kind}:immutable_binding" in _failed_names(checks)
+
+
 def test_job_smoke_rejects_failed_execution_and_missing_provider_secrets() -> None:
     job = {
         "metadata": {"name": "scheduler-job", "labels": {}},
@@ -6321,7 +7071,13 @@ def test_cli_fails_closed_without_the_api_transport_token(
         str(report_path),
     ]
     if command == "smoke":
-        argv.extend(["--expected-sha", EXPECTED_SHA])
+        runtime_env_path = tmp_path / "api-env.json"
+        runtime_env_path.write_text(
+            json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-live"}), encoding="utf-8"
+        )
+        argv.extend(
+            ["--expected-sha", EXPECTED_SHA, "--runtime-env-file", str(runtime_env_path)]
+        )
     environment = {**os.environ, "ODP_OPERATOR_SMOKE_BEARER_TOKEN": "operator-app-token"}
     environment.pop("ODP_API_INVOKER_TOKEN", None)
 
@@ -6878,12 +7634,18 @@ def _smoke_cli_env() -> dict[str, str]:
 def test_smoke_cli_defaults_to_the_bounded_startup_retry_contract(tmp_path: Path) -> None:
     server, url = start_server()
     report_path = tmp_path / "cloud-run-smoke.json"
+    runtime_env_path = tmp_path / "api-env.json"
+    runtime_env_path.write_text(
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-live"}), encoding="utf-8"
+    )
     try:
         result = subprocess.run(
             [
                 sys.executable,
                 str(VALIDATOR_PATH),
                 "smoke",
+                "--runtime-env-file",
+                str(runtime_env_path),
                 "--api-url",
                 url,
                 "--web-url",
@@ -6935,11 +7697,17 @@ def test_smoke_cli_fails_closed_on_an_unbounded_retry_policy(
     tmp_path: Path, flag: str, value: str
 ) -> None:
     report_path = tmp_path / "cloud-run-smoke.json"
+    runtime_env_path = tmp_path / "api-env.json"
+    runtime_env_path.write_text(
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-live"}), encoding="utf-8"
+    )
     result = subprocess.run(
         [
             sys.executable,
             str(VALIDATOR_PATH),
             "smoke",
+            "--runtime-env-file",
+            str(runtime_env_path),
             "--api-url",
             "http://127.0.0.1:1",
             "--web-url",
@@ -7449,12 +8217,18 @@ def test_compatibility_redacts_a_token_quoted_by_a_transport_exception() -> None
 def test_smoke_cli_redacts_a_token_quoted_by_a_transport_exception(tmp_path: Path) -> None:
     server, url = start_server()
     report_path = tmp_path / "cloud-run-smoke.json"
+    runtime_env_path = tmp_path / "api-env.json"
+    runtime_env_path.write_text(
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-live"}), encoding="utf-8"
+    )
     try:
         result = subprocess.run(
             [
                 sys.executable,
                 str(VALIDATOR_PATH),
                 "smoke",
+                "--runtime-env-file",
+                str(runtime_env_path),
                 "--api-url",
                 url,
                 "--web-url",
@@ -7531,3 +8305,337 @@ def test_smoke_redacts_known_tokens_in_payload_keys_and_exception_diagnostics(
     assert all(
         "<redacted>" in attempt["error"] for attempt in report["health_probe"]["attempts"]
     )
+
+
+@pytest.mark.parametrize("diagnostic", (
+    '{"password": "synthetic-credential"}',
+    "{'api_key': 'synthetic-credential'}",
+    "driver (password=synthetic-credential)",
+    "[token=synthetic-credential]",
+))
+def test_operator_diagnostic_mask_preserves_closing_delimiters_when_repeated(diagnostic: str) -> None:
+    first = validator._bounded_diagnostic(diagnostic, 512, [])
+    second = validator._bounded_diagnostic(first, 512, [])
+    assert "synthetic-credential" not in first
+    assert "<redacted>" in first
+    assert first.endswith(diagnostic[-1])
+    assert second == first
+
+
+@pytest.mark.parametrize(("diagnostic", "expected"), (
+    ("postgresql://<redacted>:synthetic-still-raw@db.internal/odp",
+     "postgresql://<redacted>@db.internal/odp"),
+    ("password=<redacted>:synthetic-still-raw", "password=<redacted>"),
+    ("password=[REDACTED]:synthetic-still-raw", "password=<redacted>"),
+))
+def test_operator_diagnostic_masks_mixed_redacted_and_raw_credentials(
+    diagnostic: str, expected: str,
+) -> None:
+    assert validator._bounded_diagnostic(diagnostic, 512, []) == expected
+
+
+def test_smoke_report_is_compatible_with_existing_generic_receipt_redaction() -> None:
+    # Component-composition contract, not a new runtime publication connection.
+    from delivery_toolchain.release.release_receipts import build_receipt
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _quoted_credential_operator_sections()
+    server, url = start_server()
+    try:
+        checks, report = validator.smoke_checks(
+            api_url=url, web_url=url, expected_sha=EXPECTED_SHA,
+            bearer_token=SMOKE_BEARER, api_invoker_token=SMOKE_API_INVOKER,
+            operator_role="ops-lead", operator_subject="smoke-operator",
+            operator_tenant="tenant-live", correlation_id="corr-composed-receipt", timeout=2,
+        )
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+    report["checks"] = [asdict(check) for check in checks]
+    report["checks"].append({"name": "secret:ODP_API_INVOKER_TOKEN", "ok": True, "detail": "configured"})
+    wrapped = build_receipt(
+        receipt_id="ODP-SMOKE-DIAGNOSTICS", receipt_kind="verification",
+        release_id="odp-20260824-001", manifest_ref="docs/evidence/gates/RELEASE_MANIFEST.json",
+        manifest_digest="sha256:" + "b" * 64, release_sha=EXPECTED_SHA,
+        environment="staging", stage="staging-verified", result="fail", recorded_by="Codex",
+        artifacts=[".odp_data/deployment/cloud-run-smoke.json"], details=report,
+    )
+    assert wrapped["details"] == report
+    for leaked in _quoted_credential_leaks():
+        assert leaked not in json.dumps(wrapped)
+
+
+# The tenant verdict belongs to the existing authenticated bootstrap response.
+# These fixtures are synthetic; no principal/token/tenant is queried separately.
+@pytest.mark.parametrize(
+    ("expected_tenant", "tenant_meta", "expected_present", "actual_present", "matches"),
+    [
+        ("tenant-live", {"tenantId": "tenant-live"}, True, True, True),
+        (" \ttenant-live\r\n", {"tenantId": "\r tenant-live\t "}, True, True, True),
+        ("tenant-live", {"tenantId": "tenant-other"}, True, True, False),
+        ("tenant-live", {}, True, False, False),
+        ("tenant-live", {"tenantId": None}, True, False, False),
+        ("tenant-live", {"tenantId": ""}, True, False, False),
+        ("tenant-live", {"tenantId": " \t\r\n"}, True, False, False),
+        ("tenant-live", {"tenantId": 42}, True, False, False),
+        ("tenant-live", {"tenantId": True}, True, False, False),
+        ("tenant-live", {"tenantId": ["tenant-live"]}, True, False, False),
+        ("tenant-live", {"tenantId": {"value": "tenant-live"}}, True, False, False),
+        ("", {"tenantId": "tenant-live"}, False, True, False),
+        (" \t\n", {"tenantId": "tenant-live"}, False, True, False),
+        (None, {"tenantId": "tenant-live"}, False, True, False),
+        (42, {"tenantId": "tenant-live"}, False, True, False),
+        # The namespace hashes text. UUID equivalence must not replace equality.
+        (
+            "aabbccdd-1234-4567-89ab-aabbccddeeff",
+            {"tenantId": "AABBCCDD-1234-4567-89AB-AABBCCDDEEFF"},
+            True, True, False,
+        ),
+        (
+            "aabbccdd-1234-4567-89ab-aabbccddeeff",
+            {"tenantId": "aabbccdd1234456789abaabbccddeeff"},
+            True, True, False,
+        ),
+    ],
+    ids=[
+        "same-text", "trim-only", "foreign-tenant", "missing", "null", "empty",
+        "whitespace", "number", "boolean", "list", "object", "expected-empty",
+        "expected-whitespace", "expected-null", "expected-number", "uuid-case",
+        "uuid-format",
+    ],
+)
+def test_smoke_tenant_scope_uses_the_same_bootstrap_response_without_exposing_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    expected_tenant: object,
+    tenant_meta: dict[str, object],
+    expected_present: bool,
+    actual_present: bool,
+    matches: bool,
+) -> None:
+    monkeypatch.setattr(DeterministicRuntimeHandler, "operator_tenant_meta", tenant_meta)
+    requests: list[tuple[str, dict[str, str]]] = []
+    original_get = DeterministicRuntimeHandler.do_GET
+
+    def record_request(self) -> None:
+        requests.append((self.path, {key.lower(): value for key, value in self.headers.items()}))
+        original_get(self)
+
+    monkeypatch.setattr(DeterministicRuntimeHandler, "do_GET", record_request)
+    server, url = start_server()
+    try:
+        checks, report = run_smoke(url, operator_tenant=expected_tenant)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    by_name = {check.name: check for check in checks}
+    tenant_check = by_name["smoke:/api/v1/operator/bootstrap:tenant_scope"]
+    assert tenant_check.ok is matches
+    assert report["operator_bootstrap"]["tenant_scope"] == {
+        "expected_tenant_present": expected_present,
+        "actual_tenant_present": actual_present,
+        "matches_deployment": matches,
+        "source": "bootstrap.meta.tenantId",
+    }
+    assert all(
+        check.ok for check in checks
+        if check.name != "smoke:/api/v1/operator/bootstrap:tenant_scope"
+    )
+    assert [path for path, _ in requests] == [*SMOKE_API_PATHS, "/operator"]
+    assert report["operator_bootstrap_probe"]["attempt_count"] == 1
+    for _, headers in requests:
+        assert not {
+            "x-operator-subject", "x-operator-tenant", "x-subject-id", "x-tenant-id",
+        } & headers.keys()
+    serialized = json.dumps(report) + json.dumps([asdict(check) for check in checks])
+    for raw in (expected_tenant, tenant_meta.get("tenantId")):
+        if isinstance(raw, str) and raw.strip():
+            assert raw.strip() not in serialized
+
+
+def test_smoke_tenant_scope_detail_does_not_change_with_identifier_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Two different mismatches must report the same fixed, non-identifying detail.
+    details: list[str] = []
+    server, url = start_server()
+    try:
+        for expected, actual in (("expected-one", "actual-one"), ("expected-two", "actual-two")):
+            monkeypatch.setattr(
+                DeterministicRuntimeHandler, "operator_tenant_meta", {"tenantId": actual}
+            )
+            checks, _ = run_smoke(url, operator_tenant=expected)
+            tenant_check = next(
+                check for check in checks
+                if check.name == "smoke:/api/v1/operator/bootstrap:tenant_scope"
+            )
+            assert tenant_check.ok is False
+            details.append(tenant_check.detail)
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert details[0] == details[1]
+    assert details[0]
+
+
+@pytest.mark.parametrize(
+    ("runtime_tenant", "expected_match"),
+    [("tenant-live", True), (" \ttenant-live\n", True), ("tenant-other", False)],
+    ids=["canonical", "canonical-trim", "canonical-mismatch"],
+)
+def test_smoke_cli_uses_only_the_runtime_file_canonical_tenant(
+    tmp_path: Path, runtime_tenant: str, expected_match: bool,
+) -> None:
+    runtime_env_path = tmp_path / "api-env.json"
+    runtime_env_path.write_text(
+        json.dumps({
+            "ODP_SCHEDULED_INGESTION_TENANT_ID": runtime_tenant,
+            "ODP_TENANT_ID": "tenant-live",
+            "ODP_OPERATOR_SMOKE_TENANT": "tenant-live",
+        }),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "cloud-run-smoke.json"
+    server, url = start_server()
+    try:
+        result = subprocess.run(
+            [
+                sys.executable, str(VALIDATOR_PATH), "smoke",
+                "--runtime-env-file", str(runtime_env_path),
+                "--api-url", url, "--web-url", url,
+                "--expected-sha", EXPECTED_SHA, "--output", str(report_path),
+            ],
+            cwd=ROOT,
+            env={
+                **_smoke_cli_env(),
+                "ODP_SCHEDULED_INGESTION_TENANT_ID": "process-env-conflict",
+                "ODP_TENANT_ID": "process-alias-conflict",
+                "ODP_OPERATOR_SMOKE_TENANT": "process-smoke-conflict",
+                "ODP_OPERATOR_SMOKE_SUBJECT": "compatibility-subject-not-authority",
+            },
+            check=False, capture_output=True, text=True,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert result.returncode == (0 if expected_match else 1), result.stdout + result.stderr
+    text = report_path.read_text(encoding="utf-8")
+    report = json.loads(text)
+    assert report["ok"] is expected_match
+    assert report["operator_bootstrap"]["tenant_scope"] == {
+        "expected_tenant_present": True,
+        "actual_tenant_present": True,
+        "matches_deployment": expected_match,
+        "source": "bootstrap.meta.tenantId",
+    }
+    failed = [check["name"] for check in report["checks"] if not check["ok"]]
+    assert failed == ([] if expected_match else ["smoke:/api/v1/operator/bootstrap:tenant_scope"])
+    assert report["probe_retry_policy"]["attempts"] == validator.SMOKE_PROBE_ATTEMPTS
+    assert report["probe_retry_policy"]["deadline_scope"] == "shared_by_api_probes"
+    assert report["operator_bootstrap_probe"]["attempt_count"] == 1
+    for forbidden in (
+        "tenant-live", "tenant-other", "process-env-conflict", "process-alias-conflict",
+        "process-smoke-conflict", "compatibility-subject-not-authority",
+    ):
+        assert forbidden not in text + result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "runtime_text",
+    [
+        None,
+        "{not-json-do-not-echo-runtime-input",
+        json.dumps(["do-not-echo-root-list"]),
+        json.dumps("do-not-echo-root-string"),
+        json.dumps({}),
+        json.dumps({"ODP_TENANT_ID": "tenant-live", "ODP_OPERATOR_SMOKE_TENANT": "tenant-live"}),
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": None}),
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": ""}),
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": " \t\n"}),
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": 4242424242}),
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": True}),
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": ["do-not-echo-list-value"]}),
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": {"tenant": "do-not-echo-object-value"}}),
+    ],
+    ids=[
+        "file-missing", "bad-json", "root-list", "root-string", "canonical-missing",
+        "alias-only", "null", "empty", "whitespace", "number", "boolean", "list", "object",
+    ],
+)
+def test_smoke_cli_rejects_invalid_runtime_tenant_without_fallback_or_value_disclosure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runtime_text: str | None,
+) -> None:
+    runtime_env_path = tmp_path / "runtime-input-do-not-echo.json"
+    if runtime_text is not None:
+        runtime_env_path.write_text(runtime_text, encoding="utf-8")
+    report_path = tmp_path / "cloud-run-smoke.json"
+    requests: list[str] = []
+    original_get = DeterministicRuntimeHandler.do_GET
+
+    def record_request(self) -> None:
+        requests.append(self.path)
+        original_get(self)
+
+    monkeypatch.setattr(DeterministicRuntimeHandler, "do_GET", record_request)
+    server, url = start_server()
+    try:
+        result = subprocess.run(
+            [
+                sys.executable, str(VALIDATOR_PATH), "smoke",
+                "--runtime-env-file", str(runtime_env_path),
+                "--api-url", url, "--web-url", url,
+                "--expected-sha", EXPECTED_SHA, "--output", str(report_path),
+            ],
+            cwd=ROOT,
+            env={
+                **_smoke_cli_env(),
+                "ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-live",
+                "ODP_TENANT_ID": "tenant-live",
+                "ODP_OPERATOR_SMOKE_TENANT": "tenant-live",
+            },
+            check=False, capture_output=True, text=True,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert result.returncode == 1, result.stdout + result.stderr
+    text = report_path.read_text(encoding="utf-8")
+    report = json.loads(text)
+    assert report["ok"] is False
+    assert [(check["name"], check["ok"]) for check in report["checks"]] == [
+        ("smoke:runtime_tenant", False)
+    ]
+    assert requests == []
+    assert report["secret_values_redacted"] is True
+    serialized = text + result.stdout + result.stderr
+    for forbidden in (
+        "tenant-live", "not-json-do-not-echo-runtime-input", "do-not-echo-root-list",
+        "do-not-echo-root-string", "4242424242", "do-not-echo-list-value",
+        "do-not-echo-object-value", str(runtime_env_path),
+    ):
+        assert forbidden not in serialized
+
+
+def test_smoke_cli_requires_the_runtime_env_file_argument(tmp_path: Path) -> None:
+    report_path = tmp_path / "cloud-run-smoke.json"
+    result = subprocess.run(
+        [
+            sys.executable, str(VALIDATOR_PATH), "smoke",
+            "--api-url", "http://127.0.0.1:1", "--web-url", "http://127.0.0.1:1",
+            "--expected-sha", EXPECTED_SHA, "--output", str(report_path),
+        ],
+        cwd=ROOT,
+        env={
+            **_smoke_cli_env(),
+            "ODP_SCHEDULED_INGESTION_TENANT_ID": "do-not-fallback-to-process-tenant",
+            "ODP_OPERATOR_SMOKE_TENANT": "do-not-fallback-to-legacy-tenant",
+        },
+        check=False, capture_output=True, text=True,
+    )
+    assert result.returncode == 2
+    assert "--runtime-env-file" in result.stderr
+    assert not report_path.exists()
+    assert "do-not-fallback-to-process-tenant" not in result.stdout + result.stderr
+    assert "do-not-fallback-to-legacy-tenant" not in result.stdout + result.stderr

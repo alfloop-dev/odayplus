@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-c5ec94d7b82d2f462bf2715af2a91a95",
+  "serialNumber": "urn:uuid:sha256-877f586fc3419955c0f489ab17c87cd3",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-24T08:14:52.039136+00:00",
+    "timestamp": "2026-11-04T01:38:00.193371+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@efbdaf4365e12c2b5cff13f5a7c40bd40495c857",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@efbdaf4365e12c2b5cff13f5a7c40bd40495c857"
+      "purl": "pkg:generic/alfloop-dev/odayplus@8e5872544bff88d421a1923c7957ca6b12429ce2",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@8e5872544bff88d421a1923c7957ca6b12429ce2"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "efbdaf4365e12c2b5cff13f5a7c40bd40495c857"
+        "value": "8e5872544bff88d421a1923c7957ca6b12429ce2"
       },
       {
         "name": "sbom-hash",
-        "value": "c5ec94d7b82d2f462bf2715af2a91a955d7661a5c0532b97d5ed9799a16aed1f"
+        "value": "877f586fc3419955c0f489ab17c87cd3990e1b4b998b182709a7bc14ff00db82"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:a56087db0c4df2903b1bb44816f92e014646e6cf7a457c3fa9d35a08feb6e71a"
+        "value": "sha256:1ffb7c7b7a9fb1148187ceaa11f40af163e4030f9a5a56f87264962080802b3a"
       },
       {
         "name": "container-base-images",
@@ -1623,7 +1623,10 @@
           "alg": "SHA-512",
           "content": "6J0vZqMZvRAJKtdWJdDGHEh1YJ2ZHG08/GOur8gCArYhO8ZkM//OXqtI2AAEz4jc2G+Wq4MfcePg8qNK5TZ4Kg=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "MapLibre"
+      }
     },
     {
       "name": "@maplibre/mlt",
@@ -6740,7 +6743,10 @@
           "alg": "SHA-512",
           "content": "vnS4AVwp1KHAF13i1vp1/2D5evWy3k5u/iW/B81QVsUZtV8cv2tU0b2VNFlqvh4kYwrFMDdjPCfAmfyJW9y14Q=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "Volodymyr Agafonkin"
+      }
     },
     {
       "name": "emoji-regex",
@@ -13418,7 +13424,10 @@
           "alg": "SHA-512",
           "content": "mnvGdvOrIvJOBGUEdGkrVXjN8E/VkIJCkf2eS1DH2yv82ORUlLttmDt0rWY38yYZmVwciZwBUvHM20qxBZf40w=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "Konstantin Kaefer"
+      }
     },
     {
       "name": "pendulum",
@@ -14465,10 +14474,10 @@
     },
     {
       "name": "pyasn1",
-      "version": "0.6.4",
+      "version": "0.6.5",
       "type": "library",
-      "purl": "pkg:pypi/pyasn1@0.6.4",
-      "bom-ref": "pkg:pypi/pyasn1@0.6.4",
+      "purl": "pkg:pypi/pyasn1@0.6.5",
+      "bom-ref": "pkg:pypi/pyasn1@0.6.5",
       "scope": "required",
       "licenses": [
         {
@@ -14480,11 +14489,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "9c447d8431c947fe4c8febc4ed9e760bc29011a5b01e5c74b67025bd9fb8ce81"
+          "content": "6b11616a6bcf3a40e635f082bb232fa57b5e0dd7f517bd7ddd69ec3794508a47"
         },
         {
           "alg": "SHA256",
-          "content": "deda9277cfd454080ec40b207fb6df82206a3a2688735233cdcd8d3d565f088b"
+          "content": "4017b0fce125096b8573b39c989fdb1a4b19cf761e683398184550fea0e66587"
         }
       ],
       "supplier": {
@@ -14773,10 +14782,10 @@
     },
     {
       "name": "pypdf",
-      "version": "6.21.2",
+      "version": "6.21.4",
       "type": "library",
-      "purl": "pkg:pypi/pypdf@6.21.2",
-      "bom-ref": "pkg:pypi/pypdf@6.21.2",
+      "purl": "pkg:pypi/pypdf@6.21.4",
+      "bom-ref": "pkg:pypi/pypdf@6.21.4",
       "scope": "optional",
       "licenses": [
         {
@@ -14788,11 +14797,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "0a3e1c5c886a1be03646c16a04827cc166c2a0575c971b26a4bf89686551c2d4"
+          "content": "c8817e3f888d47a087872ded69812c1ef30cacb871d6e053e0c00bbaf0bc2163"
         },
         {
           "alg": "SHA256",
-          "content": "1d44d1a3a200f25062adff0085b02040e4646431ac2ccac22e42679e91466084"
+          "content": "33e4fb41ca352810eb4e9838aa0d82d6888a5f8bf682f43e99cce5faa666255c"
         }
       ],
       "supplier": {
@@ -18608,7 +18617,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@efbdaf4365e12c2b5cff13f5a7c40bd40495c857",
+      "ref": "pkg:generic/alfloop-dev/odayplus@8e5872544bff88d421a1923c7957ca6b12429ce2",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -18653,7 +18662,7 @@
         "pkg:pypi/pymoo@0.6.2",
         "pkg:pypi/pynacl@1.6.2",
         "pkg:pypi/pyomo@6.10.1",
-        "pkg:pypi/pypdf@6.21.2",
+        "pkg:pypi/pypdf@6.21.4",
         "pkg:pypi/pytest-xdist@3.8.0",
         "pkg:pypi/pytest@9.1.1",
         "pkg:pypi/pyyaml@6.0.3",
@@ -18695,7 +18704,7 @@
     {
       "ref": "pkg:npm/@types/node@20.14.10",
       "dependsOn": [
-        "pkg:npm/undici-types@8.3.0"
+        "pkg:npm/undici-types@5.26.5"
       ]
     },
     {
@@ -18773,7 +18782,7 @@
         "pkg:npm/@math.gl/polygon@4.1.0",
         "pkg:npm/@math.gl/web-mercator@4.1.0",
         "pkg:npm/@types/geojson@7946.0.16",
-        "pkg:npm/earcut@3.2.3"
+        "pkg:npm/earcut@2.2.4"
       ]
     },
     {
@@ -18805,7 +18814,7 @@
     {
       "ref": "pkg:npm/@eslint-community/eslint-utils@4.10.1",
       "dependsOn": [
-        "pkg:npm/eslint-visitor-keys@5.0.1"
+        "pkg:npm/eslint-visitor-keys@3.4.3"
       ]
     },
     {
@@ -18815,10 +18824,10 @@
         "pkg:npm/debug@4.4.3",
         "pkg:npm/espree@9.6.1",
         "pkg:npm/globals@13.24.0",
-        "pkg:npm/ignore@7.0.6",
+        "pkg:npm/ignore@5.3.2",
         "pkg:npm/import-fresh@3.3.1",
         "pkg:npm/js-yaml@4.3.2",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/strip-json-comments@3.1.1"
       ]
     },
@@ -18840,7 +18849,7 @@
       "dependsOn": [
         "pkg:npm/@humanwhocodes/object-schema@2.0.3",
         "pkg:npm/debug@4.4.3",
-        "pkg:npm/minimatch@10.2.5"
+        "pkg:npm/minimatch@3.1.5"
       ]
     },
     {
@@ -18852,7 +18861,7 @@
     {
       "ref": "pkg:npm/@img/sharp-wasm32@0.35.5",
       "dependsOn": [
-        "pkg:npm/@emnapi/runtime@1.11.1"
+        "pkg:npm/@emnapi/runtime@1.11.3"
       ]
     },
     {
@@ -19031,7 +19040,7 @@
         "pkg:npm/@babel/runtime@7.29.7",
         "pkg:npm/@types/aria-query@5.0.4",
         "pkg:npm/aria-query@5.3.0",
-        "pkg:npm/dom-accessibility-api@0.6.3",
+        "pkg:npm/dom-accessibility-api@0.5.16",
         "pkg:npm/lz-string@1.5.0",
         "pkg:npm/picocolors@1.1.1",
         "pkg:npm/pretty-format@27.5.1"
@@ -19076,7 +19085,7 @@
     {
       "ref": "pkg:npm/@types/pg@8.23.1",
       "dependsOn": [
-        "pkg:npm/@types/node@20.14.10",
+        "pkg:npm/@types/node@26.1.1",
         "pkg:npm/pg-protocol@1.16.0",
         "pkg:npm/pg-types@2.2.0"
       ]
@@ -19097,7 +19106,7 @@
     {
       "ref": "pkg:npm/@types/ws@8.18.1",
       "dependsOn": [
-        "pkg:npm/@types/node@20.14.10"
+        "pkg:npm/@types/node@26.1.1"
       ]
     },
     {
@@ -19157,7 +19166,7 @@
         "pkg:npm/@typescript-eslint/visitor-keys@8.65.0",
         "pkg:npm/debug@4.4.3",
         "pkg:npm/minimatch@10.2.5",
-        "pkg:npm/semver@6.3.1",
+        "pkg:npm/semver@7.8.5",
         "pkg:npm/tinyglobby@0.2.17",
         "pkg:npm/ts-api-utils@2.5.0"
       ]
@@ -19193,15 +19202,15 @@
     {
       "ref": "pkg:npm/@unrs/resolver-binding-wasm32-wasi@1.12.2",
       "dependsOn": [
-        "pkg:npm/@emnapi/core@1.11.1",
-        "pkg:npm/@emnapi/runtime@1.11.1",
+        "pkg:npm/@emnapi/core@1.10.0",
+        "pkg:npm/@emnapi/runtime@1.10.0",
         "pkg:npm/@napi-rs/wasm-runtime@1.1.6"
       ]
     },
     {
       "ref": "pkg:npm/@emnapi/core@1.10.0",
       "dependsOn": [
-        "pkg:npm/@emnapi/wasi-threads@1.2.2",
+        "pkg:npm/@emnapi/wasi-threads@1.2.1",
         "pkg:npm/tslib@2.8.1"
       ]
     },
@@ -19290,7 +19299,7 @@
     {
       "ref": "pkg:npm/apache-arrow@21.2.0",
       "dependsOn": [
-        "pkg:npm/@types/node@20.14.10",
+        "pkg:npm/@types/node@25.9.5",
         "pkg:npm/flatbuffers@25.9.23",
         "pkg:npm/json-with-bigint@3.5.10",
         "pkg:npm/tslib@2.8.1"
@@ -19299,7 +19308,7 @@
     {
       "ref": "pkg:npm/@types/node@25.9.5",
       "dependsOn": [
-        "pkg:npm/undici-types@8.3.0"
+        "pkg:npm/undici-types@7.24.6"
       ]
     },
     {
@@ -19415,7 +19424,7 @@
     {
       "ref": "pkg:npm/brace-expansion@1.1.21",
       "dependsOn": [
-        "pkg:npm/balanced-match@4.0.4",
+        "pkg:npm/balanced-match@1.0.2",
         "pkg:npm/concat-map@0.0.1"
       ]
     },
@@ -19428,7 +19437,7 @@
     {
       "ref": "pkg:npm/buffer-image-size@0.6.4",
       "dependsOn": [
-        "pkg:npm/@types/node@20.14.10"
+        "pkg:npm/@types/node@26.1.1"
       ]
     },
     {
@@ -19681,17 +19690,17 @@
         "pkg:npm/doctrine@3.0.0",
         "pkg:npm/escape-string-regexp@4.0.0",
         "pkg:npm/eslint-scope@7.2.2",
-        "pkg:npm/eslint-visitor-keys@5.0.1",
+        "pkg:npm/eslint-visitor-keys@3.4.3",
         "pkg:npm/espree@9.6.1",
         "pkg:npm/esquery@1.7.0",
         "pkg:npm/esutils@2.0.3",
         "pkg:npm/fast-deep-equal@3.1.3",
         "pkg:npm/file-entry-cache@6.0.1",
         "pkg:npm/find-up@5.0.0",
-        "pkg:npm/glob-parent@5.1.2",
+        "pkg:npm/glob-parent@6.0.2",
         "pkg:npm/globals@13.24.0",
         "pkg:npm/graphemer@1.4.0",
-        "pkg:npm/ignore@7.0.6",
+        "pkg:npm/ignore@5.3.2",
         "pkg:npm/imurmurhash@0.1.4",
         "pkg:npm/is-glob@4.0.3",
         "pkg:npm/is-path-inside@3.0.3",
@@ -19699,7 +19708,7 @@
         "pkg:npm/json-stable-stringify-without-jsonify@1.0.1",
         "pkg:npm/levn@0.4.1",
         "pkg:npm/lodash.merge@4.6.2",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/natural-compare@1.4.0",
         "pkg:npm/optionator@0.9.4",
         "pkg:npm/strip-ansi@6.0.1",
@@ -19724,7 +19733,7 @@
     {
       "ref": "pkg:npm/eslint-import-resolver-node@0.3.10",
       "dependsOn": [
-        "pkg:npm/debug@4.4.3",
+        "pkg:npm/debug@3.2.7",
         "pkg:npm/is-core-module@2.16.2",
         "pkg:npm/resolve@2.0.0-next.7"
       ]
@@ -19750,7 +19759,7 @@
     {
       "ref": "pkg:npm/eslint-module-utils@2.14.0",
       "dependsOn": [
-        "pkg:npm/debug@4.4.3"
+        "pkg:npm/debug@3.2.7"
       ]
     },
     {
@@ -19761,14 +19770,14 @@
         "pkg:npm/array.prototype.findlastindex@1.2.6",
         "pkg:npm/array.prototype.flat@1.3.3",
         "pkg:npm/array.prototype.flatmap@1.3.3",
-        "pkg:npm/debug@4.4.3",
-        "pkg:npm/doctrine@3.0.0",
+        "pkg:npm/debug@3.2.7",
+        "pkg:npm/doctrine@2.1.0",
         "pkg:npm/eslint-import-resolver-node@0.3.10",
         "pkg:npm/eslint-module-utils@2.14.0",
         "pkg:npm/hasown@2.0.4",
         "pkg:npm/is-core-module@2.16.2",
         "pkg:npm/is-glob@4.0.3",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/object.fromentries@2.0.8",
         "pkg:npm/object.groupby@1.0.3",
         "pkg:npm/object.values@1.2.1",
@@ -19786,7 +19795,7 @@
     {
       "ref": "pkg:npm/eslint-plugin-jsx-a11y@6.10.2",
       "dependsOn": [
-        "pkg:npm/aria-query@5.3.0",
+        "pkg:npm/aria-query@5.3.2",
         "pkg:npm/array-includes@3.1.9",
         "pkg:npm/array.prototype.flatmap@1.3.3",
         "pkg:npm/ast-types-flow@0.0.8",
@@ -19797,7 +19806,7 @@
         "pkg:npm/hasown@2.0.4",
         "pkg:npm/jsx-ast-utils@3.3.5",
         "pkg:npm/language-tags@1.0.9",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/object.fromentries@2.0.8",
         "pkg:npm/safe-regex-test@1.1.0",
         "pkg:npm/string.prototype.includes@2.0.1"
@@ -19810,12 +19819,12 @@
         "pkg:npm/array.prototype.findlast@1.2.5",
         "pkg:npm/array.prototype.flatmap@1.3.3",
         "pkg:npm/array.prototype.tosorted@1.1.4",
-        "pkg:npm/doctrine@3.0.0",
+        "pkg:npm/doctrine@2.1.0",
         "pkg:npm/es-iterator-helpers@1.4.0",
         "pkg:npm/estraverse@5.3.0",
         "pkg:npm/hasown@2.0.4",
         "pkg:npm/jsx-ast-utils@3.3.5",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/object.entries@1.1.9",
         "pkg:npm/object.fromentries@2.0.8",
         "pkg:npm/object.values@1.2.1",
@@ -19838,7 +19847,7 @@
       "dependsOn": [
         "pkg:npm/acorn-jsx@5.3.2",
         "pkg:npm/acorn@8.17.0",
-        "pkg:npm/eslint-visitor-keys@5.0.1"
+        "pkg:npm/eslint-visitor-keys@3.4.3"
       ]
     },
     {
@@ -19970,7 +19979,7 @@
         "pkg:npm/fs.realpath@1.0.0",
         "pkg:npm/inflight@1.0.6",
         "pkg:npm/inherits@2.0.4",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/once@1.4.0",
         "pkg:npm/path-is-absolute@1.0.1"
       ]
@@ -19997,7 +20006,7 @@
     {
       "ref": "pkg:npm/happy-dom@21.0.4",
       "dependsOn": [
-        "pkg:npm/@types/node@20.14.10",
+        "pkg:npm/@types/node@26.1.1",
         "pkg:npm/@types/whatwg-mimetype@3.0.2",
         "pkg:npm/@types/ws@8.18.1",
         "pkg:npm/buffer-image-size@0.6.4",
@@ -20086,7 +20095,7 @@
     {
       "ref": "pkg:npm/is-bun-module@2.0.0",
       "dependsOn": [
-        "pkg:npm/semver@6.3.1"
+        "pkg:npm/semver@7.8.5"
       ]
     },
     {
@@ -20279,7 +20288,7 @@
     {
       "ref": "pkg:npm/minimatch@3.1.5",
       "dependsOn": [
-        "pkg:npm/brace-expansion@5.0.12"
+        "pkg:npm/brace-expansion@1.1.21"
       ]
     },
     {
@@ -20441,8 +20450,8 @@
       "ref": "pkg:npm/pretty-format@27.5.1",
       "dependsOn": [
         "pkg:npm/ansi-regex@5.0.1",
-        "pkg:npm/ansi-styles@4.3.0",
-        "pkg:npm/react-is@16.13.1"
+        "pkg:npm/ansi-styles@5.2.0",
+        "pkg:npm/react-is@17.0.2"
       ]
     },
     {
@@ -20597,7 +20606,7 @@
       "dependsOn": [
         "pkg:npm/@img/colour@1.1.0",
         "pkg:npm/detect-libc@2.1.2",
-        "pkg:npm/semver@6.3.1"
+        "pkg:npm/semver@7.8.5"
       ]
     },
     {
@@ -20740,7 +20749,7 @@
       "ref": "pkg:npm/tinyglobby@0.2.17",
       "dependsOn": [
         "pkg:npm/fdir@6.5.0",
-        "pkg:npm/picomatch@2.3.2"
+        "pkg:npm/picomatch@4.0.5"
       ]
     },
     {
@@ -20830,7 +20839,7 @@
       "ref": "pkg:npm/vite@8.1.6",
       "dependsOn": [
         "pkg:npm/lightningcss@1.33.0",
-        "pkg:npm/picomatch@2.3.2",
+        "pkg:npm/picomatch@4.0.5",
         "pkg:npm/postcss@8.5.28",
         "pkg:npm/rolldown@1.1.5",
         "pkg:npm/tinyglobby@0.2.17"
@@ -20851,7 +20860,7 @@
         "pkg:npm/magic-string@0.30.21",
         "pkg:npm/obug@2.1.4",
         "pkg:npm/pathe@2.0.3",
-        "pkg:npm/picomatch@2.3.2",
+        "pkg:npm/picomatch@4.0.5",
         "pkg:npm/std-env@4.2.0",
         "pkg:npm/tinybench@2.9.0",
         "pkg:npm/tinyexec@1.2.4",
@@ -21734,7 +21743,7 @@
     {
       "ref": "pkg:pypi/pyasn1-modules@0.4.2",
       "dependsOn": [
-        "pkg:pypi/pyasn1@0.6.4"
+        "pkg:pypi/pyasn1@0.6.5"
       ]
     },
     {

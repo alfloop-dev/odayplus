@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,7 @@ except ImportError:  # pragma: no cover - exercised only without PyYAML
     yaml = None
 
 import verification_evidence
+import worktree_cleanliness
 from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1017,6 +1019,53 @@ def pid_is_supervisor_process(pid: Any, repo_root: Path) -> bool:
     return cmdline_is_supervisor_process(parts)
 
 
+def iter_supervisor_pids(repo_root: Path) -> list[int]:
+    """Return every live process that is *repo_root*'s supervisor."""
+    matches: list[int] = []
+    for proc_dir in Path("/proc").iterdir():
+        if proc_dir.name.isdigit() and pid_is_supervisor_process(int(proc_dir.name), repo_root):
+            matches.append(int(proc_dir.name))
+    return sorted(matches)
+
+
+def terminate_supervisor_processes(
+    repo_root: Path,
+    *,
+    exclude_pid: int | None = None,
+    term_grace_seconds: float = 2.0,
+    kill_grace_seconds: float = 1.0,
+) -> dict[int, bool]:
+    """SIGTERM, then SIGKILL, every *repo_root* supervisor except ``exclude_pid``.
+
+    This is the one stop path for supervisors: the singleton winner uses it to
+    clear stragglers and the watchdog uses it to replace a heartbeat-stale one
+    that still holds the lock.  Identity is re-verified before each signal, so a
+    pid that exits and is recycled mid-shutdown is never signalled.  Returns
+    ``{pid: stopped}`` for every supervisor that was signalled.
+    """
+    results: dict[int, bool] = {}
+    for pid in iter_supervisor_pids(repo_root):
+        if pid == exclude_pid:
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            continue
+        deadline = time.time() + term_grace_seconds
+        while time.time() < deadline and pid_is_supervisor_process(pid, repo_root):
+            time.sleep(0.1)
+        if pid_is_supervisor_process(pid, repo_root):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+            deadline = time.time() + kill_grace_seconds
+            while time.time() < deadline and pid_is_supervisor_process(pid, repo_root):
+                time.sleep(0.05)
+        results[pid] = not pid_is_supervisor_process(pid, repo_root)
+    return results
+
+
 def normalize_agent_id(value: str | None) -> str:
     if not value:
         return ""
@@ -1293,6 +1342,64 @@ def worker_runtime_paths(config: dict[str, Any], run_id: str) -> dict[str, Path]
     }
 
 
+def protected_execution_paths(
+    config: dict[str, Any],
+    task_id: str | None,
+    prepared: Any = None,
+) -> tuple[str, ...]:
+    """The canonical task's protection, refusing any drift from what was prepared.
+
+    The workspace lease records what it enforced.  A launch or resume must see
+    the same list in the canonical record at that moment: loss, reduction,
+    addition or a missing record all refuse, and a cached snapshot is never a
+    substitute for the canonical record.
+    """
+    try:
+        prepared_paths = worktree_cleanliness.normalize_protected_paths(prepared)
+    except worktree_cleanliness.ProtectedPathPolicyError as error:
+        raise worktree_cleanliness.ProtectedExecutionUnavailable(str(error)) from error
+    if not task_id:
+        if prepared_paths:
+            raise worktree_cleanliness.ProtectedExecutionUnavailable(
+                "protected launch has no task id to confirm against the canonical record"
+            )
+        return ()
+    try:
+        status = load_status(config)
+    except Exception as error:  # noqa: BLE001 - any unreadable status refuses a protected launch
+        if prepared_paths:
+            raise worktree_cleanliness.ProtectedExecutionUnavailable(
+                f"canonical status is unreadable: {error}"
+            ) from error
+        return ()
+    schema = config.get("schema", {}) if isinstance(config.get("schema"), dict) else {}
+    task_id_field = schema.get("task_id_field", "id")
+    record = next(
+        (
+            task
+            for task in status.get(schema.get("tasks_path", "tasks"), []) or []
+            if isinstance(task, dict) and str(task.get(task_id_field) or "") == str(task_id)
+        ),
+        None,
+    )
+    if record is None:
+        if prepared_paths:
+            raise worktree_cleanliness.ProtectedExecutionUnavailable(
+                f"canonical task {task_id} is missing; prepared protection cannot be confirmed"
+            )
+        return ()
+    try:
+        canonical = worktree_cleanliness.task_protected_paths(record)
+    except worktree_cleanliness.ProtectedPathPolicyError as error:
+        raise worktree_cleanliness.ProtectedExecutionUnavailable(str(error)) from error
+    if canonical != prepared_paths:
+        raise worktree_cleanliness.ProtectedExecutionUnavailable(
+            f"protected_paths drifted between workspace preparation {list(prepared_paths)} "
+            f"and launch {list(canonical)} for {task_id}"
+        )
+    return canonical
+
+
 def spawn_background_process(
     command: list[str],
     *,
@@ -1304,7 +1411,19 @@ def spawn_background_process(
     status_path: Path | None = None,
     heartbeat_interval_seconds: int = 15,
     runner_enabled: bool = True,
+    protected_paths: tuple[str, ...] | list[str] = (),
+    protected_alias_roots: tuple[Path, ...] | list[Path] = (),
 ) -> tuple[subprocess.Popen[str], Path]:
+    """Start a native worker.  Protected tasks start only inside a proven sandbox.
+
+    For a task with ``protected_paths`` the whole runner (and so the provider
+    CLI and every subprocess it starts) runs under Bubblewrap with each
+    protected path masked read-only.  If that boundary cannot be proven by a
+    live probe this raises ``ProtectedExecutionUnavailable`` before any
+    process exists; there is no unsandboxed fallback.
+    """
+    if protected_paths and cwd is None:
+        raise worktree_cleanliness.ProtectedExecutionUnavailable("protected launch requires its task workspace")
     ensure_parent(log_path)
     command_to_spawn = list(command)
     spawn_env = env
@@ -1333,6 +1452,13 @@ def spawn_background_process(
             "--",
             *command,
         ]
+    if protected_paths:
+        command_to_spawn = worktree_cleanliness.protected_execution_argv(
+            command_to_spawn,
+            cwd=Path(cwd),
+            protected_paths=protected_paths,
+            alias_roots=protected_alias_roots,
+        )
     handle = log_path.open("w", encoding="utf-8")
     process = subprocess.Popen(
         command_to_spawn,
@@ -1366,6 +1492,7 @@ def snapshot_task(task: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any
         "source_plane",
         "source_ref",
         "materialization_ref",
+        worktree_cleanliness.PROTECTED_PATHS_FIELD,
     ):
         if key in task:
             payload[key] = task.get(key)

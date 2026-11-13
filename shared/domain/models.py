@@ -500,7 +500,7 @@ class SiteScoreRun:
     m12_p10: float = 0.0
     m12_p50: float = 0.0
     m12_p90: float = 0.0
-    payback_p50_months: float = 0.0
+    payback_p50_months: float | None = None
     decision_recommendation: str = "go"  # go/wait/reject/investigate
     report_uri: str = ""
 

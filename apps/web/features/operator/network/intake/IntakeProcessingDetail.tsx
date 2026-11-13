@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent, type ReactNode } from "react";
 import type {
-  AssignmentReceipt, AssistedIntake, AuditReference, CorrectionReceipt, DecisionReceipt,
-  FieldValue, IntakeSubmissionReceipt, JobReceipt, PromotionDecisionReceipt, SlaReceipt, TransitionReceipt,
+  AssignmentReceipt, AssistedIntake, AuditReference, CanonicalIntakeDetail, CorrectionReceipt, DecisionReceipt,
+  FieldValue, IntakeSubmissionReceipt, JobReceipt, MatchCaseSummary, PromotionDecisionReceipt, SlaReceipt, TransitionReceipt,
+  CanonicalIntakeParserRunMetadata, CanonicalIntakeParserFields,
 } from "@oday-plus/openapi-client";
 import { AssistedEntryForm } from "./AssistedEntryForm";
+import { CANONICAL_INTAKE_STAGE_LABEL, readCanonicalIntakeParserFields, type CanonicalIntakeReadContext } from "./canonicalIntakeReadClient";
+import { CanonicalInputFields, CanonicalIntakeFailure } from "./CanonicalIdentityDecisionPanel";
 import { AssignmentSlaSummary } from "./AssignmentSlaSummary";
 import { DurableReceiptPanel } from "./DurableReceiptPanel";
 import { EvidencePanel } from "./EvidencePanel";
@@ -23,7 +26,7 @@ import {
 } from "./intakeTypes";
 import styles from "./intake.module.css";
 
-export type IntakeProcessingDetailProps = {
+type AssistedIntakeProcessingDetailProps = {
   activeSection?: string | null;
   onSectionChange?: (section: string) => void;
   record: AssistedIntake;
@@ -52,7 +55,31 @@ export type IntakeProcessingDetailProps = {
   onLookupPromotionDecision?: () => void;
 };
 
+export type IntakeProcessingDetailProps = AssistedIntakeProcessingDetailProps | {
+  /** Same continuous detail composition, without inventing a legacy DTO. */
+  canonical: CanonicalIntakeDetail | null;
+  readContext: CanonicalIntakeReadContext;
+  matchCase: MatchCaseSummary | null;
+  intakeId: string;
+  children: ReactNode;
+  recovery?: ReactNode;
+  detailHref: string;
+  onClose: () => void;
+  onRefresh: () => void;
+  busy?: boolean;
+  activeSection?: string | null;
+  onSectionChange?: (section: string) => void;
+  testId?: string;
+};
+
 export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
+  const native = "canonical" in props;
+  const resourceId = native ? props.intakeId : props.record.id;
+  const record = native ? null : props.record;
+  const canonical = native ? props.canonical : null;
+  const version = record?.version ?? canonical?.version;
+  const outcome = record?.matchResult?.outcome;
+  const { onClose, onRefresh, detailHref, testId = "intake-detail-dialog", busy = false } = props;
   const page = useRef<HTMLElement>(null);
   useEffect(() => {
     const aliases: Record<string, string> = { property: "lineage", commercial: "lineage" };
@@ -61,20 +88,158 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
     if (!section || !allowed.includes(section)) return;
     const target = page.current?.querySelector<HTMLElement>(`[data-intake-section="${section}"]`);
     target?.scrollIntoView?.({ block: "start", behavior: "instant" });
-  }, [props.activeSection, props.record.id]);
+  }, [props.activeSection, resourceId]);
   const rememberSection = (event: SyntheticEvent<HTMLElement>) => {
     const target = (event.target as Element).closest?.<HTMLElement>("[data-intake-section]");
     if (target && page.current?.contains(target) && target.dataset.intakeSection !== props.activeSection) {
       props.onSectionChange?.(target.dataset.intakeSection!);
     }
   };
+  return (
+    <section aria-label="收件處理詳情" ref={page} onFocusCapture={rememberSection} onClickCapture={rememberSection} className={styles.intakeFullPage} data-screen-label="Intake 收件處理詳情頁" data-testid={testId}>
+      <header className={styles.intakeFullPageHeader} data-testid="intake-detail-header">
+        <button className={styles.secondaryButton} disabled={busy} onClick={onClose} type="button" data-testid="intake-return-button">← 返回收件匣</button>
+        <div>
+          <div className={styles.dialogTitle}>收件處理詳情 Intake Processing Detail</div>
+          <div className={styles.intakeHeaderChips}>
+            <span className={styles.rowId} data-testid="intake-detail-id">{resourceId}</span>
+            {record ? <>
+              <span className={styles.chip} data-testid="intake-detail-stage" data-tone={stageTone(record.stage)}>{stageLabel(record.stage)}</span>
+              {outcome ? <span className={styles.chip} data-testid="intake-detail-match" data-tone={matchTone(outcome)}>{matchLabel(outcome)}</span> : null}
+              <span className={styles.chip} data-tone={policyTone(record.policy)}>{policyLabel(record.policy)}</span>
+            </> : canonical ? <>
+              <span className={styles.chip} data-testid="intake-detail-stage">{CANONICAL_INTAKE_STAGE_LABEL[canonical.processing_state]}</span>
+              {native && props.matchCase ? <span className={styles.chip} data-testid="intake-detail-match">{props.matchCase.outcome}</span> : null}
+            </> : null}
+            <span>{version === undefined ? "版本未取得" : "版本 v" + version}</span>
+          </div>
+          <a className={styles.deepLink} data-testid="intake-detail-deeplink" href={detailHref ?? "/intake/" + resourceId}>
+            {detailHref ?? "/intake/" + resourceId} · 可直接開啟、重新載入與返回
+          </a>
+        </div>
+        {onRefresh ? <button className={styles.secondaryButton} disabled={busy} onClick={onRefresh} type="button" data-testid="intake-refresh-button">重新整理</button> : null}
+      </header>
+      {native ? <>
+        {canonical ? <NativeIntakeSections canonical={canonical} context={props.readContext} busy={busy}
+          recovery={props.recovery} onLineageSelect={() => props.onSectionChange?.("lineage")} /> : props.recovery}
+        {props.children}
+      </> : <AssistedIntakeSections {...props} />}
+    </section>
+  );
+}
+
+function NativeIntakeSections({ canonical, context, recovery, busy, onLineageSelect }: {
+  canonical: CanonicalIntakeDetail; context: CanonicalIntakeReadContext; recovery?: ReactNode;
+  busy: boolean; onLineageSelect: () => void;
+}) {
+  const epoch = useRef(0);
+  const frame = useMemo(() => ({ canonical, context }), [canonical, context]);
+  const [selected, setSelected] = useState<{ frame: typeof frame;
+    run: CanonicalIntakeParserRunMetadata; epoch: number } | null>(null);
+  const current = selected?.frame === frame ? selected : null;
+  const select = (run: CanonicalIntakeParserRunMetadata) => {
+    setSelected({ frame, run, epoch: ++epoch.current });
+    onLineageSelect();
+  };
+  return <>
+    <section data-intake-section="submission" className={styles.sectionBox} data-testid="intake-submission-summary">
+      <div className={styles.sectionHead}>送件摘要 SUBMISSION SUMMARY</div>
+      <p>收件 {canonical.intake_id} · 版本 {canonical.version} · {CANONICAL_INTAKE_STAGE_LABEL[canonical.processing_state]}</p>
+      <div className={styles.metaGrid}>
+        <Meta label="送件方式" value={canonical.intake_method} />
+        <Meta label="送件時間 Submitted At" value={canonical.submitted_at} />
+        <Meta label="提交者識別碼" value={canonical.submitter_subject_id} />
+        <Meta label="查詢編號 Correlation ID" value={canonical.correlation_id} />
+        <Meta label="品牌識別碼" value={canonical.scope.brand_id ?? null} />
+        <Meta label="區域識別碼" value={canonical.scope.region_id ?? null} />
+        <Meta label="指派區域識別碼" value={canonical.scope.assigned_area_id ?? null} />
+        <Meta label="HeatZone 識別碼" value={canonical.scope.heat_zone_id ?? null} />
+      </div>
+    </section>
+    {canonical.workflow ? <AssignmentSlaSummary record={{
+      owner: null, ownerSubjectId: canonical.workflow.owner_subject_id,
+      assignedQueue: canonical.workflow.queue_key,
+      assignmentId: canonical.workflow.assignment_id,
+      assignmentStatus: canonical.workflow.assignment_status,
+      slaInstanceId: canonical.workflow.sla_instance_id,
+      slaState: canonical.workflow.sla_state, dueAt: canonical.workflow.due_at,
+    }} assignmentResourceVersion={canonical.workflow.assignment_version}
+      slaResourceVersion={canonical.workflow.sla_version} />
+      : <p>尚無可讀取的指派與 SLA 資料。</p>}
+    <section data-intake-section="processing" data-testid="intake-processing-stages">
+      <IntakeStageTimeline canonical={canonical} context={context} />
+    </section>
+    <section data-intake-section="source" data-testid="intake-source-policy-evidence">
+      <EvidencePanel canonical={canonical} context={context} onSelectParserRun={select}
+        selectedParserRunId={current?.run.parser_run_id} busy={busy} />
+    </section>
+    {recovery}
+    <section data-intake-section="lineage" className={styles.sectionBox} aria-label="解析與已保存欄位沿革">
+      <div className={styles.sectionHead}>解析、正規化與人工修正 PARSED DATA LINEAGE</div>
+      {current ? <>
+        <NativeParserFields key={current.epoch} canonical={canonical} context={context} selected={current.run} />
+        <button className={styles.secondaryButton} type="button" disabled={busy} onClick={() => setSelected(null)}>關閉解析欄位</button>
+      </> : <p>請從上方解析紀錄選取要檢視的欄位版本。</p>}
+              {canonical.resolution ? <section aria-label="已落庫物件" className={styles.noteBox}>
+                <p>物件 {canonical.resolution.listing_id} · 版本 {canonical.resolution.listing_version} · {canonical.resolution.lifecycle_state}</p>
+                <p>目前主體 {canonical.resolution.effective_property_id} · 版本 {canonical.resolution.property_version}</p>
+                <p>建立時主體 {canonical.resolution.property_id_at_creation}</p>
+                <p>目前修訂 {canonical.resolution.current_revision_id ?? "未提供"}</p>
+                {canonical.resolution.fields?.length ? <>
+                  <table className={styles.compareGrid} aria-label="已落庫欄位">
+                    <thead><tr><th>欄位</th><th>已保存值</th><th>資料分類</th></tr></thead>
+                    <tbody>{canonical.resolution.fields.map((field) => <tr key={field.field_path}>
+                      <th scope="row">{field.field_path}</th>
+                      <td className={styles.summaryValue}>{field.masked ? "無法檢視" : field.effective === null ? "未提供" : String(field.effective)}</td>
+                      <td>{field.classification ?? "分類未提供"}</td>
+                    </tr>)}</tbody>
+                  </table>
+                  {canonical.resolution.fields.some((field) => field.masked)
+                    ? <p>部分欄位因權限或分類資料不足而遮罩。</p> : null}
+                </> : <p>目前沒有可顯示的已保存欄位資料。</p>}
+              </section> : null}
+    </section>
+  </>;
+}
+
+function NativeParserFields({ canonical, context, selected }: {
+  canonical: CanonicalIntakeDetail; context: CanonicalIntakeReadContext; selected: CanonicalIntakeParserRunMetadata;
+}) {
+  const [reload, setReload] = useState(0);
+  const [loaded, setLoaded] = useState<{ reload: number; status: "loading" } | { reload: number; status: "error"; error: unknown }
+    | { reload: number; status: "ready"; value: CanonicalIntakeParserFields }>({ reload, status: "loading" });
+  const shown = loaded.reload === reload ? loaded : { status: "loading" as const };
+  useEffect(() => {
+    const controller = new AbortController();
+    let current = true;
+    setLoaded({ reload, status: "loading" });
+    void readCanonicalIntakeParserFields(context, canonical, selected, controller.signal).then(
+      (value) => { if (current) setLoaded({ reload, status: "ready", value }); },
+      (error) => { if (current) setLoaded({ reload, status: "error", error }); },
+    );
+    return () => { current = false; controller.abort(); };
+  }, [canonical, context, selected, reload]);
+  return <div data-testid="native-parser-fields">
+    <p className={styles.summaryValue}>解析紀錄 {selected.parser_run_id} · 版本 {selected.version}</p>
+    {shown.status === "loading" ? <p role="status">正在讀取此解析紀錄的欄位…</p>
+      : shown.status === "error" ? <CanonicalIntakeFailure error={shown.error} /> : <>
+        <p>解析狀態 {shown.value.status} · 工作狀態 {shown.value.job_status} · 讀取於 {shown.value.observed_at}</p>
+        <p>人工值為補錄提案；修正狀態與覆核紀錄不表示已更新物件，已保存值另列於下方。</p>
+        <CanonicalInputFields fields={shown.value.fields} observations label="解析與人工修正欄位" />
+      </>}
+    <button className={styles.secondaryButton} disabled={shown.status === "loading"} type="button"
+      onClick={() => setReload((value) => value + 1)}>重新讀取欄位狀態</button>
+  </div>;
+}
+
+function AssistedIntakeSections(props: AssistedIntakeProcessingDetailProps) {
   const {
     record, targetListing, detailHref, busy = false, canCorrect = true, canDecide = true, canRetry = true, canReplay = true,
     error = null, history = [], jobs = [], sla, fields, auditReferences = [], submissionReceipt,
     assignmentReceipt, decisionReceipt, slaReceipt, correctionReceipts = [],
-    assignmentResourceVersion = null, slaResourceVersion = null, onClose, onAssistedEntrySave,
+    assignmentResourceVersion = null, slaResourceVersion = null, onAssistedEntrySave,
     onDecide, onOpenFix, onRetry, onReplayDlq, onCancel, onOverride, onClaimAssignment, onOpenTransfer,
-    onOpenPause, onResumeSla, onRefresh, testId = "intake-detail-dialog", promotion = null,
+    onOpenPause, onResumeSla, onRefresh, promotion = null,
     scoreJob = null, currentOperator, gateSnapshotSha256, promotionBusy = false, promotionError = null,
     promotionIdempotencyReplayed = false, canRequestPromotion = false, canReviewPromotion = false,
     canReplayScore = false, onRequestPromotion, onReviewPromotion, onReplayScore, onLookupPromotionDecision,
@@ -114,25 +279,7 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
   const submittedAt = rawRecord.submittedAt ?? rawRecord.submitted_at ?? "UNAVAILABLE";
 
   return (
-    <section aria-label="收件處理詳情" ref={page} onFocusCapture={rememberSection} onClickCapture={rememberSection} className={styles.intakeFullPage} data-screen-label="Intake 收件處理詳情頁" data-testid={testId}>
-      <header className={styles.intakeFullPageHeader} data-testid="intake-detail-header">
-        <button className={styles.secondaryButton} onClick={onClose} type="button" data-testid="intake-return-button">← 返回收件匣</button>
-        <div>
-          <div className={styles.dialogTitle}>收件處理詳情 Intake Processing Detail</div>
-          <div className={styles.intakeHeaderChips}>
-            <span className={styles.rowId} data-testid="intake-detail-id">{record.id}</span>
-            <span className={styles.chip} data-testid="intake-detail-stage" data-tone={stageTone(record.stage)}>{stageLabel(record.stage)}</span>
-            {outcome ? <span className={styles.chip} data-testid="intake-detail-match" data-tone={matchTone(outcome)}>{matchLabel(outcome)}</span> : null}
-            <span className={styles.chip} data-tone={policyTone(record.policy)}>{policyLabel(record.policy)}</span>
-            <span>版本 v{record.version}</span>
-          </div>
-          <a className={styles.deepLink} data-testid="intake-detail-deeplink" href={detailHref ?? `/intake/${record.id}`}>
-            {detailHref ?? `/intake/${record.id}`} · 可直接開啟、重新載入與返回
-          </a>
-        </div>
-        {onRefresh ? <button className={styles.secondaryButton} onClick={onRefresh} type="button" data-testid="intake-refresh-button">重新整理</button> : null}
-      </header>
-
+    <>
       <section data-intake-section="submission" className={styles.sectionBox} data-testid="intake-submission-summary">
         <div className={styles.sectionHead}>送件摘要 SUBMISSION SUMMARY</div>
         <div className={styles.metaGrid}>
@@ -255,7 +402,7 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
           )) : <div className={styles.emptyState} data-testid="audit-references-unavailable">AUDIT REFERENCES: UNAVAILABLE</div>}
         </div>
       </section>
-    </section>
+    </>
   );
 }
 

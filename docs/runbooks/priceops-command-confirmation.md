@@ -89,6 +89,21 @@ New approvals through either decision endpoint, activation, exploration-enabled 
 
 The actual worker, including idle audit-only publisher polls, separately samples `durable_audit_worm_pending_count`, `durable_audit_worm_oldest_pending_seconds` and `durable_audit_worm_backlog_check_failure_count`. Labels are bounded to the service and error class; no tenant/event identifiers become series labels. Failed observations retain the last verified gauges and increment the failure counter. They do not stop audit recovery. Existing canonical metrics retain their canonical scope. Release-bound export uses the existing exporter; live receiver/paging evidence and reserved publisher capacity are not inferred from local metrics.
 
+The observer batch-loads committed audit facts, delivery intents and jobs,
+including delivered history. Worker observations also load each tenant
+collection in a batch. An incomplete view caused by a concurrent commit is
+refreshed once as a batch; persistent missing or inconsistent facts still
+fail closed. Document keys and exact job idempotency keys remain part of the
+cross-check, alongside event integrity, tenant/sink bindings and external
+receipts.
+
+Database round trips no longer grow per historical event. Deserialization
+and integrity verification still process the complete history and remain
+linear in its size. Production volume, latency budgets and live workload
+admission still require their own evidence. The growth regression and the
+missing/orphan/forged-receipt and concurrent-arrival controls are in
+`tests/integration/test_priceops_audit_backlog.py`.
+
 ## Canonical exploration authority and budget
 
 [SD-AMD-001 section 7](../design/ODP-SD-AMD-001.md) explicitly assigns Gate creation/revocation to the workflow approval path. Production and canonically bound HTTP endpoints refuse those mutations with `405 WORKFLOW_APPROVAL_REQUIRED`; free-text approver/approval/policy inputs cannot establish or overwrite authority. Explicit unbound PoC fixtures retain their legacy helpers and are not production approvals.

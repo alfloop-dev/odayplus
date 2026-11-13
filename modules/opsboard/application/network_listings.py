@@ -9,7 +9,8 @@ Owns the Listing Radar state used by ``/api/v1/operator/network-listings``:
 - R5 human-assisted URL intake (submit/correct/decide/retry/promote).
 
 Persistence is injected, not assumed. The service composes with two optional
-repositories and never reaches into their internals:
+repositories; the durable resolver additionally verifies their SQL engine and
+tenant binding before a mutation:
 
 - ``listing_repository`` for Listing Radar rows.
 - ``intake_repository`` (:class:`AssistedIntakeRepository`) for assisted intake
@@ -35,10 +36,17 @@ import json
 import math
 import uuid
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import wraps
 from typing import Any, Protocol
+
+from modules.external_data.application.assisted_intake import missing_assisted_entry_fields
+from modules.listing.application.intake_authorization import (
+    LEGAL_HOLD_FIELDS,
+    recorded_legal_hold_state,
+)
 
 # These bindings are recorded by the property/observation pipeline. The
 # operator adapter carries them through writes; it never derives new IDs.
@@ -53,22 +61,26 @@ def _atomic_intake_submission(method: Callable[..., Any]) -> Callable[..., Any]:
     @wraps(method)
     def invoke(self: Any, *args: Any, **kwargs: Any) -> Any:
         transaction = getattr(self._intakes, "transaction", None)
-        if transaction is None:
-            return method(self, *args, **kwargs)
-        before = copy.deepcopy((self._state, self._idempotency_cache, self._idempotency_bindings))
+        # Only a real repository transaction can roll back the matching writes.
+        # Restoring self alone would hide surviving nontransactional writes.
+        before = (
+            copy.deepcopy((self._state, self._idempotency_cache, self._idempotency_bindings))
+            if transaction is not None else None
+        )
         try:
-            with transaction(intake_id=kwargs.get("intake_id")):
+            with (transaction(intake_id=kwargs.get("intake_id")) if transaction is not None else nullcontext()):
                 self._load_intakes()
                 self._load_idempotency_cache()
                 if kwargs.get("intake_id"):
                     authorize = kwargs.get("authorize_existing")
-                    if authorize is None and not self._seed_fixtures:
+                    if authorize is None and not self._seed_fixtures and transaction is not None:
                         raise NetworkListingPolicyError("INTAKE_SCOPE_CONTEXT_REQUIRED")
                     if authorize is not None:
                         authorize(_copy(self._listing_intake(kwargs["intake_id"])))
                 return method(self, *args, **kwargs)
         except BaseException:
-            self._state, self._idempotency_cache, self._idempotency_bindings = before
+            if before is not None:
+                self._state, self._idempotency_cache, self._idempotency_bindings = before
             raise
     return invoke
 
@@ -115,9 +127,13 @@ class AssistedIntakeRepository(Protocol):
 
     def get_listing_metadata(self, listing_id: str) -> dict[str, Any]: ...
 
+    def listing_metadata_guard(self, listing_id: str) -> AbstractContextManager[None]: ...
+
     def save_listing_metadata(self, listing_id: str, metadata: dict[str, Any]) -> None: ...
 
     def get_candidate_metadata(self, candidate_id: str) -> dict[str, Any]: ...
+
+    def candidate_metadata_guard(self, candidate_id: str) -> AbstractContextManager[None]: ...
 
     def save_candidate_metadata(self, candidate_id: str, metadata: dict[str, Any]) -> None: ...
 
@@ -169,11 +185,19 @@ class InMemoryAssistedIntakeRepository:
     def get_listing_metadata(self, listing_id: str) -> dict[str, Any]:
         return copy.deepcopy(self.listing_metadata.get(listing_id) or {})
 
+    def listing_metadata_guard(self, listing_id: str) -> AbstractContextManager[None]:
+        return nullcontext()  # Explicitly process-local, as for candidate metadata.
+
     def save_listing_metadata(self, listing_id: str, metadata: dict[str, Any]) -> None:
         self.listing_metadata[listing_id] = copy.deepcopy(metadata)
 
     def get_candidate_metadata(self, candidate_id: str) -> dict[str, Any]:
         return copy.deepcopy(self.candidate_metadata.get(candidate_id) or {})
+
+    def candidate_metadata_guard(self, candidate_id: str) -> AbstractContextManager[None]:
+        # Process-local fixture backend; the durable repository owns the real
+        # SQL transaction/advisory guard. No production lock is inferred here.
+        return nullcontext()
 
     def save_candidate_metadata(self, candidate_id: str, metadata: dict[str, Any]) -> None:
         self.candidate_metadata[candidate_id] = copy.deepcopy(metadata)
@@ -208,11 +232,11 @@ class NetworkListingPolicyError(RuntimeError):
 
 
 class NetworkListingPreconditionRequired(NetworkListingPolicyError):
-    """A governed write did not carry its actual listing revision."""
+    """A governed write requires the observed version of its own resource."""
 
 
 class NetworkListingVersionUnavailable(NetworkListingPolicyError):
-    """The listing producer has not published an authoritative revision."""
+    """The resource producer has not published an authoritative version."""
 
 
 def _require_acknowledged_risk(
@@ -280,34 +304,6 @@ def _first_present(data: dict[str, Any], *keys: str) -> Any:
     return None
 
 
-def _missing_assisted_entry_fields(values: dict[str, Any]) -> list[str]:
-    """Which mandatory assisted-entry fields ``values`` still does not supply.
-
-    Matching may only run once every mandatory field carries a real value, so a
-    blank or non-positive ``rent``/``areaPing`` counts as missing rather than
-    being coerced to ``0`` -- a zero rent would otherwise present an incomplete
-    submission as a complete one.
-    """
-
-    from modules.external_data.application.assisted_intake import (
-        ASSISTED_ENTRY_REQUIRED_FIELDS,
-    )
-
-    missing: list[str] = []
-    for field_name in ASSISTED_ENTRY_REQUIRED_FIELDS:
-        value = values.get(field_name)
-        if value in (None, ""):
-            missing.append(field_name)
-            continue
-        if field_name in ("rent", "areaPing"):
-            try:
-                if float(value) <= 0:
-                    missing.append(field_name)
-            except (ValueError, TypeError):
-                missing.append(field_name)
-    return missing
-
-
 def _optional_number(value: Any, cast: Any) -> Any:
     """Cast a point-in-time feature, keeping ``None`` as an explicit gap.
 
@@ -373,6 +369,13 @@ def _seed_state(*, tenant_id: str = "tenant-a") -> dict[str, Any]:
         ],
         "listingSources": [
             {
+                "id": "SRC-SYNTHETIC",
+                "name": "Synthetic intake fixture",
+                "status": "connected",
+                "complianceNote": "Non-production fixture for same-source intake and revision scenarios.",
+                "lastSyncedAt": "2026-07-14T06:10:00Z",
+            },
+            {
                 "id": "SRC-591",
                 "name": "591 licensed broker intake",
                 "status": "connected",
@@ -391,8 +394,8 @@ def _seed_state(*, tenant_id: str = "tenant-a") -> dict[str, Any]:
             {
                 "id": "L-2024",
                 "tenantId": "tenant-a",
-                "sourceId": "SRC-591",
-                "sourceListingId": "s591-2024",
+                "sourceId": "SRC-SYNTHETIC",
+                "sourceListingId": "synthetic-2024",
                 "heatZoneId": "HZ-01",
                 "address": "台北市信義區松仁路 96 號 1F",
                 "status": "new",
@@ -404,7 +407,7 @@ def _seed_state(*, tenant_id: str = "tenant-a") -> dict[str, Any]:
                 "hardRuleFailures": [],
                 "hardRuleSummary": "3/3 pass: area, floor, permitted use",
                 "sourceEvidence": [
-                    "EV-L-2024-RAW-591",
+                    "EV-L-2024-RAW-SYNTHETIC",
                     "EV-L-2024-GEOCODE",
                     "EV-L-2024-BROKER-CALL",
                 ],
@@ -537,6 +540,31 @@ class NetworkListingService:
         self._load_listings()
         self._load_candidates()
 
+    def transaction_scope(self, engine: Any, tenant_id: str):
+        """Bind canonical records and replay metadata to the aggregate's SQL unit.
+
+        A repository on another engine would commit even when the outer
+        aggregate transaction rolls back. Unpartitioned metadata would also
+        defeat this tenant boundary. Refuse either composition before writing.
+        """
+        if self._tenant_id != tenant_id:
+            raise ValueError("Listing service must share the transaction tenant")
+        for repository in (self._listing_repository, self._intakes):
+            store = getattr(repository, "_store", None)
+            if (getattr(store, "engine", None) is not engine
+                    or getattr(store, "tenant_id", None) != tenant_id):
+                raise ValueError("Listing records and metadata must share the tenant SQL engine")
+        workflow_store = getattr(self._intakes, "_canonical", None)
+        if workflow_store is not None and getattr(workflow_store, "_engine", None) is not engine:
+            raise ValueError("Listing intake workflow must share the transaction SQL engine")
+        decisions = self._review_decision_repository
+        if decisions is not None and (
+            getattr(decisions, "engine", None) is not engine
+            or getattr(decisions, "tenant_id", None) != tenant_id
+        ):
+            raise ValueError("Listing review reader must share the tenant SQL engine")
+        return nullcontext()
+
     def _require_actor(self, actor_name: str | None, actor_role_id: str) -> str:
         if not isinstance(actor_name, str) or not actor_name.strip():
             raise NetworkListingPolicyError("AUTHENTICATED_ACTOR_REQUIRED")
@@ -616,7 +644,7 @@ class NetworkListingService:
     def _load_listings(self) -> None:
         if self._listing_repository is not None:
             repo_listings = self._listing_repository.list_listings()
-            if repo_listings:
+            if repo_listings or not self._seed_fixtures:
                 self._state["listings"] = []
                 for lst in repo_listings:
                     self._state["listings"].append(self._listing_to_dict(lst))
@@ -624,12 +652,12 @@ class NetworkListingService:
                 for lst_dict in self._state["listings"]:
                     # Persist the explicit fixture verdict and provenance with
                     # the row, so the next request reads the same evidence.
-                    self._sync_listing_to_repo(lst_dict["id"])
+                    self._sync_listing_to_repo(lst_dict["id"], initialize_scope=True)
 
     def _load_candidates(self) -> None:
         if self._listing_repository is not None:
             repo_candidates = self._listing_repository.list_candidates()
-            if repo_candidates:
+            if repo_candidates or not self._seed_fixtures:
                 self._state["candidates"] = []
                 for cand in repo_candidates:
                     self._state["candidates"].append(self._candidate_to_dict(cand))
@@ -651,14 +679,29 @@ class NetworkListingService:
     def _get_listing_metadata(self, listing_id: str) -> dict[str, Any]:
         return self._intakes.get_listing_metadata(listing_id)
 
-    def _save_listing_metadata(self, listing_id: str, metadata: dict[str, Any]) -> None:
-        self._intakes.save_listing_metadata(listing_id, metadata)
+    def _save_listing_metadata(self, listing_id: str, metadata: dict[str, Any], *,
+                               initialize_scope: bool = True) -> None:
+        with self._intakes.listing_metadata_guard(listing_id):
+            current = self._get_listing_metadata(listing_id)
+            # Only the original creation callers supply initial context. A
+            # missing key in an existing sidecar is not a new-resource proof:
+            # the full-save owner may have deliberately removed that scope.
+            projected = {key: value for key, value in metadata.items()
+                         if key not in {"tenantId", "heatZoneId"}
+                         or (initialize_scope and key not in current)}
+            self._intakes.save_listing_metadata(listing_id, {**current, **projected})
 
     def _get_candidate_metadata(self, candidate_id: str) -> dict[str, Any]:
         return self._intakes.get_candidate_metadata(candidate_id)
 
     def _save_candidate_metadata(self, candidate_id: str, metadata: dict[str, Any]) -> None:
-        self._intakes.save_candidate_metadata(candidate_id, metadata)
+        # The sole caller owns seven presentation fields. Scope/custody and
+        # other producer facts are not in its live projection. Read the latest
+        # sidecar under the original metadata owner's fence, then preserve the
+        # original full-save/review-CAS hook and its explicit None semantics.
+        with self._intakes.candidate_metadata_guard(candidate_id):
+            current = self._get_candidate_metadata(candidate_id)
+            self._intakes.save_candidate_metadata(candidate_id, {**current, **metadata})
 
     def _listing_to_dict(self, lst: Any) -> dict[str, Any]:
         res = {
@@ -707,6 +750,18 @@ class NetworkListingService:
         meta = self._get_listing_metadata(lst.listing_id)
         if meta:
             res.update(meta)
+            if any(name in res for name in LEGAL_HOLD_FIELDS):
+                # Expose the producer's custody state to the existing Radar
+                # controls. An older false display flag cannot conceal a hold
+                # or replace a revoked/invalid current observation.
+                custody_state = recorded_legal_hold_state(res)
+                res["hasLegalHold"] = custody_state
+                if "legalHold" in res:
+                    res["legalHold"] = custody_state
+            # Supplemental presentation metadata cannot reopen the listing
+            # aggregate's terminal archive, including on a later retry.
+            if str(lst.listing_status).upper() == "ARCHIVED":
+                res["status"] = lst.listing_status
         elif self._seed_fixtures:
             for item in _seed_state(tenant_id=self._tenant_id or "tenant-a")["listings"]:
                 if item["id"] == lst.listing_id:
@@ -1004,7 +1059,7 @@ class NetworkListingService:
             )})
         return draft
 
-    def _sync_listing_to_repo(self, listing_id: str) -> None:
+    def _sync_listing_to_repo(self, listing_id: str, *, initialize_scope: bool = False) -> None:
         if self._listing_repository is not None:
             listing = self._listing(listing_id)
             lst_obj, addr_obj, key_obj = self._dict_to_listing(listing)
@@ -1012,6 +1067,7 @@ class NetworkListingService:
 
             meta = {
                 "tenantId": listing.get("tenantId"),
+                "status": listing["status"],
                 # Listing.frontage_m retains its legacy numeric absent value;
                 # preserve explicit unknown in the operator presentation.
                 "frontageMeters": listing.get("frontageMeters"),
@@ -1058,7 +1114,7 @@ class NetworkListingService:
                     listing, "featureSnapshotTime", "feature_snapshot_time"
                 ),
             }
-            self._save_listing_metadata(listing_id, meta)
+            self._save_listing_metadata(listing_id, meta, initialize_scope=initialize_scope)
 
     def _sync_candidate_to_repo(self, candidate_id: str) -> None:
         if self._listing_repository is not None:
@@ -1146,7 +1202,7 @@ class NetworkListingService:
         if self._listing_repository is not None and self._seed_fixtures:
             self._listing_repository.clear()
             for lst_dict in self._state["listings"]:
-                self._sync_listing_to_repo(lst_dict["id"])
+                self._sync_listing_to_repo(lst_dict["id"], initialize_scope=True)
 
         return self.snapshot()
 
@@ -1366,17 +1422,48 @@ class NetworkListingService:
             for record in records:
                 authorize_existing(_copy(record))
 
-    def _listing_write_records(self, action: str, key: str | None, actor: str, ids: list[str]) -> list[dict[str, Any]]:
+    def _listing_write_records(
+        self, action: str, key: str | None, actor: str, ids: list[str], *,
+        authorize_intake: Callable[[dict[str, Any]], None] | None = None,
+    ) -> list[dict[str, Any]]:
         lookup_key = key.strip() if key and (action == "merge" or not self._seed_fixtures) else key
         cached = self._idempotency_cache.get((action, hashlib.sha256(actor.encode()).hexdigest() + ":" + lookup_key)) if lookup_key else None
         if cached is not None:
-            fields = ("source", "target") if action == "merge" else ("listing",)
-            if any(not isinstance(cached.get(name), dict) or not isinstance(cached[name].get("id"), str) for name in fields):
-                raise NetworkListingPolicyError("REPLAY_RECEIPT_UNAVAILABLE")
             # Authorize the durable receipt's actual resources before exposing
             # it or rejecting a changed fingerprint. Never choose new body IDs
             # as the authority for an existing logical operation.
-            ids = [cached[name]["id"] for name in fields]
+            if action == "decide_intake":
+                if not isinstance(cached, dict) or not isinstance(cached.get("id"), str) or not cached["id"]:
+                    raise NetworkListingPolicyError("REPLAY_RECEIPT_UNAVAILABLE")
+                if authorize_intake is None and not self._seed_fixtures:
+                    raise NetworkListingPolicyError("INTAKE_SCOPE_CONTEXT_REQUIRED")
+                current_intake = self._listing_intake(cached["id"])
+                if authorize_intake is not None:
+                    authorize_intake(_copy(current_intake))
+                events = cached.get("auditEvents")
+                event = events[-1] if isinstance(events, list) and events else None
+                metadata = event.get("metadata") if isinstance(event, dict) else None
+                decision = metadata.get("decision") if isinstance(metadata, dict) else None
+                if (not isinstance(decision, str)
+                        or decision not in {"create", "revise", "duplicate", "quarantine", "reject"}
+                        or event.get("action") != f"intake.decide.{decision}"
+                        or event.get("targetId") != cached["id"]):
+                    raise NetworkListingPolicyError("REPLAY_RECEIPT_UNAVAILABLE")
+                ids = []
+                if decision in {"create", "revise", "duplicate"}:
+                    target_id = metadata.get("targetListingId")
+                    match = cached.get("matchResult")
+                    if (not isinstance(target_id, str) or not target_id
+                            or not isinstance(match, dict) or match.get("targetListingId") != target_id):
+                        raise NetworkListingPolicyError("REPLAY_RECEIPT_UNAVAILABLE")
+                    ids = [target_id]
+            else:
+                fields = ("source", "target") if action == "merge" else ("listing",)
+                if any(not isinstance(cached.get(name), dict) or not isinstance(cached[name].get("id"), str) for name in fields):
+                    raise NetworkListingPolicyError("REPLAY_RECEIPT_UNAVAILABLE")
+                ids = [cached[name]["id"] for name in fields]
+        if action == "decide_intake" and ids:
+            self._load_listings()
         return [self._action_listing(listing_id) for listing_id in ids]
 
     def _check_listing_revision(self, record: dict[str, Any], if_match: str | None) -> None:
@@ -1392,17 +1479,20 @@ class NetworkListingService:
         if if_match != f'W/"{revision}"':
             raise NetworkListingConflict("VERSION_CONFLICT")
 
-    def _guard_listing_retention(self, record: dict[str, Any]) -> None:
-        if record.get("status") == "archived" or record.get("mergedIntoId"):
-            raise NetworkListingConflict("LISTING_TERMINAL")
-        for hold_field in ("hasLegalHold", "legalHold"):
+    def _guard_listing_hold(self, record: dict[str, Any]) -> None:
+        for hold_field in LEGAL_HOLD_FIELDS:
             value = record.get(hold_field)
-            if value is not None and not isinstance(value, bool):
+            if hold_field in record and not isinstance(value, bool):
                 raise NetworkListingPolicyError("LEGAL_HOLD_STATE_UNAVAILABLE")
             if value is True:
                 raise NetworkListingConflict("LEGAL_HOLD_CONFLICT")
-        if not self._seed_fixtures and not any(isinstance(record.get(name), bool) for name in ("hasLegalHold", "legalHold")):
+        if not self._seed_fixtures and not any(isinstance(record.get(name), bool) for name in LEGAL_HOLD_FIELDS):
             raise NetworkListingPolicyError("LEGAL_HOLD_STATE_UNAVAILABLE")
+
+    def _guard_listing_retention(self, record: dict[str, Any]) -> None:
+        if str(record.get("status", "")).upper() == "ARCHIVED" or record.get("mergedIntoId"):
+            raise NetworkListingConflict("LISTING_TERMINAL")
+        self._guard_listing_hold(record)
         candidates = self._state.get("candidates")
         if not isinstance(candidates, list) or any(
             not isinstance(candidate, dict) or not isinstance(candidate.get("id"), str)
@@ -1436,12 +1526,18 @@ class NetworkListingService:
     ) -> dict[str, Any]:
         # Server-side role check
         actor_name = self._require_actor(actor_name, actor_role_id)
+        if not self._seed_fixtures:
+            self._load_listings()
+            self._load_candidates()
+            self._load_idempotency_cache()
         source, target = self._listing_write_records("merge", idempotency_key, actor_name,
                                                     [source_listing_id, target_listing_id])
         self._authorize_listing_write([source, target], authorize_existing)
         allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "executive", "data_owner"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to merge listing")
+        self._guard_listing_hold(source)
+        self._guard_listing_hold(target)
 
         governed_key = _require_governed_write_context(
             idempotency_key=idempotency_key,
@@ -1565,11 +1661,16 @@ class NetworkListingService:
     ) -> dict[str, Any]:
         # Server-side role check
         actor_name = self._require_actor(actor_name, actor_role_id)
+        if not self._seed_fixtures:
+            self._load_listings()
+            self._load_candidates()
+            self._load_idempotency_cache()
         listing, = self._listing_write_records("archive", idempotency_key, actor_name, [listing_id])
         self._authorize_listing_write([listing], authorize_existing)
         allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "executive", "data_owner"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to archive listing")
+        self._guard_listing_hold(listing)
 
         reason = reason.strip()
         if not reason:
@@ -1815,25 +1916,7 @@ class NetworkListingService:
 
                     effective_vals = effective_fields(intake["parsedFields"])
 
-                    from modules.external_data.application.assisted_intake import (
-                        ASSISTED_ENTRY_REQUIRED_FIELDS,
-                    )
-                    has_all_required = True
-                    for rf in ASSISTED_ENTRY_REQUIRED_FIELDS:
-                        val = effective_vals.get(rf)
-                        if val in (None, ""):
-                            has_all_required = False
-                            break
-                        if rf in ("rent", "areaPing"):
-                            try:
-                                if float(val) <= 0:
-                                    has_all_required = False
-                                    break
-                            except (ValueError, TypeError):
-                                has_all_required = False
-                                break
-
-                    if has_all_required:
+                    if not missing_assisted_entry_fields(effective_vals):
                         intake["stage"] = "MATCHING"
                         fingerprint = content_fingerprint(effective_vals)
 
@@ -1845,10 +1928,7 @@ class NetworkListingService:
                             listings=self._get_match_listings(),
                         )
                         intake["matchResult"] = match_res.to_dict()
-                        if match_res.outcome == "POSSIBLE_MATCH":
-                            intake["stage"] = "NEEDS_REVIEW"
-                        else:
-                            intake["stage"] = "READY"
+                        intake["stage"] = match_res.intake_stage
                     else:
                         intake["stage"] = "AWAITING_ASSISTED_ENTRY"
                 else:
@@ -1989,7 +2069,7 @@ class NetworkListingService:
 
         effective_vals = effective_fields(intake["parsedFields"])
 
-        if not _missing_assisted_entry_fields(effective_vals):
+        if not missing_assisted_entry_fields(effective_vals):
             fingerprint = content_fingerprint(effective_vals)
             match_res = match_listing(
                 values=effective_vals,
@@ -1999,10 +2079,7 @@ class NetworkListingService:
                 listings=self._get_match_listings(),
             )
             intake["matchResult"] = match_res.to_dict()
-            if match_res.outcome == "POSSIBLE_MATCH":
-                intake["stage"] = "NEEDS_REVIEW"
-            else:
-                intake["stage"] = "READY"
+            intake["stage"] = match_res.intake_stage
         else:
             intake["stage"] = "AWAITING_ASSISTED_ENTRY"
 
@@ -2187,7 +2264,7 @@ class NetworkListingService:
         intake["updatedAt"] = now
 
         effective_vals = effective_fields(parsed_fields)
-        missing = _missing_assisted_entry_fields(effective_vals)
+        missing = missing_assisted_entry_fields(effective_vals)
         if missing:
             intake["stage"] = "AWAITING_ASSISTED_ENTRY"
             intake["matchResult"] = None
@@ -2205,9 +2282,7 @@ class NetworkListingService:
             )
             intake["contentFingerprint"] = fingerprint
             intake["matchResult"] = match_res.to_dict()
-            intake["stage"] = (
-                "NEEDS_REVIEW" if match_res.outcome == "POSSIBLE_MATCH" else "READY"
-            )
+            intake["stage"] = match_res.intake_stage
 
         # A deterministic audit id keeps a replay from growing a second entry
         # for the same batch member.
@@ -2253,6 +2328,7 @@ class NetworkListingService:
         correlation_id: str | None,
         authorize_existing: Callable[[dict[str, Any]], None] | None = None,
         target_listing_id: str | None = None,
+        if_match: str | None = None,
     ) -> dict[str, Any]:
         # Server-side role check
         actor_name = self._require_actor(actor_name, actor_role_id)
@@ -2265,10 +2341,42 @@ class NetworkListingService:
             correlation_id=correlation_id,
             action_label="decide intake",
         )
+        intake = self._listing_intake(intake_id)
+        normalized_action = action.strip().lower()
+        match_result = intake.get("matchResult")
+        target_id = None
+        if normalized_action in {"revise", "duplicate"}:
+            target_id = (target_listing_id if normalized_action == "revise" else None) or (
+                match_result.get("targetListingId") if isinstance(match_result, dict) else None
+            )
+        targets = self._listing_write_records(
+            "decide_intake", governed_key, actor_name, [target_id] if target_id else [],
+            authorize_intake=authorize_existing,
+        )
+        if targets:
+            self._authorize_listing_write(targets, authorize_existing)
+
+        request_value = {"intake_id": intake_id, "action": action, "target_listing_id": target_listing_id,
+                         "reason": reason, "risk_summary": risk_summary,
+                         "risk_acknowledged": risk_acknowledged}
+        # Preserve the fingerprint of historical tokenless receipts. They may
+        # still be reauthorized/replayed, but cannot authorize a fresh write.
+        if if_match is not None:
+            request_value["if_match"] = if_match
         write = self._prepare_write("decide_intake", governed_key, actor_name,
-                                    {"intake_id": intake_id, "action": action, "target_listing_id": target_listing_id, "reason": reason, "risk_summary": risk_summary, "risk_acknowledged": risk_acknowledged}, correlation_id)
+                                    request_value, correlation_id)
         if write.replayed_response is not None:
             return write.replayed_response
+        if not (self._seed_fixtures and if_match is None):
+            if if_match is None:
+                raise NetworkListingPreconditionRequired("PRECONDITION_REQUIRED")
+            revision = intake.get("version")
+            if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+                raise NetworkListingVersionUnavailable("INTAKE_VERSION_UNAVAILABLE")
+            if if_match != f'W/"{revision}"':
+                raise NetworkListingConflict("VERSION_CONFLICT")
+        if match_result is not None and not isinstance(match_result, dict):
+            raise NetworkListingPolicyError("MATCH_RESULT_UNAVAILABLE")
 
         reason_text = (reason or "").strip()
         if not reason_text:
@@ -2290,11 +2398,12 @@ class NetworkListingService:
         effective_vals = effective_fields(intake["parsedFields"])
 
         before_stage = intake["stage"]
-        before_after = {"stage": {"before": before_stage}}
+        before_after = {"stage": {"before": before_stage},
+                        "matchResult": {"before": _copy(intake.get("matchResult"))}}
         effect_summary = f"Manual decision '{action}' recorded for intake {intake_id}."
 
         if action == "create":
-            missing = _missing_assisted_entry_fields(effective_vals)
+            missing = missing_assisted_entry_fields(effective_vals)
             address = effective_vals.get("address")
             if not isinstance(address, str) or not address.strip():
                 missing.append("address")
@@ -2345,20 +2454,23 @@ class NetworkListingService:
                 "sourceUrl": intake["originalUrl"],
             }
             self._state["listings"].append(new_listing)
-            self._sync_listing_to_repo(new_id)
+            self._sync_listing_to_repo(new_id, initialize_scope=True)
             intake["stage"] = "READY"
             if not intake.get("matchResult"):
                 intake["matchResult"] = {
                     "outcome": "NEW",
                     "outcomeLabel": "新物件",
-                    "confidence": 1.0,
+                    "confidence": None,
                     "targetListingId": new_id,
                     "agreeingSignals": [],
                     "contradictingSignals": [],
                     "summary": f"已手動建立為新物件 {new_id}。"
                 }
             else:
-                intake["matchResult"]["targetListingId"] = new_id
+                intake["matchResult"].update(
+                    targetListingId=new_id, confidence=None,
+                    agreeingSignals=[], contradictingSignals=[],
+                )
                 intake["matchResult"]["outcome"] = "NEW"
                 intake["matchResult"]["outcomeLabel"] = "新物件"
                 intake["matchResult"]["summary"] = f"已手動建立為新物件 {new_id}。"
@@ -2368,10 +2480,11 @@ class NetworkListingService:
             effect_summary = f"Created new listing {new_id} from intake {intake_id}."
 
         elif action == "revise":
-            target_id = target_listing_id or (intake.get("matchResult") or {}).get("targetListingId") or (self._state["listings"][0]["id"] if self._state.get("listings") else None)
+            # Only an operator-named target or the recorded match may be revised;
+            # an unmatched intake must not overwrite whichever listing is first.
             if not target_id:
                 raise NetworkListingConflict("no target listing found for revision")
-            target = self._listing(target_id)
+            target = targets[0]
             before_rent = target["rentPerMonth"]
             before_area = target["areaPing"]
             before_floor = target["floor"]
@@ -2388,9 +2501,14 @@ class NetworkListingService:
             self._sync_listing_to_repo(target_id)
             intake["stage"] = "READY"
             if not intake.get("matchResult"):
-                intake["matchResult"] = {"targetListingId": target_id, "confidence": 0.9}
-            else:
-                intake["matchResult"]["targetListingId"] = target_id
+                intake["matchResult"] = {"targetListingId": target_id, "confidence": None}
+            elif intake["matchResult"].get("targetListingId") != target_id:
+                # A measurement about another match cannot be reassigned to a
+                # human-selected target. The original remains in this audit.
+                intake["matchResult"].update(
+                    targetListingId=target_id, confidence=None,
+                    agreeingSignals=[], contradictingSignals=[],
+                )
             intake["matchResult"]["summary"] = f"已手動將版本更新至既有物件 {target_id}。"
 
             before_after["stage"]["after"] = "READY"
@@ -2400,10 +2518,9 @@ class NetworkListingService:
             effect_summary = f"Revised listing {target_id} from intake {intake_id}."
 
         elif action == "duplicate":
-            target_id = intake["matchResult"].get("targetListingId")
             if not target_id:
                 raise NetworkListingConflict("no target listing found for duplicate merge")
-            target = self._listing(target_id)
+            target = targets[0]
             before_evidence_count = len(target.get("sourceEvidence") or ())
 
             snapshot_id = intake.get("snapshotId")
@@ -2457,6 +2574,7 @@ class NetworkListingService:
             before_after["stage"]["after"] = "FAILED"
             effect_summary = f"Rejected intake {intake_id}."
 
+        before_after["matchResult"]["after"] = _copy(intake.get("matchResult"))
         audit_evt = {
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
             "occurredAt": _now(),
@@ -2685,25 +2803,7 @@ class NetworkListingService:
 
             effective_vals = effective_fields(intake["parsedFields"])
 
-            from modules.external_data.application.assisted_intake import (
-                ASSISTED_ENTRY_REQUIRED_FIELDS,
-            )
-            has_all_required = True
-            for rf in ASSISTED_ENTRY_REQUIRED_FIELDS:
-                val = effective_vals.get(rf)
-                if val in (None, ""):
-                    has_all_required = False
-                    break
-                if rf in ("rent", "areaPing"):
-                    try:
-                        if float(val) <= 0:
-                            has_all_required = False
-                            break
-                    except (ValueError, TypeError):
-                        has_all_required = False
-                        break
-
-            if has_all_required:
+            if not missing_assisted_entry_fields(effective_vals):
                 intake["stage"] = "MATCHING"
                 fingerprint = content_fingerprint(effective_vals)
 
@@ -2715,10 +2815,7 @@ class NetworkListingService:
                     listings=self._get_match_listings(),
                 )
                 intake["matchResult"] = match_res.to_dict()
-                if match_res.outcome == "POSSIBLE_MATCH":
-                    intake["stage"] = "NEEDS_REVIEW"
-                else:
-                    intake["stage"] = "READY"
+                intake["stage"] = match_res.intake_stage
             else:
                 intake["stage"] = "AWAITING_ASSISTED_ENTRY"
         else:

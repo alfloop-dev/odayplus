@@ -29,12 +29,15 @@ from shared.api.idempotency import (
 )
 from shared.api.pagination import MAX_LIMIT, PageParams, page_params, paginate
 from shared.auth import Role
-from tests.integration._authz import auth_headers
+from tests.integration._authz import AUDIT_HEADERS, auth_headers
 
 # PriceOps view/create/approve/execute is held by the pricing manager; reuse the
 # shared bundle rather than hand-rolling headers that drift from the RBAC matrix.
-WRITE_HEADERS = auth_headers(Role.PRICING_MANAGER)
-REVIEWER_HEADERS = auth_headers(Role.PRICING_MANAGER, subject="independent-pricing-reviewer")
+WRITE_HEADERS = {**auth_headers(Role.PRICING_MANAGER), "x-tenant-id": "tenant-a"}
+REVIEWER_HEADERS = {
+    **auth_headers(Role.PRICING_MANAGER, subject="independent-pricing-reviewer"),
+    "x-tenant-id": "tenant-a",
+}
 
 
 def _plan_body(plan_id: str = "PLAN-IDEM-1", *, tenant_id: str = "tenant-a") -> dict[str, Any]:
@@ -70,7 +73,9 @@ def _create_plan(client: TestClient, plan_id: str) -> None:
     assert response.status_code == 201, response.text
 
 
-def _seed_submittable_plan(client: TestClient, plan_id: str) -> None:
+def _seed_submittable_plan(
+    client: TestClient, plan_id: str, *, headers: dict[str, str] = WRITE_HEADERS
+) -> None:
     """Drive a plan to the state `submit` accepts.
 
     A plan created via POST /plans is a `candidate` and cannot be submitted; the
@@ -80,13 +85,13 @@ def _seed_submittable_plan(client: TestClient, plan_id: str) -> None:
     optimizer = client.post(
         "/api/v1/priceops/optimizer-jobs",
         json={"optimized_at": "2026-06-28T03:00:00Z", "plans": [_plan_body(plan_id)]},
-        headers=WRITE_HEADERS,
+        headers=headers,
     )
     assert optimizer.status_code == 202, optimizer.text
     submit = client.post(
         f"/api/v1/priceops/plans/{plan_id}/submit",
         json={"actor": "pricing-manager", "reason": "send plan to approval"},
-        headers=WRITE_HEADERS,
+        headers=headers,
     )
     assert submit.status_code == 200, submit.text
 
@@ -273,10 +278,14 @@ def _raise() -> None:
 def test_transition_replay_returns_the_first_result_and_does_not_double_apply() -> None:
     """Replaying `approve` must not approve twice, nor re-audit."""
     client = _client()
-    _seed_submittable_plan(client, "PLAN-REPLAY")
+    # The audit read is scoped to the reader's tenant, so the plan's lifecycle
+    # runs in its tenant and an auditor of that tenant reads the trail back.
+    tenant = {"x-tenant-id": "tenant-a"}
+    _seed_submittable_plan(client, "PLAN-REPLAY", headers={**WRITE_HEADERS, **tenant})
     body = {"actor_id": "approver", "reason": "pilot approved", "decision": "APPROVE"}
     headers = {
         **REVIEWER_HEADERS,
+        **tenant,
         "Idempotency-Key": "idem-approve-1",
         "x-correlation-id": "corr-approve-1",
     }
@@ -292,9 +301,13 @@ def test_transition_replay_returns_the_first_result_and_does_not_double_apply() 
         "a replay must not append a second audit event claiming the approval happened again"
     )
 
-    events = client.get("/api/v1/audit/events", params={"correlation_id": "corr-approve-1"}).json()[
-        "events"
-    ]
+    audit = client.get(
+        "/api/v1/audit/events",
+        params={"correlation_id": "corr-approve-1"},
+        headers={**AUDIT_HEADERS, **tenant},
+    )
+    assert audit.status_code == 200, audit.text
+    events = audit.json()["events"]
     approvals = [e for e in events if e["event_type"] == "priceops.approved.v1"]
     assert len(approvals) == 1, "the plan must be approved exactly once"
 
@@ -532,18 +545,27 @@ def test_list_plans_last_page_reports_no_more() -> None:
 def test_list_plans_filters_by_tenant() -> None:
     client = _client()
     _create_plan(client, "PLAN-TENANT-A")
-    client.post(
+    created = client.post(
         "/api/v1/priceops/plans",
         json=_plan_body("PLAN-TENANT-B", tenant_id="tenant-b"),
-        headers=WRITE_HEADERS,
+        headers={**WRITE_HEADERS, "x-tenant-id": "tenant-b"},
     )
+    assert created.status_code == 201, created.text
 
     page = client.get(
-        "/api/v1/priceops/plans", params={"tenant_id": "tenant-b"}, headers=WRITE_HEADERS
+        "/api/v1/priceops/plans", params={"tenant_id": "tenant-b"},
+        headers={**WRITE_HEADERS, "x-tenant-id": "tenant-b"},
     ).json()
 
     assert page["total"] == 1
     assert {row["tenant_id"] for row in page["items"]} == {"tenant-b"}
+
+    other = client.get(
+        "/api/v1/priceops/plans", params={"tenant_id": "tenant-a"},
+        headers={**WRITE_HEADERS, "x-tenant-id": "tenant-b"},
+    ).json()
+    assert other["total"] == 0
+    assert other["items"] == []
 
 
 def test_list_plans_default_response_stays_backward_compatible() -> None:

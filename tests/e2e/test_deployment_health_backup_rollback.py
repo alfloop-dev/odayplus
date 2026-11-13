@@ -1,13 +1,33 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import threading
+import types
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from delivery_toolchain.e2e import verify_deployment_health_backup_rollback as vdr
+from delivery_toolchain.e2e import worker_heartbeat as wh
+
+
+def heartbeat_payload(**updates):
+    return {
+        "time": datetime.now(UTC).isoformat(),
+        "worker": "product-e2e-scheduler",
+        "status": "alive",
+        "persistence": "durable",
+        "db_path": "/data/product-e2e.sqlite3",
+        "pid": os.getpid(),
+        "process_start": wh.process_start(os.getpid()),
+        "worker_tid": threading.get_native_id(),
+        "scheduler_tid": threading.get_native_id(),
+        **updates,
+    }
 
 
 def test_entrypoint_subprocess_help_executes_from_repo_root() -> None:
@@ -187,14 +207,15 @@ def test_command_result_write_to(tmp_path: Path) -> None:
 
 
 def test_wait_for_worker_heartbeat_success(monkeypatch) -> None:
-    heartbeat_payload = {"worker": "product-e2e-scheduler", "timestamp": "2026-06-29T12:00:00Z"}
+    payload = heartbeat_payload()
 
     def fake_run(command, **kwargs):
         assert kwargs.get("timeout") == vdr.DEFAULT_HEARTBEAT_EXEC_TIMEOUT
+        assert command[-3:] == ["python", "delivery_toolchain/e2e/worker_heartbeat.py", "--check"]
         completed = subprocess.CompletedProcess(
             args=command,
             returncode=0,
-            stdout=json.dumps(heartbeat_payload),
+            stdout=json.dumps(payload),
             stderr="",
         )
         return vdr.CommandResult(completed)
@@ -202,7 +223,7 @@ def test_wait_for_worker_heartbeat_success(monkeypatch) -> None:
     monkeypatch.setattr(vdr, "run", fake_run)
 
     heartbeat = vdr.wait_for_worker_heartbeat(["docker", "compose"], env={})
-    assert heartbeat == heartbeat_payload
+    assert heartbeat == payload
 
 
 def test_wait_for_worker_heartbeat_timeout(monkeypatch) -> None:
@@ -234,8 +255,8 @@ def test_wait_for_worker_heartbeat_reports_sanitized_timeout_diagnostics(monkeyp
         )
 
     monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
-    clock = iter([0.0, 0.0, 61.0])
-    monkeypatch.setattr(vdr.time, "time", lambda: next(clock))
+    clock = iter([0.0, 0.0, 61.0, 61.0])
+    monkeypatch.setattr(vdr.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(vdr.time, "sleep", lambda _seconds: None)
 
     with pytest.raises(RuntimeError) as excinfo:
@@ -250,6 +271,208 @@ def test_wait_for_worker_heartbeat_reports_sanitized_timeout_diagnostics(monkeyp
     assert "command timed out after 15.0s" in message
     assert "docker compose exec -T worker" in message
     assert secret not in message
+
+
+@pytest.mark.parametrize("returncode,timed_out", [(1, False), (0, True), (124, True)])
+def test_dr_rejects_valid_json_from_unsuccessful_exec(monkeypatch, returncode, timed_out):
+    def fake_run(command, **kwargs):
+        assert kwargs["timeout"] == 3.0  # Clamp remote exec to the remaining wait.
+        return vdr.CommandResult(
+            subprocess.CompletedProcess(command, returncode, json.dumps(heartbeat_payload()), ""),
+            timed_out=timed_out,
+        )
+
+    clock = iter([0.0, 0.0, 4.0, 4.0])
+    monkeypatch.setattr(vdr.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(vdr.time, "sleep", lambda _: None)
+    monkeypatch.setattr(vdr, "run", fake_run)
+    with pytest.raises(RuntimeError, match="worker heartbeat not observed"):
+        vdr.wait_for_worker_heartbeat(["docker", "compose"], {}, timeout_seconds=3)
+
+
+@pytest.mark.parametrize("payload", [
+    [], None, {}, {"status": "alive"}, "alive", 1,
+    heartbeat_payload(status="failed"),
+    heartbeat_payload(time=(datetime.now(UTC) - timedelta(seconds=46)).isoformat()),
+    heartbeat_payload(time=(datetime.now(UTC) + timedelta(hours=1)).isoformat()),
+])
+def test_dr_rejects_non_heartbeat_json(monkeypatch, payload):
+    monkeypatch.setattr(vdr, "run", lambda command, **kw: vdr.CommandResult(
+        subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+    ))
+    clock = iter([0.0, 0.0, 61.0, 61.0])
+    monkeypatch.setattr(vdr.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(vdr.time, "sleep", lambda _: None)
+    with pytest.raises(RuntimeError, match="worker heartbeat not observed"):
+        vdr.wait_for_worker_heartbeat(["docker", "compose"], {})
+
+
+@pytest.mark.parametrize("age,accepted", [(0, True), (45, True), (45.001, False), (-0.001, False)])
+def test_heartbeat_freshness_boundary(age, accepted):
+    now = datetime.now(UTC)
+    event = heartbeat_payload(time=(now - timedelta(seconds=age)).isoformat())
+    if accepted:
+        assert wh.validate_heartbeat(event, now=now) == event
+    else:
+        with pytest.raises(ValueError):
+            wh.validate_heartbeat(event, now=now)
+
+
+@pytest.mark.parametrize("updates", [
+    {"status": "failed"}, {"worker": "other"}, {"time": "not-a-time"},
+    {"time": "2026-01-01T00:00:00"}, {"time": None}, {"pid": True},
+    {"worker_tid": 0}, {"scheduler_tid": "1"}, {"process_start": 42},
+    {"persistence": None}, {"db_path": []},
+])
+def test_heartbeat_rejects_invalid_shape(updates):
+    with pytest.raises(ValueError):
+        wh.validate_heartbeat(heartbeat_payload(**updates))
+
+
+@pytest.mark.parametrize("updates", [
+    {"pid": 2**30}, {"process_start": "0"},
+    {"worker_tid": 2**30}, {"scheduler_tid": 2**30},
+])
+def test_check_rejects_dead_or_reused_tasks(tmp_path, updates):
+    path = tmp_path / "heartbeat.jsonl"
+    path.write_text(json.dumps(heartbeat_payload(**updates)) + "\n")
+    with pytest.raises((ValueError, OSError)):
+        wh.check_heartbeat(path)
+
+
+def test_bounded_tail_rejects_bad_latest_record_without_fallback(tmp_path):
+    path = tmp_path / "heartbeat.jsonl"
+    event = heartbeat_payload()
+    path.write_bytes(b"x" * 1_000_000 + b"\n" + json.dumps(event).encode() + b"\n")
+    assert wh.check_heartbeat(path) == event
+    for suffix in (b"{", b"bad\n", b"\n", b"x" * (wh.HEARTBEAT_TAIL_BYTES + 1) + b"\n"):
+        with path.open("ab") as handle:
+            handle.write(suffix)
+        with pytest.raises(ValueError):
+            wh.check_heartbeat(path)
+
+
+@pytest.mark.parametrize("contents,expected", [("valid", 0), ("missing", 1), ("invalid", 1), ("stale", 1), ("future", 1)])
+def test_actual_health_cli_is_read_only_without_runtime_imports(tmp_path, contents, expected):
+    path = tmp_path / "heartbeat.jsonl"
+    db = tmp_path / "must-not-create" / "db.sqlite3"
+    if contents != "missing":
+        offset = {"stale": -46, "future": 60}.get(contents, 0)
+        event = heartbeat_payload(time=(datetime.now(UTC) + timedelta(seconds=offset)).isoformat())
+        path.write_text("bad\n" if contents == "invalid" else json.dumps(event) + "\n")
+    before = path.read_bytes() if path.exists() else None
+    result = subprocess.run(
+        [sys.executable, "-S", str(vdr.ROOT / "delivery_toolchain/e2e/worker_heartbeat.py"), "--check"],
+        env={**os.environ, "ODP_E2E_WORKER_HEARTBEAT": str(path),
+             "ODP_PERSISTENCE": "invalid-probe-must-not-initialize", "ODP_DB_PATH": str(db)},
+        capture_output=True, text=True, timeout=5,
+    )
+    assert result.returncode == expected, result.stderr
+    assert not db.parent.exists()
+    assert (path.read_bytes() if path.exists() else None) == before
+    if expected == 0:
+        assert json.loads(result.stdout) == event
+    else:
+        assert not result.stdout
+
+
+def test_dr_consumer_executes_actual_check_cli(tmp_path, monkeypatch):
+    path = tmp_path / "heartbeat.jsonl"
+    event = heartbeat_payload()
+    path.write_text(json.dumps(event) + "\n")
+
+    original_run = vdr.run
+
+    def run_local(command, **kwargs):
+        assert command[:6] == ["docker", "compose", "exec", "-T", "worker", "python"]
+        return original_run([sys.executable, "-S", *command[6:]], **kwargs)
+
+    monkeypatch.setattr(vdr, "run", run_local)
+    assert vdr.wait_for_worker_heartbeat(["docker", "compose"], {
+        **os.environ, "ODP_E2E_WORKER_HEARTBEAT": str(path),
+    }) == event
+
+
+@pytest.mark.parametrize("prefix,record_size,newline,accepted", [
+    (prefix, size, b"\n", accepted)
+    for prefix in (b"", b"previous record\n")
+    for size, accepted in ((8191, True), (8192, True), (8193, False))
+] + [
+    (b"garbage", 9000, b"\n", False),
+    (b"garbage", 9000, b"", False),
+    (b"", 500, b"", False),
+])
+def test_actual_cli_and_dr_enforce_complete_record_boundaries(
+    tmp_path, monkeypatch, prefix, record_size, newline, accepted,
+):
+    path = tmp_path / "heartbeat.jsonl"
+    stop = threading.Event()
+    thread = threading.Thread(target=stop.wait)
+    thread.start()
+    try:
+        event = heartbeat_payload(scheduler_tid=thread.native_id)
+        record = json.dumps(event).encode() + newline
+        # Leading whitespace is legal JSON, but must not hide an oversized or
+        # malformed line whose bounded suffix alone would parse as healthy.
+        path.write_bytes(prefix + b" " * (record_size - len(record)) + record)
+        before = path.read_bytes()
+        if prefix == b"garbage":
+            with pytest.raises(json.JSONDecodeError):
+                json.loads(before)
+        env = {**os.environ, "ODP_E2E_WORKER_HEARTBEAT": str(path)}
+        command = [sys.executable, "-S", "delivery_toolchain/e2e/worker_heartbeat.py", "--check"]
+        result = subprocess.run(command, cwd=vdr.ROOT, env=env, capture_output=True, text=True, timeout=5)
+        assert result.returncode == (0 if accepted else 1), result.stderr
+        assert (json.loads(result.stdout) == event) if accepted else not result.stdout
+
+        original_run = vdr.run
+
+        def run_local(command, **kwargs):
+            assert command[:6] == ["docker", "compose", "exec", "-T", "worker", "python"]
+            return original_run([sys.executable, "-S", *command[6:]], **kwargs)
+
+        monkeypatch.setattr(vdr, "run", run_local)
+        if accepted:
+            assert vdr.wait_for_worker_heartbeat(["docker", "compose"], env) == event
+        else:
+            with pytest.raises(RuntimeError, match="worker heartbeat not observed"):
+                vdr.wait_for_worker_heartbeat(["docker", "compose"], env, timeout_seconds=0.5)
+        assert path.read_bytes() == before
+    finally:
+        stop.set()
+        thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("dead", ["worker", "scheduler"])
+def test_writer_fails_if_either_real_background_thread_exits(tmp_path, monkeypatch, dead):
+    path = tmp_path / "heartbeat.jsonl"
+    stopped = []
+
+    class Runtime:
+        def __init__(self, _persistence):
+            pass
+
+        def loop(self, stop, *_args):
+            stop.wait()
+
+    class DeadRuntime(Runtime):
+        def loop(self, stop, *_args):
+            stopped.append(True)
+
+    for name, cls in (("worker", "ODayWorker"), ("scheduler", "ODayScheduler")):
+        module = types.ModuleType(f"apps.{name}.oday_{name}.main")
+        setattr(module, cls, DeadRuntime if name == dead else Runtime)
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    factory = types.ModuleType("shared.infrastructure.persistence.factory")
+    factory.build_persistence = lambda: object()
+    monkeypatch.setitem(sys.modules, factory.__name__, factory)
+    monkeypatch.setenv("ODP_E2E_WORKER_HEARTBEAT", str(path))
+    assert wh.main([]) == 1
+    assert stopped
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    assert events[-1]["status"] == "failed"
+    with pytest.raises(ValueError):
+        wh.check_heartbeat(path)
 
 
 def test_create_and_restore_backup(monkeypatch) -> None:
@@ -296,22 +519,37 @@ def test_write_report_redacts_secrets_and_hashes(tmp_path: Path) -> None:
     assert content["report_sha256"] == redacted["report_sha256"]
 
 
-def test_main_full_drill_success(tmp_path: Path, monkeypatch, capsys) -> None:
+@pytest.fixture
+def full_drill_context(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("ODP_E2E_KEEP_STACK", raising=False)
     diagnostics_dir = tmp_path / "diag"
     executed_commands: list[tuple[list[str], float, bool]] = []
+    backup = {"path": vdr.BACKUP_PATH, "sha256": "a" * 64, "size_bytes": 100}
+    restore = {"restored_path": vdr.DB_PATH, "sha256": "a" * 64, "size_bytes": 100}
+    final_cleanup = {"returncode": 0, "timed_out": False}
 
     def fake_run(command, *, env, capture=False, check=True, timeout=vdr.DEFAULT_SUBPROCESS_TIMEOUT, secret_values=()):
         executed_commands.append((command, timeout, check))
+        if "down" in command and sum("down" in cmd for cmd, _, _ in executed_commands) == 2:
+            return vdr.CommandResult(
+                subprocess.CompletedProcess(
+                    command, final_cleanup["returncode"], "",
+                    "cleanup failed with Bearer cleanup-secret-12345"
+                    if final_cleanup["returncode"] or final_cleanup["timed_out"] else "",
+                ),
+                timed_out=final_cleanup["timed_out"],
+                timeout_seconds=timeout,
+            )
         cmd_str = " ".join(command)
         stdout = ""
         if "seed_product_e2e_data.py" in cmd_str:
             stdout = json.dumps({"seeded": True})
         elif "exec -T worker" in cmd_str:
-            stdout = json.dumps({"worker": "product-e2e-scheduler"})
+            stdout = json.dumps(heartbeat_payload())
         elif "exec -T api" in cmd_str and "sqlite3" in cmd_str:
-            stdout = json.dumps({"path": "/storage/backups/product-e2e.sqlite3.backup", "sha256": "sha123", "size_bytes": 100})
+            stdout = json.dumps(backup)
         elif "run --rm --no-deps api" in cmd_str:
-            stdout = json.dumps({"restored_path": "/data/product-e2e.sqlite3", "sha256": "sha123", "size_bytes": 100})
+            stdout = json.dumps(restore)
         elif "ps" in cmd_str:
             stdout = "api Up\nweb Up\nworker Up\n"
         elif "logs" in cmd_str:
@@ -338,7 +576,7 @@ def test_main_full_drill_success(tmp_path: Path, monkeypatch, capsys) -> None:
 
     def fake_restore_backup(compose, env, **kwargs):
         cases_state["probe_store_id"] = None
-        return {"restored_path": "/data/product-e2e.sqlite3", "sha256": "sha123", "size_bytes": 100}
+        return dict(restore)
 
     monkeypatch.setattr(vdr, "list_cases", fake_list_cases)
     monkeypatch.setattr(vdr, "create_probe_case", fake_create_probe_case)
@@ -354,8 +592,20 @@ def test_main_full_drill_success(tmp_path: Path, monkeypatch, capsys) -> None:
         "--cleanup-timeout",
         "30",
     ]
+    return types.SimpleNamespace(
+        diagnostics_dir=diagnostics_dir,
+        executed_commands=executed_commands,
+        backup=backup,
+        restore=restore,
+        final_cleanup=final_cleanup,
+        argv=argv,
+    )
 
-    rc = vdr.main(argv)
+
+def test_main_full_drill_success(full_drill_context, capsys) -> None:
+    diagnostics_dir = full_drill_context.diagnostics_dir
+    executed_commands = full_drill_context.executed_commands
+    rc = vdr.main(full_drill_context.argv)
     assert rc == 0
 
     # Verify diagnostic files
@@ -366,6 +616,8 @@ def test_main_full_drill_success(tmp_path: Path, monkeypatch, capsys) -> None:
     report_data = json.loads(report_file.read_text(encoding="utf-8"))
     assert report_data["result"] == "passed"
     assert report_data["rollback"]["probe_removed"] is True
+    assert report_data["rollback"]["backup_matches_restore"] is True
+    assert report_data["cleanup"]["result"] == "passed"
 
     # Verify stdout was redacted and contains digest and redaction marker
     captured = capsys.readouterr()
@@ -378,6 +630,186 @@ def test_main_full_drill_success(tmp_path: Path, monkeypatch, capsys) -> None:
     # Verify all commands executed with finite timeouts
     for _cmd, timeout, _check in executed_commands:
         assert timeout > 0
+
+
+@pytest.mark.parametrize("record,updates", [
+    ("restore", {"sha256": "b" * 64}),
+    ("restore", {"size_bytes": 101}),
+    ("both", {"sha256": None}),
+    ("both", {"sha256": "not-a-sha256"}),
+    ("both", {"size_bytes": True}),
+    ("both", {"size_bytes": 0}),
+])
+def test_main_rejects_unverified_restore(full_drill_context, capsys, record, updates):
+    context = full_drill_context
+    for name in ("backup", "restore") if record == "both" else (record,):
+        getattr(context, name).update(updates)
+
+    with pytest.raises(RuntimeError, match="backup/restore integrity"):
+        vdr.main(context.argv)
+
+    report = json.loads((context.diagnostics_dir / vdr.REPORT_NAME).read_text())
+    assert report["result"] == "failed"
+    assert report["rollback"]["restore"] == context.restore
+    assert not capsys.readouterr().out
+    assert not any(cmd[-5:] == ["up", "-d", "api", "web", "worker"] for cmd, _, _ in context.executed_commands)
+    assert sum("down" in cmd for cmd, _, _ in context.executed_commands) == 2
+
+
+@pytest.mark.parametrize("returncode,timed_out", [(2, False), (124, True), (0, True)])
+def test_main_cleanup_failure_cannot_publish_passed(full_drill_context, capsys, returncode, timed_out):
+    context = full_drill_context
+    context.final_cleanup.update(returncode=returncode, timed_out=timed_out)
+
+    with pytest.raises(RuntimeError, match="final cleanup"):
+        vdr.main(context.argv)
+
+    report = json.loads((context.diagnostics_dir / vdr.REPORT_NAME).read_text())
+    assert report["result"] == "failed"
+    assert report["cleanup"]["result"] == "failed"
+    assert report["report_sha256"] == vdr.sha256_json(report)
+    assert not capsys.readouterr().out
+    diagnostic = (context.diagnostics_dir / "compose-cleanup.txt").read_text()
+    assert "cleanup-secret-12345" not in diagnostic
+    assert "cleanup-secret-12345" not in json.dumps(report)
+
+
+@pytest.mark.parametrize("stage", ["setup", "seed"])
+@pytest.mark.parametrize("returncode,timed_out", [(2, False), (124, True)])
+def test_main_cleanup_failure_preserves_keyboard_interrupt(
+    full_drill_context, monkeypatch, capsys, stage, returncode, timed_out,
+):
+    context = full_drill_context
+    context.final_cleanup.update(returncode=returncode, timed_out=timed_out)
+    original_run = vdr.run
+
+    def interrupted_run(command, **kwargs):
+        if (stage == "setup" and "--build" in command) or (
+            stage == "seed" and "delivery_toolchain/e2e/seed_product_e2e_data.py" in command
+        ):
+            raise KeyboardInterrupt
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(vdr, "run", interrupted_run)
+    with pytest.raises(KeyboardInterrupt):
+        vdr.main(context.argv)
+
+    report = json.loads((context.diagnostics_dir / vdr.REPORT_NAME).read_text())
+    assert report["result"] == "failed"
+    assert report["error"] == "KeyboardInterrupt"
+    assert report["cleanup"]["result"] == "failed"
+    assert report["report_sha256"] == vdr.sha256_json(report)
+    assert not capsys.readouterr().out
+
+
+@pytest.mark.parametrize("filename", ["compose-ps.txt", "compose-tail.log", "compose-cleanup.txt"])
+@pytest.mark.parametrize("primary_failure", [False, True])
+def test_main_diagnostic_write_failure_still_cleans_up(
+    full_drill_context, monkeypatch, capsys, filename, primary_failure,
+):
+    context = full_drill_context
+    original_run = vdr.run
+    original_write_to = vdr.CommandResult.write_to
+
+    def failing_run(command, **kwargs):
+        if primary_failure and "--build" in command:
+            raise RuntimeError("primary setup failure")
+        return original_run(command, **kwargs)
+
+    def failing_write_to(self, path):
+        if path.name == filename:
+            raise PermissionError("diagnostic storage unavailable")
+        return original_write_to(self, path)
+
+    monkeypatch.setattr(vdr, "run", failing_run)
+    monkeypatch.setattr(vdr.CommandResult, "write_to", failing_write_to)
+    with pytest.raises(RuntimeError, match="primary setup failure" if primary_failure else "diagnostic|cleanup"):
+        vdr.main(context.argv)
+
+    assert sum("down" in cmd for cmd, _, _ in context.executed_commands) == 2
+    report = json.loads((context.diagnostics_dir / vdr.REPORT_NAME).read_text())
+    assert report["result"] == "failed"
+    if primary_failure:
+        assert report["error"] == "primary setup failure"
+    assert not capsys.readouterr().out
+
+
+@pytest.mark.parametrize("primary_failure", [False, True])
+def test_main_report_write_failure_preserves_failure_and_cleanup(
+    full_drill_context, monkeypatch, capsys, primary_failure,
+):
+    context = full_drill_context
+    original_run = vdr.run
+
+    def failing_run(command, **kwargs):
+        if primary_failure and "--build" in command:
+            raise RuntimeError("primary setup failure")
+        return original_run(command, **kwargs)
+
+    def failing_report(*args, **kwargs):
+        raise OSError("report storage unavailable")
+
+    monkeypatch.setattr(vdr, "run", failing_run)
+    monkeypatch.setattr(vdr, "write_report", failing_report)
+    with pytest.raises(RuntimeError, match="primary setup failure" if primary_failure else "report"):
+        vdr.main(context.argv)
+
+    assert sum("down" in cmd for cmd, _, _ in context.executed_commands) == 2
+    assert not (context.diagnostics_dir / vdr.REPORT_NAME).exists()
+    assert not capsys.readouterr().out
+
+
+def test_main_report_and_stderr_failure_preserve_primary(full_drill_context, monkeypatch, capsys):
+    context = full_drill_context
+    original_run = vdr.run
+
+    def failing_run(command, **kwargs):
+        if "--build" in command:
+            raise RuntimeError("primary setup failure")
+        return original_run(command, **kwargs)
+
+    def failing_report(*args, **kwargs):
+        raise OSError("report storage unavailable")
+
+    class BrokenStderr:
+        writes = 0
+
+        def write(self, text):
+            self.writes += 1
+            raise BrokenPipeError("stderr unavailable")
+
+        def flush(self):
+            pass
+
+    monkeypatch.setattr(vdr, "run", failing_run)
+    monkeypatch.setattr(vdr, "write_report", failing_report)
+    broken_stderr = BrokenStderr()
+    with monkeypatch.context() as patch:
+        patch.setattr(vdr.sys, "stderr", broken_stderr)
+        with pytest.raises(RuntimeError, match="primary setup failure"):
+            vdr.main(context.argv)
+
+    assert broken_stderr.writes > 0
+    assert sum("down" in cmd for cmd, _, _ in context.executed_commands) == 2
+    assert not (context.diagnostics_dir / vdr.REPORT_NAME).exists()
+    assert not capsys.readouterr().out
+
+
+@pytest.mark.parametrize("keep_by_env", [False, True])
+def test_main_explicit_keep_stack_preserves_success(full_drill_context, monkeypatch, keep_by_env):
+    context = full_drill_context
+    context.final_cleanup.update(returncode=2)
+    argv = context.argv
+    if keep_by_env:
+        monkeypatch.setenv("ODP_E2E_KEEP_STACK", "1")
+    else:
+        argv = [*argv, "--keep-stack"]
+
+    assert vdr.main(argv) == 0
+    assert sum("down" in cmd for cmd, _, _ in context.executed_commands) == 1
+    report = json.loads((context.diagnostics_dir / vdr.REPORT_NAME).read_text())
+    assert report["result"] == "passed"
+    assert report["cleanup"] == {"result": "skipped", "reason": "keep-stack"}
 
 
 def test_main_fails_closed_and_runs_cleanup_on_up_timeout(tmp_path: Path, monkeypatch) -> None:
@@ -439,6 +871,8 @@ def test_main_cleanup_timeout_does_not_mask_original_failure(tmp_path: Path, mon
     report_data = json.loads(report_file.read_text(encoding="utf-8"))
     assert report_data["result"] == "failed"
     assert "up failed with internal error" in report_data["error"]
+    assert report_data["cleanup"]["result"] == "failed"
+    assert "cleanup timed out" in report_data["cleanup"]["error"]
     assert (diagnostics_dir / "compose-initial-cleanup.txt").exists()
     assert (diagnostics_dir / "compose-cleanup.txt").exists()
     assert "command timed out after" in (diagnostics_dir / "compose-cleanup.txt").read_text(encoding="utf-8")

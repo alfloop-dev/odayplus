@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
+from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
+from apps.api.app.routes.listings import AssistedIntakeStore
 from apps.api.oday_api.main import create_app
 from apps.api.oday_api.security import dependencies as auth_dependencies
 from modules.opsboard.auth import SigningKey, encode_compact_jwt
+from shared.infrastructure.persistence import build_persistence
 from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy
 
 HEADERS = {
@@ -37,6 +42,134 @@ def test_url_submission_replay_and_conflict() -> None:
     conflict = client.post("/api/v1/intakes/url", headers={**HEADERS, "Idempotency-Key": "url-idempotency-key-1"}, json={
         "original_url": "https://example.test/listing/2", "scope": {"tenant_id": HEADERS["X-Tenant-Id"]}})
     assert conflict.status_code == 409
+
+
+@pytest.fixture(params=["cached", "locked_recheck"])
+def url_replay_journey(request, monkeypatch):
+    store = AssistedIntakeStore()
+    app = create_app(
+        persistence=replace(build_persistence(mode="memory"), assisted_intake_store=store),
+        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
+    )
+    client = TestClient(app)
+    region_a = str(uuid4())
+    headers = {**HEADERS, "X-Region-Ids": region_a, "Idempotency-Key": "synthetic-url-replay-auth"}
+    body = {
+        "original_url": "https://example.test/synthetic-replay-authorization",
+        "scope": {"tenant_id": HEADERS["X-Tenant-Id"], "region_id": region_a},
+    }
+    first = client.post("/api/v1/intakes/url", headers=headers, json=body)
+    assert first.status_code == 202, first.text
+    intake = store.intakes[first.json()["intake_id"]]
+
+    def replay_request():
+        if request.param == "cached":
+            return client.post("/api/v1/intakes/url", headers=headers, json=body)
+
+        # Model a same-key winner becoming visible only at the locked recheck.
+        # Observe both real load_replay reads, not a mock of replay's return.
+        reads = []
+        inside_transaction = False
+        transaction = store.transaction
+
+        class ConcurrentReceipts(dict):
+            def get(self, key, default=None):
+                reads.append(inside_transaction)
+                return None if len(reads) == 1 else super().get(key, default)
+
+        @contextmanager
+        def tracked_transaction():
+            nonlocal inside_transaction
+            with transaction():
+                inside_transaction = True
+                try:
+                    yield
+                finally:
+                    inside_transaction = False
+
+        with monkeypatch.context() as patch:
+            patch.setattr(store, "replays", ConcurrentReceipts(store.replays))
+            patch.setattr(store, "transaction", tracked_transaction)
+            result = client.post("/api/v1/intakes/url", headers=headers, json=body)
+            assert reads == [False, True], "must reach the actual second cached return"
+            return result
+
+    return client, store, headers, body, first, intake, replay_request
+
+
+def _url_replay_state(store):
+    return deepcopy({name: getattr(store, name) for name in (
+        "intakes", "jobs", "assignments", "slas", "corrections", "decisions",
+        "promotions", "saved_views", "workflow_audits", "workflow_outbox", "replays",
+    )})
+
+
+@pytest.mark.parametrize("change, status, code", [
+    ("region", 403, "SCOPE_DENIED"),
+    ("tenant", 403, "TENANT_SCOPE_DENIED"),
+    ("ownership", 403, "OWNERSHIP_REQUIRED"),
+    ("missing", 404, "RESOURCE_NOT_FOUND"),
+])
+def test_url_replay_authorizes_current_target(url_replay_journey, change, status, code):
+    client, store, headers, body, first, intake, replay_request = url_replay_journey
+    if change == "region":
+        intake["scope"]["region_id"] = str(uuid4())
+        assert body["scope"]["region_id"] == headers["X-Region-Ids"]
+    elif change == "tenant":
+        intake["scope"]["tenant_id"] = str(uuid4())
+    elif change == "ownership":
+        intake["submitted_by"] = intake["assigned_to"] = str(uuid4())
+    else:
+        del store.intakes[intake["intake_id"]]
+    before = _url_replay_state(store)
+    detail = client.get(f'/api/v1/intakes/{intake["intake_id"]}', headers=headers)
+    assert detail.status_code == status, detail.text
+    assert detail.json()["code"] == code
+    response = replay_request()
+    assert response.status_code == status, response.text
+    assert response.json()["code"] == code
+    assert response.json()["message"] == detail.json()["message"]
+    assert response.json()["correlation_id"] == response.headers["x-correlation-id"]
+    assert "idempotency-replayed" not in response.headers
+    assert _url_replay_state(store) == before
+    assert len(store.replays) == 1
+
+
+@pytest.mark.parametrize("change", ["none", "version", "owner"])
+def test_url_replay_preserves_receipt_without_repeating_work(url_replay_journey, change):
+    client, store, headers, _, first, intake, replay_request = url_replay_journey
+    if change == "version":
+        intake["version"] += 1
+    elif change == "owner":
+        intake["assigned_to"] = str(uuid4())
+        assert intake["submitted_by"] == headers["X-Subject-Id"]
+    detail = client.get(f'/api/v1/intakes/{intake["intake_id"]}', headers=headers)
+    assert detail.status_code == 200, detail.text
+    before = _url_replay_state(store)
+    response = replay_request()
+    assert response.status_code == 200, response.text
+    assert response.headers["idempotency-replayed"] == "true"
+    assert response.json() == first.json()
+    assert response.headers["etag"] == first.headers["etag"]
+    assert _url_replay_state(store) == before
+    assert len(store.intakes) == len(store.jobs) == len(store.assignments) == len(store.slas) == 1
+    assert len(store.replays) == 1
+
+
+@pytest.mark.parametrize("change", ["body_scope", "role", "payload"])
+def test_url_replay_keeps_original_submission_checks(url_replay_journey, change):
+    client, store, headers, body, _, _, _ = url_replay_journey
+    headers, body = deepcopy(headers), deepcopy(body)
+    if change == "body_scope":
+        body["scope"]["region_id"] = str(uuid4())
+    elif change == "role":
+        headers["X-Roles"] = "auditor"
+    else:
+        body["original_url"] += "/changed"
+    before = _url_replay_state(store)
+    response = client.post("/api/v1/intakes/url", headers=headers, json=body)
+    assert response.status_code == (409 if change == "payload" else 403), response.text
+    assert _url_replay_state(store) == before
 
 
 def test_batch_partial_success_and_cursor_failure() -> None:

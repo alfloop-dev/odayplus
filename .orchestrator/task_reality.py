@@ -33,6 +33,11 @@ from typing import Any
 
 MERGE_ROUTE_FIELD = "merge_route"
 
+#: `merge_group_recovery` value for a pending failure cause that names the
+#: route's attempt but cannot be resolved (see `ai_status`'s
+#: `merge_group_route_recovery_hold`).
+MERGE_ROUTE_RECOVERY_UNRESOLVED = "unresolved"
+
 #: Statuses whose records still point at live work. A terminal task's fields are
 #: history and must not be rewritten.
 ACTIVE_TASK_STATUSES = frozenset(
@@ -102,6 +107,7 @@ def task_reality_findings(
     pull_request: dict[str, Any] | None,
     branch_exists: bool,
     head_has_review_gate: bool | None = None,
+    merge_group_recovery: bool | str = False,
 ) -> list[dict[str, Any]]:
     """Describe every way ``task`` disagrees with what it names.
 
@@ -109,6 +115,11 @@ def task_reality_findings(
     there is no such PR. ``branch_exists`` is whether ``task['branch']``
     resolves on the remote. ``head_has_review_gate`` is whether the approved
     head carries the required review status, or ``None`` when not probed.
+    ``merge_group_recovery`` says whether a merge_group recovery holds
+    ``task['merge_route']``: ``"recovery"`` (or ``True``) when the route is
+    bound to a committed failure cause still awaiting its reviewer,
+    ``"unresolved"`` when a pending failure cause names this route's attempt
+    but cannot be resolved, and falsy when no recovery holds it.
 
     Every finding carries ``repairable``. A repairable finding states the single
     value reality allows; the rest carry only a description.
@@ -177,8 +188,31 @@ def task_reality_findings(
             }
         )
 
-    if pr_merged and isinstance(task.get(MERGE_ROUTE_FIELD), dict):
+    if (
+        pr_merged
+        and isinstance(task.get(MERGE_ROUTE_FIELD), dict)
+        and merge_group_recovery == MERGE_ROUTE_RECOVERY_UNRESOLVED
+    ):
+        # A pending merge_group failure names this attempt, but its cause
+        # cannot be resolved. The route is the evidence it is judged against;
+        # releasing it as an ordinary merge would erase the recovery for good.
+        findings.append(
+            {
+                "kind": "merge_route_recovery_unresolved",
+                "repairable": False,
+                "field": MERGE_ROUTE_FIELD,
+                "detail": (
+                    f"PR #{pull_request.get('number')} is merged while a pending merge_group "
+                    "failure for this route cannot be resolved; the route is kept until an "
+                    "owner or reviewer resolves that cause"
+                ),
+            }
+        )
+    elif pr_merged and isinstance(task.get(MERGE_ROUTE_FIELD), dict) and not merge_group_recovery:
         # The record described an attempt to get the PR merged. It merged.
+        # Except under a merge_group recovery: there the route is the
+        # admission record the owed reviewer decision is bound to, and it is
+        # released with that cause, not with the merge.
         findings.append(
             {
                 "kind": "merge_route_after_merge",
@@ -259,7 +293,8 @@ def reconcile_tasks(
     """Reconcile every task, returning one result per task that had findings.
 
     ``probe`` supplies the reality for one task as a mapping with
-    ``pull_request``, ``branch_exists`` and optionally ``head_has_review_gate``.
+    ``pull_request``, ``branch_exists`` and optionally ``head_has_review_gate``
+    and ``merge_group_recovery``.
     Injecting it keeps this module free of network calls and testable against
     the exact drifts observed in production.
     """
@@ -280,6 +315,7 @@ def reconcile_tasks(
             pull_request=reality.get("pull_request"),
             branch_exists=bool(reality.get("branch_exists")),
             head_has_review_gate=reality.get("head_has_review_gate"),
+            merge_group_recovery=reality.get("merge_group_recovery") or False,
         )
         if not findings:
             continue

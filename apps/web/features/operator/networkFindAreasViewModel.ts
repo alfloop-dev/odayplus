@@ -1,3 +1,4 @@
+import { recordedLensPoints, recordedZoneDetailRows } from "./network/heatZoneRecordedEvidence";
 import { operatorFixturesAllowed } from "./operatorDataMode";
 import type {
   Candidate,
@@ -776,7 +777,7 @@ function buildZoneViewModel({
   minRent: number;
   zone: OperatorHeatZone;
 }): NetworkFindAreasZoneViewModel {
-  if (!fixturesAllowed) return buildRecordedZoneViewModel({ activeLens, candidates, listings, zone });
+  if (!fixturesAllowed || zone.recordedMap) return buildRecordedZoneViewModel({ activeLens, candidates, listings, zone });
   const demandGap = clamp01(zone.demandGap ?? 0);
   const competitionIndex = clamp01(zone.competitionIndex ?? 0);
   const fixtureRisk = zone.cannibalizationRisk ?? "medium";
@@ -884,16 +885,17 @@ function buildRecordedZoneViewModel({ activeLens, candidates, listings, zone }: 
 }): NetworkFindAreasZoneViewModel {
   const measured = (value: number | null | undefined) => typeof value === "number" && Number.isFinite(value)
     && value >= 0 && value <= 1 ? value : null;
-  const native = zone.mapEvidence;
+  const native = zone.recordedMap;
   const demandGap = measured(zone.demandGap);
   const competitionIndex = measured(zone.competitionIndex);
   const confidence = measured(native?.confidence ?? zone.confidence);
   const fitScore = measured(native?.formatFitScore);
   const cannibalizationRisk = native ? null : zone.cannibalizationRisk;
-  const cannibalizationScore = native ? 1 - native.cannibalizationRisk : null;
+  const cannibalizationScore = native?.cannibalizationRisk == null ? null : 1 - native.cannibalizationRisk;
   const rentScore = measured(native?.rentFeasibility);
   const unmetScore = measured(native?.unmetDemandScore);
-  const lensScore = lensValue(activeLens, { demandGap, competitionScore: competitionIndex === null ? null : 1 - competitionIndex,
+  const recordedPoints = native ? recordedLensPoints(native, activeLens) : null;
+  const lensScore = native ? recordedPoints === null ? null : recordedPoints / 100 : lensValue(activeLens, { demandGap, competitionScore: competitionIndex === null ? null : 1 - competitionIndex,
     confidence, fitScore, cannibalizationScore, rentScore, unmetScore, trafficScore: null, lifeScore: null });
   const lensPoints = lensScore === null ? null : Math.round(lensScore * 100);
   const bestCandidate = candidates.filter((candidate) => candidate.score !== null && candidate.recommendation !== null)
@@ -901,7 +903,7 @@ function buildRecordedZoneViewModel({ activeLens, candidates, listings, zone }: 
   const availableListingCount = listings.filter((listing) => !CLOSED_LISTING_STATUSES.has(listing.status)).length;
   const riskLabel = cannibalizationRisk === null ? "未評估" : RISK_LABEL_ZH[cannibalizationRisk];
   return {
-    zone, id: zone.id, label: zone.label, rank: native?.priorityRank ?? zone.rank,
+    zone, id: zone.id, label: zone.label, rank: native?.rank ?? zone.rank,
     centroidLabel: zone.centroid ? `${zone.centroid[1].toFixed(4)}, ${zone.centroid[0].toFixed(4)}` : "未定位",
     demandGap, demandLabel: formatPercent(demandGap), competitionIndex, competitionLabel: formatPercent(competitionIndex),
     cannibalizationRisk, cannibalizationScore, cannibalizationLabel: riskLabel,
@@ -912,10 +914,10 @@ function buildRecordedZoneViewModel({ activeLens, candidates, listings, zone }: 
     overallPoints: native?.score ?? null, availableListingCount, listingCount: listings.length, candidateCount: candidates.length,
     bestCandidate, candidates, listings, candidateSummary: bestCandidate ? `${bestCandidate.id} ${bestCandidate.recommendation} · ${bestCandidate.score}`
       : candidates.length ? `${candidates.length} 個候選點等待評分` : "No candidate",
-    detailRows: [
+    detailRows: native ? recordedZoneDetailRows(native) : [
       { key: "demand", label: "需求缺口", value: demandGap === null ? "未評估" : levelWithPercent(demandGap) },
       { key: "competition", label: "競店壓力", value: competitionIndex === null ? "未評估" : levelWithPercent(competitionIndex) },
-      { key: "cannibalization", label: "自家稀釋", value: native ? formatPercent(native.cannibalizationRisk) : riskLabel },
+      { key: "cannibalization", label: "自家稀釋", value: riskLabel },
       { key: "rentBand", label: "租金帶", value: zone.rentBand },
       { key: "rentFeasibility", label: "租金可行性", value: rentScore === null ? "未評估" : levelWithPercent(rentScore) },
       { key: "listings", label: "可用物件", value: `${availableListingCount} 筆` },

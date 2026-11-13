@@ -32,6 +32,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
@@ -62,6 +63,11 @@ DEFAULT_TTL_HOURS = 24
 MAX_TTL_HOURS = 168  # 7 days max allowed extension
 DEFAULT_EPHEMERAL_STATE_DIR = Path("/tmp/oday-plus-ephemeral-staging")
 DEFAULT_EPHEMERAL_MODULE_DIR = Path("infra/terraform/modules/ephemeral_staging")
+# Applied and executed on its own before the rest of the release; see
+# make_terraform_creation_executor.
+STAGING_MIGRATION_JOB_ADDRESS = "google_cloud_run_v2_job.staging_migration"
+STAGING_MIGRATION_EXECUTE_ATTEMPTS = 3
+STAGING_MIGRATION_RETRY_SECONDS = 60.0
 LIFECYCLE_STATE_VERSION = 1
 
 # These are the only outputs the Runtime Release staging branch may use as
@@ -234,8 +240,8 @@ def staging_live_gate_proof(report: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _live_gate_correlation_id(expected_sha: str) -> str:
-    return f"corr-staging-live-e2e-{expected_sha[:12]}-{int(datetime.now(UTC).timestamp())}"
+def _live_gate_correlation_id(expected_sha: str, *, purpose: str = "live-e2e") -> str:
+    return f"corr-staging-{purpose}-{expected_sha[:12]}-{int(datetime.now(UTC).timestamp())}"
 
 
 def _live_gate_clients(
@@ -460,6 +466,7 @@ class StagingConfig:
     tenant_id: str = ""
     cloud_sql_instance_name: str = "oday-staging-db"
     cloud_sql_connection_name: str = "project:asia-east1:oday-staging-db"
+    cloud_sql_service_account_email: str = ""
     network_name: str = "oday-staging-vpc"
     subnetwork_name: str = "oday-staging-subnet"
     # These are long-lived foundation inputs and must be supplied by the
@@ -887,7 +894,7 @@ def generate_tfvars(
     else:
         target_created_dt = ref_now
 
-    return {
+    tfvars = {
         "project_id": config.project_id,
         "region": config.region,
         "release_id": config.release_id,
@@ -913,6 +920,11 @@ def generate_tfvars(
         "deployer_service_account_email": config.deployer_service_account_email,
         "additional_labels": config.additional_labels,
     }
+    # Only present when supplied, so the identity of a release created before
+    # this input existed is unchanged.
+    if config.cloud_sql_service_account_email:
+        tfvars["cloud_sql_service_account_email"] = config.cloud_sql_service_account_email
+    return tfvars
 
 
 def plan_staging_resources(
@@ -1825,12 +1837,17 @@ def make_terraform_creation_executor(
     outputs_path: Path | None = None,
     backend_bucket: str = "",
     backend_prefix: str = "",
+    gcloud_bin: str = "gcloud",
 ) -> Callable[[StagingConfig, Sequence[StagingResource]], Mapping[str, Any]]:
     """Build the live create executor used by the CLI.
 
     Terraform state and tfvars are isolated by release id. The planned
     ``created_at`` is persisted into tfvars before apply, so a subsequent
     apply uses the same timestamp rather than refreshing the TTL.
+
+    The API refuses to start against an unmigrated database and Terraform
+    waits for every service revision to become ready, so the release
+    migration job is applied and executed before the rest of the stack.
     """
     module_path = module_dir.expanduser().resolve()
     state_path_root = state_dir.expanduser().resolve()
@@ -2011,6 +2028,38 @@ def make_terraform_creation_executor(
         ]
         if not remote_backend:
             apply_arguments.insert(3, f"-state={state_path}")
+        _run_terraform(
+            module_dir=module_path,
+            terraform_bin=terraform_bin,
+            arguments=[*apply_arguments, f"-target={STAGING_MIGRATION_JOB_ADDRESS}"],
+        )
+        migration_job = get_ephemeral_resource_names(
+            apply_config.release_id, apply_config.project_id, tenant_id=apply_config.tenant_id
+        )["cloud_run_migration_job"]
+        # The runtime SA's Cloud SQL and secret grants were created seconds
+        # ago and take a minute or two to propagate; the migration is
+        # idempotent (alembic upgrade head), so a refused connection is retried.
+        for attempt in range(1, STAGING_MIGRATION_EXECUTE_ATTEMPTS + 1):
+            try:
+                _live_gcloud(
+                    [
+                        "run",
+                        "jobs",
+                        "execute",
+                        migration_job,
+                        f"--region={apply_config.region}",
+                        f"--project={apply_config.project_id}",
+                        "--wait",
+                        "--quiet",
+                    ],
+                    gcloud_bin=gcloud_bin,
+                    timeout=1900.0,
+                )
+                break
+            except RuntimeError:
+                if attempt == STAGING_MIGRATION_EXECUTE_ATTEMPTS:
+                    raise
+                time.sleep(STAGING_MIGRATION_RETRY_SECONDS)
         _run_terraform(
             module_dir=module_path,
             terraform_bin=terraform_bin,
@@ -2749,6 +2798,58 @@ def _live_cloud_run_field(
     raise RuntimeError(f"Cloud Run {field_name} readback is missing from the live resource")
 
 
+_CLOUD_RUN_EGRESS_ANNOTATION = "run.googleapis.com/vpc-access-egress"
+_CLOUD_RUN_EGRESS_CANONICAL = {
+    "all": "ALL_TRAFFIC",
+    "all-traffic": "ALL_TRAFFIC",
+    "ALL_TRAFFIC": "ALL_TRAFFIC",
+    "private-ranges-only": "PRIVATE_RANGES_ONLY",
+    "PRIVATE_RANGES_ONLY": "PRIVATE_RANGES_ONLY",
+}
+_CLOUD_RUN_EGRESS_PATHS: tuple[tuple[str, ...], ...] = (
+    ("spec", "template", "metadata", "annotations", _CLOUD_RUN_EGRESS_ANNOTATION),
+    ("metadata", "annotations", _CLOUD_RUN_EGRESS_ANNOTATION),
+    ("template", "template", "vpcAccess", "egress"),
+    ("template", "vpcAccess", "egress"),
+    ("spec", "template", "spec", "template", "spec", "vpcAccess", "egress"),
+    ("spec", "template", "spec", "vpcAccess", "egress"),
+    ("spec", "template", "vpcAccess", "egress"),
+    ("vpcAccess", "egress"),
+)
+
+
+def _live_cloud_run_egress(payload: Mapping[str, Any], *, field_name: str) -> str:
+    """Read Cloud Run VPC egress the way the dev release path does.
+
+    Same rule as ``cloud_run_job_vpc_egress`` in cloud_run_release_traffic.sh:
+    ``gcloud ... describe`` returns the v1 shape, whose egress is the
+    ``run.googleapis.com/vpc-access-egress`` annotation (``all-traffic``); the
+    v2 shape carries ``vpcAccess.egress`` (``ALL_TRAFFIC``). Every location is
+    read and the readback fails closed when none carries a value, a value is
+    not a recognised setting, or two locations disagree.
+    """
+
+    observed: dict[str, str] = {}
+    for path in _CLOUD_RUN_EGRESS_PATHS:
+        value: Any = payload
+        for key in path:
+            if not isinstance(value, Mapping) or key not in value:
+                break
+            value = value[key]
+        else:
+            location = ".".join(path)
+            if not isinstance(value, str) or value not in _CLOUD_RUN_EGRESS_CANONICAL:
+                raise RuntimeError(
+                    f"Cloud Run {field_name} at {location} is not a recognised setting: {value!r}"
+                )
+            observed[location] = _CLOUD_RUN_EGRESS_CANONICAL[value]
+    if not observed:
+        raise RuntimeError(f"Cloud Run {field_name} readback is missing from the live resource")
+    if len(set(observed.values())) != 1:
+        raise RuntimeError(f"Cloud Run {field_name} readback is contradictory: {observed}")
+    return next(iter(observed.values()))
+
+
 def _live_cloud_run_description(
     resource_kind: str,
     resource_name: str,
@@ -2856,21 +2957,39 @@ def _live_http_get(
     return status, payload if isinstance(payload, Mapping) else {}, ""
 
 
-def _live_health_is_valid(payload: Mapping[str, Any], *, providers_disabled: bool = False) -> bool:
+def _live_web_operator_requires_login(
+    web_uri: str, *, transport_token: str, correlation_id: str
+) -> tuple[bool, str]:
+    """Web readback: the protected route sends an anonymous visitor to sign-in.
+
+    The production Web runtime answers /operator with a redirect to /login,
+    not JSON, so it is judged by the live gate's own rule.
+    """
+
+    gate = _live_e2e_gate()
+    web = gate.UrllibHttpClient(
+        gate._normalize_origin(web_uri, allow_http=False),
+        timeout=30,
+        bearer_token="",
+        operator_role="",
+        operator_subject="",
+        operator_tenant="",
+        correlation_id=correlation_id,
+        transport_token=transport_token,
+    )
+    checks: list[Any] = []
+    gate._check_web_login(http=web, checks=checks)
+    failed = [check for check in checks if not check.ok]
+    if failed or not checks:
+        return False, failed[0].detail if failed else "no web login check ran"
+    return True, ""
+
+
+def _live_health_is_valid(payload: Mapping[str, Any]) -> bool:
     """Require explicit health/readback values instead of treating HTTP 200 as proof."""
 
     status = str(payload.get("status") or "").strip().lower()
-    valid = status in {"ok", "healthy", "ready", "pass", "passed"}
-    if not valid:
-        return False
-    if not providers_disabled:
-        return True
-
-    serialized = json.dumps(payload, sort_keys=True).lower()
-    provider_markers = ("external_providers", "external-providers", "providers")
-    if not any(marker in serialized for marker in provider_markers):
-        return False
-    return not any(marker in serialized for marker in ("\"mode\": \"live\"", "\"enabled\": true"))
+    return status in {"ok", "healthy", "ready", "pass", "passed"}
 
 
 def _load_live_state_for_release(
@@ -3049,16 +3168,7 @@ def make_live_rehearsal_executor(
             raise RuntimeError(
                 f"{kind} service image readback does not match its immutable Terraform output"
             )
-        actual_egress = _live_cloud_run_field(
-            payload,
-            (
-                ("spec", "template", "vpcAccess", "egress"),
-                ("spec", "template", "spec", "vpcAccess", "egress"),
-                ("template", "vpcAccess", "egress"),
-                ("template", "template", "vpcAccess", "egress"),
-            ),
-            field_name=f"{kind} service VPC egress",
-        )
+        actual_egress = _live_cloud_run_egress(payload, field_name=f"{kind} service VPC egress")
         if actual_egress != "ALL_TRAFFIC":
             raise RuntimeError(
                 f"{kind} service live VPC egress is {actual_egress!r}; expected ALL_TRAFFIC"
@@ -3095,14 +3205,7 @@ def make_live_rehearsal_executor(
             raise RuntimeError(
                 f"{kind} job image readback does not match its immutable Terraform output"
             )
-        actual_egress = _live_cloud_run_field(
-            payload,
-            (
-                ("template", "template", "vpcAccess", "egress"),
-                ("spec", "template", "spec", "template", "spec", "vpcAccess", "egress"),
-            ),
-            field_name=f"{kind} job VPC egress",
-        )
+        actual_egress = _live_cloud_run_egress(payload, field_name=f"{kind} job VPC egress")
         if actual_egress != "ALL_TRAFFIC":
             raise RuntimeError(
                 f"{kind} job live VPC egress is {actual_egress!r}; expected ALL_TRAFFIC"
@@ -3154,14 +3257,7 @@ def make_live_rehearsal_executor(
             raise RuntimeError(
                 "public egress probe job image readback does not match its immutable Terraform output"
             )
-        actual_egress = _live_cloud_run_field(
-            payload,
-            (
-                ("template", "template", "vpcAccess", "egress"),
-                ("spec", "template", "spec", "template", "spec", "vpcAccess", "egress"),
-            ),
-            field_name="public egress probe job VPC egress",
-        )
+        actual_egress = _live_cloud_run_egress(payload, field_name="public egress probe job VPC egress")
         if actual_egress != "ALL_TRAFFIC":
             raise RuntimeError(
                 f"public egress probe job live VPC egress is {actual_egress!r}; expected ALL_TRAFFIC"
@@ -3190,10 +3286,10 @@ def make_live_rehearsal_executor(
             "status": "denied",
         }
 
-    def endpoint(path: str, *, web: bool = False, providers_disabled: bool = False) -> Mapping[str, Any]:
-        audience = web_uri if web else api_uri
+    def endpoint(path: str) -> Mapping[str, Any]:
+        audience = api_uri
         payload = _live_json_get(f"{audience}{path}", token_for(audience))
-        if not _live_health_is_valid(payload, providers_disabled=providers_disabled):
+        if not _live_health_is_valid(payload):
             raise RuntimeError(f"release-scoped readback failed health contract for {path}")
         if (
             path == "/platform/version"
@@ -3202,6 +3298,38 @@ def make_live_rehearsal_executor(
         ):
             raise RuntimeError("release-scoped version readback does not match candidate_sha")
         return {"success": True, "endpoint": f"{audience}{path}", "status": "verified"}
+
+    def external_providers_disabled_readback(context: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Judge the served provider runtime by the live gate's consumer-only rule.
+
+        Under ODP_REQUIRE_LIVE_DATA a healthy /platform/health always reports
+        the live data mode, so provider state is read from its structured
+        readiness fields rather than by scanning the payload text.
+        """
+
+        gate = _live_e2e_gate()
+        config = staging_live_gate_config(
+            outputs,
+            release_profile=str(context.get("release_profile") or ""),
+            manifest_digest=str(context.get("manifest_digest") or ""),
+            bearer_token="",
+            api_transport_token=token_for(api_uri),
+        )
+        payload = _live_json_get(f"{api_uri}/readiness", token_for(api_uri))
+        provider = gate._as_dict(gate._as_dict(payload.get("details")).get("provider"))
+        if not gate._disabled_provider_runtime_confirmed(config, provider):
+            raise RuntimeError("release-scoped readiness does not prove external providers are disabled")
+        return {"success": True, "endpoint": f"{api_uri}/readiness", "status": "verified"}
+
+    def web_operator_requires_login() -> Mapping[str, Any]:
+        ok, detail = _live_web_operator_requires_login(
+            web_uri,
+            transport_token=token_for(web_uri),
+            correlation_id=f"staging-web-readback-{outputs['resource_labels']['candidate_sha'][:12]}",
+        )
+        if not ok:
+            raise RuntimeError(f"release-scoped Web /operator readback failed: {detail}")
+        return {"success": True, "endpoint": f"{web_uri}/operator", "status": "verified"}
 
     def release_profile_readback(context: Mapping[str, Any]) -> dict[str, Any]:
         """Fail closed unless the runtime serves the admitted profile truthfully.
@@ -3236,6 +3364,92 @@ def make_live_rehearsal_executor(
             "name": expected,
             "verified": True,
             "model_checks": [check.name for check in checks],
+        }
+
+    def execute_worker_idempotency(context: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Enqueue this stage's own probe, replay it, then drain it with the worker job.
+
+        The worker job runs ``--max-jobs 1 --require-job`` and nothing earlier
+        in the rehearsal enqueues (the scheduler trigger stays paused), so an
+        empty queue must fail it. The stage therefore puts the live gate's
+        provider-disabled ``external-fetch`` probe on the queue through the
+        release API itself. Enqueue, idempotent replay, terminal state and
+        audit receipts are judged by the gate's own ``_check_worker_and_audit``;
+        the drain is the worker job with its Terraform args unchanged, so the
+        job still fails when it claims nothing.
+        """
+
+        gate = _live_e2e_gate()
+        execute_job("staging_worker_job_name", "staging_worker_image", "worker", run=False)
+        # Same principal and transport as release_profile_readback: the smoke
+        # bearer for the release-bound audience, the API token for Cloud Run.
+        smoke_token = token_for(staging_smoke_token_audience(str(outputs["release_id"])))
+        api_token = token_for(api_uri)
+        redact = gate._redactor(smoke_token, api_token)
+        config = staging_live_gate_config(
+            outputs,
+            release_profile=str(context.get("release_profile") or ""),
+            manifest_digest=str(context.get("manifest_digest") or ""),
+            bearer_token=smoke_token,
+            api_transport_token=api_token,
+        )
+        correlation_id = _live_gate_correlation_id(config.expected_sha, purpose="worker-idempotency")
+
+        class RequiredJobDrain:
+            def drain(self) -> tuple[bool, str]:
+                try:
+                    execute_job("staging_worker_job_name", "staging_worker_image", "worker")
+                except Exception as exc:
+                    return False, f"worker job execution failed: {exc}"
+                return True, "worker job claimed a required job and completed"
+
+        checks: list[Any] = []
+        report: dict[str, Any] = {}
+        try:
+            api_client, _ = _live_gate_clients(
+                config, web_transport_token="", correlation_id=correlation_id
+            )
+            readiness = api_client.request("GET", "/readiness", authenticated=False)
+            provider = gate._as_dict(gate._as_dict(readiness.payload.get("details")).get("provider"))
+            gate._check_worker_and_audit(
+                http=api_client,
+                config=config,
+                worker_driver=RequiredJobDrain(),
+                correlation_id=correlation_id,
+                checks=checks,
+                report=report,
+                provider=provider,
+                monotonic=time.monotonic,
+                sleep=time.sleep,
+            )
+        except Exception as exc:
+            # Only the exception type: a message could carry request data.
+            raise RuntimeError(f"worker idempotency probe could not run: {type(exc).__name__}") from None
+        worker = report.get("worker") if isinstance(report.get("worker"), Mapping) else {}
+        failed = [check for check in checks if not check.ok]
+        proof = {
+            "ok": bool(checks) and not failed,
+            "checks": [{"name": check.name, "ok": check.ok} for check in checks],
+            "terminal_status": worker.get("terminal_status"),
+            "expected_terminal_status": worker.get("expected_terminal_status"),
+            "secret_values_redacted": True,
+        }
+        if proof["ok"]:
+            return {
+                "success": True,
+                "job": str(outputs["staging_worker_job_name"]).strip(),
+                "execution": "succeeded",
+                "status": "verified",
+                "worker_idempotency": proof,
+            }
+        return {
+            "success": False,
+            "status": "failed",
+            "detail": redact(
+                "staging worker idempotency failed: "
+                + "; ".join(f"{check.name}: {str(check.detail)[:300]}" for check in failed)
+            ),
+            "worker_idempotency": proof,
         }
 
     def execute_live_gate(context: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -3309,6 +3523,9 @@ def make_live_rehearsal_executor(
         }
 
     def execute(stage_name: str, _context: Mapping[str, Any]) -> Mapping[str, Any]:
+        # Worker and SQL stages can outlast an ID token. Reuse credentials
+        # only within this stage, never across a long-running rehearsal.
+        token_cache.clear()
         ensure_release_identities_exist()
         if stage_name == "db_expand_migration":
             return execute_job("staging_migration_job_name", "staging_worker_image", "migration")
@@ -3320,9 +3537,9 @@ def make_live_rehearsal_executor(
             endpoint("/platform/health")
             endpoint("/platform/version")
             profile_proof = release_profile_readback(_context)
-            return {**endpoint("/operator", web=True), "release_profile": profile_proof}
+            return {**web_operator_requires_login(), "release_profile": profile_proof}
         if stage_name == "worker_idempotency":
-            return execute_job("staging_worker_job_name", "staging_worker_image", "worker")
+            return execute_worker_idempotency(_context)
         if stage_name == "scheduler_oneshot":
             trigger_state = _live_gcloud(
                 [
@@ -3357,6 +3574,10 @@ def make_live_rehearsal_executor(
                     backup_uri,
                     f"--database={database}",
                     f"--project={project_id}",
+                    # The drill restores into the same release database, so
+                    # the dump drops each object before recreating it.
+                    "--clean",
+                    "--if-exists",
                     "--quiet",
                 ],
                 gcloud_bin=gcloud_bin,
@@ -3406,6 +3627,10 @@ def make_live_rehearsal_executor(
                     revision = str(entry.get("revisionName") or entry.get("revision") or "").strip()
                     if not revision:
                         raise RuntimeError(f"{service_name} rollback target is not pinned to a revision")
+                    if entry.get("percent") is None and str(entry.get("tag") or "").strip():
+                        # gcloud omits percent on a tag-only route (such as the
+                        # rehearsal probe after restore); it serves no traffic.
+                        continue
                     try:
                         percent = int(entry.get("percent"))
                     except (TypeError, ValueError) as exc:
@@ -3449,7 +3674,7 @@ def make_live_rehearsal_executor(
                 # mutation is attempted; an absent target fails closed.
                 approved_traffic = normalize_traffic(service_name, describe_traffic(service_name))
                 baseline_revisions = set(approved_traffic)
-                switched_to_probe = False
+                traffic_switch_attempted = False
                 probe_revision = ""
                 try:
                     _live_gcloud(
@@ -3480,26 +3705,43 @@ def make_live_rehearsal_executor(
                     ).strip()
                     if not probe_revision or probe_revision in baseline_revisions:
                         raise RuntimeError(f"{service_name} rollback rehearsal target is not distinct")
+                    # A timeout or CLI error cannot prove the remote switch
+                    # did not commit. Arm restoration before issuing it.
+                    traffic_switch_attempted = True
                     update_traffic(service_name, {probe_revision: 100})
-                    switched_to_probe = True
+                    # A successful CLI exit is not an allocation receipt. The
+                    # health probe only proves the rehearsal target once the
+                    # remote readback serves every request from the probe;
+                    # zero-percent and tag-only routes may remain listed.
+                    try:
+                        switched = normalize_traffic(service_name, describe_traffic(service_name))
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"{service_name} rollback rehearsal switch readback failed: {type(exc).__name__}"
+                        ) from exc
+                    if switched.get(probe_revision) != 100:
+                        raise RuntimeError(
+                            f"{service_name} rollback rehearsal switch readback does not serve the probe revision"
+                        )
                     if is_web:
-                        health_readback = endpoint("/operator", web=True)
+                        health_readback = web_operator_requires_login()
                     else:
                         health_readback = endpoint("/platform/health")
                 finally:
-                    if switched_to_probe:
+                    if traffic_switch_attempted:
                         try:
                             update_traffic(service_name, approved_traffic)
+                            # Read back on failure paths too: a successful
+                            # restore command alone does not prove recovery.
+                            restored = normalize_traffic(service_name, describe_traffic(service_name))
                         except Exception as exc:
                             raise RuntimeError(
                                 f"{service_name} rollback target restore failed: {type(exc).__name__}"
                             ) from exc
-
-                restored = normalize_traffic(service_name, describe_traffic(service_name))
-                if restored != approved_traffic:
-                    raise RuntimeError(
-                        f"{service_name} rollback target readback does not match the approved allocation"
-                    )
+                        if restored != approved_traffic:
+                            raise RuntimeError(
+                                f"{service_name} rollback target readback does not match the approved allocation"
+                            )
                 rollback_proofs.append(
                     {
                         "service": service_name,
@@ -3519,7 +3761,7 @@ def make_live_rehearsal_executor(
         if stage_name == "public_egress_denied_probe":
             return execute_public_egress_probe()
         if stage_name == "external_providers_disabled_readback":
-            return endpoint("/platform/health", providers_disabled=True)
+            return external_providers_disabled_readback(_context)
         if stage_name == "live_e2e_gate":
             return execute_live_gate(_context)
         raise RuntimeError(f"Unknown staging rehearsal stage: {stage_name}")
@@ -3694,6 +3936,7 @@ def verify_ephemeral_staging(
                             "health_readback",
                             "rollback_targets",
                             "release_profile",
+                            "worker_idempotency",
                             "live_e2e_gate",
                         ):
                             if key in stage_result:
@@ -4744,6 +4987,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     create_p.add_argument("--dry-run", action="store_true", help="Perform dry-run planning only")
     create_p.add_argument("--tfvars-out", help="Path to write tfvars JSON")
     create_p.add_argument("--cloud-sql-connection-name", default="", help="Cloud SQL connection name")
+    create_p.add_argument(
+        "--cloud-sql-service-account-email",
+        default="",
+        help="Service account of the Cloud SQL instance (backup/restore drill bucket access)",
+    )
     create_p.add_argument("--network-name", default="oday-staging-vpc", help="Staging VPC network")
     create_p.add_argument("--subnetwork-name", default="oday-staging-subnet", help="Staging VPC subnetwork")
     create_p.add_argument("--kms-key-id", default="", help="CMEK key id")
@@ -4880,6 +5128,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             region=args.region,
             cloud_sql_instance_name=sql_instance,
             cloud_sql_connection_name=sql_connection,
+            cloud_sql_service_account_email=args.cloud_sql_service_account_email,
             network_name=args.network_name,
             subnetwork_name=args.subnetwork_name,
             kms_key_id=args.kms_key_id or StagingConfig.__dataclass_fields__["kms_key_id"].default,

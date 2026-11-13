@@ -52,11 +52,11 @@ export function validatePasswordPolicy(
     }
   }
 
-  if (normalizedPassword.length < 12) {
+  if (normalizedPassword.length < 8) {
     return {
       valid: false,
       code: "AUTH_PASSWORD_POLICY_VIOLATION",
-      reason: "Password must be at least 12 characters long.",
+      reason: "Password must be at least 8 characters long.",
     };
   }
 

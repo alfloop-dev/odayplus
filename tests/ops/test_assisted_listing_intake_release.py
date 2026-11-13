@@ -21,17 +21,17 @@ import pytest
 import yaml
 
 from delivery_toolchain.release.assisted_listing_intake import drills
-from delivery_toolchain.release.assisted_listing_intake.config import (
+from delivery_toolchain.release.assisted_listing_intake.gates import (
+    check_feature_flags,
+    check_production_readiness,
+)
+from modules.listing.application.intake_release_governance import (
     INFRA_DIR,
     REQUIRED_LIVE_TARGETS,
     ReleaseConfigError,
-    load_release_config,
-)
-from delivery_toolchain.release.assisted_listing_intake.gates import (
-    check_feature_flags,
     check_live_runtime_evidence,
-    check_production_readiness,
     check_release_authority,
+    load_release_config,
 )
 
 
@@ -55,6 +55,54 @@ def test_release_config_loads_and_validates(config) -> None:
     assert len(config.release_authority["gates"]) == 9
     assert len(config.canary_plan["write_canary_units"]) == 7
     assert len(config.rollback_triggers["mechanism_order"]) == 8
+
+
+def test_original_release_script_can_be_called_directly_from_another_directory(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    script = Path(__file__).resolve().parents[2] / "delivery_toolchain/release/assisted_listing_intake/run.py"
+    result = subprocess.run([sys.executable, str(script), "--help"], cwd=tmp_path,
+        env={k: v for k, v in os.environ.items() if k != "PYTHONPATH"}, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert "--phase" in result.stdout
+
+
+def test_manifest_scope_survives_the_original_registry_builder(config):
+    from delivery_toolchain.release.assisted_listing_intake.gates import build_intake_flag_registry
+
+    registry = build_intake_flag_registry(config)
+    for entry in config.feature_flags["flags"]:
+        assert registry.get(entry["key"]).scope.value == entry["scope"]
+        assert registry.get(entry["key"]).high_risk is True
+        assert not registry.is_enabled(entry["key"])
+
+
+@pytest.mark.parametrize("filename,field", [
+    ("feature_flags.yaml", "flags"), ("release_authority.yaml", "gates"),
+    ("live_runtime_evidence.yaml", "targets"),
+])
+def test_non_mapping_governance_rows_remain_explicit_config_errors(infra_copy, filename, field):
+    path = infra_copy / filename
+    value = yaml.safe_load(path.read_text())
+    value[field].append(None)
+    path.write_text(yaml.safe_dump(value))
+    with pytest.raises(ReleaseConfigError, match="malformed"):
+        load_release_config(infra_copy)
+
+
+def test_enabled_scoped_manifest_is_not_hidden_by_a_context_free_query(infra_copy):
+    path = infra_copy / "feature_flags.yaml"
+    value = yaml.safe_load(path.read_text())
+    entry = value["flags"][0]
+    entry.update(enabled=True, approved_by=["synthetic-a", "synthetic-b"],
+        bindings=[{"tenant_id": "00000000-0000-0000-0000-000000000001"}], configuration_version=1)
+    path.write_text(yaml.safe_dump(value))
+    result = check_feature_flags(load_release_config(infra_copy))
+    assert result["passed"] is False
+    assert result["enabled_production_flags"] == ["assisted_intake_v1_read"]
+    assert result["flags"][0]["active"] is False and result["flags"][0]["enabled"] is True
 
 
 def test_missing_config_fails_closed(tmp_path: Path) -> None:
@@ -387,6 +435,28 @@ def _live_unit(unit: int, passed: bool = True) -> dict:
         "completed_at": "2026-07-22T12:00:00Z",
         "evidence_ref": f"gs://odp-release-evidence/intake-v1/live/canary-unit-{unit}.json",
     }
+
+
+@pytest.mark.parametrize("location,field,invalid", [
+    ("authority", "approver", True), ("authority", "approved_at", True),
+    ("authority", "evidence_ref", True), ("authority", "approver", ["synthetic-actor"]),
+    ("authority", "evidence_ref", "   "), ("live", "recorded_by", True),
+    ("live", "recorded_at", True), ("live", "evidence_ref", True),
+    ("live", "recorded_at", "not-a-timestamp"),
+    ("target", "completed_at", True), ("target", "evidence_ref", True),
+    ("canary", "completed_at", True), ("canary", "evidence_ref", True),
+])
+def test_governed_attestation_requires_actual_actor_time_and_evidence_shapes(infra_copy, location, field, invalid):
+    _approve_all_authority(infra_copy)
+    _record_live_evidence(infra_copy, canary_units=[_live_unit(3)])
+    path = infra_copy / ("release_authority.yaml" if location == "authority" else "live_runtime_evidence.yaml")
+    document = yaml.safe_load(path.read_text())
+    target = (document["gates"][0] if location == "authority" else document["targets"][0] if location == "target"
+              else document["canary_units"][0] if location == "canary" else document)
+    target[field] = invalid
+    path.write_text(yaml.safe_dump(document))
+    with pytest.raises(ReleaseConfigError, match="automation drift"):
+        load_release_config(infra_copy)
 
 
 def test_live_evidence_default_not_recorded(config) -> None:
@@ -787,3 +857,44 @@ def test_cutover_gate_blocks_while_pending(config, tmp_path: Path) -> None:
     )
     assert result["passed"] is False
     assert "restore" in result["failed_drills"]
+
+
+def test_original_migration_cleanup_cli_uses_new_copy_and_preserves_wal_source(tmp_path):
+    import subprocess
+    import sys
+
+    from product_ops.migrations.assisted_listing_intake.migrate import IntakeMigrator
+
+    result = drills.run_migration_reconciliation(tmp_path / "original-drill", rows_per_tenant=1)
+    source = Path(result["staging_db"])
+    copy = tmp_path / "cli-rollback-proof.sqlite3"
+    with closing(sqlite3.connect(source)) as writer:
+        assert writer.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        IntakeMigrator(writer, migration_ref="ODP-INTAKE-RELEASE-001-DRILL")._create_finding(
+            drills.STAGING_TENANT_B, "snapshot", "synthetic-committed-WAL-evidence", [], "MISSING_EVIDENCE", "WARNING",
+            {"original": "source WAL proof"}, {"original": "retain"})
+        writer.commit()
+        before = hashlib.sha256(writer.serialize()).hexdigest()
+        command = [sys.executable, "-m", "product_ops.migrations.assisted_listing_intake.migrate", "--action", "rollback",
+            "--sqlite-path", str(source), "--rollback-copy-path", str(copy), "--tenant-id", drills.STAGING_TENANT_B,
+            "--migration-ref", "ODP-INTAKE-RELEASE-001-DRILL"]
+        executed = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        assert executed.returncode == 0, executed.stdout + executed.stderr
+        proof = json.loads(executed.stdout)
+        assert proof["rows_before"] == proof["staging_record_untouched"] == proof["other_tenant_rows_untouched"] == 1
+        assert proof["rows_after"] == 0 and proof["rows_deleted"] > 0
+        assert proof["source_unchanged"] is True and proof["live_rollback_qualified"] is False
+        assert proof["source_snapshot_sha256_before"] == proof["source_snapshot_sha256_after"] == before
+        with closing(sqlite3.connect(copy)) as saved:
+            assert saved.execute("SELECT count(*) FROM reconciliation_findings WHERE source_id='synthetic-committed-WAL-evidence'").fetchone()[0] == 1
+            disposition = json.loads(saved.execute("SELECT actual FROM reconciliation_findings WHERE severity='INFO' AND tenant_id=?",
+                (drills.STAGING_TENANT_B,)).fetchone()[0])
+            assert disposition["rollback_disposition"] == "ROLLED_BACK"
+        copy_hash = hashlib.sha256(copy.read_bytes()).hexdigest()
+        retry = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        assert retry.returncode == 1 and json.loads(retry.stdout)["reason"] == "isolated_copy_proof_failed"
+        assert hashlib.sha256(copy.read_bytes()).hexdigest() == copy_hash
+        command[command.index("--rollback-copy-path") + 1] = str(source)
+        same_path = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        assert same_path.returncode == 1
+        assert hashlib.sha256(writer.serialize()).hexdigest() == before

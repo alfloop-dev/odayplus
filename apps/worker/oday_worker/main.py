@@ -52,7 +52,8 @@ class _LeaseHeartbeat:
 
     def stop(self) -> tuple[int, BaseException | None]:
         self._stop.set()
-        self._thread.join()
+        if self._thread.ident is not None:
+            self._thread.join()
         with self._state_lock:
             try:
                 latest = self._queue.get(self._job_id)
@@ -177,6 +178,24 @@ class ODayWorker:
             ScoreExecutionJobRepository,
         )
         canonical_score_job = job.job_type in {INTAKE_SITESCORE_JOB_TYPE, SITESCORE_EXECUTION_JOB_TYPE}
+        canonical_identity_job = job.job_type == "identity-execution"
+        canonical_native_start_job = job.job_type == "native-intake-start"
+        canonical_native_identity_job = job.job_type == "native-intake-identity"
+        canonical_native_source_policy_job = job.job_type == "native-intake-source-policy"
+        canonical_native_source_policy_recheck_job = job.job_type == "native-intake-source-policy-recheck"
+        canonical_native_retrieval_job = job.job_type == "native-intake-retrieval"
+        canonical_native_assisted_entry_job = job.job_type == "native-intake-assisted-entry"
+        canonical_native_parser_job = job.job_type == "native-intake-parser"
+        native_sql_command = (
+            (canonical_native_start_job or canonical_native_identity_job or canonical_native_source_policy_job
+             or canonical_native_source_policy_recheck_job)
+            and getattr(getattr(self.persistence, "engine", None), "dialect", None) == "postgresql"
+        )
+        canonical_transaction_owned_job = (
+            canonical_score_job or canonical_identity_job or canonical_native_start_job
+            or canonical_native_identity_job or canonical_native_source_policy_job or canonical_native_source_policy_recheck_job
+            or canonical_native_retrieval_job or canonical_native_assisted_entry_job or canonical_native_parser_job
+        )
         score_owner = ScoreExecutionJobRepository if job.job_type == SITESCORE_EXECUTION_JOB_TYPE else IntakeScoreJobRepository
 
         def score_heartbeat(job_id: str, *, expected_version: int, fence_token: int) -> int:
@@ -186,6 +205,23 @@ class ODayWorker:
             return score_owner(self.persistence).heartbeat(
                 job_id, expected_version=expected_version, fence_token=fence_token,
             )
+
+        def identity_heartbeat(job_id: str, *, expected_version: int, fence_token: int) -> int:
+            from modules.listing.application.identity_delivery import IdentityJobAdmission
+
+            return IdentityJobAdmission(self.persistence.canonical_identity_graph()).heartbeat(
+                job_id, expected_version=expected_version, fence_token=fence_token)
+
+        def native_intake_heartbeat(job_id: str, *, expected_version: int, fence_token: int) -> int:
+            engine = getattr(self.persistence, "engine", None)
+            if getattr(engine, "dialect", None) != "postgresql":
+                return self.job_queue.heartbeat(job_id, expected_version=expected_version, fence_token=fence_token)
+            # Bound the pre-command renewal independently. The native owner
+            # subsequently checks this physical lease in its own SQL root.
+            with engine.transaction():
+                engine.query_one("SELECT set_config('lock_timeout',?,true)", ("100ms",))
+                engine.query_one("SELECT set_config('statement_timeout',?,true)", ("500ms",))
+                return self.job_queue.heartbeat(job_id, expected_version=expected_version, fence_token=fence_token)
 
         context = TraceContext(
             correlation_id=job.correlation_id,
@@ -209,10 +245,26 @@ class ODayWorker:
                 queue=self.job_queue,
                 job=job,
                 interval_seconds=self.heartbeat_interval_seconds,
-                heartbeat=score_heartbeat if canonical_score_job else None,
+                # SQL-only native phases use a physical heartbeat to renew
+                # their lease before the atomic phase/result transaction locks
+                # that row. It must never invoke the identity authenticator.
+                heartbeat=(score_heartbeat if canonical_score_job else identity_heartbeat if canonical_identity_job
+                           else native_intake_heartbeat if (canonical_native_start_job or canonical_native_identity_job
+                                                          or canonical_native_source_policy_job
+                                                          or canonical_native_source_policy_recheck_job) else None),
             )
-            heartbeat.start()
             try:
+                if native_sql_command:
+                    # Renew once before the SQL command opens its SERIALIZABLE
+                    # root. A background UPDATE can invalidate the root's first
+                    # physical-row snapshot, including protective settlement.
+                    # Current caps are 40s for native start, 30s for identity,
+                    # and 15s for policy evaluation. Each owner independently
+                    # checks the actual 45s lease during command/settlement;
+                    # no renewal runs concurrently with that root.
+                    native_intake_heartbeat(job.job_id, expected_version=job.version, fence_token=job.fence_token)
+                elif not (canonical_native_retrieval_job or canonical_native_assisted_entry_job or canonical_native_parser_job):
+                    heartbeat.start()
                 self.execute_job(job)
                 current_version, heartbeat_failure = heartbeat.stop()
                 duration = time.monotonic() - start_time
@@ -239,7 +291,7 @@ class ODayWorker:
                     )
                     return True
 
-                if canonical_score_job:
+                if canonical_transaction_owned_job:
                     if (latest_job is not None
                             and latest_job.status == JobStatus.QUEUED
                             and latest_job.delivery_state == JobDeliveryState.RETRYING):
@@ -250,7 +302,8 @@ class ODayWorker:
                         )
                     else:
                         self._record_stale_worker(
-                            job, heartbeat_failure or JobFenceRejectedError(
+                            job, JobFenceRejectedError("NATIVE_PARSER_OUTCOME_UNRESOLVED") if canonical_native_parser_job
+                            else heartbeat_failure or JobFenceRejectedError(
                                 "Canonical score handler did not commit a terminal or retry checkpoint"
                             ),
                         )
@@ -298,7 +351,20 @@ class ODayWorker:
             except Exception as exc:
                 current_version, heartbeat_failure = heartbeat.stop()
                 duration = time.monotonic() - start_time
-                latest_job = self.job_queue.get(job.job_id)
+                try:
+                    latest_job = self.job_queue.get(job.job_id)
+                except Exception as observation_error:
+                    if not canonical_native_parser_job:
+                        raise
+                    # An unavailable outcome read is no success, failure or
+                    # retry grant. Preserve the domain's recoverable state and
+                    # emit no driver details or input values.
+                    self.telemetry.logger.error(
+                        f"Native parser job {job.job_id} outcome is unresolved",
+                        correlation_id=job.correlation_id, actor="worker", resource=f"job/{job.job_type}",
+                        action="execute", result="unresolved", error_code=type(observation_error).__name__,
+                    )
+                    return True
                 if latest_job and latest_job.status in (
                     JobStatus.CANCELLED,
                     JobStatus.SUCCEEDED,
@@ -319,7 +385,8 @@ class ODayWorker:
                 ):
                     self._record_stale_worker(job, JobFenceRejectedError("Job execution ownership changed"))
                 elif heartbeat_failure is not None:
-                    self._record_stale_worker(job, heartbeat_failure)
+                    self._record_stale_worker(job, JobFenceRejectedError("NATIVE_PARSER_OUTCOME_UNRESOLVED")
+                        if canonical_native_parser_job else heartbeat_failure)
                 else:
                     # Record metrics
                     self.telemetry.metrics.observe(
@@ -332,7 +399,8 @@ class ODayWorker:
                         labels={"job_type": job.job_type, "error_class": type(exc).__name__},
                     )
                     self.telemetry.logger.error(
-                        f"Job {job.job_id} failed: {exc}",
+                        (f"Job {job.job_id} failed ({type(exc).__name__})" if canonical_native_parser_job
+                            else f"Job {job.job_id} failed: {exc}"),
                         correlation_id=job.correlation_id,
                         actor="worker",
                         resource=f"job/{job.job_type}",
@@ -341,7 +409,7 @@ class ODayWorker:
                         error_code=type(exc).__name__,
                     )
 
-                    if canonical_score_job:
+                    if canonical_transaction_owned_job:
                         # A storage/authorization/fence failure must not be
                         # converted into a separate delivery-only retry. The
                         # authoritative checkpoint stays recoverable.

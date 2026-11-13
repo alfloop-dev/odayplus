@@ -1,15 +1,26 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ComponentProps } from "react";
+import { useMemo, type ComponentProps } from "react";
 import type { ApiBinding } from "../../../../src/lib/api/binding";
 import { NetworkFindAreasWorkspace as Workspace } from "../../NetworkFindAreasWorkspace";
 import { NETWORK_TAB_IDS } from "../networkUrlState";
+import { CanonicalIntakeCasePicker } from "../intake/CanonicalIntakeCasePicker";
+import { CanonicalIntakeCommandProvider } from "../intake/useCanonicalIntakeCommand";
+import { operatorSecurityHeaders, operatorSubjectId } from "../../operatorSecurityHeaders";
 
 // Existing route/data-gate cases explicitly model all read grants. The
 // principal-projection cases below provide their exact bootstrap metadata.
 function NetworkFindAreasWorkspace(props: ComponentProps<typeof Workspace>) {
-  return <Workspace allowedTabIds={NETWORK_TAB_IDS} {...props} />;
+  // The isolated native controls explicitly compose the original owner that
+  // production now mounts in Console. They never manufacture a session grant.
+  const role = props.activeRoleId ?? "ops-lead";
+  const key = JSON.stringify([role, operatorSubjectId(role), props.allowedTabIds ?? NETWORK_TAB_IDS,
+    window.sessionStorage.getItem("oday.operator.tenant")]);
+  const context = useMemo(() => radarProps.showNativePicker
+    ? { fetchImpl: fetch, contextKey: key, headers: operatorSecurityHeaders(role) } : null, [key, role]);
+  const workspace = <Workspace allowedTabIds={NETWORK_TAB_IDS} {...props} canonicalIntakeReadContext={context} />;
+  return context ? <CanonicalIntakeCommandProvider context={context}>{workspace}</CanonicalIntakeCommandProvider> : workspace;
 }
 import type { Candidate, OperatorHeatZone } from "../../types";
 
@@ -19,21 +30,38 @@ const navigation = vi.hoisted(() => ({
   search: "ws=network&tab=radar",
 }));
 
-vi.mock("next/navigation", () => ({
-  usePathname: () => navigation.pathname,
+vi.mock("next/navigation", async () => {
+  const { useSyncExternalStore } = await import("react");
+  const subscribe = (listener: () => void) => {
+    window.addEventListener("popstate", listener);
+    return () => window.removeEventListener("popstate", listener);
+  };
+  const location = () => useSyncExternalStore(subscribe, () => navigation.pathname + "?" + navigation.search);
+  return {
+  usePathname: () => location().split("?")[0],
   useRouter: () => ({
     push: navigation.push,
+    replace: (href: string) => {
+      const url = new URL(href, window.location.origin);
+      navigation.pathname = url.pathname; navigation.search = url.search.slice(1);
+      window.history.replaceState(null, "", href);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    },
   }),
-  useSearchParams: () => new URLSearchParams(navigation.search),
-}));
+  useSearchParams: () => new URLSearchParams(location().split("?").slice(1).join("?")),
+  };
+});
 
-const radarProps = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>> }));
+const radarProps = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>>, showNativePicker: false }));
 const reviewPanelControl = vi.hoisted(() => ({ latest: null as unknown }));
 
 vi.mock("../ListingRadarPanel", () => ({
   ListingRadarPanel: (props: Record<string, unknown>) => {
     radarProps.calls.push(props);
-    return <div data-testid="listing-radar-panel">Listing Radar</div>;
+    const context = props.canonicalIntakeReadContext as ComponentProps<typeof CanonicalIntakeCasePicker>["context"] | undefined;
+    return <div data-testid="listing-radar-panel">Listing Radar
+      {radarProps.showNativePicker && (!props.intakeDetailOpen || props.intakeKind === "canonical") && context ? <CanonicalIntakeCasePicker context={context} /> : null}
+    </div>;
   },
 }));
 
@@ -160,8 +188,14 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
   beforeEach(() => {
     navigation.pathname = "/operator";
     navigation.search = "ws=network&tab=radar";
-    navigation.push.mockReset();
+    navigation.push.mockReset().mockImplementation((href: string) => {
+      const url = new URL(href, window.location.origin);
+      navigation.pathname = url.pathname; navigation.search = url.search.slice(1);
+      window.history.pushState(null, "", href);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
     radarProps.calls.length = 0;
+    radarProps.showNativePicker = false;
     reviewPanelControl.latest = null;
     window.history.replaceState(null, "", "/operator?ws=network&tab=radar");
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
@@ -176,6 +210,113 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
+
+  it.each(["tab", "intake detail"])("retains the original unknown URL command when the real workspace removes the picker for %s", async (surface) => {
+    radarProps.showNativePicker = true;
+    const writes: RequestInit[] = [];
+    const receipt = { intake_id: "00000000-0000-0000-0000-000000000095", intake_method: "URL",
+      processing_state: "SUBMITTED", version: 1, submitted_at: "2026-10-19T08:00:00Z",
+      correlation_id: "00000000-0000-0000-0000-000000000096", transition_id: "00000000-0000-0000-0000-000000000097",
+      audit_event_id: "00000000-0000-0000-0000-000000000098", outbox_event_id: "00000000-0000-0000-0000-000000000099" };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/v1/canonical-intakes" && init?.method === "POST") {
+        writes.push(init);
+        if (writes.length === 1) throw new TypeError("original URL result unknown");
+        return new Response(JSON.stringify(receipt), { status: 201 });
+      }
+      if (path === "/api/v1/canonical-intakes") return new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 });
+      return forbiddenResponse("isolated-native-lifetime", path);
+    }));
+    const guard = (current: () => boolean) => async () => current();
+    const props = { allowedTabIds: ["radar", "review"] as const, activeRoleId: "expansion-manager" as const, createAuthenticatedReadGuard: guard };
+    const view = render(<NetworkFindAreasWorkspace {...props} />);
+    fireEvent.click(await screen.findByRole("button", { name: "選取收件／比對案件" }));
+    fireEvent.click(await screen.findByRole("button", { name: "從網址建立正式收件" }));
+    fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://source.example/original-workspace" } });
+    fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "切換工作區後保留原始操作" } });
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    await screen.findByRole("button", { name: "重試同一請求" });
+    if (surface === "tab") navigation.search = "ws=network&tab=review";
+    else { navigation.pathname = "/intake/IN-3001"; navigation.search = ""; }
+    view.rerender(<NetworkFindAreasWorkspace {...props} />);
+    await waitFor(() => expect(screen.queryByTestId("canonical-intake-case-picker")).not.toBeInTheDocument());
+    expect(writes[0].signal?.aborted).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "重試原操作" }));
+    const summary = await screen.findByRole("region", { name: "先前收件操作" });
+    await within(summary).findByText(/原操作已收到回執/);
+    expect(summary).toHaveTextContent(`收件 ${receipt.intake_id} · 版本 1 · SUBMITTED`);
+    expect(writes).toHaveLength(2);
+    expect(writes[1].body).toBe(writes[0].body);
+    expect(new Headers(writes[1].headers).get("idempotency-key")).toBe(new Headers(writes[0].headers).get("idempotency-key"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it.each(["query HTTP", "query JSON", "role", "tenant"] as const)(
+    "keeps one native URL command bound to its actual account/context across a %s change", async (change) => {
+      // Real picker, original native client and command hook; only the declared
+      // local API transport and external account lease are engineering premises.
+      radarProps.showNativePicker = true;
+      const beforeTenant = sessionStorage.getItem("oday.operator.tenant");
+      let finish!: () => void;
+      const writes: RequestInit[] = [];
+      const receipt = { intake_id: "00000000-0000-0000-0000-000000000095", intake_method: "URL",
+        processing_state: "SUBMITTED", version: 1, submitted_at: "2026-10-19T08:00:00Z",
+        correlation_id: "00000000-0000-0000-0000-000000000096",
+        transition_id: "00000000-0000-0000-0000-000000000097",
+        audit_event_id: "00000000-0000-0000-0000-000000000098",
+        outbox_event_id: "00000000-0000-0000-0000-000000000099" };
+      vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(String(input), window.location.origin).pathname;
+        if (path === "/api/v1/canonical-intakes" && init?.method === "POST") {
+          writes.push(init);
+          if (change === "query JSON") {
+            const response = new Response(JSON.stringify(receipt), { status: 201 });
+            response.json = () => new Promise(resolve => { finish = () => resolve(receipt); });
+            return Promise.resolve(response);
+          }
+          return new Promise<Response>(resolve => { finish = () => resolve(new Response(JSON.stringify(receipt), { status: 201 })); });
+        }
+        if (path === "/api/v1/canonical-intakes") return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
+        return Promise.resolve(forbiddenResponse("isolated-native-command", path));
+      }));
+      const guard = (current: () => boolean) => async () => current();
+      let role: "expansion-manager" | "expansion-staff" = "expansion-manager";
+      const view = render(<NetworkFindAreasWorkspace allowedTabIds={["radar"]} activeRoleId={role} createAuthenticatedReadGuard={guard} />);
+      try {
+        fireEvent.click(await screen.findByRole("button", { name: "選取收件／比對案件" }));
+        fireEvent.click(await screen.findByRole("button", { name: "從網址建立正式收件" }));
+        fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://source.example/same-native-command" } });
+        fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
+        fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "保留同一已送出指令及正式回執" } });
+        fireEvent.click(screen.getByTestId("intake-submit-button"));
+        await waitFor(() => { expect(writes).toHaveLength(1); expect(finish).toBeDefined(); });
+        const key = new Headers(writes[0].headers).get("idempotency-key");
+        expect(key).toBeTruthy();
+        if (change.startsWith("query")) {
+          const params = new URLSearchParams(navigation.search);
+          params.set("search", "changed-inbox-query");
+          navigation.search = params.toString();
+          window.history.replaceState(null, "", `/operator?${navigation.search}`);
+        } else if (change === "role") role = "expansion-staff";
+        else sessionStorage.setItem("oday.operator.tenant", "different-observed-tenant");
+        view.rerender(<NetworkFindAreasWorkspace allowedTabIds={["radar"]} activeRoleId={role} createAuthenticatedReadGuard={guard} />);
+        if (change.startsWith("query")) {
+          expect(screen.getByTestId("intake-add-dialog")).toBeVisible();
+          expect(screen.getByTestId("intake-submit-button")).toBeDisabled();
+        } else expect(screen.queryByTestId("canonical-intake-case-picker")).not.toBeInTheDocument();
+        await act(async () => finish());
+        if (change.startsWith("query")) expect(await screen.findByText(/正式收件 .*已送出/)).toHaveTextContent(receipt.intake_id);
+        else expect(screen.queryByText(/正式收件 .*已送出/)).not.toBeInTheDocument();
+        expect(writes).toHaveLength(1);
+        expect(new Headers(writes[0].headers).get("idempotency-key")).toBe(key);
+      } finally {
+        if (beforeTenant === null) sessionStorage.removeItem("oday.operator.tenant");
+        else sessionStorage.setItem("oday.operator.tenant", beforeTenant);
+      }
+    },
+  );
 
   it.each([
     ["response", "URL"], ["JSON", "URL"],

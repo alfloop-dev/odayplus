@@ -183,7 +183,7 @@ export function hasNetworkScoringRenderShape(value: unknown): boolean {
     && rows(value.candidates, (candidate) => text(candidate.title) && text(candidate.zoneLabel)
       && text(candidate.heatZoneId) && nullableText(candidate.address)
       && nullableText(candidate.modelVersion) && text(candidate.datasetSnapshotId)
-      && text(candidate.stage) && validGate(candidate.gate) && typeof candidate.scored === "boolean"
+      && text(candidate.stage) && optionalText(candidate.canonicalSiteStatus) && validGate(candidate.gate) && typeof candidate.scored === "boolean"
       && nullableNumber(candidate.score) && nullableRecommendation(candidate.recommendation)
       && typeof candidate.inCompare === "boolean" && optionalText(candidate.listingId) && optionalText(candidate.reviewId)
       && validReadEvidence(candidate.readEvidence) && validPipelineEvidence(candidate.pipelineEvidence)

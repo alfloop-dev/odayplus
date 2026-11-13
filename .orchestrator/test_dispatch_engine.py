@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -16,7 +18,32 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import dispatch_engine
+import dispatch_policy
+import runtime_state
 import supervisor
+
+
+class RunningAssignmentPredicateTests(unittest.TestCase):
+    """Running eligibility stays strict; a finished handoff is proven elsewhere."""
+
+    CONFIG: dict[str, Any] = {"agents": {"claude": {"display_name": "Claude"}, "codex": {"display_name": "Codex"}}}
+
+    def _matches(self, agent: str, **task: Any) -> bool:
+        record = {"id": "T-1", "owner": "Claude", "reviewer": "Codex", **task}
+        worker = {"task_id": "T-1", "agent_id": agent, "logical_agent_id": agent}
+        return dispatch_engine.worker_matches_current_assignment(self.CONFIG, worker, {"T-1": record})
+
+    def test_blocked_is_never_running_eligible_for_either_role(self) -> None:
+        self.assertFalse(self._matches("claude", status="blocked", waiting_for="Claude"))
+        self.assertFalse(self._matches("codex", status="blocked", waiting_for="Codex"))
+
+    def test_other_statuses_keep_their_role_binding(self) -> None:
+        self.assertTrue(self._matches("claude", status="in_progress"))
+        self.assertTrue(self._matches("claude", status="review_approved"))
+        self.assertTrue(self._matches("codex", status="review"))
+        self.assertFalse(self._matches("codex", status="in_progress"))
+        self.assertFalse(self._matches("claude", status="review"))
+        self.assertFalse(self._matches("claude", status="done"))
 
 
 class PausedOwnerFailoverPreferenceTests(unittest.TestCase):
@@ -257,23 +284,560 @@ class PausedOwnerFailoverPreferenceTests(unittest.TestCase):
         )
         self.assertEqual((reassignment or {}).get("new_owner"), "Codex2")
 
+    def _git(self, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-c", "commit.gpgsign=false", *args],
+            cwd=self.root, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+
+    def _submitted_review(self, *authors: str, submitted_by: str = "Claude", **overrides: Any) -> dict[str, Any]:
+        """A review over a real synthetic range, with the provenance `submit_review` records.
+
+        The config's status root is this checkout, so the registry's own
+        `pantheon` repository is the repository the range is written to: each
+        of `authors` commits on the task branch, then `submitted_by` merges an
+        advanced `dev` back in as the finalizer's base advance.
+        """
+        if not (self.root / ".git").exists():
+            self._git("init", "-q", "-b", "dev")
+            self._git("config", "user.email", "worker@pantheon.local")
+            self._git("config", "user.name", "Worker")
+            self._git("commit", "-q", "--allow-empty", "-m", "bootstrap")
+        self._git("checkout", "-q", "-B", "task/T-2", "dev")
+        for index, author in enumerate(authors):
+            reviewer = "Claude" if author != "Claude" else "Codex2"
+            self._git(
+                "commit", "-q", "--allow-empty", "-m",
+                f"T-2: change {index}\n\nLLM-Agent: {author}\nTask-ID: T-2\nReviewer: {reviewer}\n",
+            )
+        self._git("checkout", "-q", "dev")
+        self._git("commit", "-q", "--allow-empty", "-m", "OTHER-1: unrelated dev work")
+        self._git("update-ref", "refs/remotes/origin/dev", "dev")
+        self._git("checkout", "-q", "task/T-2")
+        self._git("merge", "--no-ff", "-q", "-m", f"Merge dev into task/T-2\n\nLLM-Agent: {submitted_by}\n", "dev")
+        head = self._git("rev-parse", "HEAD")
+        task = {
+            "id": "T-2",
+            "status": "review",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "task_class": "implementation",
+            "review_submission": {
+                "pr_number": 12,
+                "branch": "task/T-2",
+                "base_branch": "dev",
+                "remote_sha": head,
+                "source_head": head,
+                "source_base": self._git("rev-parse", "dev"),
+                "source_authors": list(authors),
+                "submitted_by": submitted_by,
+            },
+        }
+        task.update(overrides)
+        return {"tasks": [task]}
+
     def test_reviewer_failover_order_is_unchanged(self) -> None:
         """The reviewer branch is not an implementation-owner decision."""
-        status = {
-            "tasks": [
-                {
-                    "id": "T-2",
-                    "status": "review",
-                    "owner": "Claude",
-                    "reviewer": "Codex",
-                    "task_class": "implementation",
-                }
-            ]
-        }
-        reassignment = self._run(self._config(), self._paused_codex_state(), status)
+        reassignment = self._run(self._config(), self._paused_codex_state(), self._submitted_review("Claude"))
         self.assertIsNotNone(reassignment)
         self.assertEqual(reassignment["new_reviewer"], "Codex2")
         self.assertEqual(reassignment["new_owner"], "Claude")
+
+    def test_reviewer_failover_excludes_every_source_pool(self) -> None:
+        """Codex2 is next in order, but it wrote part of the range."""
+        reassignment = self._run(
+            self._config(), self._paused_codex_state(), self._submitted_review("Claude", "Codex2")
+        )
+        self.assertIsNotNone(reassignment)
+        self.assertEqual(reassignment["new_reviewer"], "AgyB")
+        self.assertEqual(reassignment["new_owner"], "Claude")
+
+    def test_reviewer_failover_refuses_missing_or_unknown_source(self) -> None:
+        """Without validated source evidence no replacement is independent."""
+        missing = self._submitted_review("Claude")
+        missing["tasks"][0].pop("review_submission")
+        unknown = self._submitted_review("Codex-Root")
+        stale = self._submitted_review("Claude")
+        stale["tasks"][0]["review_submission"]["source_head"] = "c" * 40
+        # Same real head, base and remote; Codex2 wrote part of the range, but
+        # the record is rewritten to leave it out. Read from the record, Codex2
+        # would be the next independent reviewer.
+        rewritten = self._submitted_review("Claude", "Codex2")
+        rewritten["tasks"][0]["review_submission"]["source_authors"] = ["Claude"]
+        for label, status in (
+            ("missing", missing),
+            ("unknown", unknown),
+            ("stale", stale),
+            ("rewritten", rewritten),
+        ):
+            with self.subTest(label=label):
+                self.assertIsNone(self._run(self._config(), self._paused_codex_state(), status))
+
+
+class ReviewDispatchStateReloadTests(unittest.TestCase):
+    """One dispatch tick reads the board once, not once per review task.
+
+    Every review-eligibility check asked `resolve_task_sha` and
+    `task_pr_ci_status` for a task whose record the dispatcher already held,
+    and each of them reloaded and re-normalized the whole ai-status state just
+    to find that record's branch and repository again. On the live board that
+    is ~1.5 s per call, so a tick with twenty review tasks spent minutes there.
+    The record is passed now; the origin read it guards is not cached by it.
+    """
+
+    HEADS = {"R-1": "1" * 40, "R-2": "2" * 40, "R-3": "3" * 40, "R-4": "4" * 40}
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmpdir.name)
+        (self.root / "event_queue.jsonl").write_text("", encoding="utf-8")
+        supervisor.runtime_ai_status.clear_ai_status_caches()
+        self.addCleanup(supervisor.runtime_ai_status.clear_ai_status_caches)
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def _config(self) -> dict[str, Any]:
+        agents = {
+            "claude": ("Claude", "claude", "claude_main"),
+            "codex": ("Codex", "codex", "codex_bjoe"),
+            "codex2": ("Codex2", "codex_lupin", "codex_lupin"),
+        }
+        return {
+            "paths": {
+                "event_queue": str(self.root / "event_queue.jsonl"),
+                "status_file": str(self.root / "ai-status.json"),
+                "activity_log": str(self.root / "activity.jsonl"),
+            },
+            "ready_dispatcher": {
+                "review_statuses": ["review"],
+                "finalize_statuses": ["review_approved"],
+                "owned_statuses": ["in_progress", "todo"],
+                "active_worker_statuses": ["running"],
+                "max_dispatches_per_tick": 10,
+            },
+            "providers": {
+                "claude": {"delivery_mode": "claude_cli"},
+                "codex": {"delivery_mode": "codex", "codex": {"codex_home": str(self.root / "codex-home")}},
+                "codex_lupin": {"delivery_mode": "codex", "codex": {"codex_home": str(self.root / "codex-home")}},
+            },
+            "agents": {
+                agent_id: {
+                    "display_name": display,
+                    "provider": provider,
+                    "adapter": "claude_cli" if provider == "claude" else "codex",
+                    "account_pool": pool,
+                }
+                for agent_id, (display, provider, pool) in agents.items()
+            },
+            "account_pools": {
+                pool: {"enabled": True, "max_concurrent": 1}
+                for _display, _provider, pool in agents.values()
+            },
+        }
+
+    def _status(self) -> dict[str, Any]:
+        def review(task_id: str, owner: str, reviewer: str, **extra: Any) -> dict[str, Any]:
+            task = {
+                "id": task_id,
+                "status": "review",
+                "owner": owner,
+                "reviewer": reviewer,
+                "task_class": "implementation",
+                "review_submission": {
+                    "pr_number": int(task_id[-1]),
+                    "branch": f"task/{task_id}",
+                    "remote_sha": self.HEADS[task_id],
+                    "submitted_by": owner,
+                },
+            }
+            task.update(extra)
+            return task
+
+        return {
+            "tasks": [
+                review("R-1", "Claude", "Codex"),
+                review("R-2", "Claude", "Codex2"),
+                # Reimported from an existing PR: only the record names its branch.
+                review("R-3", "Codex", "Claude", branch="imported/r3-from-pr"),
+                # Origin moved past the submitted head: never review-ready.
+                review("R-4", "Codex", "Codex2"),
+            ]
+        }
+
+    def _tick(self, *, pass_records: bool) -> dict[str, Any]:
+        """Run one dispatch tick against faked origin and GitHub reads."""
+        status = self._status()
+        on_disk = copy.deepcopy(status)
+        origin = {
+            "refs/heads/task/R-1": self.HEADS["R-1"],
+            "refs/heads/task/R-2": self.HEADS["R-2"],
+            "refs/heads/imported/r3-from-pr": self.HEADS["R-3"],
+            "refs/heads/task/R-4": "f" * 40,
+        }
+        ls_remote_refs: list[tuple[str, ...]] = []
+        loads: list[int] = []
+        queued: list[dict[str, Any]] = []
+        real_run = subprocess.run
+        real_resolve = supervisor.runtime_ai_status.resolve_task_sha
+        real_ci = supervisor.runtime_ai_status.task_pr_ci_status
+
+        def fake_run(cmd: Any, *args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            argv = [str(part) for part in cmd] if isinstance(cmd, (list, tuple)) else [str(cmd)]
+            if "ls-remote" not in argv:
+                return real_run(cmd, *args, **kwargs)
+            refs = tuple(a for a in argv if a.startswith("refs/heads/"))
+            ls_remote_refs.append(refs)
+            out = "".join(f"{origin[ref]}\t{ref}\n" for ref in refs if ref in origin)
+            return subprocess.CompletedProcess(argv, 0, out, "")
+
+        def load_state() -> dict[str, Any]:
+            loads.append(1)
+            return copy.deepcopy(on_disk)
+
+        def gh_pr(args: list[str], *, cwd: Any = None) -> dict[str, Any]:
+            return {
+                "state": "OPEN",
+                "statusCheckRollup": [
+                    {"__typename": "CheckRun", "name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}
+                ],
+            }
+
+        def resolve_from_disk(task_id: str, *args: Any, task: Any = None, **kwargs: Any) -> Any:
+            return real_resolve(task_id, *args, **kwargs)
+
+        def ci_from_disk(task_id: str, *args: Any, task: Any = None, **kwargs: Any) -> Any:
+            return real_ci(task_id, *args, **kwargs)
+
+        config = self._config()
+        runtime = supervisor.runtime_ai_status
+        with contextlib.ExitStack() as stack:
+            enter = stack.enter_context
+            enter(mock.patch.object(subprocess, "run", side_effect=fake_run))
+            enter(mock.patch.object(runtime, "load_state", side_effect=load_state))
+            enter(mock.patch.object(runtime, "status_runtime_config", return_value=config))
+            enter(mock.patch.object(runtime, "run_gh_json_command", side_effect=gh_pr))
+            if not pass_records:
+                # The pre-change shape: every check finds its record on disk again.
+                enter(mock.patch.object(runtime, "resolve_task_sha", side_effect=resolve_from_disk))
+                enter(mock.patch.object(runtime, "task_pr_ci_status", side_effect=ci_from_disk))
+            enter(mock.patch.object(supervisor, "load_status", return_value=status))
+            enter(mock.patch.object(supervisor, "load_event_queue", return_value=[]))
+            enter(mock.patch.object(supervisor, "queue_delivery_event", side_effect=lambda _c, e: queued.append(e) or True))
+            # Source provenance is read from Git commits and is not what this measures.
+            enter(mock.patch.object(supervisor, "review_source_block_reason", return_value=None))
+            # Board repairs ahead of candidate selection have their own tests;
+            # here they would only rewrite the fixture before the checks run.
+            for name, value in (
+                ("repair_open_task_metadata", False),
+                ("repair_unsubmitted_review_tasks", False),
+                ("release_dead_helper_claims", (False, True)),
+                ("reassign_tasks_after_review_churn", False),
+                ("normalize_task_assignment_integrity", False),
+                ("normalize_mainline_task_assignment", False),
+            ):
+                enter(mock.patch.object(supervisor, name, return_value=value))
+            enter(mock.patch.object(dispatch_engine, "reassign_unavailable_reviewers", return_value=False))
+            enter(mock.patch.object(dispatch_engine, "task_reality_reconcile_is_due", return_value=False))
+            enter(mock.patch.object(supervisor, "write_activity_log"))
+            enter(mock.patch.object(supervisor, "console_log"))
+            enter(mock.patch.object(dispatch_engine, "_commit_advisory_status_transition", return_value=True))
+            supervisor.dispatch_ready_tasks(config, {"queue": {"events": {}}, "workers": {}}, provider_report={})
+
+        return {
+            "loads": len(loads),
+            "ls_remote_refs": ls_remote_refs,
+            "review_dispatches": sorted(
+                (event["task_id"], event["target_agent"])
+                for event in queued
+                if event.get("reason") == "review_ready_dispatch"
+            ),
+            "next": {task["id"]: task.get("next") for task in status["tasks"]},
+        }
+
+    def test_one_tick_does_not_reload_state_per_review_task(self) -> None:
+        before = self._tick(pass_records=False)
+        after = self._tick(pass_records=True)
+
+        self.assertGreaterEqual(before["loads"], len(self.HEADS))
+        self.assertEqual(after["loads"], 0)
+        self.assertEqual(
+            after["review_dispatches"],
+            [("R-1", "Codex"), ("R-2", "Codex2"), ("R-3", "Claude")],
+        )
+        self.assertEqual(after["review_dispatches"], before["review_dispatches"])
+        self.assertEqual(after["next"], before["next"])
+        self.assertIn("drifted", str(after["next"]["R-4"]))
+
+    def test_origin_is_still_asked_for_every_review_head(self) -> None:
+        """Passing the record replaces the board read, not the forced origin read."""
+        after = self._tick(pass_records=True)
+        asked = {ref for refs in after["ls_remote_refs"] for ref in refs}
+        self.assertLessEqual(
+            {
+                "refs/heads/task/R-1",
+                "refs/heads/task/R-2",
+                "refs/heads/imported/r3-from-pr",
+                "refs/heads/task/R-4",
+            },
+            asked,
+        )
+        # The recorded branch is authoritative; the conventional name is not probed.
+        self.assertNotIn("refs/heads/task/R-3", asked)
+
+    def test_passed_record_binds_branch_and_repository(self) -> None:
+        runtime = supervisor.runtime_ai_status
+        record = {"id": "R-3", "branch": "imported/r3-from-pr", "repository": "pantheon"}
+        disk = {"tasks": [{"id": "R-3", "branch": "task/R-3-stale"}]}
+        refs: list[str] = []
+
+        def fake_run(cmd: Any, *args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            asked = [str(a) for a in cmd if str(a).startswith("refs/heads/")]
+            refs.extend(asked)
+            return subprocess.CompletedProcess(cmd, 0, f"{'3' * 40}\t{asked[0]}\n", "")
+
+        binding = mock.Mock(resolved=True, root=self.root)
+        with (
+            mock.patch.object(runtime, "status_runtime_config", return_value=self._config()),
+            mock.patch.object(runtime, "load_state", return_value=disk) as load_state,
+            mock.patch.object(runtime, "resolve_task_repository", return_value=binding) as resolve_repo,
+            mock.patch.object(runtime.subprocess, "run", side_effect=fake_run) as run,
+        ):
+            self.assertEqual(runtime.resolve_task_sha("R-3", force_refresh=True, task=record), "3" * 40)
+            load_state.assert_not_called()
+            self.assertIs(resolve_repo.call_args.args[1], record)
+            self.assertEqual(run.call_args.kwargs["cwd"], self.root)
+            self.assertEqual(refs, ["refs/heads/imported/r3-from-pr"])
+
+            # A record for some other task is not this task's binding: the
+            # canonical lookup decides, exactly as when nothing is passed.
+            refs.clear()
+            runtime.resolve_task_sha("R-3", force_refresh=True, task={"id": "R-9", "branch": "other"})
+            load_state.assert_called_once()
+            self.assertEqual(refs, ["refs/heads/task/R-3-stale"])
+
+    def _isolate_supervisor_status_paths(self) -> None:
+        """Keep a full dispatch tick off the checkout's coordination files.
+
+        ai_status binds STATUS_FILE / LOG_FILE / CURRENT_WORK_FILE to the
+        status root at import, so they are pointed at this case's temporary
+        root for its duration. Only the Git reader behind the source-author
+        rule is stood in for: synthetic heads have no repository behind them,
+        and the rest of the rule -- binding to the submitted head and base,
+        registration and every account pool -- still judges each path.
+        """
+
+        def git_finds_the_recorded_authors(
+            _config: Any, _task: Any, submission: dict[str, Any]
+        ) -> tuple[Any, None]:
+            return tuple(str(author).strip() for author in submission.get("source_authors") or ()), None
+
+        runtime = supervisor.runtime_ai_status
+        self.enterContext(mock.patch.object(runtime, "STATUS_FILE", self.root / "ai-status.json"))
+        self.enterContext(mock.patch.object(runtime, "LOG_FILE", self.root / "ai-activity-log.jsonl"))
+        self.enterContext(mock.patch.object(runtime, "CURRENT_WORK_FILE", self.root / "current-work.md"))
+        self.enterContext(
+            mock.patch.object(dispatch_policy, "immutable_review_source_authors", git_finds_the_recorded_authors)
+        )
+
+    def test_persisted_dispatch_cursor_prevents_review_starvation(self) -> None:
+        self._isolate_supervisor_status_paths()
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "enabled": True,
+                "review_statuses": ["review"],
+                "owned_statuses": ["in_progress", "todo"],
+                "active_worker_statuses": ["running"],
+                "max_dispatches_per_tick": 1,
+            },
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                    "provider": "codex",
+                },
+            },
+            "providers": {},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "OWNER-FIRST",
+                    "status": "todo",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                },
+                {
+                    "id": "REVIEW-LATER",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                    # The source provenance `submit_review` binds: the
+                    # validated range's `LLM-Agent` authors and the finalizer.
+                    "review_submission": {
+                        "pr_number": 7,
+                        "remote_sha": "a" * 40,
+                        "source_head": "a" * 40,
+                        "source_base": "b" * 40,
+                        "source_authors": ["Antigravity"],
+                        "submitted_by": "Antigravity",
+                    },
+                },
+            ]
+        }
+        state = runtime_state.default_state()
+        first_round: list[dict[str, Any]] = []
+        second_round: list[dict[str, Any]] = []
+
+        common_patches = (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "outstanding_delivery_indexes",
+                return_value=(set(), set(), set()),
+            ),
+            mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "utc_now",
+                return_value="2026-07-31T12:00:00Z",
+            ),
+            mock.patch("ai_status.resolve_task_sha", return_value="a" * 40),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
+        )
+        with contextlib.ExitStack() as stack:
+            for patcher in common_patches:
+                stack.enter_context(patcher)
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "queue_delivery_event",
+                    side_effect=lambda _config, event: first_round.append(event) or True,
+                )
+            )
+            self.assertTrue(supervisor.dispatch_ready_tasks(config, state, provider_report={}))
+
+        self.assertEqual(first_round[0]["task_id"], "OWNER-FIRST")
+        self.assertEqual(state["ready_dispatcher"]["dispatch_cursor"], 1)
+        self.assertEqual(state["ready_dispatcher"]["dispatch_cursor_revision"], 1)
+
+        # Simulate the end-of-loop save/reload boundary that previously erased
+        # the cursor and restarted every round from Antigravity.
+        state = runtime_state.migrate_state(copy.deepcopy(state))
+        with contextlib.ExitStack() as stack:
+            for patcher in (
+                mock.patch.object(supervisor, "load_status", return_value=status),
+                mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+                mock.patch.object(
+                    supervisor,
+                    "outstanding_delivery_indexes",
+                    return_value=(set(), set(), set()),
+                ),
+                mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+                mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+                mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
+                mock.patch.object(
+                    supervisor,
+                    "utc_now",
+                    return_value="2026-07-31T12:00:00Z",
+                ),
+                mock.patch("ai_status.resolve_task_sha", return_value="a" * 40),
+                mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
+                mock.patch.object(
+                    supervisor,
+                    "queue_delivery_event",
+                    side_effect=lambda _config, event: second_round.append(event) or True,
+                ),
+            ):
+                stack.enter_context(patcher)
+            self.assertTrue(supervisor.dispatch_ready_tasks(config, state, provider_report={}))
+
+        self.assertEqual(second_round[0]["task_id"], "REVIEW-LATER")
+        self.assertEqual(second_round[0]["target_agent"], "Codex")
+        self.assertEqual(second_round[0]["reason"], "review_ready_dispatch")
+        self.assertEqual(state["ready_dispatcher"]["dispatch_cursor"], 0)
+        self.assertEqual(state["ready_dispatcher"]["dispatch_cursor_revision"], 2)
+        self.assertEqual(
+            state["ready_dispatcher"]["dispatch_cursor_updated_at"],
+            "2026-07-31T12:00:00Z",
+        )
+
+    def test_dispatcher_fails_closed_on_owner_self_review(self) -> None:
+        self._isolate_supervisor_status_paths()
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "enabled": True,
+                "review_statuses": ["review"],
+                "active_worker_statuses": ["running"],
+                "helper_claim": {"enabled": False},
+            },
+            "agents": {
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                    "provider": "codex",
+                }
+            },
+            "providers": {},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "INVALID-SELF-REVIEW",
+                    "status": "review",
+                    "priority": "P1",
+                    "owner": "Codex",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                }
+            ]
+        }
+        state = runtime_state.default_state()
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "outstanding_delivery_indexes",
+                return_value=(set(), set(), set()),
+            ),
+            mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
+            mock.patch.object(supervisor, "queue_delivery_event") as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                provider_report={},
+                agent_ids_override=["codex"],
+            )
+
+        self.assertFalse(changed)
+        queue_delivery_event.assert_not_called()
 
 
 if __name__ == "__main__":

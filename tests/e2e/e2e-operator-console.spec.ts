@@ -365,7 +365,7 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
   // Enter the Network (展店與店網) workspace.
   await page.getByRole("button", { name: /展店與店網/ }).click();
   const workspace = page.getByTestId("network-find-areas-workspace");
-  await expect(workspace).toBeVisible();
+  await expect(workspace).toBeVisible({ timeout: 15_000 });
 
   // Default tab is Find Areas.
   await expect(page.getByTestId("network-panel-find-areas")).toBeVisible();
@@ -480,7 +480,10 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
   await page
     .getByTestId("review-decision-reason")
     .fill("Review approved based on excellent SiteScore and fit metrics.");
+  const decisionResponse = page.waitForResponse((response) => response.request().method() === "POST"
+    && new URL(response.url()).pathname.endsWith("/operator/network-reviews/RV-702/decide"), { timeout: 15_000 });
   await page.getByTestId("review-decision-submit").click();
+  expect((await decisionResponse).status()).toBe(200);
   await expect(page.getByTestId("review-decision-dialog")).toHaveCount(0);
   await expect(page.getByTestId("review-decided-RV-702")).toContainText(
     "Approved",

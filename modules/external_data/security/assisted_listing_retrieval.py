@@ -97,6 +97,7 @@ SENSITIVE_SNAPSHOT_KEY_PARTS = (
 EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE)
 SECRET_RE = re.compile(r"\b(?:sk|pk|rk|tok|key)-[A-Za-z0-9_-]{8,}\b")
+URI_TOKEN_RE = re.compile(r"(?:\b[A-Za-z][A-Za-z0-9+.-]*://|(?<![\w:])//)[^\s<>\"']+")
 PHONE_RE = re.compile(r"(?<!\d)(?:\+?886[-\s]?)?0?9\d{2}[-\s]?\d{3}[-\s]?\d{3}(?!\d)")
 
 
@@ -177,21 +178,28 @@ def contains_sensitive_submission_material(payload: Mapping[str, Any]) -> list[s
     return offenders
 
 
+def _sensitive_query_material(query: str) -> bool:
+    return any(key.lower() in SENSITIVE_QUERY_KEYS for key, _ in parse_qsl(query, keep_blank_values=True))
+
+
+def _sensitive_url_material(parts) -> str | None:
+    """One credential policy for URL inputs and URLs embedded in text."""
+    if parts.username or parts.password:
+        return "credentials"
+    queries = {parts.query, parts.fragment, parts.fragment.split("?", 1)[-1]}
+    return "query" if any(_sensitive_query_material(query) for query in queries) else None
+
+
 def validate_submitted_listing_url(raw_url: str) -> None:
     """Fail closed on URL credentials, sensitive query material, and local IPs."""
 
     parts = urlsplit((raw_url or "").strip())
     if parts.scheme.lower() not in ALLOWED_URL_SCHEMES or not parts.netloc:
         raise SensitiveSubmissionError("submitted listing URL must be a complete http(s) URL")
-    if parts.username or parts.password:
+    sensitive = _sensitive_url_material(parts)
+    if sensitive == "credentials":
         raise SensitiveSubmissionError("submitted listing URL must not contain credentials")
-
-    sensitive_query = [
-        key
-        for key, _ in parse_qsl(parts.query, keep_blank_values=True)
-        if key.lower() in SENSITIVE_QUERY_KEYS
-    ]
-    if sensitive_query:
+    if sensitive == "query":
         raise SensitiveSubmissionError(
             "submitted listing URL must not contain credential or token query parameters"
         )
@@ -674,12 +682,26 @@ def _is_sensitive_snapshot_key(key: str) -> bool:
 
 def _string_contains_secret(value: str) -> bool:
     lowered = value.lower()
-    return (
+    if (
         "authorization:" in lowered
         or "cookie:" in lowered
         or bool(BEARER_RE.search(value))
         or bool(SECRET_RE.search(value))
-    )
+    ):
+        return True
+    # Tokenization only: every URI uses the same existing credential/query
+    # policy as submitted URLs. Safe schema/profile URLs remain ordinary text.
+    for match in URI_TOKEN_RE.finditer(value):
+        try:
+            if _sensitive_url_material(urlsplit(match.group().rstrip("),.;"))):
+                return True
+        except ValueError:
+            return True
+    for word in re.finditer(r"\S+", value):
+        text = word.group()
+        if "=" in text and _sensitive_query_material(text.lstrip("?#")):
+            return True
+    return False
 
 
 def _redact_sensitive_string(value: str) -> str:

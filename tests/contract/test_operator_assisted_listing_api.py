@@ -152,9 +152,11 @@ def test_exact_duplicate_contract_test() -> None:
         idempotency_key="idem-1",
         correlation_id="corr-1",
     )
-    # Manually overwrite stage to RETRIEVING (non-terminal)
+    # Persist RETRIEVING in the original repository; a command refreshes its
+    # current state instead of trusting a mutation of the service cache alone.
     intake = service._state["assistedIntakes"][0]
     intake["stage"] = "RETRIEVING"
+    service._intakes.save_intake(intake)
 
     # Submitting same URL again should raise NetworkListingConflict
     with pytest.raises(NetworkListingConflict):
@@ -204,6 +206,45 @@ def test_changed_price_revision_contract_test() -> None:
     listings = snap_resp.json()["listings"]
     l2024 = next(item for item in listings if item["id"] == "L-2024")
     assert l2024["rentPerMonth"] == 55000
+
+
+def test_unmatched_revision_is_rejected_instead_of_overwriting_first_listing() -> None:
+    app = create_app()
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/v1/operator/network-listings/intake/submit",
+        json={"url": "https://www.synthetic.example/detail-77120345.html", "heatZoneId": "HZ-01"},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 200
+    intake = resp.json()
+    assert intake["matchResult"]["targetListingId"] is None
+    listings_before = client.get("/api/v1/operator/network-listings", headers=HEADERS).json()["listings"]
+    assert listings_before
+
+    body = {
+        "action": "revise",
+        "reason": "無比對目標的版本更新",
+        "riskSummary": "將以送件版本覆寫既有物件。",
+        "riskAcknowledged": True,
+        "actorRoleId": "expansionManager",
+    }
+    for _ in range(2):
+        decide_resp = client.post(
+            f"/api/v1/operator/network-listings/intake/{intake['id']}/decide",
+            json=body,
+            headers=_write_headers("unmatched-revise"),
+        )
+        assert decide_resp.status_code == 409
+        assert "no target listing" in decide_resp.json()["detail"]
+
+    listings_after = client.get("/api/v1/operator/network-listings", headers=HEADERS).json()["listings"]
+    assert listings_after == listings_before
+    after = client.get(f"/api/v1/operator/network-listings/intake/{intake['id']}", headers=HEADERS)
+    assert after.status_code == 200
+    for field in ("stage", "version", "matchResult", "auditEvents"):
+        assert after.json()[field] == intake[field], field
 
 
 def test_ambiguous_entity_match_review_test() -> None:
@@ -450,6 +491,7 @@ def test_promote_intake_contract_test() -> None:
     # manual creation. This explicitly synthetic fixture supplies those facts.
     listing = Listing(
         listing_id="L-SYNTHETIC-PROMOTION-CONTRACT",
+        tenant_id="tenant-a",
         source_listing_id="synthetic-measured-promotion-record",
         source_id="synthetic-measured-source",
         address_id=str(uuid4()),
@@ -484,6 +526,12 @@ def test_promote_intake_contract_test() -> None:
         ),
     )
     app = create_app(persistence=bundle)
+    # Record the synthetic target's ownership in the existing metadata owner.
+    # Request headers alone cannot supply missing Listing authorization facts.
+    app.state.operator_intake_repository.save_listing_metadata(
+        listing.listing_id,
+        {"tenantId": listing.tenant_id, "heatZoneId": "HZ-01", "hasLegalHold": False},
+    )
     client = TestClient(app)
 
     url = "https://www.synthetic.example/detail-88520242.html"

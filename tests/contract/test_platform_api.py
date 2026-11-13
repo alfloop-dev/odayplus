@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from shared.auth import Role
+from tests.integration._authz import AUDIT_HEADERS
 
 # External-data freshness is an integration-domain read guarded by RBAC
 # (ODP-GAP-API-001); DATA_OWNER holds the integration view grant.
@@ -81,7 +82,15 @@ def test_platform_version_prefers_deployment_release_sha(monkeypatch) -> None:
 
 def test_job_enqueue_is_idempotent_and_audited() -> None:
     client = TestClient(create_app())
-    headers = {"x-correlation-id": "corr-job-1", "Idempotency-Key": "idem-1"}
+    # The audit read is scoped to the reader's tenant, so the job is enqueued by
+    # a principal of that tenant and an auditor of the same tenant reads it back.
+    tenant = {"x-tenant-id": "tenant-jobs"}
+    headers = {
+        "x-subject-id": "job-submitter",
+        **tenant,
+        "x-correlation-id": "corr-job-1",
+        "Idempotency-Key": "idem-1",
+    }
     payload = {"job_type": "forecastops.score", "payload": {"site_id": "site-123"}}
 
     first = client.post("/jobs", json=payload, headers=headers)
@@ -102,7 +111,11 @@ def test_job_enqueue_is_idempotent_and_audited() -> None:
     assert first_body["job"]["correlation_id"] == "corr-job-1"
     assert first_body["job"]["idempotency_key"] == "idem-1"
 
-    audit = client.get("/audit/events", params={"correlation_id": "corr-job-1"})
+    audit = client.get(
+        "/audit/events",
+        params={"correlation_id": "corr-job-1"},
+        headers={**AUDIT_HEADERS, **tenant},
+    )
 
     assert audit.status_code == 200
     events = audit.json()["events"]

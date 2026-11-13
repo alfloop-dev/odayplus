@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
+from tests.integration._authz import AUDIT_HEADERS
 
 STAFF_HEADERS = {
     "x-subject-id": "operator-expansion-staff",
@@ -95,10 +96,15 @@ def test_evidence_export_manifest_verification_and_download() -> None:
     assert download_data["bundle"]["id"] == intake_id
 
     # Verify WORM event was written to audit log
-    audit_events = client.get(
+    # The audit read needs audit:view and is scoped to the reader's tenant: an
+    # auditor of the exporting tenant reads the export event back.
+    audit = client.get(
         "/api/v1/audit/events",
-        headers=MANAGER_HEADERS,
-    ).json().get("events", [])
+        params={"correlation_id": "corr-export-test-run"},
+        headers={**AUDIT_HEADERS, "x-tenant-id": "tenant-a"},
+    )
+    assert audit.status_code == 200, audit.text
+    audit_events = audit.json()["events"]
     export_event = next(
         (e for e in audit_events if e["event_type"] == "audit.evidence_export.v1"), None
     )

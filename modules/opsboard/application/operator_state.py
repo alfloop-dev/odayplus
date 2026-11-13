@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from modules.opsboard.application.operator_live_repository import (
+    OPERATOR_DATA_UNAVAILABLE_MESSAGE,
     OperatorLiveRepositoryError,
 )
 from modules.opsboard.application.today_metrics import build_today_metrics
@@ -357,10 +358,10 @@ class OperatorStateService:
         except Exception as exc:
             self._state = {}
             self._live_ready = False
-            self._live_error = f"{type(exc).__name__}: {exc}"
+            self._live_error = OPERATOR_DATA_UNAVAILABLE_MESSAGE
             if isinstance(exc, OperatorLiveRepositoryError):
                 raise
-            raise OperatorLiveRepositoryError(self._live_error) from exc
+            raise OperatorLiveRepositoryError(f"{type(exc).__name__}: {exc}") from exc
         else:
             data_mode = str(
                 self._state.get("_meta", {}).get("dataMode", "live")

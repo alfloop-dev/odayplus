@@ -289,6 +289,8 @@ def test_create_app_injects_live_repository_for_production_postgresql(
         DurableAssistedIntakeStore,
     )
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
+    from shared.infrastructure.persistence.job_queue import DurableJobQueue
+    from shared.infrastructure.persistence.outbox import DurableOutboxRepository
 
     engine = _ProductionStubEngine()
     bundle = replace(
@@ -296,6 +298,8 @@ def test_create_app_injects_live_repository_for_production_postgresql(
         mode="postgresql",
         engine=engine,
         audit_log=DurableAuditLog(engine),
+        job_queue=DurableJobQueue(engine),
+        outbox_repository=DurableOutboxRepository(engine),
         assisted_intake_store=DurableAssistedIntakeStore(SimpleNamespace(engine=engine)),
     )
     app = create_app(
@@ -331,6 +335,174 @@ def test_repository_probe_reports_real_dependency_failure() -> None:
     assert probe.errors == (
         "OperatorLiveRepositoryError: stores: ConnectionError: database unavailable",
     )
+
+
+@pytest.mark.parametrize("endpoint", ["bootstrap", "today"])
+@pytest.mark.parametrize(
+    ("failure", "section_name", "reason_code", "state"),
+    [
+        ("stores", "stores", "OPERATOR_STORES_UNAVAILABLE", "unavailable"),
+        ("tenant_factory", "listings", "OPERATOR_TENANT_LISTINGS_UNAVAILABLE", "unavailable"),
+        ("issues", "storeOpsIssues", "OPERATOR_STORE_OPS_ISSUES_UNAVAILABLE", "unavailable"),
+        ("jobs", "activeJobs", "OPERATOR_ACTIVE_JOBS_UNAVAILABLE", "unavailable"),
+        ("interventions", "interventions", "OPERATOR_INTERVENTIONS_PARTIAL", "degraded"),
+        ("forecast", "forecastAlerts", "OPERATOR_FORECAST_ALERTS_PARTIAL", "degraded"),
+    ],
+)
+def test_live_http_section_failures_keep_codes_without_exception_text(
+    tmp_path: Path,
+    monkeypatch: Any,
+    endpoint: str,
+    failure: str,
+    section_name: str,
+    reason_code: str,
+    state: str,
+) -> None:
+    # Deliberately include an opaque value that no credential pattern can identify.
+    opaque = "synthetic-unclassified-section-value-4721"
+
+    def fail(*_args: Any, **_kwargs: Any) -> Any:
+        raise ConnectionError(f"database unavailable: password=synthetic-db-only; {opaque}")
+
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "false")
+    bundle = _durable_bundle(tmp_path / "public-section-error.sqlite3")
+    tenant = "tenant-public-error"
+    bundle.tenant_repository.save_tenant(Tenant(tenant_id=tenant, tenant_name="Public error test"))
+    bundle.brand_repository.save_brand(
+        Brand(brand_id="brand-public-error", tenant_id=tenant, brand_code="test", brand_name="Test")
+    )
+    bundle.address_location_repository.save_address(
+        AddressLocation(address_id="address-public-error", raw_address="Synthetic public error test")
+    )
+    bundle.store_repository.save_store(
+        Store(store_id="store-public-error", tenant_id=tenant, brand_id="brand-public-error",
+              address_id="address-public-error", store_name="Public error test", store_status="open")
+    )
+    if failure == "issues":
+        bundle = replace(bundle, store_ops_repository=SimpleNamespace(
+            tenant_id=tenant, is_live=True, get_state=fail,
+        ))
+    try:
+        repository = OperatorLiveRepository(bundle)
+        app = create_app(persistence=bundle, operator_live_repository=repository)
+        if failure == "stores":
+            monkeypatch.setattr(bundle.store_repository, "list_stores", fail)
+        elif failure == "tenant_factory":
+            monkeypatch.setattr(type(bundle), "listing_repository_for_tenant", fail)
+        elif failure == "jobs":
+            monkeypatch.setattr(bundle.job_queue, "count_active_jobs", fail)
+        elif failure == "interventions":
+            monkeypatch.setattr(bundle.intervention_repository, "list_by_store", fail)
+        elif failure == "forecast":
+            monkeypatch.setattr(bundle.forecastops_repository, "list_alerts_by_store", fail)
+        with TestClient(app) as client:
+            response = client.get(f"/api/v1/operator/{endpoint}", headers={
+                "x-subject-id": "operator-ops-lead", "x-roles": "operations_manager",
+                "x-operator-role": "ops-lead", "x-tenant-id": tenant,
+                "x-correlation-id": "corr-public-section-error",
+            })
+        if failure in {"stores", "interventions"}:
+            # The actual HTTP composition refuses unavailable pending-review
+            # owners before returning a partial envelope. Preserve that fence;
+            # check this section's public service projection separately.
+            assert response.status_code == 503, response.text
+            assert response.json()["detail"]["code"] == "OPERATOR_PENDING_OWNER_UNAVAILABLE"
+            meta = OperatorStateService(live_repository=repository).get_today(
+                role_id="ops-lead", tenant_id=tenant, correlation_id="corr-public-section-error",
+            )["meta"]
+        else:
+            assert response.status_code == 200, response.text
+            meta = response.json()["meta"]
+        assert opaque not in response.text
+        assert "synthetic-db-only" not in response.text
+        assert opaque not in str(meta)
+        assert "synthetic-db-only" not in str(meta)
+        assert meta["dataMode"] == "degraded"
+        assert meta["correlationId"] == "corr-public-section-error"
+        section = meta["sections"][section_name]
+        assert section == meta["liveReadiness"]["sections"][section_name]
+        assert section["state"] == state
+        assert section["reasonCode"] == reason_code
+        assert section["source"]
+        assert section["recordCount"] == (0 if state == "degraded" else None)
+        assert section["complete"] is False
+        assert section["available"] is (state == "degraded")
+        assert section["message"] == "Operator data is temporarily unavailable. Please try again later."
+    finally:
+        bundle.engine.close()
+
+
+def test_platform_health_probe_does_not_publish_raw_dependency_errors(monkeypatch: Any) -> None:
+    opaque = "synthetic-unclassified-probe-value-8891"
+
+    class BrokenEngine:
+        def query_one(self, _query: str) -> Any:
+            raise ConnectionError(opaque)
+
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "false")
+    repository = OperatorLiveRepository(SimpleNamespace(mode="postgresql", engine=BrokenEngine()))
+    with TestClient(create_app(operator_live_repository=repository)) as client:
+        response = client.get("/platform/health")
+
+    assert response.status_code == 200, response.text
+    probe = response.json()["modes"]["data"]["operatorRepositoryProbe"]
+    assert probe["ready"] is False
+    assert probe["repository"] == "OperatorLiveRepository"
+    assert probe["errors"] == ["Operator data is temporarily unavailable. Please try again later."]
+    assert opaque not in response.text
+    # Keep internal diagnostic information separate from public serialization.
+    assert repository.probe().errors == (f"ConnectionError: {opaque}",)
+
+
+def test_live_readiness_does_not_publish_raw_repository_failure() -> None:
+    opaque = "synthetic-unclassified-readiness-value-1248"
+
+    class BrokenRepository:
+        def load_state(self, **_kwargs: Any) -> Any:
+            raise ConnectionError(opaque)
+
+    service = OperatorStateService(live_repository=BrokenRepository())
+    with pytest.raises(RuntimeError, match=opaque):
+        service.get_today(tenant_id="tenant-public-error")
+    readiness = service.live_readiness
+    assert readiness["ready"] is False
+    assert readiness["reasonCode"] == "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE"
+    assert readiness["error"] == "Operator data is temporarily unavailable. Please try again later."
+    assert opaque not in str(readiness)
+
+
+def test_live_dependency_explanations_survive_public_projection() -> None:
+    def fail(**_kwargs: Any) -> Any:
+        raise ConnectionError("synthetic-unclassified-dependency-value-1919")
+
+    repository = OperatorLiveRepository(replace(
+        _memory_bundle(), store_repository=SimpleNamespace(list_stores=fail),
+    ))
+    sections = repository.load_state(tenant_id="tenant-public-error")["_meta"]["sections"]
+    assert sections["stores"]["message"] == "Operator data is temporarily unavailable. Please try again later."
+    for name, label in [("transactions", "transactions"), ("interventions", "interventions"),
+                        ("forecastAlerts", "forecast alerts")]:
+        section = sections[name]
+        assert section["state"] == "unavailable"
+        assert section["recordCount"] is None
+        assert section["reasonCode"] == "OPERATOR_STORES_DEPENDENCY_UNAVAILABLE"
+        assert section["message"] == f"{label} require an available tenant-scoped store set"
+    assert "synthetic-unclassified-dependency-value-1919" not in str(sections)
+
+
+def test_live_readiness_keeps_static_configuration_explanations() -> None:
+    service = OperatorStateService(require_live_data=True)
+    with pytest.raises(RuntimeError, match="not configured"):
+        service.get_today(tenant_id="tenant-public-error")
+    assert service.live_readiness["error"] == "Operator live repository is not configured"
+
+    state = {"_meta": {"dataMode": "unavailable"}, "workQueue": [], "decisions": [],
+             "riskRows": [], "auditFeed": [], "notifications": [], "kpis": []}
+    repository = SimpleNamespace(data_origin={"kind": "unavailable"}, load_state=lambda **_: state)
+    service = OperatorStateService(live_repository=repository)
+    service.get_today(tenant_id="tenant-public-error")
+    assert service.live_readiness["ready"] is False
+    assert service.live_readiness["error"] == "all Operator read-model sections are unavailable"
 
 
 def test_live_repository_requires_tenant_scope() -> None:
