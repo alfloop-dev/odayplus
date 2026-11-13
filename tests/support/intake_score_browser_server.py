@@ -12,12 +12,13 @@ import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
+from typing import Literal
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.testclient import TestClient
 from psycopg.conninfo import conninfo_to_dict
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from apps.api.app.routes import listings
 from apps.api.app.routes.operator import create_operator_router
@@ -35,6 +36,13 @@ from tests.support.intake_score_synthetic import (
     prepare_database,
     ready_scenario,
 )
+
+
+class RetainedHistoryScenario(BaseModel):
+    # Closed fixture selection on the existing isolated control, not a product
+    # reset/seed API or a caller-supplied Intake/import payload.
+    model_config = ConfigDict(extra="forbid")
+    retained_history: Literal["assisted-entry-only"]
 
 
 class Drain(BaseModel):
@@ -143,7 +151,7 @@ def create_app():
         prediction_id = result.get("prediction_run_id") if result else None
         score_run_id = result.get("sitescore_run_id") if result else None
         candidates = [c for c in bundle.listing_repository_for_tenant(TENANT).list_candidates()
-                      if c.candidate_site.listing_id == case["listing_id"]]
+                      if case["listing_id"] and c.candidate_site.listing_id == case["listing_id"]]
         events = [e.event_type for e in bundle.outbox_repository.get_unpublished_events()
                   if e.payload.get("candidate_site_id") == candidate_id and candidate_id]
         audit_rows = bundle.engine.query(
@@ -181,7 +189,7 @@ def create_app():
                                        "infer_calls": read_runtime.infer_calls}}
 
     @app.post("/_synthetic/scenarios", dependencies=[Depends(control)])
-    def seed():
+    def seed(body: RetainedHistoryScenario | None = None):
         with controls:
             # A debugging/restart interval can exceed the real audit backlog
             # gate. Deliver pending evidence through the real audit worker;
@@ -194,7 +202,8 @@ def create_app():
                         break
             finally:
                 audit_bundle.engine.close()
-            case = ready_scenario(database_url, bundle, TestClient(app))
+            case = ready_scenario(database_url, bundle, TestClient(app),
+                                  retained_history=body.retained_history if body else None)
             scenarios[case["scenario_id"]] = case
             return state(case["scenario_id"])
 

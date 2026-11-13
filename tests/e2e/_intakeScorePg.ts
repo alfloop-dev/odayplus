@@ -7,13 +7,16 @@ export const PG_CONTROL = process.env.ODP_SCORE_BROWSER_CONTROL_KEY ?? "syntheti
 const MANAGER_HEADERS = { "x-roles": "expansion_user,site_reviewer", "x-operator-role": "expansion-manager" };
 
 export type PgScenario = {
-  scenario_id: string; intake_id: string; listing_id: string; tenant_id: string;
+  scenario_id: string; intake_id: string; listing_id: string | null; original_url: string; tenant_id: string;
   proposer_id: string; reviewer_id: string;
 };
 
-export async function openPgScenario(page: Page, options: { entry?: "intake" | "radar" } = {}) {
+export async function openPgScenario(page: Page, options: {
+  entry?: "intake" | "radar"; retainedHistory?: "assisted-entry-only";
+} = {}) {
   const api = await playwrightRequest.newContext({ baseURL: PG_API, extraHTTPHeaders: { "x-synthetic-control": PG_CONTROL } });
-  const response = await api.post("/_synthetic/scenarios");
+  const response = await api.post("/_synthetic/scenarios", options.retainedHistory
+    ? { data: { retained_history: options.retainedHistory } } : undefined);
   expect(response.status(), await response.text()).toBe(200);
   const scenario = await response.json() as PgScenario;
   await page.setExtraHTTPHeaders({ ...MANAGER_HEADERS, "x-tenant-id": scenario.tenant_id, "x-subject-id": scenario.proposer_id });
@@ -45,12 +48,13 @@ export async function openPgScenario(page: Page, options: { entry?: "intake" | "
     await page.goto(`${PG_WEB}/intake/${scenario.intake_id}?ws=network&tab=radar`);
   }
   await expect(page.getByTestId("intake-detail-id")).toHaveText(scenario.intake_id, { timeout: 30_000 });
-  await expect(page.getByTestId("intake-detail-stage")).toHaveText("可決策");
+  await expect(page.getByTestId("intake-detail-stage")).toHaveText(options.retainedHistory ? "待人工補錄" : "可決策");
   return { api, scenario };
 }
 
 /** Enter the actual Radar with a measured, durable listing; no UI route stub. */
 export async function openPgRadar(page: Page, scenario: PgScenario) {
+  expect(scenario.listing_id, "Radar navigation requires an actually resolved listing").toBeTruthy();
   await page.goto(`${PG_WEB}/operator?ws=network&tab=radar`);
   await expect(page.getByTestId("network-panel-listings")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("listing-filter-all").click();

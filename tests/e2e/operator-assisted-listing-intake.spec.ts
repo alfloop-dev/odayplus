@@ -28,7 +28,7 @@ import {
  */
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
-const PG_CASE = /^canonical (4:|5 and 6:|native:)/;
+const PG_CASE = /^canonical (2:|4:|5 and 6:|native:)/;
 // Explicit isolated fixture input; never a production default or catalog entry.
 const SYNTHETIC_TARGET_FORMAT = "synthetic-manual-format:Browser/v1";
 
@@ -664,11 +664,13 @@ test("canonical 1: exact URL duplicate is intercepted before retrieval", async (
   await expect(page.getByTestId(`intake-inbox-row-${firstId}`)).toHaveCount(1);
 });
 
-test("canonical 2: assisted-entry-only keeps URL and validates durable manual input", async ({
+test("canonical 2: retained assisted-entry-only keeps URL and validates durable manual input", async ({
   page,
 }) => {
-  await openRadar(page);
-  await submitUrl(page, URLS.assistedOnly);
+  const { api, scenario } = await openPgScenario(page, { retainedHistory: "assisted-entry-only" });
+  try {
+  // Explicit retained history, not proof of fresh source-policy admission.
+  expect(scenario.listing_id).toBeNull();
 
   await expect(page.getByTestId("intake-detail-stage")).toHaveText(
     "待人工補錄",
@@ -692,13 +694,29 @@ test("canonical 2: assisted-entry-only keeps URL and validates durable manual in
   );
 
   await page.getByTestId("assisted-risk-ack").check();
-  await page.getByTestId("assisted-save").click();
+  const [corrected] = await Promise.all([
+    page.waitForResponse((response) => new URL(response.url()).pathname ===
+      `/api/v1/operator/network-listings/intake/${scenario.intake_id}/correct` && response.request().method() === "POST"),
+    page.getByTestId("assisted-save").click(),
+  ]);
+  expect(corrected.status(), await corrected.text()).toBe(200);
+  expect(corrected.request().headers()["idempotency-key"]).toBeTruthy();
   await expect(page.getByTestId("intake-parsed-lineage")).toBeVisible({
     timeout: 15_000,
   });
   await expect(page.getByTestId("intake-timeline-audit-section")).toContainText(
     "人工補錄",
   );
+  await page.reload();
+  await expect(page.getByTestId("intake-parsed-lineage")).toContainText("新北市板橋區府中路 26 號 1F");
+  const read = await api.get(`/api/v1/operator/network-listings/intake/${scenario.intake_id}`, {
+    headers: { ...MANAGER_HEADERS, "x-tenant-id": scenario.tenant_id, "x-subject-id": scenario.proposer_id },
+  });
+  expect(read.status(), await read.text()).toBe(200);
+  expect(await read.json()).toMatchObject({ originalUrl: scenario.original_url, policy: "ASSISTED_ENTRY_ONLY",
+    capturedAt: null, rawSnapshot: null, parserVersion: null, version: 2,
+    parsedFields: { address: { correctedValue: "新北市板橋區府中路 26 號 1F" } } });
+  } finally { await api.dispose(); }
 });
 
 test("canonical 3: possible match requires explicit reason and risk acknowledgement", async ({

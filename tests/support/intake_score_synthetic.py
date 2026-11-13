@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from typing import Literal
 from uuid import uuid4
 
 import psycopg
@@ -549,24 +550,15 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         assert metadata_thread is None or not metadata_thread.is_alive(), "Owned metadata transport did not stop"
 
 
-def ready_scenario(database_url, bundle, client):
-    scenario_id, listing_id, snapshot_id = str(uuid4()), str(uuid4()), str(uuid4())
-    captured = datetime.now(UTC) - timedelta(minutes=10)
+def ready_scenario(database_url, bundle, client, *,
+        retained_history: Literal["assisted-entry-only"] | None = None):
+    # The no-body browser control retains its original ready scenario. The
+    # explicit history variant stops before correction/decision, so those
+    # original UI journeys exercise their actual commands, not a fresh writer.
+    if retained_history not in (None, "assisted-entry-only"):
+        raise ValueError("Unknown retained browser history")
+    scenario_id = str(uuid4())
     source_id = "synthetic-browser-" + scenario_id
-    listing = Listing(listing_id=listing_id, source_listing_id=scenario_id, source_id=source_id,
-                      address_id=str(uuid4()), listing_status="watching", rent_amount=54000,
-                      area_ping=22, floor="1F", frontage_m=5, confidence=0.9, snapshot_id=snapshot_id)
-    for name, value in {"property_id": str(uuid4()), "listing_obs_id": str(uuid4()),
-                        "prior_90d_cell_net_revenue": 1_800_000.0, "prior_90d_cell_transaction_count": 720,
-                        "prior_90d_cell_store_count": 4, "feature_snapshot_time": captured,
-                        "hard_rule_failures": []}.items():
-        object.__setattr__(listing, name, value)
-    address = AddressLocation(address_id=listing.address_id, raw_address="Synthetic browser measured address",
-                              normalized_address="Synthetic browser measured address", latitude=25.033964,
-                              longitude=121.564468, geocode_confidence=0.95, h3_res_9="8929a1d4d67ffff")
-    bundle.listing_repository_for_tenant(TENANT).save_listing(listing, address, ListingDedupKey(
-        source_id=source_id, source_listing_id=scenario_id, normalized_address=address.normalized_address,
-        rent_amount=listing.rent_amount, area_ping=listing.area_ping))
     # Explicit retained Operator history, not a fresh HTTP command or native
     # submission. The existing bridge initializes its workflow in the same SQL
     # transaction; correction and resolution below remain actual API commands.
@@ -596,6 +588,28 @@ def ready_scenario(database_url, bundle, client):
     initial = retained.json()
     assert initial["stage"] == "AWAITING_ASSISTED_ENTRY"
     assert initial["assignmentId"] and initial["slaInstanceId"]
+    case = {"scope": SCOPE, "scenario_id": scenario_id, "intake_id": iid,
+            "listing_id": None, "original_url": url,
+            "tenant_id": TENANT, "proposer_id": MANAGER, "reviewer_id": APPROVER}
+    if retained_history == "assisted-entry-only":
+        return case
+
+    listing_id, snapshot_id = str(uuid4()), str(uuid4())
+    captured = datetime.now(UTC) - timedelta(minutes=10)
+    listing = Listing(listing_id=listing_id, source_listing_id=scenario_id, source_id=source_id,
+                      address_id=str(uuid4()), listing_status="watching", rent_amount=54000,
+                      area_ping=22, floor="1F", frontage_m=5, confidence=0.9, snapshot_id=snapshot_id)
+    for name, value in {"property_id": str(uuid4()), "listing_obs_id": str(uuid4()),
+                        "prior_90d_cell_net_revenue": 1_800_000.0, "prior_90d_cell_transaction_count": 720,
+                        "prior_90d_cell_store_count": 4, "feature_snapshot_time": captured,
+                        "hard_rule_failures": []}.items():
+        object.__setattr__(listing, name, value)
+    address = AddressLocation(address_id=listing.address_id, raw_address="Synthetic browser measured address",
+                              normalized_address="Synthetic browser measured address", latitude=25.033964,
+                              longitude=121.564468, geocode_confidence=0.95, h3_res_9="8929a1d4d67ffff")
+    bundle.listing_repository_for_tenant(TENANT).save_listing(listing, address, ListingDedupKey(
+        source_id=source_id, source_listing_id=scenario_id, normalized_address=address.normalized_address,
+        rent_amount=listing.rent_amount, area_ping=listing.area_ping))
     corrected = client.post(f"{base}/{iid}/correct", json={"fields": {"floor": "1F"}, "reason": SCOPE,
                             "riskSummary": "Explicit synthetic measured input", "riskAcknowledged": True}, headers=headers())
     assert corrected.status_code == 200, corrected.text
@@ -630,8 +644,7 @@ def ready_scenario(database_url, bundle, client):
                        "source_snapshot_version": 1, "intake_method": "MANUAL", "parser_release_id": None, "parser_run_id": None})
         intake["version"] += 1
         store.flush()
-    return {"scope": SCOPE, "scenario_id": scenario_id, "intake_id": iid, "listing_id": listing_id,
-            "tenant_id": TENANT, "proposer_id": MANAGER, "reviewer_id": APPROVER}
+    return {**case, "listing_id": listing_id}
 
 
 class BrowserModelRuntime:

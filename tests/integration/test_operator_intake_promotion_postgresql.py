@@ -217,6 +217,71 @@ def test_browser_ready_fixture_uses_retained_history_without_fresh_http(intake_b
         bundle.engine.close()
 
 
+def test_browser_retained_assisted_entry_preserves_real_correction_without_fresh_http(intake_blank_db, monkeypatch):
+    from modules.opsboard.application.network_listings import NetworkListingService
+    from tests.support.intake_score_synthetic import headers, prepare_database, ready_scenario
+
+    db = intake_blank_db
+    prepare_database(db.url())
+    bundle = _bundle(db, monkeypatch)
+
+    def forbid_fresh(*_args, **_kwargs):
+        pytest.fail("Retained manual-entry setup must not invoke a fresh writer")
+
+    monkeypatch.setattr(NetworkListingService, "submit_intake", forbid_fresh)
+    try:
+        client = _promotion_client(bundle)
+        case = ready_scenario(db.url(), bundle, client, retained_history="assisted-entry-only")
+        assert case["listing_id"] is None
+        path = f"{BASE}/intake/{case['intake_id']}"
+        initial = client.get(path, headers=headers()).json()
+        assert (initial["stage"], initial["version"]) == ("AWAITING_ASSISTED_ENTRY", 1)
+        assert initial["originalUrl"] == case["original_url"]
+        assert initial["parsedFields"] == {} and initial["auditEvents"] == []
+        assert initial["assignmentId"] and initial["slaInstanceId"]
+        body = {"fields": {"address": "Synthetic retained manual address", "rent": "54000", "areaPing": "22"},
+                "reason": "Explicit retained manual-entry correction", "riskSummary": "No retrieved evidence",
+                "riskAcknowledged": True}
+        command_headers = headers(key="synthetic-retained-manual-correction")
+        corrected = client.post(path + "/correct", json=body, headers=command_headers)
+        assert corrected.status_code == 200, corrected.text
+        record = corrected.json()
+        assert record["version"] == 2
+        assert record["assignmentId"] == initial["assignmentId"]
+        assert record["slaInstanceId"] == initial["slaInstanceId"]
+        assert [event["action"] for event in record["auditEvents"]] == ["intake.correct"]
+        assert record["auditEvents"][0]["actorName"] == MANAGER
+        for name in ("capturedAt", "rawSnapshot", "snapshotId", "parserVersion", "lastObservedAt"):
+            assert record[name] is None
+        replay = client.post(path + "/correct", json=body, headers=command_headers)
+        assert replay.status_code == 200 and replay.json() == record
+        assert client.get(path, headers={**headers(), "x-tenant-id": str(uuid4())}).status_code == 404
+        store = bundle.assisted_intake_store
+        store.refresh(TENANT)
+        assert len(store.intakes) == len(store.assignments) == len(store.slas) == 1
+        assert not store.jobs and not store.promotions
+        assert bundle.listing_repository_for_tenant(TENANT).list_listings() == []
+        assert bundle.listing_repository_for_tenant(TENANT).list_candidates() == []
+        receipts = bundle.operator_intake_repository_for_tenant(TENANT).list_idempotency_records()
+        assert [receipt.action for receipt in receipts] == ["correct_intake"]
+        assert bundle.engine.query_one(
+            "SELECT count(*) AS count FROM durable_jobs WHERE job_type='assisted-listing-intake'",
+        )["count"] == 0
+        with db.connect() as connection:
+            # Historical Operator presentation has not manufactured a native
+            # Intake, source approval, snapshot, worker result or command.
+            for table in ("intake.intakes", "intake.source_registry", "intake.source_snapshots", "workflow.jobs"):
+                assert connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+    finally:
+        bundle.engine.close()
+    replica = _bundle(db, monkeypatch)
+    try:
+        read = _promotion_client(replica).get(path, headers=headers())
+        assert read.status_code == 200 and read.json() == record
+    finally:
+        replica.engine.close()
+
+
 def test_canonical_promotion_positive_restart_and_replay(bridge_database, monkeypatch):
     bundle = _bundle(bridge_database, monkeypatch)
     try:
