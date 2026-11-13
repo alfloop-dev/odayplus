@@ -45,6 +45,29 @@ def _run(label: str, fn, argv: list[str]) -> tuple[int, str, str]:
     return rc, out.getvalue(), err.getvalue()
 
 
+def _promote(release) -> int:
+    """Promote with owner-signed approval documents, in the listed order.
+
+    PROMOTIONS = "version:approval.json[:rollback_target];..." -- the approval
+    files are written only after the named approver approves; the trainer
+    enforces approver != ODP_MODEL_TRAINING_ACTOR and the role allow-list.
+    """
+    for item in [p for p in os.environ["PROMOTIONS"].split(";") if p.strip()]:
+        parts = item.strip().split(":")
+        version, approval = parts[0], parts[1]
+        argv = ["promote", "--model", "forecastops", "--version", version,
+                "--approval-file", approval]
+        if len(parts) > 2 and parts[2]:
+            argv += ["--rollback-target", parts[2]]
+        rc, out, err = _run(f"PROMOTE {version}", release.main, argv)
+        print(out[:4000], err[-3000:], flush=True)
+        if rc != 0:
+            print(f"RESULT: FAILED (promotion of {version} refused)", flush=True)
+            return 1
+    print("RESULT: OK (promoted)", flush=True)
+    return 0
+
+
 def main() -> int:
     os.environ["ODAY_DATABASE_URL"] = _socket_dsn(
         os.environ["RAW_DB_URL"], os.environ["CLOUD_SQL_INSTANCE"]
@@ -114,21 +137,31 @@ def main() -> int:
     except ValueError:
         print(out[:2000], err[-2000:], flush=True)
 
-    version = os.environ["MODEL_VERSION"].strip()
-    end = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    rc, out, err = _run(
-        "TRAIN forecastops",
-        release.main,
-        ["train", "--model", "forecastops", "--version", version,
-         "--start", "2020-01-01T00:00:00Z", "--end", end],
+    if os.environ.get("ACTION", "train") == "promote":
+        return _promote(release)
+
+    # Bound training to the date-ordered chunk-loaded stretch: one-batch
+    # backfilled history is rejected by the horizon maturity rule.
+    start = os.environ["TRAIN_START"].strip()
+    end = os.environ.get("TRAIN_END", "").strip() or datetime.now(UTC).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
     )
-    if rc != 0:
-        print("TRAIN stderr:", err[-3000:], flush=True)
-        print("RESULT: FAILED (training refused or failed)", flush=True)
-        return 1
-    result = json.loads(out)
-    print("TRAIN result:", json.dumps(result, sort_keys=True, default=str)[:6000], flush=True)
-    print(f"RESULT: OK (registered forecast_revenue_interval version {version}; NOT promoted)", flush=True)
+    versions = [v.strip() for v in os.environ["MODEL_VERSIONS"].split(",") if v.strip()]
+    for version in versions:
+        rc, out, err = _run(
+            f"TRAIN forecastops {version}",
+            release.main,
+            ["train", "--model", "forecastops", "--version", version,
+             "--start", start, "--end", end],
+        )
+        if rc != 0:
+            print("TRAIN stderr:", err[-3000:], flush=True)
+            print(f"RESULT: FAILED (training {version} refused or failed)", flush=True)
+            return 1
+        result = json.loads(out)
+        print(f"TRAIN result {version}:",
+              json.dumps(result, sort_keys=True, default=str)[:8000], flush=True)
+    print(f"RESULT: OK (registered {versions}; NOT promoted)", flush=True)
     return 0
 
 

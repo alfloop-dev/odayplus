@@ -8,7 +8,6 @@ on:
     branches: [seed-dev-data-backfill]
     paths:
       - .github/workflows/seed-dev-forecast-train.yml
-      - .github/scripts/seed_dev_forecast_train_driver.py
   workflow_dispatch: {}
 
 permissions:
@@ -29,7 +28,9 @@ jobs:
       ODP_MODEL_ARTIFACT_ROOT: gs://odayplus-runtime-20260825-model-artifacts/dev-model-releases
       ODP_RELEASE_COMMIT_SHA: ${{ github.sha }}
       ODP_MODEL_TRAINING_ACTOR: github-actions:seed-dev-forecast-train
-      MODEL_VERSION: dev-forecast-20261112-1
+      MODEL_VERSIONS: dev-forecast-20261112-1,dev-forecast-20261112-2
+      TRAIN_START: '2026-01-14T00:00:00Z'
+      TRAIN_END: '2026-05-14T00:00:00Z'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
