@@ -32,15 +32,6 @@ const PG_CASE = /^(canonical (2:|3:|4:|5 and 6:|native:)|retained )/;
 // Explicit isolated fixture input; never a production default or catalog entry.
 const SYNTHETIC_TARGET_FORMAT = "synthetic-manual-format:Browser/v1";
 
-const URLS = {
-  clean: "https://www.synthetic.example/detail-77120345.html",
-  possible: "https://www.synthetic.example/detail-99310418.html",
-  timeout: "https://www.synthetic.example/detail-50000001.html",
-  assistedOnly: "https://www.591.com.tw/rent-detail-16244102.html",
-  blocked: "https://listing-aggregator.example/item/7731",
-  unknown: "https://unknown-house.example.tw/item/7731",
-};
-
 const MANAGER_HEADERS = {
   "x-roles": "expansion_user,site_reviewer",
   "x-operator-role": "expansion-manager",
@@ -521,33 +512,6 @@ async function setOperatorSession(
   );
 }
 
-async function openRadar(
-  page: Page,
-  role = "expansion-manager",
-  subject = "qa-expansion-manager",
-) {
-  await page.goto("/operator?ws=network");
-  await setOperatorSession(page, role, subject);
-  await page.reload();
-  await page.getByTestId("network-tab-1").click();
-  await expect(page.getByTestId("intake-inbox-view")).toBeVisible({
-    timeout: 15_000,
-  });
-}
-
-async function submitUrl(page: Page, url: string) {
-  await page.getByTestId("intake-add-button").click();
-  await expect(page.getByTestId("intake-add-dialog")).toBeVisible();
-  await page.getByTestId("intake-url-input").fill(url);
-  await page.getByTestId("intake-submit-button").click();
-  await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({
-    timeout: 15_000,
-  });
-  return (
-    (await page.getByTestId("intake-detail-id").textContent())?.trim() ?? ""
-  );
-}
-
 async function requestPromotion(page: Page) {
   await expect(page.getByTestId("promotion-request-form")).toBeVisible({
     timeout: 15_000,
@@ -1015,20 +979,60 @@ test("canonical 5 and 6: SCORE_FAILED retains Candidate and same-key replay queu
   } finally { await api.dispose(); }
 });
 
-test("source policy fails closed for blocked and unknown sources", async ({
-  page,
-}) => {
-  await openRadar(page);
-  for (const [url, policy] of [
-    [URLS.blocked, "來源封鎖"],
-    [URLS.unknown, "政策未知"],
-  ] as const) {
-    await submitUrl(page, url);
+test("canonical native: source policy fails closed for fresh blocked and unknown sources", async ({ page }) => {
+  const input = nativeBrowserInput();
+  await loginNativeSession(page, input);
+  await openNativeIntakeList(page);
+  for (const policy of ["SOURCE_BLOCKED", "POLICY_UNKNOWN"] as const) {
+    const source = input.policy_sources[policy];
+    await page.getByRole("button", { name: "從網址建立正式收件", exact: true }).click();
+    await expect(page.getByTestId("intake-submit-button")).toBeDisabled();
+    await page.getByTestId("intake-url-input").fill(source.original_url);
+    await page.getByRole("combobox", { name: /^正式收件範圍/ })
+      .selectOption({ label: `沿用收件 ${input.intake_id} 的範圍` });
+    const reason = `明確核對 ${policy} 的真實來源政策拒絕；送件回執不代表已獲准擷取。`;
+    await page.getByLabel("送件原因", { exact: true }).fill(reason);
+    const [response] = await Promise.all([
+      page.waitForResponse((candidate) => candidate.request().method() === "POST"
+        && new URL(candidate.url()).pathname === "/api/v1/canonical-intakes"),
+      page.getByTestId("intake-submit-button").click(),
+    ]);
+    expect(response.status(), await response.text()).toBe(201);
+    const receipt = await response.json() as CanonicalIntakeReceipt;
+    expect(receipt).toMatchObject({ processing_state: "SUBMITTED", version: 1, intake_method: "URL" });
+    const body = response.request().postDataJSON();
+    expect(body).toEqual({ intake_method: "URL", original_url: source.original_url, scope: input.fresh_scope, reason });
+    const headers = await response.request().allHeaders();
+    expect(headers["if-actor-match"]).toBe(input.actor_id);
+    expect(headers["if-tenant-match"]).toBe(input.tenant_id);
+    expect(headers["idempotency-key"]).toBeTruthy();
+    await expect(page.getByTestId("intake-detail-id")).toHaveText(receipt.intake_id);
+    const path = `/api/v1/canonical-intakes/${receipt.intake_id}?include_source=true&include_history=true&include_evidence=true`;
+    let observed: any;
+    // Read-only observation of the actual registered workers, not a retry of
+    // submission, legacy-fresh refusal, retained quarantine or mocked policy.
+    await expect.poll(async () => {
+      const read = await page.request.get(path);
+      expect(read.status(), await read.text()).toBe(200);
+      observed = await read.json();
+      return observed.processing_state;
+    }).toBe("QUARANTINED");
+    expect(observed).toMatchObject({ intake_id: receipt.intake_id, version: 4, resolution: null,
+      submitter_subject_id: input.actor_id, correlation_id: receipt.correlation_id,
+      source_info: { source_id: source.source_id, recorded_policy_state: policy },
+      processing_evidence: { items: [], next_cursor: null } });
+    expect(observed.processing_history.items.map((item: any) => item.to_state)).toEqual([
+      "SUBMITTED", "CHECKING_IDENTITY", "CHECKING_SOURCE_POLICY", "QUARANTINED",
+    ]);
+    await selectNativeIntake(page, receipt.intake_id, true);
     await expect(page.getByTestId("intake-detail-stage")).toHaveText("已隔離");
-    await expect(page.getByTestId("intake-detail-dialog")).toContainText(
-      policy,
-    );
-    await expect(page.getByTestId("decide-action-steward")).toBeVisible();
+    await expect(page.getByTestId("native-intake-evidence-panel")).toContainText(policy);
+    await expect(page.getByTestId("native-intake-stage-timeline")).toContainText("來源政策 → 已隔離");
+    // Native quarantine has no legacy steward/final-decision shortcut.
+    await expect(page.getByTestId("intake-detail-actions")).toHaveCount(0);
+    await expect(page.getByTestId("decide-action-create")).toHaveCount(0);
+    writeFileSync(join(dirname(process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE!), `native-policy-${policy}.json`),
+      JSON.stringify({ receipt, key: headers["idempotency-key"], body, observed }), { mode: 0o600 });
     await page.getByTestId("intake-return-button").click();
   }
 });

@@ -12,6 +12,7 @@ export type NativeBrowserInput = {
   url_manual: { original_url: string; fields: { address: string; rent: number; areaPing: number } } | null;
   fresh_urls: { presentation: string; durability: string; duplicate: string; replay: string };
   fresh_scope: NativeIntakeScope;
+  policy_sources: Record<"SOURCE_BLOCKED" | "POLICY_UNKNOWN", { source_id: string; original_url: string }>;
 };
 
 export function nativeBrowserInput(): NativeBrowserInput {

@@ -135,7 +135,7 @@ reasons and snapshot/parser content are not added to the receipt. The other
 five journeys and historical Intake decision remain unchanged.
 
 Backend retained-receipt fixtures and the original browser add/replay/durability/
-keyboard callers are migrated. The original source-policy and legacy stepper
+keyboard callers are migrated. The network spec's five-policy and legacy stepper
 callers and full exact-head PostgreSQL/browser qualification remain pending at
 this intermediate checkpoint. Historical GETs (UUID and `IN-...`),
 original Intake-version decisions, corrections, batch/schedule operations and
@@ -210,6 +210,25 @@ selection: missing owned scenario/credentials fails the migrated URL cases.
 Retained legacy browser cases remain separately selected against their existing
 isolated PG fixture; neither selection alone qualifies both full specs or
 source-policy admission. All failures and unexecuted cases remain evidence.
+
+The original assisted-spec blocked/unknown probe now uses that same password
+session, explicit scope/reason form and canonical POST. Two uniquely hosted
+synthetic registry rows supply only negative policy premises, not source-use
+approvals. The existing targeted browser admission helper drives their actual
+start, identity and source-policy jobs through the registered worker. The UI
+observes the resulting QUARANTINED detail and recorded policy; the fixture
+independently binds the accepted submission receipt, four transitions, three
+successful jobs, audits/outbox, one Assignment/SLA and no snapshot, parser,
+match case or legacy shadow. This is genuine fresh negative policy proof,
+not evidence of admitted retrieval or the remaining five-policy/11-stage flow.
+The original legacy steward shortcut is not offered on a native quarantine.
+
+Retained-record reload controls bind their real Intake GET before checking UI.
+The promotion reload separately binds its promotion lookup and job receipt
+GET, retaining actual status/body, independent actors, durable worker results
+and UI assertions. No retry, authorization bypass or numeric deadline change
+is introduced. Earlier reload failures remain recorded; a passing retained
+selection alone does not establish load qualification or both complete specs.
 
 ## Remaining release limits
 

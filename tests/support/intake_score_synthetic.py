@@ -114,12 +114,16 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
     private_dir.mkdir(mode=0o700)
     password, signing, session_secret, metadata_secret = (secrets.token_urlsafe(40) for _ in range(4))
     append_property = str(uuid4()) if independent_reviewer else None
+    policy_sources = {policy: {"source_id": "browser-policy-" + uuid4().hex,
+        "original_url": "https://policy-" + uuid4().hex + ".example.invalid/Listing"}
+        for policy in ("SOURCE_BLOCKED", "POLICY_UNKNOWN")}
     credentials = {"username": "synthetic-manager-" + ids["reviewer"], "password": password,
         "actor_id": ids["reviewer"], "tenant_id": ids["tenant"], "intake_id": parsed["intake_id"],
         "match_case_id": match_case["match_case_id"] if match_case else None, "manager_region_id": manager_region_id,
         "outside_intake_id": ids["intake"], "context_property_ids": [ids["target"], ids["split_target"]],
         "append_property_id": append_property, "append_receipt_probe": append_receipt_probe,
         "url_manual": None,
+        "policy_sources": policy_sources,
         # Explicit test URLs, not admitted sources or a fixture retrieval path.
         "fresh_urls": {kind: "https://browser-fresh.example.invalid/" + ids["tenant"] + "/" + kind
             for kind in ("presentation", "durability", "duplicate", "replay")},
@@ -130,6 +134,17 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         env={**os.environ, "OWNED_BROWSER_PASSWORD": password}, text=True)
     now = datetime.now(UTC)
     with database.connect() as connection:
+        from modules.listing.application.native_intake_url_identity import NATIVE_URL_RULE_VERSION
+
+        # Explicit isolated negative registry premises. No legal/license,
+        # account, retrieval or assisted-entry approval is supplied by these
+        # rows. The actual identity and source-policy workers must classify them.
+        for policy, source in policy_sources.items():
+            connection.execute("INSERT INTO intake.source_registry (source_id,display_name,allowed_hosts,"
+                "canonicalization_rule_version,retrieval_mode,policy_owner_subject_id,production_enabled,kill_switch) "
+                "VALUES (%s,%s,%s,%s,%s,%s,true,false)",
+                (source["source_id"], SCOPE, [urlsplit(source["original_url"]).hostname],
+                 NATIVE_URL_RULE_VERSION, policy, ids["actor"]))
         if url_manual_capture is not None:
             original_url, source_id = connection.execute("SELECT original_url,source_id FROM intake.intakes "
                 "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], parsed["intake_id"])).fetchone()
@@ -227,6 +242,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
     metadata_server = None
     metadata_thread = None
     url_admissions = []
+    policy_admissions = {policy: [] for policy in policy_sources}
 
     if url_manual_capture is not None:
         from shared.infrastructure.persistence.factory import PersistenceBundle
@@ -268,44 +284,47 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         admissions = [worker_bundle.canonical_intake_start, worker_bundle.canonical_intake_identity,
             worker_bundle.canonical_intake_source_policy, worker_bundle.canonical_intake_assisted_entry]
 
-        def admit_browser_event():
-            if credentials["url_manual"] is None or len(url_admissions) == len(admissions):
+        def admit_browser_event(original_url, receipts, phases):
+            if len(receipts) == phases:
                 return
             with database.connect() as connection:
                 row = connection.execute("SELECT intake_id FROM intake.intakes WHERE tenant_id=%s AND original_url=%s",
-                    (ids["tenant"], credentials["url_manual"]["original_url"])).fetchall()
+                    (ids["tenant"], original_url)).fetchall()
                 if not row:
                     return
                 assert len(row) == 1
                 intake_id = str(row[0][0])
-                if not url_admissions:
+                if not receipts:
                     events = connection.execute("SELECT event_id FROM workflow.outbox_events WHERE tenant_id=%s "
                         "AND aggregate_type='intake' AND aggregate_id=%s AND event_type='intake.submitted'",
                         (ids["tenant"], intake_id)).fetchall()
                 else:
-                    previous = url_admissions[-1]
+                    previous = receipts[-1]
                     if worker_bundle.job_queue.get(previous["job_id"]).status != JobStatus.SUCCEEDED:
                         return
                     result = connection.execute("SELECT result FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s",
                         (ids["tenant"], previous["job_id"])).fetchone()[0]
                     assert result["intake_id"] == intake_id
-                    if len(url_admissions) < 3:
+                    if len(receipts) < 3:
                         events = [(result["outbox_event_id"],)]
                     else:
-                        assert result["processing_state"] == "AWAITING_ASSISTED_ENTRY"
+                        assert phases == 4 and result["processing_state"] == "AWAITING_ASSISTED_ENTRY"
                         events = connection.execute("SELECT event_id FROM workflow.outbox_events WHERE tenant_id=%s "
                             "AND aggregate_type='intake_assisted_entry' AND event_type='intake.assisted_entry_requested' "
                             "AND payload->'payload'->>'intake_id'=%s", (ids["tenant"], intake_id)).fetchall()
                         if not events:
                             return
                 assert len(events) == 1
-            receipt = admissions[len(url_admissions)]().admit_event(ids["tenant"], str(events[0][0]))
+            receipt = admissions[len(receipts)]().admit_event(ids["tenant"], str(events[0][0]))
             assert receipt["intake_id"] == intake_id
-            url_admissions.append(receipt)
+            receipts.append(receipt)
 
         while not stop.is_set():
             try:
-                admit_browser_event()
+                if credentials["url_manual"] is not None:
+                    admit_browser_event(credentials["url_manual"]["original_url"], url_admissions, 4)
+                for policy, source in policy_sources.items():
+                    admit_browser_event(source["original_url"], policy_admissions[policy], 3)
                 if not worker.run_once():
                     stop.wait(0.1)
             except Exception as error:
@@ -476,6 +495,46 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                         (ids["tenant"], fresh_id)).fetchone()[0] == 0
                 assert connection.execute("SELECT count(*) FROM odp_runtime.durable_documents WHERE doc_id=%s AND "
                     "collection IN ('operator.assisted_intakes','assisted_intake.intakes')", (fresh_id,)).fetchone()[0] == 0
+            for policy, source in policy_sources.items():
+                entry = json.loads((private_dir / ("native-policy-" + policy + ".json")).read_text())
+                receipt, key, body = entry["receipt"], entry["key"], entry["body"]
+                policy_id = receipt["intake_id"]
+                assert body == {"intake_method": "URL", "original_url": source["original_url"],
+                    "scope": credentials["fresh_scope"], "reason": body["reason"]}
+                assert len(body["reason"].strip()) >= 3
+                saved = worker_bundle.assisted_intake_store.read_command_replay(
+                    ids["tenant"], ids["reviewer"], "submitCanonicalIntake", key)
+                assert saved is not None and saved[1] == receipt and saved[2] == 201
+                assert receipt["processing_state"] == "SUBMITTED" and receipt["version"] == 1
+                rows = connection.execute("SELECT intake_id,submitter_subject_id,processing_state,version,source_id,"
+                    "source_policy_state,resolved_listing_id FROM intake.intakes WHERE tenant_id=%s AND original_url=%s",
+                    (ids["tenant"], source["original_url"])).fetchall()
+                assert len(rows) == 1 and tuple(map(str, rows[0])) == (
+                    policy_id, ids["reviewer"], "QUARANTINED", "4", source["source_id"], policy, "None")
+                transitions = connection.execute("SELECT to_state,job_id,transition_id FROM intake.intake_stage_transitions "
+                    "WHERE tenant_id=%s AND intake_id=%s ORDER BY sequence_no", (ids["tenant"], policy_id)).fetchall()
+                assert [row[0] for row in transitions] == ["SUBMITTED", "CHECKING_IDENTITY", "CHECKING_SOURCE_POLICY", "QUARANTINED"]
+                assert len(policy_admissions[policy]) == 3
+                assert [str(row[1]) for row in transitions[1:]] == [row["job_id"] for row in policy_admissions[policy]]
+                jobs = connection.execute("SELECT job_id,job_type,status,result FROM workflow.jobs "
+                    "WHERE tenant_id=%s AND aggregate_id=%s ORDER BY created_at,job_id", (ids["tenant"], policy_id)).fetchall()
+                assert [row[1] for row in jobs] == ["native-intake-start", "native-intake-identity", "native-intake-source-policy"]
+                for index, (job_id, _kind, status, result) in enumerate(jobs, 1):
+                    assert status == "SUCCEEDED" and result["intake_id"] == policy_id
+                    assert worker_bundle.job_queue.get(str(job_id)).status == JobStatus.SUCCEEDED
+                    assert str(transitions[index][2]) == result["transition_id"]
+                    assert connection.execute("SELECT count(*) FROM audit.audit_events WHERE tenant_id=%s AND audit_event_id=%s",
+                        (ids["tenant"], result["audit_event_id"])).fetchone()[0] == 1
+                    assert connection.execute("SELECT count(*) FROM workflow.outbox_events WHERE tenant_id=%s AND event_id=%s",
+                        (ids["tenant"], result["outbox_event_id"])).fetchone()[0] == 1
+                assert jobs[-1][3]["policy_decision"]["effective_policy"] == policy
+                assert jobs[-1][3]["policy_decision"]["accepted_worker"] == "owned-native-browser-worker"
+                for table in ("intake.source_snapshots", "intake.parser_runs", "identity.match_cases", "workflow.assignments", "workflow.sla_instances"):
+                    count = connection.execute(f"SELECT count(*) FROM {table} WHERE tenant_id=%s AND intake_id=%s",
+                        (ids["tenant"], policy_id)).fetchone()[0]
+                    assert count == (1 if table in {"workflow.assignments", "workflow.sla_instances"} else 0)
+                assert connection.execute("SELECT count(*) FROM odp_runtime.durable_documents WHERE doc_id=%s AND "
+                    "collection IN ('operator.assisted_intakes','assisted_intake.intakes')", (policy_id,)).fetchone()[0] == 0
             if submissions:
                 new_intake = submitted["intake_id"]
                 assert connection.execute("SELECT count(*) FROM intake.intakes WHERE tenant_id=%s AND original_url=%s",
@@ -576,6 +635,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             "independent_reviewer_id": independent_reviewer, "real_reviewer_sessions": reviewer_sessions,
             "manual_context_appended": bool(append_property),
             "new_url_manual_admissions": url_admissions,
+            "fresh_policy_admissions": policy_admissions,
             "fresh_url_submissions": [{"intake_id": entry["receipt"]["intake_id"], "processing_state": "SUBMITTED",
                 "key": entry["key"]} for entry in fresh_commands],
             "private_artifacts": str(private_dir)}
