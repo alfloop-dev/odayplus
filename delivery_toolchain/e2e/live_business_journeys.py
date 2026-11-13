@@ -2905,8 +2905,9 @@ class JourneyRunner:
             history = _as_dict(row.get("processing_history"))
             evidence = _as_dict(row.get("processing_evidence"))
             transitions = history.get("items")
-            original = next((field for field in source.get("url_fields", [])
-                             if isinstance(field, dict) and field.get("field_path") == "originalUrl"), {})
+            url_fields = source.get("url_fields")
+            original = next((field for field in url_fields
+                             if isinstance(field, dict) and field.get("field_path") == "originalUrl"), {}) if isinstance(url_fields, list) else {}
             authorized = _as_dict(self.scope.as_receipt()["authorized_outcomes"]["policy_probe"])
             outcome.update({
                 "readback_status": readback.status,
@@ -2954,7 +2955,8 @@ class JourneyRunner:
                 and history.get("through_sequence") == len(trail) == row["version"]
                 and [item.get("to_state") for item in trail] == [
                     "SUBMITTED", "CHECKING_IDENTITY", "CHECKING_SOURCE_POLICY", policy.quarantine_stage]
-                and all(item.get("sequence_no") == item.get("resulting_version") == index
+                and all(type(item.get("sequence_no")) is int and type(item.get("resulting_version")) is int
+                        and item["sequence_no"] == item["resulting_version"] == index
                         and _canonical_uuid(item.get("transition_id"))
                         and item.get("source_snapshot_id") is None and item.get("match_case_id") is None
                         for index, item in enumerate(trail, 1))
@@ -3539,7 +3541,7 @@ def journey_receipt_problems(spec: JourneySpec, entry: Mapping[str, Any]) -> lis
                 "intake_id", "transition_id", "audit_event_id", "outbox_event_id", "correlation_id"))
             and policy.get("record_id") == submitted.get("intake_id")
             and policy.get("tenant_id") == scope.get("tenant_id")
-            and policy.get("submitter_subject_id") == accounts.get("primary")
+            and policy.get("submitter_subject_id") == _as_dict(scope.get("account_ids")).get("primary")
             and isinstance(authorized.get("scope"), dict)
             and set(authorized["scope"]) == {"brand_id", "region_id", "assigned_area_id", "heat_zone_id"}
             and all(value is None or _canonical_uuid(value) for value in authorized["scope"].values())
@@ -3563,7 +3565,8 @@ def journey_receipt_problems(spec: JourneySpec, entry: Mapping[str, Any]) -> lis
             and history.get("through_sequence") == len(trail) == policy["version"]
             and [item.get("to_state") for item in trail] == [
                 "SUBMITTED", "CHECKING_IDENTITY", "CHECKING_SOURCE_POLICY", spec.policy.quarantine_stage]
-            and all(item.get("sequence_no") == item.get("resulting_version") == index
+            and all(type(item.get("sequence_no")) is int and type(item.get("resulting_version")) is int
+                    and item["sequence_no"] == item["resulting_version"] == index
                     and _canonical_uuid(item.get("transition_id"))
                     and item.get("source_snapshot_id") is None and item.get("match_case_id") is None
                     for index, item in enumerate(trail, 1))

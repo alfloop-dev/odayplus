@@ -714,9 +714,6 @@ class BusinessWeb:
                 return refused
             assert "if-match" not in ctx.headers  # collection admission has no resource version
             self.policy_bodies.append(deepcopy(ctx.body))
-            self.policy_intake["scope"] = deepcopy(ctx.body["scope"])
-            for field in self.policy_intake["source_info"]["url_fields"]:
-                field["effective"] = ctx.body["original_url"]
             return Resp(201, self.policy_submission)
 
         def read_native_intake(ctx: Ctx) -> Resp:
@@ -1501,6 +1498,7 @@ def test_durable_quarantine_without_retrieval_satisfies_the_policy_probe(policy:
     authored = scope["journeys"]["intake"]["writes"]["policy_probe"]["body"]
     authored["scope"]["brand_id"] = "00000000-0000-0000-0000-000000000099"
     authored["reason"] = "Explicit offline author reason, not a principal default"
+    web.policy_intake["scope"] = deepcopy(authored["scope"])
     receipt, _, _ = run(web, selection=["intake"], scope=scope)
     entry = receipt["journeys"]["intake"]
     assert entry["status"] == "PASSED", blockers(receipt, "intake")
