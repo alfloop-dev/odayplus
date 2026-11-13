@@ -379,6 +379,9 @@ class Step:
     idempotent: bool = False
     #: name -> dotted path in the response payload.
     capture: Mapping[str, str] = field(default_factory=dict)
+    #: Captured authoritative resource version required by this existing command.
+    #: Collection creation has no If-Match precondition.
+    if_match_capture: str = ""
     #: dotted paths that must be present and non-empty in the response.
     required: tuple[str, ...] = ()
     #: Expected platform audit event type prefix for this write. Matched only
@@ -988,10 +991,10 @@ JOURNEYS: tuple[JourneySpec, ...] = (
         title="Assisted listing intake decision and source-policy rejection",
         selector="/operator?ws=network&tab=intake",
         actor_roles={
-            "primary": frozenset({"expansion_user"}),
+            "primary": frozenset({"site_reviewer"}),
             "denied": frozenset({"pricing_manager", "franchisee"}),
         },
-        operator_role="expansion-staff",
+        operator_role="expansion-manager",
         required_records=("intake_id",),
         required_foreign=("intake_id",),
         writes_allowed={
@@ -1016,13 +1019,15 @@ JOURNEYS: tuple[JourneySpec, ...] = (
         ),
         action_fields={"decide": "action"},
         read=Step(
-            "read_intake", "GET", f"{V1}/operator/network-listings/intake/{{record.intake_id}}"
+            "read_intake", "GET", f"{V1}/operator/network-listings/intake/{{record.intake_id}}",
+            capture={"intake_version": "version"},
         ),
         writes=(
             _write(
                 "decide",
                 "POST",
                 f"{V1}/operator/network-listings/intake/{{record.intake_id}}/decide",
+                if_match_capture="intake_version",
             ),
         ),
         readback=Step(
@@ -1038,7 +1043,7 @@ JOURNEYS: tuple[JourneySpec, ...] = (
         record_id_path="id",
         record_key="intake_id",
         tenant_paths=("tenantId",),
-        state_paths=("stage", "matchResult.targetListingId", "auditEvents"),
+        state_paths=("stage", "matchResult.targetListingId", "auditEvents", "version"),
         provenance_paths=("id", "tenantId", "sourceId", "policy", "intakeMethod", "stage"),
         allowed_values={
             "policy": (frozenset({"APPROVED_RETRIEVAL", "ASSISTED_ENTRY_ONLY"}), "source"),
@@ -1963,6 +1968,11 @@ class JourneyRunner:
             body = dict(body or {})
             for key, template in step.body_overrides.items():
                 body[key] = render(template, variables, quote=False)
+        if step.if_match_capture:
+            version = self.captured.get(step.if_match_capture)
+            if type(version) is not int or version < 1:
+                raise PreflightViolation("observed resource version is required before sending a command")
+            headers["if-match"] = f'W/"{version}"'
         if body is not None:
             headers["content-type"] = "application/json"
         if step.idempotent and step.method.upper() in MUTATING_METHODS:
@@ -2129,6 +2139,18 @@ class JourneyRunner:
             return None
         if not self.bind_record(payload):
             return None
+        for name, dotted in self.spec.read.capture.items():
+            value = dig(payload, self.path_of(dotted))
+            version_required = any(step.if_match_capture == name for step in self.spec.writes)
+            if not self.result.check(
+                type(value) is int and value > 0 if version_required else _present(value),
+                f"read:{self.spec.read.name}:capture:{name}",
+                "authoritative resource version required" if version_required else "read capture required",
+                "business-data",
+            ):
+                return None
+            self.captured[name] = value
+            self.result.captured[name] = value
         for path, (allowed, dependency) in self.spec.allowed_values.items():
             value = dig(payload, self.path_of(path))
             if not self.result.check(
@@ -3259,6 +3281,14 @@ def journey_receipt_problems(spec: JourneySpec, entry: Mapping[str, Any]) -> lis
         problems.append("record state unchanged")
     captures = _as_dict(entry.get("captured"))
     outcomes = _as_dict(scope.get("authorized_outcomes"))
+    if spec.journey_id == "intake":
+        version = captures.get("intake_version")
+        before_version = _as_dict(before.get("state")).get("version")
+        after_version = _as_dict(after.get("state")).get("version")
+        if (type(version) is not int or version < 1
+                or type(before_version) is not int or before_version != version
+                or type(after_version) is not int or after_version != version + 1):
+            problems.append("observed legacy Intake decision version missing or different")
     if spec.journey_id == "operations":
         before_state, after_state = _as_dict(before.get("state")), _as_dict(after.get("state"))
         action = _as_dict(scope.get("authorized_actions")).get("transition")

@@ -106,7 +106,7 @@ ACCOUNTS: dict[str, frozenset[str]] = {
     "franchisee.owner": frozenset({"franchisee"}),
     "ops.regional": frozenset({"operations_manager"}),
     # intake
-    "intake.staff": frozenset({"expansion_user"}),
+    "intake.manager": frozenset({"site_reviewer", "expansion_user"}),
     "pricing.analyst": frozenset({"pricing_manager"}),
 }
 
@@ -125,7 +125,7 @@ ACTORS: dict[str, dict[str, str]] = {
     },
     "governance": {"primary": "governance.lead", "denied": "growth.marketer"},
     "franchise": {"primary": "franchisee.owner", "denied": "ops.regional"},
-    "intake": {"primary": "intake.staff", "denied": "pricing.analyst"},
+    "intake": {"primary": "intake.manager", "denied": "pricing.analyst"},
 }
 
 
@@ -634,13 +634,18 @@ class BusinessWeb:
                 "reject",
             } or not ctx.body.get("reason"):
                 return Resp(422, {})
-            if ctx.headers.get("x-operator-role") != "expansion-staff":
+            if ctx.headers.get("x-operator-role") != "expansion-manager":
                 return Resp(403, {})
-            refused = self.denied(ctx, "intake", {"expansion_user"})
+            refused = self.denied(ctx, "intake", {"site_reviewer"})
             if refused:
                 return refused
+            if "if-match" not in ctx.headers:
+                return Resp(428, {"detail": "PRECONDITION_REQUIRED"})
+            if ctx.headers["if-match"] != f'W/"{self.intake["version"]}"':
+                return Resp(409, {"detail": "VERSION_CONFLICT"})
             action = ctx.body["action"]
             if "intake" not in self.non_durable:
+                self.intake["version"] += 1
                 self.intake["stage"] = {"quarantine": "QUARANTINED", "reject": "FAILED"}.get(action, "READY")
                 if action == "create":
                     target_id = "L-2030"
@@ -2030,14 +2035,24 @@ def test_ready_intake_creates_tenant_bound_listing_surviving_repository_restart(
         }, "auditEvents": [],
         "matchResult": {"targetListingId": "L-2024"},
     })
-    service = NetworkListingService(bundle.listing_repository, repository, tenant_id=TENANT)
+    from modules.listing.application.intake_authorization import authorize_intake_action
+    from shared.auth import Principal, Role, Scope
+
+    principal = Principal(account_id("intake.manager"), frozenset({Role.SITE_REVIEWER, Role.EXPANSION_USER}), Scope(tenant_id=TENANT))
+
+    def authorize_existing(record):
+        authorize_intake_action(principal, "decide", resource=record,
+            operator_role_id="expansion-manager", risk_summary="Offline fixture, no retrieval", risk_acknowledged=True)
+
+    service = NetworkListingService(bundle.listing_repository, repository, seed_fixtures=False, tenant_id=TENANT)
     before = service.get_intake("OFFLINE-DURABLE-INTAKE")
     prior_ids = {row["id"] for row in service.snapshot(tenant_id=TENANT)["listings"]}
     result = service.decide_intake(
         intake_id=before["id"], action="create", reason="Offline durable creation test",
         risk_summary="Offline fixture, no retrieval", risk_acknowledged=True,
-        actor_role_id="expansionManager", actor_name="offline-only",
+        actor_role_id="site_reviewer", actor_name=principal.subject_id,
         idempotency_key="offline-create", correlation_id="offline-create-corr",
+        if_match=f'W/"{before["version"]}"', authorize_existing=authorize_existing,
     )
     assert result["stage"] == before["stage"] == "READY"
     assert before["version"] == 3
