@@ -6510,6 +6510,16 @@ def normalize_handoffs(state: dict[str, Any]) -> None:
         task = task_map.get(task_id)
         if task:
             task_status = task.get("status")
+            if task_status in {"review", "in_progress"} and (
+                merge_group_route_recovery_hold(task, pending) == MERGE_ROUTE_RECOVERY_UNRESOLVED
+            ):
+                # Several merge_group failure causes (or a cause beside another
+                # pending handoff) that the cause rule cannot resolve to one,
+                # none proven to concern another PR or source head. Collapsing
+                # them to the last would turn list order into the one licensed
+                # recovery; they stay pending, ambiguous, and nothing is
+                # dispatched or released from them.
+                continue
             if task_status in {"in_progress", "blocked", "done"}:
                 # The merge_group owner-return keeps its one committed cause:
                 # the same reviewer decision is still owed once the owner's

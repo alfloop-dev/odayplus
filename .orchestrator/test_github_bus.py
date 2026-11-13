@@ -5848,6 +5848,80 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             },
         )
 
+    def test_recovery_refuses_pr_facts_that_do_not_name_the_exact_pr(self) -> None:
+        """Facts A or B naming no PR or another PR decide nothing, whatever they say.
+
+        Each node below is served by the original GraphQL transport, open,
+        merged or closed, and carries an active queue group that does enrol
+        the source head. None of it is this PR's answer: the run is neither
+        stale nor processed, the canonical task, approval, route and handoffs
+        are unchanged, no revocation intent is written or POSTed, and the
+        ready tick dispatches nobody. The run stays open for a later read.
+        """
+        for label in ("A", "B"):
+            for defect in ("missing", "wrong"):
+                for state in ("OPEN", "MERGED", "CLOSED"):
+                    with self.subTest(label=label, defect=defect, state=state):
+                        self.setUp()
+                        status_path = self._canonical_store()
+                        self._route_approved_head()
+                        status_path.write_text(json.dumps(self.status), encoding="utf-8")
+                        before = json.loads(status_path.read_text(encoding="utf-8"))
+                        self._runs = [self._failure_run(id=31321422749)]
+                        commits = {self.GROUP_HEAD_NEW: self._group_enrolling_approved_head()}
+                        good = self._active_group_node(self.GROUP_HEAD_NEW)
+                        bad = dict(good, state=state, merged=state == "MERGED",
+                                   mergedAt=self.MERGED_AT if state == "MERGED" else None)
+                        if defect == "missing":
+                            bad.pop("number")
+                        else:
+                            bad["number"] = 757
+                        nodes = [bad] if label == "A" else [good, bad]
+                        posts: list[dict] = []
+                        write_log = mock.Mock()
+
+                        changed, canonical = self._recover(
+                            status_path,
+                            gh=self._gh(pr_nodes=nodes, runs=self._runs, commits=commits),
+                            post=lambda payload, _posts=posts: _posts.append(dict(payload)) or (True, ""),
+                            extra=(mock.patch("github_reconciliation.write_activity_log", new=write_log),),
+                        )
+
+                        self.assertFalse(changed)
+                        self.assertEqual(posts, [])
+                        self.assertEqual(self._board_facts(canonical), self._board_facts(before))
+                        board = json.loads(status_path.read_text(encoding="utf-8"))
+                        self.assertEqual(self._board_facts(board), self._board_facts(before))
+                        for field in ("status_check_outbox", "review_gate_revocations", "review_gate_refresh_pending"):
+                            self.assertNotIn(field, board["tasks"][0])
+                        self.assertNotIn("merge_group_run:31321422749",
+                                         self.bus_state.get("processed_merge_group_run_ids", []))
+                        entries = [c.args[1] for c in write_log.call_args_list]
+                        self.assertEqual([(e["type"], e["reason"]) for e in entries],
+                                         [("merge_group_failure_unresolved", f"pr_facts_{label}_unavailable")])
+                        queued: list[dict] = []
+                        self._ready_dispatch(queued)
+                        self.assertEqual(queued, [])
+
+    def test_legacy_cause_refuses_pr_facts_that_do_not_name_the_exact_pr(self) -> None:
+        for number in (None, 757):
+            with self.subTest(number=number):
+                self.setUp()
+                status_path, route, cause = self._legacy_board()
+                before = json.loads(status_path.read_text(encoding="utf-8"))
+                node = dict(self.default_pr_node, headRefOid=self.APPROVED_HEAD)
+                if number is None:
+                    node.pop("number")
+                else:
+                    node["number"] = number
+                changed, canonical, seen = self._poll(
+                    status_path, gh=self._gh(pr_node=node, runs=[self._legacy_run()]))
+                self.assertFalse(changed)
+                seen["post"].assert_not_called()
+                self.assertEqual(canonical["handoffs"], [cause])
+                self.assertEqual(self._board_facts(canonical), self._board_facts(before))
+                self.assertEqual(canonical["tasks"][0]["merge_route"], route)
+
     def test_recovery_chain_revokes_gates_and_dispatches_reviewer_once_with_route_kept(self) -> None:
         status_path = self._canonical_store()
         route = self._route_approved_head()
@@ -7470,16 +7544,17 @@ class MergeGroupReconciliationTests(unittest.TestCase):
                          "branch": "task/odp-test-mg-002"})
         board["tasks"].append(ordinary)
         status_path.write_text(json.dumps(board), encoding="utf-8")
-        merged = mock.Mock(stdout=json.dumps({"number": 756, "state": "MERGED", "mergedAt": self.MERGED_AT,
-                                              "headRefName": "x"}))
         calls: list[list] = []
 
         def run_gh(args, **_kwargs):
             calls.append(list(args))
-            return merged
+            return mock.Mock(stdout=json.dumps({"number": int(args[2]), "state": "MERGED",
+                                                "mergedAt": self.MERGED_AT, "headRefName": "x"}))
 
         import supervisor
 
+        # The tick's entrypoint binds the supervisor scope this stage logs through.
+        dispatch_engine._sync_supervisor_scope()
         status = supervisor.load_status(self.config)
         with (
             mock.patch("github_bus.run_gh", side_effect=run_gh),
@@ -7494,9 +7569,184 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             self.assertTrue(dispatch_engine.reconcile_task_reality(self.config, status))
         # `gh pr view` is asked for fields it has; `merged` is derived.
         self.assertTrue(calls and all("mergedAt" in a[-1] and "merged," not in a[-1] for a in calls))
+        # Every read is bound to the verified repository.
+        self.assertTrue(all(a[3:5] == ["--repo", "o/r"] for a in calls))
         after = {t["id"]: t for t in json.loads(status_path.read_text(encoding="utf-8"))["tasks"]}
         self.assertEqual(after["ODP-TEST-MG-001"]["merge_route"], route)
         self.assertNotIn("merge_route", after["ODP-TEST-MG-002"])
+
+    def test_task_reality_reads_prs_only_for_tasks_the_registry_binds_here(self) -> None:
+        """A same-numbered PR of this checkout never releases another repository's route.
+
+        Only the registry decides which repository a task belongs to; a task
+        that declares none but whose artifacts name another repository, an
+        explicit foreign or unknown declaration, ambiguous artifacts and a
+        repository without a checkout all keep their route and status, and no
+        PR is read for them. An answer naming another number is no answer.
+        """
+        status_path, route, _cause = self._legacy_board()
+        repos_root = Path(status_path).parent
+        (repos_root / "ext").mkdir()
+        (repos_root / "other").mkdir()
+        self.config["coordination"] = {"repositories": {
+            "ext_repo": {"repo": "o/ext", "local_path": str(repos_root / "ext"),
+                         "artifact_prefixes": ["ext/"]},
+            "other_repo": {"repo": "o/other", "local_path": str(repos_root / "other"),
+                           "artifact_prefixes": ["other/"]},
+            "missing_repo": {"repo": "o/missing", "local_path": str(repos_root / "absent"),
+                             "artifact_prefixes": ["missing/"]},
+        }}
+        board = json.loads(status_path.read_text(encoding="utf-8"))
+        board["tasks"][0]["pr_number"] = 756
+        base = json.loads(json.dumps(board["tasks"][0]))
+
+        def merged_route_task(task_id: str, pr: int, **fields) -> dict:
+            task = json.loads(json.dumps(base))
+            branch = f"task/{task_id.lower()}"
+            task.update({"id": task_id, "pr_number": pr, "branch": branch,
+                         "review_submission": dict(base["review_submission"], pr_number=pr, branch=branch),
+                         "merge_route": dict(route, pr_number=pr)})
+            task.update(fields)
+            return task
+
+        foreign = {
+            # Same PR number as this repository's merged PR 757.
+            "ODP-TEST-MG-EXT-INFERRED": merged_route_task("ODP-TEST-MG-EXT-INFERRED", 757,
+                                                          artifacts=["ext/docs/a.md"]),
+            "ODP-TEST-MG-EXT-DECLARED": merged_route_task("ODP-TEST-MG-EXT-DECLARED", 757,
+                                                          repository="o/ext"),
+            "ODP-TEST-MG-UNKNOWN": merged_route_task("ODP-TEST-MG-UNKNOWN", 757,
+                                                     repository="o/unregistered"),
+            "ODP-TEST-MG-AMBIGUOUS": merged_route_task("ODP-TEST-MG-AMBIGUOUS", 757,
+                                                       artifacts=["ext/a.md", "other/b.md"]),
+            "ODP-TEST-MG-NO-CHECKOUT": merged_route_task("ODP-TEST-MG-NO-CHECKOUT", 757,
+                                                         artifacts=["missing/a.md"]),
+        }
+        local = {
+            # Undeclared, inferred to this repository.
+            "ODP-TEST-MG-002": merged_route_task("ODP-TEST-MG-002", 757),
+            # Declared through the registry id of this repository.
+            "ODP-TEST-MG-ALIAS": merged_route_task("ODP-TEST-MG-ALIAS", 758, repository="pantheon"),
+        }
+        # This repository's PR 759 answers as another PR: not this task's facts.
+        wrong_number = merged_route_task("ODP-TEST-MG-WRONG-NUMBER", 759)
+        board["tasks"].extend([*foreign.values(), *local.values(), wrong_number])
+        status_path.write_text(json.dumps(board), encoding="utf-8")
+        before = {t["id"]: t for t in board["tasks"]}
+        calls: list[list] = []
+
+        def run_gh(args, **_kwargs):
+            calls.append(list(args))
+            self.assertEqual(args[3:5], ["--repo", "o/r"])
+            number = int(args[2])
+            return mock.Mock(stdout=json.dumps({"number": 1 if number == 759 else number, "state": "MERGED",
+                                                "mergedAt": self.MERGED_AT, "headRefName": "x"}))
+
+        import supervisor
+
+        # The tick's entrypoint binds the supervisor scope this stage logs through.
+        dispatch_engine._sync_supervisor_scope()
+        branches = {t["branch"] for t in board["tasks"]}
+
+        def reconcile(this_repo):
+            status = supervisor.load_status(self.config)
+            with (
+                mock.patch("github_bus.run_gh", side_effect=run_gh),
+                mock.patch.object(dispatch_engine, "_this_repository_slug", return_value=this_repo),
+                mock.patch.object(dispatch_engine, "_remote_branch_names", return_value=set(branches)),
+                mock.patch.object(supervisor, "sync_status_pipeline", side_effect=self._canonical_sync(status_path)),
+                mock.patch.object(ai_status, "post_task_review_status_payload", return_value=(True, "")),
+                mock.patch.object(ai_status, "task_repository_slug_safe", return_value="o/r"),
+                mock.patch.object(dispatch_engine, "write_activity_log"),
+            ):
+                return dispatch_engine.reconcile_task_reality(self.config, status)
+
+        # An origin that cannot be read proves no task is this repository's.
+        self.assertFalse(reconcile(None))
+        self.assertEqual(calls, [])
+        self.assertEqual({t["id"]: t for t in json.loads(status_path.read_text(encoding="utf-8"))["tasks"]},
+                         before)
+
+        self.assertTrue(reconcile("o/r"))
+        self.assertEqual(sorted(int(a[2]) for a in calls), [756, 757, 758, 759])
+        after = {t["id"]: t for t in json.loads(status_path.read_text(encoding="utf-8"))["tasks"]}
+        self.assertEqual(after["ODP-TEST-MG-001"]["merge_route"], route)
+        for task_id in local:
+            self.assertNotIn("merge_route", after[task_id], task_id)
+        for task_id in [*foreign, "ODP-TEST-MG-WRONG-NUMBER"]:
+            for field in ("merge_route", "status", "pr_number", "branch", "review_submission"):
+                self.assertEqual(after[task_id].get(field), before[task_id].get(field), (task_id, field))
+
+    def test_sync_keeps_ambiguous_recovery_causes_and_the_ready_tick_dispatches_none(self) -> None:
+        """Several unresolved causes stay pending through sync; none becomes the recovery.
+
+        `normalize_handoffs` used to keep only the last pending handoff, which
+        handed the original ready tick a unique cause chosen by list order.
+        Every order and every damaged mix below is synced by the real CLI,
+        reloaded, and offered to the original ready producer: all pending
+        handoffs survive unchanged, the route keeps head/at/attempts, the task
+        stays in review, and neither owner nor reviewer is dispatched.
+        """
+        other_group = dict(run_id=self.LEGACY_RUN_ID + 1, head_sha=self.GROUP_HEAD_NEW,
+                           queue_ref="gh-readonly-queue/dev/pr-756-b41f0c9d",
+                           created_at="2026-09-06T01:40:00Z")
+
+        def valid_board():
+            # The board binds the fixture to its real source commit; the cause
+            # names that exact source head.
+            status_path, route, cause = self._legacy_board()
+            cause = dict(cause, source_head=self.APPROVED_HEAD)
+            board = json.loads(status_path.read_text(encoding="utf-8"))
+            board["handoffs"] = [cause]
+            status_path.write_text(json.dumps(board), encoding="utf-8")
+            return status_path, route, cause
+
+        manual = {"task_id": "ODP-TEST-MG-001", "from": "Codex", "to": "Claude2",
+                  "message": "Please look again.", "status": "pending",
+                  "created_at": "2026-09-06T01:45:00Z"}
+        cases = {
+            "two_groups": lambda c: [c, dict(c, **other_group)],
+            "two_groups_reversed": lambda c: [dict(c, **other_group), c],
+            "duplicate": lambda c: [c, dict(c)],
+            "missing_run_id": lambda c: [c, {k: v for k, v in dict(c, **other_group).items() if k != "run_id"}],
+            "manual_pending_after": lambda c: [c, manual],
+            "manual_pending_before": lambda c: [manual, c],
+        }
+        for name, build in cases.items():
+            with self.subTest(name):
+                self.setUp()
+                status_path, route, cause = valid_board()
+                board = json.loads(status_path.read_text(encoding="utf-8"))
+                board["handoffs"] = build(cause)
+                status_path.write_text(json.dumps(board), encoding="utf-8")
+                before = json.loads(status_path.read_text(encoding="utf-8"))
+
+                self.assertTrue(self._canonical_sync(status_path)(self.config))
+                synced = json.loads(status_path.read_text(encoding="utf-8"))
+                self.assertEqual(synced["handoffs"], before["handoffs"])
+                self.assertEqual(synced["tasks"][0]["status"], "review")
+                self.assertEqual(synced["tasks"][0]["merge_route"], route)
+                self.assertIsNone(ai_status.merge_group_recovery_cause(synced["tasks"][0], synced["handoffs"]))
+
+                queued: list[dict] = []
+                self.assertEqual(self._ready_dispatch(queued), [])
+                self.assertEqual(queued, [])
+                after = json.loads(status_path.read_text(encoding="utf-8"))
+                self.assertEqual(after["handoffs"], before["handoffs"])
+                self.assertEqual(after["tasks"][0]["merge_route"], route)
+                self.assertEqual(after["tasks"][0]["status"], "review")
+
+        # The unique valid cause still survives the same sync and is dispatched
+        # to the assigned reviewer exactly once.
+        self.setUp()
+        status_path, route, cause = valid_board()
+        self.assertTrue(self._canonical_sync(status_path)(self.config))
+        self.assertEqual(json.loads(status_path.read_text(encoding="utf-8"))["handoffs"], [cause])
+        queued = []
+        self.assertEqual(self._ready_dispatch(queued), [None])
+        self.assertEqual([(e["task_id"], e["reason"], e["target_agent"]) for e in queued],
+                         [("ODP-TEST-MG-001", "review_ready_dispatch", "Claude2")])
+        self.assertEqual(json.loads(status_path.read_text(encoding="utf-8"))["tasks"][0]["merge_route"], route)
 
     def test_supervisor_merge_group_reconciliation_exports_and_behavior(self) -> None:
         """Verify supervisor exports and delegates merge group reconciliation correctly."""

@@ -398,14 +398,33 @@ def merge_queue_entry_group_head(pr_facts: Any) -> tuple[str, bool]:
     return oid.strip().lower(), True
 
 
-def is_valid_pr_facts(pr_facts: Any) -> bool:
+def pr_facts_number_verdict(pr_facts: Any, pr_number: int) -> str:
+    """Is this PR node the requested PR? ``""`` when exactly; else the reason.
+
+    The reader asks GitHub for one number, but the answer is what decides: a
+    node naming no number, an unusable one, or another PR is not facts about
+    the requested PR, whatever its state or queue entry say. Returns
+    ``"pr_number_missing"`` or ``"pr_number_mismatch"``.
+    """
+    number = pr_facts.get("number") if isinstance(pr_facts, dict) else None
+    if isinstance(number, bool) or not isinstance(number, int):
+        return "pr_number_missing"
+    if isinstance(pr_number, bool) or not isinstance(pr_number, int) or number != pr_number:
+        return "pr_number_mismatch"
+    return ""
+
+
+def is_valid_pr_facts(pr_facts: Any, pr_number: int | None = None) -> bool:
     """Return true only when GitHub returned a PR node this guard may act on.
 
     A node is actionable only if it carries a state GitHub actually defines and a
-    head SHA. Everything else is unknown; the caller keeps the failure for the
-    next cycle rather than deciding on an unanswered question.
+    head SHA -- and, when `pr_number` is given, names exactly that PR.
+    Everything else is unknown; the caller keeps the failure for the next cycle
+    rather than deciding on an unanswered question.
     """
     if not isinstance(pr_facts, dict) or not pr_facts:
+        return False
+    if pr_number is not None and pr_facts_number_verdict(pr_facts, pr_number):
         return False
     if not pr_state(pr_facts):
         return False
@@ -416,7 +435,8 @@ def fetch_pr_queue_facts(repo: str, pr_number: int) -> dict[str, Any] | None:
     """Read fresh PR state, head SHA and queue enrollment from the one bus reader.
 
     `github_bus.fetch_pr_merge_queue_status` is the single GraphQL reader for PR
-    facts here. Returns None whenever GitHub's answer is missing or unusable.
+    facts here. Returns None whenever GitHub's answer is missing or unusable,
+    including a node that does not name exactly the requested PR.
     """
     from github_bus import GitHubBusOffline, fetch_pr_merge_queue_status
 
@@ -426,7 +446,7 @@ def fetch_pr_queue_facts(repo: str, pr_number: int) -> dict[str, Any] | None:
         raise
     except Exception:
         return None
-    return facts if is_valid_pr_facts(facts) else None
+    return facts if is_valid_pr_facts(facts, pr_number) else None
 
 
 def match_workflow_identity(target: dict[str, Any], candidate: dict[str, Any]) -> bool | None:
@@ -1032,6 +1052,15 @@ def reconcile_merge_group_runs(
                     f"GitHub returned no usable PR state and head SHA ({label}).",
                 )
                 return "unresolved"
+            # Identity before any verdict: a node that is not exactly this PR
+            # must not be read as this PR merged, closed, open or queued.
+            number_verdict = pr_facts_number_verdict(facts, _pr_number)
+            if number_verdict:
+                record_unresolved(
+                    f"pr_facts_{label}_{number_verdict}",
+                    f"GitHub's PR node does not name PR #{_pr_number} ({label}).",
+                )
+                return "unresolved"
             if pr_is_merged(facts):
                 record_stale("already_merged", f"the PR is already merged ({label}).")
                 return "stale"
@@ -1443,12 +1472,9 @@ def legacy_cause_group_revocation_targets(
     facts = fetch_pr_queue_facts(repo, pr_number)
     if facts is None:
         return [], LEGACY_CAUSE_UNRESOLVED, "pr_facts_unavailable"
-    try:
-        facts_number = int(facts.get("number"))
-    except (TypeError, ValueError):
-        return [], LEGACY_CAUSE_UNRESOLVED, "pr_number_missing"
-    if facts_number != pr_number:
-        return [], LEGACY_CAUSE_UNRESOLVED, "pr_number_mismatch"
+    number_verdict = pr_facts_number_verdict(facts, pr_number)
+    if number_verdict:
+        return [], LEGACY_CAUSE_UNRESOLVED, number_verdict
     if pr_head_sha(facts) != source_head:
         return [], LEGACY_CAUSE_UNRESOLVED, "pr_head_mismatch"
     group_heads = [group_head]

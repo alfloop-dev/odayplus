@@ -409,21 +409,36 @@ def _remote_branch_names() -> set[str] | None:
     return names
 
 
-def _pull_request_record(pr_number: int) -> dict[str, Any] | None:
+def _pull_request_record(pr_number: int, repository: str) -> dict[str, Any] | None:
     """The PR's state, or None when there is no readable PR.
 
     `gh pr view` has no `merged` field (asking for it fails the whole call),
     so the record is read with `mergedAt` and `merged` is derived: true only
     when GitHub says MERGED and names when. A MERGED state without a merge
     time is not proof of a merge.
+
+    The read is bound to the verified `repository` slug: without `--repo`,
+    `gh` answers for whatever repository the supervisor's cwd points at, and
+    a same-numbered PR there is not this task's PR. An answer for any other
+    number is not an answer either.
     """
     import json as _json
 
     from github_bus import GitHubBusError, GitHubBusOffline, run_gh
 
+    if not _is_repository_slug(repository):
+        return None
     try:
         proc = run_gh(
-            ["pr", "view", str(pr_number), "--json", "number,state,mergedAt,headRefName"]
+            [
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                str(repository).strip(),
+                "--json",
+                "number,state,mergedAt,headRefName",
+            ]
         )
     except (GitHubBusError, GitHubBusOffline):
         return None
@@ -431,7 +446,10 @@ def _pull_request_record(pr_number: int) -> dict[str, Any] | None:
         payload = _json.loads(proc.stdout or "{}")
     except ValueError:
         return None
-    if not isinstance(payload, dict) or not payload.get("number"):
+    if not isinstance(payload, dict):
+        return None
+    number = payload.get("number")
+    if isinstance(number, bool) or not isinstance(number, int) or number != pr_number:
         return None
     state = str(payload.get("state") or "").strip().upper()
     payload["merged"] = state == "MERGED" and bool(str(payload.get("mergedAt") or "").strip())
@@ -502,14 +520,29 @@ def reconcile_task_reality(config: dict[str, Any], status: dict[str, Any]) -> bo
     # were present in `oday-data-platform`. Reporting a false drift is worse
     # than reporting none, so anything not belonging to this repository is left
     # to whatever reconciles that one.
+    #
+    # Which repository a task belongs to is the registry's answer
+    # (`resolve_task_repository`): an explicit declaration wins, and the
+    # artifact-prefix inference for tasks that declare nothing lives only
+    # there. Comparing the declared string alone let an undeclared task whose
+    # artifacts name another repository through, and its same-numbered PR in
+    # this checkout then cleared its merge route. Unknown, ambiguous, missing
+    # checkout, a binding with no slug, or an unreadable local origin cannot be
+    # shown to be this repository, and are declined the same way.
+    from multi_repo_registry import normalized_repository_slug, resolve_task_repository
+
     this_repo = _this_repository_slug()
+    wanted = normalized_repository_slug(this_repo)
+    if not wanted:
+        # Cannot tell whose repository this is; declining is the safe half.
+        return False
     tasks = []
     for task in all_tasks:
-        declared = str(task.get("repository") or "").strip()
-        if declared and this_repo and declared.lower() != this_repo.lower():
+        try:
+            binding = resolve_task_repository(config, task)
+        except Exception:
             continue
-        if declared and not this_repo:
-            # Cannot tell whose repository this is; declining is the safe half.
+        if not binding.resolved or normalized_repository_slug(binding.slug) != wanted:
             continue
         tasks.append(task)
     if not tasks:
@@ -531,7 +564,7 @@ def reconcile_task_reality(config: dict[str, Any], status: dict[str, Any]) -> bo
         # recovery's admission record, not a stale merge attempt; a recovery
         # the cause rule cannot resolve keeps it as evidence, fail-closed.
         return {
-            "pull_request": _pull_request_record(pr_number) if pr_number > 0 else None,
+            "pull_request": _pull_request_record(pr_number, str(this_repo)) if pr_number > 0 else None,
             "branch_exists": str(task.get("branch") or "") in remote_branches,
             "merge_group_recovery": runtime_ai_status.merge_group_route_recovery_hold(
                 task, status.get("handoffs")
