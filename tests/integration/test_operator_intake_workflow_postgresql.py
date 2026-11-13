@@ -426,12 +426,61 @@ def test_retained_operator_replay_reads_and_transfers_same_canonical_workflow(br
         bundle.engine.close()
 
 
-@pytest.mark.parametrize("failure", ["policy", "outbox", "replay"])
-def test_operator_submission_rolls_back_workflow_replay_and_queue(bridge_database, monkeypatch, failure):
-    _synthetic_approved_policy(monkeypatch)
+@pytest.mark.parametrize("surface", ["operator", "v1"])
+def test_retired_fresh_url_leaves_no_legacy_or_native_sql_graph(bridge_database, monkeypatch, surface):
     bundle = _bundle(bridge_database, monkeypatch)
     try:
-        client = _client(bundle, policy=failure != "policy")
+        client = _client(bundle)
+        retained = _seed_historical_submission(bundle, "https://example.invalid/retired-url")
+        # A different key for an existing URL is fresh even when the row is
+        # already readable. No URL-duplicate lookup may turn it into a replay.
+        before = _snapshot(bundle)
+        repository = bundle.operator_intake_repository_for_tenant(TENANT)
+        legacy_before = deepcopy((repository.list_intakes(), repository.list_idempotency_records()))
+
+        def physical_state():
+            tables = ("intake.intakes", "intake.intake_stage_transitions", "intake.source_snapshots",
+                      "identity.match_cases", "expansion.listings", "workflow.jobs", "audit.audit_events",
+                      "workflow.outbox_events", "workflow.assignments", "workflow.assignment_transitions",
+                      "workflow.sla_instances", "workflow.sla_transitions", "workflow.sla_pause_intervals",
+                      "odp_runtime.durable_jobs")
+            with bridge_database.connect() as connection:
+                return {table: sorted(connection.execute("SELECT row_to_json(t) FROM " + table + " t").fetchall(),
+                                      key=lambda row: json.dumps(row, sort_keys=True, default=str))
+                        for table in tables}
+
+        sql_before = physical_state()
+
+        def no_enqueue(*_args, **_kwargs):
+            raise AssertionError("Retired fresh URL cannot enqueue a job")
+
+        monkeypatch.setattr(bundle.job_queue, "enqueue", no_enqueue)
+        path = f"{BASE}/intake/submit" if surface == "operator" else "/api/v1/intakes/url"
+        body = ({"url": retained["originalUrl"]} if surface == "operator" else {
+            "original_url": retained["originalUrl"], "scope": {"tenant_id": TENANT},
+        })
+        response = client.post(path, json=body, headers=_headers(key="synthetic-unrecorded-url"))
+        assert response.status_code == 422, response.text
+        assert response.json() == {"detail": (
+            "LEGACY_URL_CREATE_RETIRED: use POST /api/v1/canonical-intakes "
+            "with an explicit reason and scope"
+        )}
+        assert "Idempotency-Replayed" not in response.headers and "location" not in response.headers
+        assert _snapshot(bundle) == before
+        assert physical_state() == sql_before
+        assert (repository.list_intakes(), repository.list_idempotency_records()) == legacy_before
+    finally:
+        bundle.engine.close()
+
+
+@pytest.mark.parametrize("failure", ["policy", "outbox", "replay"])
+def test_retained_preparation_rolls_back_workflow_replay_and_queue(bridge_database, monkeypatch, failure):
+    from modules.listing.application.intake_workflow_bootstrap import IntakeWorkflowUnavailable
+
+    bundle = _bundle(bridge_database, monkeypatch)
+    try:
+        if failure == "policy":
+            bundle = replace(bundle, assisted_intake_workflow_policy=None)
         before = _snapshot(bundle)
         enqueued = []
         original_enqueue = bundle.job_queue.enqueue
@@ -455,13 +504,13 @@ def test_operator_submission_rolls_back_workflow_replay_and_queue(bridge_databas
                 return original(collection, key, value, **kwargs)
 
             monkeypatch.setattr(bundle.assisted_intake_store._store, "put", fail)
-        body = {"url": "https://www.synthetic.example/detail-999.html"}
-        if failure == "policy":
-            response = client.post(f"{BASE}/intake/submit", json=body, headers=_headers())
-            assert response.status_code == 503, response.text
-        else:
-            with pytest.raises(RuntimeError, match="synthetic bridge persistence failure"):
-                client.post(f"{BASE}/intake/submit", json=body, headers=_headers())
+        # The fresh HTTP writer is gone. Preserve rollback proof at the
+        # original retained repository/physical-transaction seam instead of
+        # adding a test-only exception to that retired product boundary.
+        expected = IntakeWorkflowUnavailable if failure == "policy" else RuntimeError
+        message = "Intake workflow policy/calendar is unavailable" if failure == "policy" else "synthetic bridge persistence failure"
+        with pytest.raises(expected, match=message):
+            _seed_historical_submission(bundle, "https://www.synthetic.example/detail-999.html", linked_job=True)
         assert _snapshot(bundle) == before
         assert len(enqueued) == 1
         assert bundle.operator_intake_repository_for_tenant(TENANT).list_intakes() == []

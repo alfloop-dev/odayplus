@@ -10,8 +10,11 @@ fields did not prove the submission route could create those resources.
 
 The production operator factory now injects the canonical workflow store and
 its existing tenant-bound policy into `OperatorIntakeWorkflowRepository`.
-New submissions use the verified actor subject and actual submission time. The
-canonical document is the business authority; Assignment and SLA facts are read
+Retained Operator records and their subsequent commands use this bridge; it
+is no longer a URL fresh-create owner. New URL commands use the existing
+`CanonicalIntakeRepository.submit` SQL owner via `POST /api/v1/canonical-intakes`.
+The canonical document remains the authority for legacy workflow commands;
+Assignment and SLA facts are read
 only from matching tenant/intake/resource bindings, with their own versions.
 The existing operator aggregate may retain presentation caches, but a subsequent
 request reloads the canonical repository before serving or mutating Intake.
@@ -32,15 +35,31 @@ and an SLA state label is never sorted as a due timestamp.
 ## Submission and command transaction
 
 The bridge uses the existing canonical transaction owner and the same database
-engine as the operator replay repository. New Intake, workflow bootstrap, audit,
-outbox and actor-bound submission replay must commit or roll back together.
-A tenant advisory lock serializes duplicate submissions across application
-replicas. Repeating an accepted idempotency key returns its saved response
-without creating a second Intake, Assignment or SLA.
+engine as the operator replay repository. Retained-record edits, workflow, audit,
+outbox and actor-bound replay remain in their existing transaction boundaries.
+The tenant advisory lock and locked reload remain in place. Repeating an exact
+accepted idempotency key returns its saved response only after current-resource
+authorization, without creating a second Intake, Assignment or SLA.
 
-Approved retrieval through this production bridge requires the shared durable
-job queue. No external snapshot side effect should execute inside the HTTP
-submission transaction. The worker resolves the tenant-bound canonical Intake
+Both legacy URL endpoints are replay-only:
+`POST /api/v1/operator/network-listings/intake/submit` and
+`POST /api/v1/intakes/url`. An authorized, valid fresh request returns HTTP 422
+with `LEGACY_URL_CREATE_RETIRED` and directs callers to
+`POST /api/v1/canonical-intakes`; it does not redirect incompatible payloads.
+The existing error envelope is retained (including V1 `VALIDATION_FAILED`).
+A new key for the same URL is fresh and is refused, not deduplicated into an old
+receipt. There is no fixture-mode HTTP exception or automatic native fallback.
+The original actor/tenant/operation/key/fingerprint namespaces are unchanged;
+a changed body with the same bound key still conflicts. Unbound Operator
+receipts still require governed reconciliation rather than attribution from a
+display name. V1 retains both replay lookups and both current-target checks.
+Fresh refusal creates no Intake, Assignment, SLA, transition, business audit,
+outbox, retrieval job or replay receipt. Existing authorization-denial auditing
+is not a business creation side effect.
+
+Historical approved-retrieval jobs and their retry still require the shared
+durable job queue. Refused legacy submissions perform no retrieval or snapshot
+write. The worker resolves the tenant-bound canonical Intake
 repository and advances its version when saving progress. Retry must refer to
 the actual persisted job identity and retain the same workflow resource IDs.
 Missing workflow policy/store or a mismatched queue does not silently select a
@@ -59,7 +78,7 @@ field masking precede Inbox filters and counts. A transfer directory response
 is only a candidate list; command execution still revalidates actor, target,
 policy, version and scope.
 
-## Historical decision caller and URL cutover preparation
+## Historical decision caller and URL creation cutover
 
 The existing six-journey business runner retains authorized historical Operator
 Intake GET and decision routes. Its final-decision actor must actually hold
@@ -75,9 +94,10 @@ guessed or refreshed token. The schema2 receipt retains the observed version
 and the independently read post-decision version. URL creation has no such
 version precondition; it must not inherit this decision header.
 
-This is preparation for `ODP-URL-CREATE-CANONICAL-CUTOVER-261111`, not the URL
-writer cutover itself. Both legacy HTTP fresh endpoints remain enabled at this
-intermediate checkpoint, but the UI no longer produces those requests. The
+The candidate for `ODP-URL-CREATE-CANONICAL-CUTOVER-261111` now retires both
+legacy HTTP fresh writers. This is source integration, not an approved runtime
+or deployment cutover, and does not promise compatibility for old fresh clients.
+The UI no longer produces those requests. The
 legacy Inbox add button and old `dialog=add` links enter the existing native
 picker, whose URL form uses `intakeKind=canonical&dialog=add` in the original
 navigation serializer. That link first reads the canonical collection;
@@ -114,16 +134,20 @@ policy. The original receipt verifier rechecks the saved metadata; raw URLs,
 reasons and snapshot/parser content are not added to the receipt. The other
 five journeys and historical Intake decision remain unchanged.
 
-Retiring the legacy HTTP fresh endpoints, converting historical receipt/fixtures,
-and complete owned PostgreSQL/browser regression are still pending. Offline HTTP/service
-controls do not execute or authorize the non-dispatchable live business
+Backend retained-receipt fixtures are migrated; remaining original browser
+fresh/setup callers and full exact-head PostgreSQL/browser qualification are
+still pending at this intermediate checkpoint. Historical GETs (UUID and `IN-...`),
+original Intake-version decisions, corrections, batch/schedule operations and
+existing job recovery remain supported. Native versions are never legacy
+version tokens. Offline HTTP/service controls do not execute or authorize the
+non-dispatchable live business
 acceptance, source admission, deployment, Human UAT or GO.
 
 ## Verification evidence required
 
 | Proof | Required observation |
 | --- | --- |
-| Actual PostgreSQL HTTP submission | Production operator factory creates one canonical UUID with verified actor, real timestamp, Assignment/SLA IDs and versions. |
+| Actual PostgreSQL URL submission | Native POST creates one SUBMITTED SQL graph with its real workflow/audit/outbox/receipt; exact replay creates no second graph. Both old HTTP fresh requests are refused with no new legacy/native graph or job. |
 | Cross-route lifecycle | The same UUID is assignable/transferable through V1; restarted operator list/detail return the resulting resource IDs, owner and versions. |
 | Replay and rollback | Replay creates no extra resources; policy, audit/outbox or replay persistence failure leaves no partial workflow or queued job. |
 | Scope | Another tenant cannot read the record; same-tenant out-of-scope duplicates do not reveal its ID. |
@@ -194,8 +218,8 @@ discoverable after restart without creating a second candidate on replay.
 An exception while reserving or committing the job is a transaction failure;
 it cannot manufacture a retained receipt for work that was never accepted.
 
-Required isolated PostgreSQL evidence includes an actual Operator submission,
-correction and resolution command, V1 request, second synthetic actor review,
+Required isolated PostgreSQL evidence includes an explicitly retained Operator
+record followed by actual correction and resolution commands, V1 request, second synthetic actor review,
 fresh-process receipt/candidate readback, both-entry-point identity, replay,
 concurrent mutation and rollback. A measured synthetic Listing/Address fixture
 can establish local integration behavior; it cannot establish a live geocoder,

@@ -2508,60 +2508,14 @@ else:
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
-                intake_id, job_id = str(uuid4()), str(uuid4())
-                correlation_id_str = str(uuid4())
-                ts = now()
-
-                value = {
-                    "intake_id": intake_id,
-                    "state": "SUBMITTED",
-                    "intake_method": "URL",
-                    "scope": body.scope.model_dump(),
-                    "submitted_at": ts,
-                    "updated_at": ts,
-                    "version": 1,
-                    "job_id": job_id,
-                    "correlation_id": correlation_id_str,
-                    "submitted_by": actor_id,
-                    "original_url": body.original_url,
-                    "canonical_url": body.original_url,
-                    "policy_state": "POLICY_UNKNOWN",
-                    "processing_history": [
-                        {
-                            "transition_id": str(uuid4()),
-                            "from_state": None,
-                            "to_state": "SUBMITTED",
-                            "occurred_at": ts,
-                            "actor": actor_id,
-                            "version_after": 1,
-                        }
-                    ],
-                    "fields": [],
-                    "audit": [],
-                }
-                active.intakes[intake_id] = value
-                initialize_workflow(value)
-
-                active.jobs[job_id] = {
-                    "job_id": job_id,
-                    "status": "QUEUED",
-                    "checkpoint": "RETRIEVING",
-                    "attempt": 0,
-                    "version": 1,
-                    "correlation_id": correlation_id_str,
-                    "intake_id": intake_id,
-                    "tenant_id": tenant_id,
-                }
-
-                receipt_val = {
-                    "intake_id": intake_id,
-                    "state": "SUBMITTED",
-                    "version": 1,
-                    "job_id": job_id,
-                    "correlation_id": correlation_id_str,
-                    "submitted_at": ts,
-                }
-                return receipt_val, 202
+                # Keep both original replay lookups and their current-target
+                # authorization. Only the fresh branch is retired; raising here
+                # also prevents replay() from saving a new legacy receipt.
+                raise HTTPException(
+                    422,
+                    "LEGACY_URL_CREATE_RETIRED: use POST /api/v1/canonical-intakes "
+                    "with an explicit reason and scope",
+                )
 
             def authorize_replay(receipt: dict[str, Any]) -> None:
                 # A retained receipt is an outcome, not a retained access grant.

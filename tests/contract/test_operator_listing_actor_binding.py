@@ -160,6 +160,56 @@ def test_historical_receipt_cannot_reveal_current_private_intake_or_save_replay(
     assert (service._state,repository.idempotency) == before
 
 
+@pytest.mark.parametrize("stage", [None, "SUBMITTED", "READY", "NEEDS_REVIEW", "QUARANTINED", "FAILED", "AWAITING_ASSISTED_ENTRY"])
+@pytest.mark.parametrize("subject", [OWNER, OTHER])
+def test_fresh_operator_url_is_not_a_duplicate_or_foreign_receipt(api, monkeypatch, stage, subject):
+    _, service, repository = api
+    url = "https://www.synthetic.example/detail-retired-fresh.html"
+    if stage is not None:
+        record = _seed_submission(repository, key="synthetic-existing-history", url=url)
+        record["stage"] = stage
+        repository.save_intake(record)
+    service._load_intakes()
+    service._load_idempotency_cache()
+    before = deepcopy((service.export_state(), repository.list_intakes(), repository.list_idempotency_records()))
+
+    def no_effect(*_args, **_kwargs):
+        raise AssertionError("Fresh legacy URL must not resolve policy, retrieve or persist")
+
+    monkeypatch.setattr("modules.external_data.application.assisted_intake.resolve_source_policy", no_effect)
+    monkeypatch.setattr(service, "_get_snapshot_service", no_effect)
+    monkeypatch.setattr(repository, "save_intake", no_effect)
+    monkeypatch.setattr(repository, "save_idempotency_record", no_effect)
+    response = _submit(api, subject, key="synthetic-unrecorded-command", suffix="retired-fresh")
+    assert response.status_code == 422, response.text
+    assert response.json() == {"detail": (
+        "LEGACY_URL_CREATE_RETIRED: use POST /api/v1/canonical-intakes "
+        "with an explicit reason and scope"
+    )}
+    assert "location" not in response.headers
+    assert "idempotency-replayed" not in response.headers
+    assert (service.export_state(), repository.list_intakes(), repository.list_idempotency_records()) == before
+
+
+@pytest.mark.parametrize("seed_fixtures", [False, True])
+@pytest.mark.parametrize("async_intake", [False, True])
+def test_direct_service_retires_fresh_url_even_in_fixture_or_async_mode(seed_fixtures, async_intake):
+    repository = InMemoryAssistedIntakeRepository()
+    service = NetworkListingService(intake_repository=repository, tenant_id=TENANT, seed_fixtures=seed_fixtures)
+    before = deepcopy((service.export_state(), repository.list_intakes(), repository.list_idempotency_records()))
+
+    class NoQueue:
+        def enqueue(self, *_args, **_kwargs):
+            raise AssertionError("Fresh legacy URL must not enqueue retrieval")
+
+    with pytest.raises(NetworkListingPolicyError, match="LEGACY_URL_CREATE_RETIRED: use POST /api/v1/canonical-intakes"):
+        service.submit_intake(url="https://example.invalid/fresh-retired", heat_zone_id=None,
+            actor_name=OWNER, actor_role_id="expansion_user", tenant_id=TENANT,
+            idempotency_key="synthetic-retired-direct", correlation_id="synthetic-correlation",
+            job_queue=NoQueue(), async_intake=async_intake, authorize_existing=lambda _record: None)
+    assert (service.export_state(), repository.list_intakes(), repository.list_idempotency_records()) == before
+
+
 def test_staff_cannot_use_body_manager_role_to_execute_decision(api):
     client,service,repository = api
     record = _seed_submission(repository, key="synthetic-staff-decision-setup",

@@ -98,6 +98,45 @@ def test_historical_url_submission_replay_and_conflict() -> None:
     assert conflict.status_code == 409
 
 
+@pytest.mark.parametrize("namespace", ["empty", "new_key", "other_actor", "other_tenant"])
+def test_fresh_url_is_retired_without_workflow_job_or_receipt(namespace, monkeypatch):
+    store = AssistedIntakeStore()
+    client = TestClient(create_app(
+        persistence=replace(build_persistence(mode="memory"), assisted_intake_store=store),
+        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
+    ))
+    body = {"original_url": "https://example.test/listing/1",
+            "scope": {"tenant_id": HEADERS["X-Tenant-Id"]}}
+    key = "url-idempotency-key-1"
+    headers = {**HEADERS, "Idempotency-Key": key}
+    if namespace != "empty":
+        _retain_url_submission(store, body, key=key)
+    if namespace == "new_key":
+        headers["Idempotency-Key"] = "url-unrecorded-new-key-1"
+    elif namespace == "other_actor":
+        headers["X-Subject-Id"] = str(uuid4())
+    elif namespace == "other_tenant":
+        headers["X-Tenant-Id"] = body["scope"]["tenant_id"] = str(uuid4())
+    before = _url_replay_state(store)
+
+    def no_bootstrap(*_args, **_kwargs):
+        raise AssertionError("Fresh legacy URL must not initialize a workflow")
+
+    monkeypatch.setattr("apps.api.app.routes.listings.initialize_intake_workflow", no_bootstrap)
+    response = client.post("/api/v1/intakes/url", headers=headers, json=body)
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "VALIDATION_FAILED"
+    assert response.json()["message"] == (
+        "LEGACY_URL_CREATE_RETIRED: use POST /api/v1/canonical-intakes "
+        "with an explicit reason and scope"
+    )
+    assert response.json()["retryable"] is False
+    assert response.json()["correlation_id"] == response.headers["x-correlation-id"]
+    assert "idempotency-replayed" not in response.headers
+    assert "location" not in response.headers
+    assert _url_replay_state(store) == before
+
+
 @pytest.fixture(params=["cached", "locked_recheck"])
 def url_replay_journey(request, monkeypatch):
     store = AssistedIntakeStore()
