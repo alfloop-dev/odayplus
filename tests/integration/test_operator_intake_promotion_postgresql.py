@@ -11,7 +11,7 @@ import pytest
 from modules.listing.domain.models import ListingDedupKey
 from shared.auth import Role
 from shared.domain.models import AddressLocation, Listing
-from tests.intake_registry_fixture import APPROVER, MANAGER, TENANT
+from tests.intake_registry_fixture import APPROVER, MANAGER, OWNER, TENANT
 from tests.integration.test_intake_registry_calendar_postgresql import _bundle
 from tests.integration.test_operator_intake_workflow_postgresql import (
     BASE,
