@@ -267,7 +267,7 @@ describe("native Intake and case selection", () => {
     fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
     fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "人工確認此頁應送正式收件" } });
     fireEvent.click(screen.getByTestId("intake-submit-button"));
-    expect(await screen.findByTestId("intake-detail-stage")).toHaveTextContent("已送出");
+    await waitFor(() => expect(screen.getByTestId("intake-detail-stage")).toHaveTextContent("已送出"));
     await screen.findByText("這筆收件目前沒有比對案件。");
     expect(window.location.pathname).toBe(`/intake/${id(95)}`);
     expect(posts(context)).toHaveLength(1);

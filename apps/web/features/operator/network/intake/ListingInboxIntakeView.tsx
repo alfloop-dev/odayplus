@@ -151,7 +151,7 @@ export function ListingInboxIntakeView({
               className={styles.addButton}
               data-testid="intake-add-button"
               disabled={busy || !onAddRequested}
-              onClick={onAddRequested}
+              onClick={() => onAddRequested?.()}
               type="button"
             >
               ＋ 從網址新增物件
