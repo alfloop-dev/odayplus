@@ -85,7 +85,14 @@ async function selectNativeIntake(page: Page, intakeId: string, refresh = false)
     return;
   }
   await openNativeIntakeList(page);
+  const reading = page.waitForResponse((response) => response.request().method() === "GET"
+    && new URL(response.url()).pathname === `/api/v1/canonical-intakes/${intakeId}`);
   await page.getByRole("button", { name: new RegExp(intakeId) }).click();
+  const response = await reading;
+  // Fail on the actual native read refusal (with its typed detail), rather
+  // than timing out looking for a confirmation action that cannot exist.
+  expect(response.status(), await response.text()).toBe(200);
+  expect((await response.json()).intake_id).toBe(intakeId);
 }
 
 // One fault control for the original native command callers. Only the browser
