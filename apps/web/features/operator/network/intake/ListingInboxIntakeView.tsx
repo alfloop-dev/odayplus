@@ -3,9 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import type { AssistedIntake, IntakeInboxPage, IntakeInboxQuery } from "@oday-plus/openapi-client";
 import type { OperatorRoleId } from "../../navigation";
-import { getOperatorRole } from "../../navigation";
 import styles from "./intake.module.css";
-import { AddListingFromUrlDialog, type IntakeHeatZoneOptions } from "./AddListingFromUrlDialog";
 import { StateMatrix } from "./StateMatrix";
 import {
   matchLabel,
@@ -25,11 +23,9 @@ export function ListingInboxIntakeView({
   records,
   loadState,
   loadError,
-  actionError,
   busy,
   selectedHeatZoneId,
-  heatZoneOptions,
-  onAddSubmit,
+  onAddRequested,
   onOpenDetail,
   onRetryLoad,
   onRetryIntake,
@@ -37,18 +33,15 @@ export function ListingInboxIntakeView({
   onQueryChange,
   queryFilters,
   onFilterChange,
-  addDialogRequested = false,
-  onAddDialogClosed,
 }: {
   activeRoleId: OperatorRoleId;
   records: AssistedIntake[];
   loadState: "loading" | "ready" | "error";
   loadError?: IntakeApiError | null;
-  actionError?: IntakeApiError | null;
   busy: boolean;
   selectedHeatZoneId?: string;
-  heatZoneOptions?: IntakeHeatZoneOptions;
-  onAddSubmit: (input: { url: string; heatZoneId: string }) => Promise<void>;
+  /** Opens the existing canonical collection/form; never submits a legacy URL. */
+  onAddRequested?: () => void;
   onOpenDetail: (intakeId: string) => void;
   onRetryLoad?: () => void;
   onRetryIntake?: (intakeId: string) => void;
@@ -56,30 +49,15 @@ export function ListingInboxIntakeView({
   onQueryChange?: (query: IntakeInboxQuery) => void;
   queryFilters?: IntakeInboxFilterState;
   onFilterChange?: (next: IntakeInboxFilterState) => void;
-  /** URL asked for the add dialog (`dialog=add`, e.g. from Find Areas). */
-  addDialogRequested?: boolean;
-  onAddDialogClosed?: () => void;
 }) {
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isStateMatrixOpen, setIsStateMatrixOpen] = useState(false);
 
-  const role = getOperatorRole(activeRoleId);
-  const submitterLabel = `${role.label}`;
   const readOnly = isReadOnly(activeRoleId);
   const permitted = canView(activeRoleId);
   const canSubmit = canPerform("submit", activeRoleId);
   const canRetry = canPerform("retry", activeRoleId);
 
   useEffect(() => { setIsStateMatrixOpen(false); }, [activeRoleId]);
-
-  useEffect(() => {
-    if (addDialogRequested && canSubmit) setIsAddDialogOpen(true);
-  }, [addDialogRequested, canSubmit]);
-
-  const closeAddDialog = () => {
-    setIsAddDialogOpen(false);
-    onAddDialogClosed?.();
-  };
 
   const {
     filters,
@@ -172,7 +150,8 @@ export function ListingInboxIntakeView({
             <button
               className={styles.addButton}
               data-testid="intake-add-button"
-              onClick={() => setIsAddDialogOpen(true)}
+              disabled={busy || !onAddRequested}
+              onClick={onAddRequested}
               type="button"
             >
               ＋ 從網址新增物件
@@ -180,6 +159,11 @@ export function ListingInboxIntakeView({
           ) : null}
         </div>
       </div>
+
+      {canSubmit && !onAddRequested ? <p role="status" className={styles.warnNote}>
+        目前無法驗證正式收件的讀取資格，請確認登入與權限；不會改用舊新增入口。
+      </p> : null}
+      {canSubmit && busy ? <p role="status">收件操作處理中，請等待結果後再新增。</p> : null}
 
       {/* Saved View Tabs */}
       <div style={{ display: "flex", gap: "0.5rem", margin: "0.5rem 0", flexWrap: "wrap" }}>
@@ -579,27 +563,6 @@ export function ListingInboxIntakeView({
 
       {isStateMatrixOpen ? <StateMatrix onClose={() => setIsStateMatrixOpen(false)} /> : null}
 
-      {/* Add Dialog */}
-      {isAddDialogOpen ? (
-        <AddListingFromUrlDialog
-          busy={busy}
-          defaultHeatZoneId={selectedHeatZoneId}
-          heatZoneOptions={heatZoneOptions}
-          error={actionError ?? null}
-          onClose={closeAddDialog}
-          onOpenExisting={(intakeId) => {
-            setIsAddDialogOpen(false);
-            onOpenDetail(intakeId);
-          }}
-          onSubmit={async (input) => {
-            // The submit handler moves the URL on (dialog=detail on success),
-            // so only the local open state is cleared here.
-            await onAddSubmit(input);
-            setIsAddDialogOpen(false);
-          }}
-          submitterLabel={submitterLabel}
-        />
-      ) : null}
     </section>
   );
 }

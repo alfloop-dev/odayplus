@@ -168,6 +168,7 @@ export function ListingRadarPanel({
         : <p role="alert">{intakeKind === "invalid" ? "收件連結的用途無效，請返回收件匣重新開啟。" : "目前無法驗證正式收件的讀取資格，請確認登入與權限。"}</p>
         : <AssistedIntakeSection
         activeRoleId={activeRoleId}
+        canonicalIntakeAvailable={Boolean(canonicalIntakeReadContext)}
         selectedHeatZoneId={selectedHeatZoneId}
         heatZoneOptions={heatZoneOptions}
         targetListings={listings.map(toTargetListingData)}

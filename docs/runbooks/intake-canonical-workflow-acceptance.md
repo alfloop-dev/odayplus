@@ -76,8 +76,9 @@ and the independently read post-decision version. URL creation has no such
 version precondition; it must not inherit this decision header.
 
 This is preparation for `ODP-URL-CREATE-CANONICAL-CUTOVER-261111`, not the URL
-writer cutover itself. Both existing legacy fresh endpoints and the old UI
-producer remain enabled at this intermediate checkpoint. The existing native
+writer cutover itself. Both legacy HTTP fresh endpoints remain enabled at this
+intermediate checkpoint, but the UI no longer produces those requests. The
+legacy Inbox add button and old `dialog=add` links enter the existing native
 picker now represents its URL form with `intakeKind=canonical&dialog=add` in the
 original navigation serializer. That link first reads the canonical collection;
 loading or denied reads do not expose a submit form. The user must explicitly
@@ -85,9 +86,14 @@ select scope and enter a reason. Its SUBMITTED receipt navigates only to the
 native detail reader, never the legacy presentation aggregate. Closing the form
 returns to the same collection, and browser history can reopen it without a POST.
 
-Retiring the old producer/endpoints, converting historical receipt/fixtures,
-wiring the legacy Inbox opener to this native link, and complete owned
-PostgreSQL/browser regression are still pending. Offline HTTP/service
+An unavailable native reader leaves the add action explicitly unavailable;
+read-only roles cannot use the old link to obtain a submit form. The URL dialog
+now requires the native scope/reason contract only. It does not infer a scope
+from the selected legacy HeatZone or reinterpret a conflict as an `IN-...` link.
+Historical Inbox reads, decisions and manual-entry recovery remain separate.
+
+Retiring the legacy HTTP fresh endpoints, converting historical receipt/fixtures,
+and complete owned PostgreSQL/browser regression are still pending. Offline HTTP/service
 controls do not execute or authorize the non-dispatchable live business
 acceptance, source admission, deployment, Human UAT or GO.
 

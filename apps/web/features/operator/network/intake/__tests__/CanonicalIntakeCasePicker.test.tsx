@@ -7,6 +7,8 @@ import { CanonicalIntakeCommandProvider } from "../useCanonicalIntakeCommand";
 import type { CanonicalIntakeReadContext } from "../canonicalIntakeReadClient";
 import type { CanonicalIdentityPlanningContext } from "@oday-plus/openapi-client";
 import { buildInboxReturnHref, parseUrlState } from "../urlState";
+import { useSearchParams } from "next/navigation";
+import { ListingRadarPanel } from "../../ListingRadarPanel";
 
 vi.mock("next/navigation", async () => {
   const { useSyncExternalStore } = await import("react");
@@ -222,7 +224,71 @@ describe("sole native owner reference after complete provider replacement", () =
   });
 });
 
+function RadarWithCurrentIntakeRoute({ context, role = "expansion-manager" }: {
+  context?: CanonicalIntakeReadContext; role?: "expansion-manager" | "pm-audit";
+}) {
+  const params = useSearchParams();
+  return <ListingRadarPanel activeRoleId={role} canonicalIntakeReadContext={context}
+    intakeKind={parseUrlState(params).intakeKind} listings={[]} rows={[]} sources={[]} selectedHeatZoneId="legacy-zone" />;
+}
+
 describe("native Intake and case selection", () => {
+  it.each(["button", "legacy add URL"])("routes the actual legacy Inbox %s through the native picker/form/reader without an old POST", async (entry) => {
+    if (entry === "legacy add URL") window.history.replaceState(null, "", "/operator?ws=network&tab=radar&dialog=add&selected=IN-old&decision=create&extra=a&extra=b#intake/IN-old");
+    else window.history.replaceState(null, "", "/operator?ws=network&tab=radar&extra=a&extra=b");
+    const legacyFetch = vi.fn(async () => json({ items: [], total: 0, page: 1, pageSize: 10,
+      counts: { needsReview: 0, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 }, evidenceState: "complete" }));
+    vi.stubGlobal("fetch", legacyFetch);
+    const pending = deferred<Response>();
+    const context = makeContext((path, init) => {
+      if (init?.method === "POST") return json(reloadReceipt(), 201);
+      if (path.startsWith("/api/v1/canonical-intakes?")) return pending.promise;
+      if (path.endsWith("/match-case")) return json({ detail: "CANONICAL_MATCH_CASE_NOT_FOUND" }, 404);
+      return json({ ...intake(95), intake_method: "URL", processing_state: "SUBMITTED", version: 1,
+        processing_history: { ...intake(95).processing_history, intake_version: 1 },
+        processing_evidence: { ...intake(95).processing_evidence, intake_version: 1 } });
+    });
+    render(<CanonicalIntakeCommandProvider context={context}><RadarWithCurrentIntakeRoute context={context} /></CanonicalIntakeCommandProvider>);
+    if (entry === "button") fireEvent.click(screen.getByTestId("intake-add-button"));
+    expect(await screen.findByText("正在讀取收件…")).toBeVisible();
+    expect(screen.queryByTestId("intake-add-dialog")).not.toBeInTheDocument();
+    await act(async () => pending.resolve(json({ items: [intake(1)], next_cursor: null })));
+    await screen.findByTestId("intake-add-dialog");
+    const url = new URL(window.location.href);
+    expect(url.searchParams.get("intakeKind")).toBe("canonical");
+    expect(url.searchParams.get("dialog")).toBe("add");
+    expect(url.searchParams.has("selected")).toBe(false);
+    expect(url.searchParams.has("decision")).toBe(false);
+    expect(url.searchParams.getAll("extra")).toEqual(["a", "b"]);
+    expect(url.hash).toBe("");
+    expect(screen.getByLabelText("正式收件範圍")).toHaveValue("");
+    expect(screen.getByLabelText("送件原因")).toHaveValue("");
+    fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://source.example/actual-inbox-opener" } });
+    fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "人工確認此頁應送正式收件" } });
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    expect(await screen.findByTestId("intake-detail-stage")).toHaveTextContent("已送出");
+    await screen.findByText("這筆收件目前沒有比對案件。");
+    expect(window.location.pathname).toBe(`/intake/${id(95)}`);
+    expect(posts(context)).toHaveLength(1);
+    expect(posts(context)[0][0]).toBe("/api/v1/canonical-intakes");
+    expect(new Headers(posts(context)[0][1]?.headers).has("if-match")).toBe(false);
+    expect(legacyFetch.mock.calls.every((args) => !((args as unknown as [unknown, RequestInit?])[1]?.method))).toBe(true);
+  });
+
+  it.each(["no native reader", "read only"])("keeps a legacy add URL explicit and does not fall back with %s", async (state) => {
+    window.history.replaceState(null, "", "/operator?ws=network&tab=radar&dialog=add");
+    const legacyFetch = vi.fn(async () => json({ items: [], total: 0, page: 1, pageSize: 10, counts: {}, evidenceState: "complete" }));
+    vi.stubGlobal("fetch", legacyFetch);
+    const context = makeContext();
+    render(<CanonicalIntakeCommandProvider context={context}><RadarWithCurrentIntakeRoute
+      context={state === "no native reader" ? undefined : context} role={state === "read only" ? "pm-audit" : "expansion-manager"} /></CanonicalIntakeCommandProvider>);
+    expect(await screen.findByText(state === "no native reader" ? /無法驗證正式收件的讀取資格/ : /此角色無權新增正式收件/)).toBeVisible();
+    expect(screen.queryByTestId("intake-add-dialog")).not.toBeInTheDocument();
+    expect(context.fetchImpl).not.toHaveBeenCalled();
+    expect(legacyFetch.mock.calls.every((args) => !((args as unknown as [unknown, RequestInit?])[1]?.method))).toBe(true);
+  });
+
   it("restores the native add URL through the existing collection, submits explicit input and follows only its native reader", async () => {
     const params = new URLSearchParams(`ws=network&selected=IN-old&dialog=decide&decision=create&extra=a&extra=b&heatZoneId=HZ-old`);
     const href = buildInboxReturnHref({ ...parseUrlState(params), intakeKind: "canonical", canonicalCursor: "",

@@ -11,7 +11,6 @@ export { IntakeErrorRecovery } from "./IntakeErrorRecovery";
 export {
   intakeApi,
   newCorrelationId,
-  newIdempotencyKey,
   newIntakeActionIdempotencyKey,
 } from "./intakeClient";
 export type { IntakeApiError, IntakeResult } from "./intakeClient";
