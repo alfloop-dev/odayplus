@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { StrictMode } from "react";
+import { flushSync } from "react-dom";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalIntakeCasePicker as CasePicker, CanonicalIntakeCommandStatus } from "../CanonicalIntakeCasePicker";
@@ -399,7 +400,7 @@ describe("native Intake and case selection", () => {
     expect(window.location.hash).toBe("#identity");
     expect(posts(context)).toHaveLength(0);
   });
-  it("isolates the earlier receipt when transport and unrelated URL state change together", async () => {
+  it.each(["new", "old"] as const)("isolates the earlier receipt when transport and unrelated URL state change together (%s reader observes navigation)", async (observer) => {
     const receipt = { intake_id: id(95), intake_method: "URL", processing_state: "SUBMITTED", version: 1,
       submitted_at: "2026-10-19T08:00:00Z", correlation_id: id(96), transition_id: id(97), audit_event_id: id(98), outbox_event_id: id(99) };
     const first = entryContext("AWAITING_SOURCE_AUTHORIZATION", () => json(receipt, 201));
@@ -414,16 +415,31 @@ describe("native Intake and case selection", () => {
     const second = makeContext(() => secondRead.promise, "new-account");
     act(() => {
       const url = new URL(window.location.href); url.searchParams.set("unrelated", "changed");
-      view.rerender(<CanonicalIntakeCasePicker context={second} />);
-      window.history.replaceState(null, "", url);
-      // The new transport must observe this navigation. Notify the existing
-      // useSyncExternalStore router double after installing that transport;
-      // notifying the old reader instead must not grant the new one its dialog.
-      window.dispatchEvent(new PopStateEvent("popstate"));
+      // External-store navigation is synchronous but a root rerender may be
+      // queued. Explicitly cover both real orderings rather than let scheduler
+      // timing decide which context observed the URL. Neither may retain the
+      // earlier receipt; only a new-reader navigation can reopen its own read.
+      const navigate = () => {
+        window.history.replaceState(null, "", url);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      };
+      if (observer === "old") flushSync(navigate);
+      flushSync(() => view.rerender(<CanonicalIntakeCasePicker context={second} />));
+      if (observer === "new") navigate();
     });
     expect(screen.queryByText(/正式收件 .*已送出/)).not.toBeInTheDocument();
     expect(screen.queryByText(/第一個已驗證帳號/)).not.toBeInTheDocument();
-    await waitFor(() => expect(second.fetchImpl).toHaveBeenCalledOnce());
+    expect(new URL(window.location.href).searchParams.get("unrelated")).toBe("changed");
+    if (observer === "old") {
+      // A URL observed by the departed context is not the new account's intent
+      // to open a reader. The existing exact URL remains, with no stale dialog.
+      expect(second.fetchImpl).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("canonical-intake-case-picker")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("intake-detail-dialog")).not.toBeInTheDocument();
+      expect(posts(second)).toHaveLength(0);
+      return;
+    }
+    await waitFor(() => expect(second.fetchImpl, window.location.href).toHaveBeenCalledOnce());
     expect(String(vi.mocked(second.fetchImpl).mock.calls[0][0])).toContain("/api/v1/canonical-intakes/" + id(95));
     await act(async () => { secondRead.resolve(json({ detail: "current account denied" }, 403)); });
     expect(await screen.findByRole("alert")).toBeVisible();
