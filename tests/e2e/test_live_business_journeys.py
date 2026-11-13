@@ -1016,7 +1016,7 @@ def test_all_six_journeys_pass_and_seal_a_verifiable_receipt() -> None:
 
 
 def test_receipt_binds_release_actor_selector_and_record_identity() -> None:
-    receipt, _, _ = run()
+    receipt, web, _ = run()
 
     assert receipt["source_sha"] == SHA
     assert receipt["release"]["manifest_digest"] == DIGEST
@@ -1050,6 +1050,7 @@ def test_receipt_binds_release_actor_selector_and_record_identity() -> None:
     assert intake["policy_outcome"]["processing_state"] == "QUARANTINED"
     assert not web.writes_to("/network-listings/intake/submit")
     assert len(web.writes_to("/canonical-intakes")) == 1
+    assert intake["requests"]["worker_or_provider_triggers"] == 1
 
 
 def test_receipt_carries_no_password_cookie_or_token() -> None:
@@ -1559,9 +1560,10 @@ def test_generic_or_legacy_fresh_refusal_is_not_source_policy_proof(status: int)
     ("processing_evidence", None), ("processing_evidence.intake_version", 3),
     ("processing_evidence.next_cursor", "more"), ("processing_history.previous_cursor", "earlier"),
     ("processing_history.items.2.to_state", "RETRIEVING"),
+    ("processing_history.items.0.sequence_no", True),
     ("processing_history.items.3.source_policy_version", None),
     ("processing_history.items.3.source_snapshot_id", "00000000-0000-0000-0000-000000000099"),
-    ("source_info.url_fields.0.masked", True),
+    ("source_info.url_fields", None), ("source_info.url_fields.0.masked", True),
     ("source_info.url_fields.0.effective", "https://another.example.invalid/not-submitted"),
 ])
 def test_native_policy_readback_requires_current_bound_no_retrieval_proof(path: str, value: Any) -> None:
@@ -1574,6 +1576,21 @@ def test_native_policy_readback_requires_current_bound_no_retrieval_proof(path: 
     receipt, _, _ = run(web, selection=["intake"])
     assert receipt["journeys"]["intake"]["status"] == "FAILED"
     assert blockers(receipt, "intake") == {"policy:blocked_source_rejected": "policy"}
+
+
+@pytest.mark.parametrize("key,value", [
+    ("processing_state", "READY"), ("processing_state", "QUEUED"), ("processing_state", "APPROVED"),
+    ("intake_method", "MANUAL"), ("version", True), ("version", 2),
+    ("audit_event_id", None), ("outbox_event_id", "legacy-event"), ("transition_id", None),
+])
+def test_policy_probe_requires_real_submitted_receipt_before_polling(key: str, value: Any) -> None:
+    web = BusinessWeb()
+    web.policy_submission[key] = value
+    receipt, _, _ = run(web, selection=["intake"])
+    assert receipt["journeys"]["intake"]["status"] == "FAILED"
+    assert blockers(receipt, "intake") == {"policy:blocked_source_rejected": "policy"}
+    assert len(web.policy_bodies) == 1
+    assert not any(call[0] == "GET" and "/canonical-intakes/" in call[1] for call in web.calls)
 
 
 def test_native_policy_worker_wait_is_bounded_without_resubmitting() -> None:
@@ -1591,7 +1608,7 @@ def test_native_policy_worker_wait_is_bounded_without_resubmitting() -> None:
     ("source_id", "different-source"), ("scope", {}), ("original_url_digest", "sha256:" + "0" * 64),
     ("policy", "APPROVED_RETRIEVAL"), ("evidence_count", 1), ("evidence", {}),
     ("history.previous_cursor", "earlier"), ("transitions.2.to_state", "RETRIEVING"),
-    ("transitions.3.source_policy_version", None),
+    ("transitions.0.sequence_no", True), ("transitions.3.source_policy_version", None),
 ])
 def test_resealed_receipt_cannot_replace_native_policy_proof_with_boolean(path: str, value: Any) -> None:
     receipt, _, _ = run()
