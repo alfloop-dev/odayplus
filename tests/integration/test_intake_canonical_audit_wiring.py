@@ -82,11 +82,14 @@ def case(intake_blank_db, monkeypatch):
 
 
 def _submit(bundle, *, key=None):
+    # Keep exercising real SQL policy/audit/rollback through the supported
+    # manual batch entry. This is not native URL creation or parser completion.
     return _client(bundle).post(
-        "/api/v1/intakes/url",
+        "/api/v1/intake-batches",
         json={
-            "original_url": "https://example.invalid/canonical-audit",
-            "scope": {"tenant_id": TENANT},
+            "batch_id": "00000000-0000-0000-0000-000000000201",
+            "method": "MANUAL", "scope": {"tenant_id": TENANT},
+            "rows": [{"address_raw": "Synthetic canonical audit address"}],
         },
         headers={**HEADERS, "Idempotency-Key": key or "synthetic-audit-submit-" + str(uuid4())},
     )
@@ -116,7 +119,7 @@ def test_http_receipts_have_actual_policy_bound_canonical_rows_and_restart(case)
     key = "synthetic-canonical-submit-" + str(uuid4())
     response = _submit(bundle, key=key)
     assert response.status_code == 202, response.text
-    iid = response.json()["intake_id"]
+    iid = response.json()["rows"][0]["intake_id"]
     before = _snapshot(bundle)
     with db.connect() as conn:
         rows = conn.execute(
@@ -140,7 +143,7 @@ def test_http_receipts_have_actual_policy_bound_canonical_rows_and_restart(case)
         detail = _client(restarted).get(f"/api/v1/intakes/{iid}", headers=HEADERS)
         assert detail.status_code == 200
         replay = _submit(restarted, key=key)
-        assert replay.status_code == 200 and replay.json() == response.json()
+        assert replay.status_code == 202 and replay.json() == response.json()
         assert _snapshot(restarted) == before
     finally:
         restarted.engine.close()
@@ -184,7 +187,7 @@ def test_revoked_policy_approver_role_denies_new_write_without_changing_existing
     db, bundle, _ = case
     submitted = _submit(bundle)
     assert submitted.status_code == 202, submitted.text
-    iid = submitted.json()["intake_id"]
+    iid = submitted.json()["rows"][0]["intake_id"]
     before = _snapshot(bundle)
     with db.connect() as conn:
         conn.execute(
@@ -231,7 +234,12 @@ def test_failure_after_canonical_insert_rolls_back_everything_and_same_key_can_r
         assert conn.execute("SELECT count(*) FROM audit.audit_events").fetchone()[0] == 0
     retried = _submit(bundle, key=key)
     assert retried.status_code == 202, retried.text
-    assert retried.headers["Idempotency-Replayed"] == "false"
+    committed = _snapshot(bundle)
+    assert len(committed["intakes"]) == len(committed["assignments"]) == len(committed["slas"]) == len(committed["replays"]) == 1
+    assert not committed["jobs"]
+    replayed = _submit(bundle, key=key)
+    assert replayed.status_code == 202 and replayed.json() == retried.json()
+    assert _snapshot(bundle) == committed
     with db.connect() as conn:
         assert conn.execute("SELECT count(*) FROM audit.audit_events").fetchone()[0] == 3
 
@@ -259,7 +267,7 @@ def test_completion_rechecks_actual_canonical_record_instead_of_envelope_flags(c
     db, bundle, _ = case
     submitted = _submit(bundle)
     assert submitted.status_code == 202, submitted.text
-    iid = submitted.json()["intake_id"]
+    iid = submitted.json()["rows"][0]["intake_id"]
     store = bundle.assisted_intake_store
     store.refresh(TENANT)
     # Controlled parser precondition only; no parser/UAT claim.

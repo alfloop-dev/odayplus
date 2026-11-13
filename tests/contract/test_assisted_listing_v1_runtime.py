@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from contextlib import contextmanager
 from copy import deepcopy
@@ -10,9 +11,10 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from apps.api.app.routes.listings import AssistedIntakeStore
+from apps.api.app.routes.listings import AssistedIntakeStore, IntakeSubmissionReceipt, UrlIntakeRequest
 from apps.api.oday_api.main import create_app
 from apps.api.oday_api.security import dependencies as auth_dependencies
+from modules.listing.application.intake_workflow_bootstrap import initialize_intake_workflow
 from modules.opsboard.auth import SigningKey, encode_compact_jwt
 from shared.infrastructure.persistence import build_persistence
 from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy
@@ -31,14 +33,66 @@ def submit(client: TestClient, key: str = "url-idempotency-key-1"):
     })
 
 
-def test_url_submission_replay_and_conflict() -> None:
-    client = TestClient(create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy()))
+def _retain_url_submission(store, body, *, key, headers=HEADERS):
+    """Prepare a pre-cutover V1 record with its exact bound historical receipt.
+
+    Never invoke either fresh writer or pretend this document is native SQL
+    data. Replay still runs the real route's namespace/fingerprint and current
+    target checks, including its transaction-locked second lookup.
+    """
+    request = UrlIntakeRequest.model_validate(body)
+    actor, tenant = headers["X-Subject-Id"], headers["X-Tenant-Id"]
+    iid, jid, cid = (str(uuid4()) for _ in range(3))
+    at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    value = {
+        "intake_id": iid, "state": "SUBMITTED", "intake_method": "URL",
+        "scope": request.scope.model_dump(), "submitted_by": actor,
+        "submitted_at": at, "updated_at": at, "version": 1,
+        "job_id": jid, "correlation_id": cid,
+        "original_url": request.original_url, "canonical_url": request.original_url,
+        "policy_state": "POLICY_UNKNOWN", "fields": [], "audit": [],
+        "processing_history": [{
+            "transition_id": str(uuid4()), "from_state": None, "to_state": "SUBMITTED",
+            "occurred_at": at, "actor": actor, "version_after": 1,
+        }],
+    }
+    receipt = IntakeSubmissionReceipt(
+        intake_id=iid, state="SUBMITTED", version=1, job_id=jid,
+        correlation_id=cid, submitted_at=at,
+    ).model_dump(mode="json")
+    digest = hashlib.sha256(json.dumps(request.model_dump(), sort_keys=True, default=str).encode()).hexdigest()
+    with store.transaction():
+        store.intakes[iid] = value
+        initialize_intake_workflow(store, value, SyntheticIntakeWorkflowPolicy())
+        store.jobs[jid] = {
+            "job_id": jid, "intake_id": iid, "tenant_id": tenant,
+            "status": "QUEUED", "checkpoint": "RETRIEVING", "attempt": 0,
+            "version": 1, "correlation_id": cid,
+        }
+        store.replays[f"{tenant}:{actor}:submitUrlIntake:_collection:{key}"] = (digest, deepcopy(receipt), 202)
+        store.flush()
+    return receipt
+
+
+def test_historical_url_submission_replay_and_conflict() -> None:
+    store = AssistedIntakeStore()
+    client = TestClient(create_app(
+        persistence=replace(build_persistence(mode="memory"), assisted_intake_store=store),
+        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
+    ))
+    receipt = _retain_url_submission(store, {
+        "original_url": "https://example.test/listing/1",
+        "scope": {"tenant_id": HEADERS["X-Tenant-Id"]},
+    }, key="url-idempotency-key-1")
+    before = _url_replay_state(store)
     first = submit(client)
-    assert first.status_code == 202
-    assert first.headers["idempotency-replayed"] == "false"
+    assert first.status_code == 200
+    assert first.headers["idempotency-replayed"] == "true"
+    assert first.json() == receipt
     replayed = submit(client)
     assert replayed.status_code == 200
     assert replayed.json() == first.json()
+    assert _url_replay_state(store) == before
     conflict = client.post("/api/v1/intakes/url", headers={**HEADERS, "Idempotency-Key": "url-idempotency-key-1"}, json={
         "original_url": "https://example.test/listing/2", "scope": {"tenant_id": HEADERS["X-Tenant-Id"]}})
     assert conflict.status_code == 409
@@ -58,9 +112,12 @@ def url_replay_journey(request, monkeypatch):
         "original_url": "https://example.test/synthetic-replay-authorization",
         "scope": {"tenant_id": HEADERS["X-Tenant-Id"], "region_id": region_a},
     }
+    receipt = _retain_url_submission(store, body, key=headers["Idempotency-Key"], headers=headers)
+    before = _url_replay_state(store)
     first = client.post("/api/v1/intakes/url", headers=headers, json=body)
-    assert first.status_code == 202, first.text
-    intake = store.intakes[first.json()["intake_id"]]
+    assert first.status_code == 200 and first.json() == receipt, first.text
+    assert _url_replay_state(store) == before
+    intake = store.intakes[receipt["intake_id"]]
 
     def replay_request():
         if request.param == "cached":
@@ -185,8 +242,15 @@ def test_batch_partial_success_and_cursor_failure() -> None:
 
 
 def test_if_match_and_assignment_contract() -> None:
-    client = TestClient(create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy()))
-    intake = submit(client, "url-assignment-key-1").json()
+    store = AssistedIntakeStore()
+    client = TestClient(create_app(
+        persistence=replace(build_persistence(mode="memory"), assisted_intake_store=store),
+        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
+    ))
+    intake = _retain_url_submission(store, {
+        "original_url": "https://example.test/listing/1",
+        "scope": {"tenant_id": HEADERS["X-Tenant-Id"]},
+    }, key="url-assignment-key-1")
     url = f'/api/v1/intakes/{intake["intake_id"]}/assignment'
     body = {"owner_subject_id": "00000000-0000-0000-0000-000000000003", "owner_role": "reviewer",
             "due_at": "2026-07-19T00:00:00Z", "reason": "triage"}
@@ -317,7 +381,11 @@ def test_all_intake_scope_axes_guard_create_read_mutate_and_list(
     header_name: str,
     scope_field: str,
 ) -> None:
-    client = TestClient(create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy()))
+    store = AssistedIntakeStore()
+    client = TestClient(create_app(
+        persistence=replace(build_persistence(mode="memory"), assisted_intake_store=store),
+        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
+    ))
     allowed_id = str(uuid4())
     denied_id = str(uuid4())
     restricted_headers = {
@@ -330,6 +398,11 @@ def test_all_intake_scope_axes_guard_create_read_mutate_and_list(
         "X-Roles": "site_reviewer",
     }
 
+    _retain_url_submission(store, {
+        "original_url": f"https://example.test/scope/{scope_field}/allowed",
+        "scope": {"tenant_id": HEADERS["X-Tenant-Id"], scope_field: allowed_id},
+    }, key=f"scope-allowed-{scope_field}", headers=restricted_headers)
+    before = _url_replay_state(store)
     allowed = client.post(
         "/api/v1/intakes/url",
         headers={
@@ -344,7 +417,8 @@ def test_all_intake_scope_axes_guard_create_read_mutate_and_list(
             },
         },
     )
-    assert allowed.status_code == 202
+    assert allowed.status_code == 200 and allowed.headers["idempotency-replayed"] == "true"
+    assert _url_replay_state(store) == before
     allowed_intake_id = allowed.json()["intake_id"]
 
     denied_create = client.post(
@@ -364,6 +438,11 @@ def test_all_intake_scope_axes_guard_create_read_mutate_and_list(
     assert denied_create.status_code == 403
     assert denied_create.json()["code"] == "SCOPE_DENIED"
 
+    _retain_url_submission(store, {
+        "original_url": f"https://example.test/scope/{scope_field}/outside",
+        "scope": {"tenant_id": HEADERS["X-Tenant-Id"], scope_field: denied_id},
+    }, key=f"scope-outside-{scope_field}", headers=unrestricted_headers)
+    before = _url_replay_state(store)
     outside = client.post(
         "/api/v1/intakes/url",
         headers={
@@ -378,7 +457,8 @@ def test_all_intake_scope_axes_guard_create_read_mutate_and_list(
             },
         },
     )
-    assert outside.status_code == 202
+    assert outside.status_code == 200 and outside.headers["idempotency-replayed"] == "true"
+    assert _url_replay_state(store) == before
     outside_intake_id = outside.json()["intake_id"]
 
     assert client.get(
