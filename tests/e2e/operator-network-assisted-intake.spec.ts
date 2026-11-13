@@ -562,11 +562,12 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     } finally { await api.dispose(); }
   });
 
-  test("unapproved source fails closed into quarantine with a governance reason", async ({
+  test("retained policy-unknown quarantine shows its governance reason without offering creation", async ({
     page,
   }) => {
-    await openRadarAsExpansionManager(page);
-    await submitUrl(page, URLS.unknown);
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "policy-unknown" });
+    try {
+    // Historical presentation, not proof of fresh native policy admission.
 
     await expect(page.getByTestId("intake-detail-stage")).toHaveText("已隔離");
     await expect(page.getByTestId("intake-detail-dialog")).toContainText(
@@ -581,6 +582,13 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     // Quarantine routes to governance review, not to listing creation.
     await expect(page.getByTestId("decide-action-steward")).toBeVisible();
     await expect(page.getByTestId("decide-action-create")).toHaveCount(0);
+    const before = await getIntakeApi(scenario.intake_id, scenario);
+    expect(before).toMatchObject({ policy: "POLICY_UNKNOWN", stage: "QUARANTINED", version: 1,
+      rawSnapshot: null, snapshotId: null, parserVersion: null, capturedAt: null });
+    await page.reload();
+    await expect(page.getByTestId("intake-detail-stage")).toHaveText("已隔離");
+    expect(await getIntakeApi(scenario.intake_id, scenario)).toEqual(before);
+    } finally { await api.dispose(); }
   });
 
   test("retained retryable failure shows code, correlation and next action, and retry preserves input", async ({
@@ -758,9 +766,10 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
   // ADDITIONAL TESTS INTEGRATING ODP-OC-R5-004 COMPLIANCE
   // ==========================================================================
 
-  test("AUTH_REQUIRED policy flow and form submission", async ({ page }) => {
-    await openRadarAsExpansionManager(page);
-    await submitUrl(page, URLS.authRequired);
+  test("retained AUTH_REQUIRED history permits durable manual correction without claiming retrieval", async ({ page }) => {
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "auth-required" });
+    try {
+    // The retained policy is not an approved account, capture or fresh probe.
 
     await expect(page.getByTestId("intake-detail-stage")).toHaveText(
       "待人工補錄",
@@ -783,27 +792,46 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       await page.getByTestId("intake-detail-id").textContent()
     )?.trim();
     expect(id).toBeTruthy();
-    const data = await getIntakeApi(id!);
+    expect(id).toBe(scenario.intake_id);
+    const data = await getIntakeApi(id!, scenario);
     expect(data.policy).toBe("AUTH_REQUIRED");
     expect(data.capturedAt).toBeNull();
     expect(data.rawSnapshot).toBeNull();
 
-    // Fill form and save (re-uses revision address matching L-2024 to transition)
+    expect(data).toMatchObject({ version: 1, parserVersion: null, snapshotId: null, parsedFields: {} });
+    expect(scenario.listing_id).toBeTruthy();
+    // Fill the real human form against the retained scenario's actual target.
     await page
       .getByTestId("assisted-address")
       .fill("台北市信義區松仁路 96 號 1F");
     await page.getByTestId("assisted-rent").fill("55000");
     await page.getByTestId("assisted-area").fill("18");
     await page.getByTestId("assisted-risk-ack").check();
-    await page.getByTestId("assisted-save").click();
+    const [corrected] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST"
+        && new URL(response.url()).pathname === `/api/v1/operator/network-listings/intake/${scenario.intake_id}/correct`),
+      page.getByTestId("assisted-save").click(),
+    ]);
+    expect(corrected.status(), await corrected.text()).toBe(200);
+    expect(corrected.request().headers()["idempotency-key"]).toBeTruthy();
 
-    // Wait for conversion/match to possible match
+    // Wait for the actual matcher after the committed human correction.
     await expect(page.getByTestId("intake-detail-stage")).toHaveText(
       "待人工覆核",
     );
     await expect(page.getByTestId("intake-detail-match")).toHaveText(
       "疑似重複",
     );
+    await page.reload();
+    await expect(page.getByTestId("intake-detail-stage")).toHaveText("待人工覆核");
+    const saved = await getIntakeApi(scenario.intake_id, scenario);
+    expect(saved).toMatchObject({ version: 2, policy: "AUTH_REQUIRED", stage: "NEEDS_REVIEW",
+      rawSnapshot: null, snapshotId: null, capturedAt: null, parserVersion: null,
+      matchResult: { outcome: "POSSIBLE_MATCH", targetListingId: scenario.listing_id },
+      parsedFields: { address: { sourceValue: null, normalizedValue: null, correctedValue: "台北市信義區松仁路 96 號 1F" },
+        rent: { correctedValue: 55000 }, areaPing: { correctedValue: 18 } } });
+    expect(saved.auditEvents.filter((event: any) => event.action === "intake.correct")).toHaveLength(1);
+    } finally { await api.dispose(); }
   });
 
   test("prove the correct fetch or no-fetch behavior per policy state", async ({

@@ -36,7 +36,7 @@ from tests.intake_registry_fixture import (
 )
 
 SCOPE = "ISOLATED_SYNTHETIC_PG_BROWSER_NOT_PRODUCTION_ADMISSION"
-RetainedBrowserHistory = Literal["assisted-entry-only", "possible-match", "retrieval-timeout", "revision"]
+RetainedBrowserHistory = Literal["assisted-entry-only", "possible-match", "retrieval-timeout", "revision", "auth-required", "policy-unknown"]
 
 
 def _insert_policy(connection, row, tenant, approver, now):
@@ -556,7 +556,7 @@ def ready_scenario(database_url, bundle, client, *,
     # The no-body control retains its original ready scenario. Explicit history
     # variants stop before the original UI correction/decision/recovery commands.
     # These fixtures attest neither fresh source policy nor successful retrieval.
-    if retained_history not in (None, "assisted-entry-only", "possible-match", "retrieval-timeout", "revision"):
+    if retained_history not in (None, "assisted-entry-only", "possible-match", "retrieval-timeout", "revision", "auth-required", "policy-unknown"):
         raise ValueError("Unknown retained browser history")
     scenario_id = str(uuid4())
     source_id = "synthetic-browser-" + scenario_id
@@ -607,6 +607,27 @@ def ready_scenario(database_url, bundle, client, *,
                 MatchSignal("floor", "樓層", False, "Retained 2F submission compared with actual 1F target"),
             ), "Explicit retained synthetic match history; no retrieval or parser run is attested.").to_dict(),
         }
+    elif retained_history == "auth-required":
+        from modules.external_data.application.assisted_intake import SOURCE_REGISTRY
+
+        policy = next(source for source in SOURCE_REGISTRY if source.policy == "AUTH_REQUIRED")
+        url = "https://" + policy.canonical_host + "/detail/" + scenario_id
+        listing_id = str(uuid4())
+        # A real comparison Listing for the subsequent human correction. No
+        # provider identity or retrieved evidence is assigned to this Intake.
+        listing = Listing(listing_id=listing_id, source_listing_id="retained-target-" + scenario_id,
+            source_id=source_id, address_id=str(uuid4()), listing_status="watching",
+            rent_amount=55000, area_ping=18, floor="1F")
+        address = AddressLocation(address_id=listing.address_id,
+            raw_address="台北市信義區松仁路 96 號 1F", normalized_address="台北市信義區松仁路 96 號 1F")
+        target_seed = (listing, address, ListingDedupKey(source_id=source_id,
+            source_listing_id=listing.source_listing_id, normalized_address=address.normalized_address,
+            rent_amount=listing.rent_amount, area_ping=listing.area_ping))
+        history = {"policy": policy.policy, "policyLabel": "需授權帳號", "policyReason": policy.policy_reason}
+    elif retained_history == "policy-unknown":
+        url = "https://unknown-house.example.tw/retained-" + scenario_id
+        history = {"stage": "QUARANTINED", "policy": "POLICY_UNKNOWN", "policyLabel": "政策未知",
+            "policyReason": "Explicit retained governance finding: no approved source-use policy; no retrieval is attested."}
     elif retained_history == "retrieval-timeout":
         from modules.external_data.application.assisted_intake import RETRIEVAL_CORPUS
 

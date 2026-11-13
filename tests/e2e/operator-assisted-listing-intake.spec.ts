@@ -1051,10 +1051,20 @@ test("retained retryable retrieval failure exposes code, correlation, recovery a
   } finally { await api.dispose(); }
 });
 
-test("governance reviewer gets masked read-only intake while unrelated roles fail closed", async ({
+test("retained governance reviewer gets masked read-only intake while unrelated roles fail closed", async ({
   page,
 }) => {
-  await openRadar(page, "expansion-manager", "qa-role-seed-manager");
+  const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+  try {
+  const intakeId = scenario.intake_id;
+  const before = await api.get(`/api/v1/operator/network-listings/intake/${intakeId}`, {
+    headers: { ...MANAGER_HEADERS, "x-tenant-id": scenario.tenant_id, "x-subject-id": scenario.proposer_id },
+  });
+  expect(before.status(), await before.text()).toBe(200);
+  const original = await before.json();
+  expect(original.heatZoneId).toBeNull();
+  await page.goto(`${PG_WEB}/operator?ws=network&tab=radar`);
+  await expect(page.getByTestId("intake-inbox-view")).toBeVisible({ timeout: 15_000 });
   // The inherited area must be visible. Clearing it explicitly includes
   // unassigned intakes, and that choice must survive detail and role reloads.
   await expect(page.getByTestId("intake-filter-heat-zone")).toHaveValue("HZ-01");
@@ -1068,27 +1078,21 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
   ]);
   expect(allAreas.status()).toBe(200);
   await expect.poll(() => new URL(page.url()).searchParams.get("heatZoneId")).toBe("");
-  const [created, intakeId] = await Promise.all([
-    page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/operator/network-listings/intake/submit"
-      && response.request().method() === "POST"),
-    submitUrl(page, URLS.possible),
-  ]);
-  expect(created.status()).toBe(200);
-  expect((await created.json()).heatZoneId).toBeNull();
-  await page.getByTestId("intake-return-button").click();
-  // Returning to the inbox rewrites the durable URL asynchronously; reloading
-  // before it settles restores the full-page detail view without the tab bar.
-  await expect(page.getByTestId("intake-inbox-view")).toBeVisible({
-    timeout: 15_000,
-  });
+  await expect(page.getByTestId(`intake-inbox-row-${intakeId}`)).toBeVisible();
 
-  await setOperatorSession(page, "pm-audit", "qa-governance-reviewer");
+  // Explicit synthetic authenticated headers and UI subject must change
+  // together. A persona label alone never grants governance read authority.
+  await page.setExtraHTTPHeaders({ "x-roles": "auditor", "x-operator-role": "pm-audit",
+    "x-subject-id": "qa-governance-reviewer", "x-tenant-id": scenario.tenant_id });
+  await setOperatorSession(page, "pm-audit", "qa-governance-reviewer", scenario.tenant_id);
   await page.reload();
   await page.getByTestId("network-tab-1").click();
   await expect(page.getByTestId("intake-read-only")).toBeVisible({
     timeout: 15_000,
   });
   await expect(page.getByTestId("intake-add-button")).toHaveCount(0);
+  await expect(page.getByTestId("intake-filter-heat-zone")).toHaveValue("");
+  expect(new URL(page.url()).searchParams.get("heatZoneId")).toBe("");
   // The durable intake deep link can restore the detail after a role switch.
   // Only open the row when that restoration did not already happen.
   if (!(await page.getByTestId("intake-detail-dialog").isVisible())) {
@@ -1121,13 +1125,15 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
           "x-operator-role": role,
           "x-roles": systemRole,
           "x-subject-id": `qa-${role}`,
-          "x-tenant-id": "tenant-a",
+          "x-tenant-id": scenario.tenant_id,
         },
       },
     );
     expect(denied.status()).toBe(403);
 
-    await setOperatorSession(page, role, `qa-${role}`);
+    await page.setExtraHTTPHeaders({ "x-operator-role": role, "x-roles": systemRole,
+      "x-subject-id": `qa-${role}`, "x-tenant-id": scenario.tenant_id });
+    await setOperatorSession(page, role, `qa-${role}`, scenario.tenant_id);
     const [bootstrap] = await Promise.all([
       page.waitForResponse((response) =>
         response.url().includes("/api/v1/operator/bootstrap") &&
@@ -1160,4 +1166,10 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
       page.off("request", recordRequest);
     }
   }
+  const after = await api.get(`/api/v1/operator/network-listings/intake/${intakeId}`, {
+    headers: { ...MANAGER_HEADERS, "x-tenant-id": scenario.tenant_id, "x-subject-id": scenario.proposer_id },
+  });
+  expect(after.status(), await after.text()).toBe(200);
+  expect(await after.json()).toEqual(original);
+  } finally { await api.dispose(); }
 });
