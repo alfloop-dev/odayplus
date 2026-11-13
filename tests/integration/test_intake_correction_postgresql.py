@@ -1,12 +1,14 @@
 """Real PG16 commits/restarts with explicitly synthetic actors and parser state."""
 
 from copy import deepcopy
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
+from modules.listing.application.intake_workflow_bootstrap import initialize_intake_workflow
 from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
 from tests.intake_workflow_fixture import (
     SyntheticIntakeAuditRetention,
@@ -44,20 +46,35 @@ def postgres_case(intake_blank_db, monkeypatch, tmp_path):
     with owned_production_gcs_worm(monkeypatch):
         app = _app()
         with TestClient(app, raise_server_exceptions=False) as client:
-            response = client.post(
-                "/api/v1/intakes/url",
-                json={
-                    "original_url": "https://example.invalid/pg-correction",
-                    "scope": {"tenant_id": TENANT_ID},
-                },
-                headers=_headers(ACTOR_ID, key=f"synthetic-submit-{uuid4()}"),
-            )
-            assert response.status_code == 202, response.text
-            iid = response.json()["intake_id"]
+            # Retained V1 parent, not a call to the retired fresh URL writer.
+            # Use the original physical transaction/audit owner for its workflow.
             store = app.state.assisted_intake_store
             store.refresh(TENANT_ID)
+            iid, job_id, correlation_id = (str(uuid4()) for _ in range(3))
+            at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            intake = {
+                "intake_id": iid, "state": "SUBMITTED", "intake_method": "URL",
+                "scope": {"tenant_id": TENANT_ID}, "submitted_by": ACTOR_ID,
+                "submitted_at": at, "updated_at": at, "version": 1,
+                "original_url": "https://example.invalid/retained-pg-correction",
+                "canonical_url": "https://example.invalid/retained-pg-correction",
+                "policy_state": "POLICY_UNKNOWN", "job_id": job_id,
+                "correlation_id": correlation_id, "fields": [], "audit": [],
+                "processing_history": [{
+                    "transition_id": str(uuid4()), "from_state": None, "to_state": "SUBMITTED",
+                    "occurred_at": at, "actor": ACTOR_ID, "version_after": 1,
+                }],
+            }
+            with store.transaction():
+                store.intakes[iid] = intake
+                initialize_intake_workflow(store, intake, SyntheticIntakeWorkflowPolicy())
+                store.jobs[job_id] = {
+                    "job_id": job_id, "intake_id": iid, "tenant_id": TENANT_ID,
+                    "status": "QUEUED", "checkpoint": "RETRIEVING", "attempt": 0,
+                    "version": 1, "correlation_id": correlation_id,
+                }
+                store.flush()
             # Isolate correction storage; no claim that the parser produced this row.
-            intake = store.intakes[iid]
             intake.update(
                 state="NEEDS_REVIEW", source_snapshot_id=str(uuid4()), parser_run_id=str(uuid4())
             )

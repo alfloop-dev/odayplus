@@ -18,7 +18,10 @@ from psycopg.types.json import Jsonb
 
 from apps.api.app.routes import listings
 from modules.listing.application.intake_registry_calendar import RegistryIntakeWorkflowPolicy
-from modules.listing.application.intake_workflow_bootstrap import IntakeWorkflowUnavailable
+from modules.listing.application.intake_workflow_bootstrap import (
+    IntakeWorkflowUnavailable,
+    initialize_intake_workflow,
+)
 from shared.auth import Role
 from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
 from shared.infrastructure.persistence.factory import build_persistence
@@ -101,6 +104,41 @@ def _bundle(database, monkeypatch):
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     monkeypatch.setenv("ODAY_DATABASE_URL", database.url())
     return build_persistence(mode="postgresql")
+
+
+def _retained_url_workflow(bundle):
+    """Persist the original V1 task fixture, independent of fresh HTTP create.
+
+    The real store, registry policy, audit sink and same-engine transaction own
+    this historical setup. It is not a native Intake or source-use approval.
+    """
+    store = bundle.assisted_intake_store
+    store.refresh(TENANT)
+    intake_id, job_id, correlation_id = (str(uuid4()) for _ in range(3))
+    at = AT.isoformat().replace("+00:00", "Z")
+    intake = {
+        "intake_id": intake_id, "state": "SUBMITTED", "intake_method": "URL",
+        "scope": {"tenant_id": TENANT}, "submitted_by": MANAGER,
+        "submitted_at": at, "updated_at": at, "version": 1,
+        "original_url": "https://example.invalid/retained-sql-workflow",
+        "canonical_url": "https://example.invalid/retained-sql-workflow",
+        "policy_state": "POLICY_UNKNOWN", "job_id": job_id,
+        "correlation_id": correlation_id, "fields": [], "audit": [],
+        "processing_history": [{
+            "transition_id": str(uuid4()), "from_state": None, "to_state": "SUBMITTED",
+            "occurred_at": at, "actor": MANAGER, "version_after": 1,
+        }],
+    }
+    with store.transaction():
+        store.intakes[intake_id] = intake
+        initialize_intake_workflow(store, intake, bundle.assisted_intake_workflow_policy)
+        store.jobs[job_id] = {
+            "job_id": job_id, "intake_id": intake_id, "tenant_id": TENANT,
+            "status": "QUEUED", "checkpoint": "RETRIEVING", "attempt": 0,
+            "version": 1, "correlation_id": correlation_id,
+        }
+        store.flush()
+    return intake_id
 
 
 def test_native_submission_uses_the_existing_sql_workflow_policy_and_current_approver(intake_blank_db, monkeypatch):
@@ -339,16 +377,7 @@ def test_sql_policy_http_pause_resume_survives_restart_and_flush_failure(
 
     bundle = _bundle(db, monkeypatch)
     try:
-        response = client_for(bundle).post(
-            "/api/v1/intakes/url",
-            json={
-                "original_url": "https://example.invalid/synthetic-sql",
-                "scope": {"tenant_id": TENANT},
-            },
-            headers={**headers, "Idempotency-Key": "synthetic-sql-submit"},
-        )
-        assert response.status_code == 202, response.text
-        intake_id = response.json()["intake_id"]
+        intake_id = _retained_url_workflow(bundle)
     finally:
         bundle.engine.close()
 
@@ -474,16 +503,7 @@ def test_assignment_transitions_and_sla_completion_are_durable_atomic_and_replay
     bundle = _bundle(db, monkeypatch)
     try:
         client = client_for(bundle)
-        submitted = client.post(
-            "/api/v1/intakes/url",
-            json={
-                "original_url": "https://example.invalid/sql-task",
-                "scope": {"tenant_id": TENANT},
-            },
-            headers={**headers(MANAGER), "Idempotency-Key": "synthetic-pg-submission"},
-        )
-        assert submitted.status_code == 202, submitted.text
-        iid = submitted.json()["intake_id"]
+        iid = _retained_url_workflow(bundle)
         assignment_body = {
                 "owner_subject_id": OWNER,
                 "owner_role": "expansion-staff",
