@@ -829,7 +829,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       rawSnapshot: null, snapshotId: null, capturedAt: null, parserVersion: null,
       matchResult: { outcome: "POSSIBLE_MATCH", targetListingId: scenario.listing_id },
       parsedFields: { address: { sourceValue: null, normalizedValue: null, correctedValue: "台北市信義區松仁路 96 號 1F" },
-        rent: { correctedValue: 55000 }, areaPing: { correctedValue: 18 } } });
+        rent: { correctedValue: "55000" }, areaPing: { correctedValue: "18" } } });
     expect(saved.auditEvents.filter((event: any) => event.action === "intake.correct")).toHaveLength(1);
     } finally { await api.dispose(); }
   });
