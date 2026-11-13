@@ -314,7 +314,14 @@ class ProductionBodyDomainTests(unittest.TestCase):
         self.assertEqual(wc.PROTECTED_BODY_NAMES, ("test_listing_production_asset.py",))
         self.assertEqual(
             wc.protected_body_sparse_patterns(),
-            ("/*", "!**/tests/sources", "!**/tests/sources/**", "!**/test_listing_production_asset.py*"),
+            (
+                "/*",
+                "!**/tests/sources",
+                "!**/tests/sources/**",
+                "!**/test_listing_production_asset.py*",
+                "!**/*\\\\*",
+                "!**/*\\\\*/**",
+            ),
         )
         self.assertTrue(
             wc.in_protected_body_domain(
@@ -352,6 +359,10 @@ class ProtectedBodyDomainTests(SyntheticBodyDomain, unittest.TestCase):
             NAMED_COPY,
             SYNTHETIC_NAME,
             f"x/{SYNTHETIC_NAME}.bak/inner.txt",
+            # POSIX Git keeps a backslash inside one name; the domain reads a separator.
+            "archive/guarded\\zone/body.txt",
+            "archive\\guarded/zone/body.txt",
+            f"x\\{SYNTHETIC_NAME}",
         ):
             with self.subTest(path=path):
                 self.assertTrue(wc.in_protected_body_domain(path))
@@ -360,7 +371,7 @@ class ProtectedBodyDomainTests(SyntheticBodyDomain, unittest.TestCase):
                 self.assertFalse(wc.in_protected_body_domain(path))
         self.assertEqual(
             wc.protected_body_sparse_patterns(),
-            ("/*", "!**/guarded/zone", "!**/guarded/zone/**", f"!**/{SYNTHETIC_NAME}*"),
+            ("/*", "!**/guarded/zone", "!**/guarded/zone/**", f"!**/{SYNTHETIC_NAME}*", "!**/*\\\\*", "!**/*\\\\*/**"),
         )
 
     def test_exclusion_before_materialization_keeps_root_and_nested_copies_out(self) -> None:

@@ -942,6 +942,71 @@ class ProtectedRolloutPreflightTests(unittest.TestCase):
         self.assertIsNone(rollout.worktree_cleanliness.protected_body_checkout_refusal(target, require_sparse=True))
         self.assertTrue(rollout.clean(target))
 
+    def test_runtime_keeps_every_denied_name_spelling_out_before_materializing(self) -> None:
+        """POSIX Git keeps a backslash inside one name, where the domain reads a separator.
+
+        Original entry from a sparse source that passes the shared proof and ``clean``;
+        generic empty blobs staged from index metadata only, so no source body exists.
+        Ordinary slash descendant and exact-prefix entries are the excluded controls,
+        sibling names the materialized ones.
+        """
+        wc = rollout.worktree_cleanliness
+        for patcher in (
+            mock.patch.object(wc, "PROTECTED_BODY_PREFIXES", ("guarded/zone",)),
+            mock.patch.object(wc, "PROTECTED_BODY_NAMES", ("synthetic_asset.py",)),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        excluded = (
+            "archive/guarded/zone/body.txt",
+            "other/guarded/zone",
+            "archive/guarded\\zone/body.txt",
+            "archive\\guarded/zone/body.txt",
+            "dotted\\.\\guarded\\zone",
+            "named\\synthetic_asset.py.txt",
+        )
+        materialized = ("archive/guarded/zonex/body.txt", "other/guarded/sibling.txt", "keep.txt")
+        source = self.root / "spelling-source"
+        source.mkdir()
+
+        def staged(*args: str, stdin: bytes | None = None) -> str:
+            return subprocess.run(
+                ["git", *args], cwd=source, input=stdin, capture_output=True, check=True
+            ).stdout.decode().strip()
+
+        staged("init", "--quiet")
+        self.assertIsNone(wc.install_protected_body_sparse(source))
+        empty = staged("hash-object", "-w", "--stdin", stdin=b"")
+        for name in (*excluded, *materialized):
+            staged("update-index", "--add", "--cacheinfo", f"100644,{empty},{name}")
+        sha = staged(
+            "-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid",
+            "commit-tree", staged("write-tree"), stdin=b"synthetic spellings\n",
+        )
+        staged("update-ref", "HEAD", sha)
+        staged("update-index", "--skip-worktree", "--", *excluded, *materialized)
+        self.assertTrue(all(wc.in_protected_body_domain(name) for name in excluded))
+        self.assertFalse(any(wc.in_protected_body_domain(name) for name in materialized))
+        self.assertIsNone(wc.protected_body_checkout_refusal(source, require_sparse=True))
+        self.assertTrue(rollout.clean(source))
+        target = self.root / "spelling-runtime"
+
+        rollout.add_runtime_worktree(source, target, "runtime-live-spelling", sha)
+
+        flags = dict(
+            (record[2:], record[0]) for record in rollout.git(target, "ls-files", "-t", "-z").split("\0") if record
+        )
+        for name in excluded:
+            with self.subTest(path=name):
+                self.assertEqual(flags[name], "S")
+                self.assertFalse(os.path.lexists(target / name))
+        for name in materialized:
+            with self.subTest(path=name):
+                self.assertEqual(flags[name], "H")
+                self.assertTrue((target / name).is_file())
+        self.assertIsNone(wc.protected_body_checkout_refusal(target, require_sparse=True))
+        self.assertTrue(rollout.clean(target))
+
     def test_source_holding_a_body_copy_is_never_clean_and_never_status_read(self) -> None:
         self._enter_body_domain()
         self.assertTrue((self.source / self.DOMAIN_COPY).is_file())

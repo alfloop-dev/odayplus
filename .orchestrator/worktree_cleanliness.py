@@ -132,6 +132,11 @@ def _ancestors(relative_path: str) -> list[str]:
 
 PROTECTED_BODY_PREFIXES: tuple[str, ...] = ("tests/sources",)
 PROTECTED_BODY_NAMES: tuple[str, ...] = ("test_listing_production_asset.py",)
+# On POSIX Git keeps a literal backslash inside one tree-name component, while
+# the domain reads it as a separator ("archive\tests/sources/x").  No finite
+# set of slash patterns follows every such spelling, so any name holding a
+# backslash is excluded whole (``\\`` is the escaped backslash in a pattern).
+_BACKSLASH_NAME_PATTERNS: tuple[str, ...] = ("!**/*\\\\*", "!**/*\\\\*/**")
 
 
 def _domain_prefixes(prefixes: Iterable[str] | None) -> tuple[str, ...]:
@@ -141,9 +146,11 @@ def _domain_prefixes(prefixes: Iterable[str] | None) -> tuple[str, ...]:
 def protected_body_sparse_patterns(prefixes: Iterable[str] | None = None) -> tuple[str, ...]:
     """The non-cone sparse patterns that keep every domain entry out of a checkout.
 
-    They cover exactly what ``in_protected_body_domain`` denies: an entry
+    They cover every Git name ``in_protected_body_domain`` denies: an entry
     beneath a prefix and an entry named by the prefix itself (a file tracked
-    at ``.../tests/sources``), at any depth.
+    at ``.../tests/sources``), at any depth, and every name holding a
+    backslash, which the domain may read as a separator.  A slash-only Git
+    name has no empty or ``.`` component, so the domain reads it literally.
     """
     return (
         "/*",
@@ -153,6 +160,7 @@ def protected_body_sparse_patterns(prefixes: Iterable[str] | None = None) -> tup
             for pattern in (f"!**/{prefix}", f"!**/{prefix}/**")
         ),
         *(f"!**/{name}*" for name in PROTECTED_BODY_NAMES),
+        *_BACKSLASH_NAME_PATTERNS,
     )
 
 

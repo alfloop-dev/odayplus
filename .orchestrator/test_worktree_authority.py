@@ -524,6 +524,26 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         self.assertTrue(ok, status)
         self.assertEqual(worker_workspace.compute_worktree_state_identity(worktree), f"clean:{self.base}")
 
+    def test_creation_keeps_every_denied_name_spelling_out(self) -> None:
+        self._enter_body_domain(tracked=False)
+        control = "archive/vault/copiesx/keep.txt"
+        (self.repo / control).parent.mkdir(parents=True)
+        (self.repo / control).touch()
+        self._git(self.repo, "add", control)
+        base = self._domain_introducing_base()
+        worktree = (self.root / "worktrees" / "pantheon" / "dom-spell-001").resolve()
+        ok, error = supervisor._create_worker_worktree(self.repo, worktree, "task/DOM-SPELL-001", base)
+        self.assertTrue(ok, error)
+        for name in (self.DOMAIN_COPY, "archive/vault/copies", *self.DOMAIN_SPELLINGS):
+            with self.subTest(path=name):
+                self.assertTrue(worktree_cleanliness.in_protected_body_domain(name))
+                self.assertFalse(os.path.lexists(worktree / name))
+                self.assertEqual(self._git(worktree, "ls-files", "-t", "--", name).stdout.split()[0], "S")
+        self.assertTrue((worktree / control).is_file())
+        self.assertTrue((worktree / "README.md").is_file())
+        self.assertIsNone(worktree_cleanliness.protected_body_checkout_refusal(worktree, require_sparse=True))
+        self.assertEqual(worker_workspace.compute_worktree_state_identity(worktree), f"clean:{base}")
+
     def test_creation_still_refuses_a_task_protected_tree_before_any_exclusion(self) -> None:
         self._enter_body_domain()
         worktree = self.root / "wt-dom-tracked"
@@ -544,9 +564,12 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         self.assertIn("sparse_exclusion_failed", error or "")
         self.assertFalse(worktree.exists())
 
+    # POSIX Git keeps a backslash inside one name, where the domain reads a separator.
+    DOMAIN_SPELLINGS = ("archive/vault\\copies/body.txt", "archive\\vault/copies/body.txt")
+
     def _domain_introducing_base(self) -> str:
-        """Advance dev with one generic empty domain entry and its exact-prefix twin."""
-        for name in (self.DOMAIN_COPY, "archive/vault/copies"):
+        """Advance dev with generic empty domain entries: a copy, its exact-prefix twin, backslash spellings."""
+        for name in (self.DOMAIN_COPY, "archive/vault/copies", *self.DOMAIN_SPELLINGS):
             (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
             (self.repo / name).touch()
             self._git(self.repo, "add", name)
@@ -583,7 +606,7 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
                 self.assertEqual(merges, [], "refused before Git could write a file")
                 self.assertEqual(self._rev(worktree, "HEAD"), old_base)
                 self.assertEqual(self._git(worktree, "symbolic-ref", "--short", "HEAD").stdout.strip(), "task/DOM-REUSE-001")
-                for name in (self.DOMAIN_COPY, "archive/vault/copies", "archive"):
+                for name in (self.DOMAIN_COPY, "archive/vault/copies", "archive", *self.DOMAIN_SPELLINGS):
                     self.assertFalse(os.path.lexists(worktree / name), name)
 
     def test_reuse_of_an_excluded_checkout_keeps_target_domain_entries_out(self) -> None:
@@ -598,7 +621,7 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         self.assertTrue(ok, status)
         self.assertEqual(status, f"ff_to_{new_base[:12]}")
         self.assertEqual(self._rev(worktree, "HEAD"), new_base)
-        for name in (self.DOMAIN_COPY, "archive/vault/copies"):
+        for name in (self.DOMAIN_COPY, "archive/vault/copies", *self.DOMAIN_SPELLINGS):
             with self.subTest(path=name):
                 self.assertFalse(os.path.lexists(worktree / name))
                 self.assertEqual(self._git(worktree, "ls-files", "-t", "--", name).stdout.split()[0], "S")

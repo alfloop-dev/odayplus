@@ -1170,8 +1170,16 @@ PLAIN_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 GIT_PREFLIGHT_NAME = "Require sparse-capable Git before checkout"
 DENIAL_PROOF_NAME = "Prove protected path stayed out of checkout"
 # The shared protected body domain of .orchestrator/worktree_cleanliness.py:
-# the root prefix and every embedded copy of it, plus the named asset.
-DENY_PATTERNS = ["/*", "!**/tests/sources", "!**/tests/sources/**", "!**/test_listing_production_asset.py*"]
+# the root prefix and every embedded copy of it, plus the named asset, and
+# every name holding a backslash (which the domain may read as a separator).
+DENY_PATTERNS = [
+    "/*",
+    "!**/tests/sources",
+    "!**/tests/sources/**",
+    "!**/test_listing_production_asset.py*",
+    "!**/*\\\\*",
+    "!**/*\\\\*/**",
+]
 # `sparse-checkout` is what denies and `ref` is pinned per job above; every
 # other input can widen, redirect or replace the deny.
 ALLOWED_CHECKOUT_INPUTS = {"fetch-depth", "ref", "sparse-checkout", "sparse-checkout-cone-mode"}
@@ -1830,6 +1838,53 @@ def test_clean_commits_pass_the_proof_with_and_without_compared_endpoints(checko
     for compare in (None, f"{fixture.clean} {fixture.clean}"):
         proof = fixture.run_proof(compare)
         assert proof.returncode == 0, proof.stdout + proof.stderr
+
+
+def test_every_denied_spelling_of_an_embedded_copy_stays_out_of_the_checkout(
+    checkout_fixture: _CheckoutFixture,
+) -> None:
+    """Git on POSIX keeps a backslash inside one name; the domain reads it as a separator.
+
+    Generic empty blobs only, staged from index metadata; nothing denied is ever written.
+    """
+    fixture = checkout_fixture
+    # The slash copy and both backslash spellings are domain entries; a backslash
+    # name outside the domain is excluded whole as well.
+    excluded = (
+        f"archive/{fixture.PREFIX}/body.txt",
+        "archive/guarded\\zone/body.txt",
+        "archive\\guarded/zone/body.txt",
+        "lone\\name.txt",
+    )
+    allowed = ("archive/guarded/zonex/body.txt", "archive/guarded/sibling.txt")
+    env = {**os.environ, "GIT_INDEX_FILE": str(fixture.root / "spellings.index")}
+
+    def staged(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=fixture.seed, env=env, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    empty = fixture.git(fixture.seed, "hash-object", "-w", "--stdin", stdin="").stdout.strip()
+    staged("read-tree", fixture.clean)
+    for path in (*excluded, *allowed):
+        staged("update-index", "--add", "--cacheinfo", f"100644,{empty},{path}")
+    commit = fixture.git(fixture.seed, "commit-tree", staged("write-tree"), "-p", fixture.clean, "-m", "spellings")
+    fixture.git(fixture.seed, "push", "-q", str(fixture.origin), f"+{commit.stdout.strip()}:refs/heads/dev")
+
+    fixture.action_checkout(fixture.deny_patterns())
+    flags = dict(
+        (record[2:], record[0])
+        for record in fixture.git(fixture.checkout, "ls-files", "-t", "-z").stdout.split("\0")
+        if record
+    )
+    for path in excluded:
+        assert flags[path] == "S", path
+        assert not os.path.lexists(fixture.checkout / path), path
+    for path in allowed:
+        assert flags[path] == "H", path
+        assert (fixture.checkout / path).is_file(), path
+    proof = fixture.run_proof()
+    assert proof.returncode == 0, proof.stdout + proof.stderr
 
 
 @pytest.mark.parametrize("depth", [None, 1])

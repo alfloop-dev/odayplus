@@ -41,6 +41,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       # Git path, tree and index metadata only; no denied body is ever opened.
       # Sparse checkout only stops materialization: rename detection could still
@@ -180,6 +182,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       # Git path, tree and index metadata only; no denied body is ever opened.
       # Sparse checkout only stops materialization: rename detection could still
@@ -398,6 +402,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       # Git path, tree and index metadata only; no denied body is ever opened.
       # Sparse checkout only stops materialization: rename detection could still
@@ -566,6 +572,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       # Git path, tree and index metadata only; no denied body is ever opened.
       # Sparse checkout only stops materialization: rename detection could still
@@ -822,6 +830,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       # Git path, tree and index metadata only; no denied body is ever opened.
       # Sparse checkout only stops materialization: rename detection could still
@@ -943,6 +953,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       # Git path, tree and index metadata only; no denied body is ever opened.
       # Sparse checkout only stops materialization: rename detection could still
@@ -1065,6 +1077,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       # Git path, tree and index metadata only; no denied body is ever opened.
       # Sparse checkout only stops materialization: rename detection could still
@@ -1194,6 +1208,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       # Git path, tree and index metadata only; no denied body is ever opened.
       # Sparse checkout only stops materialization: rename detection could still
@@ -1312,6 +1328,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       # Git path, tree and index metadata only; no denied body is ever opened.
       # Sparse checkout only stops materialization: rename detection could still
@@ -1492,6 +1510,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       # Git path, tree and index metadata only; no denied body is ever opened.
       # Sparse checkout only stops materialization: rename detection could still
@@ -1777,6 +1797,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       # Git path, tree and index metadata only; no denied body is ever opened.
       # Sparse checkout only stops materialization: rename detection could still

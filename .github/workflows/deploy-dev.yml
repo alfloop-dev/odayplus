@@ -244,6 +244,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       - name: Assert exact release SHA is checked out
         env:
@@ -456,6 +458,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       - name: Assert exact release SHA is checked out
         run: |
@@ -955,6 +959,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       - name: Assert the dispatch event SHA is checked out
         env:
@@ -1434,6 +1440,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
       - name: Assert automatic admission checkout identity
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
@@ -1719,6 +1727,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       - name: Assert exact release SHA is checked out
         run: |
@@ -2420,6 +2430,8 @@ jobs:
             !**/tests/sources
             !**/tests/sources/**
             !**/test_listing_production_asset.py*
+            !**/*\\*
+            !**/*\\*/**
 
       - name: Assert exact release SHA is checked out
         run: |

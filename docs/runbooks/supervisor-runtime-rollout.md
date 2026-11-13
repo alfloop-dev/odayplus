@@ -193,11 +193,19 @@ non-cone sparse patterns 由 `protected_body_sparse_patterns()` 產生：
 !**/tests/sources
 !**/tests/sources/**
 !**/test_listing_production_asset.py*
+!**/*\\*
+!**/*\\*/**
 ```
 
 `!**/tests/sources` 排除「路徑本身就是 prefix」的條目（例如追蹤在 `.../tests/sources` 的一般檔案），
-`!**/tests/sources/**` 排除其下所有條目；兩者合起來恰好等於 `in_protected_body_domain` 拒絕的範圍。
-證明要求 worktree 的 patterns 與上表完全一致。先前只用三行（沒有 `!**/tests/sources`）準備的既有
+`!**/tests/sources/**` 排除其下所有條目。POSIX 上的 Git 允許名稱含字面反斜線，且把它留在同一個
+路徑元件裡；`in_protected_body_domain` 卻把反斜線當分隔符（`archive\tests/sources/x`、
+`archive/tests\sources/x` 都屬 domain），有限的 slash patterns 無法跟上所有拼法，所以最後兩行把
+任何含反斜線的名稱整個排除（pattern 中 `\\` 是跳脫後的一個反斜線）。只含 slash 的 Git 名稱沒有空的
+或 `.` 路徑元件，domain 依字面判定，前四行即涵蓋；因此 patterns 涵蓋 domain 拒絕的每一種 Git 名稱，
+在 Git 寫檔前排除，不靠事後拒絕或刪除。含反斜線但不屬 domain 的名稱也會被排除（無法在 Windows
+checkout 的名稱）。
+證明要求 worktree 的 patterns 與上表完全一致。先前用較舊 patterns（三行，或沒有反斜線兩行的四行）準備的既有
 worktree 會被 fail-closed 拒絕（`sparse patterns differ from the protected body domain`），不會自動改寫
 patterns（對已 materialize 的 worktree 重設 patterns 可能刪除檔案）；採入新版 runtime 前，由 Root 以
 `--no-checkout` 加新 patterns 重新準備這些 worktree。
