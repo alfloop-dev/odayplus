@@ -134,9 +134,10 @@ policy. The original receipt verifier rechecks the saved metadata; raw URLs,
 reasons and snapshot/parser content are not added to the receipt. The other
 five journeys and historical Intake decision remain unchanged.
 
-Backend retained-receipt fixtures are migrated; remaining original browser
-fresh/setup callers and full exact-head PostgreSQL/browser qualification are
-still pending at this intermediate checkpoint. Historical GETs (UUID and `IN-...`),
+Backend retained-receipt fixtures and the original browser add/replay/durability/
+keyboard callers are migrated. The original source-policy and legacy stepper
+callers and full exact-head PostgreSQL/browser qualification remain pending at
+this intermediate checkpoint. Historical GETs (UUID and `IN-...`),
 original Intake-version decisions, corrections, batch/schedule operations and
 existing job recovery remain supported. Native versions are never legacy
 version tokens. Offline HTTP/service controls do not execute or authorize the
@@ -159,7 +160,7 @@ Use the recorded commands/results in the candidate's evidence package. Test
 names or mocked DTO fields alone do not satisfy these observations. Intermediate
 failures, skipped tests and incomplete proof remain visible in that package.
 
-The three native password-session PostgreSQL browser cases require the Web
+The native password-session PostgreSQL browser profiles require the Web
 production build from the same checkout. The existing `product-db` preparation
 step builds it once before SQL tests; local runs use the same command:
 
@@ -178,6 +179,37 @@ remain unchanged. This avoids counting development compilation after login as
 browser navigation. The isolated synthetic records, real session and worker
 checks, and existing service-identity requirement still apply; this is not
 human UAT or production data admission.
+
+The existing `run_native_identity_browser` composition now selects
+`canonical native:` cases from **both** original assisted-intake specs. Its
+original five profiles (UNSCOPED, REGION, CASE_CONTEXT,
+CASE_CONTEXT_APPEND_DIRECT, URL_MANUAL) retain the password/BFF/SQL identity,
+metadata transport and signed worker checks. Run them through the existing
+PostgreSQL fixture, after that build:
+
+```sh
+env UV_PYTHON=3.12 uv run --frozen pytest -q \
+  tests/integration/test_native_matching_case_command_postgresql.py \
+  -k test_native_browser_password_session_and_registered_worker_read_real_persisted_result
+```
+
+These cases exercise the old Inbox button and `dialog=add` through the same
+native form, explicit observed scope and human reason, actual 201/SUBMITTED,
+current native detail/history, reload, same-key replay/conflict, independent
+new keys for the same URL, and keyboard dismissal without writes. An empty
+legacy view does not imply an empty native collection. The harness independently
+reads each new SQL graph, transition, Assignment/SLA, audit, outbox and original
+receipt. The submission-only URLs have no source-policy decision, snapshot,
+parser, match case, resolved Listing or native processing job. A new key is not
+URL-based receipt recovery; matching and source admission remain later workers'
+responsibilities. The separate URL_MANUAL profile still drives actual admitted
+manual-entry jobs and the original lost-response/exact-GET recovery.
+
+Do not count a POC composition as these native cases or silently omit the native
+selection: missing owned scenario/credentials fails the migrated URL cases.
+Retained legacy browser cases remain separately selected against their existing
+isolated PG fixture; neither selection alone qualifies both full specs or
+source-policy admission. All failures and unexecuted cases remain evidence.
 
 ## Remaining release limits
 

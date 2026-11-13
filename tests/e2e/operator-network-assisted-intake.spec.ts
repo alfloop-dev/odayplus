@@ -8,21 +8,24 @@ import {
 /**
  * Assisted Listing Intake — product E2E (ODP-OC-R5-011 / ODP-OC-R5-004).
  *
- * This suite drives the real Operator UI and FastAPI server with explicitly
- * synthetic fixture records and header-trust test identities. Assertions cover
- * persisted test effects; this is not a production login or real role UAT.
+ * Retained-history cases use the real UI/FastAPI with explicitly synthetic PG
+ * records and header-trust identities. `canonical native:` cases instead require
+ * the original owned password-session/BFF/SQL composition, selected by
+ * run_native_identity_browser from BOTH specs. Missing credentials fail them.
+ * Neither composition is real role UAT or production source/model admission.
  *
  * ============================================================================
  * TEST-TO-ACCEPTANCE MAPPING (ODP-OC-R5-004)
  * ============================================================================
  * [Acceptance Criteria]                               | [Verified By Test(s)]
  * ----------------------------------------------------------------------------
- * 1. Screen Labels: All 5 Package 7 labels exist.     | test("all five Package 7 screen labels exist...")
+ * 1. Package 10 labels and native URL entry.          | test("canonical native: Package 10 inbox...")
  * ----------------------------------------------------------------------------
  * 2. 11 Ingestion Stages: Covered without fabrication. | test("explicit assertion of all 11 stage transitions...")
  * ----------------------------------------------------------------------------
- * 3. 5 Match Outcomes: NEW, EXACT_DUPLICATE, REVISION, | test("empty state, then a clean URL...", "exact duplicate...",
- *    POSSIBLE_MATCH, and QUARANTINED verified.        | "possible match...", "unapproved source...", "revision outcome...")
+ * 3. Native submit/replay/new-key semantics.          | test("canonical native: empty legacy view...", "canonical native: a new key...")
+ *    Retained match outcomes and real decisions.     | retained possible/revision and CREATE/REVISE/DUPLICATE audit cases
+ *    Native SUBMITTED is not READY or a NEW match.   | original native identity case (other spec) retains signed execution
  * ----------------------------------------------------------------------------
  * 4. 5 Source Policies: APPROVED_RETRIEVAL,            | test("prove the correct fetch or no-fetch behavior...")
  *    ASSISTED_ENTRY_ONLY, AUTH_REQUIRED,               |
@@ -67,7 +70,8 @@ const URLS = {
   authRequired: "https://www.housefun.com.tw/detail/12345", // AUTH_REQUIRED → AWAITING_ASSISTED_ENTRY
 };
 
-// Serial: these share one backend and each test resets it.
+// Serial per original spec. Retained PG cases and native password-session
+// cases own their separate fixture databases; only remaining POC callers reset.
 test.describe.configure({ mode: "serial", timeout: 120_000 });
 
 test.beforeAll(async () => {

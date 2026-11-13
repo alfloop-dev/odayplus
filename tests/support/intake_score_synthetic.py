@@ -445,6 +445,9 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                     (ids["tenant"], fresh_id)).fetchone()
                 assert tuple(map(str, row[:3])) == (ids["reviewer"], "SUBMITTED", "1")
                 assert row[3] == body["original_url"] and all(value is None for value in row[4:])
+                scope = connection.execute("SELECT brand_id,region_id,assigned_area_id,heat_zone_id FROM intake.intakes "
+                    "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], fresh_id)).fetchone()
+                assert {key: str(value) if value is not None else None for key, value in zip(scope_keys, scope)} == credentials["fresh_scope"]
                 transitions = connection.execute("SELECT transition_id,from_state,to_state,actor_subject_id,"
                     "resulting_version FROM intake.intake_stage_transitions WHERE tenant_id=%s AND intake_id=%s",
                     (ids["tenant"], fresh_id)).fetchall()

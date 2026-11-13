@@ -255,6 +255,11 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
         expect(actual.status(), await actual.text()).toBe(200);
         return (await actual.json()).processing_state;
       }, { timeout: 60_000 }).toBe("AWAITING_ASSISTED_ENTRY");
+      // A whole reload recovers only the exact receipt, not the lost form's
+      // navigation callback. Dismiss the restored add route with its existing
+      // control before selecting the committed Intake behind that modal.
+      await page.getByTestId("intake-add-dialog").getByRole("button", { name: "取消", exact: true }).click();
+      await expect(page.getByTestId("intake-add-dialog")).toHaveCount(0);
       await page.getByRole("button", { name: new RegExp(newIntakeId) }).click();
       await page.getByTestId("assisted-address").fill(input.url_manual.fields.address);
       await page.getByTestId("assisted-rent").fill(String(input.url_manual.fields.rent));
