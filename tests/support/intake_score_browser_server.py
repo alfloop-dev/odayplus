@@ -12,7 +12,6 @@ import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
-from typing import Literal
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -33,6 +32,7 @@ from tests.support.intake_score_synthetic import (
     SCOPE,
     TENANT,
     BrowserModelRuntime,
+    RetainedBrowserHistory,
     prepare_database,
     ready_scenario,
 )
@@ -42,7 +42,7 @@ class RetainedHistoryScenario(BaseModel):
     # Closed fixture selection on the existing isolated control, not a product
     # reset/seed API or a caller-supplied Intake/import payload.
     model_config = ConfigDict(extra="forbid")
-    retained_history: Literal["assisted-entry-only"]
+    retained_history: RetainedBrowserHistory
 
 
 class Drain(BaseModel):

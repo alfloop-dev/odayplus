@@ -44,7 +44,7 @@ import {
  * ============================================================================
  */
 
-import { openPgScenario } from "./_intakeScorePg";
+import { openPgScenario, PG_API, type PgScenario } from "./_intakeScorePg";
 
 import {
   acquireOperatorBackendLock,
@@ -79,9 +79,9 @@ test.afterAll(() => {
 });
 
 test.beforeEach(async ({}, info) => {
-  // Retained manual-entry history belongs to the separate physical PG
-  // composition. Do not reset an unrelated legacy backend for this journey.
-  if (info.title === "retained assisted-entry-only source keeps the URL and never fetches the page") return;
+  // Retained history belongs to the separate physical PG composition. Do
+  // not reset an unrelated legacy backend for these original UI journeys.
+  if (info.title.startsWith("retained ")) return;
   const api = await playwrightRequest.newContext({
     baseURL: API_BASE_URL,
     extraHTTPHeaders: {
@@ -134,16 +134,16 @@ async function submitUrl(page: Page, url: string) {
 }
 
 /** Helper to query direct API details of an intake record */
-async function getIntakeApi(id: string) {
+async function getIntakeApi(id: string, scenario?: PgScenario) {
   const api = await playwrightRequest.newContext({
-    baseURL: API_BASE_URL,
+    baseURL: scenario ? PG_API : API_BASE_URL,
     extraHTTPHeaders: {
-      "x-subject-id": "operator-expansion-manager",
+      "x-subject-id": scenario?.proposer_id ?? "operator-expansion-manager",
       // The same verified fixture subject owns the record. Platform roles,
       // rather than client display/persona labels, determine the audit role.
       "x-roles": "expansion_user,site_reviewer",
       "x-operator-role": "expansion-manager",
-      "x-tenant-id": "tenant-a",
+      "x-tenant-id": scenario?.tenant_id ?? "tenant-a",
     },
   });
   const res = await api.get(`/api/v1/operator/network-listings/intake/${id}`);
@@ -246,11 +246,12 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     );
   });
 
-  test("possible match requires a human decision and refuses an empty reason", async ({
+  test("retained possible match requires a human decision and refuses an empty reason", async ({
     page,
   }) => {
-    await openRadarAsExpansionManager(page);
-    await submitUrl(page, URLS.possible);
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    try {
+    expect(scenario.listing_id).toBeTruthy();
 
     await expect(page.getByTestId("intake-detail-stage")).toHaveText(
       "待人工覆核",
@@ -302,16 +303,20 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(
       page.getByTestId("intake-timeline-audit-section"),
     ).toContainText("實地確認樓層");
+    await page.reload();
+    await expect(page.getByTestId("intake-detail-stage")).toHaveText("可決策");
+    expect(await getIntakeApi(scenario.intake_id, scenario)).toMatchObject({
+      id: scenario.intake_id, stage: "READY", version: 2, matchResult: { outcome: "NEW" },
+    });
+    } finally { await api.dispose(); }
   });
 
-  test("identity-field correction demands a reason, then records before/after", async ({
+  test("retained identity-field correction demands a reason, then records before/after", async ({
     page,
   }) => {
-    await openRadarAsExpansionManager(page);
-    await submitUrl(page, URLS.possible);
-    const id5 = (
-      await page.getByTestId("intake-detail-id").textContent()
-    )?.trim()!;
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    try {
+    const id5 = scenario.intake_id;
 
     await page.getByTestId("fix-field-address").click();
     await expect(page.getByTestId("intake-fix-title")).toContainText(
@@ -355,8 +360,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       page.getByTestId("intake-timeline-audit-section"),
     ).toContainText("門牌");
 
-    const updatedData = await getIntakeApi(id5);
-    expect(updatedData.originalUrl).toBe(URLS.possible);
+    const updatedData = await getIntakeApi(id5, scenario);
+    expect(updatedData.originalUrl).toBe(scenario.original_url);
     expect(updatedData.canonicalUrl).toBeTruthy();
 
     const addressField = updatedData.parsedFields.address;
@@ -377,9 +382,10 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(addressChange).toBeDefined();
     expect(addressChange.before).toBeTruthy();
     expect(addressChange.after).toBe("新北市板橋區府中路 26 號 1F");
+    } finally { await api.dispose(); }
   });
 
-  test("correct and decide writes carry retry-stable idempotency keys", async ({
+  test("retained correct and decide writes carry retry-stable idempotency keys", async ({
     page,
   }) => {
     const correctKeys: string[] = [];
@@ -416,9 +422,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       await route.continue();
     });
 
-    await openRadarAsExpansionManager(page);
-    await submitUrl(page, URLS.possible);
-
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    try {
     await page.getByTestId("fix-field-address").click();
     await page
       .getByTestId("intake-fix-value")
@@ -461,6 +466,11 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(decideKeys[0]).toBe(decideKeys[1]);
     expect(decideKeys[0]).not.toBe("<none>");
     expect(decideKeys[0]).toContain("intake-decide-create-");
+    const saved = await getIntakeApi(scenario.intake_id, scenario);
+    expect(saved).toMatchObject({ stage: "READY", version: 3 });
+    expect(saved.auditEvents.filter((event: any) => event.action === "intake.correct")).toHaveLength(1);
+    expect(saved.auditEvents.filter((event: any) => event.action === "intake.decide.create")).toHaveLength(1);
+    } finally { await api.dispose(); }
   });
 
   test("retained assisted-entry-only source keeps the URL and never fetches the page", async ({
@@ -550,11 +560,11 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("decide-action-create")).toHaveCount(0);
   });
 
-  test("retryable failure shows code, correlation and next action, and retry preserves input", async ({
+  test("retained retryable failure shows code, correlation and next action, and retry preserves input", async ({
     page,
   }) => {
-    await openRadarAsExpansionManager(page);
-    await submitUrl(page, URLS.timeout);
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "retrieval-timeout" });
+    try {
 
     await expect(page.getByTestId("intake-detail-stage")).toHaveText(
       "處理失敗",
@@ -571,6 +581,13 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     );
 
     await expect(page.getByTestId("error-action-retry")).toBeVisible();
+    await page.getByTestId("error-toggle-preserved-input").click();
+    await expect(page.getByTestId("error-preserved-input-json")).toContainText(scenario.original_url);
+    await page.reload();
+    await expect(page.getByTestId("error-code")).toHaveText("[ODP-INTAKE-RETRIEVAL-TIMEOUT]");
+    expect(await getIntakeApi(scenario.intake_id, scenario)).toMatchObject({ stage: "FAILED", version: 1,
+      originalUrl: scenario.original_url, rawSnapshot: null, parserVersion: null });
+    } finally { await api.dispose(); }
   });
 
   test("revision outcome offers append-version against the matched listing", async ({
@@ -671,16 +688,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-add-dialog")).toBeHidden();
   });
 
-  test("mobile routes ambiguous side-by-side compare to a desktop-required state", async ({
+  test("retained mobile routes ambiguous side-by-side compare to a desktop-required state", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await openRadarAsExpansionManager(page);
-    await submitUrl(page, URLS.possible);
-
-    await expect(page.getByTestId("intake-desktop-required")).toBeVisible();
-    // Submission and status tracking remain available on mobile.
-    await expect(page.getByTestId("intake-detail-stage")).toBeVisible();
+    const { api } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    try {
+      await expect(page.getByTestId("intake-desktop-required")).toBeVisible();
+      await expect(page.getByTestId("intake-detail-stage")).toBeVisible();
+    } finally { await api.dispose(); }
   });
 
   // ==========================================================================

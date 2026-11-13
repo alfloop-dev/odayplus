@@ -12,7 +12,8 @@ export type PgScenario = {
 };
 
 export async function openPgScenario(page: Page, options: {
-  entry?: "intake" | "radar"; retainedHistory?: "assisted-entry-only";
+  entry?: "intake" | "radar";
+  retainedHistory?: "assisted-entry-only" | "possible-match" | "retrieval-timeout";
 } = {}) {
   const api = await playwrightRequest.newContext({ baseURL: PG_API, extraHTTPHeaders: { "x-synthetic-control": PG_CONTROL } });
   const response = await api.post("/_synthetic/scenarios", options.retainedHistory
@@ -48,7 +49,9 @@ export async function openPgScenario(page: Page, options: {
     await page.goto(`${PG_WEB}/intake/${scenario.intake_id}?ws=network&tab=radar`);
   }
   await expect(page.getByTestId("intake-detail-id")).toHaveText(scenario.intake_id, { timeout: 30_000 });
-  await expect(page.getByTestId("intake-detail-stage")).toHaveText(options.retainedHistory ? "待人工補錄" : "可決策");
+  const retainedStage = { "assisted-entry-only": "待人工補錄", "possible-match": "待人工覆核", "retrieval-timeout": "處理失敗" };
+  await expect(page.getByTestId("intake-detail-stage")).toHaveText(options.retainedHistory
+    ? retainedStage[options.retainedHistory] : "可決策");
   return { api, scenario };
 }
 

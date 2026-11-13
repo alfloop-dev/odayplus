@@ -28,7 +28,7 @@ import {
  */
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
-const PG_CASE = /^canonical (2:|4:|5 and 6:|native:)/;
+const PG_CASE = /^(canonical (2:|3:|4:|5 and 6:|native:)|retained )/;
 // Explicit isolated fixture input; never a production default or catalog entry.
 const SYNTHETIC_TARGET_FORMAT = "synthetic-manual-format:Browser/v1";
 
@@ -719,11 +719,12 @@ test("canonical 2: retained assisted-entry-only keeps URL and validates durable 
   } finally { await api.dispose(); }
 });
 
-test("canonical 3: possible match requires explicit reason and risk acknowledgement", async ({
+test("canonical 3: retained possible match requires explicit reason and risk acknowledgement", async ({
   page,
 }) => {
-  await openRadar(page);
-  await submitUrl(page, URLS.possible);
+  const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+  try {
+  expect(scenario.listing_id).toBeTruthy();
 
   await expect(page.getByTestId("intake-detail-stage")).toHaveText(
     "待人工覆核",
@@ -752,6 +753,13 @@ test("canonical 3: possible match requires explicit reason and risk acknowledgem
   await expect(page.getByTestId("intake-timeline-audit-section")).toContainText(
     "現場確認樓層",
   );
+  await page.reload();
+  await expect(page.getByTestId("intake-detail-stage")).toHaveText("可決策");
+  const read = await page.request.get(`/api/v1/operator/network-listings/intake/${scenario.intake_id}`);
+  expect(read.status(), await read.text()).toBe(200);
+  expect(await read.json()).toMatchObject({ id: scenario.intake_id, version: 2, stage: "READY",
+    matchResult: { outcome: "NEW" } });
+  } finally { await api.dispose(); }
 });
 
 
@@ -1016,11 +1024,11 @@ test("source policy fails closed for blocked and unknown sources", async ({
   }
 });
 
-test("retryable retrieval failure exposes code, correlation, recovery and preserved durable state", async ({
+test("retained retryable retrieval failure exposes code, correlation, recovery and preserved durable state", async ({
   page,
 }) => {
-  await openRadar(page);
-  await submitUrl(page, URLS.timeout);
+  const { api, scenario } = await openPgScenario(page, { retainedHistory: "retrieval-timeout" });
+  try {
   await expect(page.getByTestId("intake-detail-stage")).toHaveText("處理失敗");
   // Canonical Package 10 recovery surface (IntakeErrorRecovery).
   const failure = page.getByTestId("intake-error-recovery");
@@ -1033,6 +1041,12 @@ test("retryable retrieval failure exposes code, correlation, recovery and preser
     "UNAVAILABLE",
   );
   await expect(page.getByTestId("error-action-retry")).toBeVisible();
+  await page.getByTestId("error-toggle-preserved-input").click();
+  await expect(page.getByTestId("error-preserved-input-json")).toContainText(scenario.original_url);
+  await page.reload();
+  await expect(page.getByTestId("error-code")).toHaveText("[ODP-INTAKE-RETRIEVAL-TIMEOUT]");
+  await expect(page.getByTestId("error-correlation-id")).not.toHaveText("UNAVAILABLE");
+  } finally { await api.dispose(); }
 });
 
 test("governance reviewer gets masked read-only intake while unrelated roles fail closed", async ({
