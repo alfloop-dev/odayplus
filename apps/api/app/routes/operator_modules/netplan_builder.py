@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from apps.api.app.routes.netplan import _parse_time as parse_native_execution_time
 from models.shared_ml import ProductionExecutionConfigurationError
 from modules.netplan.application import NetPlanApprovalError
 from modules.opsboard.application.netplan_builder import (
@@ -19,6 +21,7 @@ from shared.infrastructure.persistence.feature_flags import (
     FeatureFlagOperationDisabled,
     FeatureFlagStoreUnavailable,
 )
+from shared.infrastructure.persistence.netplan_outcomes import HORIZON_DAYS
 
 
 class NetPlanBuilderCommand(BaseModel):
@@ -45,7 +48,29 @@ class NetPlanBuilderCommand(BaseModel):
             validate_recorded_outcome(value.get("outcome"))
         if "nativeDecision" in cls.model_fields:
             validate_native_decision(value.get("nativeDecision"))
+        if "executedAt" in value:
+            value = {**value, "executedAt": parse_actual_execution_time(value["executedAt"])}
         return value
+
+
+def parse_actual_execution_time(value: Any) -> datetime:
+    """Parse once with the native execute route's ISO/Z/naive-as-UTC rule.
+
+    An explicit key must carry a real instant; null or blank never silently
+    becomes the registration time. The registry's own horizons must remain
+    representable so a malformed far date is refused before any write.
+    """
+    if type(value) is not str or not value.strip():
+        raise HTTPException(422, "NETPLAN_BUILDER_COMMAND_INVALID")
+    try:
+        parsed = parse_native_execution_time(value.strip())
+        if parsed is None or parsed.utcoffset() is None:
+            raise ValueError("actual execution time must be an aware instant")
+        parsed + timedelta(days=max(HORIZON_DAYS))
+        parsed.astimezone(UTC)
+    except (ValueError, OverflowError) as exc:
+        raise HTTPException(422, "NETPLAN_BUILDER_COMMAND_INVALID") from exc
+    return parsed
 
 
 class NetPlanRecordedOutcomeCommand(NetPlanBuilderCommand):
@@ -58,6 +83,11 @@ class NetPlanBuilderSaveCommand(NetPlanBuilderCommand):
 
 class NetPlanBuilderDecisionCommand(NetPlanBuilderCommand):
     nativeDecision: dict[str, Any]
+
+
+class NetPlanBuilderExecuteCommand(NetPlanBuilderCommand):
+    # Optional for existing callers: omitted keeps native registration time.
+    executedAt: datetime | None = None
 
 
 def create_netplan_builder_router(*, factory, require_view, require_edit, require_solve, require_decide=None):
@@ -90,6 +120,8 @@ def create_netplan_builder_router(*, factory, require_view, require_edit, requir
                 expected_problem_hash=body.expectedProblemHash, reason=body.reason,
                 constraints=getattr(body, "constraints", None), idempotency_key=idempotency_key,
                 outcome=getattr(body, "outcome", None),
+                **({"executed_at": body.executedAt} if isinstance(body, NetPlanBuilderExecuteCommand)
+                   and body.executedAt is not None else {}),
                 **({"decision": body.nativeDecision} if isinstance(body, NetPlanBuilderDecisionCommand) else {}),
             )
         except HTTPException:
@@ -116,7 +148,7 @@ def create_netplan_builder_router(*, factory, require_view, require_edit, requir
         return command("solve", store_id, body, request, idempotency_key)
 
     @router.post("/stores/{store_id}/netplan/builder/execute", dependencies=[Depends(require_solve)])
-    def execute_plan(store_id: str, body: NetPlanBuilderCommand, request: Request,
+    def execute_plan(store_id: str, body: NetPlanBuilderExecuteCommand, request: Request,
                      idempotency_key: str | None = Header(None, alias="Idempotency-Key")):
         return command("execute", store_id, body, request, idempotency_key)
 

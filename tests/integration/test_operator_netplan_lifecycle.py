@@ -61,7 +61,8 @@ def test_manual_zero_outcome_close_and_original_receipt_replay_use_trusted_actor
         assert case.repository.get_scenario(case.scenario_id).status_history[-1].actor == "planner"
 
 
-@pytest.mark.parametrize("extra", [{"actor": "forged"}, {"executed_by": "forged"}, {"observed_at": "2000-01-01"}])
+@pytest.mark.parametrize("extra", [{"actor": "forged"}, {"executed_by": "forged"}, {"observed_at": "2000-01-01"},
+                                   {"executedAt": "2026-10-01T00:00:00Z"}])
 def test_lifecycle_never_accepts_a_body_actor_or_observation_clock(tmp_path, extra):
     with _case(tmp_path / "actor.sqlite3") as case:
         current = executed_fixture(case)

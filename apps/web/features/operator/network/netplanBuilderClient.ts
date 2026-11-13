@@ -47,7 +47,7 @@ export type BuilderResult = { ok: true; builder: CanonicalBuilder; auditEventId?
   | { ok: false; superseded: true } | { ok: false; message: string };
 export type NetPlanBuilderApi = {
   decide?: (storeId: string, builder: CanonicalBuilder, reason: string, key: string, decision: NativeDecision) => Promise<BuilderResult>;
-  lifecycle?: (storeId: string, operation: LifecycleOperation, builder: CanonicalBuilder, reason: string, key: string, outcome?: RecordedOutcome) => Promise<BuilderResult>;
+  lifecycle?: (storeId: string, operation: LifecycleOperation, builder: CanonicalBuilder, reason: string, key: string, outcome?: RecordedOutcome, executedAt?: string) => Promise<BuilderResult>;
   read: (storeId: string) => Promise<BuilderResult>;
   command: (storeId: string, operation: "save" | "solve", builder: CanonicalBuilder,
     reason: string, key: string, constraints?: BuilderConstraints) => Promise<BuilderResult>;
@@ -167,7 +167,8 @@ export function createNetPlanBuilderApi(headers: Record<string, string>,
   captureGuard: () => (() => Promise<boolean>) | undefined,
   onChanged: () => Promise<void>): NetPlanBuilderApi {
   async function request(storeId: string, operation?: "save" | "solve" | "decide" | LifecycleOperation, builder?: CanonicalBuilder,
-    reason?: string, key?: string, constraints?: BuilderConstraints, outcome?: RecordedOutcome, nativeDecision?: NativeDecision): Promise<BuilderResult> {
+    reason?: string, key?: string, constraints?: BuilderConstraints, outcome?: RecordedOutcome, nativeDecision?: NativeDecision,
+    executedAt?: string): Promise<BuilderResult> {
     const guard = captureGuard();
     if (!guard) return { ok: false, message: "尚無已驗證的工作階段；請重新載入。" };
     const current = async () => { try { return await guard(); } catch { return false; } };
@@ -180,7 +181,8 @@ export function createNetPlanBuilderApi(headers: Record<string, string>,
         cache: "no-store", headers: { ...headers, "Content-Type": "application/json", "X-Correlation-Id": cid,
           ...(key ? { "Idempotency-Key": key } : {}) },
         ...(operation ? { body: JSON.stringify({ scenarioId: builder!.scenarioId,
-          expectedProblemHash: builder!.problemHash, reason, ...(operation === "save" ? { constraints } : operation === "outcome" ? { outcome } : operation === "decide" ? { nativeDecision } : {}) }) } : {}),
+          expectedProblemHash: builder!.problemHash, reason, ...(operation === "save" ? { constraints } : operation === "outcome" ? { outcome } : operation === "decide" ? { nativeDecision }
+            : operation === "execute" && executedAt ? { executedAt } : {}) }) } : {}),
       });
       if (!await current()) return superseded();
       const data: unknown = await response.json();
@@ -209,7 +211,7 @@ export function createNetPlanBuilderApi(headers: Record<string, string>,
     }
   }
   return { decide: (id, builder, reason, key, decision) => request(id, "decide", builder, reason, key, undefined, undefined, decision),
-    lifecycle: (id, operation, builder, reason, key, outcome) => request(id, operation, builder, reason, key, undefined, outcome),
+    lifecycle: (id, operation, builder, reason, key, outcome, executedAt) => request(id, operation, builder, reason, key, undefined, outcome, undefined, executedAt),
     read: id => request(id), command: (id, operation, builder, reason, key, constraints) =>
     request(id, operation, builder, reason, key, constraints) };
 }
