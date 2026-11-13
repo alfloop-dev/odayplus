@@ -340,7 +340,9 @@ def _replay_retained_url(client, *, headers, **request):
     assert set(request) == {"json"}
     body = UrlIntakeRequest.model_validate(request["json"])
     actor, tenant, key = headers["x-subject-id"], headers["x-tenant-id"], headers["Idempotency-Key"]
-    store = client.app.state.assisted_intake_store
+    # In this memory composition the router creates its local store; the
+    # persistence bundle's optional SQL-store slot is deliberately None.
+    store = AssistedIntakeStore._instances[-1]
     iid, jid, cid = (str(uuid4()) for _ in range(3))
     at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     intake = {
