@@ -21,7 +21,8 @@ import {
  * ----------------------------------------------------------------------------
  * 1. Package 10 labels and native URL entry.          | test("canonical native: Package 10 inbox...")
  * ----------------------------------------------------------------------------
- * 2. 11 Ingestion Stages: Covered without fabrication. | test("explicit assertion of all 11 stage transitions...")
+ * 2. 11 legacy stage labels, order and state display. | test("retained explicit assertion of all 11 stage labels...")
+ *    Historical presentation is not native transitions. | native cases bind actual SQL history separately
  * ----------------------------------------------------------------------------
  * 3. Native submit/replay/new-key semantics.          | test("canonical native: empty legacy view...", "canonical native: a new key...")
  *    Retained match outcomes and real decisions.     | retained possible/revision and CREATE/REVISE/DUPLICATE audit cases
@@ -889,113 +890,61 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(unknownData.stage).toBe("QUARANTINED");
   });
 
-  test("explicit assertion of all 11 stage transitions in the UI stepper", async ({
-    page,
-  }) => {
-    await openRadarAsExpansionManager(page);
-
-    // 1-7: SUBMITTED, CHECKING_IDENTITY, CHECKING_SOURCE_POLICY, RETRIEVING, PARSING, MATCHING, READY
-    await submitUrl(page, URLS.clean);
-    const stepCodesClean = await page
-      .locator(
-        '[data-testid="timeline-stepper"] [data-testid^="timeline-step-"]',
-      )
-      .evaluateAll((steps) =>
-        steps.map((step) =>
-          step.getAttribute("data-testid")!.replace("timeline-step-", ""),
-        ),
-      );
-    expect(stepCodesClean).toEqual([
-      "SUBMITTED",
-      "CHECKING_IDENTITY",
-      "CHECKING_SOURCE_POLICY",
-      "RETRIEVING",
-      "PARSING",
-      "MATCHING",
-      "READY",
-    ]);
-    await page.getByTestId("intake-return-button").click();
-
-    // 8: NEEDS_REVIEW
-    await submitUrl(page, URLS.possible);
-    const stepCodesPossible = await page
-      .locator(
-        '[data-testid="timeline-stepper"] [data-testid^="timeline-step-"]',
-      )
-      .evaluateAll((steps) =>
-        steps.map((step) =>
-          step.getAttribute("data-testid")!.replace("timeline-step-", ""),
-        ),
-      );
-    expect(stepCodesPossible).toEqual([
-      "SUBMITTED",
-      "CHECKING_IDENTITY",
-      "CHECKING_SOURCE_POLICY",
-      "RETRIEVING",
-      "PARSING",
-      "MATCHING",
-      "NEEDS_REVIEW",
-    ]);
-    await page.getByTestId("intake-return-button").click();
-
-    // 9: FAILED
-    await submitUrl(page, URLS.timeout);
-    const stepCodesTimeout = await page
-      .locator(
-        '[data-testid="timeline-stepper"] [data-testid^="timeline-step-"]',
-      )
-      .evaluateAll((steps) =>
-        steps.map((step) =>
-          step.getAttribute("data-testid")!.replace("timeline-step-", ""),
-        ),
-      );
-    expect(stepCodesTimeout).toEqual([
-      "SUBMITTED",
-      "CHECKING_IDENTITY",
-      "CHECKING_SOURCE_POLICY",
-      "RETRIEVING",
-      "PARSING",
-      "MATCHING",
-      "FAILED",
-    ]);
-    await page.getByTestId("intake-return-button").click();
-
-    // 10: AWAITING_ASSISTED_ENTRY
-    await submitUrl(page, URLS.assistedOnly);
-    const stepCodesAssisted = await page
-      .locator(
-        '[data-testid="timeline-stepper"] [data-testid^="timeline-step-"]',
-      )
-      .evaluateAll((steps) =>
-        steps.map((step) =>
-          step.getAttribute("data-testid")!.replace("timeline-step-", ""),
-        ),
-      );
-    expect(stepCodesAssisted).toEqual([
-      "SUBMITTED",
-      "CHECKING_IDENTITY",
-      "CHECKING_SOURCE_POLICY",
-      "AWAITING_ASSISTED_ENTRY",
-    ]);
-    await page.getByTestId("intake-return-button").click();
-
-    // 11: QUARANTINED
-    await submitUrl(page, URLS.unknown);
-    const stepCodesUnknown = await page
-      .locator(
-        '[data-testid="timeline-stepper"] [data-testid^="timeline-step-"]',
-      )
-      .evaluateAll((steps) =>
-        steps.map((step) =>
-          step.getAttribute("data-testid")!.replace("timeline-step-", ""),
-        ),
-      );
-    expect(stepCodesUnknown).toEqual([
-      "SUBMITTED",
-      "CHECKING_IDENTITY",
-      "CHECKING_SOURCE_POLICY",
-      "QUARANTINED",
-    ]);
+  test("retained explicit assertion of all 11 stage labels, order and state in the UI stepper", async ({ page }) => {
+    // These are the original five legacy paths, not eleven claimed native
+    // transitions. The existing stepper derives labels from retained state
+    // and recorded policy; only the native timeline displays actual SQL rows.
+    const head = ["SUBMITTED", "CHECKING_IDENTITY", "CHECKING_SOURCE_POLICY"];
+    const parsed = [...head, "RETRIEVING", "PARSING", "MATCHING"];
+    const paths = [
+      { history: "revision", stage: "READY", policy: "APPROVED_RETRIEVAL", steps: [...parsed, "READY"], state: "done" },
+      { history: "possible-match", stage: "NEEDS_REVIEW", policy: "APPROVED_RETRIEVAL", steps: [...parsed, "NEEDS_REVIEW"], state: "done" },
+      { history: "retrieval-timeout", stage: "FAILED", policy: "APPROVED_RETRIEVAL", steps: [...parsed, "FAILED"], state: "failed" },
+      { history: "assisted-entry-only", stage: "AWAITING_ASSISTED_ENTRY", policy: "ASSISTED_ENTRY_ONLY",
+        steps: [...head, "AWAITING_ASSISTED_ENTRY"], state: "current" },
+      { history: "policy-unknown", stage: "QUARANTINED", policy: "POLICY_UNKNOWN", steps: [...head, "QUARANTINED"], state: "failed" },
+    ] as const;
+    expect(new Set(paths.flatMap((path) => [...path.steps])).size).toBe(11);
+    const writes: string[] = [];
+    const observe = (request: import("@playwright/test").Request) => {
+      if (request.method() !== "GET" && new URL(request.url()).pathname.startsWith("/api/v1/"))
+        writes.push(new URL(request.url()).pathname);
+    };
+    page.on("request", observe);
+    try {
+      for (const path of paths) {
+        const { api, scenario } = await openPgScenario(page, { retainedHistory: path.history });
+        try {
+          const before = await getIntakeApi(scenario.intake_id, scenario);
+          expect(before).toMatchObject({ id: scenario.intake_id, stage: path.stage, policy: path.policy, version: 1,
+            originalUrl: scenario.original_url, rawSnapshot: null, snapshotId: null, capturedAt: null,
+            parserVersion: null, lastObservedAt: null, auditEvents: [] });
+          expect(before.assignmentId).toBeTruthy();
+          expect(before.slaInstanceId).toBeTruthy();
+          for (const reload of [false, true]) {
+            if (reload) expect(await reloadPgIntake(page, scenario)).toEqual(before);
+            const stepper = page.getByTestId("timeline-stepper");
+            await expect(stepper).toBeVisible();
+            await expect(stepper).toHaveAttribute("role", "region");
+            await expect(stepper).toHaveAttribute("aria-label", "收件處理階段");
+            await expect(stepper).toHaveAttribute("tabindex", "0");
+            const steps = stepper.locator('[data-testid^="timeline-step-"]');
+            expect(await steps.evaluateAll((nodes) => nodes.map((node) =>
+              node.getAttribute("data-testid")!.replace("timeline-step-", "")))).toEqual(path.steps);
+            for (const code of path.steps.slice(0, -1))
+              await expect(page.getByTestId(`timeline-step-${code}`)).toHaveAttribute("data-state", "done");
+            const current = page.getByTestId(`timeline-step-${path.stage}`);
+            await expect(current).toHaveAttribute("data-state", path.state);
+            // The non-colour glyph preserves the original accessible state
+            // distinction; quarantine/failure must not look like success.
+            await expect(current).toContainText(path.state === "failed" ? "✕" : String(path.steps.length));
+            await expect(page.getByTestId("native-intake-stage-timeline")).toHaveCount(0);
+          }
+          expect(await getIntakeApi(scenario.intake_id, scenario)).toEqual(before);
+        } finally { await api.dispose(); }
+      }
+      expect(writes).toEqual([]);
+    } finally { page.off("request", observe); }
   });
 
   test("retained decisions and corrections survive page reload and a fresh browser context", async ({

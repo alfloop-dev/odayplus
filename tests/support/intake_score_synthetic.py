@@ -694,6 +694,15 @@ def ready_scenario(database_url, bundle, client, *,
     submitted_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     url = "https://rent.591.com.tw/browser-" + scenario_id
     history = {}
+    if retained_history in {"possible-match", "revision", "retrieval-timeout"}:
+        from modules.external_data.application.assisted_intake import SOURCE_REGISTRY
+
+        # Preserve these original synthetic records' recorded retrieval policy
+        # for the legacy stepper. This is historical presentation only: no
+        # current source registry, grant, captured evidence or job is created.
+        policy = next(source for source in SOURCE_REGISTRY if source.domain == "synthetic.example")
+        url = "https://" + policy.canonical_host + "/retained-" + scenario_id
+        history.update(policy=policy.policy, policyLabel="已核准擷取", policyReason=policy.policy_reason)
     listing_id = None
     target_seed = None
     if retained_history in {"possible-match", "revision"}:
@@ -721,7 +730,7 @@ def ready_scenario(database_url, bundle, client, *,
         target_seed = (listing, address, ListingDedupKey(
             source_id=source_id, source_listing_id=listing.source_listing_id,
             normalized_address=address.normalized_address, rent_amount=listing.rent_amount, area_ping=listing.area_ping))
-        history = {
+        history.update({
             "stage": "READY" if revision else "NEEDS_REVIEW",
             "parsedFields": parsed,
             "matchResult": MatchResult("REVISION" if revision else "POSSIBLE_MATCH", 0.95 if revision else 0.55, listing_id, (
@@ -729,7 +738,7 @@ def ready_scenario(database_url, bundle, client, *,
                 MatchSignal("rent", "租金", False, "Retained commercial revision compared with actual target") if revision else
                 MatchSignal("floor", "樓層", False, "Retained 2F submission compared with actual 1F target"),
             ), "Explicit retained synthetic match history; no retrieval or parser run is attested.").to_dict(),
-        }
+        })
     elif retained_history == "auth-required":
         from modules.external_data.application.assisted_intake import SOURCE_REGISTRY
 
@@ -759,7 +768,7 @@ def ready_scenario(database_url, bundle, client, *,
 
         failure = RETRIEVAL_CORPUS["https://www.synthetic.example/detail-50000001.html"].failure
         assert failure is not None
-        history = {"stage": "FAILED", "failure": failure.to_dict()}
+        history.update(stage="FAILED", failure=failure.to_dict())
     with repository.transaction():
         if target_seed:
             bundle.listing_repository_for_tenant(TENANT).save_listing(*target_seed)

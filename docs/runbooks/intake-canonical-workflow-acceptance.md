@@ -135,9 +135,15 @@ reasons and snapshot/parser content are not added to the receipt. The other
 five journeys and historical Intake decision remain unchanged.
 
 Backend retained-receipt fixtures and the original browser add/replay/durability/
-keyboard callers are migrated. The network spec's five-policy and legacy stepper
-callers and full exact-head PostgreSQL/browser qualification remain pending at
-this intermediate checkpoint. Historical GETs (UUID and `IN-...`),
+keyboard callers are migrated. The original network stepper case now preserves
+all five ordered paths and eleven legacy labels through the existing retained
+PG histories, with reload, accessible state/glyph and no-write checks. Their
+recorded policy is presentation history, not current source approval or proof
+of retrieval. No capture, parser run, native READY or transition history is
+manufactured for these records. The native timeline separately shows actual SQL
+transitions; the derived legacy stepper cannot attest those transitions.
+The network spec's five-policy fresh caller and full exact-head PostgreSQL/
+browser qualification remain pending at this intermediate checkpoint. Historical GETs (UUID and `IN-...`),
 original Intake-version decisions, corrections, batch/schedule operations and
 existing job recovery remain supported. Native versions are never legacy
 version tokens. Offline HTTP/service controls do not execute or authorize the

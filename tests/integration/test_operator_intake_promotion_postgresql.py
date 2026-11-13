@@ -239,7 +239,12 @@ def test_browser_retained_review_and_failure_keep_real_guards(intake_blank_db, m
         assert observed.status_code == 200, observed.text
         initial = observed.json()
         assert initial["version"] == 1 and initial["auditEvents"] == []
+        # These retained original synthetic retrieval histories preserve their
+        # recorded policy for legacy presentation. They confer no current
+        # source approval and contain no manufactured capture/parser evidence.
+        assert initial["policy"] == "APPROVED_RETRIEVAL"
         assert initial["originalUrl"] == case["original_url"]
+        assert initial["originalUrl"].startswith("https://www.synthetic.example/retained-")
         assert initial["assignmentId"] and initial["slaInstanceId"]
         for field in ("rawSnapshot", "snapshotId", "capturedAt", "parserVersion", "lastObservedAt"):
             assert initial[field] is None
