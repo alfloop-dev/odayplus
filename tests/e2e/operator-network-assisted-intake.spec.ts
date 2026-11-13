@@ -1188,7 +1188,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       await pgPage.setExtraHTTPHeaders({ "x-subject-id": scenario.reviewer_id, "x-tenant-id": scenario.tenant_id,
         "x-roles": "expansion_user,site_reviewer", "x-operator-role": "expansion-manager" });
       await pgPage.evaluate((actor) => sessionStorage.setItem("oday.operator.subject", actor), scenario.reviewer_id);
-      await pgPage.reload();
+      const [restoredPromotion] = await Promise.all([
+        pgPage.waitForResponse((response) => response.request().method() === "GET"
+          && new URL(response.url()).pathname === `/api/v1/intakes/${scenario.intake_id}/promotion-decision`),
+        pgPage.reload(),
+      ]);
+      expect(restoredPromotion.status(), await restoredPromotion.text()).toBe(200);
+      expect(restoredPromotion.request().headers()["x-subject-id"]).toBe(scenario.reviewer_id);
+      expect(await restoredPromotion.json()).toMatchObject({ promotion_decision_id: requestReceipt.promotion_decision_id,
+        status: "PENDING_REVIEW", target_format_code: SYNTHETIC_TARGET_FORMAT });
       await expect(pgPage.getByTestId("promotion-second-actor-ok")).toBeVisible();
       await expect(pgPage.getByTestId("promotion-receipt")).toContainText(SYNTHETIC_TARGET_FORMAT);
       await pgPage.getByTestId("promotion-review-reason").fill("Audit test independent review reason");
