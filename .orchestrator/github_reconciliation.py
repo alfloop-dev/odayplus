@@ -57,10 +57,8 @@ SUCCESS_CONCLUSIONS = frozenset({
     MERGE_GROUP_CONCLUSION_SKIPPED,
 })
 
-MERGE_GROUP_QUEUE_REF_PATTERN = re.compile(
-    r"^(?:refs/heads/)?gh-readonly-queue/[^/]+/pr-(?P<pr>\d+)-[0-9a-fA-F]+$",
-    re.IGNORECASE,
-)
+# One queue-ref rule, shared with the canonical status writer.
+MERGE_GROUP_QUEUE_REF_PATTERN = runtime_ai_status.MERGE_GROUP_QUEUE_REF_PATTERN
 
 
 def evaluate_finalize_gate(task: dict[str, Any]) -> FinalizeGateResult:
@@ -160,25 +158,67 @@ def evaluate_finalize_gate(task: dict[str, Any]) -> FinalizeGateResult:
     )
 
 
-def parse_merge_group_pr_number(queue_ref: str | None) -> int | None:
-    """Extract candidate PR number from a merge_group queue ref.
+parse_merge_group_pr_number = runtime_ai_status.parse_merge_group_pr_number
 
-    Expected ref formats include:
-      - refs/heads/gh-readonly-queue/<base>/pr-<number>-<base_sha>
-      - gh-readonly-queue/<base>/pr-<number>-<base_sha>
+
+# Verdicts of the merge_group producer's binding checks.
+LEGACY_CAUSE_PROVEN = "proven"
+LEGACY_CAUSE_REFUTED = "refuted"
+LEGACY_CAUSE_UNRESOLVED = "unresolved"
+GITHUB_PULL_URL_PATTERN = re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)$")
+
+
+def merge_group_task_repository_verdict(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    repo: str,
+    pr_number: Any,
+) -> tuple[str, str]:
+    """Is this canonical task's PR the bus repository's PR `pr_number`?
+
+    The bus polls one repository, but the board holds tasks of every
+    registered repository, and PR numbers and shared source SHAs repeat
+    across them. A merge_group run, and a cause recorded from one, names
+    only a queue ref and a PR number, so before the merge_group producer
+    reads or writes anything on `repo` for a task -- the failure scan's
+    demotion and the legacy cause enrichment alike -- the task itself must
+    say it lives there: its repository through the registry's one
+    task->repository answer, and its submitted PR URL (and the task's, when
+    recorded) naming exactly that repository and PR. Returns
+    ``(verdict, reason)``: `proven` when bound, `refuted` when the task
+    names another repository or PR, `unresolved` when its repository or PR
+    URL cannot be read. Only `proven` lets the producer go on.
     """
-    if not queue_ref or not isinstance(queue_ref, str):
-        return None
-    raw = queue_ref.strip()
-    if not raw:
-        return None
-    match = MERGE_GROUP_QUEUE_REF_PATTERN.fullmatch(raw)
-    if not match:
-        return None
+    from multi_repo_registry import normalized_repository_slug, repository_slug, task_repository_id
+
+    bus_slug = normalized_repository_slug(repo)
+    if not bus_slug:
+        return LEGACY_CAUSE_UNRESOLVED, "bus_repository_unknown"
+    repo_id = task_repository_id(config, task)
+    task_slug = normalized_repository_slug(repository_slug(config, repo_id)) if repo_id else None
+    if not task_slug:
+        return LEGACY_CAUSE_UNRESOLVED, "task_repository_unknown"
+    if task_slug != bus_slug:
+        return LEGACY_CAUSE_REFUTED, "task_repository_mismatch"
     try:
-        return int(match.group("pr"))
+        wanted_pr = int(pr_number)
     except (TypeError, ValueError):
-        return None
+        return LEGACY_CAUSE_UNRESOLVED, "pr_number_unusable"
+
+    submission = task.get("review_submission")
+    urls = [("submission", (submission or {}).get("pr_url") if isinstance(submission, dict) else None)]
+    if task.get("pr_url") is not None:
+        urls.append(("task", task.get("pr_url")))
+    for label, raw in urls:
+        url = str(raw or "").strip().rstrip("/") if isinstance(raw, str) else ""
+        match = GITHUB_PULL_URL_PATTERN.fullmatch(url)
+        if not match:
+            return LEGACY_CAUSE_UNRESOLVED, f"{label}_pr_url_unusable"
+        if normalized_repository_slug(match.group(1)) != bus_slug:
+            return LEGACY_CAUSE_REFUTED, f"{label}_pr_url_repository_mismatch"
+        if int(match.group(2)) != wanted_pr:
+            return LEGACY_CAUSE_REFUTED, f"{label}_pr_url_number_mismatch"
+    return LEGACY_CAUSE_PROVEN, "task_bound_to_bus_repository"
 
 
 def correlate_merge_group_task(
@@ -241,6 +281,9 @@ def correlate_merge_group_task(
     if len(matched) > 1:
         return None, "ambiguous"
     return None, "unmatched"
+
+
+MERGE_GROUP_FAILURE_HANDOFF_REASON = runtime_ai_status.MERGE_GROUP_FAILURE_HANDOFF_REASON
 
 
 def _record_seen_run_ids(bus_state: dict[str, Any], new_keys: list[str], max_ids: int = 2000) -> None:
@@ -318,14 +361,70 @@ def pr_queue_identity(pr_facts: Any) -> tuple[bool, str]:
     return enrolled, enqueued_at
 
 
-def is_valid_pr_facts(pr_facts: Any) -> bool:
+def merge_queue_entry_group_head(pr_facts: Any) -> tuple[str, bool]:
+    """Return (group_head_sha, known) for the PR's current merge queue entry.
+
+    `MergeQueueEntry.headCommit` is the group commit GitHub built for the
+    entry. `("", True)` is a positive answer that there is no group commit to
+    consider: the PR is not enrolled, or its entry has not been grouped yet
+    (`headCommit: null`). `("", False)` means GitHub's answer cannot say which
+    commit it is -- an enrolled PR without an entry, an entry without the
+    field, or a malformed oid -- and must never be read as "nothing to revoke".
+
+    "Not enrolled" is only ever GitHub's explicit answer: the reader's GraphQL
+    node always carries `isInMergeQueue` and `mergeQueueEntry`, so a node
+    missing either field, or with a flag that is not a boolean, did not answer
+    the question and is unknown -- never an empty target list. An entry beside
+    a flag that is not `true` contradicts itself and is unknown as well.
+    """
+    if not isinstance(pr_facts, dict):
+        return "", False
+    if "mergeQueueEntry" not in pr_facts:
+        return "", False
+    enrolled = pr_facts.get("isInMergeQueue")
+    if not isinstance(enrolled, bool):
+        return "", False
+    entry = pr_facts["mergeQueueEntry"]
+    if entry is None:
+        return "", not enrolled
+    if not enrolled or not isinstance(entry, dict) or "headCommit" not in entry:
+        return "", False
+    head_commit = entry.get("headCommit")
+    if head_commit is None:
+        return "", True
+    oid = head_commit.get("oid") if isinstance(head_commit, dict) else None
+    if not isinstance(oid, str) or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", oid.strip()):
+        return "", False
+    return oid.strip().lower(), True
+
+
+def pr_facts_number_verdict(pr_facts: Any, pr_number: int) -> str:
+    """Is this PR node the requested PR? ``""`` when exactly; else the reason.
+
+    The reader asks GitHub for one number, but the answer is what decides: a
+    node naming no number, an unusable one, or another PR is not facts about
+    the requested PR, whatever its state or queue entry say. Returns
+    ``"pr_number_missing"`` or ``"pr_number_mismatch"``.
+    """
+    number = pr_facts.get("number") if isinstance(pr_facts, dict) else None
+    if isinstance(number, bool) or not isinstance(number, int):
+        return "pr_number_missing"
+    if isinstance(pr_number, bool) or not isinstance(pr_number, int) or number != pr_number:
+        return "pr_number_mismatch"
+    return ""
+
+
+def is_valid_pr_facts(pr_facts: Any, pr_number: int | None = None) -> bool:
     """Return true only when GitHub returned a PR node this guard may act on.
 
     A node is actionable only if it carries a state GitHub actually defines and a
-    head SHA. Everything else is unknown; the caller keeps the failure for the
-    next cycle rather than deciding on an unanswered question.
+    head SHA -- and, when `pr_number` is given, names exactly that PR.
+    Everything else is unknown; the caller keeps the failure for the next cycle
+    rather than deciding on an unanswered question.
     """
     if not isinstance(pr_facts, dict) or not pr_facts:
+        return False
+    if pr_number is not None and pr_facts_number_verdict(pr_facts, pr_number):
         return False
     if not pr_state(pr_facts):
         return False
@@ -336,7 +435,8 @@ def fetch_pr_queue_facts(repo: str, pr_number: int) -> dict[str, Any] | None:
     """Read fresh PR state, head SHA and queue enrollment from the one bus reader.
 
     `github_bus.fetch_pr_merge_queue_status` is the single GraphQL reader for PR
-    facts here. Returns None whenever GitHub's answer is missing or unusable.
+    facts here. Returns None whenever GitHub's answer is missing or unusable,
+    including a node that does not name exactly the requested PR.
     """
     from github_bus import GitHubBusOffline, fetch_pr_merge_queue_status
 
@@ -346,7 +446,7 @@ def fetch_pr_queue_facts(repo: str, pr_number: int) -> dict[str, Any] | None:
         raise
     except Exception:
         return None
-    return facts if is_valid_pr_facts(facts) else None
+    return facts if is_valid_pr_facts(facts, pr_number) else None
 
 
 def match_workflow_identity(target: dict[str, Any], candidate: dict[str, Any]) -> bool | None:
@@ -704,6 +804,32 @@ def merge_group_audit_entry(
     return entry
 
 
+def record_review_gate_revocation_intent(
+    task: dict[str, Any], repo: str, group_heads: list[str]
+) -> None:
+    """Write the review-gate revocation intent of a merge_group recovery.
+
+    Confirmed grants move into the existing `review_gate_revocations`, each
+    group commit proven to enrol the reviewed head joins them, and
+    `review_gate_refresh_pending` makes the canonical `ai_status sync` that
+    commits the transition post them and persist the outcome (ACK, or the
+    exact payload in `status_check_outbox` for retry). The caller commits it
+    through the canonical CAS; nothing is posted from here.
+    """
+    runtime_ai_status.retain_review_gate_targets(task)
+    revocations = {
+        runtime_ai_status.status_check_target(target): target
+        for target in task.get("review_gate_revocations", []) or []
+        if isinstance(target, dict)
+    }
+    for group_head in group_heads:
+        group_target = {"repo_slug": repo, "sha": group_head, "context": "task-review-gate"}
+        revocations.setdefault(runtime_ai_status.status_check_target(group_target), group_target)
+    if revocations:
+        task["review_gate_revocations"] = list(revocations.values())
+    task["review_gate_refresh_pending"] = True
+
+
 def reconcile_merge_group_runs(
     config: dict[str, Any],
     bus_state: dict[str, Any],
@@ -879,6 +1005,26 @@ def reconcile_merge_group_runs(
                 extra,
             ))
 
+        # Correlation matched a PR number on the whole multi-repository board;
+        # the task must be this repository's PR before anything is read from
+        # or written to it. A task proven to be another repository's (or
+        # another PR's) is not this run's; one that cannot be bound is asked
+        # again next cycle, against whatever the canonical record says then.
+        binding, binding_reason = merge_group_task_repository_verdict(config, task, repo, pr_number)
+        if binding == LEGACY_CAUSE_REFUTED:
+            record_stale(
+                binding_reason,
+                "the correlated task's repository or submitted PR is not this repository's PR.",
+            )
+            non_mutating_seen.append(run_key)
+            continue
+        if binding != LEGACY_CAUSE_PROVEN:
+            record_unresolved(
+                binding_reason,
+                "the correlated task's repository or submitted PR URL cannot be bound to this repository.",
+            )
+            continue
+
         approved_head = str(task.get("approved_head") or "").strip().lower()
         if not approved_head:
             record_unresolved(
@@ -904,6 +1050,15 @@ def reconcile_merge_group_runs(
                 record_unresolved(
                     f"pr_facts_{label}_unavailable",
                     f"GitHub returned no usable PR state and head SHA ({label}).",
+                )
+                return "unresolved"
+            # Identity before any verdict: a node that is not exactly this PR
+            # must not be read as this PR merged, closed, open or queued.
+            number_verdict = pr_facts_number_verdict(facts, _pr_number)
+            if number_verdict:
+                record_unresolved(
+                    f"pr_facts_{label}_{number_verdict}",
+                    f"GitHub's PR node does not name PR #{_pr_number} ({label}).",
                 )
                 return "unresolved"
             if pr_is_merged(facts):
@@ -957,6 +1112,7 @@ def reconcile_merge_group_runs(
         superseding_run: dict[str, Any] | None = None
         supersede_reason: str | None = None
         association_unknown = False
+        target_group_head = ""
         if target_kind == TARGET_CURRENT_FAILURE:
             effective_target = fresh_target if isinstance(fresh_target, dict) and fresh_target else run
             target_group_head = str(
@@ -1080,6 +1236,35 @@ def reconcile_merge_group_runs(
             )
             continue
 
+        # Every group commit proven to enrol the reviewed head may carry the
+        # success `merge-queue-review-gate.yml` re-asserted from the PR head.
+        # Revoking only the PR head would leave those standing. The failing
+        # group was proven above; the PR's current queue entry is read from the
+        # same facts-B node and must be proven the same way before it is
+        # touched, and an entry that cannot be classified leaves the failure
+        # open rather than revoking an unknown target or skipping a real one.
+        group_targets = [target_group_head] if target_group_head else []
+        active_group_head, active_known = merge_queue_entry_group_head(facts_b)
+        if not active_known:
+            record_unresolved(
+                "active_group_identity_unknown",
+                "the PR's current merge queue entry does not name a usable group commit.",
+            )
+            continue
+        if active_group_head and active_group_head not in group_targets:
+            active_incorporates = merge_group_incorporates_head(
+                repo, active_group_head, approved_head, parents_cache
+            )
+            if active_incorporates is None:
+                record_unresolved(
+                    "active_group_association_unknown",
+                    "the PR's current merge queue group could not be proven to enrol or "
+                    "exclude the reviewed head.",
+                )
+                continue
+            if active_incorporates:
+                group_targets.append(active_group_head)
+
         log_entry = {
             "type": "merge_group_failure_reconciled",
             "task_id": task_id,
@@ -1129,20 +1314,28 @@ def reconcile_merge_group_runs(
             "message": handoff_msg,
             "status": "pending",
             "created_at": now_ts,
-            "reason": "merge_group_failure",
+            "reason": MERGE_GROUP_FAILURE_HANDOFF_REASON,
             "run_id": run_id,
             "queue_ref": queue_ref,
             "head_sha": head_sha,
             "pr_number": pr_number,
+            # The reviewed PR head the failing group was proven to enrol. The
+            # ready dispatcher accepts this cause only for exactly this head.
+            "source_head": approved_head,
         }
         status.setdefault("handoffs", []).append(handoff_entry)
 
         task["status"] = "review"
         task.pop("approved_head", None)
-        # A successful task-review-gate status may still be attached to the
-        # exact merge-group head.  Recovery requires a fresh reviewer decision,
-        # so remove the local receipt before the canonical transition and
-        # overwrite GitHub's status with the pending review state below.
+        # A successful task-review-gate status may still be attached to the PR
+        # head and to every group commit that enrolled it.  Recovery requires a
+        # fresh reviewer decision, so the revocation intent is written into the
+        # same canonical transition: confirmed grants move into the existing
+        # `review_gate_revocations`, each proven group commit joins them, and
+        # `review_gate_refresh_pending` makes the canonical `ai_status sync`
+        # that commits this transition post them and persist the outcome
+        # (ACK, or the exact payload in `status_check_outbox` for retry).
+        record_review_gate_revocation_intent(task, repo, group_targets)
         task.pop("review_gate_sha", None)
         task.pop("waiting_for", None)
         task["next"] = (
@@ -1163,20 +1356,10 @@ def reconcile_merge_group_runs(
         for _, task_id, failure_record in mutating_failures:
             task_entry = bus_state.setdefault("tasks", {}).setdefault(task_id, {})
             task_entry["last_merge_group_failure"] = failure_record
-        for _, task_id, _ in mutating_failures:
-            recovered_task = next(
-                (
-                    candidate
-                    for candidate in status.get("tasks", []) or []
-                    if isinstance(candidate, dict) and str(candidate.get("id") or "") == task_id
-                ),
-                None,
-            )
-            if recovered_task is not None:
-                # This must happen after the CAS-backed transition succeeds:
-                # a stale snapshot must never emit a recovery gate for a task
-                # state that was not committed.
-                runtime_ai_status.emit_task_review_status_check(recovered_task, "review")
+        # No emission from this snapshot. The committed transition carries the
+        # revocation intent, and the canonical `ai_status sync` run by the
+        # commit is the emitter whose outbox/ACK result is persisted; anything
+        # emitted here would be discarded by the caller's immediate reload.
         return True
 
     if non_mutating_seen:
@@ -1192,8 +1375,229 @@ def poll_merge_group_runs(
     repo: str,
 ) -> bool:
     """Poll GitHub merge_group runs and reconcile them."""
+    # At most one mutating transition per cycle: an enrichment that wrote (or
+    # was refused) leaves `status` carrying its edit, so the failure scan
+    # waits for the next cycle's fresh canonical read.
+    enriched = enrich_legacy_merge_group_causes(config, status, repo)
+    if enriched is not None:
+        return enriched
     limit = int((config.get("github_bus", {}) or {}).get("poll_batch_sizes", {}).get("merge_group_runs", 30))
     runs = fetch_merge_group_runs(repo, limit=limit)
     if not runs:
         return False
     return reconcile_merge_group_runs(config, bus_state, status, repo, runs)
+
+
+def legacy_merge_group_cause_source_verdict(
+    repo: str,
+    cause: dict[str, Any],
+    source_head: str,
+    parents_cache: dict[str, list[str] | None] | None = None,
+) -> tuple[str, str]:
+    """Does GitHub prove this committed cause failed a group enrolling `source_head`?
+
+    Reads the exact run the cause names and the parents of its group commit.
+    Returns ``(verdict, reason)``: `proven` only when the run is the same
+    repository's `merge_group` run on the recorded queue ref and group head,
+    is still a completed failure, and the group commit carries `source_head`
+    as a non-base parent. `refuted` is reserved for immutable facts GitHub
+    answered differently; anything missing, re-running or unanswerable is
+    `unresolved`.
+    """
+    run_id = cause.get("run_id")
+    group_head = str(cause.get("head_sha") or "").strip().lower()
+    queue_ref = str(cause.get("queue_ref") or "").strip()
+    run = fetch_workflow_run(repo, run_id)
+    if not isinstance(run, dict) or not run:
+        return LEGACY_CAUSE_UNRESOLVED, "run_unavailable"
+
+    repository = run.get("repository")
+    observed = {
+        "run_id": str(run.get("id") or run.get("databaseId") or "").strip(),
+        "repository": str(repository.get("full_name") or "").strip().lower()
+        if isinstance(repository, dict)
+        else "",
+        "event": str(run.get("event") or "").strip().lower(),
+        "queue_ref": str(run.get("head_branch") or run.get("headBranch") or "").strip(),
+        "group_head": str(run.get("head_sha") or run.get("headSha") or "").strip().lower(),
+    }
+    expected = {
+        "run_id": str(run_id).strip(),
+        "repository": str(repo or "").strip().lower(),
+        "event": "merge_group",
+        "queue_ref": queue_ref,
+        "group_head": group_head,
+    }
+    for field, wanted in expected.items():
+        if not observed[field]:
+            return LEGACY_CAUSE_UNRESOLVED, f"run_{field}_missing"
+        if observed[field] != wanted:
+            return LEGACY_CAUSE_REFUTED, f"run_{field}_mismatch"
+
+    run_status = str(run.get("status") or "").strip().lower()
+    conclusion = str(run.get("conclusion") or "").strip().lower()
+    if run_status != "completed" or conclusion not in FAILURE_CONCLUSIONS:
+        # A re-run under the same id may be running or have succeeded; the
+        # cause is not proven, and the next re-run may fail again.
+        return LEGACY_CAUSE_UNRESOLVED, "run_not_a_completed_failure"
+
+    incorporates = merge_group_incorporates_head(repo, group_head, source_head, parents_cache)
+    if incorporates is None:
+        return LEGACY_CAUSE_UNRESOLVED, "group_association_unknown"
+    if not incorporates:
+        return LEGACY_CAUSE_REFUTED, "group_did_not_enrol_source_head"
+    return LEGACY_CAUSE_PROVEN, "group_enrolled_source_head"
+
+
+def legacy_cause_group_revocation_targets(
+    repo: str,
+    cause: dict[str, Any],
+    source_head: str,
+    parents_cache: dict[str, list[str] | None] | None = None,
+) -> tuple[list[str], str, str]:
+    """Every group commit a proven legacy cause must revoke, or why not.
+
+    The cause's own group was proven to enrol `source_head` by
+    `legacy_merge_group_cause_source_verdict`. The PR's current queue entry
+    is read from the one PR reader, on the exact PR and source head, and its
+    group commit is revoked only when proven to enrol the source as well.
+    Returns ``(group_heads, verdict, reason)``; anything GitHub cannot answer
+    is `unresolved` and writes nothing.
+    """
+    group_head = str(cause.get("head_sha") or "").strip().lower()
+    try:
+        pr_number = int(cause.get("pr_number"))
+    except (TypeError, ValueError):
+        return [], LEGACY_CAUSE_UNRESOLVED, "pr_number_unusable"
+    facts = fetch_pr_queue_facts(repo, pr_number)
+    if facts is None:
+        return [], LEGACY_CAUSE_UNRESOLVED, "pr_facts_unavailable"
+    number_verdict = pr_facts_number_verdict(facts, pr_number)
+    if number_verdict:
+        return [], LEGACY_CAUSE_UNRESOLVED, number_verdict
+    if pr_head_sha(facts) != source_head:
+        return [], LEGACY_CAUSE_UNRESOLVED, "pr_head_mismatch"
+    group_heads = [group_head]
+    active_group_head, active_known = merge_queue_entry_group_head(facts)
+    if not active_known:
+        return [], LEGACY_CAUSE_UNRESOLVED, "active_group_identity_unknown"
+    if active_group_head and active_group_head not in group_heads:
+        incorporates = merge_group_incorporates_head(
+            repo, active_group_head, source_head, parents_cache
+        )
+        if incorporates is None:
+            return [], LEGACY_CAUSE_UNRESOLVED, "active_group_association_unknown"
+        if incorporates:
+            group_heads.append(active_group_head)
+    return group_heads, LEGACY_CAUSE_PROVEN, "group_enrolled_source_head"
+
+
+def enrich_legacy_merge_group_causes(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    repo: str,
+) -> bool | None:
+    """Record the proven source relation on a cause committed before it existed.
+
+    A recovery cause written before `source_head` was part of the record
+    cannot license a reviewer dispatch: the ready dispatcher requires the
+    cause to name exactly the routed source head. This is the recovery
+    producer completing its own committed record, not a new cause: it only
+    touches a cause `ai_status.merge_group_recovery_cause` binds to the
+    canonical task as read this cycle, of a task whose registered repository
+    and submitted PR URL are this bus's repository and the cause's PR
+    (`merge_group_task_repository_verdict`), re-reads the exact run and group
+    commit it names, and writes `source_head` through the same canonical CAS
+    only when GitHub proves the relation. Nothing is remembered between
+    cycles: a refuted or unresolved relation is audited like any unresolved
+    merge_group failure and the cause is read and asked again next cycle,
+    against whatever the canonical record says then.
+
+    The same CAS carries the review-gate revocation the legacy producer
+    never wrote: the cause's proven group and the PR's current queue group,
+    when proven to enrol the source, join `review_gate_revocations` through
+    the producer's own `record_review_gate_revocation_intent`, and the
+    canonical sync that commits it posts them and persists ACK or outbox.
+    The route and every other handoff are left unchanged.
+
+    Returns None when nothing was written, otherwise whether the canonical
+    CAS accepted the write.
+    """
+    from status_transition import commit_canonical_task_transition
+
+    schema = config.get("schema", {}) or {}
+    task_id_field = schema.get("task_id_field", "id")
+    handoffs = status.get("handoffs")
+    parents_cache: dict[str, list[str] | None] = {}
+    proven: list[dict[str, Any]] = []
+
+    for task in status.get(schema.get("tasks_path", "tasks"), []) or []:
+        if not isinstance(task, dict):
+            continue
+        # Only the producer's own review-phase cause; the owner publication
+        # phase reads a cause that already proves its source.
+        if str(task.get("status") or "").strip().lower() != "review" or task.get("approved_head"):
+            continue
+        cause = runtime_ai_status.merge_group_recovery_cause(task, handoffs, require_source_head=False)
+        if cause is None or "source_head" in cause:
+            continue
+        source_head = str((task.get("review_submission") or {}).get("remote_sha") or "").strip().lower()
+        task_id = str(task.get(task_id_field) or task.get("id") or "").strip()
+
+        # The cause is bound to the task; the task has to be bound to the
+        # repository this bus reads before any of its runs or commits are.
+        verdict, reason = merge_group_task_repository_verdict(config, task, repo, cause.get("pr_number"))
+        if verdict == LEGACY_CAUSE_PROVEN:
+            verdict, reason = legacy_merge_group_cause_source_verdict(
+                repo, cause, source_head, parents_cache
+            )
+        facts = {
+            "task_id": task_id,
+            "run_id": cause.get("run_id"),
+            "queue_ref": cause.get("queue_ref"),
+            "head_sha": cause.get("head_sha"),
+            "pr_number": cause.get("pr_number"),
+            "source_head": source_head,
+        }
+        if verdict == LEGACY_CAUSE_PROVEN:
+            # The legacy producer committed the demotion without revoking the
+            # group commits; a success re-asserted on them would outlive the
+            # resumed review. The proven group and the PR's current queue
+            # group (when it is proven to enrol the source) are revoked in the
+            # same CAS that completes the cause, or nothing is written.
+            group_heads, verdict, reason = legacy_cause_group_revocation_targets(
+                repo, cause, source_head, parents_cache
+            )
+        if verdict == LEGACY_CAUSE_PROVEN:
+            proven.append(dict(facts, revoked_group_heads=group_heads))
+            cause["source_head"] = source_head
+            record_review_gate_revocation_intent(task, repo, group_heads)
+            continue
+        write_activity_log(config, merge_group_audit_entry(
+            f"merge_group_cause_source_{verdict}",
+            facts,
+            reason,
+            (
+                f"Committed merge group failure cause for task {task_id} (run {cause.get('run_id')}) "
+                f"carries no source head; the relation to {source_head} is {verdict} ({reason}). "
+                "The cause is left unchanged and read again next cycle."
+            ),
+        ))
+
+    if not proven:
+        return None
+    committed = bool(commit_canonical_task_transition(config, status))
+    if committed:
+        for facts in proven:
+            write_activity_log(config, merge_group_audit_entry(
+                "merge_group_cause_source_proven",
+                facts,
+                "group_enrolled_source_head",
+                (
+                    f"Merge group run {facts['run_id']} on {facts['queue_ref']} enrolled source head "
+                    f"{facts['source_head']} of task {facts['task_id']}; recorded it on the committed cause "
+                    f"and queued review-gate revocation for group commits "
+                    f"{', '.join(h[:8] for h in facts['revoked_group_heads'])}."
+                ),
+            ))
+    return committed

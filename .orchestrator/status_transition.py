@@ -7,6 +7,7 @@ from typing import Any
 
 import fcntl
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -522,7 +523,141 @@ def repair_open_task_metadata(config: dict[str, Any], status: dict[str, Any]) ->
     return changed
 
 
-def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, Any]) -> bool:
+def _merge_group_publication_owner_return_due(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    task: dict[str, Any],
+    state: dict[str, Any] | None,
+) -> bool:
+    """A merge_group recovery the reviewer cannot take until the owner publishes.
+
+    The recovery producer returned the task to `review` with a committed
+    cause, but its PR has since merged while the recorded submission was
+    verified only as open. The reviewer stays refused until the owner's
+    publisher verifies the merge; nothing but this narrow case is moved, and
+    any task that is busy, gated, or whose facts cannot be read stays put.
+    """
+    sv = _supervisor_module()
+    if not isinstance(state, dict):
+        return False
+    if str(task.get("status") or "").strip().lower() != "review":
+        return False
+    if str(task.get("approved_head") or "").strip():
+        return False
+    submission = task.get("review_submission")
+    if not isinstance(submission, dict) or submission.get("merged_at") or submission.get("merge_commit"):
+        return False
+    if not sv.review_submission_is_complete(config, task):
+        return False
+    if runtime_ai_status.merge_group_recovery_cause(task, status.get("handoffs")) is None:
+        return False
+    if (
+        sv.task_is_human_gate(task)
+        or bool(task.get("non_dispatchable"))
+        or sv.is_human_gate_agent(task.get("owner"))
+        or sv.is_human_gate_agent(task.get("waiting_for"))
+        or runtime_ai_status.task_unresolved_human_or_independent_gate_reason(task)
+        or task.get("helper_execution_lease")
+    ):
+        return False
+    task_id = str(task.get("id") or "").strip()
+    _agents, active_task_agents = sv.active_worker_indexes(
+        state, sv.active_worker_statuses(config), config
+    )
+    _pending_agents, pending_task_agents, _keys = sv.outstanding_delivery_indexes(config, state)
+    if any(item_task == task_id for item_task, _agent in active_task_agents | pending_task_agents):
+        return False
+    from dispatch_policy import task_review_source_identity
+
+    if task_review_source_identity(config, task).error:
+        return False
+    return _merge_group_recovery_pr_merged_on_source_head(task, submission)
+
+
+def _merge_group_recovery_pr_merged_on_source_head(
+    task: dict[str, Any], submission: dict[str, Any]
+) -> bool:
+    """GitHub's fresh answer that the recovery's exact PR merged its source head green.
+
+    This is the boundary before the owner-return mutates anything, so it reads
+    the PR through the publisher's own provenance reader and the registry's
+    repository binding -- uncached, with `--repo` -- and binds every fact the
+    publisher will later verify: the PR number recorded on the task, its
+    submission and its route; the immutable source head (`headRefOid`, never
+    the merge commit); the task branch and merge target; MERGED with a merge
+    time and commit; and CI under the shared `normalized_green_pr_checks` rule.
+    A missing, unknown, malformed or drifted fact moves nothing.
+    """
+    ai = runtime_ai_status
+    task_id = str(task.get("id") or "").strip()
+    try:
+        pr_number = int(submission.get("pr_number"))
+        if pr_number <= 0 or int(task.get("pr_number")) != pr_number:
+            return False
+        if int((task.get("merge_route") or {}).get("pr_number")) != pr_number:
+            return False
+    except (TypeError, ValueError):
+        return False
+    source_head = str(submission.get("remote_sha") or "").strip().lower()
+    branch = str(submission.get("branch") or "").strip()
+    base_branch = str(submission.get("base_branch") or "").strip()
+    if not source_head or not branch or not base_branch:
+        return False
+    try:
+        rt_config = ai.status_runtime_config()
+        # The registry's one task -> repository -> checkout answer. A task
+        # naming an unregistered repository, artifacts spanning several, or a
+        # registered repository without its checkout or slug is "cannot
+        # answer", never a default repository's PR.
+        binding = ai.resolve_task_repository(rt_config, task)
+        if not binding.resolved or not binding.repo_id or not binding.slug:
+            return False
+        repository_id = binding.repo_id
+        repository_root = binding.root
+        slug = binding.slug
+        if branch != ai.task_branch_name(task, task_id):
+            return False
+        if base_branch != ai.delivery_merge_target_branch(rt_config, repository_id):
+            return False
+        pr = ai.pull_request_status_for_branch(
+            repository_root, branch, slug, base_branch=base_branch, head_sha=source_head
+        )
+        if not isinstance(pr, dict):
+            return False
+        if isinstance(pr.get("number"), bool) or int(pr.get("number")) != pr_number:
+            return False
+        url = str(pr.get("url") or "").strip().rstrip("/").lower()
+        if not url.endswith(f"/{slug.lower()}/pull/{pr_number}"):
+            return False
+        if str(pr.get("state") or "").strip().upper() != "MERGED":
+            return False
+        if str(pr.get("headRefOid") or "").strip().lower() != source_head:
+            return False
+        if str(pr.get("headRefName") or "").strip() != branch:
+            return False
+        if str(pr.get("baseRefName") or "").strip() != base_branch:
+            return False
+        if not isinstance(pr.get("mergedAt"), str) or not pr["mergedAt"].strip():
+            return False
+        merge_commit = pr.get("mergeCommit")
+        merge_commit = merge_commit.get("oid") if isinstance(merge_commit, dict) else merge_commit
+        if not isinstance(merge_commit, str) or not re.fullmatch(
+            r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", merge_commit.strip()
+        ):
+            return False
+        # The publisher's own CI rule for a merged PR; it raises on anything
+        # pending, failed, unrecognised or absent.
+        ai.normalized_green_pr_checks(pr, exclude_review_gate=True)
+    except (Exception, SystemExit):
+        return False
+    return True
+
+
+def repair_unsubmitted_review_tasks(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    state: dict[str, Any] | None = None,
+) -> bool:
     sv = _supervisor_module()
     paths = config.get("paths") or {}
     if not paths.get("status_file") or not paths.get("activity_log"):
@@ -532,6 +667,39 @@ def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, An
     timestamp = sv.utc_now()
     for task in status.get("tasks", []) or []:
         if str(task.get("status") or "").strip().lower() != "review":
+            continue
+        if _merge_group_publication_owner_return_due(config, status, task, state):
+            # The owner's publisher is the only writer that can verify the
+            # merge. The task goes back to it exactly like any owner-return,
+            # except that the committed cause and the route are kept: the
+            # reviewer decision is still owed for this same head.
+            task_id = str(task.get("id") or "").strip()
+            pr_number = (task.get("review_submission") or {}).get("pr_number")
+            message = (
+                f"Merge group recovery: PR #{pr_number} has merged, but its review submission was "
+                "verified only while open. The owner must publish the same PR via "
+                "delivery_toolchain/git/task_finalize.sh; the reviewer decision stays pending."
+            )
+            task["status"] = "in_progress"
+            task.pop("waiting_for", None)
+            task["last_update"] = timestamp
+            task["next"] = message
+            task["last_reopened_by"] = "Supervisor"
+            task["last_reopened_reason"] = REOPEN_REASON_CONTROL_PLANE_RECOVERY
+            task["last_reopen_category"] = REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY
+            task["last_reopened_at"] = timestamp
+            sv.write_activity_log(
+                config,
+                {
+                    "type": "review_submission_repaired",
+                    "task_id": task_id,
+                    "message": message,
+                    "reason": REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+                    "category": REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
+                    "entry": "merge_group_merged_publication",
+                },
+            )
+            changed = True
             continue
         if sv.review_submission_is_complete(config, task):
             continue
@@ -624,14 +792,25 @@ def reject_unsealed_worker_handoff(
         "worker_run_id": worker_run_id,
         "rejected_at": timestamp,
     }
+    # A merge_group recovery the owner was publishing keeps its committed
+    # cause and route through the retry: the same owner resubmits the same
+    # merged PR, and the reviewer decision is still owed for that head.
+    recovery_cause = (
+        None
+        if str(task.get("approved_head") or "").strip()
+        else runtime_ai_status.merge_group_recovery_cause(task, status.get("handoffs"))
+    )
     task.pop("waiting_for", None)
     task.pop("approved_head", None)
-    task.pop("merge_route", None)
+    if recovery_cause is None:
+        task.pop("merge_route", None)
     task["last_reopened_by"] = "Supervisor"
     task["last_reopened_reason"] = reopen_reason
     task["last_reopen_category"] = REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY
     task["last_reopened_at"] = timestamp
     for handoff in status.get("handoffs", []) or []:
+        if handoff is recovery_cause:
+            continue
         if handoff.get("task_id") == task_id and handoff.get("status") != "done":
             handoff["status"] = "done"
             handoff["resolved_at"] = timestamp

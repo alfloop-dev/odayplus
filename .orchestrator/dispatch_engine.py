@@ -409,15 +409,36 @@ def _remote_branch_names() -> set[str] | None:
     return names
 
 
-def _pull_request_record(pr_number: int) -> dict[str, Any] | None:
-    """The PR's state, or None when there is no readable PR."""
+def _pull_request_record(pr_number: int, repository: str) -> dict[str, Any] | None:
+    """The PR's state, or None when there is no readable PR.
+
+    `gh pr view` has no `merged` field (asking for it fails the whole call),
+    so the record is read with `mergedAt` and `merged` is derived: true only
+    when GitHub says MERGED and names when. A MERGED state without a merge
+    time is not proof of a merge.
+
+    The read is bound to the verified `repository` slug: without `--repo`,
+    `gh` answers for whatever repository the supervisor's cwd points at, and
+    a same-numbered PR there is not this task's PR. An answer for any other
+    number is not an answer either.
+    """
     import json as _json
 
     from github_bus import GitHubBusError, GitHubBusOffline, run_gh
 
+    if not _is_repository_slug(repository):
+        return None
     try:
         proc = run_gh(
-            ["pr", "view", str(pr_number), "--json", "number,state,merged,headRefName"]
+            [
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                str(repository).strip(),
+                "--json",
+                "number,state,mergedAt,headRefName",
+            ]
         )
     except (GitHubBusError, GitHubBusOffline):
         return None
@@ -425,7 +446,14 @@ def _pull_request_record(pr_number: int) -> dict[str, Any] | None:
         payload = _json.loads(proc.stdout or "{}")
     except ValueError:
         return None
-    return payload if payload.get("number") else None
+    if not isinstance(payload, dict):
+        return None
+    number = payload.get("number")
+    if isinstance(number, bool) or not isinstance(number, int) or number != pr_number:
+        return None
+    state = str(payload.get("state") or "").strip().upper()
+    payload["merged"] = state == "MERGED" and bool(str(payload.get("mergedAt") or "").strip())
+    return payload
 
 
 def task_reality_reconcile_is_due(
@@ -492,14 +520,29 @@ def reconcile_task_reality(config: dict[str, Any], status: dict[str, Any]) -> bo
     # were present in `oday-data-platform`. Reporting a false drift is worse
     # than reporting none, so anything not belonging to this repository is left
     # to whatever reconciles that one.
+    #
+    # Which repository a task belongs to is the registry's answer
+    # (`resolve_task_repository`): an explicit declaration wins, and the
+    # artifact-prefix inference for tasks that declare nothing lives only
+    # there. Comparing the declared string alone let an undeclared task whose
+    # artifacts name another repository through, and its same-numbered PR in
+    # this checkout then cleared its merge route. Unknown, ambiguous, missing
+    # checkout, a binding with no slug, or an unreadable local origin cannot be
+    # shown to be this repository, and are declined the same way.
+    from multi_repo_registry import normalized_repository_slug, resolve_task_repository
+
     this_repo = _this_repository_slug()
+    wanted = normalized_repository_slug(this_repo)
+    if not wanted:
+        # Cannot tell whose repository this is; declining is the safe half.
+        return False
     tasks = []
     for task in all_tasks:
-        declared = str(task.get("repository") or "").strip()
-        if declared and this_repo and declared.lower() != this_repo.lower():
+        try:
+            binding = resolve_task_repository(config, task)
+        except Exception:
             continue
-        if declared and not this_repo:
-            # Cannot tell whose repository this is; declining is the safe half.
+        if not binding.resolved or normalized_repository_slug(binding.slug) != wanted:
             continue
         tasks.append(task)
     if not tasks:
@@ -517,9 +560,15 @@ def reconcile_task_reality(config: dict[str, Any], status: dict[str, Any]) -> bo
             pr_number = int(task.get("pr_number") or 0)
         except (TypeError, ValueError):
             pr_number = 0
+        # A route bound to a committed merge_group recovery cause is that
+        # recovery's admission record, not a stale merge attempt; a recovery
+        # the cause rule cannot resolve keeps it as evidence, fail-closed.
         return {
-            "pull_request": _pull_request_record(pr_number) if pr_number > 0 else None,
+            "pull_request": _pull_request_record(pr_number, str(this_repo)) if pr_number > 0 else None,
             "branch_exists": str(task.get("branch") or "") in remote_branches,
+            "merge_group_recovery": runtime_ai_status.merge_group_route_recovery_hold(
+                task, status.get("handoffs")
+            ),
         }
 
     results = task_reality.reconcile_tasks(tasks, probe=probe)
@@ -1574,6 +1623,75 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
 
 
 @_entrypoint
+def committed_merge_group_review_recovery(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    target_agent: str,
+) -> bool:
+    """True only for a committed merge-group failure recovery of this routed head.
+
+    `github_reconciliation.reconcile_merge_group_runs` demotes an approved task
+    back to `review` through the canonical CAS and records the cause as one
+    pending `merge_group_failure` handoff. It deliberately leaves
+    `task.merge_route` alone, so the same-head route would otherwise keep the
+    reviewer from ever being dispatched. This reads the cause from the
+    canonical store -- never from the caller's snapshot or `next` text -- and
+    accepts it only when every identity it names matches exactly
+    (`ai_status.merge_group_recovery_cause`), including the proof that it
+    failed a group that enrolled exactly this source head. Missing, unknown,
+    duplicated or superseded facts fail closed.
+    """
+    schema = config.get("schema", {}) or {}
+    task_id_field = schema.get("task_id_field", "id")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    task_id = str(task.get(task_id_field) or task.get("id") or "").strip()
+    reviewer = normalize_agent_id(str(task.get(reviewer_field) or ""))
+    if not task_id or not reviewer or normalize_agent_id(target_agent or "") != reviewer:
+        return False
+
+    try:
+        canonical = load_status(config)
+    except Exception:
+        return False
+    if not isinstance(canonical, dict):
+        return False
+    canonical_task = next(
+        (
+            candidate
+            for candidate in canonical.get(schema.get("tasks_path", "tasks"), []) or []
+            if isinstance(candidate, dict)
+            and str(candidate.get(task_id_field) or "").strip() == task_id
+        ),
+        None,
+    )
+    # The caller's task must be the committed one: same status, reviewer,
+    # submitted head, route, PR and repository, so a stale or locally edited snapshot cannot
+    # borrow a recovery it does not carry.
+    if not isinstance(canonical_task, dict):
+        return False
+    for field in (
+        "status",
+        reviewer_field,
+        "approved_head",
+        "review_submission",
+        MERGE_ROUTE_FIELD,
+        # The CI read after this check resolves the task's own PR and
+        # repository, so those must be the committed ones as well.
+        "pr_number",
+        "repository",
+    ):
+        if canonical_task.get(field) != task.get(field):
+            return False
+
+    # Reviewer phase: the demoted, unapproved review the cause was written for.
+    if str(canonical_task.get("status") or "").strip().lower() != "review":
+        return False
+    if str(canonical_task.get("approved_head") or "").strip():
+        return False
+    return runtime_ai_status.merge_group_recovery_cause(canonical_task, canonical.get("handoffs")) is not None
+
+
+@_entrypoint
 def is_task_review_dispatch_eligible(
     config: dict[str, Any],
     task: dict[str, Any],
@@ -1649,11 +1767,18 @@ def is_task_review_dispatch_eligible(
     # Merge route on current submitted head suppresses redundant review dispatch.
     # Stale merge route records from prior/repaired heads must not block new head review.
     # Malformed/unknown route metadata or routes missing an explicit head fail closed.
+    # The one exception is a committed merge-group failure recovery for exactly
+    # this routed head: the route stays untouched (head/at/attempts), and the
+    # canonical recovery handoff is what licenses one fresh reviewer decision.
     route = task.get("merge_route")
     if route is not None:
         if isinstance(route, dict):
             route_head = str(route.get("head") or "").strip()
-            if not route_head or route_head == submitted_sha:
+            if not route_head:
+                return False
+            if route_head == submitted_sha and not committed_merge_group_review_recovery(
+                config, task, target_agent
+            ):
                 return False
         else:
             return False
@@ -2886,7 +3011,7 @@ def dispatch_ready_tasks(
     metadata_repaired = repair_open_task_metadata(config, status)
     if metadata_repaired:
         status = load_status(config)
-    review_states_repaired = repair_unsubmitted_review_tasks(config, status)
+    review_states_repaired = repair_unsubmitted_review_tasks(config, status, state)
     if review_states_repaired:
         status = load_status(config)
 
@@ -3461,6 +3586,14 @@ def dispatch_ready_tasks(
                             and not bool(task.get("non_dispatchable"))
                             and not is_human_gate_agent(str(task.get("waiting_for") or ""))
                             and not is_human_gate_agent(str(task_owner or ""))
+                            # Publishing the merged PR of an owner-returned
+                            # merge_group recovery is owner-only (the publisher
+                            # refuses any helper), so a helper lease on it could
+                            # only fail and hold the task's lock against its
+                            # owner. The owner keeps waiting for capacity.
+                            and not runtime_ai_status.merge_group_recovery_publication_pending(
+                                task, status.get("handoffs")
+                            )
                             and dependencies_satisfied(task, task_map, dependency_done_statuses)
                             and independent
                             and (

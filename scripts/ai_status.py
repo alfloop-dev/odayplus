@@ -6290,6 +6290,214 @@ def mark_handoffs_done_for_actor(state: dict[str, Any], task_id: str, actor: str
             handoff["resolved_at"] = iso_now()
 
 
+MERGE_GROUP_FAILURE_HANDOFF_REASON = "merge_group_failure"
+MERGE_GROUP_QUEUE_REF_PATTERN = re.compile(
+    r"^(?:refs/heads/)?gh-readonly-queue/[^/]+/pr-(?P<pr>\d+)-[0-9a-fA-F]+$",
+    re.IGNORECASE,
+)
+
+
+def parse_merge_group_pr_number(queue_ref: str | None) -> int | None:
+    """Extract the PR number from a merge_group queue ref.
+
+    Accepts ``refs/heads/gh-readonly-queue/<base>/pr-<number>-<base_sha>`` and
+    the same ref without ``refs/heads/``.
+    """
+    if not queue_ref or not isinstance(queue_ref, str):
+        return None
+    match = MERGE_GROUP_QUEUE_REF_PATTERN.fullmatch(queue_ref.strip())
+    if not match:
+        return None
+    try:
+        return int(match.group("pr"))
+    except (TypeError, ValueError):
+        return None
+
+
+def merge_group_recovery_cause(
+    task: dict[str, Any],
+    handoffs: Any,
+    *,
+    require_source_head: bool = True,
+) -> dict[str, Any] | None:
+    """The one committed merge-group failure cause bound to this task's routed head.
+
+    The merge_group recovery producer demotes an approved task to `review`
+    through the canonical CAS, resolves every earlier handoff of the task and
+    records the failure as one pending `merge_group_failure` handoff to the
+    reviewer, leaving `task.merge_route` untouched. This is the single
+    identity rule every later step reads that cause through: the task's
+    submitted head and PR equal the route's, the task's own `pr_number` is that
+    same PR, the cause is the task's only
+    pending handoff, names the assigned reviewer, the same PR (also through
+    its queue ref), a run id, a group commit distinct from the source head,
+    postdates the route, and -- unless `require_source_head` is False, which
+    only the producer's own completion of a pre-field cause uses -- proves the
+    exact source head. Anything missing, unknown or ambiguous returns None.
+
+    The task's lifecycle phase (review, owner publication, seal retry) is not
+    part of the identity; each caller checks its own phase.
+    """
+    if not isinstance(task, dict):
+        return None
+    task_id = str(task.get("id") or "").strip()
+    normalize = orchestrator_common.normalize_agent_id
+    reviewer = normalize(str(task.get("reviewer") or ""))
+    if not task_id or not reviewer:
+        return None
+    submission = task.get("review_submission")
+    route = task.get("merge_route")
+    if not isinstance(submission, dict) or not isinstance(route, dict):
+        return None
+    source_head = str(submission.get("remote_sha") or "").strip().lower()
+    if not source_head or str(route.get("head") or "").strip().lower() != source_head:
+        return None
+    try:
+        pr_number = int(submission.get("pr_number"))
+        route_pr = int(route.get("pr_number"))
+    except (TypeError, ValueError):
+        return None
+    if pr_number <= 0 or route_pr != pr_number:
+        return None
+    # The task's own PR is what every later read resolves (CI, provenance,
+    # reality probe through `task_pr_lookup_scope`); it has to be this PR too,
+    # or a recovery for one PR would be judged on another PR's checks.
+    try:
+        task_pr = int(task.get("pr_number"))
+    except (TypeError, ValueError):
+        return None
+    if task_pr != pr_number:
+        return None
+    routed_at = orchestrator_common.parse_utc_timestamp(route.get("at"))
+    if routed_at is None:
+        return None
+
+    pending = [
+        handoff
+        for handoff in handoffs or []
+        if isinstance(handoff, dict)
+        and str(handoff.get("task_id") or "").strip() == task_id
+        and str(handoff.get("status") or "").strip().lower() == "pending"
+    ]
+    # Recovery resolves every earlier handoff of the task in the same commit,
+    # so its cause is the only pending one. Anything else pending means the
+    # recovery was superseded or is ambiguous.
+    if len(pending) != 1:
+        return None
+    cause = pending[0]
+    if str(cause.get("reason") or "") != MERGE_GROUP_FAILURE_HANDOFF_REASON:
+        return None
+    if normalize(str(cause.get("to") or "")) != reviewer:
+        return None
+    try:
+        if int(cause.get("pr_number")) != pr_number:
+            return None
+    except (TypeError, ValueError):
+        return None
+    group_head = str(cause.get("head_sha") or "").strip().lower()
+    if not group_head or group_head == source_head:
+        return None
+    if cause.get("run_id") in (None, ""):
+        return None
+    if parse_merge_group_pr_number(str(cause.get("queue_ref") or "")) != pr_number:
+        return None
+    created_at = orchestrator_common.parse_utc_timestamp(cause.get("created_at"))
+    # The failure has to postdate the admission that put this head in the
+    # queue; an older cause cannot explain the current route.
+    if created_at is None or created_at < routed_at:
+        return None
+    if require_source_head and str(cause.get("source_head") or "").strip().lower() != source_head:
+        return None
+    return cause
+
+
+MERGE_ROUTE_RECOVERY_BOUND = "recovery"
+MERGE_ROUTE_RECOVERY_UNRESOLVED = "unresolved"
+
+
+def merge_group_route_recovery_hold(task: dict[str, Any], handoffs: Any) -> str:
+    """Does a merge_group recovery still hold `task.merge_route`?
+
+    `recovery`: the route is bound to the committed cause (the identity rule
+    above; a cause recorded before `source_head` existed counts until its
+    producer has judged it). `unresolved`: the cause rule refuses every
+    pending `merge_group_failure` handoff of the task, yet none of them is
+    proven to concern another PR or another source head -- a damaged or
+    partially recorded recovery, whose route is the evidence the cause is
+    judged against and must not be released as an ordinary merge. `""`: no
+    recovery holds the route; it is released like any other.
+    """
+    if not isinstance(task, dict):
+        return ""
+    route = task.get("merge_route")
+    if not isinstance(route, dict):
+        return ""
+    route_head = str(route.get("head") or "").strip().lower()
+    cause = merge_group_recovery_cause(task, handoffs, require_source_head=False)
+    if cause is not None:
+        if "source_head" not in cause or (
+            str(cause.get("source_head") or "").strip().lower() == route_head
+        ):
+            return MERGE_ROUTE_RECOVERY_BOUND
+        return ""
+
+    task_id = str(task.get("id") or "").strip()
+    failures = [
+        handoff
+        for handoff in handoffs or []
+        if isinstance(handoff, dict)
+        and str(handoff.get("task_id") or "").strip() == task_id
+        and str(handoff.get("status") or "").strip().lower() == "pending"
+        and str(handoff.get("reason") or "") == MERGE_GROUP_FAILURE_HANDOFF_REASON
+    ]
+    if not task_id or not failures:
+        return ""
+    submission = task.get("review_submission")
+    source_head = (
+        str(submission.get("remote_sha") or "").strip().lower() if isinstance(submission, dict) else ""
+    )
+    if source_head and route_head and source_head != route_head:
+        # The task has since submitted another head: the route belongs to an
+        # earlier attempt, and the merge of the current PR releases it.
+        return ""
+
+    def positive_int(value: Any) -> int | None:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return None
+        return number if number > 0 else None
+
+    route_pr = positive_int(route.get("pr_number")) or positive_int(task.get("pr_number"))
+
+    def concerns_another_attempt(handoff: dict[str, Any]) -> bool:
+        named_source = str(handoff.get("source_head") or "").strip().lower()
+        if named_source and route_head and named_source != route_head:
+            return True
+        handoff_pr = positive_int(handoff.get("pr_number"))
+        return bool(handoff_pr and route_pr and handoff_pr != route_pr)
+
+    if all(concerns_another_attempt(handoff) for handoff in failures):
+        return ""
+    return MERGE_ROUTE_RECOVERY_UNRESOLVED
+
+
+def merge_group_recovery_publication_pending(task: dict[str, Any], handoffs: Any) -> bool:
+    """An owner-returned recovery whose merged PR still awaits the owner's publisher.
+
+    Only the merge_group owner-return produces this: `in_progress`, no
+    approval, and the committed cause still bound to the routed head. It is
+    the one in-progress state whose reviewer cause and route survive
+    `normalize_handoffs`, a rejected closeout seal and the publisher itself.
+    """
+    return (
+        isinstance(task, dict)
+        and str(task.get("status") or "").strip().lower() == "in_progress"
+        and not str(task.get("approved_head") or "").strip()
+        and merge_group_recovery_cause(task, handoffs) is not None
+    )
+
+
 def normalize_handoffs(state: dict[str, Any]) -> None:
     task_map = {task["id"]: task for task in state["tasks"]}
     pending_by_task: dict[str, list[dict[str, Any]]] = {}
@@ -6302,7 +6510,22 @@ def normalize_handoffs(state: dict[str, Any]) -> None:
         task = task_map.get(task_id)
         if task:
             task_status = task.get("status")
+            if task_status in {"review", "in_progress"} and (
+                merge_group_route_recovery_hold(task, pending) == MERGE_ROUTE_RECOVERY_UNRESOLVED
+            ):
+                # Several merge_group failure causes (or a cause beside another
+                # pending handoff) that the cause rule cannot resolve to one,
+                # none proven to concern another PR or source head. Collapsing
+                # them to the last would turn list order into the one licensed
+                # recovery; they stay pending, ambiguous, and nothing is
+                # dispatched or released from them.
+                continue
             if task_status in {"in_progress", "blocked", "done"}:
+                # The merge_group owner-return keeps its one committed cause:
+                # the same reviewer decision is still owed once the owner's
+                # publisher has verified the merged PR.
+                if merge_group_recovery_publication_pending(task, pending):
+                    continue
                 for handoff in pending:
                     handoff["status"] = "done"
                     handoff["resolved_at"] = iso_now()
@@ -8307,6 +8530,17 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     )
     if is_same_submission and "submitted_by" in existing_sub:
         submission["submitted_by"] = existing_sub["submitted_by"]
+    # The owner publishing the merged PR of an owner-returned merge_group
+    # recovery: the same immutable PR/head/branch, now verified merged by the
+    # checks above. Its committed cause is the reviewer handoff still owed,
+    # and its route is the admission record; both are kept. Any other
+    # submission -- a new head, an open PR, no bound cause -- is ordinary.
+    merge_group_recovery_publication = bool(
+        is_same_submission
+        and submission.get("merged_at")
+        and submission.get("merge_commit")
+        and merge_group_recovery_publication_pending(task, state.get("handoffs"))
+    )
 
     # Every actor of the submitted work has to resolve to a registered account
     # before review can start: an unknown author is not an independent one, so
@@ -8379,21 +8613,23 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     task["pr_number"] = submission["pr_number"]
     task["pr_url"] = submission["pr_url"]
     task.pop("approved_head", None)
-    task.pop("merge_route", None)
+    if not merge_group_recovery_publication:
+        task.pop("merge_route", None)
     task.pop("handoff_seal", None)
     task.pop("helper_execution_lease", None)
     mark_handoffs_done_for_actor(state, task_id, actor)
     mark_blockers_resolved(state, task_id)
-    state.setdefault("handoffs", []).append(
-        {
-            "task_id": task_id,
-            "from": actor,
-            "to": reviewer,
-            "message": message,
-            "status": "pending",
-            "created_at": timestamp,
-        }
-    )
+    if not merge_group_recovery_publication:
+        state.setdefault("handoffs", []).append(
+            {
+                "task_id": task_id,
+                "from": actor,
+                "to": reviewer,
+                "message": message,
+                "status": "pending",
+                "created_at": timestamp,
+            }
+        )
     append_log(
         {
             "ts": timestamp,
@@ -8402,6 +8638,11 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
             "task_id": task_id,
             "message": f"Submitted PR #{submission['pr_number']} to {reviewer}: {message}",
             "submission": submission,
+            **(
+                {"merge_group_recovery_publication": True}
+                if merge_group_recovery_publication
+                else {}
+            ),
         }
     )
 
