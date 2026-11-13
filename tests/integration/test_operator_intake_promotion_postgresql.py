@@ -17,6 +17,7 @@ from tests.integration.test_operator_intake_workflow_postgresql import (
     BASE,
     _client,
     _headers,
+    _seed_historical_submission,
 )
 from tests.integration.test_operator_intake_workflow_postgresql import (
     bridge_database as bridge_database,
@@ -75,11 +76,16 @@ def _ready_intake(db, bundle, client):
                                          source_listing_id=listing.source_listing_id,
                                          normalized_address=address.normalized_address,
                                          rent_amount=listing.rent_amount, area_ping=listing.area_ping))
-    submitted = client.post(f"{BASE}/intake/submit", json={"url": "https://rent.591.com.tw/synthetic-promotion",
-                                                       "heatZoneId": "synthetic-permitted-zone"},
-                            headers=_headers())
+    # Promotion acts on retained Operator work, not either retired URL fresh
+    # writer. The original bridge initializes its actual Assignment/SLA in SQL.
+    retained = _seed_historical_submission(
+        bundle, "https://rent.591.com.tw/synthetic-promotion",
+        heat_zone_id="synthetic-permitted-zone",
+    )
+    submitted = client.get(f"{BASE}/intake/{retained['id']}", headers=_headers())
     assert submitted.status_code == 200, submitted.text
     initial = submitted.json()
+    assert initial["stage"] == "AWAITING_ASSISTED_ENTRY"
     iid = initial["id"]
     corrected = client.post(f"{BASE}/intake/{iid}/correct",
                             json={"fields": {"floor": "1F"}, "reason": "Synthetic measured revision",

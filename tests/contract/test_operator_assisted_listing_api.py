@@ -9,12 +9,12 @@ from apps.api.app.routes.operator_modules.network_listings import is_record_owne
 from apps.api.oday_api.main import create_app
 from modules.listing.domain.models import ListingDedupKey
 from modules.opsboard.application.network_listings import (
-    NetworkListingConflict,
     NetworkListingService,
 )
 from shared.auth import Principal
 from shared.domain.models import AddressLocation, Listing
 from shared.infrastructure.persistence.factory import _memory_bundle
+from tests.integration.test_assisted_listing_intake_persistence import _replay_retained_url
 
 HEADERS = {
     "x-subject-id": "operator-expansion-manager",
@@ -32,14 +32,14 @@ def _write_headers(key: str) -> dict[str, str]:
     }
 
 
-def test_first_submission_contract_test() -> None:
+def test_historical_submission_replays_original_receipt() -> None:
     app = create_app()
     client = TestClient(app)
 
-    # Submit a new valid synthetic URL
+    # Retained history remains replayable, not a new native READY command.
     url = "https://www.synthetic.example/detail-77120345.html"
-    resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    resp = _replay_retained_url(
+        app, client,
         json={"url": url, "heatZoneId": "HZ-01"},
         headers={
             **HEADERS,
@@ -76,8 +76,8 @@ def test_listing_inbox_server_query_contract() -> None:
 
     created_ids: list[str] = []
     for suffix in ("query-a", "query-b"):
-        response = client.post(
-            "/api/v1/operator/network-listings/intake/submit",
+        response = _replay_retained_url(
+            app, client, stage="FAILED", outcome=None,
             json={
                 "url": f"https://www.synthetic.example/detail-{suffix}.html",
                 "heatZoneId": "HZ-01",
@@ -119,65 +119,37 @@ def test_listing_inbox_server_query_contract() -> None:
     assert no_match.json()["total"] == 0
 
 
-def test_exact_duplicate_contract_test() -> None:
+def test_exact_historical_replay_keeps_receipt_after_current_stage_changes() -> None:
     app = create_app()
     client = TestClient(app)
-
-    # 1. First submission -> READY
     url = "https://www.synthetic.example/detail-77120345.html"
-    resp = client.post(
+    headers = _write_headers("retained-exact-url")
+    first = _replay_retained_url(
+        app, client, json={"url": url, "heatZoneId": "HZ-01"}, headers=headers,
+    )
+    repo = app.state.operator_intake_repository
+    current = repo.get_intake(first.json()["id"])
+    current["stage"] = "RETRIEVING"
+    repo.save_intake(current)
+    # Replay returns the old receipt, not the current processing state or a
+    # fresh creation. Current-target authorization remains the server's job.
+    before = (repo.list_intakes(), repo.list_idempotency_records())
+    replay = client.post(
         "/api/v1/operator/network-listings/intake/submit",
-        json={"url": url, "heatZoneId": "HZ-01"},
-        headers=HEADERS,
+        json={"url": url, "heatZoneId": "HZ-01"}, headers=headers,
     )
-    assert resp.status_code == 200
-    id1 = resp.json()["id"]
-
-    # 2. Second submission -> exact duplicate returned (terminal state idempotency)
-    resp2 = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
-        json={"url": url, "heatZoneId": "HZ-01"},
-        headers=HEADERS,
-    )
-    assert resp2.status_code == 200
-    assert resp2.json()["id"] == id1
-
-    # 3. Test URL concurrency check (raising conflict if stage is not terminal)
-    service = NetworkListingService()
-    service.submit_intake(
-        url=url,
-        heat_zone_id="HZ-01",
-        actor_role_id="expansionManager",
-        actor_name="林曉青",
-        idempotency_key="idem-1",
-        correlation_id="corr-1",
-    )
-    # Persist RETRIEVING in the original repository; a command refreshes its
-    # current state instead of trusting a mutation of the service cache alone.
-    intake = service._state["assistedIntakes"][0]
-    intake["stage"] = "RETRIEVING"
-    service._intakes.save_intake(intake)
-
-    # Submitting same URL again should raise NetworkListingConflict
-    with pytest.raises(NetworkListingConflict):
-        service.submit_intake(
-            url=url,
-            heat_zone_id="HZ-01",
-            actor_role_id="expansionManager",
-            actor_name="林曉青",
-            idempotency_key="idem-2",
-            correlation_id="corr-2",
-        )
+    assert replay.status_code == 200 and replay.json() == first.json(), replay.text
+    assert (repo.list_intakes(), repo.list_idempotency_records()) == before
 
 
 def test_changed_price_revision_contract_test() -> None:
     app = create_app()
     client = TestClient(app)
 
-    # Submit a revision URL (L-2024 duplicate but rent is 55000 instead of 58000)
+    # Retained revision remains decidable against its actual Listing target.
     url = "https://www.synthetic.example/detail-88520242.html"
-    resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    resp = _replay_retained_url(
+        app, client, outcome="REVISION", target="L-2024",
         json={"url": url, "heatZoneId": "HZ-01"},
         headers=HEADERS,
     )
@@ -196,7 +168,7 @@ def test_changed_price_revision_contract_test() -> None:
             "riskAcknowledged": True,
             "actorRoleId": "expansionManager",
         },
-        headers=_write_headers("changed-price-revise"),
+        headers={**_write_headers("changed-price-revise"), "If-Match": f'W/"{data["version"]}"'},
     )
     assert decide_resp.status_code == 200
     assert decide_resp.json()["stage"] == "READY"
@@ -212,8 +184,8 @@ def test_unmatched_revision_is_rejected_instead_of_overwriting_first_listing() -
     app = create_app()
     client = TestClient(app)
 
-    resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    resp = _replay_retained_url(
+        app, client,
         json={"url": "https://www.synthetic.example/detail-77120345.html", "heatZoneId": "HZ-01"},
         headers=HEADERS,
     )
@@ -253,8 +225,8 @@ def test_ambiguous_entity_match_review_test() -> None:
 
     # Possible match - same normalized address as L-2025 but different floor/rent
     url = "https://www.synthetic.example/detail-99310418.html"
-    resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    resp = _replay_retained_url(
+        app, client, stage="NEEDS_REVIEW", outcome="POSSIBLE_MATCH", target="L-2025",
         json={"url": url, "heatZoneId": "HZ-02"},
         headers=HEADERS,
     )
@@ -299,8 +271,8 @@ def test_ambiguous_entity_match_review_test() -> None:
 def test_created_listing_keeps_address_but_requires_measured_geocode_for_promotion() -> None:
     app = create_app()
     client = TestClient(app)
-    submitted = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    submitted = _replay_retained_url(
+        app, client, stage="NEEDS_REVIEW", outcome="POSSIBLE_MATCH", target="L-2025",
         json={
             "url": "https://www.synthetic.example/detail-99310418.html",
             "heatZoneId": "HZ-02",
@@ -319,7 +291,7 @@ def test_created_listing_keeps_address_but_requires_measured_geocode_for_promoti
             "riskAcknowledged": True,
             "actorRoleId": "expansion-manager",
         },
-        headers=_write_headers("promotion-gate-decide"),
+        headers={**_write_headers("promotion-gate-decide"), "If-Match": f'W/"{intake["version"]}"'},
     )
     assert decided.status_code == 200
     listing_id = decided.json()["matchResult"]["targetListingId"]
@@ -362,10 +334,10 @@ def test_malformed_payload_contract_test() -> None:
     app = create_app()
     client = TestClient(app)
 
-    # Malformed payload (empty address raw)
+    # Retained malformed source history still requires manual entry.
     url = "https://www.synthetic.example/detail-40028801.html"
-    resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    resp = _replay_retained_url(
+        app, client, stage="AWAITING_ASSISTED_ENTRY", outcome=None,
         json={"url": url, "heatZoneId": "HZ-01"},
         headers=HEADERS,
     )
@@ -374,14 +346,14 @@ def test_malformed_payload_contract_test() -> None:
     assert data["stage"] == "AWAITING_ASSISTED_ENTRY"
 
 
-def test_unapproved_source_fail_closed_test() -> None:
+def test_retained_source_policy_states_remain_readable() -> None:
     app = create_app()
     client = TestClient(app)
 
     # 1. 591 is ASSISTED_ENTRY_ONLY
     url_591 = "https://www.591.com.tw/rent-detail-12345.html"
-    resp_591 = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    resp_591 = _replay_retained_url(
+        app, client, stage="AWAITING_ASSISTED_ENTRY", outcome=None,
         json={"url": url_591, "heatZoneId": "HZ-01"},
         headers=HEADERS,
     )
@@ -392,8 +364,9 @@ def test_unapproved_source_fail_closed_test() -> None:
 
     # 2. Unknown source is POLICY_UNKNOWN
     url_unknown = "https://www.unknown-domain.com/rent/123"
-    resp_unknown = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    # This is historical readback, not current policy-admission proof.
+    resp_unknown = _replay_retained_url(
+        app, client, stage="QUARANTINED", outcome="QUARANTINED",
         json={"url": url_unknown, "heatZoneId": "HZ-01"},
         headers=HEADERS,
     )
@@ -407,10 +380,10 @@ def test_timeout_contract_test() -> None:
     app = create_app()
     client = TestClient(app)
 
-    # Timeout URL
+    # Retained timeout history keeps corrections through the actual retry.
     url = "https://www.synthetic.example/detail-50000001.html"
-    resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    resp = _replay_retained_url(
+        app, client, stage="FAILED", outcome=None,
         json={"url": url, "heatZoneId": "HZ-01"},
         headers=HEADERS,
     )
@@ -463,8 +436,8 @@ def test_role_based_server_checks() -> None:
     client = TestClient(app)
 
     url = "https://www.synthetic.example/detail-77120345.html"
-    resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    resp = _replay_retained_url(
+        app, client,
         json={"url": url, "heatZoneId": "HZ-01"},
         headers=HEADERS,
     )
@@ -535,8 +508,8 @@ def test_promote_intake_contract_test() -> None:
     client = TestClient(app)
 
     url = "https://www.synthetic.example/detail-88520242.html"
-    resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    resp = _replay_retained_url(
+        app, client, outcome="REVISION", target="L-2024",
         json={"url": url, "heatZoneId": "HZ-01"},
         headers={
             **HEADERS,
@@ -642,8 +615,8 @@ def test_promote_intake_contract_test() -> None:
 
 
 def _ready_intake_id(client) -> str:
-    resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    resp = _replay_retained_url(
+        client.app, client, outcome="REVISION", target="L-2024",
         json={"url": "https://www.synthetic.example/detail-88520242.html", "heatZoneId": "HZ-01"},
         headers={
             **HEADERS,

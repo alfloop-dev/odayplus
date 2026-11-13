@@ -309,7 +309,9 @@ def _claim_intake_job(bundle, job_id):
     raise AssertionError("Intake job was not claimable")
 
 
-def _seed_historical_submission(bundle, url, *, key="synthetic-operator-submit", linked_job=False):
+def _seed_historical_submission(
+    bundle, url, *, key="synthetic-operator-submit", linked_job=False, heat_zone_id=None,
+):
     """Prepare retained Operator data through its existing repository contract.
 
     No HTTP/service fresh command or native READY result is used for setup.
@@ -325,7 +327,7 @@ def _seed_historical_submission(bundle, url, *, key="synthetic-operator-submit",
     actor_key = hashlib.sha256(MANAGER.encode()).hexdigest() + ":" + key
     record = {
         "id": intake_id, "tenantId": TENANT, "intakeMethod": "URL",
-        "originalUrl": url, "canonicalUrl": url, "heatZoneId": None,
+        "originalUrl": url, "canonicalUrl": url, "heatZoneId": heat_zone_id,
         "submitter": MANAGER, "submittedBy": MANAGER, "owner": MANAGER,
         "submittedAt": at, "updatedAt": at, "lastObservedAt": None,
         "stage": "SUBMITTED" if linked_job else "AWAITING_ASSISTED_ENTRY",
@@ -339,7 +341,7 @@ def _seed_historical_submission(bundle, url, *, key="synthetic-operator-submit",
             job, created = bundle.job_queue.enqueue(JobRequest(
                 job_type="assisted-listing-intake", payload={
                     "intake_id": intake_id, "url": url, "tenant_id": TENANT,
-                    "heat_zone_id": None, "actor_role_id": Role.SITE_REVIEWER.value,
+                    "heat_zone_id": heat_zone_id, "actor_role_id": Role.SITE_REVIEWER.value,
                     "actor_name": MANAGER,
                 }, idempotency_key="intake-submit:" + hashlib.sha256(
                     f"{TENANT}:{actor_key}".encode()).hexdigest(),
@@ -350,7 +352,7 @@ def _seed_historical_submission(bundle, url, *, key="synthetic-operator-submit",
         repository.save_idempotency_record(network_listings.IntakeIdempotencyRecord(
             action="submit_intake", key=actor_key, response=deepcopy(record),
             actor_subject_id=MANAGER, request_sha256=hashlib.sha256(json.dumps(
-                {"url": url.strip(), "heat_zone_id": None, "async_intake": False},
+                {"url": url.strip(), "heat_zone_id": heat_zone_id, "async_intake": False},
                 sort_keys=True, separators=(",", ":"), allow_nan=False,
             ).encode()).hexdigest(),
         ))
