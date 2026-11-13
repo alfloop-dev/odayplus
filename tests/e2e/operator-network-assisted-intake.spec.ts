@@ -526,7 +526,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-parsed-lineage")).toBeVisible({
       timeout: 15_000,
     });
-    await page.reload();
+    const [restored] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "GET"
+        && new URL(response.url()).pathname === `/api/v1/operator/network-listings/intake/${scenario.intake_id}`),
+      page.reload(),
+    ]);
+    // Reload completion is not completion of the original async detail read.
+    // Bind the durability assertion to that actual response, not a loading UI.
+    expect(restored.status(), await restored.text()).toBe(200);
+    expect(await restored.json()).toMatchObject({ id: scenario.intake_id, version: 2 });
     await expect(page.getByTestId("intake-parsed-lineage")).toContainText("新北市板橋區府中路 26 號 1F");
     const read = await api.get(`/api/v1/operator/network-listings/intake/${scenario.intake_id}`, {
       headers: { "x-roles": "expansion_user,site_reviewer", "x-operator-role": "expansion-manager",
