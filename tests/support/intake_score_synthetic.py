@@ -625,9 +625,12 @@ def ready_scenario(database_url, bundle, client, *,
             rent_amount=listing.rent_amount, area_ping=listing.area_ping))
         history = {"policy": policy.policy, "policyLabel": "需授權帳號", "policyReason": policy.policy_reason}
     elif retained_history == "policy-unknown":
+        from modules.external_data.application.assisted_intake import MatchResult
+
         url = "https://unknown-house.example.tw/retained-" + scenario_id
+        reason = "Explicit retained governance finding: no approved source-use policy; no retrieval is attested."
         history = {"stage": "QUARANTINED", "policy": "POLICY_UNKNOWN", "policyLabel": "政策未知",
-            "policyReason": "Explicit retained governance finding: no approved source-use policy; no retrieval is attested."}
+            "policyReason": reason, "matchResult": MatchResult("QUARANTINED", 0.0, None, (), reason).to_dict()}
     elif retained_history == "retrieval-timeout":
         from modules.external_data.application.assisted_intake import RETRIEVAL_CORPUS
 

@@ -22,8 +22,10 @@ export async function openPgScenario(page: Page, options: {
   const scenario = await response.json() as PgScenario;
   await page.setExtraHTTPHeaders({ ...MANAGER_HEADERS, "x-tenant-id": scenario.tenant_id, "x-subject-id": scenario.proposer_id });
   await page.addInitScript(({ tenant, proposer }) => {
-    sessionStorage.setItem("oday.operator.role", "expansion-manager");
-    localStorage.setItem("oday.operator.role", "expansion-manager");
+    // Initialize this fresh fixture context, but do not overwrite an explicit
+    // in-test role switch on reload (governance/read-only and denied roles).
+    if (!sessionStorage.getItem("oday.operator.role")) sessionStorage.setItem("oday.operator.role", "expansion-manager");
+    if (!localStorage.getItem("oday.operator.role")) localStorage.setItem("oday.operator.role", "expansion-manager");
     if (!sessionStorage.getItem("oday.operator.subject")) sessionStorage.setItem("oday.operator.subject", proposer);
     sessionStorage.setItem("oday.operator.tenant", tenant);
   }, { tenant: scenario.tenant_id, proposer: scenario.proposer_id });
