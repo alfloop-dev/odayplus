@@ -414,12 +414,12 @@ describe("native Intake and case selection", () => {
     const second = makeContext(() => secondRead.promise, "new-account");
     act(() => {
       const url = new URL(window.location.href); url.searchParams.set("unrelated", "changed");
-      window.history.replaceState(null, "", url);
-      // Notify the existing useSyncExternalStore router double, just as its
-      // push/replace and the other history controls do. A silent history
-      // mutation does not establish that the new transport observed navigation.
-      window.dispatchEvent(new PopStateEvent("popstate"));
       view.rerender(<CanonicalIntakeCasePicker context={second} />);
+      window.history.replaceState(null, "", url);
+      // The new transport must observe this navigation. Notify the existing
+      // useSyncExternalStore router double after installing that transport;
+      // notifying the old reader instead must not grant the new one its dialog.
+      window.dispatchEvent(new PopStateEvent("popstate"));
     });
     expect(screen.queryByText(/正式收件 .*已送出/)).not.toBeInTheDocument();
     expect(screen.queryByText(/第一個已驗證帳號/)).not.toBeInTheDocument();
