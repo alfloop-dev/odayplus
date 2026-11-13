@@ -236,7 +236,7 @@ describe("native Intake and case selection", () => {
   it.each(["button", "legacy add URL"])("routes the actual legacy Inbox %s through the native picker/form/reader without an old POST", async (entry) => {
     if (entry === "legacy add URL") window.history.replaceState(null, "", "/operator?ws=network&tab=radar&dialog=add&selected=IN-old&decision=create&extra=a&extra=b#intake/IN-old");
     else window.history.replaceState(null, "", "/operator?ws=network&tab=radar&extra=a&extra=b");
-    const legacyFetch = vi.fn(async () => json({ items: [], total: 0, page: 1, pageSize: 10,
+    const legacyFetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json({ items: [], total: 0, page: 1, pageSize: 10,
       counts: { needsReview: 0, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 }, evidenceState: "complete" }));
     vi.stubGlobal("fetch", legacyFetch);
     const pending = deferred<Response>();
@@ -273,12 +273,12 @@ describe("native Intake and case selection", () => {
     expect(posts(context)).toHaveLength(1);
     expect(posts(context)[0][0]).toBe("/api/v1/canonical-intakes");
     expect(new Headers(posts(context)[0][1]?.headers).has("if-match")).toBe(false);
-    expect(legacyFetch.mock.calls.every((args) => !((args as unknown as [unknown, RequestInit?])[1]?.method))).toBe(true);
+    expect(legacyFetch.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
   });
 
   it.each(["no native reader", "read only"])("keeps a legacy add URL explicit and does not fall back with %s", async (state) => {
     window.history.replaceState(null, "", "/operator?ws=network&tab=radar&dialog=add");
-    const legacyFetch = vi.fn(async () => json({ items: [], total: 0, page: 1, pageSize: 10, counts: {}, evidenceState: "complete" }));
+    const legacyFetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json({ items: [], total: 0, page: 1, pageSize: 10, counts: {}, evidenceState: "complete" }));
     vi.stubGlobal("fetch", legacyFetch);
     const context = makeContext();
     render(<CanonicalIntakeCommandProvider context={context}><RadarWithCurrentIntakeRoute
@@ -286,7 +286,7 @@ describe("native Intake and case selection", () => {
     expect(await screen.findByText(state === "no native reader" ? /無法驗證正式收件的讀取資格/ : /此角色無權新增正式收件/)).toBeVisible();
     expect(screen.queryByTestId("intake-add-dialog")).not.toBeInTheDocument();
     expect(context.fetchImpl).not.toHaveBeenCalled();
-    expect(legacyFetch.mock.calls.every((args) => !((args as unknown as [unknown, RequestInit?])[1]?.method))).toBe(true);
+    expect(legacyFetch.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
   });
 
   it("restores the native add URL through the existing collection, submits explicit input and follows only its native reader", async () => {
