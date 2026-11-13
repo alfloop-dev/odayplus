@@ -22,13 +22,17 @@ export subsidy-ready evidence.
 
 | Area | Required state |
 |---|---|
-| Environment | Staging or integration environment deployed with build version recorded |
-| Data | Deterministic UAT snapshot with HeatZones, Listings, Candidate Sites, Stores, Alerts, Interventions, Price Plans, Campaigns, AVM Reports, NetPlan Scenarios, Model Versions, and Decision Logs |
+| Environment | Staging environment deployed with build version recorded (QA-06 §3). Integration environments may support engineering preparation but do not substitute for this full formal UAT. |
+| Data | Deterministic UAT snapshot with at least 3 HeatZones, 20 Listings, 10 Candidate Sites, 5 SiteScore Reports, 10 Stores, 3 Red Alerts, 3 Interventions, 2 Price Plans, 2 Ad Campaigns, 2 AVM Reports, 2 NetPlan Scenarios, 3 Model Versions, and 20 Decision Logs (QA-06 §3) |
 | Accounts | qa_admin, executive_user, expansion_user, site_reviewer, ops_manager, field_supervisor, marketing_user, pricing_user, finance_user, legal_user, data_scientist, mlops_user, franchisee_user, audit_user, readonly_user, no_permission_user |
 | Evidence | Screenshot/video capture path, audit export path, and manifest owner assigned |
 | Defects | Known issues reviewed; P0/P1 open defects block UAT start unless accepted by Product Owner and QA Lead |
 
 ## Role Scripts
+
+QA-06 §4 defines the task and pass criteria for each of the 55 IDs below.
+The existing plan owners (QA Lead / Product Owner) complete the step-by-step
+execution and session arrangements in the release UAT packet.
 
 | Role | Script IDs | Required sign-off evidence |
 |---|---|---|
@@ -44,11 +48,19 @@ export subsidy-ready evidence.
 | Franchisee | UAT-FRAN-001..005 | Self-store isolation, recommendation view, feedback submission |
 | Audit user | UAT-AUDIT-001..005 | Decision search, decision detail, evidence export, permission change trace |
 
+### SiteScore Review
+
+See QA-06 §4.2 (`UAT-SITE-001..005`) for the original review tasks and pass criteria.
+
+### Franchisee
+
+See QA-06 §4.10 (`UAT-FRAN-001..005`) for the original franchisee tasks and pass criteria.
+
 ## Exit Criteria
 
 | Gate | Pass condition |
 |---|---|
-| Functional UAT | All role scripts completed or explicitly marked not applicable |
+| Functional UAT | All 55 role-script IDs listed in Role Scripts executed and completed, each with a traceable result (QA-06 §8). A not-applicable mark does not count as completed for full formal UAT. |
 | Defects | Zero P0/P1 UAT defects; accepted-with-conditions items have owner and due date |
 | High-risk decisions | SiteScore GO, PriceOps approval, AdLift spend, AVM reserve price, NetPlan EXIT/MOVE, model release, data quality override, permission change, and sensitive export have audit evidence |
 | Sign-off | Product Owner, QA Lead, Security Owner, SRE Owner, and Business Owner sign-off captured |
