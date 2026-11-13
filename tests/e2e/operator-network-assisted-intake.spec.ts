@@ -656,26 +656,51 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     } finally { await api.dispose(); }
   });
 
-  test("queue counts reflect real server state across mixed outcomes", async ({
+  test("retained queue counts reflect real server state across mixed outcomes", async ({
     page,
   }) => {
-    await openRadarAsExpansionManager(page);
+    const contexts: import("@playwright/test").APIRequestContext[] = [];
+    try {
+      const review = await openPgScenario(page, { retainedHistory: "possible-match" });
+      contexts.push(review.api);
+      const headers = { "x-subject-id": review.scenario.proposer_id, "x-tenant-id": review.scenario.tenant_id,
+        "x-roles": "expansion_user,site_reviewer", "x-operator-role": "expansion-manager" };
+      const before = await review.api.get("/api/v1/operator/network-listings/intake", { headers });
+      expect(before.status(), await before.text()).toBe(200);
+      const baseline = await before.json();
+      const failed = await openPgScenario(page, { retainedHistory: "retrieval-timeout" });
+      contexts.push(failed.api);
+      const assisted = await openPgScenario(page, { retainedHistory: "assisted-entry-only" });
+      contexts.push(assisted.api);
+      const states = await Promise.all([review, failed, assisted].map(({ scenario }) =>
+        getIntakeApi(scenario.intake_id, scenario)));
+      expect(states.map((record) => record.stage)).toEqual(["NEEDS_REVIEW", "FAILED", "AWAITING_ASSISTED_ENTRY"]);
+      expect(new Set(states.map((record) => record.id)).size).toBe(3);
+      // Retained fixtures do not establish fresh policy/retrieval success.
+      for (const record of states) expect(record).toMatchObject({ version: 1, rawSnapshot: null, snapshotId: null, parserVersion: null });
+      const after = await review.api.get("/api/v1/operator/network-listings/intake", { headers });
+      expect(after.status(), await after.text()).toBe(200);
+      const current = await after.json();
+      expect(current.total).toBe(baseline.total + 2);
+      expect(current.counts).toMatchObject({ needsReview: baseline.counts.needsReview,
+        blocked: baseline.counts.blocked + 1, awaitingEntry: baseline.counts.awaitingEntry + 1 });
 
-    await submitUrl(page, URLS.possible);
-    await page.getByTestId("intake-return-button").click();
-    await submitUrl(page, URLS.timeout);
-    await page.getByTestId("intake-return-button").click();
-    await submitUrl(page, URLS.assistedOnly);
-    await page.getByTestId("intake-return-button").click();
-
-    // Canonical inbox renders server counts inside the saved-view tab labels.
-    await expect(page.getByTestId("intake-tab-needsReview")).toContainText(
-      "(1)",
-    );
-    await expect(page.getByTestId("intake-tab-blocked")).toContainText("(1)");
-    await expect(page.getByTestId("intake-tab-awaitingEntry")).toContainText(
-      "(1)",
-    );
+      // Explicitly select all areas, rather than inheriting the shell's HZ-01
+      // or assigning its legacy label to these unscoped retained SQL records.
+      await page.goto(`${PG_WEB}/operator?ws=network&tab=radar&heatZoneId=`);
+      await expect(page.getByTestId("intake-table")).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByTestId("intake-filter-heat-zone")).toHaveValue("");
+      for (const tab of ["needsReview", "blocked", "awaitingEntry"] as const) {
+        await expect(page.getByTestId(`intake-tab-${tab}`)).toContainText(`(${current.counts[tab]})`);
+      }
+      await page.reload();
+      await expect(page.getByTestId("intake-table")).toBeVisible({ timeout: 15_000 });
+      for (const tab of ["needsReview", "blocked", "awaitingEntry"] as const) {
+        await expect(page.getByTestId(`intake-tab-${tab}`)).toContainText(`(${current.counts[tab]})`);
+      }
+    } finally {
+      for (const api of contexts) await api.dispose();
+    }
   });
 
   test("a role without listing permission gets the permission-limited state, not an empty queue", async ({
@@ -1081,7 +1106,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       .getByTestId("intake-decide-reason")
       .fill("Audit test create reason");
     await page.getByTestId("intake-decide-risk-ack").check();
-    await page.getByTestId("intake-decide-submit").click();
+    const [created] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST"
+        && new URL(response.url()).pathname === `/api/v1/operator/network-listings/intake/${id1}/decide`),
+      page.getByTestId("intake-decide-submit").click(),
+    ]);
+    expect(created.status(), await created.text()).toBe(200);
+    expect(created.request().headers()["if-match"]).toBe(`W/"${beforeCreate.version}"`);
+    expect(created.request().headers()["idempotency-key"]).toBeTruthy();
+    expect(await created.json()).toMatchObject({ id: id1, stage: "READY", version: beforeCreate.version + 1 });
     await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({
       timeout: 15_000,
     });
@@ -1189,7 +1222,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       .getByTestId("intake-decide-reason")
       .fill("Audit test revise reason");
     await page.getByTestId("intake-decide-risk-ack").check();
-    await page.getByTestId("intake-decide-submit").click();
+    const [revised] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST"
+        && new URL(response.url()).pathname === `/api/v1/operator/network-listings/intake/${id2}/decide`),
+      page.getByTestId("intake-decide-submit").click(),
+    ]);
+    expect(revised.status(), await revised.text()).toBe(200);
+    expect(revised.request().headers()["if-match"]).toBe(`W/"${beforeRevise.version}"`);
+    expect(revised.request().headers()["idempotency-key"]).toBeTruthy();
+    expect(await revised.json()).toMatchObject({ id: id2, stage: "READY", version: beforeRevise.version + 1 });
     await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({
       timeout: 15_000,
     });
@@ -1232,7 +1273,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       .getByTestId("intake-decide-reason")
       .fill("Audit test duplicate reason");
     await page.getByTestId("intake-decide-risk-ack").check();
-    await page.getByTestId("intake-decide-submit").click();
+    const [duplicated] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST"
+        && new URL(response.url()).pathname === `/api/v1/operator/network-listings/intake/${id3}/decide`),
+      page.getByTestId("intake-decide-submit").click(),
+    ]);
+    expect(duplicated.status(), await duplicated.text()).toBe(200);
+    expect(duplicated.request().headers()["if-match"]).toBe(`W/"${beforeDuplicate.version}"`);
+    expect(duplicated.request().headers()["idempotency-key"]).toBeTruthy();
+    expect(await duplicated.json()).toMatchObject({ id: id3, stage: "READY", version: beforeDuplicate.version + 1 });
     await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({
       timeout: 15_000,
     });
@@ -1273,7 +1322,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       .getByTestId("intake-decide-reason")
       .fill("Audit test quarantine reason");
     await page.getByTestId("intake-decide-risk-ack").check();
-    await page.getByTestId("intake-decide-submit").click();
+    const [quarantined] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST"
+        && new URL(response.url()).pathname === `/api/v1/operator/network-listings/intake/${id4}/decide`),
+      page.getByTestId("intake-decide-submit").click(),
+    ]);
+    expect(quarantined.status(), await quarantined.text()).toBe(200);
+    expect(quarantined.request().headers()["if-match"]).toBe(`W/"${beforeQuarantine.version}"`);
+    expect(quarantined.request().headers()["idempotency-key"]).toBeTruthy();
+    expect(await quarantined.json()).toMatchObject({ id: id4, stage: "QUARANTINED", version: beforeQuarantine.version + 1 });
     await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({
       timeout: 15_000,
     });
