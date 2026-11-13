@@ -902,6 +902,7 @@ def _seed_forecast_history(connection) -> tuple[UUID, UUID, dict[date, UUID]]:
             finished_at=_at(day, 23),
             processed_count=1,
             valid_loaded=1,
+            final_cursor=f"forecast-cursor:{day.isoformat()}",
         )
         _insert_transaction(
             connection,
@@ -1086,7 +1087,7 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
             _insert_run(
                 connection,
                 name="forecast-target-resume-eof",
-                resumed_from="target-chunk-last-order",
+                resumed_from=f"forecast-cursor:{FORECAST_TARGET_DAY.isoformat()}",
                 source_kind="orders",
                 partition_key=FORECAST_TARGET_DAY.isoformat(),
                 finished_at=target_eof_at,
@@ -1203,8 +1204,10 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
                 },
             ),
         )
-        # Runs that never read any of the 29 days: another source kind, and
-        # orders partitions strictly after the target / before the first day.
+        # Another source kind is unrelated. Orders extraction dates, however,
+        # are NOT affected-event-date bounds: updatedAt can hide an old order
+        # beyond an unread prefix. The Root contract requires conservative
+        # refusal even without this store's lineage (no selective waiver).
         unrelated_bad_scopes = (
             ("transaction", FORECAST_TARGET_DAY.isoformat()),
             ("transaction", FORECAST_PRIOR_DAY.isoformat()),
@@ -1231,11 +1234,14 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
                     processed_count=1,
                     quarantined_count=1,
                 )
-                (unrelated_row,) = source.load(spec, bounds).rows
-                assert unrelated_row["date"] == FORECAST_TARGET_DAY
-                assert unrelated_row["label_maturity_time"] == (
-                    loaded_row["label_maturity_time"]
-                )
+                if source_kind == "orders":
+                    assert_target_refused("SOURCE_RUN_NOT_COMPLETE")
+                else:
+                    (unrelated_row,) = source.load(spec, bounds).rows
+                    assert unrelated_row["date"] == FORECAST_TARGET_DAY
+                    assert unrelated_row["label_maturity_time"] == (
+                        loaded_row["label_maturity_time"]
+                    )
         for day, run, reason in (
             (FORECAST_TARGET_DAY, target_run, "SOURCE_RUN_NOT_COMPLETE"),
             (FORECAST_PRIOR_DAY, prior_run, "PRIOR_SOURCE_NOT_COMPLETE"),
@@ -1416,8 +1422,9 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
                             )
                             assert cross_row["feature_snapshot_time"] == cross_eof_at
 
-            # Bounded chunks that never read this day, or that stopped before
-            # R0 reached EOF, leave the original proof and its clocks intact.
+            # Other source kinds leave the proof intact. An earlier bounded
+            # same-day chunk needs a matching cursor suffix to R0; another
+            # orders extraction date alone cannot prove an unrelated tail.
             unrelated_chunks = (
                 ("transaction", day.isoformat(), cross_chunk_at),
                 ("orders", (FORECAST_TARGET_DAY + timedelta(days=1)).isoformat(), cross_chunk_at),
@@ -1442,7 +1449,17 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
                         processed_count=1,
                         valid_loaded=1,
                         partition_complete=False,
+                        final_cursor="earlier-chunk-cursor",
                     )
+                    if source_kind == "orders" and partition_key != day.isoformat():
+                        assert_target_refused("SOURCE_RUN_NOT_COMPLETE")
+                        continue
+                    if source_kind == "orders":
+                        connection.execute(
+                            "UPDATE data_plane.ingestion_runs SET resumed_from = %s, "
+                            "started_at = %s WHERE run_id = %s",
+                            ("earlier-chunk-cursor", _at(day, 22) + timedelta(minutes=1), run),
+                        )
                     (unrelated_chunk_row,) = source.load(spec, bounds).rows
                     assert unrelated_chunk_row["label_maturity_time"] == (
                         loaded_row["label_maturity_time"]
@@ -1770,7 +1787,7 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
             _insert_run(
                 connection,
                 name="forecast-prior-resume-eof",
-                resumed_from="prior-chunk-last-order",
+                resumed_from=f"forecast-cursor:{FORECAST_PRIOR_DAY.isoformat()}",
                 source_kind="orders",
                 partition_key=FORECAST_PRIOR_DAY.isoformat(),
                 finished_at=prior_eof_at,
@@ -2882,8 +2899,9 @@ def test_postgresql_forecast_view_refuses_unresolved_later_update_quarantine(
                 )
                 assert_target_refused(reason)
 
-                # Resolving that quarantine restores the admitted row with
-                # its original clocks; nothing is backdated or invented.
+                # Resolution removes this known-order quarantine veto, but
+                # does not settle a FAILED extraction with unknown unread tail.
+                # An arbitrary later EOF cannot erase quarantined failed work.
                 connection.execute(
                     """
                     UPDATE data_plane.quarantined_records
@@ -2895,7 +2913,7 @@ def test_postgresql_forecast_view_refuses_unresolved_later_update_quarantine(
                         _id(f"quarantine-snapshot:later-update:{day.isoformat()}"),
                     ),
                 )
-                assert_target_admitted()
+                assert_target_refused("SOURCE_RUN_NOT_COMPLETE")
 
             # The same failed chunk inside the order day's own partition, after
             # a later zero-row EOF of that partition, is refused as well.
@@ -2925,9 +2943,9 @@ def test_postgresql_forecast_view_refuses_unresolved_later_update_quarantine(
                 )
                 assert_target_refused(reason)
 
-            # An unresolved quarantine of an earlier, superseded version of the
-            # order, or of an unrelated order or source, is not stale evidence
-            # about the projected row and does not refuse the day.
+            # Superseded/order-unrelated quarantine evidence alone does not
+            # make this projected order stale. It cannot, however, settle an
+            # incomplete orders run whose unobserved tail remains unknown.
             unrelated_partition = (FORECAST_FIRST_DAY - timedelta(days=10)).isoformat()
             with connection.transaction(force_rollback=True):
                 earlier_run = _insert_run(
@@ -2965,6 +2983,26 @@ def test_postgresql_forecast_view_refuses_unresolved_later_update_quarantine(
                     run_id=earlier_run,
                     partition_key=update_day.isoformat(),
                     quarantined_at=_at(update_day, 4),
+                )
+                assert_target_refused("SOURCE_RUN_NOT_COMPLETE")
+
+            # Preserve the positive quarantine-resolution rule when its run
+            # really is fully accounted for: no unresolved extraction is hidden
+            # behind the absence of this order's lineage.
+            with connection.transaction(force_rollback=True):
+                completed = _insert_run(
+                    connection, name=f"forecast-accounted-update:{day}", source_kind="orders",
+                    partition_key=update_day.isoformat(), finished_at=_at(update_day, 6),
+                )
+                _insert_quarantine(
+                    connection, name=f"accounted-quarantine:{day}", source_id=order_id,
+                    run_id=completed, partition_key=update_day.isoformat(),
+                    quarantined_at=_at(update_day, 4),
+                )
+                assert_target_refused(reason)
+                connection.execute(
+                    "UPDATE data_plane.quarantined_records SET resolved_at = %s "
+                    "WHERE run_id = %s", (_at(update_day, 8), completed),
                 )
                 assert_target_admitted()
 
