@@ -47,7 +47,7 @@ import {
  * ============================================================================
  */
 
-import { loginNativeSession, nativeBrowserInput, openNativeIntakeList, openPgScenario, PG_API, PG_WEB, submitNativeURL, type PgScenario } from "./_intakeScorePg";
+import { loginNativeSession, nativeBrowserInput, openNativeIntakeList, openPgScenario, PG_API, PG_WEB, reloadPgIntake, submitNativeURL, type PgScenario } from "./_intakeScorePg";
 
 import {
   acquireOperatorBackendLock,
@@ -526,15 +526,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-parsed-lineage")).toBeVisible({
       timeout: 15_000,
     });
-    const [restored] = await Promise.all([
-      page.waitForResponse((response) => response.request().method() === "GET"
-        && new URL(response.url()).pathname === `/api/v1/operator/network-listings/intake/${scenario.intake_id}`),
-      page.reload(),
-    ]);
-    // Reload completion is not completion of the original async detail read.
-    // Bind the durability assertion to that actual response, not a loading UI.
-    expect(restored.status(), await restored.text()).toBe(200);
-    expect(await restored.json()).toMatchObject({ id: scenario.intake_id, version: 2 });
+    const restored = await reloadPgIntake(page, scenario);
+    expect(restored).toMatchObject({ id: scenario.intake_id, version: 2 });
     await expect(page.getByTestId("intake-parsed-lineage")).toContainText("新北市板橋區府中路 26 號 1F");
     const read = await api.get(`/api/v1/operator/network-listings/intake/${scenario.intake_id}`, {
       headers: { "x-roles": "expansion_user,site_reviewer", "x-operator-role": "expansion-manager",
@@ -817,7 +810,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     await expect(page.getByTestId("intake-detail-match")).toHaveText(
       "疑似重複",
     );
-    await page.reload();
+    const restored = await reloadPgIntake(page, scenario);
+    expect(restored).toMatchObject({ id: scenario.intake_id, version: 2, stage: "NEEDS_REVIEW" });
     await expect(page.getByTestId("intake-detail-stage")).toHaveText("待人工覆核");
     const saved = await getIntakeApi(scenario.intake_id, scenario);
     expect(saved).toMatchObject({ version: 2, policy: "AUTH_REQUIRED", stage: "NEEDS_REVIEW",

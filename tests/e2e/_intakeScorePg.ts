@@ -151,6 +151,19 @@ export async function openPgScenario(page: Page, options: {
   return { api, scenario };
 }
 
+/** A document reload is not completion of the original async Intake read. */
+export async function reloadPgIntake(page: Page, scenario: PgScenario) {
+  const [response] = await Promise.all([
+    page.waitForResponse((candidate) => candidate.request().method() === "GET"
+      && new URL(candidate.url()).pathname === `/api/v1/operator/network-listings/intake/${scenario.intake_id}`),
+    page.reload(),
+  ]);
+  expect(response.status(), await response.text()).toBe(200);
+  const record = await response.json();
+  expect(record.id).toBe(scenario.intake_id);
+  return record;
+}
+
 /** Enter the actual Radar with a measured, durable listing; no UI route stub. */
 export async function openPgRadar(page: Page, scenario: PgScenario) {
   expect(scenario.listing_id, "Radar navigation requires an actually resolved listing").toBeTruthy();

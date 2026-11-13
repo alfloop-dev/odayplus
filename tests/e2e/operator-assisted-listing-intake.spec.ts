@@ -10,7 +10,7 @@ import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CanonicalIdentityReceipt, CanonicalIntakeAssistedEntryRequestReceipt, CanonicalIntakeReceipt, MatchCaseReceipt } from "@oday-plus/openapi-client";
 
-import { createPgNavigationControl, loginNativeSession, nativeBrowserInput, openNativeIntakeList, openPgRadar, openPgScenario, PG_WEB, submitNativeURL, type PgScenario } from "./_intakeScorePg";
+import { createPgNavigationControl, loginNativeSession, nativeBrowserInput, openNativeIntakeList, openPgRadar, openPgScenario, PG_WEB, reloadPgIntake, submitNativeURL, type PgScenario } from "./_intakeScorePg";
 
 import {
   acquireOperatorBackendLock,
@@ -697,7 +697,8 @@ test("canonical 2: retained assisted-entry-only keeps URL and validates durable 
   await expect(page.getByTestId("intake-timeline-audit-section")).toContainText(
     "人工補錄",
   );
-  await page.reload();
+  const restored = await reloadPgIntake(page, scenario);
+  expect(restored).toMatchObject({ id: scenario.intake_id, version: 2 });
   await expect(page.getByTestId("intake-parsed-lineage")).toContainText("新北市板橋區府中路 26 號 1F");
   const read = await api.get(`/api/v1/operator/network-listings/intake/${scenario.intake_id}`, {
     headers: { ...MANAGER_HEADERS, "x-tenant-id": scenario.tenant_id, "x-subject-id": scenario.proposer_id },
