@@ -455,6 +455,9 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                 sla, = connection.execute("SELECT assignment_id,version FROM workflow.sla_instances "
                     "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], fresh_id)).fetchall()
                 assert assignment[1:] == ("UNASSIGNED", 1) and sla == (assignment[0], 1)
+                for table in ("workflow.assignment_transitions", "workflow.sla_transitions"):
+                    assert connection.execute(f"SELECT count(*) FROM {table} WHERE tenant_id=%s AND correlation_id=%s",
+                        (ids["tenant"], receipt["correlation_id"])).fetchone()[0] == 1
                 audits = connection.execute("SELECT action,audit_event_id FROM audit.audit_events WHERE tenant_id=%s "
                     "AND correlation_id=%s AND action IN ('assignment.create','intake.create','sla.create')",
                     (ids["tenant"], receipt["correlation_id"])).fetchall()
@@ -468,7 +471,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                     column = "aggregate_id" if table == "workflow.jobs" else "intake_id"
                     assert connection.execute(f"SELECT count(*) FROM {table} WHERE tenant_id=%s AND {column}=%s",
                         (ids["tenant"], fresh_id)).fetchone()[0] == 0
-                assert connection.execute("SELECT count(*) FROM durable_documents WHERE doc_id=%s AND "
+                assert connection.execute("SELECT count(*) FROM odp_runtime.durable_documents WHERE doc_id=%s AND "
                     "collection IN ('operator.assisted_intakes','assisted_intake.intakes')", (fresh_id,)).fetchone()[0] == 0
             if submissions:
                 new_intake = submitted["intake_id"]
