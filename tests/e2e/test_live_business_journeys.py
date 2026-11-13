@@ -168,6 +168,8 @@ class BusinessWeb:
         self.non_durable: set[str] = set()
         self.drop_audit: set[str] = set()
         self.policy_open = False
+        self.policy_pending_reads = 0
+        self.policy_bodies: list[dict[str, Any]] = []
         self._event = 0
 
         self.issue = {
@@ -241,6 +243,43 @@ class BusinessWeb:
             "version": 3,
             "auditEvents": [],
             "matchResult": {"targetListingId": "L-2024"},
+        }
+        # OFFLINE metadata only: shaped like the existing native DTOs. This
+        # does not execute a worker, create a SQL graph or qualify live policy.
+        self.policy_submission = {
+            key: str(uuid5(NAMESPACE_DNS, "offline-policy-" + key)) for key in (
+                "intake_id", "transition_id", "audit_event_id", "outbox_event_id", "correlation_id")}
+        self.policy_submission.update(processing_state="SUBMITTED", intake_method="URL", version=1, submitted_at=NOW)
+        states = ["SUBMITTED", "CHECKING_IDENTITY", "CHECKING_SOURCE_POLICY", "QUARANTINED"]
+        transitions = [{
+            "transition_id": self.policy_submission["transition_id"] if index == 1 else str(uuid5(NAMESPACE_DNS, f"offline-policy-transition-{index}")),
+            "sequence_no": index, "from_state": states[index - 2] if index > 1 else None,
+            "to_state": state, "actor_subject_id": account_id(ACTORS["intake"]["primary"]) if index == 1 else None,
+            "service_principal": "native-intake-source-policy" if index > 1 else None,
+            "permission": "intake.quarantine" if index == 4 else "intake.create",
+            "reason_code": "SOURCE_BLOCKED" if index == 4 else None,
+            "expected_version": index - 1 if index > 1 else None, "resulting_version": index,
+            "job_id": str(uuid5(NAMESPACE_DNS, f"offline-policy-job-{index}")) if index > 1 else None,
+            "source_policy_version": 7 if index == 4 else None,
+            "parser_release_id": None, "source_snapshot_id": None, "match_case_id": None,
+            "correlation_id": self.policy_submission["correlation_id"], "causation_id": None, "occurred_at": NOW,
+        } for index, state in enumerate(states, 1)]
+        self.policy_intake = {
+            "intake_id": self.policy_submission["intake_id"], "tenant_id": TENANT,
+            "submitter_subject_id": account_id(ACTORS["intake"]["primary"]),
+            "intake_method": "URL", "processing_state": "QUARANTINED", "version": 4,
+            "submitted_at": NOW, "correlation_id": self.policy_submission["correlation_id"],
+            "scope": {axis: None for axis in ("brand_id", "region_id", "assigned_area_id", "heat_zone_id")},
+            "resolution": None, "workflow": None,
+            "source_info": {"source_id": "blocked-portal", "recorded_policy_state": "SOURCE_BLOCKED",
+                "last_transition_at": NOW, "completed_at": None,
+                "url_fields": [{"field_path": field, "classification": "CONFIDENTIAL", "effective":
+                    "https://blocked-portal.example.invalid/listing-8812", "masked": False, "mask_reason_code": None}
+                    for field in ("originalUrl", "canonicalUrl")]},
+            "processing_history": {"intake_id": self.policy_submission["intake_id"], "intake_version": 4,
+                "through_sequence": 4, "items": transitions, "next_cursor": None, "previous_cursor": None},
+            "processing_evidence": {"intake_id": self.policy_submission["intake_id"], "intake_version": 4,
+                "through_at": NOW, "observed_at": NOW, "items": [], "next_cursor": None, "previous_cursor": None},
         }
         self._routes()
 
@@ -669,32 +708,37 @@ class BusinessWeb:
                 )
             return Resp(200, self.intake)
 
-        def submit_intake(ctx: Ctx) -> Resp:
-            refused = self.denied(ctx, "intake", {"expansion_user"})
+        def submit_native_intake(ctx: Ctx) -> Resp:
+            refused = self.denied(ctx, "intake", {"site_reviewer", "expansion_user"})
             if refused:
                 return refused
-            if self.policy_open:
-                return Resp(
-                    200,
-                    {
-                        "id": "LI-7001",
-                        "stage": "PENDING_REVIEW",
-                        "policy": "SOURCE_BLOCKED",
-                        "rawSnapshot": {"html": "<listing/>"},
-                    },
-                )
-            return Resp(422, {"error": {"code": "SOURCE_BLOCKED"}})
+            assert "if-match" not in ctx.headers  # collection admission has no resource version
+            self.policy_bodies.append(deepcopy(ctx.body))
+            self.policy_intake["scope"] = deepcopy(ctx.body["scope"])
+            for field in self.policy_intake["source_info"]["url_fields"]:
+                field["effective"] = ctx.body["original_url"]
+            return Resp(201, self.policy_submission)
 
-        def search_intake(ctx: Ctx) -> Resp:
-            return Resp(200, {"items": []})
+        def read_native_intake(ctx: Ctx) -> Resp:
+            assert ctx.query == {"include_source": "true", "include_history": "true", "include_evidence": "true"}
+            if ctx.match.group(1) != self.policy_submission["intake_id"]:
+                return Resp(404, {})
+            row = deepcopy(self.policy_intake)
+            if self.policy_pending_reads:
+                self.policy_pending_reads -= 1
+                row["processing_state"] = "CHECKING_SOURCE_POLICY"
+            if self.policy_open:
+                # A source-policy label alone cannot erase actual retrieval.
+                row["processing_evidence"]["items"] = [{"kind": "SNAPSHOT"}]
+            return Resp(200, row)
 
         self.route(
             "GET",
             rf"{v1}/operator/network-listings",
             lambda ctx: Resp(200, {"listings": self.listings}),
         )
-        self.route("GET", rf"{v1}/operator/network-listings/intake", search_intake)
-        self.route("POST", rf"{v1}/operator/network-listings/intake/submit", submit_intake)
+        self.route("POST", rf"{v1}/canonical-intakes", submit_native_intake)
+        self.route("GET", rf"{v1}/canonical-intakes/([^/]+)", read_native_intake)
         self.route("GET", rf"{v1}/operator/network-listings/intake/([^/]+)", read_intake)
         self.route("POST", rf"{v1}/operator/network-listings/intake/([^/]+)/decide", decide_intake)
 
@@ -841,7 +885,12 @@ def journey_scopes() -> dict[str, dict[str, Any]]:
         },
         "policy_probe": {
             "source_ref": "https://blocked-portal.example.invalid/listing-8812",
-            "body": {"url": "https://blocked-portal.example.invalid/listing-8812"},
+            "source_id": "blocked-portal",
+            "body": {
+                "intake_method": "URL", "original_url": "https://blocked-portal.example.invalid/listing-8812",
+                "reason": "Offline authorized blocked-source policy probe",
+                "scope": {"brand_id": None, "region_id": None, "assigned_area_id": None, "heat_zone_id": None},
+            },
         },
     }
     return scopes
@@ -999,7 +1048,11 @@ def test_receipt_binds_release_actor_selector_and_record_identity() -> None:
         "wrong_role_denied": True,
         "policy_rejected": True,
     }
-    assert intake["policy_outcome"]["mode"] == "refused"
+    assert intake["policy_outcome"]["mode"] == "quarantined"
+    assert intake["policy_outcome"]["submission"]["processing_state"] == "SUBMITTED"
+    assert intake["policy_outcome"]["processing_state"] == "QUARANTINED"
+    assert not web.writes_to("/network-listings/intake/submit")
+    assert len(web.writes_to("/canonical-intakes")) == 1
 
 
 def test_receipt_carries_no_password_cookie_or_token() -> None:
@@ -1437,42 +1490,119 @@ def test_policy_blocked_source_accepted_with_retrieval_fails_intake() -> None:
     assert blockers(receipt, "intake") == {"policy:blocked_source_rejected": "policy"}
 
 
-def test_durable_quarantine_without_retrieval_satisfies_the_policy_probe() -> None:
+@pytest.mark.parametrize("policy", ["SOURCE_BLOCKED", "POLICY_UNKNOWN"])
+def test_durable_quarantine_without_retrieval_satisfies_the_policy_probe(policy: str) -> None:
+    from apps.api.app.routes.canonical_intakes import CanonicalIntakeDetail, CanonicalIntakeReceipt
+
     web = BusinessWeb()
-    quarantined = {
-        "id": "LI-7001",
-        "stage": "QUARANTINED",
-        "policy": "SOURCE_BLOCKED",
-        "rawSnapshot": None,
-        "snapshotId": None,
-        "parsedFields": {},
-    }
+    web.policy_intake["source_info"]["recorded_policy_state"] = policy
+    web.policy_pending_reads = 2
+    scope = scope_document()
+    authored = scope["journeys"]["intake"]["writes"]["policy_probe"]["body"]
+    authored["scope"]["brand_id"] = "00000000-0000-0000-0000-000000000099"
+    authored["reason"] = "Explicit offline author reason, not a principal default"
+    receipt, _, _ = run(web, selection=["intake"], scope=scope)
+    entry = receipt["journeys"]["intake"]
+    assert entry["status"] == "PASSED", blockers(receipt, "intake")
+    assert entry["policy_outcome"]["mode"] == "quarantined"
+    assert entry["policy_outcome"]["policy"] == policy
+    assert web.policy_bodies == [authored]
+    assert len([call for call in web.calls if call[0] == "GET" and "/canonical-intakes/" in call[1]]) == 3
+    assert not web.writes_to("/network-listings/intake/submit")
+    # Reuse the real DTOs; the offline double cannot invent legacy READY or
+    # omit required native metadata while claiming to exercise this caller.
+    CanonicalIntakeReceipt.model_validate(web.policy_submission)
+    CanonicalIntakeDetail.model_validate(web.policy_intake)
+    assert bj.journey_receipt_problems(bj.JOURNEYS_BY_ID["intake"], entry) == []
+    assert authored["reason"] not in json.dumps(entry)
+    assert authored["original_url"] not in json.dumps(entry)
 
-    def submit(ctx: Ctx) -> Resp:
-        return Resp(200, quarantined)
 
-    def read(ctx: Ctx) -> Resp:
-        if ctx.match.group(1) == "LI-7001":
-            return Resp(200, quarantined)
-        if ctx.match.group(1) == web.intake["id"]:
-            return Resp(200, web.intake)
-        return Resp(404, {})
+@pytest.mark.parametrize("fault", ["legacy_body", "reason", "scope", "axis", "scope_uuid", "source", "source_ref"])
+def test_policy_probe_requires_explicit_native_authorization_before_any_write(fault: str) -> None:
+    scope = scope_document()
+    probe = scope["journeys"]["intake"]["writes"]["policy_probe"]
+    if fault == "legacy_body":
+        probe["body"] = {"url": probe["source_ref"]}
+    elif fault in {"reason", "scope"}:
+        probe["body"].pop(fault)
+    elif fault == "axis":
+        probe["body"]["scope"].pop("brand_id")
+    elif fault == "scope_uuid":
+        probe["body"]["scope"]["heat_zone_id"] = "HZ-01"
+    elif fault == "source":
+        probe.pop("source_id")
+    else:
+        probe["source_ref"] = "https://another.example.invalid/not-authorized"
+    receipt, web, _ = run(scope=scope, selection=["intake"])
+    assert receipt["journeys"]["intake"]["status"] == "BLOCKED"
+    _zero_writes(receipt, web, "intake")
 
-    web.handlers = [
-        (
-            m,
-            p,
-            submit
-            if p.pattern.endswith("intake/submit")
-            else read
-            if m == "GET" and p.pattern.endswith("intake/([^/]+)")
-            else h,
-        )
-        for m, p, h in web.handlers
-    ]
+
+@pytest.mark.parametrize("status", [200, 400, 401, 403, 409, 422])
+def test_generic_or_legacy_fresh_refusal_is_not_source_policy_proof(status: int) -> None:
+    web = BusinessWeb()
+    web.handlers = [(method, pattern,
+        (lambda ctx: Resp(status, {"error": {"code": "SOURCE_BLOCKED"}}))
+        if method == "POST" and pattern.pattern.endswith("/canonical-intakes") else handler)
+        for method, pattern, handler in web.handlers]
     receipt, _, _ = run(web, selection=["intake"])
-    assert receipt["journeys"]["intake"]["status"] == "PASSED", blockers(receipt, "intake")
-    assert receipt["journeys"]["intake"]["policy_outcome"]["mode"] == "quarantined"
+    assert receipt["journeys"]["intake"]["status"] == "FAILED"
+    assert blockers(receipt, "intake") == {"policy:blocked_source_rejected": "policy"}
+    assert not any(call[0] == "GET" and "/canonical-intakes/" in call[1] for call in web.calls)
+
+
+@pytest.mark.parametrize("path,value", [
+    ("processing_state", "READY"), ("processing_state", "AWAITING_ASSISTED_ENTRY"),
+    ("tenant_id", FOREIGN_TENANT), ("submitter_subject_id", account_id("pricing.analyst")),
+    ("scope.brand_id", "00000000-0000-0000-0000-000000000099"),
+    ("source_info.recorded_policy_state", "APPROVED_RETRIEVAL"),
+    ("source_info.source_id", "unscoped-source"), ("resolution", {"listing_id": "unexpected"}),
+    ("processing_evidence", None), ("processing_evidence.intake_version", 3),
+    ("processing_evidence.next_cursor", "more"), ("processing_history.previous_cursor", "earlier"),
+    ("processing_history.items.2.to_state", "RETRIEVING"),
+    ("processing_history.items.3.source_policy_version", None),
+    ("processing_history.items.3.source_snapshot_id", "00000000-0000-0000-0000-000000000099"),
+    ("source_info.url_fields.0.masked", True),
+    ("source_info.url_fields.0.effective", "https://another.example.invalid/not-submitted"),
+])
+def test_native_policy_readback_requires_current_bound_no_retrieval_proof(path: str, value: Any) -> None:
+    web = BusinessWeb()
+    target = web.policy_intake
+    parts = path.split(".")
+    for part in parts[:-1]:
+        target = target[int(part)] if isinstance(target, list) else target[part]
+    target[int(parts[-1]) if isinstance(target, list) else parts[-1]] = value
+    receipt, _, _ = run(web, selection=["intake"])
+    assert receipt["journeys"]["intake"]["status"] == "FAILED"
+    assert blockers(receipt, "intake") == {"policy:blocked_source_rejected": "policy"}
+
+
+def test_native_policy_worker_wait_is_bounded_without_resubmitting() -> None:
+    web = BusinessWeb()
+    web.policy_pending_reads = 1000
+    receipt, _, _ = run(web, selection=["intake"])
+    assert receipt["journeys"]["intake"]["status"] == "FAILED"
+    assert len(web.policy_bodies) == 1
+    assert len([call for call in web.calls if call[0] == "GET" and "/canonical-intakes/" in call[1]]) == 13
+
+
+@pytest.mark.parametrize("path,value", [
+    ("status", 200), ("durable", False), ("submission.processing_state", "READY"),
+    ("submission.audit_event_id", None), ("record_id", "old-legacy-id"), ("tenant_id", FOREIGN_TENANT),
+    ("source_id", "different-source"), ("scope", {}), ("original_url_digest", "sha256:" + "0" * 64),
+    ("policy", "APPROVED_RETRIEVAL"), ("evidence_count", 1), ("evidence", {}),
+    ("history.previous_cursor", "earlier"), ("transitions.2.to_state", "RETRIEVING"),
+    ("transitions.3.source_policy_version", None),
+])
+def test_resealed_receipt_cannot_replace_native_policy_proof_with_boolean(path: str, value: Any) -> None:
+    receipt, _, _ = run()
+    target = receipt["journeys"]["intake"]["policy_outcome"]
+    parts = path.split(".")
+    for part in parts[:-1]:
+        target = target[int(part)] if isinstance(target, list) else target[part]
+    target[int(parts[-1]) if isinstance(target, list) else parts[-1]] = value
+    assert "business_journey:intake" in failing_checks(reseal(receipt))
 
 
 # ---------------------------------------------------------------------------
@@ -1815,7 +1945,6 @@ def test_every_journey_path_is_routed_by_the_deployed_api(monkeypatch: pytest.Mo
             steps.append(("GET", spec.job.path))
         if spec.policy is not None:
             steps.append((spec.policy.submit.method, spec.policy.submit.path))
-            steps.append((spec.policy.absence.method, spec.policy.absence.path))
             steps.append(("GET", spec.policy.readback_path))
     missing = [f"{method} {path}" for method, path in steps if not routed(method, path)]
     assert missing == []
@@ -2159,7 +2288,7 @@ def test_runner_uses_actual_legacy_http_decision_version_and_role(fault: str, ex
                 if method == "POST" and actor == ACTORS["intake"]["primary"]:
                     observed.append((headers.get("if-match"), result.status_code))
                 return Resp(result.status_code, result.json())
-            if method == "POST" and path == base + "submit":
+            if method == "POST" and path == "/api/v1/canonical-intakes":
                 assert "if-match" not in kwargs["headers"]
             return super().request(method, path, **kwargs)
 

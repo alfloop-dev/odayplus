@@ -79,8 +79,8 @@ This is preparation for `ODP-URL-CREATE-CANONICAL-CUTOVER-261111`, not the URL
 writer cutover itself. Both legacy HTTP fresh endpoints remain enabled at this
 intermediate checkpoint, but the UI no longer produces those requests. The
 legacy Inbox add button and old `dialog=add` links enter the existing native
-picker now represents its URL form with `intakeKind=canonical&dialog=add` in the
-original navigation serializer. That link first reads the canonical collection;
+picker, whose URL form uses `intakeKind=canonical&dialog=add` in the original
+navigation serializer. That link first reads the canonical collection;
 loading or denied reads do not expose a submit form. The user must explicitly
 select scope and enter a reason. Its SUBMITTED receipt navigates only to the
 native detail reader, never the legacy presentation aggregate. Closing the form
@@ -91,6 +91,28 @@ read-only roles cannot use the old link to obtain a submit form. The URL dialog
 now requires the native scope/reason contract only. It does not infer a scope
 from the selected legacy HeatZone or reinterpret a conflict as an `IN-...` link.
 Historical Inbox reads, decisions and manual-entry recovery remain separate.
+
+The same business runner's source-policy probe now submits only to the existing
+`POST /api/v1/canonical-intakes`. Its authorized schema2 scope must supply the
+actual `intake_method=URL`, HTTPS `original_url`, human-authored `reason`, and
+all four explicitly selected `scope` axes (including explicit nulls when that
+is the actual authorized choice). `source_ref` must match that URL and
+`source_id` names the authorized source. Legacy `url` bodies, missing axes and
+inferred principal/HeatZone defaults are not accepted scope authorizations.
+This supplies no new source approval or read-flag enrollment.
+
+The probe admits only the real 201/SUBMITTED receipt, then uses bounded GETs
+with source/history/evidence metadata to observe the existing worker's
+SOURCE_BLOCKED or POLICY_UNKNOWN quarantine. It neither retries the POST nor
+kicks a scheduler or completes processing itself. Current tenant, submitter,
+scope, source, original URL, submission correlation and version are bound to
+the durable read. Complete pre-retrieval transition history, no resolved
+Listing and an empty, unpaginated evidence page at that observed version are
+required. SUBMITTED/APPROVED/QUEUED/READY, masked or missing proof, a generic
+legacy-fresh refusal, or an authorization denial cannot stand in for source
+policy. The original receipt verifier rechecks the saved metadata; raw URLs,
+reasons and snapshot/parser content are not added to the receipt. The other
+five journeys and historical Intake decision remain unchanged.
 
 Retiring the legacy HTTP fresh endpoints, converting historical receipt/fixtures,
 and complete owned PostgreSQL/browser regression are still pending. Offline HTTP/service

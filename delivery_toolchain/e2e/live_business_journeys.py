@@ -437,20 +437,16 @@ class JobSpec:
 
 @dataclass(frozen=True)
 class PolicySpec:
-    """A submission the source policy must refuse or durably quarantine."""
+    """Native admission followed by durable, pre-retrieval policy quarantine.
+
+    SUBMITTED is only admission. A generic HTTP refusal is not source-policy
+    proof; the existing worker must record its actual blocked/unknown decision.
+    """
 
     submit: Step
-    #: Read proving a refused submission persisted nothing (``items`` empty).
-    absence: Step
-    #: Response path of the created record when the policy quarantines instead.
-    record_id_path: str
-    stage_path: str
-    quarantine_stage: str
-    policy_path: str
-    blocked_policies: frozenset[str]
-    #: Paths that must be empty on a quarantined record (no retrieval).
-    not_retrieved_paths: tuple[str, ...]
     readback_path: str
+    quarantine_stage: str
+    blocked_policies: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -581,7 +577,7 @@ class JourneySpec:
     def all_paths(self) -> list[str]:
         steps = [self.read, *self.writes, self.readback, self.cross_tenant, *self.extra_reads]
         if self.policy is not None:
-            steps.extend([self.policy.submit, self.policy.absence])
+            steps.append(self.policy.submit)
         paths = [step.path for step in steps]
         if self.job is not None:
             paths.append(self.job.path)
@@ -1052,23 +1048,17 @@ JOURNEYS: tuple[JourneySpec, ...] = (
             submit=Step(
                 "policy_blocked_submission",
                 "POST",
-                f"{V1}/operator/network-listings/intake/submit",
+                f"{V1}/canonical-intakes",
                 body_from="policy_probe",
                 idempotent=True,
-                expect=frozenset({200, 400, 403, 409, 422}),
+                worker_trigger=True,
+                expect=frozenset({201}),
+                required=("intake_id", "transition_id", "audit_event_id", "outbox_event_id", "correlation_id"),
             ),
-            absence=Step(
-                "policy_blocked_absence",
-                "GET",
-                f"{V1}/operator/network-listings/intake?search={{write.policy_probe.source_ref}}",
-            ),
-            record_id_path="id",
-            stage_path="stage",
             quarantine_stage="QUARANTINED",
-            policy_path="policy",
             blocked_policies=frozenset({"SOURCE_BLOCKED", "POLICY_UNKNOWN"}),
-            not_retrieved_paths=("rawSnapshot", "snapshotId", "parsedFields"),
-            readback_path=f"{V1}/operator/network-listings/intake/{{captured.policy_intake_id}}",
+            readback_path=(f"{V1}/canonical-intakes/{{captured.policy_intake_id}}"
+                           "?include_source=true&include_history=true&include_evidence=true"),
         ),
     ),
 )
@@ -1396,6 +1386,13 @@ class JourneyScope:
                 } if self.journey_id == "governance" else None,
                 "transition_body": dict(_as_dict(_as_dict(self.writes.get("transition")).get("body")))
                 if self.journey_id == "operations" else None,
+                "policy_probe": {
+                    "source_id": _as_dict(self.writes.get("policy_probe")).get("source_id"),
+                    "scope": dict(_as_dict(_as_dict(_as_dict(self.writes.get("policy_probe")).get("body")).get("scope"))),
+                    "original_url_digest": outcome_content_digest({
+                        "original_url": _as_dict(_as_dict(self.writes.get("policy_probe")).get("body")).get("original_url")}),
+                    "submission_body_digest": outcome_content_digest(_as_dict(_as_dict(self.writes.get("policy_probe")).get("body"))),
+                } if self.journey_id == "intake" else None,
             },
         }
 
@@ -1579,14 +1576,22 @@ def journey_scope(
     if spec.policy is not None:
         probe = _as_dict(writes.get("policy_probe"))
         probe_body = _as_dict(probe.get("body"))
-        url = str(probe_body.get("url") or "")
-        if not url.startswith("https://") or not str(probe.get("source_ref") or ""):
-            blockers.append(
-                (
-                    "source",
-                    "writes.policy_probe needs an authorized HTTPS url and canonical source_ref",
-                )
-            )
+        url = probe_body.get("original_url")
+        if (not isinstance(url, str) or not url.startswith("https://")
+                or probe.get("source_ref") != url or not str(probe.get("source_id") or "").strip()):
+            blockers.append(("source", "writes.policy_probe needs its authorized HTTPS original_url, matching source_ref and source_id"))
+        # This is scope authorization, not a replacement for native validation.
+        # Never let native DTO defaults invent the author's operation scope.
+        operation_scope = probe_body.get("scope")
+        axes = {"brand_id", "region_id", "assigned_area_id", "heat_zone_id"}
+        if (set(probe_body) != {"intake_method", "original_url", "scope", "reason"}
+                or probe_body.get("intake_method") != "URL"
+                or not isinstance(probe_body.get("reason"), str)
+                or len(probe_body["reason"].strip()) < 3
+                or not isinstance(operation_scope, dict) or set(operation_scope) != axes
+                or any(value is not None and _canonical_uuid(value) is None
+                       for value in _as_dict(operation_scope).values())):
+            blockers.append(("scope-authorization", "writes.policy_probe.body requires authored native URL input, reason and all four explicit scope axes"))
         decision = _as_dict(writes.get("decide"))
         if decision.get("action") in {"revise", "duplicate"}:
             target = records.get("target_listing_id")
@@ -2865,52 +2870,99 @@ class JourneyRunner:
         if policy is None:
             return True
         response, correlation_id = self.send(policy.submit, label="policy")
-        outcome: dict[str, Any] = {"status": response.status, "correlation_id": correlation_id}
+        # The original native admission owner creates a SUBMITTED graph. It
+        # does not synchronously evaluate source policy or return legacy READY.
+        submitted = response.payload
+        outcome: dict[str, Any] = {"status": response.status, "correlation_id": correlation_id,
+                                  "mode": "quarantined", "durable": False}
+        receipt_keys = ("intake_id", "transition_id", "audit_event_id", "outbox_event_id", "correlation_id")
+        admitted = (
+            not response.failed and response.status in policy.submit.expect
+            and submitted.get("processing_state") == "SUBMITTED"
+            and submitted.get("intake_method") == "URL"
+            and type(submitted.get("version")) is int and submitted["version"] == 1
+            and _present(submitted.get("submitted_at"))
+            and all(_canonical_uuid(submitted.get(key)) for key in receipt_keys)
+        )
         proven = False
-        if not response.failed and response.status in DENIED_STATUSES | {400, 409, 422}:
-            absence, _ = self.send(policy.absence, label="policy-absence")
-            items = absence.payload.get("items") if not absence.failed else None
-            code = dig(response.payload, "error.code") or dig(response.payload, "detail.code")
+        if admitted:
+            outcome["submission"] = {key: submitted.get(key) for key in (
+                *receipt_keys, "processing_state", "intake_method", "version", "submitted_at")}
+            self.captured["policy_intake_id"] = submitted["intake_id"]
+            deadline = self.monotonic() + self.job_deadline_seconds
+            # One submitted command; bounded GETs only, no retry/new key,
+            # scheduler kick, manual completion or synthetic worker result.
+            while True:
+                readback, _ = self.send(Step("policy_readback", "GET", policy.readback_path), label="policy-readback")
+                if (readback.failed or readback.status != 200
+                        or readback.payload.get("processing_state") not in {
+                            "SUBMITTED", "CHECKING_IDENTITY", "CHECKING_SOURCE_POLICY"}
+                        or self.monotonic() >= deadline):
+                    break
+                self.sleep(self.poll_interval_seconds)
+            row = readback.payload
+            source = _as_dict(row.get("source_info"))
+            history = _as_dict(row.get("processing_history"))
+            evidence = _as_dict(row.get("processing_evidence"))
+            transitions = history.get("items")
+            original = next((field for field in source.get("url_fields", [])
+                             if isinstance(field, dict) and field.get("field_path") == "originalUrl"), {})
+            authorized = _as_dict(self.scope.as_receipt()["authorized_outcomes"]["policy_probe"])
+            outcome.update({
+                "readback_status": readback.status,
+                "record_id": row.get("intake_id"), "tenant_id": row.get("tenant_id"),
+                "submitter_subject_id": row.get("submitter_subject_id"),
+                "scope": row.get("scope"), "version": row.get("version"),
+                "processing_state": row.get("processing_state"), "intake_method": row.get("intake_method"),
+                "submitted_at": row.get("submitted_at"), "native_correlation_id": row.get("correlation_id"),
+                "source_id": source.get("source_id"), "policy": source.get("recorded_policy_state"),
+                "original_url_digest": outcome_content_digest({"original_url": original.get("effective")}),
+                "resolution_absent": "resolution" in row and row["resolution"] is None,
+                "history": {key: history.get(key) for key in (
+                    "intake_id", "intake_version", "through_sequence", "next_cursor", "previous_cursor")},
+                "transitions": [{key: item.get(key) for key in (
+                    "transition_id", "sequence_no", "from_state", "to_state", "permission",
+                    "resulting_version", "job_id", "source_policy_version", "source_snapshot_id", "match_case_id")}
+                    for item in transitions if isinstance(item, dict)] if isinstance(transitions, list) else None,
+                "evidence": {key: evidence.get(key) for key in (
+                    "intake_id", "intake_version", "through_at", "observed_at", "next_cursor", "previous_cursor")},
+                "evidence_count": len(evidence["items"]) if isinstance(evidence.get("items"), list) else None,
+            })
+            trail = outcome["transitions"] or []
+            last = trail[-1] if trail else {}
             proven = (
-                code in policy.blocked_policies
-                and not absence.failed
-                and absence.status == 200
-                and isinstance(items, list)
-                and not items
+                not readback.failed and readback.status == 200
+                and row.get("intake_id") == submitted["intake_id"]
+                and row.get("tenant_id") == self.scope.tenant_id
+                and row.get("submitter_subject_id") == self.scope.account_ids["primary"]
+                and row.get("scope") == authorized.get("scope") and row.get("intake_method") == "URL"
+                and row.get("submitted_at") == submitted["submitted_at"]
+                and row.get("correlation_id") == submitted["correlation_id"]
+                and row.get("processing_state") == policy.quarantine_stage
+                and source.get("recorded_policy_state") in policy.blocked_policies
+                and source.get("source_id") == authorized.get("source_id")
+                and original.get("masked") is False
+                and outcome["original_url_digest"] == authorized.get("original_url_digest")
+                and outcome["resolution_absent"] and outcome["evidence_count"] == 0
+                and type(row.get("version")) is int and row["version"] > submitted["version"]
+                and all(page.get("intake_id") == submitted["intake_id"]
+                        and page.get("intake_version") == row["version"]
+                        and "next_cursor" in page and page["next_cursor"] is None
+                        and "previous_cursor" in page and page["previous_cursor"] is None
+                        for page in (history, evidence))
+                and _present(evidence.get("observed_at")) and evidence.get("through_at") == evidence.get("observed_at")
+                and history.get("through_sequence") == len(trail) == row["version"]
+                and [item.get("to_state") for item in trail] == [
+                    "SUBMITTED", "CHECKING_IDENTITY", "CHECKING_SOURCE_POLICY", policy.quarantine_stage]
+                and all(item.get("sequence_no") == item.get("resulting_version") == index
+                        and _canonical_uuid(item.get("transition_id"))
+                        and item.get("source_snapshot_id") is None and item.get("match_case_id") is None
+                        for index, item in enumerate(trail, 1))
+                and trail[0]["transition_id"] == submitted["transition_id"]
+                and last.get("permission") == "intake.quarantine" and _canonical_uuid(last.get("job_id"))
+                and type(last.get("source_policy_version")) is int and last["source_policy_version"] > 0
             )
-            outcome.update({"mode": "refused", "nothing_persisted": proven})
-        elif not response.failed and response.status == 200:
-            record_id = dig(response.payload, policy.record_id_path)
-            self.captured["policy_intake_id"] = record_id
-            quarantined = (
-                dig(response.payload, policy.stage_path) == policy.quarantine_stage
-                and str(dig(response.payload, policy.policy_path)) in policy.blocked_policies
-                and not any(_present(dig(response.payload, p)) for p in policy.not_retrieved_paths)
-            )
-            durable = False
-            if _present(record_id):
-                readback, _ = self.send(
-                    Step("policy_readback", "GET", policy.readback_path), label="policy-readback"
-                )
-                durable = (
-                    not readback.failed
-                    and readback.status == 200
-                    and dig(readback.payload, policy.record_id_path) == record_id
-                    and dig(readback.payload, policy.stage_path) == policy.quarantine_stage
-                    and str(dig(readback.payload, policy.policy_path)) in policy.blocked_policies
-                    and not any(
-                        _present(dig(readback.payload, p)) for p in policy.not_retrieved_paths
-                    )
-                )
-            proven = quarantined and durable
-            outcome.update(
-                {
-                    "mode": "quarantined",
-                    "record_id": record_id,
-                    "policy": dig(response.payload, policy.policy_path),
-                    "durable": durable,
-                }
-            )
+            outcome["durable"] = bool(proven)
         self.result.policy_outcome = outcome
         self.result.negative_probes["policy_rejected"] = proven
         return self.result.check(
@@ -3466,8 +3518,61 @@ def journey_receipt_problems(spec: JourneySpec, entry: Mapping[str, Any]) -> lis
     for probe in ("cross_tenant_denied", "wrong_role_denied"):
         if probes.get(probe) is not True:
             problems.append(f"negative probe {probe} not proven")
-    if spec.policy is not None and probes.get("policy_rejected") is not True:
-        problems.append("policy rejection not proven")
+    if spec.policy is not None:
+        # Recheck the saved, non-payload proof at the receipt trust boundary;
+        # a resealed boolean or legacy fresh refusal is not policy evidence.
+        policy = _as_dict(entry.get("policy_outcome"))
+        submitted = _as_dict(policy.get("submission"))
+        authorized = _as_dict(outcomes.get("policy_probe"))
+        history, evidence = _as_dict(policy.get("history")), _as_dict(policy.get("evidence"))
+        trail = policy.get("transitions")
+        trail = trail if isinstance(trail, list) and all(isinstance(item, dict) for item in trail) else []
+        last = trail[-1] if trail else {}
+        policy_proven = (
+            probes.get("policy_rejected") is True
+            and policy.get("status") == 201 and policy.get("readback_status") == 200
+            and policy.get("mode") == "quarantined" and policy.get("durable") is True
+            and _present(policy.get("correlation_id"))
+            and submitted.get("processing_state") == "SUBMITTED" and submitted.get("intake_method") == "URL"
+            and type(submitted.get("version")) is int and submitted["version"] == 1
+            and all(_canonical_uuid(submitted.get(key)) for key in (
+                "intake_id", "transition_id", "audit_event_id", "outbox_event_id", "correlation_id"))
+            and policy.get("record_id") == submitted.get("intake_id")
+            and policy.get("tenant_id") == scope.get("tenant_id")
+            and policy.get("submitter_subject_id") == accounts.get("primary")
+            and isinstance(authorized.get("scope"), dict)
+            and set(authorized["scope"]) == {"brand_id", "region_id", "assigned_area_id", "heat_zone_id"}
+            and all(value is None or _canonical_uuid(value) for value in authorized["scope"].values())
+            and policy.get("scope") == authorized["scope"]
+            and bool(DIGEST_PATTERN.fullmatch(str(authorized.get("submission_body_digest") or "")))
+            and bool(DIGEST_PATTERN.fullmatch(str(authorized.get("original_url_digest") or "")))
+            and policy.get("original_url_digest") == authorized["original_url_digest"]
+            and _present(submitted.get("submitted_at")) and policy.get("submitted_at") == submitted["submitted_at"]
+            and policy.get("native_correlation_id") == submitted.get("correlation_id")
+            and policy.get("processing_state") == spec.policy.quarantine_stage and policy.get("intake_method") == "URL"
+            and policy.get("policy") in spec.policy.blocked_policies
+            and _present(authorized.get("source_id")) and policy.get("source_id") == authorized["source_id"]
+            and policy.get("resolution_absent") is True and type(policy.get("evidence_count")) is int
+            and policy["evidence_count"] == 0 and type(policy.get("version")) is int and policy["version"] > 1
+            and all(page.get("intake_id") == submitted.get("intake_id")
+                    and page.get("intake_version") == policy["version"]
+                    and "next_cursor" in page and page["next_cursor"] is None
+                    and "previous_cursor" in page and page["previous_cursor"] is None
+                    for page in (history, evidence))
+            and _present(evidence.get("observed_at")) and evidence.get("through_at") == evidence.get("observed_at")
+            and history.get("through_sequence") == len(trail) == policy["version"]
+            and [item.get("to_state") for item in trail] == [
+                "SUBMITTED", "CHECKING_IDENTITY", "CHECKING_SOURCE_POLICY", spec.policy.quarantine_stage]
+            and all(item.get("sequence_no") == item.get("resulting_version") == index
+                    and _canonical_uuid(item.get("transition_id"))
+                    and item.get("source_snapshot_id") is None and item.get("match_case_id") is None
+                    for index, item in enumerate(trail, 1))
+            and trail[0]["transition_id"] == submitted.get("transition_id")
+            and last.get("permission") == "intake.quarantine" and _canonical_uuid(last.get("job_id"))
+            and type(last.get("source_policy_version")) is int and last["source_policy_version"] > 0
+        )
+        if not policy_proven:
+            problems.append("native policy quarantine and no-retrieval proof missing or different")
     writes = _as_dict(entry.get("requests")).get("business_writes")
     if not isinstance(writes, int) or isinstance(writes, bool) or writes < len(spec.writes):
         problems.append("business write count below the journey's writes")
