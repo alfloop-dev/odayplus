@@ -15694,9 +15694,22 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
         self.addCleanup(self._registry_patcher.stop)
         self.addCleanup(self._base_patcher.stop)
 
+    # The shared protected body domain proof that precedes status
+    # (worktree_cleanliness.protected_body_checkout_refusal), answered with
+    # metadata of a checkout holding no domain entry: an index, a HEAD tree and
+    # an untracked listing.  Exact commands, run in the worktree, bytes only.
+    _DOMAIN_METADATA = {
+        ("git", "ls-files", "-z", "-t", "--stage"): b"",
+        ("git", "rev-parse", "--verify", "--quiet", "HEAD^{commit}"): b"a" * 40 + b"\n",
+        ("git", "ls-tree", "-r", "-z", "--full-tree", "a" * 40): b"",
+        ("git", "ls-files", "-z", "--others"): b"",
+    }
+
     def _stub_subprocess_run(self, results):
         def fake_run(cmd, *args, **kwargs):
             cmd_tuple = tuple(str(c) for c in cmd)
+            if cmd_tuple in self._DOMAIN_METADATA and kwargs.get("cwd") is not None:
+                return subprocess.CompletedProcess(cmd, 0, self._DOMAIN_METADATA[cmd_tuple], b"")
             for key, value in results.items():
                 if cmd_tuple[: len(key)] == key:
                     return value

@@ -164,9 +164,15 @@ TOOLING_COMMAND = (
 )
 PRODUCT_UNIT_COMMAND = (
     'uv run pytest -m "not requires_live_env and not performance" --ignore=tests/tooling'
-    " --ignore=tests/e2e/test_acceptance_coverage.py tests modules apps shared models -n auto"
+    " --ignore=tests/security --ignore=tests/e2e/test_acceptance_coverage.py tests modules apps shared models -n auto"
 )
 RECEIPT_UNIT_FILE = "tests/e2e/test_acceptance_coverage.py"
+SECURITY_UNIT_FILE = "tests/security/test_security_unit.py"
+# The required product-security lane runs `make security`; this is the one
+# pytest line of that existing Makefile recipe, matched verbatim (no marker
+# filter, so it selects every tests/security case the unit lane would).
+SECURITY_MAKE_RECIPE_LINE = "\t$(UV) run pytest tests/security"
+SECURITY_PYTEST_ARGS = ["tests/security"]
 # A synthetic stand-in for every selection root either lane names. Each file
 # holds one trivial case; no repository test or source body is collected.
 SYNTHETIC_SELECTION_TREE = (
@@ -177,6 +183,7 @@ SYNTHETIC_SELECTION_TREE = (
     "infra/test_infra_unit.py",
     RECEIPT_UNIT_FILE,
     "tests/e2e/test_other_e2e_unit.py",
+    SECURITY_UNIT_FILE,
     "tests/unit/test_product_unit.py",
     "modules/test_module_unit.py",
     "apps/test_app_unit.py",
@@ -215,10 +222,23 @@ def synthetic_collected_files(tree: Path, pytest_args: list[str]) -> list[str]:
     return sorted({line.split("::", 1)[0] for line in result.stdout.splitlines() if "::" in line})
 
 
-def receipt_unit_lane_owners(jobs: dict[str, Any], tree: Path) -> dict[str, list[str]]:
+def security_lane_pytest_argv(jobs: dict[str, Any], makefile_text: str) -> list[str]:
+    """Return the security lane's pytest argv only while its real callers are unchanged."""
+    assert count_exact_command_occurrences(jobs, "make security") == {"product-security": 1}
+    recipe = makefile_text.split("\nsecurity:", 1)[1].split("\n\n", 1)[0].splitlines()[1:]
+    assert recipe == [SECURITY_MAKE_RECIPE_LINE], f"make security recipe changed: {recipe}"
+    return list(SECURITY_PYTEST_ARGS)
+
+
+def receipt_unit_lane_owners(
+    jobs: dict[str, Any], tree: Path, makefile_text: str | None = None,
+) -> dict[str, list[str]]:
+    if makefile_text is None:
+        makefile_text = (ROOT / "Makefile").read_text(encoding="utf-8")
     lanes = {
         "orchestrator": lane_pytest_argv(jobs, "orchestrator", "Test orchestrator and infrastructure code"),
         "product-lint-unit": lane_pytest_argv(jobs, "product-lint-unit", "Test product code"),
+        "product-security": security_lane_pytest_argv(jobs, makefile_text),
     }
     return {lane: synthetic_collected_files(tree, args) for lane, args in lanes.items()}
 
@@ -368,7 +388,33 @@ def test_receipt_unit_file_has_one_owner_in_tooling_and_mixed_scope(
     assert "tests/e2e/test_other_e2e_unit.py" in selected["product-lint-unit"]
     assert not any(path.startswith("tests/tooling/") for path in selected["product-lint-unit"])
     assert not set(selected["orchestrator"]) & set(selected["product-lint-unit"])
-    assert set(selected["orchestrator"]) | set(selected["product-lint-unit"]) == set(SYNTHETIC_SELECTION_TREE)
+    assert set(selected["orchestrator"]) | set(selected["product-lint-unit"]) | set(
+        selected["product-security"]) == set(SYNTHETIC_SELECTION_TREE)
+
+
+def test_security_files_have_one_required_owner_and_no_omission(
+    ci_workflow: dict[str, Any], tmp_path: Path,
+) -> None:
+    """product-security owns tests/security; the unit lane never re-executes it."""
+    jobs = ci_workflow["jobs"]
+    selected = receipt_unit_lane_owners(jobs, tmp_path)
+    assert selected["product-security"] == [SECURITY_UNIT_FILE]
+    assert not any(path.startswith("tests/security/") for path in selected["product-lint-unit"])
+    assert not any(path.startswith("tests/security/") for path in selected["orchestrator"])
+    lanes = list(selected)
+    for index, lane in enumerate(lanes):
+        for other in lanes[index + 1:]:
+            assert not set(selected[lane]) & set(selected[other]), (lane, other)
+    union = set().union(*map(set, selected.values()))
+    assert union == set(SYNTHETIC_SELECTION_TREE)
+    owner = jobs["product-security"]
+    assert owner.get("if") == jobs["product-lint-unit"].get("if")
+    assert owner.get("continue-on-error", False) is False
+    step, = [step for step in owner["steps"] if step.get("name") == "Run security checks"]
+    assert step.get("if") is None and step.get("continue-on-error", False) is False
+    assert "product-security" in jobs["product"]["needs"]
+    policy = json.loads((ROOT / ".github/branch-protection/policy.json").read_text())
+    assert "product" in policy["required_status_checks"]
 
 
 @pytest.mark.parametrize("damage", ["tooling-omits", "product-repeats"])
@@ -386,6 +432,43 @@ def test_receipt_unit_selection_rejects_omission_or_duplicate_run(
         step["run"] = step["run"].replace(" --ignore=" + RECEIPT_UNIT_FILE, "")
     with pytest.raises(AssertionError):
         test_receipt_unit_file_has_one_owner_in_tooling_and_mixed_scope(workflow, tmp_path)
+
+
+@pytest.mark.parametrize("damage", [
+    "unit-repeats", "security-recipe-narrowed", "security-recipe-filtered",
+    "security-recipe-duplicated", "security-command-dropped", "security-command-repeated",
+    "security-optional",
+])
+def test_security_selection_rejects_omission_or_duplicate_run(
+    ci_workflow: dict[str, Any], tmp_path: Path, damage: str,
+) -> None:
+    workflow = deepcopy(ci_workflow)
+    jobs = workflow["jobs"]
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    assert makefile.count(SECURITY_MAKE_RECIPE_LINE + "\n") == 1
+    unit_step, = [step for step in jobs["product-lint-unit"]["steps"] if step.get("name") == "Test product code"]
+    security_step, = [step for step in jobs["product-security"]["steps"]
+                      if step.get("name") == "Run security checks"]
+    if damage == "unit-repeats":
+        unit_step["run"] = unit_step["run"].replace(" --ignore=tests/security", "")
+    elif damage == "security-recipe-narrowed":
+        makefile = makefile.replace(SECURITY_MAKE_RECIPE_LINE, SECURITY_MAKE_RECIPE_LINE + "/test_audit_policy.py")
+    elif damage == "security-recipe-filtered":
+        makefile = makefile.replace(SECURITY_MAKE_RECIPE_LINE, "\t$(UV) run pytest -m 'not requires_live_env' tests/security")
+    elif damage == "security-recipe-duplicated":
+        makefile = makefile.replace(SECURITY_MAKE_RECIPE_LINE, SECURITY_MAKE_RECIPE_LINE + "\n" + SECURITY_MAKE_RECIPE_LINE)
+    elif damage == "security-command-dropped":
+        security_step["run"] = 'echo "make security"'
+    elif damage == "security-command-repeated":
+        unit_step["run"] += "\nmake security"
+    else:
+        security_step["continue-on-error"] = True
+    if damage.startswith("security-recipe"):
+        with pytest.raises(AssertionError):
+            receipt_unit_lane_owners(jobs, tmp_path, makefile)
+    else:
+        with pytest.raises(AssertionError):
+            test_security_files_have_one_required_owner_and_no_omission(workflow, tmp_path)
 
 
 def test_ci_workflow_pytest_addopts_are_reporting_only(ci_workflow: dict[str, Any]) -> None:
@@ -968,34 +1051,138 @@ def test_quarterly_password_browser_is_a_required_isolated_supplement() -> None:
     assert diagnostics["with"]["path"] == "${{ runner.temp }}/product-e2e-supplemental/area-planning3/"
 
 
-# --- protected checkout denial on the three unconditional PR workflows -------
+# --- protected checkout denial on every existing workflow checkout -------------
 
-PROTECTED_PR_WORKFLOWS = {
+# Every existing workflow that checks out this repository, and how many times.
+PROTECTED_CHECKOUT_WORKFLOWS = {
+    "assisted-intake-design-validation.yml": 1,
     "ci.yml": 11,
+    "deploy-dev.yml": 6,
     "emgi-consumer-boundary.yml": 1,
+    "merge-queue-review-gate.yml": 1,
+    "promote-dev-to-main.yml": 1,
     "tooling-scope-review-gate.yml": 1,
 }
+PROTECTED_CHECKOUT_TOTAL = 22
 # Jobs whose gates diff, walk or prove ancestry; a shallow clone would silently weaken them.
 FULL_HISTORY_JOBS = {
+    "assisted-intake-design-validation.yml": {"validate-contract-package"},
     "ci.yml": {"change-scope", "product-lint-unit", "product-db", "product-api-contract", "product-e2e-gate"},
+    "deploy-dev.yml": {"release_phase", "build", "admission", "automatic_admission", "deploy", "staging_closeout"},
     "emgi-consumer-boundary.yml": {"boundary"},
+    "merge-queue-review-gate.yml": {"review-gate"},
+    "promote-dev-to-main.yml": {"promote"},
     "tooling-scope-review-gate.yml": {"classify"},
 }
 PR_COMPARED_COMMITS = "${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }}"
 # The jobs whose steps hand these exact commits to a diff. Every other job proves HEAD only.
 COMPARED_COMMITS = {
+    ("assisted-intake-design-validation.yml", "validate-contract-package"): (
+        "${{ github.event.pull_request.base.sha || github.sha }} ${{ github.event.pull_request.head.sha || github.sha }}"
+    ),
     ("ci.yml", "change-scope"): (
         "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }} "
         "${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after }}"
     ),
+    ("deploy-dev.yml", "admission"): "${{ inputs.release_sha }} ${{ github.sha }}",
     ("emgi-consumer-boundary.yml", "boundary"): PR_COMPARED_COMMITS,
     ("tooling-scope-review-gate.yml", "classify"): PR_COMPARED_COMMITS,
 }
+# The exact trusted or dispatched ref each job checks out; every other job takes the event default.
+CHECKOUT_REFS = {
+    ("deploy-dev.yml", "release_phase"): "${{ inputs.phase == 'auto' && github.sha || inputs.release_sha }}",
+    ("deploy-dev.yml", "build"): "${{ inputs.release_sha }}",
+    ("deploy-dev.yml", "admission"): "${{ github.sha }}",
+    ("deploy-dev.yml", "automatic_admission"): "${{ inputs.release_sha }}",
+    ("deploy-dev.yml", "deploy"): "${{ inputs.release_sha }}",
+    ("deploy-dev.yml", "staging_closeout"): "${{ inputs.release_sha }}",
+    ("merge-queue-review-gate.yml", "review-gate"): "${{ github.event.merge_group.head_sha }}",
+    ("promote-dev-to-main.yml", "promote"): "${{ github.event.workflow_run.head_sha }}",
+}
+def _head_equality_script(variable: str, label: str) -> str:
+    """The approved exact-SHA assertion form: HEAD must equal one named, pinned commit."""
+    return (
+        'head_sha="$(git rev-parse HEAD)"\n'
+        f'if [ "${{head_sha}}" != "${{{variable}}}" ]; then\n'
+        f'  echo "Error: checked out HEAD (${{head_sha}}) does not match {label} (${{{variable}}})." >&2\n'
+        "  exit 1\n"
+        "fi\n"
+    )
+
+
+RELEASE_SHA_INPUT = "${{ inputs.release_sha }}"
+# The one HEAD identity assertion allowed between a ref checkout and its proof:
+# (step name, exact approved script, compared variable, the pinned commit it must hold,
+#  whether the step itself binds that variable or inherits it from the job).
+# Nothing but this exact equality may run before the proof, so no extra read or
+# command can touch a denied body and no weakened comparison can pass.
+IDENTITY_ASSERTIONS = {
+    ("deploy-dev.yml", "release_phase"): (
+        "Assert exact release SHA is checked out",
+        "set -euo pipefail\n" + _head_equality_script("RELEASE_SHA", "inputs.release_sha"),
+        "RELEASE_SHA", RELEASE_SHA_INPUT, "step",
+    ),
+    ("deploy-dev.yml", "build"): (
+        "Assert exact release SHA is checked out",
+        "set -euo pipefail\n" + _head_equality_script("ODAY_RELEASE_SHA", "ODAY_RELEASE_SHA"),
+        "ODAY_RELEASE_SHA", RELEASE_SHA_INPUT, "job",
+    ),
+    ("deploy-dev.yml", "admission"): (
+        "Assert the dispatch event SHA is checked out",
+        "set -euo pipefail\n"
+        'if [[ ! "${EVENT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then\n'
+        '  echo "Error: dispatch event SHA (${EVENT_SHA}) is not an exact 40-character commit SHA." >&2\n'
+        "  exit 1\n"
+        "fi\n" + _head_equality_script("EVENT_SHA", "the dispatch event SHA"),
+        "EVENT_SHA", "${{ github.sha }}", "step",
+    ),
+    ("deploy-dev.yml", "automatic_admission"): (
+        "Assert automatic admission checkout identity",
+        'test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"',
+        "RELEASE_SHA", RELEASE_SHA_INPUT, "step",
+    ),
+    ("deploy-dev.yml", "deploy"): (
+        "Assert exact release SHA is checked out",
+        "set -euo pipefail\n" + _head_equality_script("ODAY_RELEASE_SHA", "ODAY_RELEASE_SHA"),
+        "ODAY_RELEASE_SHA", RELEASE_SHA_INPUT, "job",
+    ),
+    ("deploy-dev.yml", "staging_closeout"): (
+        "Assert exact release SHA is checked out",
+        "set -euo pipefail\n" + _head_equality_script("ODAY_RELEASE_SHA", "ODAY_RELEASE_SHA"),
+        "ODAY_RELEASE_SHA", RELEASE_SHA_INPUT, "job",
+    ),
+}
+# Keys a guarded script step may carry; anything else (shell, working-directory,
+# id-driven outputs, ...) could change what the exact script runs or judges.
+GUARDED_SCRIPT_KEYS = {"name", "run", "env"}
+# Guarded steps also inherit workflow/job `env` and `defaults.run`. Plain data
+# variables (release SHA, service names, PG*) are needed downstream; these names
+# instead decide what runs before or around the exact scripts: shell startup
+# files and functions, command lookup, loaders, interpreter hooks and Git's own
+# repository/config/object selection.
+INHERITED_EXECUTION_ENV = re.compile(
+    r"(?:BASH_ENV|ENV|SHELLOPTS|BASHOPTS|BASH_FUNC_\S*|BASH_XTRACEFD|PS4|IFS|CDPATH|GLOBIGNORE|EXECIGNORE"
+    r"|PATH|HOME|XDG_CONFIG_HOME|LD_\S*|DYLD_\S*|PYTHON\S*|GIT_\S*|PERL5?LIB|PERL5OPT|RUBYOPT|NODE_OPTIONS)"
+)
+# Inherited env may only carry literal data names; anything else (an
+# expression, a non-string YAML key) cannot be judged against the list above.
+PLAIN_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 GIT_PREFLIGHT_NAME = "Require sparse-capable Git before checkout"
 DENIAL_PROOF_NAME = "Prove protected path stayed out of checkout"
-DENY_PATTERNS = ["/*", "!/tests/sources"]
-# `sparse-checkout` is what denies; every other input can widen, redirect or replace it.
-ALLOWED_CHECKOUT_INPUTS = {"fetch-depth", "sparse-checkout", "sparse-checkout-cone-mode"}
+# The shared protected body domain of .orchestrator/worktree_cleanliness.py:
+# the root prefix and every embedded copy of it, plus the named asset, and
+# every name holding a backslash (which the domain may read as a separator).
+DENY_PATTERNS = [
+    "/*",
+    "!**/tests/sources",
+    "!**/tests/sources/**",
+    "!**/test_listing_production_asset.py*",
+    "!**/*\\\\*",
+    "!**/*\\\\*/**",
+]
+# `sparse-checkout` is what denies and `ref` is pinned per job above; every
+# other input can widen, redirect or replace the deny.
+ALLOWED_CHECKOUT_INPUTS = {"fetch-depth", "ref", "sparse-checkout", "sparse-checkout-cone-mode"}
 REMATERIALIZING_COMMAND = re.compile(
     r"\bgit(?:\s+-[cC]\s+\S+|\s+-\S+)*\s+(?:checkout|switch|restore|read-tree|stash|clone|archive|pull|fetch|merge|rebase"
     r"|sparse-checkout|submodule|lfs|worktree\s+add|reset\s+--hard)\b"
@@ -1010,6 +1197,55 @@ def load_pr_workflow(name: str) -> dict[str, Any]:
 def reference_step_scripts() -> tuple[str, str]:
     steps = load_pr_workflow("tooling-scope-review-gate.yml")["jobs"]["classify"]["steps"]
     return steps[0]["run"], steps[2]["run"]
+
+
+def _identity_assertion_violations(
+    here: str, job: dict[str, Any], step: dict[str, Any], expected: tuple[str, str, str, str, str] | None
+) -> list[str]:
+    if expected is None:
+        return [f"{here}: exact denial proof must directly follow checkout"]
+    name, script, variable, pinned, binder = expected
+    violations = []
+    if step.get("name") != name or step.get("run") != script:
+        violations.append(f"{here}: only the exact HEAD identity assertion may precede the denial proof")
+    if set(step) - GUARDED_SCRIPT_KEYS - {"if", "continue-on-error"}:
+        violations.append(f"{here}: identity assertion may not set {sorted(set(step) - GUARDED_SCRIPT_KEYS)}")
+    # The compared value is the exact trusted/dispatched commit, bound where the approved form binds it.
+    step_env = step.get("env")
+    if binder == "step":
+        if step_env != {variable: pinned}:
+            violations.append(f"{here}: identity assertion must compare HEAD with {pinned}")
+    elif step_env is not None or not isinstance(job.get("env"), dict) or job["env"].get(variable) != pinned:
+        violations.append(f"{here}: identity assertion must compare HEAD with {pinned}")
+    return violations
+
+
+def _inherited_execution_violations(here: str, workflow: dict[str, Any], job: dict[str, Any]) -> list[str]:
+    """Workflow/job settings every guarded step inherits must not change how its exact script runs."""
+    violations = []
+    for scope, source in (("workflow", workflow), ("job", job)):
+        # Any defaults value (mapping, expression string or other shape) is a
+        # run default the guarded steps would inherit; none is inspected away.
+        defaults = source.get("defaults")
+        if defaults is not None and defaults != {}:
+            violations.append(f"{here}: guarded steps inherit {scope} defaults {defaults!r}")
+        env = source.get("env")
+        if env is None:
+            continue
+        if not isinstance(env, dict):
+            # A whole-env expression decides its names only at run time.
+            violations.append(f"{here}: guarded steps inherit an opaque {scope} env {env!r}")
+            continue
+        unsafe = sorted(
+            repr(key)
+            for key in env
+            if not isinstance(key, str) or not PLAIN_ENV_NAME.fullmatch(key) or INHERITED_EXECUTION_ENV.fullmatch(key)
+        )
+        if unsafe:
+            violations.append(f"{here}: guarded steps inherit {scope} execution env {unsafe}")
+    if "container" in job:
+        violations.append(f"{here}: guarded steps inherit a job container")
+    return violations
 
 
 def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[str]:
@@ -1027,25 +1263,41 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
             continue
         at = positions[0]
         checkout = steps[at]
+        violations.extend(_inherited_execution_violations(here, workflow, job))
         if checkout["uses"] != "actions/checkout@v4":
             violations.append(f"{here}: checkout version changed: {checkout['uses']}")
         if at != 1 or steps[0].get("name") != GIT_PREFLIGHT_NAME or steps[0].get("run") != preflight_run:
             violations.append(f"{here}: exact Git preflight must be the only step before checkout")
+        guarded = [steps[0], checkout]
         following = steps[at + 1] if at + 1 < len(steps) else {}
+        if following.get("name") != DENIAL_PROOF_NAME:
+            violations.extend(
+                _identity_assertion_violations(here, job, following, IDENTITY_ASSERTIONS.get((name, job_name)))
+            )
+            guarded.append(following)
+            following = steps[at + 2] if at + 2 < len(steps) else {}
+        elif (name, job_name) in IDENTITY_ASSERTIONS:
+            violations.append(f"{here}: exact HEAD identity assertion was dropped")
         if following.get("name") != DENIAL_PROOF_NAME or following.get("run") != proof_run:
             violations.append(f"{here}: exact denial proof must directly follow checkout")
+        guarded.append(following)
         expected_env = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
         if (name, job_name) in COMPARED_COMMITS:
             expected_env["PROTECTED_COMPARE_SHAS"] = COMPARED_COMMITS[(name, job_name)]
         if following.get("env") != expected_env:
             violations.append(f"{here}: denial proof must judge repository configuration and every compared commit")
-        for step in (steps[0], checkout, following):
+        for step in guarded:
             for softener in ("if", "continue-on-error"):
                 if softener in step:
                     violations.append(f"{here}: {step.get('name') or step.get('uses')} may not set {softener}")
+        for step, keys in ((steps[0], {"name", "run"}), (following, GUARDED_SCRIPT_KEYS)):
+            if set(step) - keys - {"if", "continue-on-error"}:
+                violations.append(f"{here}: {step.get('name')} may not set {sorted(set(step) - keys)}")
         inputs = checkout.get("with") or {}
         if set(inputs) - ALLOWED_CHECKOUT_INPUTS:
             violations.append(f"{here}: unsupported checkout inputs {sorted(set(inputs) - ALLOWED_CHECKOUT_INPUTS)}")
+        if inputs.get("ref") != CHECKOUT_REFS.get((name, job_name)):
+            violations.append(f"{here}: checkout ref changed: {inputs.get('ref')!r}")
         if inputs.get("sparse-checkout-cone-mode") is not False:
             violations.append(f"{here}: sparse checkout must stay non-cone")
         if str(inputs.get("sparse-checkout") or "").split() != DENY_PATTERNS:
@@ -1058,33 +1310,85 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
                 violations.append(f"{here}: {step.get('name')} can re-materialize the denied prefix")
             if re.search(r"git diff (?!--no-renames)[^\n]*--name-only", script):
                 violations.append(f"{here}: {step.get('name')} rename detection would fetch bodies")
-    if checkouts != PROTECTED_PR_WORKFLOWS[name]:
-        violations.append(f"{name}: expected {PROTECTED_PR_WORKFLOWS[name]} checkouts, found {checkouts}")
+    if checkouts != PROTECTED_CHECKOUT_WORKFLOWS[name]:
+        violations.append(f"{name}: expected {PROTECTED_CHECKOUT_WORKFLOWS[name]} checkouts, found {checkouts}")
     return violations
 
 
-@pytest.mark.parametrize("name", sorted(PROTECTED_PR_WORKFLOWS))
-def test_pr_workflow_denies_protected_prefix_before_every_checkout(name: str) -> None:
+@pytest.mark.parametrize("name", sorted(PROTECTED_CHECKOUT_WORKFLOWS))
+def test_workflow_denies_protected_prefix_before_every_checkout(name: str) -> None:
     assert protected_checkout_violations(name, load_pr_workflow(name)) == []
+
+
+def test_every_existing_checkout_is_covered() -> None:
+    """No workflow may check this repository out outside the validated set."""
+    found = {}
+    for path in sorted((ROOT / ".github" / "workflows").glob("*.y*ml")):
+        jobs = (yaml.safe_load(path.read_text()) or {}).get("jobs") or {}
+        count = sum(
+            "actions/checkout" in str(step.get("uses", ""))
+            for job in jobs.values()
+            for step in (job.get("steps") or [])
+        )
+        if count:
+            found[path.name] = count
+    assert found == PROTECTED_CHECKOUT_WORKFLOWS
+    assert sum(found.values()) == PROTECTED_CHECKOUT_TOTAL
+
+
+def test_deny_patterns_are_the_shared_domain_policy() -> None:
+    """The workflows deny exactly what the shared cleanliness policy names."""
+    sys.path.insert(0, str(ROOT / ".orchestrator"))
+    try:
+        import worktree_cleanliness as wc
+    finally:
+        sys.path.remove(str(ROOT / ".orchestrator"))
+    assert DENY_PATTERNS == list(wc.protected_body_sparse_patterns())
+    _preflight, proof = reference_step_scripts()
+    assert proof.count('denied = "tests/sources"') == 1
+    assert "wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)" in proof
+    assert "wc.protected_body_sparse_patterns((denied,))" in proof
+
+
+def _proof_step(name: str, job: str) -> tuple[list[dict[str, Any]], int]:
+    steps = load_pr_workflow(name)["jobs"][job]["steps"]
+    return steps, next(i for i, step in enumerate(steps) if step.get("name") == DENIAL_PROOF_NAME)
 
 
 def test_compared_commits_are_the_ones_the_downstream_consumers_read() -> None:
     """The proof must vouch for the exact values handed to the later diff, not lookalikes."""
     expression = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
     for name in ("emgi-consumer-boundary.yml", "tooling-scope-review-gate.yml"):
-        steps = next(iter(load_pr_workflow(name)["jobs"].values()))["steps"]
+        job = next(iter(load_pr_workflow(name)["jobs"]))
+        steps, proof = _proof_step(name, job)
         consumer = next(step for step in steps if "BASE_SHA" in (step.get("env") or {}))
-        assert steps.index(consumer) > 2, "the consumer must run after the proof"
-        assert steps[2]["env"]["PROTECTED_COMPARE_SHAS"] == f"{consumer['env']['BASE_SHA']} {consumer['env']['HEAD_SHA']}"
+        assert steps.index(consumer) > proof, "the consumer must run after the proof"
+        assert steps[proof]["env"]["PROTECTED_COMPARE_SHAS"] == f"{consumer['env']['BASE_SHA']} {consumer['env']['HEAD_SHA']}"
 
-    steps = load_pr_workflow("ci.yml")["jobs"]["change-scope"]["steps"]
+    steps, proof = _proof_step("ci.yml", "change-scope")
     consumer = next(step for step in steps if step.get("name") == "Classify change scope")
-    assert steps.index(consumer) > 2
-    base, head = expression.findall(steps[2]["env"]["PROTECTED_COMPARE_SHAS"])
+    assert steps.index(consumer) > proof
+    base, head = expression.findall(steps[proof]["env"]["PROTECTED_COMPARE_SHAS"])
     env = consumer["env"]
     # One alternative per case the classifier selects from, in each endpoint.
     assert [expression.fullmatch(env[key]).group(1) for key in ("PR_BASE_SHA", "MERGE_GROUP_BASE_SHA", "PUSH_BEFORE_SHA")] == base.split(" || ")
     assert [expression.fullmatch(env[key]).group(1) for key in ("PR_HEAD_SHA", "MERGE_GROUP_HEAD_SHA", "PUSH_AFTER_SHA")] == head.split(" || ")
+
+    # Admission compares the dispatched candidate with the trusted event commit it checked out.
+    steps, proof = _proof_step("deploy-dev.yml", "admission")
+    consumer = next(step for step in steps if step.get("name") == "Validate candidate ancestry against the dispatch event SHA")
+    assert steps.index(consumer) > proof
+    assert steps[proof]["env"]["PROTECTED_COMPARE_SHAS"] == f"{consumer['env']['RELEASE_SHA']} {consumer['env']['EVENT_SHA']}"
+
+    # The intake gate reviews the PR head against the PR base; a dispatch reviews its own commit.
+    steps, proof = _proof_step("assisted-intake-design-validation.yml", "validate-contract-package")
+    consumers = [step for step in steps if "REVIEWED_COMMIT" in (step.get("env") or {})]
+    assert consumers and all(steps.index(step) > proof for step in consumers)
+    base, head = expression.findall(steps[proof]["env"]["PROTECTED_COMPARE_SHAS"])
+    for step in consumers:
+        env = step["env"]
+        assert env["REVIEWED_COMMIT"] == env["CURRENT_PR_HEAD"] == f"${{{{ {head} }}}}"
+        assert expression.fullmatch(env["BASE_COMMIT"]).group(1).split(" || ")[0] == base.split(" || ")[0]
 
 
 def test_full_history_jobs_are_all_the_jobs_that_declared_it() -> None:
@@ -1098,6 +1402,18 @@ def test_full_history_jobs_are_all_the_jobs_that_declared_it() -> None:
             if (step.get("with") or {}).get("fetch-depth") == 0
         }
         assert declared == expected
+
+
+def test_pinned_refs_and_identity_assertions_are_all_the_jobs_that_declared_them() -> None:
+    """Exact dispatch/trusted refs and their HEAD assertions are not a hand-picked subset."""
+    declared_refs = {}
+    for name in PROTECTED_CHECKOUT_WORKFLOWS:
+        for job_name, job in load_pr_workflow(name)["jobs"].items():
+            for step in job.get("steps", []):
+                if "actions/checkout" in str(step.get("uses", "")) and "ref" in (step.get("with") or {}):
+                    declared_refs[(name, job_name)] = step["with"]["ref"]
+    assert declared_refs == CHECKOUT_REFS
+    assert set(IDENTITY_ASSERTIONS) <= set(CHECKOUT_REFS)
 
 
 def _mutated(mutate: Any) -> list[str]:
@@ -1144,6 +1460,198 @@ def _mutated(mutate: Any) -> list[str]:
 )
 def test_checkout_contract_rejects_each_weakening(label: str, mutate: Any) -> None:
     assert _mutated(mutate), label
+
+
+def _mutated_job(name: str, job: str, mutate: Any) -> list[str]:
+    workflow = load_pr_workflow(name)
+    mutate(workflow["jobs"][job]["steps"])
+    return protected_checkout_violations(name, workflow)
+
+
+@pytest.mark.parametrize(
+    ("label", "name", "job", "mutate"),
+    [
+        ("admission ref dropped", "deploy-dev.yml", "admission", lambda s: s[1]["with"].pop("ref")),
+        ("admission ref redirected", "deploy-dev.yml", "admission",
+         lambda s: s[1]["with"].update({"ref": "${{ inputs.release_sha }}"})),
+        ("auto ref untrusted", "deploy-dev.yml", "release_phase",
+         lambda s: s[1]["with"].update({"ref": "${{ inputs.release_sha }}"})),
+        ("admission history lost", "deploy-dev.yml", "admission", lambda s: s[1]["with"].pop("fetch-depth")),
+        ("admission compare dropped", "deploy-dev.yml", "admission", lambda s: s[3]["env"].pop("PROTECTED_COMPARE_SHAS")),
+        ("admission compare head only", "deploy-dev.yml", "admission",
+         lambda s: s[3]["env"].update({"PROTECTED_COMPARE_SHAS": "${{ github.sha }}"})),
+        ("identity assertion dropped", "deploy-dev.yml", "build", lambda s: s.pop(2)),
+        ("identity assertion runs python", "deploy-dev.yml", "deploy",
+         lambda s: s[2].update({"run": "python3 -c 'print(1)'\ngit rev-parse HEAD"})),
+        ("identity assertion renamed", "deploy-dev.yml", "staging_closeout", lambda s: s[2].update({"name": "Anything"})),
+        ("identity assertion skipped", "deploy-dev.yml", "automatic_admission", lambda s: s[2].update({"if": "false"})),
+        ("proof after identity removed", "deploy-dev.yml", "deploy", lambda s: s.pop(3)),
+        ("deploy proof skipped", "deploy-dev.yml", "deploy", lambda s: s[3].update({"continue-on-error": True})),
+        ("deploy deny weakened", "deploy-dev.yml", "deploy", lambda s: s[1]["with"].update({"sparse-checkout": "/*\n"})),
+        ("deploy rest tarball", "deploy-dev.yml", "deploy",
+         lambda s: s.append({"name": "x", "run": "gh api repos/o/r/tarball/main > a.tgz"})),
+        ("queue ref dropped", "merge-queue-review-gate.yml", "review-gate", lambda s: s[1]["with"].pop("ref")),
+        ("queue proof removed", "merge-queue-review-gate.yml", "review-gate", lambda s: s.pop(2)),
+        ("promote ref redirected", "promote-dev-to-main.yml", "promote",
+         lambda s: s[1]["with"].update({"ref": "${{ github.sha }}"})),
+        ("promote body fetch", "promote-dev-to-main.yml", "promote",
+         lambda s: s.append({"name": "x", "run": "git fetch origin main"})),
+        ("intake compare dropped", "assisted-intake-design-validation.yml", "validate-contract-package",
+         lambda s: s[2]["env"].pop("PROTECTED_COMPARE_SHAS")),
+        ("intake history lost", "assisted-intake-design-validation.yml", "validate-contract-package",
+         lambda s: s[1]["with"].pop("fetch-depth")),
+        ("intake ref injected", "assisted-intake-design-validation.yml", "validate-contract-package",
+         lambda s: s[1]["with"].update({"ref": "main"})),
+        ("ci lane deny omitted", "ci.yml", "product-db", lambda s: s[1]["with"].pop("sparse-checkout")),
+        ("ci lane history lost", "ci.yml", "product-e2e-gate", lambda s: s[1]["with"].pop("fetch-depth")),
+    ],
+)
+def test_every_workflow_rejects_each_weakening(label: str, name: str, job: str, mutate: Any) -> None:
+    assert _mutated_job(name, job, mutate), label
+
+
+def _approved_assertion(job: str) -> str:
+    return IDENTITY_ASSERTIONS[("deploy-dev.yml", job)][1]
+
+
+@pytest.mark.parametrize(
+    ("label", "job", "mutate"),
+    [
+        # The exact-SHA equality must survive, not just its name or a substring of it.
+        ("equality missing", "build", lambda j: j["steps"][2].update({"run": "git rev-parse HEAD"})),
+        ("no assertion", "build", lambda j: j["steps"][2].update({"run": "echo git rev-parse HEAD"})),
+        ("body read before proof", "build",
+         lambda j: j["steps"][2].update({"run": "git rev-parse HEAD\ngit show HEAD:guarded/zone/body.txt"})),
+        ("body read appended", "build",
+         lambda j: j["steps"][2].update({"run": _approved_assertion("build") + "cat guarded/zone/body.txt\n"})),
+        ("extra command prepended", "deploy",
+         lambda j: j["steps"][2].update({"run": "git ls-tree -r HEAD guarded\n" + _approved_assertion("deploy")})),
+        ("equality inverted", "staging_closeout",
+         lambda j: j["steps"][2].update({"run": _approved_assertion("staging_closeout").replace("!=", "==")})),
+        ("failure tolerated", "build",
+         lambda j: j["steps"][2].update({"run": _approved_assertion("build").replace("exit 1", "exit 0")})),
+        ("self comparison", "automatic_admission",
+         lambda j: j["steps"][2].update({"run": 'test "$(git rev-parse HEAD)" = "$(git rev-parse HEAD)"\n'})),
+        ("exact sha shape dropped", "admission",
+         lambda j: j["steps"][2].update({"run": "set -euo pipefail\n" + _head_equality_script("EVENT_SHA", "the dispatch event SHA")})),
+        # The compared value must be the exact trusted/dispatched commit.
+        ("job value redirected", "build", lambda j: j["env"].update({"ODAY_RELEASE_SHA": "${{ github.sha }}"})),
+        ("job value overridden by step", "deploy",
+         lambda j: j["steps"][2].update({"env": {"ODAY_RELEASE_SHA": "${{ github.event.after }}"}})),
+        ("step value redirected", "release_phase",
+         lambda j: j["steps"][2]["env"].update({"RELEASE_SHA": "${{ github.sha }}"})),
+        ("step value dropped", "automatic_admission", lambda j: j["steps"][2].pop("env")),
+        ("dispatch value redirected", "admission",
+         lambda j: j["steps"][2]["env"].update({"EVENT_SHA": "${{ inputs.release_sha }}"})),
+        ("startup script injected", "release_phase",
+         lambda j: j["steps"][2]["env"].update({"BASH_ENV": "guarded/zone/body.txt"})),
+        # Anything that changes how the exact script runs.
+        ("shell replaced", "build", lambda j: j["steps"][2].update({"shell": "cat guarded/zone/body.txt; bash {0}"})),
+        ("directory moved", "deploy", lambda j: j["steps"][2].update({"working-directory": "guarded/zone"})),
+        ("action replaces script", "build", lambda j: j["steps"][2].update({"uses": "actions/github-script@v7"})),
+    ],
+)
+def test_identity_assertion_rejects_each_mutation(label: str, job: str, mutate: Any) -> None:
+    """In-memory mutations only: nothing here is executed and no body is read."""
+    workflow = load_pr_workflow("deploy-dev.yml")
+    assert protected_checkout_violations("deploy-dev.yml", workflow) == []
+    mutate(workflow["jobs"][job])
+    violations = protected_checkout_violations("deploy-dev.yml", workflow)
+    assert any(f"deploy-dev.yml:{job}: identity assertion" in v or "exact HEAD identity assertion" in v
+               for v in violations), (label, violations)
+
+
+def test_guarded_script_steps_take_no_execution_overrides() -> None:
+    for index, extra in ((0, {"shell": "sh -c 'cat guarded/zone/body.txt; sh {0}'"}),
+                         (0, {"env": {"BASH_ENV": "guarded/zone/body.txt"}}),
+                         (2, {"working-directory": "guarded"})):
+        workflow = load_pr_workflow("tooling-scope-review-gate.yml")
+        workflow["jobs"]["classify"]["steps"][index].update(extra)
+        assert protected_checkout_violations("tooling-scope-review-gate.yml", workflow), extra
+
+
+_STARTUP_READ = "$(git show HEAD:guarded/zone/body.txt; echo /dev/null)"
+_SHELL_READ = 'bash -c "git show HEAD:guarded/zone/body.txt; bash {0}"'
+
+
+def _set(container: dict[str, Any], key: str, value: dict[str, Any]) -> None:
+    container.setdefault(key, {}).update(value)
+
+
+@pytest.mark.parametrize(
+    ("label", "name", "job", "mutate"),
+    [
+        # The guarded preflight, identity assertion and proof all inherit these.
+        ("workflow startup env", "deploy-dev.yml", "build", lambda w: _set(w, "env", {"BASH_ENV": _STARTUP_READ})),
+        ("job startup env", "deploy-dev.yml", "build", lambda w: _set(w["jobs"]["build"], "env", {"BASH_ENV": _STARTUP_READ})),
+        ("workflow default shell", "deploy-dev.yml", "build",
+         lambda w: _set(w, "defaults", {"run": {"shell": _SHELL_READ}})),
+        ("job default shell", "deploy-dev.yml", "build",
+         lambda w: _set(w["jobs"]["build"], "defaults", {"run": {"shell": _SHELL_READ}})),
+        ("workflow default directory", "tooling-scope-review-gate.yml", "classify",
+         lambda w: _set(w, "defaults", {"run": {"working-directory": "guarded/zone"}})),
+        ("job default directory", "ci.yml", "product-db",
+         lambda w: _set(w["jobs"]["product-db"], "defaults", {"run": {"working-directory": "guarded"}})),
+        ("workflow sh startup", "promote-dev-to-main.yml", "promote", lambda w: _set(w, "env", {"ENV": _STARTUP_READ})),
+        ("job command lookup", "deploy-dev.yml", "deploy",
+         lambda w: _set(w["jobs"]["deploy"], "env", {"PATH": "guarded/zone:/usr/bin"})),
+        ("job exported function", "merge-queue-review-gate.yml", "review-gate",
+         lambda w: _set(w["jobs"]["review-gate"], "env", {"BASH_FUNC_git%%": "() { cat guarded/zone/body.txt; }"})),
+        ("workflow git redirect", "emgi-consumer-boundary.yml", "boundary",
+         lambda w: _set(w, "env", {"GIT_DIR": "/elsewhere/.git"})),
+        ("job loader", "assisted-intake-design-validation.yml", "validate-contract-package",
+         lambda w: _set(w["jobs"]["validate-contract-package"], "env", {"LD_PRELOAD": "guarded/zone/x.so"})),
+        ("job interpreter hook", "ci.yml", "orchestrator",
+         lambda w: _set(w["jobs"]["orchestrator"], "env", {"PYTHONPATH": "guarded/zone"})),
+        ("job container", "ci.yml", "change-scope",
+         lambda w: w["jobs"]["change-scope"].update({"container": {"image": "x", "env": {"BASH_ENV": _STARTUP_READ}}})),
+    ],
+)
+def test_guarded_steps_reject_inherited_execution_overrides(label: str, name: str, job: str, mutate: Any) -> None:
+    """In-memory mutations only: nothing here is executed and no body is read."""
+    workflow = load_pr_workflow(name)
+    assert protected_checkout_violations(name, workflow) == []
+    mutate(workflow)
+    violations = protected_checkout_violations(name, workflow)
+    assert any(v.startswith(f"{name}:{job}: guarded steps inherit") for v in violations), (label, violations)
+
+
+_WHOLE_ENV = "${{ fromJSON(vars.GUARDED_ENV) }}"
+
+
+@pytest.mark.parametrize(
+    ("label", "scope", "key", "value"),
+    [
+        # Shapes the name list cannot judge are refused, not skipped or crashed on.
+        ("workflow whole-env expression", "workflow", "env", _WHOLE_ENV),
+        ("job whole-env expression", "job", "env", _WHOLE_ENV),
+        ("job env list", "job", "env", ["BASH_ENV=/dev/null"]),
+        ("workflow expression env key", "workflow", "env", {"${{ vars.NAME }}": _STARTUP_READ}),
+        ("job non-string env key", "job", "env", {True: "x"}),
+        ("job spaced env key", "job", "env", {"BASH_ENV ": _STARTUP_READ}),
+        ("workflow defaults expression", "workflow", "defaults", "${{ fromJSON(vars.GUARDED_DEFAULTS) }}"),
+        ("job falsey non-mapping defaults", "job", "defaults", []),
+        ("job defaults run expression", "job", "defaults", {"run": "${{ fromJSON(vars.RUN) }}"}),
+        ("workflow empty defaults run", "workflow", "defaults", {"run": {}}),
+    ],
+)
+def test_guarded_steps_reject_opaque_inherited_context(label: str, scope: str, key: str, value: Any) -> None:
+    """In-memory mutations only: nothing here is executed and no body is read."""
+    name, job = "deploy-dev.yml", "build"
+    workflow = load_pr_workflow(name)
+    assert protected_checkout_violations(name, workflow) == []
+    (workflow if scope == "workflow" else workflow["jobs"][job])[key] = value
+    violations = protected_checkout_violations(name, workflow)
+    assert any(v.startswith(f"{name}:{job}: guarded steps inherit") for v in violations), (label, violations)
+
+
+def test_inherited_data_env_and_pinned_commit_stay_accepted() -> None:
+    """The necessary workflow/job data env (including the pinned release SHA) is not an override."""
+    workflow = load_pr_workflow("deploy-dev.yml")
+    assert workflow["env"] and workflow["jobs"]["build"]["env"]["ODAY_RELEASE_SHA"]
+    _set(workflow["jobs"]["build"], "env", {"ODP_EXTRA_LABEL": "x"})
+    _set(workflow, "env", {"PGHOST": "localhost"})
+    assert protected_checkout_violations("deploy-dev.yml", workflow) == []
 
 
 def _run_preflight(path_dir: Path) -> subprocess.CompletedProcess[str]:
@@ -1330,6 +1838,53 @@ def test_clean_commits_pass_the_proof_with_and_without_compared_endpoints(checko
     for compare in (None, f"{fixture.clean} {fixture.clean}"):
         proof = fixture.run_proof(compare)
         assert proof.returncode == 0, proof.stdout + proof.stderr
+
+
+def test_every_denied_spelling_of_an_embedded_copy_stays_out_of_the_checkout(
+    checkout_fixture: _CheckoutFixture,
+) -> None:
+    """Git on POSIX keeps a backslash inside one name; the domain reads it as a separator.
+
+    Generic empty blobs only, staged from index metadata; nothing denied is ever written.
+    """
+    fixture = checkout_fixture
+    # The slash copy and both backslash spellings are domain entries; a backslash
+    # name outside the domain is excluded whole as well.
+    excluded = (
+        f"archive/{fixture.PREFIX}/body.txt",
+        "archive/guarded\\zone/body.txt",
+        "archive\\guarded/zone/body.txt",
+        "lone\\name.txt",
+    )
+    allowed = ("archive/guarded/zonex/body.txt", "archive/guarded/sibling.txt")
+    env = {**os.environ, "GIT_INDEX_FILE": str(fixture.root / "spellings.index")}
+
+    def staged(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=fixture.seed, env=env, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    empty = fixture.git(fixture.seed, "hash-object", "-w", "--stdin", stdin="").stdout.strip()
+    staged("read-tree", fixture.clean)
+    for path in (*excluded, *allowed):
+        staged("update-index", "--add", "--cacheinfo", f"100644,{empty},{path}")
+    commit = fixture.git(fixture.seed, "commit-tree", staged("write-tree"), "-p", fixture.clean, "-m", "spellings")
+    fixture.git(fixture.seed, "push", "-q", str(fixture.origin), f"+{commit.stdout.strip()}:refs/heads/dev")
+
+    fixture.action_checkout(fixture.deny_patterns())
+    flags = dict(
+        (record[2:], record[0])
+        for record in fixture.git(fixture.checkout, "ls-files", "-t", "-z").stdout.split("\0")
+        if record
+    )
+    for path in excluded:
+        assert flags[path] == "S", path
+        assert not os.path.lexists(fixture.checkout / path), path
+    for path in allowed:
+        assert flags[path] == "H", path
+        assert (fixture.checkout / path).is_file(), path
+    proof = fixture.run_proof()
+    assert proof.returncode == 0, proof.stdout + proof.stderr
 
 
 @pytest.mark.parametrize("depth", [None, 1])

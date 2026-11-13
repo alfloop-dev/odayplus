@@ -179,6 +179,93 @@ supervisor、worker 與人工狀態命令都由 `runtime-current/scripts/ai_stat
 舊 checkout 的 writer 把已修正狀態寫回舊格式。重啟失敗時會把 runtime symlink 與
 status launcher 一起回復，再重新啟動前一版服務。
 
+### 6.0 封存保護來源邊界（protected body domain）
+
+`.orchestrator/worktree_cleanliness.py` 是唯一一份規則：`PROTECTED_BODY_PREFIXES`
+（`tests/sources`，於任意深度以連續路徑元件比對，例如
+`docs/audits/external-source-ingestion-20260913/implementation-handoff/untracked/tests/sources/...`）
+與 `PROTECTED_BODY_NAMES`（任何以 `test_listing_production_asset.py` 開頭的路徑元件）。
+判定只看路徑名稱；被拒絕的 body 不讀、不 hash、不複製、不執行、不刪除。對應的
+non-cone sparse patterns 由 `protected_body_sparse_patterns()` 產生：
+
+```text
+/*
+!**/tests/sources
+!**/tests/sources/**
+!**/test_listing_production_asset.py*
+!**/*\\*
+!**/*\\*/**
+```
+
+`!**/tests/sources` 排除「路徑本身就是 prefix」的條目（例如追蹤在 `.../tests/sources` 的一般檔案），
+`!**/tests/sources/**` 排除其下所有條目。POSIX 上的 Git 允許名稱含字面反斜線，且把它留在同一個
+路徑元件裡；`in_protected_body_domain` 卻把反斜線當分隔符（`archive\tests/sources/x`、
+`archive/tests\sources/x` 都屬 domain），有限的 slash patterns 無法跟上所有拼法，所以最後兩行把
+任何含反斜線的名稱整個排除（pattern 中 `\\` 是跳脫後的一個反斜線）。只含 slash 的 Git 名稱沒有空的
+或 `.` 路徑元件，domain 依字面判定，前四行即涵蓋；因此 patterns 涵蓋 domain 拒絕的每一種 Git 名稱，
+在 Git 寫檔前排除，不靠事後拒絕或刪除。含反斜線但不屬 domain 的名稱也會被排除（無法在 Windows
+checkout 的名稱）。
+證明要求 worktree 的 patterns 與上表完全一致。先前用較舊 patterns（三行，或沒有反斜線兩行的四行）準備的既有
+worktree 會被 fail-closed 拒絕（`sparse patterns differ from the protected body domain`），不會自動改寫
+patterns（對已 materialize 的 worktree 重設 patterns 可能刪除檔案）；採入新版 runtime 前，由 Root 以
+`--no-checkout` 加新 patterns 重新準備這些 worktree。
+
+同一規則接回的原入口：
+
+| 入口 | 行為 |
+|---|---|
+| `rollout_supervisor_runtime.add_runtime_worktree` | `--no-checkout` 註冊並證明 HEAD 後，先 `install_protected_body_sparse`，才 `read-tree --reset -u`；之後以 `protected_body_checkout_refusal(require_sparse=True)` 證明 domain 未落地 |
+| `rollout_supervisor_runtime.clean`（source、既有 target 重用、新 target） | 先跑 domain 證明，未通過即不 clean，`git status` 不會執行 |
+| `worker_workspace._create_worker_worktree` | 同上順序：註冊 → 證明 HEAD／task 保護 → sparse → materialize → 證明 |
+| `worker_workspace._protected_commit_refusal`（`check_index=True` 的所有呼叫者：重用 refresh、state identity、activity observer、handoff seal、merge continuation、preempt、quarantine、pruner） | task 保護之前先跑 domain 證明 |
+| `worker_workspace._refresh_reused_worker_worktree` 的每一個 checkout／merge（review pin、detached 重新 attach、base fast-forward） | 變更前以 `checkout_into` 把目標 commit 交給同一個 `protected_body_checkout_refusal(target=...)`：目標 tree 有 domain 條目時，這個既有 worktree 必須已有完全一致的 sparse 排除，否則在 Git 寫檔前拒絕（即使 task `protected_paths` 為空、目前 checkout 尚無 domain 條目）；不遮蔽、不刪除任何已落地內容 |
+| `worktree_cleanliness.inspect_worktree`（含 `task_finalize.sh`） | status 之前先跑 domain 證明；domain 內的未追蹤 dirt 與同路徑漂移在 status 之前即以 `protected_metadata_refused` blocking，不可當 seed、不產生 fingerprint；fingerprint 對 domain 路徑仍只用 lstat（防禦性保留） |
+| quarantine／interrupted merge seal | domain 內的 dirt 拒絕備份與 seal，不讀 body |
+| context seeding | 對所有 task（不只 `protected_paths` task）拒絕 domain 內的 context 來源或目的地；task brief 的每個相容候選路徑（實際被讀取／複製的來源）與生成時寫回的 canonical brief 也在 metadata 探測與寫入前經同一個 `context_path_protection_error` 判定，拒絕即 fail-closed，不會改走下一個候選 |
+| 7 個既有 workflow 的 22 個 checkout | 全部：Git preflight → checkout（上述 sparse patterns）→ 同一份證明腳本，證明在任何 reader 之前（deploy-dev 緊接在 HEAD 身分 assert 之後）；比較端點時另拒絕 domain 在兩端不一致；唯一的結構驗證是既有 `tests/tooling/test_ci_product_parallel.py`（逐 job 鎖定 checkout 數、full history、精確 ref、HEAD 身分 assert、比較端點與下游 consumer 一致） |
+
+Repository 身分只有一條規則：`worktree_cleanliness.shares_git_common_dir`（路徑必須是 worktree 的
+top level，且解析後的 Git common dir 與 source 相同；metadata 無法回答即拒絕）。rollout 既有
+target 重用、`worker_workspace._refresh_reused_worker_worktree`（`wrong_worktree: ...`）與
+`_quarantine_and_preserve_dirty_worktree`（另保留兩端 git-dir 有效性；`worktree_belongs_to_another_repository`）
+都直接呼叫它，各自在當下重新判定；另一個 clone 即使同 HEAD、同 named branch 也拒絕。
+
+`protected_body_checkout_refusal` 的判定（全部只用 Git metadata 與 lstat）：
+
+1. HEAD tree 與 index 取聯集。HEAD 或 index 追蹤任何 domain entry（或 `require_sparse`）時，
+   worktree 必須 `core.sparseCheckout=true`、非 cone、patterns 完全相同。
+2. 同一 domain 路徑在 HEAD 與 index 必須是同一個 (mode, object)：只在 HEAD（從 index
+   移除、body 可能還在磁碟上）、只在 index、unmerged、object 或 mode 不同，一律以
+   `protected_body_drift` 拒絕。
+3. 每個 domain entry 都是 skip-worktree（`S`），並以 lstat 證明本身不在磁碟上；祖先為
+   symlink 亦拒絕。
+4. 以不帶任何 exclude 選項的 `git ls-files -z --others` 列出未追蹤名稱（Git 此時不開任何
+   `.gitignore`）；任何未追蹤的 domain entry（含 domain 內的 `.gitignore`）都以
+   `protected_body_present: ... is untracked domain content` 拒絕，`git status` 不會執行，
+   因此 status 不會走進 domain 目錄讀 ignore 檔。空目錄（例如 protected launch 的 mask
+   掛載點）沒有 body，不被列出也不拒絕。
+5. metadata 無法讀取一律拒絕，不當成「沒有東西」。
+
+root `tests/sources` 的 task `protected_paths` 拒絕（tracked 即拒絕）完全保留，sparse
+不會把原本拒絕的 task／ref 變成允許。
+
+**已知限制。** 這是對已知 metadata 命中路徑的保護，不是任意內容副本的證明。sparse
+bootstrap 只證明 working tree 上沒有 body，不證明沒有 Git object 存取；先前不受限的
+`git grep` 暴露仍為 UNKNOWN。被 `.gitignore` 忽略的目錄（例如 `.venv`、`node_modules`）
+內若有符合 domain 名稱的路徑，也會被拒絕（fail-closed），需人工確認。
+
+**採用後果（Root serial adoption 必讀）。** 在此規則之前建立、未設 sparse 的 worktree
+（包含既有 worker worktree、既有 runtime 目錄與 rollout `--source-root` checkout）若
+materialize 了 domain 副本，所有讀取入口都會以 `protected_metadata_refused:
+protected_body_not_excluded` 拒絕，且不會自動修復（修復需刪除副本，本規則禁止）。
+因此：
+
+1. rollout 的 `--source-root` 必須是以 `--no-checkout` 建立、先套上述 sparse patterns 再
+   materialize 的 worktree，否則 rollout 以「dirty source checkout」拒絕。
+2. 合併後、runtime 尚未 rollout 前，舊 supervisor 建立的 worktree 沒有 sparse；若其 task
+   branch 已包含此規則，`task_finalize.sh` 會在該 worktree 拒絕送審。
+3. 既有 worker worktree 需由 Root 依同一順序重建，pruner 不會回收被拒絕的 worktree。
+
 watchdog 的 systemd/cron 安裝根目錄同樣必須是 `runtime-current`（或由 service 直接
 執行該 symlink 內的 watchdog），絕不可指向開發者的 `dev` checkout；watchdog 只負責
 liveness/restart，不負責 fetch、merge 或任何 Git promotion。`restart-supervisor.sh` 已退役。

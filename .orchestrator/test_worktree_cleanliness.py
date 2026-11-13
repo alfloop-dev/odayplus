@@ -267,6 +267,488 @@ class ProtectedMetadataTests(unittest.TestCase):
         self.assertFalse(any("guarded" in name for name in opened))
 
 
+SYNTHETIC_DOMAIN = ("guarded/zone",)
+SYNTHETIC_NAME = "synthetic_asset.py"
+NESTED_COPY = "archive/untracked/guarded/zone/body.py.txt"
+NAMED_COPY = "archive/untracked/synthetic_asset.py.txt"
+
+
+class SyntheticBodyDomain:
+    """Hold the shared domain to a synthetic namespace with an isolated Git config."""
+
+    def enter_synthetic_domain(self, case: unittest.TestCase, root: Path) -> None:
+        (root / "gitconfig").touch()
+        for patcher in (
+            mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(root / "gitconfig"), "GIT_CONFIG_NOSYSTEM": "1"}),
+            mock.patch.object(wc, "PROTECTED_BODY_PREFIXES", SYNTHETIC_DOMAIN),
+            mock.patch.object(wc, "PROTECTED_BODY_NAMES", (SYNTHETIC_NAME,)),
+        ):
+            patcher.start()
+            case.addCleanup(patcher.stop)
+
+
+def domain_commit(repo: Path) -> str:
+    """Root and nested copies of the synthetic domain beside ordinary files."""
+    git(repo, "init", "--quiet", "-b", "dev")
+    git(repo, "config", "user.email", "test@example.invalid")
+    git(repo, "config", "user.name", "Test")
+    for relative, text in (
+        ("keep/tracked.txt", "keep\n"),
+        ("guarded/zone/root.txt", "synthetic root body\n"),
+        (NESTED_COPY, "synthetic nested body\n"),
+        (NAMED_COPY, "synthetic named body\n"),
+        ("archive/untracked/guarded/zone2/sibling.txt", "not in the domain\n"),
+    ):
+        (repo / relative).parent.mkdir(parents=True, exist_ok=True)
+        (repo / relative).write_text(text, encoding="utf-8")
+    git(repo, "add", ".")
+    git(repo, "commit", "--quiet", "-m", "domain")
+    return git(repo, "rev-parse", "HEAD")
+
+
+class ProductionBodyDomainTests(unittest.TestCase):
+    """The one production domain every runtime, worker and CI checkout uses."""
+
+    def test_production_domain_names_the_canonical_prefix_and_asset(self) -> None:
+        self.assertEqual(wc.PROTECTED_BODY_PREFIXES, ("tests/sources",))
+        self.assertEqual(wc.PROTECTED_BODY_NAMES, ("test_listing_production_asset.py",))
+        self.assertEqual(
+            wc.protected_body_sparse_patterns(),
+            (
+                "/*",
+                "!**/tests/sources",
+                "!**/tests/sources/**",
+                "!**/test_listing_production_asset.py*",
+                "!**/*\\\\*",
+                "!**/*\\\\*/**",
+            ),
+        )
+        self.assertTrue(
+            wc.in_protected_body_domain(
+                "docs/audits/external-source-ingestion-20260913/implementation-handoff/untracked/tests/sources/x.py.txt"
+            )
+        )
+
+
+class ProtectedBodyDomainTests(SyntheticBodyDomain, unittest.TestCase):
+    """Synthetic namespace only; every domain verdict is reached without its body."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.enter_synthetic_domain(self, self.root)
+        self.seed = self.root / "seed"
+        self.seed.mkdir()
+        self.commit = domain_commit(self.seed)
+        self.worktree = self.root / "worktree"
+
+    def prepared(self) -> Path:
+        """Register, exclude, then materialize, exactly as the runtime and workers do."""
+        git(self.seed, "worktree", "add", "--quiet", "--no-checkout", "-b", "task/x", str(self.worktree), self.commit)
+        self.assertIsNone(wc.install_protected_body_sparse(self.worktree))
+        git(self.worktree, "read-tree", "--reset", "-u", self.commit)
+        return self.worktree
+
+    def test_domain_is_decided_from_the_name_at_any_depth(self) -> None:
+        for path in (
+            "guarded/zone",
+            "guarded/zone/x.py",
+            NESTED_COPY,
+            "a/b/guarded/zone/",
+            NAMED_COPY,
+            SYNTHETIC_NAME,
+            f"x/{SYNTHETIC_NAME}.bak/inner.txt",
+            # POSIX Git keeps a backslash inside one name; the domain reads a separator.
+            "archive/guarded\\zone/body.txt",
+            "archive\\guarded/zone/body.txt",
+            f"x\\{SYNTHETIC_NAME}",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(wc.in_protected_body_domain(path))
+        for path in ("guarded/zone2/x", "guarded/other", "x/guarded", "zone/guarded/x", "keep/tracked.txt", ""):
+            with self.subTest(path=path):
+                self.assertFalse(wc.in_protected_body_domain(path))
+        self.assertEqual(
+            wc.protected_body_sparse_patterns(),
+            ("/*", "!**/guarded/zone", "!**/guarded/zone/**", f"!**/{SYNTHETIC_NAME}*", "!**/*\\\\*", "!**/*\\\\*/**"),
+        )
+
+    def test_exclusion_before_materialization_keeps_root_and_nested_copies_out(self) -> None:
+        worktree = self.prepared()
+        self.assertTrue((worktree / "keep" / "tracked.txt").is_file())
+        self.assertTrue((worktree / "archive/untracked/guarded/zone2/sibling.txt").is_file())
+        for path in ("guarded/zone/root.txt", NESTED_COPY, NAMED_COPY):
+            with self.subTest(path=path):
+                self.assertFalse(os.path.lexists(worktree / path))
+        flags = dict(line.split(" ", 1)[::-1] for line in git(worktree, "ls-files", "-t").splitlines())
+        self.assertEqual({flags["guarded/zone/root.txt"], flags[NESTED_COPY], flags[NAMED_COPY]}, {"S"})
+        self.assertIsNone(wc.protected_body_checkout_refusal(worktree, require_sparse=True))
+        self.assertEqual(inspect_worktree(worktree).kind, "clean")
+        self.assertEqual(
+            [entry[2] for entry in wc.protected_body_tree_entries(worktree, self.commit)],
+            sorted(["guarded/zone/root.txt", NESTED_COPY, NAMED_COPY]),
+        )
+
+    def test_exclusion_never_follows_a_materialization(self) -> None:
+        worktree = self.prepared()
+        self.assertIn("already_materialized", wc.install_protected_body_sparse(worktree))
+        self.assertTrue((worktree / "keep" / "tracked.txt").is_file())
+
+    def test_unexcluded_checkout_is_refused_before_status_can_compare_a_body(self) -> None:
+        commands: list[list[str]] = []
+        real_run = subprocess.run
+
+        def recording_run(args, *a, **kw):
+            commands.append(list(args))
+            return real_run(args, *a, **kw)
+
+        with mock.patch.object(wc.subprocess, "run", side_effect=recording_run):
+            inspection = inspect_worktree(self.seed)
+        self.assertEqual(inspection.kind, "protected_metadata_refused")
+        self.assertIn("sparse checkout is not enabled", inspection.detail)
+        self.assertFalse(inspection.handoff_clean)
+        self.assertFalse([command for command in commands if "status" in command])
+
+    def test_every_weakened_exclusion_refuses(self) -> None:
+        def patterns_replaced(worktree: Path) -> None:
+            Path(git(worktree, "rev-parse", "--git-path", "info/sparse-checkout")).write_text("/*\n", encoding="utf-8")
+
+        def unflagged(worktree: Path) -> None:
+            git(worktree, "update-index", "--no-skip-worktree", NESTED_COPY)
+
+        def recreated(worktree: Path) -> None:
+            (worktree / NESTED_COPY).parent.mkdir(parents=True)
+            (worktree / NESTED_COPY).write_text("synthetic again\n", encoding="utf-8")
+
+        def aliased(worktree: Path) -> None:
+            outside = self.root / "outside"
+            outside.mkdir(exist_ok=True)
+            (worktree / "archive/untracked/guarded/zone").symlink_to(outside, target_is_directory=True)
+
+        cases = {
+            "sparse off": (lambda w: git(w, "config", "--worktree", "core.sparseCheckout", "false"), "not enabled"),
+            "cone on": (lambda w: git(w, "config", "--worktree", "core.sparseCheckoutCone", "true"), "cone mode"),
+            "patterns replaced": (patterns_replaced, "patterns differ"),
+            "skip-worktree cleared": (unflagged, "not skip-worktree"),
+            # Git itself clears skip-worktree from a present file when it loads
+            # the index, so a recreated body is seen either way.
+            "body recreated": (recreated, f"{NESTED_COPY} is not skip-worktree"),
+            "ancestor alias": (aliased, "symlink above"),
+        }
+        for label, (damage, reason) in cases.items():
+            with self.subTest(label=label):
+                if self.worktree.exists():
+                    git(self.seed, "worktree", "remove", "--force", str(self.worktree))
+                    git(self.seed, "branch", "-D", "task/x")
+                worktree = self.prepared()
+                damage(worktree)
+                refusal = wc.protected_body_checkout_refusal(worktree)
+                self.assertIsNotNone(refusal)
+                self.assertIn(reason, refusal)
+                self.assertEqual(inspect_worktree(worktree).kind, "protected_metadata_refused")
+
+    def test_unreadable_metadata_is_never_read_as_nothing_there(self) -> None:
+        worktree = self.prepared()
+        with mock.patch.object(wc, "_git_metadata", return_value=None):
+            self.assertIn("unreadable_metadata", wc.protected_body_checkout_refusal(worktree))
+        failed = subprocess.CompletedProcess([], 128, b"", b"")
+        with mock.patch.object(wc, "_git_metadata", return_value=failed):
+            self.assertIn("unreadable_metadata", wc.protected_body_checkout_refusal(worktree))
+            self.assertIsNone(wc.protected_body_tree_entries(worktree, self.commit))
+        self.assertIsNone(wc.protected_body_tree_entries(worktree, ""))
+
+    def _inspect_recording(self, worktree: Path, **kwargs: object) -> tuple[object, list[list[str]], list[str]]:
+        """inspect_worktree, recording every Git command and every Python open."""
+        commands: list[list[str]] = []
+        opened: list[str] = []
+        real_run = subprocess.run
+        real_open = Path.open
+
+        def recording_run(args, *a, **kw):
+            commands.append(list(args))
+            return real_run(args, *a, **kw)
+
+        def recording_open(path, *args, **kw):
+            opened.append(str(path))
+            return real_open(path, *args, **kw)
+
+        with mock.patch.object(wc.subprocess, "run", side_effect=recording_run), \
+             mock.patch.object(Path, "open", recording_open):
+            inspection = inspect_worktree(worktree, **kwargs)
+        return inspection, commands, opened
+
+    def test_untracked_domain_dirt_refuses_before_status_could_open_it(self) -> None:
+        """Untracked domain content blocks, and is never listed through an exclude file."""
+        cases = {
+            "nested body": ("other/guarded/zone/new.txt", "synthetic one\n"),
+            # Status would open this .gitignore to decide what to hide.
+            "domain .gitignore": ("other/guarded/zone/.gitignore", "hidden.ban\n"),
+            "root domain .gitignore": ("guarded/zone/.gitignore", "hidden.ban\n"),
+            "named asset": (f"other/{SYNTHETIC_NAME}.bak", "synthetic named\n"),
+        }
+        for label, (dirt, text) in cases.items():
+            with self.subTest(label=label):
+                if self.worktree.exists():
+                    git(self.seed, "worktree", "remove", "--force", str(self.worktree))
+                    git(self.seed, "branch", "-D", "task/x")
+                worktree = self.prepared()
+                (worktree / dirt).parent.mkdir(parents=True, exist_ok=True)
+                (worktree / dirt).write_text(text, encoding="utf-8")
+                (worktree / dirt).with_name("hidden.ban").write_text("synthetic ignored\n", encoding="utf-8")
+                inspection, commands, opened = self._inspect_recording(
+                    worktree, materialized_paths=[dirt, "other", "guarded"]
+                )
+                self.assertEqual(inspection.kind, "protected_metadata_refused")
+                self.assertIn("untracked domain content", inspection.detail)
+                self.assertFalse(inspection.handoff_clean)
+                self.assertEqual(inspection.fingerprint, "")
+                self.assertFalse([command for command in commands if "status" in command])
+                listings = [command for command in commands if "--others" in command]
+                self.assertEqual(len(listings), 1)
+                self.assertFalse([flag for flag in listings[0] if flag.startswith("--exclude")])
+                self.assertFalse(any("guarded/zone" in name or SYNTHETIC_NAME in name for name in opened))
+                self.assertTrue((worktree / dirt).is_file(), "refusal never deletes the dirt")
+                self.assertFalse(wc.is_reusable_dirt_entry("??", dirt, None, frozenset({dirt})))
+
+    def test_empty_domain_directory_is_no_body(self) -> None:
+        """An empty directory (a sandbox mask) holds nothing status could read."""
+        worktree = self.prepared()
+        (worktree / "guarded" / "zone").mkdir(parents=True)
+        self.assertIsNone(wc.protected_body_checkout_refusal(worktree, require_sparse=True))
+        self.assertEqual(inspect_worktree(worktree).kind, "clean")
+
+    def test_head_index_union_refuses_same_path_drift_without_opening_it(self) -> None:
+        other = git(self.seed, "rev-parse", f"{self.commit}:keep/tracked.txt")
+
+        def head_only(worktree: Path) -> None:
+            # Removed from the index while the body is back on disk: only HEAD names it.
+            git(worktree, "update-index", "--force-remove", NESTED_COPY)
+            (worktree / NESTED_COPY).parent.mkdir(parents=True, exist_ok=True)
+            (worktree / NESTED_COPY).write_text("synthetic leftover\n", encoding="utf-8")
+
+        def head_only_absent(worktree: Path) -> None:
+            git(worktree, "update-index", "--force-remove", NESTED_COPY)
+
+        def index_only(worktree: Path) -> None:
+            git(worktree, "update-index", "--add", "--cacheinfo", f"100644,{other},guarded/zone/staged.txt")
+
+        def object_drift(worktree: Path) -> None:
+            git(worktree, "update-index", "--cacheinfo", f"100644,{other},{NESTED_COPY}")
+
+        def mode_drift(worktree: Path) -> None:
+            blob = git(worktree, "rev-parse", f":{NESTED_COPY}")
+            git(worktree, "update-index", "--cacheinfo", f"100755,{blob},{NESTED_COPY}")
+
+        cases = {
+            "HEAD only, body on disk": (head_only, "in HEAD but not in the index"),
+            "HEAD only, absent": (head_only_absent, "in HEAD but not in the index"),
+            "index only": (index_only, "in the index but not in HEAD"),
+            "object drift": (object_drift, "differs between HEAD and the index"),
+            "mode drift": (mode_drift, "differs between HEAD and the index"),
+        }
+        for label, (damage, reason) in cases.items():
+            with self.subTest(label=label):
+                if self.worktree.exists():
+                    git(self.seed, "worktree", "remove", "--force", str(self.worktree))
+                    git(self.seed, "branch", "-D", "task/x")
+                worktree = self.prepared()
+                damage(worktree)
+                inspection, commands, opened = self._inspect_recording(worktree)
+                self.assertEqual(inspection.kind, "protected_metadata_refused")
+                self.assertIn("protected_body_drift", inspection.detail)
+                self.assertIn(reason, inspection.detail)
+                self.assertEqual(inspection.fingerprint, "")
+                self.assertFalse([command for command in commands if "status" in command])
+                self.assertFalse(any("guarded/zone" in name for name in opened))
+
+    def test_unmerged_domain_entry_refuses(self) -> None:
+        worktree = self.prepared()
+        blob = git(worktree, "rev-parse", f":{NESTED_COPY}")
+        entries = "".join(
+            f"100644 {blob} {stage}\t{NESTED_COPY}\n" for stage in (1, 2, 3)
+        )
+        git(worktree, "update-index", "--force-remove", NESTED_COPY)
+        subprocess.run(
+            ["git", "update-index", "--index-info"], cwd=worktree, input=entries.encode(), check=True
+        )
+        refusal = wc.protected_body_checkout_refusal(worktree)
+        self.assertIn("is unmerged in the index", refusal)
+        self.assertEqual(inspect_worktree(worktree).kind, "protected_metadata_refused")
+
+    def test_context_paths_in_the_domain_are_refused_for_every_task(self) -> None:
+        status = self.root / "status"
+        (status / "docs").mkdir(parents=True)
+        (status / "docs" / "alias").symlink_to(self.seed / "archive" / "untracked", target_is_directory=True)
+        self.assertIn("protected body domain", wc.context_path_protection_error(status, NESTED_COPY, ()))
+        self.assertIn("protected body domain", wc.context_path_protection_error(status, NAMED_COPY, ()))
+        self.assertIsNone(wc.context_path_protection_error(status, "docs/readme.md", ()))
+        self.assertIn("leaving its root", wc.context_path_protection_error(status, "docs/alias/guarded", ()))
+        # Ancestor aliases inside the root: the alias target alone ("guarded",
+        # "archive/untracked") is outside the domain, the resolved full path is
+        # not. Generic names only; no body exists or is opened.
+        (status / "guarded").mkdir()
+        (status / "archive" / "untracked" / "guarded").mkdir(parents=True)
+        (status / "docs" / "up").symlink_to("../guarded", target_is_directory=True)
+        (status / "docs" / "copies").symlink_to("../archive/untracked/guarded", target_is_directory=True)
+        (status / "docs" / "root").symlink_to("..", target_is_directory=True)
+        (status / "docs" / "asset").symlink_to(f"../archive/untracked/{SYNTHETIC_NAME}.txt")
+        for context in (
+            "docs/up/zone/body.txt",
+            "docs/up/zone",
+            "docs/copies/zone/body.py.txt",
+            "docs/root/guarded/../docs/up/zone/body.txt",
+            "docs/asset",
+        ):
+            with self.subTest(context=context):
+                self.assertIn(
+                    "symlink alias into the protected body domain",
+                    wc.context_path_protection_error(status, context, ()),
+                )
+        for context in ("docs/up", "docs/up/zone2/x.txt", "docs/copies/plain.md", "docs/root/docs/readme.md"):
+            with self.subTest(context=context):
+                self.assertIsNone(wc.context_path_protection_error(status, context, ()))
+        # The task-specific rule keeps refusing an alias of a protected ancestor.
+        self.assertIn("alias of protected path", wc.context_path_protection_error(status, "docs/up", GUARD))
+
+    def test_context_metadata_names_the_literal_filesystem_entry(self) -> None:
+        # A POSIX name may contain a literal backslash; a directory listing
+        # yields it and the copy opens it, so its metadata is what is judged.
+        status = self.root / "status"
+        (status / "docs").mkdir(parents=True)
+        (status / "guarded" / "zone").mkdir(parents=True)
+        (status / "docs" / "alias\\leaf.md").symlink_to("../guarded/zone/empty.md")
+        (status / "docs" / "note\\plain.md").touch()
+        self.assertIn(
+            "symlink alias into the protected body domain",
+            wc.context_path_protection_error(status, "docs/alias\\leaf.md", ()),
+        )
+        self.assertIsNone(wc.context_path_protection_error(status, "docs/note\\plain.md", ()))
+        # The logical name keeps its slash-normalized domain classification.
+        self.assertIn("protected body domain", wc.context_path_protection_error(status, "docs\\guarded\\zone\\x", ()))
+
+
+WORKFLOWS = THIS_DIR.parent / ".github" / "workflows"
+
+
+def _load_workflow(name: str) -> dict:
+    import yaml
+
+    return yaml.safe_load((WORKFLOWS / name).read_text(encoding="utf-8"))
+
+
+def _reference_scripts() -> tuple[str, str]:
+    steps = _load_workflow("tooling-scope-review-gate.yml")["jobs"]["classify"]["steps"]
+    return steps[0]["run"], steps[2]["run"]
+
+
+class CheckoutBoundaryProofTests(unittest.TestCase):
+    """The reference proof on a checkout made the way actions/checkout makes it.
+
+    A synthetic namespace stands in for the production prefix; the named-asset
+    pattern stays the production one and no file of that name exists here.
+    """
+
+    PREFIX = "guarded/zone"
+    NESTED = "archive/untracked/guarded/zone/body.py.txt"
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "gitconfig").touch()
+        env = mock.patch.dict(
+            os.environ, {"GIT_CONFIG_GLOBAL": str(self.root / "gitconfig"), "GIT_CONFIG_NOSYSTEM": "1"}
+        )
+        env.start()
+        self.addCleanup(env.stop)
+        self.seed = self.root / "seed"
+        self.origin = self.root / "origin.git"
+        self.checkout = self.root / "checkout"
+        git(self.root, "init", "--quiet", "-b", "dev", str(self.seed))
+        git(self.seed, "config", "user.email", "test@example.invalid")
+        git(self.seed, "config", "user.name", "Test")
+        (self.seed / ".orchestrator").mkdir()
+        (self.seed / ".orchestrator" / "worktree_cleanliness.py").write_bytes(
+            (THIS_DIR / "worktree_cleanliness.py").read_bytes()
+        )
+        (self.seed / "keep.txt").write_text("keep\n", encoding="utf-8")
+        (self.seed / self.NESTED).parent.mkdir(parents=True)
+        (self.seed / self.NESTED).write_text("synthetic archived copy one\n", encoding="utf-8")
+        git(self.seed, "add", ".")
+        git(self.seed, "commit", "--quiet", "-m", "base")
+        self.base = git(self.seed, "rev-parse", "HEAD")
+        self.base_body = git(self.seed, "rev-parse", f"HEAD:{self.NESTED}")
+        (self.seed / self.NESTED).write_text("synthetic archived copy two\n", encoding="utf-8")
+        git(self.seed, "commit", "--quiet", "-am", "drift")
+        self.drifted = git(self.seed, "rev-parse", "HEAD")
+        self.drifted_body = git(self.seed, "rev-parse", f"HEAD:{self.NESTED}")
+        git(self.seed, "branch", "drifted")
+        git(self.seed, "reset", "--quiet", "--hard", self.base)
+        git(self.root, "init", "--quiet", "--bare", str(self.origin))
+        git(self.origin, "config", "uploadpack.allowFilter", "true")
+        git(self.origin, "config", "uploadpack.allowAnySHA1InWant", "true")
+        git(self.seed, "push", "--quiet", str(self.origin), "dev", "drifted")
+
+    def action_checkout(self, patterns: list[str], ref: str = "dev") -> None:
+        """git-source-provider.ts: filtered fetch, sparse setup, then checkout."""
+        git(self.root, "init", "--quiet", str(self.checkout))
+        git(self.checkout, "remote", "add", "origin", f"file://{self.origin}")
+        git(self.checkout, "-c", "protocol.version=2", "fetch", "-q", "--no-tags", "--filter=blob:none",
+            "origin", "+refs/heads/*:refs/remotes/origin/*")
+        git(self.checkout, "config", "core.sparseCheckout", "true")
+        sparse = self.checkout / ".git" / "info" / "sparse-checkout"
+        sparse.parent.mkdir(exist_ok=True)
+        sparse.write_text("\n".join(patterns) + "\n", encoding="utf-8")
+        git(self.checkout, "checkout", "-q", "--force", "-B", "current", f"refs/remotes/origin/{ref}")
+
+    def run_proof(self, compare: str | None = None) -> subprocess.CompletedProcess[str]:
+        _preflight, proof = _reference_scripts()
+        env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
+        env.pop("PROTECTED_COMPARE_SHAS", None)
+        if compare is not None:
+            env["PROTECTED_COMPARE_SHAS"] = compare
+        return subprocess.run(
+            ["bash", "-e", "-c", proof.replace('denied = "tests/sources"', f'denied = "{self.PREFIX}"')],
+            cwd=self.checkout, env=env, capture_output=True, text=True, check=False,
+        )
+
+    def local_objects(self) -> str:
+        return git(self.checkout, "cat-file", "--batch-check", "--batch-all-objects")
+
+    def test_nested_copy_stays_tracked_unmaterialized_and_unfetched(self) -> None:
+        self.action_checkout(list(wc.protected_body_sparse_patterns((self.PREFIX,))))
+        self.assertTrue((self.checkout / "keep.txt").is_file())
+        self.assertFalse(os.path.lexists(self.checkout / self.NESTED))
+        for compare in (None, f"{self.base} {self.base}"):
+            proof = self.run_proof(compare)
+            self.assertEqual(proof.returncode, 0, proof.stdout + proof.stderr)
+        self.assertNotIn(self.base_body, self.local_objects())
+
+    def test_old_root_only_deny_materializes_the_copy_and_is_refused(self) -> None:
+        self.action_checkout(["/*", f"!/{self.PREFIX}"])
+        self.assertTrue((self.checkout / self.NESTED).is_file(), "the hazard the domain exists for")
+        proof = self.run_proof()
+        self.assertNotEqual(proof.returncode, 0)
+        self.assertIn("deny patterns changed", proof.stderr)
+        self.assertIn("protected body domain", proof.stderr)
+
+    def test_copy_differing_between_compared_commits_is_refused_without_fetching_either(self) -> None:
+        self.action_checkout(list(wc.protected_body_sparse_patterns((self.PREFIX,))), ref="drifted")
+        proof = self.run_proof(f"{self.base} {self.drifted}")
+        self.assertNotEqual(proof.returncode, 0)
+        self.assertIn("protected body domain differs between compared commits", proof.stderr)
+        objects = self.local_objects()
+        self.assertNotIn(self.base_body, objects)
+        self.assertNotIn(self.drifted_body, objects)
+
+    def test_unreadable_compared_commit_is_refused(self) -> None:
+        self.action_checkout(list(wc.protected_body_sparse_patterns((self.PREFIX,))))
+        proof = self.run_proof(f"{self.base} {'a' * 40}")
+        self.assertNotEqual(proof.returncode, 0)
+        self.assertIn("protected body domain unreadable at a compared commit", proof.stderr)
+
+
 class ProtectedExecutionEnforcementTests(unittest.TestCase):
     """Real Bubblewrap probes against synthetic fixtures outside tests/sources."""
 

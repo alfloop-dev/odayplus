@@ -87,7 +87,10 @@ def _triggers(workflow: dict[str, Any]) -> dict[str, Any]:
 def _review_gate_step() -> dict[str, Any]:
     """The single shell step the review gate runs, taken from the workflow."""
     job = _load_yaml(REVIEW_GATE_WORKFLOW_PATH)["jobs"]["review-gate"]
-    run_steps = [step for step in job["steps"] if "run" in step]
+    # The checkout boundary's Git preflight and denial proof come first and are
+    # contracted by tests/tooling/test_ci_product_parallel.py; they are not the gate.
+    boundary = {"Require sparse-capable Git before checkout", "Prove protected path stayed out of checkout"}
+    run_steps = [step for step in job["steps"] if "run" in step and step.get("name") not in boundary]
     assert len(run_steps) == 1, (
         "expected exactly one shell step in the review-gate job; the contract "
         f"harness executes it verbatim, found {len(run_steps)}"
