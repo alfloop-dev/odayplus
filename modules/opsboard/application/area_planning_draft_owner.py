@@ -1,8 +1,10 @@
 """Current-credential, canonical-parent owner for preliminary area planning.
 
-Only planning intent is stored here. The original native NetPlan owner must
-separately authorize and admit any future scenario creation. This owner does
-not accept financial documents, create scenarios, solve, approve or execute.
+Only planning intent is stored here. The original native NetPlan request owner
+separately authorizes and admits scenario creation: materialization runs inside
+that owner's CREATE operation and calls its original creation path. This owner
+does not accept financial documents, supply financial values, solve, approve
+or execute.
 """
 from __future__ import annotations
 
@@ -17,6 +19,7 @@ from fastapi import HTTPException
 from modules.netplan.domain.area_planning_draft import (
     AreaPlanningDraft,
     AreaPlanningDraftInvalid,
+    AreaPlanningDraftStatus,
     AreaPlanningFields,
 )
 from modules.netplan.infrastructure.area_planning_drafts import DurableAreaPlanningDraftRepository
@@ -44,14 +47,11 @@ def _record_decided_denial(method):
         try:
             return method(self, *args, **kwargs)
         except HTTPException:
-            # A command transaction has already rolled back when this wrapper
-            # runs. A decided refusal remains a refusal if its audit sink is
-            # unavailable, matching the existing authorization boundary.
-            if self._denial is not None:
-                try:
-                    self.audit.record(self._denial)
-                except Exception:
-                    _LOG.exception("Area planning access denied; denial audit delivery unavailable")
+            # A command transaction has normally rolled back when this wrapper
+            # runs. Inside an enclosing native owner transaction the denial is
+            # kept for that caller, which records it after its own rollback.
+            if getattr(getattr(self.engine, "_local", None), "connection", None) is None:
+                self.record_denial()
             raise
     return wrapped
 
@@ -78,6 +78,16 @@ class AreaPlanningDraftOwner:
         self.audit, self.queue = audit_log, queue
         self.zones, self.candidates = heat_zone_reader, candidate_snapshot_reader
         self.correlation_id, self._denial = correlation_id, None
+
+    def record_denial(self):
+        # A decided refusal remains a refusal if its audit sink is
+        # unavailable, matching the existing authorization boundary.
+        denial, self._denial = self._denial, None
+        if denial is not None:
+            try:
+                self.audit.record(denial)
+            except Exception:
+                _LOG.exception("Area planning access denied; denial audit delivery unavailable")
 
     def _refuse(self, status: int, code: str, *, identity: str | None = None):
         self._denial = AuditEvent(
@@ -134,6 +144,14 @@ class AreaPlanningDraftOwner:
                 if not zones or any(value != heat_zone_id for value in zones):
                     self._refuse(404, "AREA_PLANNING_PARENT_NOT_FOUND")
 
+    @staticmethod
+    def _require_command_key(key: Any) -> None:
+        """One owner rule for the receipt key of every area draft command."""
+        if not isinstance(key, str) or not 16 <= len(key) <= 128 or any(
+            not (c.isascii() and (c.isalnum() or c in "._:-")) for c in key
+        ):
+            raise AreaPlanningDraftInvalid("AREA_PLANNING_COMMAND_KEY_REQUIRED")
+
     def _get(self, identity: str) -> AreaPlanningDraft:
         draft = self.repository.get(identity)
         if draft is None:
@@ -165,7 +183,8 @@ class AreaPlanningDraftOwner:
         return {"heatZoneId": heat_zone_id, "items": items}
 
     @contextmanager
-    def _transaction(self, identity: str | None, heat_zone_id: str, fields: AreaPlanningFields):
+    def _transaction(self, identity: str | None, heat_zone_id: str | None,
+                     fields: AreaPlanningFields | None, native: Any = None):
         # Share the native NetPlan tenant lock and SQL engine. The proposal row
         # is then locked before reading its current version or replaying a key.
         with self.native.scenario_transaction(None), ExitStack() as stack:
@@ -179,8 +198,13 @@ class AreaPlanningDraftOwner:
                     self.engine, self.principal.tenant_id, self.queue, self.audit._worm_sink,
                 )))
             if identity:
-                self._get(identity)
-            self._admit(heat_zone_id, fields)
+                current = self._get(identity)
+                if native is not None and current.status == AreaPlanningDraftStatus.MATERIALIZED:
+                    # A replay or repeated request never creates again. It
+                    # still needs the actual native object in current scope.
+                    native.scenario(current.native_scenario_id)
+            if fields is not None:
+                self._admit(heat_zone_id, fields)
             yield
 
     @_record_decided_denial
@@ -189,10 +213,7 @@ class AreaPlanningDraftOwner:
         self._bind(Action.CREATE if operation == "create" else Action.UPDATE)
         if operation not in {"create", "update"} or (operation == "create") != (identity is None):
             raise AreaPlanningDraftInvalid("AREA_PLANNING_OPERATION_INVALID")
-        if not isinstance(key, str) or not 16 <= len(key) <= 128 or any(
-            not (c.isascii() and (c.isalnum() or c in "._:-")) for c in key
-        ):
-            raise AreaPlanningDraftInvalid("AREA_PLANNING_COMMAND_KEY_REQUIRED")
+        self._require_command_key(key)
         expected = {"name", "quarter", "budget", "candidateIds", "heatZoneId"}
         if operation == "update":
             expected.add("expectedVersion")
@@ -246,4 +267,74 @@ class AreaPlanningDraftOwner:
         )
         # This exact committed command response stays bound to the receipt.
         # The boundary above rechecks present access before every replay.
+        return {**outcome.value, "receiptId": outcome.receipt_id, "replayed": outcome.replayed}
+
+    @_record_decided_denial
+    def materialize(self, *, identity: str, payload: dict[str, Any], key: str,
+                    native: Any, create_native: Any):
+        """Create the original native DRAFT and link this proposal atomically.
+
+        ``native`` is the original native request owner already inside its
+        CREATE operation; this owner was built from its ``raw`` repository.
+        ``create_native`` is the original native creation path. Only the
+        first receipt operation pins/admits the creation body, so the native
+        existing-ID refusal stays intact while a replay never creates again.
+        Candidate rows carry identifiers only: no financial value, source,
+        model, currency or period is supplied here.
+        """
+        self._bind(Action.UPDATE)
+        if (getattr(native, "raw", None) is not self.native
+                or getattr(native, "principal", None) is not self.principal
+                or not callable(create_native)):
+            raise HTTPException(503, "AREA_PLANNING_NATIVE_OWNER_UNAVAILABLE")
+        self._require_command_key(key)
+        if not isinstance(payload, dict) or set(payload) != {"expectedVersion"}:
+            raise AreaPlanningDraftInvalid("AREA_PLANNING_COMMAND_FIELDS_INVALID")
+        expected = payload["expectedVersion"]
+        if type(expected) is not int or expected < 1:
+            raise AreaPlanningDraftInvalid("AREA_PLANNING_EXPECTED_VERSION_REQUIRED")
+        self._get(identity)
+
+        def apply(_receipt_id):
+            previous = self._get(identity)
+            scenario_id = self.repository.scenario_id_for_draft(previous.draft_id)
+            # Version, state and planning-input completeness precede creation.
+            linked = previous.materialize(
+                scenario_id=scenario_id, actor=self.principal.subject_id, expected_version=expected,
+            )
+            created = create_native({
+                "tenant_id": previous.tenant_id, "scenario_name": previous.fields.name,
+                "planning_horizon": previous.fields.quarter,
+                "constraints": {"max_budget": previous.fields.budget},
+                "existing_stores": [],
+                "candidate_sites": [{"candidate_site_id": candidate}
+                                    for candidate in previous.fields.candidate_ids],
+                "scenario_id": scenario_id,
+            })
+            if not isinstance(created, dict) or created.get("scenario_id") != scenario_id:
+                raise HTTPException(503, "AREA_PLANNING_NATIVE_OWNER_UNAVAILABLE")
+            current = self.repository.save(previous, linked)
+            event = self.audit.record(AuditEvent(
+                event_type="netplan.area_draft.materialize",
+                actor=self.principal.subject_id, action="materialize",
+                resource="netplan-area-draft/" + current.draft_id, outcome="success",
+                correlation_id=self.correlation_id,
+                metadata={"tenant_id": current.tenant_id, "draft_id": current.draft_id,
+                          "heat_zone_id": current.heat_zone_id, "version": current.version,
+                          "native_scenario_id": scenario_id},
+            ))
+            return {"draft": current.to_dict(),
+                    "auditEventIds": [created["audit_event_id"], event.event_id]}
+
+        receipts = TenantScopedCommandReceiptStore(
+            self.queue, AREA_PLANNING_DRAFT_RECEIPT_SERVICE,
+            transaction_factory=lambda: self._transaction(identity, None, None, native),
+        )
+        outcome = receipts.run(
+            tenant_id=self.principal.tenant_id, idempotency_key=key,
+            scope="materialize:" + identity + ":" + self.principal.subject_id,
+            payload={"operation": "materialize", "identity": identity,
+                     "actor": self.principal.subject_id, "input": payload},
+            correlation_id=self.correlation_id, operation=apply,
+        )
         return {**outcome.value, "receiptId": outcome.receipt_id, "replayed": outcome.replayed}

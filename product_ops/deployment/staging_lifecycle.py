@@ -162,6 +162,15 @@ STAGING_SMOKE_ROLES: tuple[str, ...] = ("operations_manager", "model_owner", "da
 #: The module hard-codes ODP_EXTERNAL_PROVIDER_MODE=disabled on every staging
 #: container; the gate is held to that posture and expects no provider.
 STAGING_EXTERNAL_PROVIDER_MODE = "disabled"
+# ODP-STAGING-PASSWORD-RUNTIME-WIRING-261114: the staging Web custom domain
+# is only console-staging.oday-plus.com.tw (ODP-EPHEMERAL-STAGING-ROLLOUT-001
+# acceptance). Human password sign-in redirects to ODP_WEB_BASE_URL and sets
+# its host-only __Host- session cookie there, so the Web must be configured
+# with this exact origin, not its Cloud Run URL: the Web derives no alias for a
+# custom domain and a request on it would otherwise be redirected to run.app
+# without the cookie. generate_tfvars writes it; the module's staging_web
+# refuses to plan without it.
+STAGING_WEB_PUBLIC_ORIGIN = "https://console-staging.oday-plus.com.tw"
 STAGING_LIVE_E2E_WORKER_DEADLINE_SECONDS = 600.0
 STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS = 10.0
 
@@ -728,6 +737,7 @@ def get_ephemeral_resource_names(
         "secret_db_url": f"{name_prefix}-database-url",
         "secret_cursor_key": f"{name_prefix}-cursor-signing-key",
         "secret_web_session": f"{name_prefix}-web-session",
+        "secret_identity_key": f"{name_prefix}-identity-signing-key",
         "scheduler_job": f"{name_prefix}-worker-trigger",
     }
 
@@ -924,6 +934,9 @@ def generate_tfvars(
     # this input existed is unchanged.
     if config.cloud_sql_service_account_email:
         tfvars["cloud_sql_service_account_email"] = config.cloud_sql_service_account_email
+    # Always the governed staging console origin (ODP_WEB_BASE_URL); there is
+    # no per-run or environment override and no Cloud Run URL fallback.
+    tfvars["web_base_url"] = STAGING_WEB_PUBLIC_ORIGIN
     return tfvars
 
 
@@ -997,6 +1010,15 @@ def plan_staging_resources(
             resource_type="google_secret_manager_secret",
             resource_name=names["secret_web_session"],
             resource_id=f"projects/{config.project_id}/secrets/{names['secret_web_session']}",
+            release_id=config.release_id,
+            labels=labels,
+            created_at=created_iso,
+            expires_at=expires_iso,
+        ),
+        StagingResource(
+            resource_type="google_secret_manager_secret",
+            resource_name=names["secret_identity_key"],
+            resource_id=f"projects/{config.project_id}/secrets/{names['secret_identity_key']}",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -4890,6 +4912,7 @@ def validate_module_contract(module_dir: Path) -> list[str]:
         "random_password.staging_db.result",
         "random_password.staging_cursor_signing_key.result",
         "random_password.staging_web_session.result",
+        "random_password.staging_identity_token_signing_key.result",
         "secret_data",
         "password",
     )

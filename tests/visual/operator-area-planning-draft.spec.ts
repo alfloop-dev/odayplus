@@ -1,4 +1,4 @@
-import { expect, request as playwrightRequest, test, type Page } from "@playwright/test";
+import { expect, request as playwrightRequest, test, type Locator, type Page, type Response } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { PG_API, PG_CONTROL, PG_WEB } from "../e2e/_intakeScorePg";
 
@@ -35,12 +35,51 @@ async function login(page: Page, username: string, role = "expansion-manager") {
   expect(session.status, session.text).toBe(200);
   expect(session.json.subject).toBe(username);
 }
+async function dialogGeometry(dialog: Locator, width: number) {
+  const geometry = await dialog.evaluate(element => {
+    const box = element.getBoundingClientRect();return { left: box.left, right: box.right,
+      client: element.clientWidth, scroll: element.scrollWidth,
+      documentClient: document.documentElement.clientWidth, documentScroll: document.documentElement.scrollWidth,
+      fields: [...element.querySelectorAll("input")].map(input => {
+        const rect = input.getBoundingClientRect();return { left: rect.left, right: rect.right, width: rect.width };
+      }) };
+  });
+  expect(geometry.left).toBeGreaterThanOrEqual(-1);expect(geometry.right).toBeLessThanOrEqual(width + 1);
+  expect(geometry.scroll).toBeLessThanOrEqual(geometry.client + 1);
+  expect(geometry.documentScroll).toBeLessThanOrEqual(geometry.documentClient + 1);
+  expect(geometry.fields.every(field => field.width > 0 && field.left >= geometry.left - 1 && field.right <= geometry.right + 1)).toBe(true);
+  return geometry;
+}
+// The executive principal is granted ops-lead, expansion-manager and pm-audit
+// personas; the server starts it on ops-lead. The person then selects the
+// expansion persona in the normal header role menu (selection among grants only).
+async function selectExpansionManagerPersona(page: Page) {
+  await page.getByRole("button", { name: /營運主管/, expanded: false }).click();
+  await page.locator('[data-screen-label="Role Switch Menu"]').getByRole("button", { name: /^展店經理/ }).click();
+  await expect(page.getByRole("button", { name: /展店經理/, expanded: false })).toBeVisible();
+}
+async function openAreaDialog(page: Page, zoneId: string) {
+  await page.locator(`[data-zone-id="${zoneId}"]`).click();
+  const launch = page.getByTestId("find-areas-zone-actions").getByRole("button", { name: "加入季度展店計畫", exact: true });
+  await expect(launch).toBeEnabled();await launch.click();
+  return page.getByRole("dialog", { name: "季度展店：區域規劃草稿", exact: true });
+}
+const path = (response: Response) => new URL(response.url()).pathname;
+const nativeBase = "/api/v1/netplan/scenarios/";
+// Fresh area GET plus the linked native GET that the dialog issues for one row.
+function linkedReads(page: Page, id: string) {
+  return Promise.all([
+    page.waitForResponse(response => response.request().method() === "GET" && path(response) === `${base}/${id}`),
+    page.waitForResponse(response => response.request().method() === "GET" && path(response).startsWith(nativeBase)),
+  ]);
+}
 for (const width of [1440, 1024, 390]) {
   test(`area draft persists and reopens through password session at ${width}px`, async ({ page, browser }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 });
     const controls = await playwrightRequest.newContext({ baseURL: PG_API,
       extraHTTPHeaders: { "x-synthetic-control": PG_CONTROL } });
     const other = await browser.newContext();
+    const executiveContext = await browser.newContext({ viewport: { width, height: 1000 } });
     try {
       const prepared = await controls.post("/_synthetic/area-planning/setup");
       expect(prepared.status(), await prepared.text()).toBe(200);
@@ -133,18 +172,7 @@ for (const width of [1440, 1024, 390]) {
       const foreignPage = await other.newPage();await login(foreignPage, scenario.foreign_username, "expansion-staff");
       const foreign = await browserRequest(foreignPage, `${base}/${id}`, { headers: { "x-operator-role": "expansion-staff" } });
       expect(foreign.status).toBe(404);
-      const geometry = await dialog.evaluate(element => {
-        const box = element.getBoundingClientRect();return { left: box.left, right: box.right,
-          client: element.clientWidth, scroll: element.scrollWidth,
-          documentClient: document.documentElement.clientWidth, documentScroll: document.documentElement.scrollWidth,
-          fields: [...element.querySelectorAll("input")].map(input => {
-            const rect = input.getBoundingClientRect();return { left: rect.left, right: rect.right, width: rect.width };
-          }) };
-      });
-      expect(geometry.left).toBeGreaterThanOrEqual(-1);expect(geometry.right).toBeLessThanOrEqual(width + 1);
-      expect(geometry.scroll).toBeLessThanOrEqual(geometry.client + 1);
-      expect(geometry.documentScroll).toBeLessThanOrEqual(geometry.documentClient + 1);
-      expect(geometry.fields.every(field => field.width > 0 && field.left >= geometry.left - 1 && field.right <= geometry.right + 1)).toBe(true);
+      const geometry = await dialogGeometry(dialog, width);
       await testInfo.attach(`actual-area-password-${width}-receipt-and-geometry.json`, { body: JSON.stringify({ scope: scenario.scope,
         actual, geometry, nativeGeometry, recordedProjection: { source: reloadedSnapshot.source,
           selectedHeatZoneId: reloadedSnapshot.selectedHeatZoneId, availability: reloadedSnapshot.heatZoneAvailability,
@@ -153,6 +181,83 @@ for (const width of [1440, 1024, 390]) {
       await page.screenshot({ path: testInfo.outputPath(`actual-area-draft-${width}px.png`), fullPage: true });
       await dialog.screenshot({ path: testInfo.outputPath(`actual-area-draft-dialog-${width}px.png`) });
       await page.keyboard.press("Escape");await expect(dialog).toHaveCount(0);await expect(launch).toBeFocused();
-    } finally { await other.close();await controls.dispose(); }
+
+      // A separate same-tenant executive (the native NetPlan creator) opens the
+      // same persisted completed draft through its own password session and BFF,
+      // explicitly creates the native DRAFT, then reloads and reopens it.
+      const executive = await executiveContext.newPage();
+      const writes: string[] = [];
+      executive.on("request", sent => {
+        if (sent.method() !== "GET" && new URL(sent.url()).pathname.startsWith("/api/v1/")) {
+          writes.push(`${sent.method()} ${new URL(sent.url()).pathname}`);
+        }
+      });
+      await login(executive, scenario.executive_username);await selectExpansionManagerPersona(executive);
+      let executiveDialog = await openAreaDialog(executive, scenario.zone_id);
+      await executiveDialog.getByRole("button", { name: `${name} · v2`, exact: true }).click();
+      await expect(executiveDialog.getByLabel("規劃季度", { exact: true })).toHaveValue("2027Q2");
+      await expect(executiveDialog.getByLabel("展店預算（元）", { exact: true })).toHaveValue("0");
+      await expect(executiveDialog.getByLabel("Synthetic area candidate", { exact: true })).toBeChecked();
+      const create = executiveDialog.getByRole("button", { name: "建立 NetPlan 情境草稿", exact: true });
+      await expect(create).toBeEnabled();
+      const materializing = executive.waitForResponse(response => response.request().method() === "POST"
+        && path(response) === `${base}/${id}/materialize`);
+      const afterMaterialize = linkedReads(executive, id);
+      await create.click();
+      const materialized = await materializing;expect(materialized.status(), await materialized.text()).toBe(200);
+      const linkReceipt = await materialized.json(), linked = linkReceipt.draft;
+      expect(linked).toMatchObject({ draftId: id, tenantId: scenario.tenant_id, heatZoneId: scenario.zone_id, name,
+        quarter: "2027Q2", budget: 0, candidateIds: [scenario.candidate_id], createdBy: scenario.manager_username,
+        materializedBy: scenario.executive_username, status: "MATERIALIZED", version: 3 });
+      expect(linkReceipt.replayed).toBe(false);
+      const scenarioId: string = linked.nativeScenarioId;
+      expect(scenarioId).toEqual(expect.any(String));
+      const nativeExpected = { scenario_id: scenarioId, tenant_id: scenario.tenant_id, scenario_name: name,
+        planning_horizon: "2027Q2", status: "draft", constraints: { max_budget: 0 }, solve: null, approvals: [] };
+      const verifyNative = (detail: { options_by_entity: Record<string, { source_snapshot_ids: string[] }[]> }) => {
+        expect(detail).toMatchObject(nativeExpected);
+        expect(Object.keys(detail.options_by_entity)).toEqual([scenario.candidate_id]);
+        // ID-only original mapping: no source, model, currency or GM is invented.
+        expect(detail.options_by_entity[scenario.candidate_id].every(option => option.source_snapshot_ids.length === 0)).toBe(true);
+      };
+      const [freshArea, freshNative] = await afterMaterialize;
+      expect(freshArea.status(), await freshArea.text()).toBe(200);expect(await freshArea.json()).toEqual(linked);
+      expect(path(freshNative)).toBe(nativeBase + scenarioId);
+      expect(freshNative.status(), await freshNative.text()).toBe(200);
+      const createdNative = await freshNative.json();verifyNative(createdNative);
+      const verifyReadback = async (target: Locator) => {
+        const readback = target.getByRole("region", { name: "NetPlan 情境草稿讀回" });
+        await expect(readback).toContainText(`${name} · 2027Q2 · 狀態 draft · 預算上限 0`);
+        await expect(readback).toContainText("此情境尚未解算或送審");
+        await expect(readback).toContainText("期望毛利／成本／風險／產能：未提供來源，數值尚未核實（不代表 0 或預設值）");
+        await expect(readback).not.toContainText("產能 1");
+        await expect(readback).not.toContainText("期望毛利 0");
+        await expect(target.getByLabel("草稿名稱", { exact: true })).toBeDisabled();
+        await expect(target.getByRole("button", { name: "建立 NetPlan 情境草稿", exact: true })).toHaveCount(0);
+      };
+      await expect(executiveDialog.getByText(`已核對區域規劃草稿 ${name} 與其 NetPlan 情境草稿。`, { exact: true })).toBeVisible();
+      await verifyReadback(executiveDialog);
+      const executiveGeometry = await dialogGeometry(executiveDialog, width);
+      await executiveDialog.screenshot({ path: testInfo.outputPath(`actual-area-native-created-${width}px.png`) });
+
+      await executive.reload();await expect(executive).toHaveURL(url => url.pathname === "/operator");
+      await selectExpansionManagerPersona(executive);
+      executiveDialog = await openAreaDialog(executive, scenario.zone_id);
+      const reopening = linkedReads(executive, id);
+      await executiveDialog.getByRole("button", { name: `${name} · v3 · 已建立 NetPlan`, exact: true }).click();
+      const [reopenedArea, reopenedNative] = await reopening;
+      expect(reopenedArea.status(), await reopenedArea.text()).toBe(200);expect(await reopenedArea.json()).toEqual(linked);
+      expect(path(reopenedNative)).toBe(nativeBase + scenarioId);
+      expect(reopenedNative.status(), await reopenedNative.text()).toBe(200);
+      const reopenedDetail = await reopenedNative.json();verifyNative(reopenedDetail);
+      expect(reopenedDetail.created_at).toBe(createdNative.created_at);
+      await verifyReadback(executiveDialog);
+      // Only the explicit materialize command was sent: no retry, solve, submit or approval.
+      expect(writes).toEqual([`POST ${base}/${id}/materialize`]);
+      await testInfo.attach(`actual-area-native-${width}-receipt-and-readback.json`, { body: JSON.stringify({
+        scope: scenario.scope, linked, createdNative, reopenedNative: reopenedDetail, writes, geometry: executiveGeometry,
+      }, null, 2), contentType: "application/json" });
+      await executiveDialog.screenshot({ path: testInfo.outputPath(`actual-area-native-reopened-${width}px.png`) });
+    } finally { await other.close();await executiveContext.close();await controls.dispose(); }
   });
 }
