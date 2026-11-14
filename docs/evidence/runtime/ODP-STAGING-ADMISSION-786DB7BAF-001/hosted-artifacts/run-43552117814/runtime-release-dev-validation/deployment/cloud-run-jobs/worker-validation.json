@@ -1,0 +1,59 @@
+{
+  "checks": [
+    {
+      "detail": "exact release SHA is present in image/env/labels",
+      "name": "jobs-smoke:worker:release_sha",
+      "ok": true
+    },
+    {
+      "detail": "bounded worker entrypoint is configured",
+      "name": "jobs-smoke:worker:entrypoint",
+      "ok": true
+    },
+    {
+      "detail": "no external providers selected (consumer-only deployment)",
+      "name": "jobs-smoke:worker:provider_selection",
+      "ok": true
+    },
+    {
+      "detail": "database and every selected provider secret are bound to Secret Manager references: ODAY_DATABASE_URL",
+      "name": "jobs-smoke:worker:secret_bindings",
+      "ok": true
+    },
+    {
+      "detail": "latest execution completed with succeededCount>=1 and failedCount=0",
+      "name": "jobs-smoke:worker:execution",
+      "ok": true
+    },
+    {
+      "detail": "execution has a queryable Cloud Run status receipt",
+      "name": "jobs-smoke:worker:execution_receipt",
+      "ok": true
+    },
+    {
+      "detail": "job and completed execution bind the exact immutable image and release",
+      "name": "jobs-smoke:worker:immutable_binding",
+      "ok": true
+    }
+  ],
+  "execution_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:95f8799e7d0e939785523700c19e9845e622cab52b115ce13d0f34246bef0137",
+  "execution_job_name": "oday-worker-r-786db7bafee0",
+  "execution_name": "oday-worker-r-786db7bafee0-ww828",
+  "expected_sha": "786db7bafee061382e8bc60ab60bf139a232176f",
+  "generated_at": "2026-11-14T03:54:26Z",
+  "job_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:95f8799e7d0e939785523700c19e9845e622cab52b115ce13d0f34246bef0137",
+  "job_kind": "worker",
+  "job_name": "oday-worker-r-786db7bafee0",
+  "ok": true,
+  "release_sha": "786db7bafee061382e8bc60ab60bf139a232176f",
+  "required_secret_env_vars": [
+    "ODAY_DATABASE_URL"
+  ],
+  "schema_version": 1,
+  "secret_bound_env_vars": [
+    "ODAY_DATABASE_URL"
+  ],
+  "secret_values_redacted": true,
+  "selected_provider_ids": [],
+  "unselected_provider_secret_env_vars": []
+}
