@@ -236,8 +236,9 @@ PostgreSQL/password-session profiles completed successfully at `97ffa8a40b56`
 (exit 0, 609.27 seconds), including the three original accessibility cases and
 the fresh URL_MANUAL parser/matching/independent execution SQL checks. The prior
 failure remains evidence, not a pass. This qualifies that isolated native
-selection only: the original full product packet/shared lifecycle, five-policy
-retrieval boundary and final-head/current-base CI remain outstanding.
+selection only: execution of the original full product packet with its shared
+lifecycle, five-policy retrieval boundary and final-head/current-base CI remain
+outstanding.
 
 These cases exercise the old Inbox button and `dialog=add` through the same
 native form, explicit observed scope and human reason, actual 201/SUBMITTED,
@@ -275,8 +276,26 @@ keep their original origins. The full packet's existing
 journey into the original submission/replay case, in a separate actual session
 context. Native5 still registers that journey independently. This preserves
 130 packet cases rather than adding a 131st test or dropping identity assertions.
-The product runner must still supply the same owned native lifecycle/context;
-this registration/origin wiring alone does not qualify a full packet run.
+The original `run_product_e2e.sh` now invokes the existing URL_MANUAL SQL test
+fixture around its Playwright phase. That fixture calls back into the same
+script's internal `--native-playwright-phase`, which executes the single,
+unchanged 18-spec command. It does not start another stack, merge reports or
+change schema2/130-case/zero-skip checks. The common helper retains its original
+password sessions, worker and independent SQL verification until that phase
+finishes. Native5 retains its 240-second per-profile wait; the full packet stays
+under the original 45-minute job boundary. POC and retained-PG consumers keep
+their original origins, rather than inheriting the native server port.
+
+The runner preserves the actual Playwright terminal exit separately from native
+fixture setup/SQL verification, and refuses success when the child exit receipt
+is missing. Either failure fails the runner. CI binds only this fixture process
+to the same job-owned PostGIS service through `INTAKE_TEST_DATABASE_URL` and its
+original per-test scratch allocator. The host production Web build is prepared
+with the command above; the Docker POC build remains separate. This is source
+integration, not full-packet qualification: native5 passed at `0845d09002bf`
+(exit 0, 619.16 seconds), while this new full-packet branch has not yet executed.
+The original five-policy fresh consumer and FindAreas legacy area-select
+expectation still require migration before final whole-packet qualification.
 
 The original assisted-spec blocked/unknown probe now uses that same password
 session, explicit scope/reason form and canonical POST. Two uniquely hosted
