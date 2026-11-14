@@ -10,7 +10,8 @@ export type NativeBrowserInput = {
   context_property_ids: string[]; append_property_id: string | null; append_receipt_probe: boolean;
   independent_reviewer: { username: string; password: string; actor_id: string } | null;
   url_manual: { original_url: string; fields: { address: string; rent: number; areaPing: number } } | null;
-  fresh_urls: { presentation: string; durability: string; duplicate: string; replay: string; keyboard: string; landmarks: string };
+  fresh_urls: { presentation: string; durability: string; duplicate: string; replay: string; keyboard: string; landmarks: string; find_areas?: string };
+  find_areas_zone_ids: string[];
   fresh_scope: NativeIntakeScope;
   policy_sources: Record<"SOURCE_BLOCKED" | "POLICY_UNKNOWN", { source_id: string; original_url: string }>;
 };

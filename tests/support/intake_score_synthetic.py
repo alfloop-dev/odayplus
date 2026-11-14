@@ -134,11 +134,14 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         "append_property_id": append_property, "append_receipt_probe": append_receipt_probe,
         "url_manual": None,
         "policy_sources": policy_sources,
+        "find_areas_zone_ids": [str(uuid4()), str(uuid4())] if product_browser_phase else [],
         # Explicit test URLs, not admitted sources or a fixture retrieval path.
         "fresh_urls": {kind: "https://browser-fresh.example.invalid/" + ids["tenant"] + "/" + kind
             for kind in ("presentation", "durability", "duplicate", "replay", "keyboard", "landmarks")},
         "independent_reviewer": {"actor_id": independent_reviewer, "username": "synthetic-manager-" + independent_reviewer,
             "password": password} if independent_reviewer else None}
+    if product_browser_phase:
+        credentials["fresh_urls"]["find_areas"] = "https://browser-fresh.example.invalid/" + ids["tenant"] + "/find-areas"
     hash_script = "const a=require('argon2');a.hash(process.env.OWNED_BROWSER_PASSWORD,{type:a.argon2id,memoryCost:65536,timeCost:3,parallelism:1}).then(h=>process.stdout.write(h))"
     phc = subprocess.check_output(["node", "-e", hash_script], cwd=root,
         env={**os.environ, "OWNED_BROWSER_PASSWORD": password}, text=True)
@@ -386,6 +389,18 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                 return
 
     try:
+        worker_bundle = build_persistence(mode="postgresql")
+        if product_browser_phase:
+            from modules.heatzone.workers import HeatZoneBatchScoreResult
+            from tests.unit.test_operator_canonical_heat_zones import zone_result
+
+            # Original recorded-score fixture seam, not a model execution or
+            # source admission. These explicit synthetic rows supply the real
+            # scoped FindAreas read/navigation; they grant no Intake scope.
+            worker_bundle.heatzone_store_for_tenant(ids["tenant"]).put(HeatZoneBatchScoreResult(
+                job_id=str(uuid4()), status="succeeded", tenant_id=ids["tenant"], completed_at=now,
+                scores=tuple(zone_result(zone, rank=rank) for rank, zone in
+                    enumerate(credentials["find_areas_zone_ids"], 1))))
         metadata_server = ThreadingHTTPServer(("127.0.0.1", 0), OwnedMetadata)
         metadata_thread = threading.Thread(target=metadata_server.serve_forever, daemon=True)
         metadata_thread.start()
@@ -412,7 +427,6 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         web = launch(["npm", "run", "start", "--workspace=@oday-plus/web", "--", "-p", str(web_port),
             "--hostname", "127.0.0.1"], web_env, "web")
         ready(web_url + "/login", web)
-        worker_bundle = build_persistence(mode="postgresql")
         worker_thread = threading.Thread(target=work, daemon=True)
         worker_thread.start()
         if product_browser_phase:
@@ -503,11 +517,13 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                 ids["tenant"], actor, operation, entry["key"], resource)
             assert saved is not None and saved[1] == entry["receipt"] and saved[2] == (200 if is_review else 201)
         fresh_commands = [json.loads(path.read_text()) for path in sorted(private_dir.glob("native-url-command-*.json"))]
-        # Original five URL submissions plus the two migrated a11y positive
-        # callers; focus/Escape must not add another accepted command.
-        assert len(fresh_commands) == 7
-        assert len({entry["key"] for entry in fresh_commands}) == 7
-        assert len({entry["receipt"]["intake_id"] for entry in fresh_commands}) == 7
+        # Original five URL submissions and two a11y positives; full130 also
+        # exercises its original FindAreas caller in this same SQL lifetime.
+        # Native5 does not select the shell spec; focus/Escape adds no command.
+        expected_submissions = 8 if product_browser_phase else 7
+        assert len(fresh_commands) == expected_submissions
+        assert len({entry["key"] for entry in fresh_commands}) == expected_submissions
+        assert len({entry["receipt"]["intake_id"] for entry in fresh_commands}) == expected_submissions
         with database.connect() as connection:
             # Independently verify the actual browser-to-SQL graph. No worker
             # admission was requested for these submission-only URLs; SUBMITTED

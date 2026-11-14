@@ -294,8 +294,22 @@ original per-test scratch allocator. The host production Web build is prepared
 with the command above; the Docker POC build remains separate. This is source
 integration, not full-packet qualification: native5 passed at `0845d09002bf`
 (exit 0, 619.16 seconds), while this new full-packet branch has not yet executed.
-The original five-policy fresh consumer and FindAreas legacy area-select
-expectation still require migration before final whole-packet qualification.
+The original five-policy fresh consumer still requires migration before final
+whole-packet qualification. The existing FindAreas case now uses this same
+native origin and password session, reads two explicitly synthetic recorded
+HeatZone rows through the original tenant result store, selects the nondefault
+row, and activates its original add action. The recorded-score inputs reuse the
+existing `zone_result` fixture; they prove neither model execution nor source
+admission. The original serializer must preserve the selected zone as navigation
+context through formal submission, native detail and reload. The formal form
+still starts with no chosen scope or reason: this case explicitly chooses the
+observed Intake's unscoped scope, not the displayed zone, and the server/readback
+must retain that exact choice. No `HZ-01`-to-UUID conversion or inferred scope is
+used. Its accepted key joins the common independent SQL graph verification;
+only full130 selects this original shell case, so native5 keeps its original
+seven submission-only commands while full130 expects eight. This FindAreas
+source increment has not yet executed in the full packet and is not a passing
+browser or whole-packet qualification claim.
 
 The original assisted-spec blocked/unknown probe now uses that same password
 session, explicit scope/reason form and canonical POST. Two uniquely hosted
