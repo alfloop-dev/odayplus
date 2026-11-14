@@ -2,7 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AreaPlanningDraftDialog } from "../AreaPlanningDraftDialog";
-import { createAreaPlanningDraftApi, isAreaPlanningDraft, type AreaPlanningDraft } from "../areaPlanningDraftClient";
+import { createAreaPlanningDraftApi, isAreaNativeScenario, isAreaPlanningDraft, type AreaPlanningDraft } from "../areaPlanningDraftClient";
 
 // HTTP doubles isolate UI recovery and untrusted DTOs; PostgreSQL ownership,
 // signed principal admission and transactions have separate real-DB evidence.
@@ -184,4 +184,115 @@ it.each([
     ? loaded : { heatZoneId: zone, items: [row({ version: 2 })] })));
   dialog();fireEvent.click(await screen.findByRole("button", { name: `${row().name} · v2` }));
   await screen.findByRole("alert");expect(screen.getByLabelText("草稿名稱")).toHaveValue("");
+});
+
+describe("Area draft explicit native NetPlan DRAFT", () => {
+  const scenarioId = "netplan-scenario-area-draft-" + id;
+  const complete = row({ quarter: "2027Q1", budget: 2500000, candidateIds: [candidate] });
+  const linked = row({ quarter: "2027Q1", budget: 2500000, candidateIds: [candidate], version: 2, status: "MATERIALIZED",
+    updatedAt: "2026-10-16T12:05:00Z", nativeScenarioId: scenarioId, materializedBy: actor });
+  const nativeDetail = { scenario_id: scenarioId, tenant_id: tenant, scenario_name: complete.name, planning_horizon: "2027Q1",
+    status: "draft", created_at: "2026-10-16T12:05:00Z", constraints: { max_budget: 2500000 }, solve: null, approvals: [],
+    options_by_entity: { [candidate]: [
+      { entity_id: candidate, action: "OPEN", expected_gross_margin: 0, budget_cost: 0, risk_score: 0.3, capacity_delta: 1,
+        source_snapshot_ids: [], notes: [] },
+      { entity_id: candidate, action: "KEEP", expected_gross_margin: 0, budget_cost: 0, risk_score: 0, capacity_delta: 0,
+        source_snapshot_ids: [], notes: ["defer_candidate_site"] }] } };
+  const isNative = (url: string) => url.startsWith("/api/v1/netplan/scenarios/");
+  const linkedReceipt = { draft: linked, auditEventIds: [audit, "00000000-0000-0000-0000-000000000052"],
+    receiptId: "synthetic-private-command", replayed: false };
+
+  it("creates the original native DRAFT on explicit request and shows fresh area and native readback", async () => {
+    let materialized = false;
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") { materialized = true; return response(linkedReceipt); }
+      if (isNative(url)) return response(nativeDetail);
+      const current = materialized ? linked : complete;
+      return response(url.endsWith(id) ? current : { heatZoneId: zone, items: [current] });
+    }); vi.stubGlobal("fetch", fetcher); dialog();
+    fireEvent.click(await screen.findByRole("button", { name: `${complete.name} · v1` }));
+    await screen.findByDisplayValue(complete.name);
+    fireEvent.click(screen.getByRole("button", { name: "建立 NetPlan 情境草稿" }));
+    await screen.findByText(`已核對區域規劃草稿 ${complete.name} 與其 NetPlan 情境草稿。`);
+    const post = fetcher.mock.calls.find(([, init]) => init?.method === "POST")!;
+    expect(post[0]).toBe(`/api/v1/operator/area-planning-drafts/${id}/materialize`);
+    expect(JSON.parse(String(post[1]?.body))).toEqual({ expectedVersion: 1 });
+    expect(fetcher.mock.calls.some(([url]) => url === `/api/v1/netplan/scenarios/${scenarioId}`)).toBe(true);
+    expect(fetcher.mock.calls.some(([url]) => /solve|submit|decide/.test(String(url)))).toBe(false);
+    const readback = screen.getByRole("region", { name: "NetPlan 情境草稿讀回" });
+    expect(readback).toHaveTextContent(`${complete.name} · 2027Q1 · 狀態 draft · 預算上限 2500000`);
+    expect(readback).toHaveTextContent("此情境尚未解算或送審");
+    expect(readback).toHaveTextContent("未提供來源，數值尚未核實（不代表 0）");
+    expect(readback).not.toHaveTextContent("期望毛利 0");
+    expect(screen.getByLabelText("草稿名稱")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "建立 NetPlan 情境草稿" })).toBeNull();
+  });
+  it("keeps the same key and expected version for an uncertain native creation retry", async () => {
+    let writes = 0;
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") { if (++writes === 1) throw new Error("Synthetic lost reply"); return response({ ...linkedReceipt, replayed: true }); }
+      if (isNative(url)) return response(nativeDetail);
+      const current = writes > 1 ? linked : complete;
+      return response(url.endsWith(id) ? current : { heatZoneId: zone, items: [current] });
+    }); vi.stubGlobal("fetch", fetcher); dialog();
+    fireEvent.click(await screen.findByRole("button", { name: `${complete.name} · v1` }));
+    await screen.findByDisplayValue(complete.name);
+    fireEvent.click(screen.getByRole("button", { name: "建立 NetPlan 情境草稿" }));
+    await screen.findByRole("alert");
+    expect(screen.getByRole("button", { name: "建立另一份草稿" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "重試建立 NetPlan 情境草稿" }));
+    await screen.findByText(`已核對區域規劃草稿 ${complete.name} 與其 NetPlan 情境草稿。`);
+    const posts = fetcher.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts).toHaveLength(2);
+    expect(posts[0][1]?.body).toEqual(posts[1][1]?.body);
+    expect((posts[0][1]?.headers as Record<string, string>)["Idempotency-Key"])
+      .toBe((posts[1][1]?.headers as Record<string, string>)["Idempotency-Key"]);
+  });
+  it("offers native creation only for saved complete inputs without unsaved edits", async () => {
+    let current = row({ quarter: "2027Q1", candidateIds: [candidate] });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => response(url.endsWith(id) ? current : { heatZoneId: zone, items: [current] })));
+    dialog();
+    fireEvent.click(await screen.findByRole("button", { name: `${complete.name} · v1` }));
+    await screen.findByDisplayValue(complete.name);
+    expect(screen.getByRole("button", { name: "建立 NetPlan 情境草稿" })).toBeDisabled();
+    cleanup(); current = complete; dialog();
+    fireEvent.click(await screen.findByRole("button", { name: `${complete.name} · v1` }));
+    await screen.findByDisplayValue(complete.name);
+    expect(screen.getByRole("button", { name: "建立 NetPlan 情境草稿" })).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("展店預算（元）"), { target: { value: "100" } });
+    expect(screen.getByRole("button", { name: "建立 NetPlan 情境草稿" })).toBeDisabled();
+  });
+  it("keeps a definite native refusal visible without retaining a retry", async () => {
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") return response({ detail: "NATIVE_SCENARIO_ID_ALREADY_EXISTS" }, 409);
+      return response(url.endsWith(id) ? complete : { heatZoneId: zone, items: [complete] });
+    }); vi.stubGlobal("fetch", fetcher); dialog();
+    fireEvent.click(await screen.findByRole("button", { name: `${complete.name} · v1` }));
+    await screen.findByDisplayValue(complete.name);
+    fireEvent.click(screen.getByRole("button", { name: "建立 NetPlan 情境草稿" }));
+    await screen.findByRole("alert");
+    expect(screen.queryByRole("button", { name: "重試建立 NetPlan 情境草稿" })).toBeNull();
+    expect(screen.getByLabelText("草稿名稱")).toHaveValue(complete.name);
+  });
+  it("reopens a linked draft from native GET and keeps the area draft when native read is denied", async () => {
+    let nativeStatus = 200;
+    const fetcher = vi.fn(async (url: string) => {
+      if (isNative(url)) return response(nativeStatus === 200 ? nativeDetail : { detail: "NATIVE_OBJECT_SCOPE_DENIED" }, nativeStatus);
+      return response(url.endsWith(id) ? linked : { heatZoneId: zone, items: [linked] });
+    }); vi.stubGlobal("fetch", fetcher);
+    const close = vi.fn(); dialog(close);
+    fireEvent.click(await screen.findByRole("button", { name: `${complete.name} · v2 · 已建立 NetPlan` }));
+    expect(await screen.findByText(`${complete.name} · 2027Q1 · 狀態 draft · 預算上限 2500000`)).toBeVisible();
+    nativeStatus = 403;
+    fireEvent.click(screen.getByRole("button", { name: "重新讀取草稿" }));
+    await screen.findByText("目前身分無法讀取此 NetPlan 情境；區域草稿仍保留。");
+    expect(close).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("草稿名稱")).toHaveValue(complete.name);
+    expect(screen.queryByText(scenarioId)).toBeNull();
+  });
+  it.each([{ tenant_id: "00000000-0000-0000-0000-000000000099" }, { scenario_id: "netplan-scenario-other" },
+    { constraints: {} }, { options_by_entity: { [candidate]: [{ entity_id: "other", action: "OPEN" }] } }])(
+    "rejects a foreign or malformed native readback %j", changed => {
+      expect(isAreaNativeScenario({ ...nativeDetail, ...changed }, linked)).toBe(false);
+    });
 });

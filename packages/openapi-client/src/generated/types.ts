@@ -228,6 +228,11 @@ export type AreaPlanningDraftListResponse = {
   items: AreaPlanningDraftResponse[];
 };
 
+/** AreaPlanningDraftMaterializeInput */
+export type AreaPlanningDraftMaterializeInput = {
+  expectedVersion: number;
+};
+
 /** AreaPlanningDraftResponse */
 export type AreaPlanningDraftResponse = {
   budget: number | null;
@@ -3441,6 +3446,7 @@ export const API_PATHS = {
   "/api/v1/operator/approvals/{approval_id}/decision": ["POST"],
   "/api/v1/operator/area-planning-drafts": ["GET", "POST"],
   "/api/v1/operator/area-planning-drafts/{identity}": ["GET", "PUT"],
+  "/api/v1/operator/area-planning-drafts/{identity}/materialize": ["POST"],
   "/api/v1/operator/avm/cases": ["GET", "POST"],
   "/api/v1/operator/avm/cases/{case_id}": ["GET"],
   "/api/v1/operator/avm/cases/{case_id}/dataroom": ["POST"],

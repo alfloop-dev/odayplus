@@ -2,14 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Modal } from "@oday-plus/ui";
-import { createAreaPlanningDraftApi, admitsCurrentAreaPlanningDraft, type AreaPlanningDraft,
-  type AreaPlanningFields, type AreaPlanningResult } from "./areaPlanningDraftClient";
+import { createAreaPlanningDraftApi, admitsCurrentAreaPlanningDraft, sameAreaPlanningFields, type AreaNativeScenario,
+  type AreaPlanningDraft, type AreaPlanningFields, type AreaPlanningResult } from "./areaPlanningDraftClient";
+import { NetPlanActionOptionsView } from "./NetPlanScenarioBuilder";
 import styles from "./listingSearchDialog.module.css";
 
 export type AreaPlanningDraftDialogProps = { zoneId: string; zoneLabel: string;
   candidates: { id: string; title: string }[]; headers: Record<string, string>;
   guard: () => Promise<boolean>; onClose: () => void };
-type Intent = { operation: "create" | "update"; id?: string; previous?: AreaPlanningDraft;
+type Intent = { operation: "create" | "update" | "materialize"; id?: string; previous?: AreaPlanningDraft;
   input: AreaPlanningFields & { expectedVersion?: number }; key: string };
 
 export function AreaPlanningDraftDialog({ zoneId, zoneLabel, candidates, headers, guard, onClose }: AreaPlanningDraftDialogProps) {
@@ -24,14 +25,26 @@ export function AreaPlanningDraftDialog({ zoneId, zoneLabel, candidates, headers
   const [candidateIds, setCandidateIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null), [notice, setNotice] = useState<string | null>(null);
   const [unverified, setUnverified] = useState(false), [uncertain, setUncertain] = useState<Intent | null>(null);
+  const [native, setNative] = useState<AreaNativeScenario | null>(null), [nativeError, setNativeError] = useState<string | null>(null);
   const current = (captured: typeof context) => mounted.current && latest.current === captured;
   function clear() {
     setSelected(null); setName(""); setQuarter(""); setBudget(""); setCandidateIds([]);
-    setError(null); setNotice(null); setUnverified(false); setUncertain(null);
+    setError(null); setNotice(null); setUnverified(false); setUncertain(null); setNative(null); setNativeError(null);
   }
   function edit(row: AreaPlanningDraft) {
     setSelected(row); setName(row.name); setQuarter(row.quarter ?? ""); setBudget(row.budget?.toString() ?? "");
     setCandidateIds(row.candidateIds); setError(null); setUnverified(false); setUncertain(null);
+    setNative(null); setNativeError(null);
+  }
+  // A linked draft is shown from the original native GET, never from its stored ID alone.
+  async function readNative(captured: typeof context, row: AreaPlanningDraft): Promise<boolean> {
+    if (row.status !== "MATERIALIZED") return false;
+    const result = await captured.api.scenario(row);
+    if (!current(captured)) return false;
+    if (result.ok) { setNative(result.value); setNativeError(null); return true; }
+    if ("superseded" in result) { retire(); return false; }
+    setNativeError(result.denied ? "目前身分無法讀取此 NetPlan 情境；區域草稿仍保留。" : result.message);
+    return false;
   }
   function retire() { clear(); setItems([]); onClose(); }
   function failure(result: Exclude<AreaPlanningResult<unknown>, { ok: true }>) {
@@ -58,6 +71,8 @@ export function AreaPlanningDraftDialog({ zoneId, zoneLabel, candidates, headers
           setError("目前紀錄與已收到的版本不一致，請重新讀取。"); return;
         }
         edit(result.value); setNotice(`已讀取目前草稿 ${result.value.name} v${result.value.version}。`);
+        await readNative(captured, result.value);
+        if (!current(captured) || run !== sequence.current) return;
       }
       const result = await captured.api.list();
       if (!current(captured) || run !== sequence.current) return;
@@ -79,11 +94,12 @@ export function AreaPlanningDraftDialog({ zoneId, zoneLabel, candidates, headers
     const captured = context, run = ++sequence.current; setReading(true); setError(null);
     const result = await captured.api.get(row.draftId);
     if (!current(captured) || run !== sequence.current) return;
-    setReading(false);
     if (result.ok) {
-      if (!admitsCurrentAreaPlanningDraft(row, result.value)) { setError("目前紀錄與列表版本不一致，請重新讀取。"); return; }
+      if (!admitsCurrentAreaPlanningDraft(row, result.value)) { setReading(false); setError("目前紀錄與列表版本不一致，請重新讀取。"); return; }
       edit(result.value); setNotice(null);
-    } else failure(result);
+      await readNative(captured, result.value);
+      if (current(captured) && run === sequence.current) setReading(false);
+    } else { setReading(false); failure(result); }
   }
   async function submit(retry?: Intent) {
     const captured = context, value = fields();
@@ -91,11 +107,13 @@ export function AreaPlanningDraftDialog({ zoneId, zoneLabel, candidates, headers
     const intent: Intent = retry ?? { operation: selected ? "update" : "create", id: selected?.draftId,
       previous: selected ?? undefined,
       input: { ...value!, ...(selected ? { expectedVersion: selected.version } : {}) }, key: crypto.randomUUID() };
+    const operation = intent.operation;
+    if (operation === "materialize") return;
     busy.current = true; setPending(true); setError(null); setNotice(null); ++sequence.current;
     // Until a receipt or definite rejection is received, keep this exact command.
     setUncertain(intent);
     try {
-      const result = await captured.api.command(intent.operation, intent.input, intent.key, intent.id, intent.previous);
+      const result = await captured.api.command(operation, intent.input, intent.key, intent.id, intent.previous);
       if (!current(captured)) return;
       if (!result.ok) {
         if (!("superseded" in result) && result.rejected) setUncertain(null);
@@ -115,7 +133,41 @@ export function AreaPlanningDraftDialog({ zoneId, zoneLabel, candidates, headers
       setNotice(`已核對區域規劃草稿 ${fresh.value.name} v${fresh.value.version}。`);
     } finally { if (current(captured)) { busy.current = false; setPending(false); } }
   }
+  async function materialize(retry?: Intent) {
+    const captured = context;
+    if (busy.current || reading || !current(captured) || !retry && (!selected || !materializable)) return;
+    const intent: Intent = retry ?? { operation: "materialize", id: selected!.draftId, previous: selected!,
+      input: { name: selected!.name, quarter: selected!.quarter, budget: selected!.budget,
+        candidateIds: selected!.candidateIds, expectedVersion: selected!.version }, key: crypto.randomUUID() };
+    busy.current = true; setPending(true); setError(null); setNotice(null); ++sequence.current;
+    setUncertain(intent);
+    try {
+      const result = await captured.api.materialize(intent.id!, intent.input.expectedVersion!, intent.key, intent.previous!);
+      if (!current(captured)) return;
+      if (!result.ok) {
+        if (!("superseded" in result) && result.rejected) setUncertain(null);
+        failure(result); return;
+      }
+      const accepted = result.value.draft;
+      setSelected(accepted); setUncertain(null); setUnverified(true);
+      setNotice(`已建立 NetPlan 情境草稿；正在核對區域草稿 v${accepted.version} 與 NetPlan 讀回。`);
+      const fresh = await captured.api.get(accepted.draftId);
+      if (!current(captured)) return;
+      if (!fresh.ok) { failure(fresh); return; }
+      if (!admitsCurrentAreaPlanningDraft(accepted, fresh.value)) {
+        setError("建立回應已收到；目前紀錄尚未核對，請重新讀取。"); return;
+      }
+      edit(fresh.value);
+      setItems(previous => [...previous.filter(row => row.draftId !== fresh.value.draftId), fresh.value]);
+      if (await readNative(captured, fresh.value)) setNotice(`已核對區域規劃草稿 ${fresh.value.name} 與其 NetPlan 情境草稿。`);
+    } finally { if (current(captured)) { busy.current = false; setPending(false); } }
+  }
   const disabled = pending || reading;
+  const saved = selected ? { name: selected.name, quarter: selected.quarter, budget: selected.budget, candidateIds: selected.candidateIds } : null;
+  const edited = fields();
+  const materializable = !!selected && selected.status === "DRAFT" && !pending && !reading && !unverified && !uncertain
+    && selected.quarter !== null && selected.budget !== null && selected.candidateIds.length > 0
+    && !!edited && !!saved && sameAreaPlanningFields(saved, edited);
   const locked = disabled || unverified || !!uncertain || selected?.status === "MATERIALIZED";
   return <Modal open title="季度展店：區域規劃草稿" className={styles.dialog}
     onClose={onClose} closeDisabled={pending || !!uncertain}>
@@ -125,7 +177,8 @@ export function AreaPlanningDraftDialog({ zoneId, zoneLabel, candidates, headers
     {error ? <p role="alert">{error}</p> : null}
     {notice ? <p role="status">{notice}</p> : null}
     {uncertain && !pending ? <div><p>上次保存結果尚未確認，請先重試；輸入已保留。</p>
-      <Button disabled={disabled} onClick={() => { void submit(uncertain); }}>重試上次保存</Button></div> : null}
+      <Button disabled={disabled} onClick={() => { void (uncertain.operation === "materialize" ? materialize(uncertain) : submit(uncertain)); }}>
+        {uncertain.operation === "materialize" ? "重試建立 NetPlan 情境草稿" : "重試上次保存"}</Button></div> : null}
     <Button disabled={disabled || !!uncertain} onClick={() => { void reload(); }}>重新讀取草稿</Button>
     <ul aria-label="本區規劃草稿">{items.map(row => <li key={row.draftId}>
       <Button disabled={disabled || !!uncertain || unverified} onClick={() => { void open(row); }}>
@@ -146,6 +199,17 @@ export function AreaPlanningDraftDialog({ zoneId, zoneLabel, candidates, headers
     </fieldset>
     <Button disabled={!!locked || !fields()} onClick={() => { void submit(); }}>{selected ? "保存草稿修改" : "保存區域草稿"}</Button>
     <Button disabled={disabled || unverified || !!uncertain} onClick={clear}>建立另一份草稿</Button>
-    {selected?.status === "MATERIALIZED" ? <p>已建立 NetPlan：{selected.nativeScenarioId}。此草稿已固定，後續請至 NetPlan 檢視。</p> : null}
+    {selected?.status === "DRAFT" ? <section aria-label="建立 NetPlan 情境草稿">
+      <p>季度、預算與候選點都已保存後，可明確建立 NetPlan 情境草稿。建立後此區域草稿固定，不會自動解算、送審或核准；候選點未提供來源的財務數值不視為已知。</p>
+      <Button disabled={!materializable} onClick={() => { void materialize(); }}>建立 NetPlan 情境草稿</Button>
+    </section> : null}
+    {selected?.status === "MATERIALIZED" ? <section aria-label="NetPlan 情境草稿讀回">
+      <h4>NetPlan 情境草稿</h4>
+      {native ? <>
+        <p>{native.scenario_name} · {native.planning_horizon} · 狀態 {native.status} · 預算上限 {native.constraints.max_budget}</p>
+        <NetPlanActionOptionsView optionsByEntity={native.options_by_entity} />
+        {native.status === "draft" && native.solve === null ? <p>此情境尚未解算或送審；解算、送審與核准依原 NetPlan 流程另行處理。</p> : null}
+      </> : <p role={nativeError ? "alert" : "status"}>{nativeError ?? "讀取 NetPlan 情境草稿中…"}</p>}
+    </section> : null}
   </Modal>;
 }

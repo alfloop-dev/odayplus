@@ -1,8 +1,9 @@
 """Normal API, signed current principals and actual PostgreSQL proposal writes.
 
-Declared HeatZone/candidate fixtures exercise canonical-parent structure and
-authorization only. They are not production model, source, financial, native
-handoff, real-user session, business approval or human acceptance evidence.
+Declared HeatZone/candidate fixtures exercise canonical-parent structure,
+authorization and the explicit ID-only native DRAFT link in one transaction.
+They are not production model, source, financial, solve, real-user session,
+business approval or human acceptance evidence.
 """
 from copy import deepcopy
 from datetime import UTC, datetime
