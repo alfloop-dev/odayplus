@@ -112,15 +112,8 @@ locals {
   # audience, so a local user token is never a service token and vice versa.
   # The HMAC key is a release-owned secret (staging_identity_token_signing_key)
   # created and destroyed with this release; no dev/prod key cohort is read.
-  # Pinned in staging_lifecycle.py (STAGING_LOCAL_IDENTITY_ISSUER,
-  # STAGING_LOCAL_IDENTITY_AUDIENCE_PREFIX).
   local_identity_issuer   = "urn:odp:identity:local"
   local_identity_audience = "urn:odp:staging-identity:${local.release_label}"
-  # The Web origin the browser sign-in flow redirects to. Cloud Run's
-  # deterministic service URL; the Web's own uri attribute cannot be read
-  # here without a cycle, and the module declares no data sources.
-  # A null project_number is refused by the staging_web precondition.
-  web_base_url = var.project_number == null ? null : "https://${local.name_prefix}-web-${var.project_number}.${var.region}.run.app"
 
   # Immutable creation and expiration timestamps (ensures applies do not refresh TTL).
   # created_at is deliberately a required input. Terraform cannot safely invent
@@ -994,9 +987,13 @@ resource "google_cloud_run_v2_service" "staging_web" {
         name  = "ODP_AUTH_LOCAL_AUDIENCES"
         value = local.local_identity_audience
       }
+      # The governed public origin users sign in at (var.web_base_url, written
+      # by staging_lifecycle.py). The login redirect and the host-only session
+      # cookie stay on that host; the app's own Host/CSRF/cookie rules are
+      # unchanged and trust no forwarded host.
       env {
         name  = "ODP_WEB_BASE_URL"
-        value = local.web_base_url
+        value = var.web_base_url
       }
       env {
         name  = "ODP_WEB_ALLOW_LEGACY_TRUSTED_HEADERS"
@@ -1060,10 +1057,10 @@ resource "google_cloud_run_v2_service" "staging_web" {
 
   lifecycle {
     # Terraform does not evaluate this for a destroy, so a release recorded
-    # before project_number existed can still be cleaned up.
+    # before web_base_url existed can still be cleaned up.
     precondition {
-      condition     = var.project_number != null
-      error_message = "project_number is required: the staging Web password sign-in flow needs its Cloud Run origin (ODP_WEB_BASE_URL)."
+      condition     = var.web_base_url != null
+      error_message = "web_base_url is required: the staging Web password sign-in flow needs its governed public origin (ODP_WEB_BASE_URL)."
     }
   }
 }

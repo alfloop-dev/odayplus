@@ -14,14 +14,14 @@ variable "region" {
   default     = "asia-east1"
 }
 
-variable "project_number" {
+variable "web_base_url" {
   type        = string
-  description = "Numeric GCP project number of project_id. The Web password sign-in flow needs its deterministic Cloud Run origin (ODP_WEB_BASE_URL) in production mode, so creating or updating the Web service refuses a null value. Null is accepted only so a release created before this input existed can still be destroyed from its recorded tfvars."
+  description = "Governed public HTTPS origin of the staging Web (ODP_WEB_BASE_URL), written by staging_lifecycle.py. The Web password sign-in flow redirects to it and sets its host-only session cookie there, so creating or updating the Web service refuses a null value. Null is accepted only so a release created before this input existed can still be destroyed from its recorded tfvars."
   default     = null
 
   validation {
-    condition     = var.project_number == null || can(regex("^[1-9][0-9]{5,19}$", var.project_number))
-    error_message = "project_number must be the numeric GCP project number of project_id."
+    condition     = var.web_base_url == null || can(regex("^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", var.web_base_url))
+    error_message = "web_base_url must be a bare https origin (scheme and lowercase host only, no port, path, query or trailing slash)."
   }
 }
 

@@ -306,11 +306,11 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
             # Pinned to the release-created version, never a floating "latest".
             self.assertIn(key_ref, text)
             self.assertIn(db_ref, text)
-        self.assertRegex(web, r'name\s*=\s*"ODP_WEB_BASE_URL"\s*\n\s*value\s*=\s*local\.web_base_url')
+        self.assertRegex(web, r'name\s*=\s*"ODP_WEB_BASE_URL"\s*\n\s*value\s*=\s*var\.web_base_url')
         self.assertRegex(web, r'name\s*=\s*"ODP_WEB_ALLOW_LEGACY_TRUSTED_HEADERS"\s*\n\s*value\s*=\s*"false"')
         self.assertIn("instances = [var.cloud_sql_connection_name]", web)
         self.assertIn('mount_path = "/cloudsql"', web)
-        self.assertIn("condition     = var.project_number != null", web)
+        self.assertIn("condition     = var.web_base_url != null", web)
 
         # Only the two services mount the key; jobs and the scheduler never do.
         self.assertEqual(main_tf.count('name = "ODP_IDENTITY_TOKEN_SIGNING_KEY"'), 2)
@@ -427,8 +427,8 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
 
         tfvars_content = {
             "project_id": "test-staging-proj",
-            # Synthetic project number (test fixture, not a real project).
-            "project_number": "123456789012",
+            # The governed staging console origin generate_tfvars writes.
+            "web_base_url": "https://console-staging.oday-plus.com.tw",
             "region": "asia-east1",
             "release_id": "odp-20260824-001",
             "candidate_sha": "0" * 40,
@@ -508,22 +508,42 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
                 f"Terraform plan failed for valid inputs: {valid_plan.stderr}\n{valid_plan.stdout}",
             )
 
-            # 3. Without project_number the Web password sign-in origin cannot
-            # be derived, so creating the Web service fails closed at plan.
+            # 3. Without web_base_url the Web password sign-in origin is
+            # unknown, so creating the Web service fails closed at plan.
             missing_vars = dict(valid_vars)
-            del missing_vars["project_number"]
-            (tmppath / "missing_project_number.tfvars.json").write_text(
+            del missing_vars["web_base_url"]
+            (tmppath / "missing_web_base_url.tfvars.json").write_text(
                 json.dumps(missing_vars), encoding="utf-8"
             )
             missing_plan = run_terraform(
                 "plan",
                 "-no-color",
-                "-var-file=missing_project_number.tfvars.json",
+                "-var-file=missing_web_base_url.tfvars.json",
                 chdir=tmppath,
                 home=scratch_home,
             )
-            self.assertNotEqual(missing_plan.returncode, 0, "plan must refuse a Web without project_number")
-            self.assertIn("project_number is required", missing_plan.stderr + missing_plan.stdout)
+            self.assertNotEqual(missing_plan.returncode, 0, "plan must refuse a Web without web_base_url")
+            self.assertIn("web_base_url is required", missing_plan.stderr + missing_plan.stdout)
+
+            # 4. Anything but a bare https origin is refused by the variable.
+            for index, bad_origin in enumerate(
+                (
+                    "http://console-staging.oday-plus.com.tw",
+                    "https://console-staging.oday-plus.com.tw/",
+                    "https://console-staging.oday-plus.com.tw/login",
+                    "https://console-staging.oday-plus.com.tw:8443",
+                    "https://Console-Staging.oday-plus.com.tw",
+                    "",
+                )
+            ):
+                bad_vars = dict(valid_vars, web_base_url=bad_origin)
+                bad_file = f"bad_web_base_url_{index}.tfvars.json"
+                (tmppath / bad_file).write_text(json.dumps(bad_vars), encoding="utf-8")
+                bad_plan = run_terraform(
+                    "plan", "-no-color", f"-var-file={bad_file}", chdir=tmppath, home=scratch_home
+                )
+                self.assertNotEqual(bad_plan.returncode, 0, f"plan must refuse web_base_url={bad_origin!r}")
+                self.assertIn("web_base_url must be a bare https origin", bad_plan.stderr + bad_plan.stdout)
 
 
 
@@ -582,8 +602,6 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
             candidate_sha="0" * 40,
             manifest_digest="sha256:" + "0" * 64,
             project_id="test-staging-proj",
-            # Synthetic project number (test fixture, not a real project).
-            project_number="123456789012",
             owner_task_id="ODP_TASK_001",
             api_image="asia-east1-docker.pkg.dev/test/repo/api@sha256:" + "0" * 64,
             web_image="asia-east1-docker.pkg.dev/test/repo/web@sha256:" + "0" * 64,
@@ -673,17 +691,17 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
         """
 
         from product_ops.deployment.staging_lifecycle import (
-            STAGING_LOCAL_IDENTITY_ISSUER,
+            STAGING_WEB_PUBLIC_ORIGIN,
             generate_tfvars,
             get_ephemeral_resource_names,
-            staging_local_identity_audience,
+            release_label_value,
             staging_smoke_token_audience,
         )
 
         release_id = "odp-20260824-001"
         config = self._config(release_id)
         tfvars = generate_tfvars(config)
-        self.assertEqual(tfvars["project_number"], config.project_number)
+        self.assertEqual(tfvars["web_base_url"], STAGING_WEB_PUBLIC_ORIGIN)
         output = self._plan("password_login", tfvars)
         names = get_ephemeral_resource_names(release_id, config.project_id)
 
@@ -706,20 +724,19 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
             self.assertIsNotNone(match, f"{name} is not planned from Secret Manager")
             return match.group(1)
 
-        audience = staging_local_identity_audience(release_id)
+        # Expected values written out (main.tf locals are the only owner).
+        audience = "urn:odp:staging-identity:" + release_label_value(release_id)
         self.assertNotEqual(audience, staging_smoke_token_audience(release_id))
         api = planned("google_cloud_run_v2_service.staging_api")
         web = planned("google_cloud_run_v2_service.staging_web")
         for text in (api, web):
             self.assertEqual(env_value(text, "ODP_AUTH_MODE"), "local")
-            self.assertEqual(env_value(text, "ODP_AUTH_LOCAL_ISSUER"), STAGING_LOCAL_IDENTITY_ISSUER)
+            self.assertEqual(env_value(text, "ODP_AUTH_LOCAL_ISSUER"), "urn:odp:identity:local")
             self.assertEqual(env_value(text, "ODP_AUTH_LOCAL_AUDIENCES"), audience)
             self.assertEqual(env_secret(text, "ODP_IDENTITY_TOKEN_SIGNING_KEY"), names["secret_identity_key"])
             self.assertEqual(env_secret(text, "ODAY_DATABASE_URL"), names["secret_db_url"])
-        self.assertEqual(
-            env_value(web, "ODP_WEB_BASE_URL"),
-            f"https://{names['cloud_run_web']}-{config.project_number}.{config.region}.run.app",
-        )
+        # The governed console origin, not the release's Cloud Run URL.
+        self.assertEqual(env_value(web, "ODP_WEB_BASE_URL"), "https://console-staging.oday-plus.com.tw")
         # The smoke audience stays the API's only service audience.
         self.assertEqual(env_value(api, "ODP_AUTH_SERVICE_AUDIENCES"), staging_smoke_token_audience(release_id))
         self.assertIn(

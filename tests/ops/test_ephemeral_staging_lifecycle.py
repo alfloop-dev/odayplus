@@ -5246,10 +5246,29 @@ class StagingPasswordLoginRuntimeWiringTests(unittest.TestCase):
 
     SYNTHETIC_IDENTITY_KEY = "SYNTHETICidentitysigningkeyFORTESTSONLY0000000000000000000000000"
     SYNTHETIC_DATABASE_URL = "postgresql://synthetic:synthetic@/synthetic?host=/cloudsql/synthetic"
+    #: Expected local JWT contract, written out here rather than imported: the
+    #: only runtime owner is the module's main.tf locals, which these pin.
+    LOCAL_ISSUER = "urn:odp:identity:local"
+    LOCAL_AUDIENCE_PREFIX = "urn:odp:staging-identity:"
 
     def setUp(self) -> None:
         self.release_id = "odp-20260824-001"
         self.main_text = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+
+    def _local_audience(self, release_id: str | None = None) -> str:
+        return self.LOCAL_AUDIENCE_PREFIX + release_label_value(release_id or self.release_id)
+
+    def _config(self, release_id: str | None = None) -> StagingConfig:
+        return StagingConfig(
+            release_id=release_id or self.release_id,
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            project_id="oday-staging-proj",
+            owner_task_id="ODP-STAGING-PASSWORD-RUNTIME-WIRING-261114",
+            kms_key_id="projects/oday-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+            deployer_service_account_email="deployer@oday-staging-proj.iam.gserviceaccount.com",
+            created_at="2026-08-27T06:00:00Z",
+        )
 
     def _service_block(self, name: str) -> str:
         start = self.main_text.index(f'resource "google_cloud_run_v2_service" "{name}"')
@@ -5257,19 +5276,23 @@ class StagingPasswordLoginRuntimeWiringTests(unittest.TestCase):
         return self.main_text[start:end]
 
     def _rendered_env(self, service: str, release_id: str | None = None) -> dict[str, str]:
-        """Render the static env of one service for a release, with synthetic secrets."""
+        """Render the static env of one service for a release, with synthetic secrets.
+
+        Module variables come from the tfvars the lifecycle caller writes.
+        """
 
         from product_ops.deployment.staging_lifecycle import (
-            STAGING_LOCAL_IDENTITY_ISSUER,
-            staging_local_identity_audience,
+            generate_tfvars,
             staging_smoke_token_audience,
         )
 
         release = release_id or self.release_id
+        tfvars = generate_tfvars(self._config(release))
         locals_ = {
-            "local.local_identity_issuer": STAGING_LOCAL_IDENTITY_ISSUER,
-            "local.local_identity_audience": staging_local_identity_audience(release),
+            "local.local_identity_issuer": self.LOCAL_ISSUER,
+            "local.local_identity_audience": self._local_audience(release),
             "local.smoke_token_audience": staging_smoke_token_audience(release),
+            "var.web_base_url": tfvars["web_base_url"],
         }
         secrets = {
             "staging_identity_token_signing_key": self.SYNTHETIC_IDENTITY_KEY,
@@ -5318,12 +5341,11 @@ class StagingPasswordLoginRuntimeWiringTests(unittest.TestCase):
         from uuid import uuid4
 
         from modules.opsboard.auth.jwt import SigningKey, encode_compact_jwt
-        from product_ops.deployment.staging_lifecycle import staging_local_identity_audience
 
         now = int(time.time())
         claims = {
             "iss": issuer,
-            "aud": audience or staging_local_identity_audience(self.release_id),
+            "aud": audience or self._local_audience(),
             "sub": sub or str(uuid4()),
             "sid": sid or str(uuid4()),
             "tenant_id": tenant_id or str(uuid4()),
@@ -5335,12 +5357,10 @@ class StagingPasswordLoginRuntimeWiringTests(unittest.TestCase):
         )
         return encode_compact_jwt(claims, signing)
 
-    def test_terraform_local_identity_matches_the_pinned_python_contract(self) -> None:
+    def test_terraform_local_identity_contract_is_release_bound_and_distinct(self) -> None:
+        from product_ops.deployment import staging_lifecycle
         from product_ops.deployment.staging_lifecycle import (
-            STAGING_LOCAL_IDENTITY_AUDIENCE_PREFIX,
-            STAGING_LOCAL_IDENTITY_ISSUER,
             STAGING_SMOKE_TOKEN_AUDIENCE_PREFIX,
-            staging_local_identity_audience,
             staging_smoke_token_audience,
         )
 
@@ -5348,21 +5368,19 @@ class StagingPasswordLoginRuntimeWiringTests(unittest.TestCase):
         audience = re.search(r'local_identity_audience\s*=\s*"([^"]+)"', self.main_text)
         self.assertIsNotNone(issuer)
         self.assertIsNotNone(audience)
-        self.assertEqual(issuer.group(1), STAGING_LOCAL_IDENTITY_ISSUER)
+        self.assertEqual(issuer.group(1), self.LOCAL_ISSUER)
         # Same local issuer as the root stack and the Web signer.
         self.assertRegex(
             (ROOT / "infra/terraform/main.tf").read_text(encoding="utf-8"),
-            rf'ODP_AUTH_LOCAL_ISSUER\s*=\s*"{re.escape(STAGING_LOCAL_IDENTITY_ISSUER)}"',
+            rf'ODP_AUTH_LOCAL_ISSUER\s*=\s*"{re.escape(self.LOCAL_ISSUER)}"',
         )
-        self.assertEqual(audience.group(1), STAGING_LOCAL_IDENTITY_AUDIENCE_PREFIX + "${local.release_label}")
-        self.assertEqual(
-            staging_local_identity_audience(self.release_id),
-            STAGING_LOCAL_IDENTITY_AUDIENCE_PREFIX + release_label_value(self.release_id),
-        )
-        self.assertNotEqual(STAGING_LOCAL_IDENTITY_AUDIENCE_PREFIX, STAGING_SMOKE_TOKEN_AUDIENCE_PREFIX)
-        self.assertNotEqual(
-            staging_local_identity_audience(self.release_id), staging_smoke_token_audience(self.release_id)
-        )
+        self.assertEqual(audience.group(1), self.LOCAL_AUDIENCE_PREFIX + "${local.release_label}")
+        self.assertNotEqual(self.LOCAL_AUDIENCE_PREFIX, STAGING_SMOKE_TOKEN_AUDIENCE_PREFIX)
+        self.assertNotEqual(self._local_audience(), staging_smoke_token_audience(self.release_id))
+        # main.tf is the only owner: the lifecycle module carries no parallel
+        # local identity rule that production code never calls.
+        for name in dir(staging_lifecycle):
+            self.assertNotIn("LOCAL_IDENTITY", name.upper(), name)
         # Alphanumeric key: config_from_env reads a key without ':' as the
         # single kid "local-default" that the Web signer stamps.
         key_block = re.search(
@@ -5394,16 +5412,13 @@ class StagingPasswordLoginRuntimeWiringTests(unittest.TestCase):
 
     def test_release_api_env_reaches_the_same_auth_boundary_and_refuses_wrong_tokens(self) -> None:
         from modules.opsboard.auth import AuthFailureReason, Credentials
-        from product_ops.deployment.staging_lifecycle import (
-            staging_local_identity_audience,
-            staging_smoke_token_audience,
-        )
+        from product_ops.deployment.staging_lifecycle import staging_smoke_token_audience
 
         config, boundary = self._boundary(self._rendered_env("staging_api"))
         self.assertTrue(config.is_configured)
         self.assertEqual(config.local_issuer, "urn:odp:identity:local")
         self.assertEqual(set(config.local_signing_keys), {"local-default"})
-        self.assertEqual(config.local_audiences, frozenset({staging_local_identity_audience(self.release_id)}))
+        self.assertEqual(config.local_audiences, frozenset({self._local_audience()}))
         # The smoke service path is unchanged: Google issuer, smoke audience only.
         self.assertEqual(config.service_issuer, "https://accounts.google.com")
         self.assertEqual(config.service_audiences, frozenset({staging_smoke_token_audience(self.release_id)}))
@@ -5424,7 +5439,7 @@ class StagingPasswordLoginRuntimeWiringTests(unittest.TestCase):
             AuthFailureReason.AUDIENCE_MISMATCH,
         )
         self.assertEqual(
-            reason(self._local_token(audience=staging_local_identity_audience("odp-20260824-002"))),
+            reason(self._local_token(audience=self._local_audience("odp-20260824-002"))),
             AuthFailureReason.AUDIENCE_MISMATCH,
         )
         self.assertEqual(reason(self._local_token(issuer="urn:odp:identity:dev")), AuthFailureReason.ISSUER_MISMATCH)
@@ -5507,16 +5522,7 @@ class StagingPasswordLoginRuntimeWiringTests(unittest.TestCase):
         self.assertEqual(set(outcome.principal.roles), {Role.OPERATIONS_MANAGER})
 
     def test_identity_signing_key_secret_is_release_inventory_with_cleanup_labels(self) -> None:
-        cfg = StagingConfig(
-            release_id=self.release_id,
-            candidate_sha="a" * 40,
-            manifest_digest="sha256:" + "b" * 64,
-            project_id="oday-staging-proj",
-            owner_task_id="ODP-STAGING-PASSWORD-RUNTIME-WIRING-261114",
-            kms_key_id="projects/oday-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
-            deployer_service_account_email="deployer@oday-staging-proj.iam.gserviceaccount.com",
-            created_at="2026-08-27T06:00:00Z",
-        )
+        cfg = self._config()
         names = get_ephemeral_resource_names(self.release_id, cfg.project_id)
         self.assertEqual(names["secret_identity_key"], f"{names['name_prefix']}-identity-signing-key")
         planned = plan_staging_resources(cfg, now=datetime(2026, 8, 27, 7, 0, 0, tzinfo=UTC))
@@ -5543,18 +5549,51 @@ class StagingPasswordLoginRuntimeWiringTests(unittest.TestCase):
         self.assertNotIn("identity", outputs_text)
         self.assertNotIn("signing", outputs_text)
 
-    def test_workflow_supplies_project_number_and_no_shared_identity_secret_to_staging(self) -> None:
+    def test_web_is_configured_with_the_governed_console_origin(self) -> None:
+        """caller config -> tfvars -> module variable -> Web ODP_WEB_BASE_URL.
+
+        The required staging console host must be the Web's configured origin:
+        the Web derives no alias for a custom domain, so a run.app origin would
+        send the post-login redirect off the host that received the host-only
+        session cookie. The app's Host/CSRF/cookie rules are not changed here.
+        """
+
+        from urllib.parse import urlsplit
+
+        from product_ops.deployment.staging_lifecycle import (
+            STAGING_WEB_PUBLIC_ORIGIN,
+            generate_tfvars,
+        )
+
+        self.assertEqual(STAGING_WEB_PUBLIC_ORIGIN, "https://console-staging.oday-plus.com.tw")
+        for release in (self.release_id, "odp-20260824-002"):
+            tfvars = generate_tfvars(self._config(release))
+            self.assertEqual(tfvars["web_base_url"], STAGING_WEB_PUBLIC_ORIGIN)
+            self.assertEqual(self._rendered_env("staging_web", release)["ODP_WEB_BASE_URL"], STAGING_WEB_PUBLIC_ORIGIN)
+            self.assertNotIn("project_number", tfvars)
+        parsed = urlsplit(STAGING_WEB_PUBLIC_ORIGIN)
+        self.assertEqual((parsed.scheme, parsed.path, parsed.query, parsed.port), ("https", "", "", None))
+        self.assertFalse(parsed.hostname.endswith(".run.app"))
+        # The API never receives the Web origin, and the Web reads it only
+        # from the module variable (no locally derived Cloud Run URL).
+        self.assertNotIn("ODP_WEB_BASE_URL", self._rendered_env("staging_api"))
+        self.assertRegex(
+            self._service_block("staging_web"), r'name\s*=\s*"ODP_WEB_BASE_URL"\n\s*value\s*=\s*var\.web_base_url\n'
+        )
+        self.assertNotIn("run.app", re.sub(r"#.*", "", self.main_text))
+        self.assertNotIn("project_number", self.main_text)
+
+    def test_workflow_passes_no_origin_override_and_no_shared_identity_secret_to_staging(self) -> None:
         import yaml
 
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8"))
         steps = workflow["jobs"]["deploy"]["steps"]
         create = next(s for s in steps if "staging_lifecycle.py create" in str(s.get("run", "")))
         run = str(create["run"])
-        self.assertIn(
-            "project_number=\"$(gcloud projects describe \"${GCP_PROJECT}\" --format='value(projectNumber)')\"", run
-        )
-        self.assertIn(': "${project_number:?', run)
-        self.assertIn('--project-number "${project_number}"', run)
+        # The governed origin is fixed by the lifecycle; the run cannot swap in
+        # the job's environment ODP_WEB_BASE_URL, a run.app URL or a number.
+        for override in ("--project-number", "--web-base-url", "projectNumber", "ODP_WEB_BASE_URL"):
+            self.assertNotIn(override, run)
         # The release creates its own key; the shared dev/prod key and session
         # secret references never reach the staging lifecycle.
         staging_runs = "\n".join(
