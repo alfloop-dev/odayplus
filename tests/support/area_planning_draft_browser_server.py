@@ -49,11 +49,15 @@ os.environ["ODP_PERSISTENCE"] = "postgresql"
 bundle = build_persistence(mode="postgresql")
 _foreign_tenant, _foreign_actor = str(uuid4()), str(uuid4())
 _viewer_actor = str(uuid4())
+# A separate same-tenant account with only the original executive role: the
+# native NetPlan creator. The planning-only manager above stays unelevated.
+_executive_actor = str(uuid4())
 with psycopg.connect(_database) as conn:
     conn.execute("INSERT INTO core.tenants(tenant_id,tenant_name) VALUES(%s,%s)", (_foreign_tenant, SCOPE))
 for actor, tenant, roles in ((MANAGER, TENANT, [Role.EXPANSION_USER, Role.SITE_REVIEWER]),
                              (_foreign_actor, _foreign_tenant, [Role.EXPANSION_USER]),
-                             (_viewer_actor, TENANT, [Role.AUDITOR])):
+                             (_viewer_actor, TENANT, [Role.AUDITOR]),
+                             (_executive_actor, TENANT, [Role.EXECUTIVE])):
     bundle.identity_store.save_account(Account(account_id=UUID(actor),
         tenant_id=UUID(tenant), username=actor, email=actor + "@example.invalid",
         status="active", created_by=SCOPE))
@@ -159,4 +163,5 @@ def setup():
             state.save(TENANT, aggregate)
         return {"scope": SCOPE, "zone_id": zone, "candidate_id": candidate,
                 "tenant_id": TENANT, "manager_username": MANAGER,
-                "foreign_username": _foreign_actor, "viewer_username": _viewer_actor}
+                "foreign_username": _foreign_actor, "viewer_username": _viewer_actor,
+                "executive_username": _executive_actor}

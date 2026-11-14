@@ -175,7 +175,8 @@ describe("shared read-only action options view", () => {
     expect(within(options).getByText("目前情境的動作選項（唯讀）")).toBeVisible();
     expect(screen.queryByText(/正式來源/)).toBeNull();
     expect(options).toHaveTextContent("KEEP · 期望毛利 100 · 成本 0 · 風險 0.1 · 產能 0");
-    expect(options).toHaveTextContent("OPEN · 期望毛利／成本／風險：未提供來源，數值尚未核實（不代表 0） · 產能 1");
+    expect(options).toHaveTextContent("OPEN · 期望毛利／成本／風險／產能：未提供來源，數值尚未核實（不代表 0 或預設值）");
     expect(options).not.toHaveTextContent("風險 0.3");
+    expect(options).not.toHaveTextContent("產能 1");
   });
 });

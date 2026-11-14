@@ -131,6 +131,11 @@ export function AreaPlanningDraftDialog({ zoneId, zoneLabel, candidates, headers
       edit(fresh.value);
       setItems(previous => [...previous.filter(row => row.draftId !== fresh.value.draftId), fresh.value]);
       setNotice(`已核對區域規劃草稿 ${fresh.value.name} v${fresh.value.version}。`);
+      // The current record may already be linked by a newer materialization
+      // (another actor, or while this exact command was being retried).
+      if (await readNative(captured, fresh.value)) {
+        setNotice(`已核對區域規劃草稿 ${fresh.value.name} v${fresh.value.version}；目前紀錄已連結 NetPlan 情境草稿。`);
+      }
     } finally { if (current(captured)) { busy.current = false; setPending(false); } }
   }
   async function materialize(retry?: Intent) {

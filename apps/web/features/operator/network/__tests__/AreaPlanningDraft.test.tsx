@@ -222,8 +222,9 @@ describe("Area draft explicit native NetPlan DRAFT", () => {
     const readback = screen.getByRole("region", { name: "NetPlan 情境草稿讀回" });
     expect(readback).toHaveTextContent(`${complete.name} · 2027Q1 · 狀態 draft · 預算上限 2500000`);
     expect(readback).toHaveTextContent("此情境尚未解算或送審");
-    expect(readback).toHaveTextContent("未提供來源，數值尚未核實（不代表 0）");
+    expect(readback).toHaveTextContent("期望毛利／成本／風險／產能：未提供來源，數值尚未核實（不代表 0 或預設值）");
     expect(readback).not.toHaveTextContent("期望毛利 0");
+    expect(readback).not.toHaveTextContent("產能 1");
     expect(screen.getByLabelText("草稿名稱")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "建立 NetPlan 情境草稿" })).toBeNull();
   });
@@ -247,6 +248,36 @@ describe("Area draft explicit native NetPlan DRAFT", () => {
     expect(posts[0][1]?.body).toEqual(posts[1][1]?.body);
     expect((posts[0][1]?.headers as Record<string, string>)["Idempotency-Key"])
       .toBe((posts[1][1]?.headers as Record<string, string>)["Idempotency-Key"]);
+  });
+  it("reads the linked native DRAFT when a recovered update readback was concurrently materialized", async () => {
+    const saved = { ...complete, version: 2, updatedAt: "2026-10-16T12:01:00Z" };
+    const concurrent = { ...linked, version: 3 };
+    let writes = 0;
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        if (++writes === 1) throw new Error("Synthetic lost reply");
+        return response({ ...receipt(saved), replayed: true });
+      }
+      if (isNative(url)) return response(nativeDetail);
+      const current = writes > 1 ? concurrent : complete;
+      return response(url.endsWith(id) ? current : { heatZoneId: zone, items: [current] });
+    }); vi.stubGlobal("fetch", fetcher); dialog();
+    fireEvent.click(await screen.findByRole("button", { name: `${complete.name} · v1` }));
+    await screen.findByDisplayValue(complete.name);
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿修改" }));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "重試上次保存" }));
+    await screen.findByText(`已核對區域規劃草稿 ${complete.name} v3；目前紀錄已連結 NetPlan 情境草稿。`);
+    const readback = screen.getByRole("region", { name: "NetPlan 情境草稿讀回" });
+    expect(readback).toHaveTextContent(`${complete.name} · 2027Q1 · 狀態 draft · 預算上限 2500000`);
+    expect(readback).not.toHaveTextContent("讀取 NetPlan 情境草稿中…");
+    expect(fetcher.mock.calls.filter(([url]) => url === `/api/v1/netplan/scenarios/${scenarioId}`)).toHaveLength(1);
+    const writesSent = fetcher.mock.calls.filter(([, init]) => init?.method && init.method !== "GET");
+    expect(writesSent).toHaveLength(2);
+    expect(writesSent.every(([url, init]) => init?.method === "PUT" && !String(url).endsWith("/materialize"))).toBe(true);
+    expect(writesSent[0][1]?.body).toEqual(writesSent[1][1]?.body);
+    expect(screen.getByLabelText("草稿名稱")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "建立 NetPlan 情境草稿" })).toBeNull();
   });
   it("offers native creation only for saved complete inputs without unsaved edits", async () => {
     let current = row({ quarter: "2027Q1", candidateIds: [candidate] });

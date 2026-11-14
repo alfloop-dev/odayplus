@@ -144,6 +144,14 @@ class AreaPlanningDraftOwner:
                 if not zones or any(value != heat_zone_id for value in zones):
                     self._refuse(404, "AREA_PLANNING_PARENT_NOT_FOUND")
 
+    @staticmethod
+    def _require_command_key(key: Any) -> None:
+        """One owner rule for the receipt key of every area draft command."""
+        if not isinstance(key, str) or not 16 <= len(key) <= 128 or any(
+            not (c.isascii() and (c.isalnum() or c in "._:-")) for c in key
+        ):
+            raise AreaPlanningDraftInvalid("AREA_PLANNING_COMMAND_KEY_REQUIRED")
+
     def _get(self, identity: str) -> AreaPlanningDraft:
         draft = self.repository.get(identity)
         if draft is None:
@@ -205,10 +213,7 @@ class AreaPlanningDraftOwner:
         self._bind(Action.CREATE if operation == "create" else Action.UPDATE)
         if operation not in {"create", "update"} or (operation == "create") != (identity is None):
             raise AreaPlanningDraftInvalid("AREA_PLANNING_OPERATION_INVALID")
-        if not isinstance(key, str) or not 16 <= len(key) <= 128 or any(
-            not (c.isascii() and (c.isalnum() or c in "._:-")) for c in key
-        ):
-            raise AreaPlanningDraftInvalid("AREA_PLANNING_COMMAND_KEY_REQUIRED")
+        self._require_command_key(key)
         expected = {"name", "quarter", "budget", "candidateIds", "heatZoneId"}
         if operation == "update":
             expected.add("expectedVersion")
@@ -282,10 +287,7 @@ class AreaPlanningDraftOwner:
                 or getattr(native, "principal", None) is not self.principal
                 or not callable(create_native)):
             raise HTTPException(503, "AREA_PLANNING_NATIVE_OWNER_UNAVAILABLE")
-        if not isinstance(key, str) or not 16 <= len(key) <= 128 or any(
-            not (c.isascii() and (c.isalnum() or c in "._:-")) for c in key
-        ):
-            raise AreaPlanningDraftInvalid("AREA_PLANNING_COMMAND_KEY_REQUIRED")
+        self._require_command_key(key)
         if not isinstance(payload, dict) or set(payload) != {"expectedVersion"}:
             raise AreaPlanningDraftInvalid("AREA_PLANNING_COMMAND_FIELDS_INVALID")
         expected = payload["expectedVersion"]

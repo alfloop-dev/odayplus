@@ -30,9 +30,8 @@ export function NetPlanActionOptionsView({ optionsByEntity }: { optionsByEntity:
       {options.map((option, index) => {
         const sourced = option.source_snapshot_ids.length > 0;
         return <li key={`${option.action}-${index}`}>{option.action}
-          {sourced ? ` · 期望毛利 ${option.expected_gross_margin} · 成本 ${option.budget_cost} · 風險 ${option.risk_score}`
-            : " · 期望毛利／成本／風險：未提供來源，數值尚未核實（不代表 0）"}
-          {` · 產能 ${option.capacity_delta}`}
+          {sourced ? ` · 期望毛利 ${option.expected_gross_margin} · 成本 ${option.budget_cost} · 風險 ${option.risk_score} · 產能 ${option.capacity_delta}`
+            : " · 期望毛利／成本／風險／產能：未提供來源，數值尚未核實（不代表 0 或預設值）"}
           <span>{option.notes.join("；")}</span>
           <small>來源：{sourced ? option.source_snapshot_ids.join(", ") : "未提供來源識別"}</small></li>;
       })}
