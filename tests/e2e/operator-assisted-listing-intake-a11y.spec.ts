@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
 
 /**
  * Assisted Listing Intake — Accessibility & Keyboard Product Gates (VDC-003)
@@ -12,7 +12,7 @@ import { expect, test } from "@playwright/test";
  * - Zero serious/critical axe accessibility violations
  */
 
-import { loginNativeSession, nativeBrowserInput, openPgScenario, submitNativeURL } from "./_intakeScorePg";
+import { test, loginNativeSession, nativeBrowserInput, openPgScenario, submitNativeURL } from "./_intakeScorePg";
 
 import {
   acquireOperatorBackendLock,

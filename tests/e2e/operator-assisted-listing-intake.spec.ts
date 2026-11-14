@@ -1,8 +1,8 @@
 import {
   expect,
   request as playwrightRequest,
-  test,
   type APIRequestContext,
+  type Browser,
   type Page,
   type TestInfo,
 } from "@playwright/test";
@@ -10,7 +10,7 @@ import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CanonicalIdentityReceipt, CanonicalIntakeAssistedEntryRequestReceipt, CanonicalIntakeReceipt, MatchCaseReceipt } from "@oday-plus/openapi-client";
 
-import { createPgNavigationControl, loginNativeSession, nativeBrowserInput, openNativeIntakeList, openPgRadar, openPgScenario, PG_WEB, reloadPgIntake, submitNativeURL, type PgScenario } from "./_intakeScorePg";
+import { test, createPgNavigationControl, loginNativeSession, nativeBrowserInput, openNativeIntakeList, openPgRadar, openPgScenario, PG_WEB, reloadPgIntake, submitNativeURL, type PgScenario } from "./_intakeScorePg";
 
 import {
   acquireOperatorBackendLock,
@@ -206,10 +206,12 @@ async function recoverNativeCommandResponse<R extends { audit_event_id: string; 
     same_provider_receipt_before_reload: Boolean(options.beforeReload) };
 }
 
-// The existing Python SQL fixture owns this production-auth browser profile.
-// The ordinary 130-case product packet has no native scenario or credentials.
-if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
-  test("canonical native: real password session confirms original parser fields and reads persisted result", async ({ page, request, browser }) => {
+// Both existing selections exercise the same original identity journey. The
+// fixed product packet composes it with its submission/replay case instead of
+// registering a 131st case; the separate native5 selection keeps its own case.
+async function confirmNativePersistedResult({ page, request, browser }: {
+  page: Page; request: APIRequestContext; browser: Browser;
+}) {
     test.setTimeout(180_000);
     page.setDefaultTimeout(30_000);
     const inputPath = process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE;
@@ -506,7 +508,11 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
     } finally {
       await confirmationContext?.close();
     }
-  });
+}
+
+if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE && process.env.ODP_OPERATOR_PRODUCT_GATE !== "1") {
+  test("canonical native: real password session confirms original parser fields and reads persisted result",
+    confirmNativePersistedResult);
 }
 
 test.beforeEach(async ({}, info) => {
@@ -622,7 +628,7 @@ async function reopenIntakeAs(
   await expect(page.getByTestId("intake-detail-id")).toHaveText(intakeId);
 }
 
-test("canonical native: 1 exact submission replay keeps one durable Intake without retrieval", async ({ page }) => {
+test("canonical native: 1 exact submission replay keeps one durable Intake without retrieval", async ({ page, browser }) => {
   const input = nativeBrowserInput();
   await loginNativeSession(page, input);
   await openNativeIntakeList(page);
@@ -646,6 +652,18 @@ test("canonical native: 1 exact submission replay keeps one durable Intake witho
   await expect(page.getByTestId("intake-detail-stage")).toHaveText("已送出");
   await page.getByTestId("intake-return-button").click();
   await expect(page.getByRole("button", { name: new RegExp(command.receipt.intake_id) })).toHaveCount(1);
+  if (process.env.ODP_OPERATOR_PRODUCT_GATE === "1") {
+    // A separate real session keeps replay's tab-local receipt state out of
+    // the identity fault/reload controls. It uses the same owned SQL scenario,
+    // not a retained fixture or an extra test/report producer.
+    const identityContext = await browser.newContext({ baseURL: new URL(page.url()).origin, extraHTTPHeaders: {} });
+    try {
+      await confirmNativePersistedResult({ page: await identityContext.newPage(),
+        request: identityContext.request, browser });
+    } finally {
+      await identityContext.close();
+    }
+  }
 });
 
 test("canonical 2: retained assisted-entry-only keeps URL and validates durable manual input", async ({

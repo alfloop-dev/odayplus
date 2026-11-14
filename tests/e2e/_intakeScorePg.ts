@@ -1,4 +1,4 @@
-import { expect, request as playwrightRequest, type Page } from "@playwright/test";
+import { expect, request as playwrightRequest, test as playwrightTest, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -6,7 +6,7 @@ import type { CanonicalIntakeReceipt, NativeIntakeScope } from "@oday-plus/opena
 
 export type NativeBrowserInput = {
   username: string; password: string; actor_id: string; tenant_id: string; intake_id: string;
-  match_case_id: string | null; api_url: string; manager_region_id: string | null; outside_intake_id: string;
+  match_case_id: string | null; api_url: string; web_url: string; manager_region_id: string | null; outside_intake_id: string;
   context_property_ids: string[]; append_property_id: string | null; append_receipt_probe: boolean;
   independent_reviewer: { username: string; password: string; actor_id: string } | null;
   url_manual: { original_url: string; fields: { address: string; rent: number; areaPing: number } } | null;
@@ -20,6 +20,16 @@ export function nativeBrowserInput(): NativeBrowserInput {
   expect(path, "Original owned native SQL/password-session composition is required").toBeTruthy();
   return JSON.parse(readFileSync(path!, "utf8")) as NativeBrowserInput;
 }
+
+// Bind only native cases to the existing production-session composition. The
+// same specs also contain POC and retained-PG cases: changing the whole packet's
+// baseURL would silently move those consumers to the wrong authentication mode.
+// The original helper creates this origin together with its SQL credentials.
+export const test = playwrightTest.extend({
+  baseURL: async ({ baseURL }, use, info) => {
+    await use(info.title.startsWith("canonical native:") ? nativeBrowserInput().web_url : baseURL);
+  },
+});
 
 export async function loginNativeSession(page: Page, account: { username: string; password: string; actor_id: string }) {
   await page.goto("/login?returnTo=" + encodeURIComponent("/operator?ws=network&tab=radar"));

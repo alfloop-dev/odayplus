@@ -222,6 +222,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             pass
 
     credentials["api_url"] = api_url
+    credentials["web_url"] = web_url
     scenario = private_dir / "native-scenario.json"
     scenario.write_text(json.dumps(credentials))
     scenario.chmod(0o600)

@@ -268,6 +268,16 @@ Retained legacy browser cases remain separately selected against their existing
 isolated PG fixture; neither selection alone qualifies both full specs or
 source-policy admission. All failures and unexecuted cases remain evidence.
 
+The existing shared browser fixture binds only `canonical native:` cases to
+its explicitly supplied production Web origin; POC and retained-PG consumers
+keep their original origins. The full packet's existing
+`ODP_OPERATOR_PRODUCT_GATE=1` composes the complete identity/reload/persisted-field
+journey into the original submission/replay case, in a separate actual session
+context. Native5 still registers that journey independently. This preserves
+130 packet cases rather than adding a 131st test or dropping identity assertions.
+The product runner must still supply the same owned native lifecycle/context;
+this registration/origin wiring alone does not qualify a full packet run.
+
 The original assisted-spec blocked/unknown probe now uses that same password
 session, explicit scope/reason form and canonical POST. Two uniquely hosted
 synthetic registry rows supply only negative policy premises, not source-use
