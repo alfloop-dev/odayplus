@@ -221,9 +221,14 @@ under the original Network shell. Radar retains both the Inbox invoker and the
 same picker beneath those dialogs; selected native details still replace the
 legacy reader. The existing shared modal hook remains the sole focus owner.
 The original workspace route/gate tests exercise this actual Radar path in
-addition to detail-first, authority and command-lifetime controls. These changes
-still require the five real browser profiles; component tests alone do not
-qualify accessibility.
+addition to detail-first, authority and command-lifetime controls. The first
+five-profile run after this change passed the original focus-return case in
+all five profiles, but each then failed the keyboard assertion because its
+unscoped Close locator matched three controls in the existing stacked shells.
+That assertion now targets the actual URL form's Close button, retaining the
+original Shift+Tab/focus check. The landmark case did not run in that failed
+serial selection. All five complete profiles still need qualification;
+component tests and a passing first case alone do not establish accessibility.
 
 These cases exercise the old Inbox button and `dialog=add` through the same
 native form, explicit observed scope and human reason, actual 201/SUBMITTED,

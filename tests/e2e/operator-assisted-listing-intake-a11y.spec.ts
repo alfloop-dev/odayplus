@@ -62,7 +62,7 @@ test.describe("VDC-003 Keyboard Navigation & Focus Management", () => {
 
     await expect(page.getByTestId("intake-url-input")).toBeFocused();
     await page.keyboard.press("Shift+Tab");
-    await expect(page.getByRole("button", { name: "關閉" })).toBeFocused();
+    await expect(page.getByTestId("intake-add-dialog").getByRole("button", { name: "關閉", exact: true })).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(page.getByTestId("intake-url-input")).toBeFocused();
     // URL alone is not a valid command. Tab through the actual explicit scope
