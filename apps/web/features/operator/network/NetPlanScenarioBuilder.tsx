@@ -20,6 +20,24 @@ function formFor(builder: CanonicalBuilder): Record<string, string> {
   }
   return result;
 }
+/** Read-only native action options, shared by the store builder and area NetPlan readback.
+ * An option without source snapshot IDs carries only the native mapping's mechanical
+ * placeholders; they are shown as unverified, never as known values or a formal source. */
+export function NetPlanActionOptionsView({ optionsByEntity }: { optionsByEntity: CanonicalBuilder["optionsByEntity"] }) {
+  return <section aria-label="情境動作選項">
+    <h5>目前情境的動作選項（唯讀）</h5>
+    {Object.entries(optionsByEntity).map(([entity, options]) => <div key={entity}><strong>{entity}</strong><ul>
+      {options.map((option, index) => {
+        const sourced = option.source_snapshot_ids.length > 0;
+        return <li key={`${option.action}-${index}`}>{option.action}
+          {sourced ? ` · 期望毛利 ${option.expected_gross_margin} · 成本 ${option.budget_cost} · 風險 ${option.risk_score} · 產能 ${option.capacity_delta}`
+            : " · 期望毛利／成本／風險／產能：未提供來源，數值尚未核實（不代表 0 或預設值）"}
+          <span>{option.notes.join("；")}</span>
+          <small>來源：{sourced ? option.source_snapshot_ids.join(", ") : "未提供來源識別"}</small></li>;
+      })}
+    </ul></div>)}
+  </section>;
+}
 export function NetPlanScenarioBuilder({ storeId, api, onDirtyChange }: {
   storeId: string; api: NetPlanBuilderApi; onDirtyChange: (dirty: boolean) => void;
 }) {
@@ -115,12 +133,7 @@ export function NetPlanScenarioBuilder({ storeId, api, onDirtyChange }: {
       </form>
       {!builder.editable ? <p>此情境已進入核准或執行流程；建構欄位唯讀。</p> : null}
       {!builder.policyAvailable ? <p>目前治理政策未取得；送審仍受原治理守門，不能由此核准。</p> : <p>治理政策：{builder.disclosurePolicyVersionId}</p>}
-      <h5>目前正式來源的動作選項（唯讀）</h5>
-      {Object.entries(builder.optionsByEntity).map(([entity, options]) => <div key={entity}><strong>{entity}</strong><ul>
-        {options.map((option, index) => <li key={`${option.action}-${index}`}>{option.action} · 期望毛利 {option.expected_gross_margin}
-          {` · 成本 ${option.budget_cost} · 風險 ${option.risk_score} · 產能 ${option.capacity_delta}`}
-          <span>{option.notes.join("；")}</span><small>來源：{option.source_snapshot_ids.join(", ") || "未提供來源識別"}</small></li>)}
-      </ul></div>)}
+      <NetPlanActionOptionsView optionsByEntity={builder.optionsByEntity} />
       <NetPlanLifecycleSection key={builder.scenarioId} storeId={storeId} builder={builder} api={api}
         onRecorded={(next, audit) => { setBuilder(next); setForm(formFor(next)); setAuditId(audit ?? null); }} />
       <NetPlanNativeApprovalSection storeId={storeId} builder={builder} api={api} disabled={dirty || busy}

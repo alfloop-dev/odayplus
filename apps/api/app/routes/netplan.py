@@ -146,14 +146,9 @@ else:
                 yield service
                 return
             with request_owner.operation(request, action, body) as owner:
-                try:
-                    bound = NetPlanService(repository=owner.repository, production_executor=production_executor,
-                        approval_verifier=approval_verifier, policy_repository=policy_repository,
-                        runtime_mode=runtime_mode, feature_flags=feature_flags, job_queue=job_queue,
-                        outcome_tracker=owner.outcome_registry())
-                except ProductionExecutionConfigurationError as exc:
-                    raise HTTPException(503, {"code": exc.code, "message": str(exc)}) from exc
-                yield bound
+                yield native_owned_service(owner, production_executor=production_executor,
+                    approval_verifier=approval_verifier, policy_repository=policy_repository,
+                    runtime_mode=runtime_mode, feature_flags=feature_flags, job_queue=job_queue)
 
         require_runtime_binding = runtime_binding_guard(composition_error)
 
@@ -166,35 +161,7 @@ else:
         @router.post("/scenarios", status_code=status.HTTP_201_CREATED, dependencies=[Depends(permission(Action.CREATE))])
         def create_scenario(body: NetPlanScenarioPayload, request: Request) -> dict[str, Any]:
             with owned_service(request, Action.CREATE, body) as service:
-                try:
-                    scenario = service.create_scenario(
-                        tenant_id=body.tenant_id,
-                        scenario_name=body.scenario_name,
-                        planning_horizon=body.planning_horizon,
-                        constraints=NetPlanConstraints.from_mapping(body.constraints),
-                        existing_stores=body.existing_stores,
-                        candidate_sites=body.candidate_sites,
-                        scenario_id=body.scenario_id,
-                        correlation_id=request.state.correlation_id,
-                        created_at=_parse_time(body.created_at),
-                    )
-                except ValueError as exc:
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail=str(exc),
-                    ) from exc
-                payload = scenario.to_dict()
-                payload["audit_event_id"] = _record_audit(
-                    active_audit_log,
-                    request,
-                    event_type="netplan.scenario_created.v1",
-                    actor="system",
-                    action="create_scenario",
-                    resource=f"netplan/scenarios/{scenario.scenario_id}",
-                    outcome="created",
-                    metadata={"tenant_id": scenario.tenant_id},
-                )
-                return native_response(request, payload)
+                return create_native_scenario(service, body, request, active_audit_log)
 
         @router.put("/scenarios/{scenario_id}", dependencies=[Depends(permission(Action.CREATE))])
         def update_scenario(scenario_id: str, body: NetPlanUpdateScenarioPayload, request: Request) -> dict[str, Any]:
@@ -366,6 +333,63 @@ else:
         return router
 
 
+    def native_owned_service(owner, *, production_executor=None, approval_verifier=None,
+                             policy_repository=None, runtime_mode=None, feature_flags=None,
+                             job_queue=None) -> NetPlanService:
+        """Bind the original native service to one admitted request owner.
+
+        The native routes and the Operator area materialization share this
+        exact binding: the owner's scoped repository view and its outcome
+        registry. No other repository, partition or default owner is used.
+        """
+        try:
+            return NetPlanService(repository=owner.repository, production_executor=production_executor,
+                approval_verifier=approval_verifier, policy_repository=policy_repository,
+                runtime_mode=runtime_mode, feature_flags=feature_flags, job_queue=job_queue,
+                outcome_tracker=owner.outcome_registry())
+        except ProductionExecutionConfigurationError as exc:
+            raise HTTPException(503, {"code": exc.code, "message": str(exc)}) from exc
+
+
+    def create_native_scenario(
+        service: NetPlanService, body: NetPlanScenarioPayload, request: Request, audit_log: Any,
+    ) -> dict[str, Any]:
+        """Original native DRAFT creation and its creator audit event.
+
+        Callers must already hold the request owner's CREATE operation and
+        have pinned/admitted ``body`` (tenant, actor, existing id, parents).
+        """
+        try:
+            scenario = service.create_scenario(
+                tenant_id=body.tenant_id,
+                scenario_name=body.scenario_name,
+                planning_horizon=body.planning_horizon,
+                constraints=NetPlanConstraints.from_mapping(body.constraints),
+                existing_stores=body.existing_stores,
+                candidate_sites=body.candidate_sites,
+                scenario_id=body.scenario_id,
+                correlation_id=request.state.correlation_id,
+                created_at=_parse_time(body.created_at),
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+        payload = scenario.to_dict()
+        payload["audit_event_id"] = _record_audit(
+            audit_log,
+            request,
+            event_type="netplan.scenario_created.v1",
+            actor="system",
+            action="create_scenario",
+            resource=f"netplan/scenarios/{scenario.scenario_id}",
+            outcome="created",
+            metadata={"tenant_id": scenario.tenant_id},
+        )
+        return native_response(request, payload)
+
+
     def _scenario_detail(
         service: NetPlanService, scenario_id: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
@@ -478,5 +502,7 @@ else:
         "NetPlanDecisionPayload",
         "NetPlanScenarioPayload",
         "NetPlanUpdateScenarioPayload",
+        "create_native_scenario",
         "create_netplan_router",
+        "native_owned_service",
     ]
