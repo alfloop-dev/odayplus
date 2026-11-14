@@ -106,8 +106,8 @@ describe("original R7 destructive confirmation and read-only reference entry", (
   });
 
   it("opens the existing state matrix from the mounted inbox and returns focus with no business callback", () => {
-    const onAddSubmit = vi.fn(), onOpenDetail = vi.fn();
-    render(<ListingInboxIntakeView activeRoleId="expansion-manager" records={[]} loadState="ready" busy={false} onAddSubmit={onAddSubmit} onOpenDetail={onOpenDetail} onRetryLoad={vi.fn()} onRetryIntake={vi.fn()} />);
+    const onAddRequested = vi.fn(), onOpenDetail = vi.fn();
+    render(<ListingInboxIntakeView activeRoleId="expansion-manager" records={[]} loadState="ready" busy={false} onAddRequested={onAddRequested} onOpenDetail={onOpenDetail} onRetryLoad={vi.fn()} onRetryIntake={vi.fn()} />);
     const trigger = screen.getByRole("button", { name: "收件狀態矩陣" });
     trigger.focus(); fireEvent.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "Intake Canonical State Matrix" });
@@ -116,12 +116,12 @@ describe("original R7 destructive confirmation and read-only reference entry", (
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
-    expect(onAddSubmit).not.toHaveBeenCalled();
+    expect(onAddRequested).not.toHaveBeenCalled();
     expect(onOpenDetail).not.toHaveBeenCalled();
   });
 
   it("keeps the matrix reference accessible for an existing read-only viewer and respects the inbox access boundary", () => {
-    const props = { records: [], loadState: "ready" as const, busy: false, onAddSubmit: vi.fn(), onOpenDetail: vi.fn(), onRetryLoad: vi.fn(), onRetryIntake: vi.fn() };
+    const props = { records: [], loadState: "ready" as const, busy: false, onAddRequested: vi.fn(), onOpenDetail: vi.fn(), onRetryLoad: vi.fn(), onRetryIntake: vi.fn() };
     const view = render(<ListingInboxIntakeView {...props} activeRoleId="pm-audit" />);
     fireEvent.click(screen.getByRole("button", { name: "收件狀態矩陣" }));
     expect(screen.getByRole("dialog", { name: "Intake Canonical State Matrix" })).toBeInTheDocument();
@@ -129,7 +129,7 @@ describe("original R7 destructive confirmation and read-only reference entry", (
     view.rerender(<ListingInboxIntakeView {...props} activeRoleId="ops-lead" />);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "收件狀態矩陣" })).not.toBeInTheDocument();
-    expect(props.onAddSubmit).not.toHaveBeenCalled();
+    expect(props.onAddRequested).not.toHaveBeenCalled();
     expect(props.onOpenDetail).not.toHaveBeenCalled();
   });
 });

@@ -25,11 +25,8 @@ const URL_HINT = "請確認網址格式（需為 http(s):// 開頭的完整物�
 
 export function AddListingFromUrlDialog({
   busy,
-  defaultHeatZoneId,
-  heatZoneOptions = { state: "loading", options: [] },
   error,
   onClose,
-  onOpenExisting,
   onSubmit,
   submitterLabel,
   canonicalScopes,
@@ -37,30 +34,20 @@ export function AddListingFromUrlDialog({
   errorContent,
 }: {
   busy: boolean;
-  defaultHeatZoneId?: string;
-  heatZoneOptions?: IntakeHeatZoneOptions;
   error: IntakeApiError | null;
   onClose: () => void;
-  onOpenExisting?: (intakeId: string) => void;
-  onSubmit: (input: { url: string; heatZoneId: string; reason?: string; scope?: NativeIntakeScope }) => void | Promise<void>;
+  onSubmit: (input: { url: string; reason: string; scope: NativeIntakeScope }) => void | Promise<void>;
   submitterLabel: string;
-  canonicalScopes?: ReadonlyArray<{ label: string; scope: NativeIntakeScope }>;
+  canonicalScopes: ReadonlyArray<{ label: string; scope: NativeIntakeScope }>;
   locked?: boolean;
   errorContent?: React.ReactNode;
 }) {
   const [url, setUrl] = useState("");
-  const [heatZoneId, setHeatZoneId] = useState(defaultHeatZoneId ?? "");
   const [localError, setLocalError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [reason, setReason] = useState("");
   const [scopeIndex, setScopeIndex] = useState("");
   const submitLock = useRef(false);
-
-  const availableZones = heatZoneOptions.state === "ready" ? heatZoneOptions.options : [];
-  const selectedZone = availableZones.some((zone) => zone.id === heatZoneId) ? heatZoneId : "";
-  const zoneNote = heatZoneOptions.state === "loading" ? "區域選項載入中，可不指定區域送件。"
-    : heatZoneOptions.state === "error" ? "區域選項暫時無法取得，可不指定區域送件。"
-      : availableZones.length === 0 ? "目前沒有可選區域，可不指定區域送件。" : null;
 
   const trimmed = url.trim();
   const looksValid = useMemo(() => isHttpUrl(trimmed), [trimmed]);
@@ -78,7 +65,7 @@ export function AddListingFromUrlDialog({
       setLocalError(URL_HINT);
       return;
     }
-    if (canonicalScopes && (reason.trim().length < 3 || !canonicalScopes[Number(scopeIndex)] || scopeIndex === "")) {
+    if (reason.trim().length < 3 || !canonicalScopes[Number(scopeIndex)] || scopeIndex === "") {
       setLocalError("請選取正式收件範圍，並填寫至少三字的送件原因。");
       return;
     }
@@ -86,8 +73,7 @@ export function AddListingFromUrlDialog({
     submitLock.current = true;
     setSubmitting(true);
     try {
-      await onSubmit(canonicalScopes ? { url: trimmed, heatZoneId: "", reason: reason.trim(),
-        scope: canonicalScopes[Number(scopeIndex)].scope } : { url: trimmed, heatZoneId: selectedZone });
+      await onSubmit({ url: trimmed, reason: reason.trim(), scope: canonicalScopes[Number(scopeIndex)].scope });
     } finally {
       submitLock.current = false;
       setSubmitting(false);
@@ -95,17 +81,13 @@ export function AddListingFromUrlDialog({
   }
 
   const shownError = localError ?? error?.summary ?? null;
-  const isExactDuplicate = error?.code === "ODP-INTAKE-CONFLICT" || (error?.summary ?? "").includes("已存在");
-  const existingIntakeId = isExactDuplicate
-    ? /\b(IN-[A-Za-z0-9-]+)\b/.exec(error?.summary ?? "")?.[1] ?? null
-    : null;
 
   return (
     <IntakeDialogShell
       ariaLabel="從網址新增物件"
       onClose={onClose}
       dismissible={!busy && !submitting}
-      stacked={Boolean(canonicalScopes)}
+      stacked
       screenLabel="Dialog 從網址新增物件"
       testId="intake-add-dialog"
     >
@@ -159,29 +141,10 @@ export function AddListingFromUrlDialog({
 
         <div className={styles.grid2}>
           <div>
-            {canonicalScopes ? <label className={styles.fieldLabel}>正式收件範圍<select className={styles.select}
+            <label className={styles.fieldLabel}>正式收件範圍<select className={styles.select}
               disabled={busy || submitting || locked} value={scopeIndex} onChange={(event) => setScopeIndex(event.target.value)}>
               <option value="">請明確選取範圍</option>{canonicalScopes.map((option, index) => <option key={index} value={index}>{option.label}</option>)}
-            </select></label> : <><label className={styles.fieldLabel} htmlFor="intake-area">
-              HeatZone／指定區域（選填）
-            </label>
-            <select
-              className={styles.select}
-              data-testid="intake-area-select"
-              id="intake-area"
-              onChange={(event) => setHeatZoneId(event.target.value)}
-              value={selectedZone}
-              aria-describedby={zoneNote ? "intake-area-note" : undefined}
-              disabled={busy || submitting || locked || heatZoneOptions.state !== "ready" || availableZones.length === 0}
-            >
-              <option value="">未指定</option>
-              {availableZones.map((option) => (
-                <option key={option.id || "none"} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            {zoneNote ? <small className={styles.metaValue} data-testid="intake-area-note" id="intake-area-note" role="status">{zoneNote}</small> : null}</>}
+            </select></label>
           </div>
           <div>
             <span className={styles.fieldLabel}>送件人</span>
@@ -191,31 +154,15 @@ export function AddListingFromUrlDialog({
           </div>
         </div>
 
-        {canonicalScopes ? <label className={styles.fieldLabel}>送件原因<textarea className={styles.textarea}
-          disabled={busy || submitting || locked} maxLength={4000} value={reason} onChange={(event) => setReason(event.target.value)} /></label> : null}
+        <label className={styles.fieldLabel}>送件原因<textarea className={styles.textarea}
+          disabled={busy || submitting || locked} maxLength={4000} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
 
         <div className={styles.noteBox} data-testid="intake-process-note">
-          送出後：識別檢查（相同 URL 直接指向既有紀錄）→ 來源政策判定 →
-          已核准來源才擷取解析 → 與既有物件比對。疑似重複不會自動合併；追蹤參數會正規化，
+          提交回執僅表示已收件，後續處理以重新讀取為準。來源政策由伺服器判定，
+          已核准來源才擷取解析並與既有物件比對。疑似重複不會自動合併；追蹤參數會正規化，
           原始 URL 保留為證據。你可以先離開，稍後從收件佇列回到此紀錄。
           系統僅進行使用者提交之單頁擷取或已核准推送，絕不進行定期爬取或要求提供 credentials。
         </div>
-
-        {isExactDuplicate ? (
-          <div className={styles.warnNote} data-testid="intake-exact-duplicate-intercept" role="alert">
-            ⚡ 識別檢查攔截：此網址已被收錄。系統已提供短路徑可直接導向既有物件紀錄。
-            {existingIntakeId && onOpenExisting ? (
-              <button
-                className={styles.secondaryButton}
-                data-testid="intake-open-existing"
-                onClick={() => onOpenExisting(existingIntakeId)}
-                type="button"
-              >
-                開啟既有收件 {existingIntakeId}
-              </button>
-            ) : null}
-          </div>
-        ) : null}
 
         {shownError ? (
           <div className={styles.errorPanel} data-testid="intake-add-error" role="alert">

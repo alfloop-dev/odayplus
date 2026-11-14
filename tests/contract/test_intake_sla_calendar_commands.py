@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.app.routes import listings
 from modules.listing.application import intake_sla_commands
+from modules.listing.application.intake_workflow_bootstrap import initialize_intake_workflow
 from shared.auth import Role
 from shared.domain.events import validate_event
 from tests.intake_registry_fixture import APPROVER, AT, MANAGER, OWNER, TENANT, _provider
@@ -39,12 +40,32 @@ def journey(monkeypatch):
         listings.create_assisted_intake_router(store, workflow_policy=provider), prefix="/api/v1"
     )
     client = TestClient(app)
-    response = client.post(
-        "/api/v1/intakes/url",
-        json={"original_url": "https://example.invalid/calendar", "scope": {"tenant_id": TENANT}},
-        headers={**HEADERS, "Idempotency-Key": f"synthetic-submit-{uuid4()}"},
-    )
-    assert response.status_code == 202, response.text
+    # Explicit retained V1 workflow; the pause/resume journey must not depend
+    # on the retired fresh URL command or manufacture native SQL completion.
+    intake_id, job_id, correlation_id = (str(uuid4()) for _ in range(3))
+    at = AT.isoformat().replace("+00:00", "Z")
+    intake = {
+        "intake_id": intake_id, "state": "SUBMITTED", "intake_method": "URL",
+        "scope": {"tenant_id": TENANT}, "submitted_by": MANAGER,
+        "submitted_at": at, "updated_at": at, "version": 1,
+        "original_url": "https://example.invalid/retained-calendar",
+        "canonical_url": "https://example.invalid/retained-calendar",
+        "policy_state": "POLICY_UNKNOWN", "job_id": job_id,
+        "correlation_id": correlation_id, "fields": [], "audit": [],
+        "processing_history": [{
+            "transition_id": str(uuid4()), "from_state": None, "to_state": "SUBMITTED",
+            "occurred_at": at, "actor": MANAGER, "version_after": 1,
+        }],
+    }
+    with store.transaction():
+        store.intakes[intake_id] = intake
+        initialize_intake_workflow(store, intake, provider)
+        store.jobs[job_id] = {
+            "job_id": job_id, "intake_id": intake_id, "tenant_id": TENANT,
+            "status": "QUEUED", "checkpoint": "RETRIEVING", "attempt": 0,
+            "version": 1, "correlation_id": correlation_id,
+        }
+        store.flush()
     sla = next(iter(store.slas.values()))
     Clock.instant = AT + timedelta(minutes=5)
     return client, store, sla, Clock, provider, identities

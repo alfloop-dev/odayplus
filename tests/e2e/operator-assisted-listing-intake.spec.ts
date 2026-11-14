@@ -6,11 +6,11 @@ import {
   type Page,
   type TestInfo,
 } from "@playwright/test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CanonicalIdentityReceipt, CanonicalIntakeAssistedEntryRequestReceipt, CanonicalIntakeReceipt, MatchCaseReceipt } from "@oday-plus/openapi-client";
 
-import { createPgNavigationControl, openPgRadar, openPgScenario, PG_WEB, type PgScenario } from "./_intakeScorePg";
+import { createPgNavigationControl, loginNativeSession, nativeBrowserInput, openNativeIntakeList, openPgRadar, openPgScenario, PG_WEB, reloadPgIntake, submitNativeURL, type PgScenario } from "./_intakeScorePg";
 
 import {
   acquireOperatorBackendLock,
@@ -28,18 +28,9 @@ import {
  */
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
-const PG_CASE = /^canonical (4:|5 and 6:|native:)/;
+const PG_CASE = /^(canonical (2:|3:|4:|5 and 6:|native:)|retained )/;
 // Explicit isolated fixture input; never a production default or catalog entry.
 const SYNTHETIC_TARGET_FORMAT = "synthetic-manual-format:Browser/v1";
-
-const URLS = {
-  clean: "https://www.synthetic.example/detail-77120345.html",
-  possible: "https://www.synthetic.example/detail-99310418.html",
-  timeout: "https://www.synthetic.example/detail-50000001.html",
-  assistedOnly: "https://www.591.com.tw/rent-detail-16244102.html",
-  blocked: "https://listing-aggregator.example/item/7731",
-  unknown: "https://unknown-house.example.tw/item/7731",
-};
 
 const MANAGER_HEADERS = {
   "x-roles": "expansion_user,site_reviewer",
@@ -61,17 +52,6 @@ test.beforeAll(async () => {
 test.afterAll(() => {
   releaseOperatorBackendLock();
 });
-
-async function loginNativeSession(page: Page, account: { username: string; password: string; actor_id: string }) {
-  await page.goto("/login?returnTo=" + encodeURIComponent("/operator?ws=network&tab=radar"));
-  await page.getByLabel("使用者帳號").fill(account.username);
-  await page.getByLabel("密碼", { exact: true }).fill(account.password);
-  await page.getByRole("button", { name: "登入", exact: true }).click();
-  await expect(page).toHaveURL(/\/operator\?/);
-  const session = await page.request.get("/auth/session");
-  expect(session.status()).toBe(200);
-  expect((await session.json()).subject).toBe(account.actor_id);
-}
 
 async function selectNativeIntake(page: Page, intakeId: string, refresh = false) {
   if (refresh) {
@@ -96,24 +76,14 @@ async function selectNativeIntake(page: Page, intakeId: string, refresh = false)
     return;
   }
   await openNativeIntakeList(page);
+  const reading = page.waitForResponse((response) => response.request().method() === "GET"
+    && new URL(response.url()).pathname === `/api/v1/canonical-intakes/${intakeId}`);
   await page.getByRole("button", { name: new RegExp(intakeId) }).click();
-}
-
-async function openNativeIntakeList(page: Page) {
-  const listing = () => page.waitForResponse((candidate) => candidate.request().method() === "GET"
-    && new URL(candidate.url()).pathname === "/api/v1/canonical-intakes");
-  const pending = listing();
-  await page.getByRole("button", { name: "選取收件／比對案件", exact: true }).click();
-  let response = await pending;
-  if (response.status() === 409) {
-    // Exercise the existing visible refresh after a real snapshot conflict;
-    // other failures remain failures and no command is automatically replayed.
-    await expect(page.getByTestId("canonical-intake-case-picker").getByRole("alert")).toBeVisible();
-    const reloaded = listing();
-    await page.getByRole("button", { name: "重新讀取", exact: true }).click();
-    response = await reloaded;
-  }
+  const response = await reading;
+  // Fail on the actual native read refusal (with its typed detail), rather
+  // than timing out looking for a confirmation action that cannot exist.
   expect(response.status(), await response.text()).toBe(200);
+  expect((await response.json()).intake_id).toBe(intakeId);
 }
 
 // One fault control for the original native command callers. Only the browser
@@ -244,14 +214,7 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
     page.setDefaultTimeout(30_000);
     const inputPath = process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE;
     expect(inputPath, "Owned native SQL preconditions are required").toBeTruthy();
-    const input = JSON.parse(readFileSync(inputPath!, "utf8")) as {
-      username: string; password: string; actor_id: string; tenant_id: string; intake_id: string;
-      match_case_id: string | null; api_url: string; manager_region_id: string | null; outside_intake_id: string;
-      context_property_ids: string[];
-      append_property_id: string | null; append_receipt_probe: boolean;
-      independent_reviewer: { username: string; password: string; actor_id: string } | null;
-      url_manual: { original_url: string; fields: { address: string; rent: number; areaPing: number } } | null;
-    };
+    const input = nativeBrowserInput();
     const spoof = { "x-subject-id": input.actor_id, "x-tenant-id": input.tenant_id, "x-roles": "site_reviewer,expansion_user" };
     expect((await request.get(`${input.api_url}/api/v1/canonical-intakes`, { headers: spoof })).status()).toBe(401);
     expect((await request.get("/api/v1/canonical-intakes", { headers: spoof })).status()).toBe(401);
@@ -266,6 +229,8 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
       expect(ownRegion.status(), await ownRegion.text()).toBe(200);
       expect((await ownRegion.json()).scope.region_id).toBe(input.manager_region_id);
     }
+    let confirmationContext: Awaited<ReturnType<typeof browser.newContext>> | undefined;
+    try {
     const submissionRecoveries: Array<Awaited<ReturnType<typeof recoverNativeCommandResponse<CanonicalIntakeReceipt | CanonicalIntakeAssistedEntryRequestReceipt>>> & {
       variant: "url-submit" | "manual-entry"; intake_id: string; original_http_status: 201 | 202;
     }> = [];
@@ -290,6 +255,11 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
         expect(actual.status(), await actual.text()).toBe(200);
         return (await actual.json()).processing_state;
       }, { timeout: 60_000 }).toBe("AWAITING_ASSISTED_ENTRY");
+      // A whole reload recovers only the exact receipt, not the lost form's
+      // navigation callback. Dismiss the restored add route with its existing
+      // control before selecting the committed Intake behind that modal.
+      await page.getByTestId("intake-add-dialog").getByRole("button", { name: "取消", exact: true }).click();
+      await expect(page.getByTestId("intake-add-dialog")).toHaveCount(0);
       await page.getByRole("button", { name: new RegExp(newIntakeId) }).click();
       await page.getByTestId("assisted-address").fill(input.url_manual.fields.address);
       await page.getByTestId("assisted-rent").fill(String(input.url_manual.fields.rent));
@@ -309,10 +279,35 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
         const actual = await page.request.get(`/api/v1/canonical-intakes/${newIntakeId}`);
         expect(actual.status(), await actual.text()).toBe(200);
         return (await actual.json()).processing_state;
-      }, { timeout: 60_000 }).toBe("PARSING");
+      }, { timeout: 60_000 }).toBe("MATCHING");
+      // Keep this exact fresh Intake through the original parser, service
+      // matcher, human confirmation and independent executor. The pre-parsed
+      // fixture is context only, never a substitute for the new submission.
+      let freshCase: { intake_id: string; match_case_id: string; outcome: string } | undefined;
+      await expect.poll(async () => {
+        const matched = await page.request.get(`/api/v1/intakes/${newIntakeId}/match-case`);
+        expect([200, 404], await matched.text()).toContain(matched.status());
+        if (matched.status() === 200) freshCase = await matched.json();
+        return matched.status();
+      }, { timeout: 60_000 }).toBe(200);
+      expect(freshCase).toBeDefined();
+      expect(freshCase!.intake_id).toBe(newIntakeId);
+      expect(freshCase!.outcome).toBe("NEW");
+      expect(freshCase!.match_case_id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(newIntakeId).not.toBe(input.intake_id);
+      input.intake_id = newIntakeId;
+      input.match_case_id = freshCase!.match_case_id;
       await page.getByRole("button", { name: "收起原操作回執", exact: true }).click();
-      await page.getByRole("button", { name: /返回收件匣/ }).click();
-      await page.getByRole("button", { name: new RegExp(input.intake_id) }).click();
+      // Material human proposals cannot be confirmed by their own author.
+      // Use a genuinely separate SQL manager and password session, retaining
+      // the same fresh Intake/case and every original server guard.
+      expect(input.independent_reviewer).toBeTruthy();
+      expect(input.independent_reviewer!.actor_id).not.toBe(input.actor_id);
+      confirmationContext = await browser.newContext({ baseURL: new URL(page.url()).origin, extraHTTPHeaders: {} });
+      page = await confirmationContext.newPage();
+      await loginNativeSession(page, input.independent_reviewer!);
+      input.actor_id = input.independent_reviewer!.actor_id;
+      await selectNativeIntake(page, input.intake_id);
     } else await selectNativeIntake(page, input.intake_id);
     const otherRecoveries: Array<Awaited<ReturnType<typeof recoverNativeCommandResponse<MatchCaseReceipt | CanonicalIdentityReceipt>>> & {
       operation: "createCanonicalMatchCase" | "reviewCanonicalIdentity"; resource_id: string; original_http_status: 200 | 201;
@@ -508,6 +503,9 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
         ...proof, postCount: count(), post_keys_seen: sentKeys(),
       })),
     }), { mode: 0o600 });
+    } finally {
+      await confirmationContext?.close();
+    }
   });
 }
 
@@ -541,33 +539,6 @@ async function setOperatorSession(
       window.sessionStorage.setItem("oday.operator.tenant", tenantId);
     },
     { roleId: role, subjectId: subject, tenantId: tenant },
-  );
-}
-
-async function openRadar(
-  page: Page,
-  role = "expansion-manager",
-  subject = "qa-expansion-manager",
-) {
-  await page.goto("/operator?ws=network");
-  await setOperatorSession(page, role, subject);
-  await page.reload();
-  await page.getByTestId("network-tab-1").click();
-  await expect(page.getByTestId("intake-inbox-view")).toBeVisible({
-    timeout: 15_000,
-  });
-}
-
-async function submitUrl(page: Page, url: string) {
-  await page.getByTestId("intake-add-button").click();
-  await expect(page.getByTestId("intake-add-dialog")).toBeVisible();
-  await page.getByTestId("intake-url-input").fill(url);
-  await page.getByTestId("intake-submit-button").click();
-  await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({
-    timeout: 15_000,
-  });
-  return (
-    (await page.getByTestId("intake-detail-id").textContent())?.trim() ?? ""
   );
 }
 
@@ -651,24 +622,39 @@ async function reopenIntakeAs(
   await expect(page.getByTestId("intake-detail-id")).toHaveText(intakeId);
 }
 
-test("canonical 1: exact URL duplicate is intercepted before retrieval", async ({
-  page,
-}) => {
-  await openRadar(page);
-  const firstId = await submitUrl(page, URLS.clean);
+test("canonical native: 1 exact submission replay keeps one durable Intake without retrieval", async ({ page }) => {
+  const input = nativeBrowserInput();
+  await loginNativeSession(page, input);
+  await openNativeIntakeList(page);
+  await page.getByRole("button", { name: "從網址建立正式收件", exact: true }).click();
+  const command = await submitNativeURL(page, input, input.fresh_urls.replay,
+    "明確核對同一正式送件識別的合法重播，不能以相同網址猜測回執。");
+  const replay = await page.request.post("/api/v1/canonical-intakes", {
+    headers: { "Idempotency-Key": command.key, "If-Actor-Match": input.actor_id, "If-Tenant-Match": input.tenant_id },
+    data: command.body,
+  });
+  expect(replay.status(), await replay.text()).toBe(201);
+  expect(replay.headers()["idempotency-replayed"]).toBe("true");
+  expect(await replay.json()).toEqual(command.receipt);
+  const conflict = await page.request.post("/api/v1/canonical-intakes", {
+    headers: { "Idempotency-Key": command.key, "If-Actor-Match": input.actor_id, "If-Tenant-Match": input.tenant_id },
+    data: { ...command.body, reason: "Different explicit intent cannot borrow the accepted key" },
+  });
+  expect(conflict.status(), await conflict.text()).toBe(409);
+  await page.reload();
+  await expect(page.getByTestId("intake-detail-id")).toHaveText(command.receipt.intake_id);
+  await expect(page.getByTestId("intake-detail-stage")).toHaveText("已送出");
   await page.getByTestId("intake-return-button").click();
-
-  const secondId = await submitUrl(page, URLS.clean);
-  expect(secondId).toBe(firstId);
-  await page.getByTestId("intake-return-button").click();
-  await expect(page.getByTestId(`intake-inbox-row-${firstId}`)).toHaveCount(1);
+  await expect(page.getByRole("button", { name: new RegExp(command.receipt.intake_id) })).toHaveCount(1);
 });
 
-test("canonical 2: assisted-entry-only keeps URL and validates durable manual input", async ({
+test("canonical 2: retained assisted-entry-only keeps URL and validates durable manual input", async ({
   page,
 }) => {
-  await openRadar(page);
-  await submitUrl(page, URLS.assistedOnly);
+  const { api, scenario } = await openPgScenario(page, { retainedHistory: "assisted-entry-only" });
+  try {
+  // Explicit retained history, not proof of fresh source-policy admission.
+  expect(scenario.listing_id).toBeNull();
 
   await expect(page.getByTestId("intake-detail-stage")).toHaveText(
     "待人工補錄",
@@ -692,20 +678,38 @@ test("canonical 2: assisted-entry-only keeps URL and validates durable manual in
   );
 
   await page.getByTestId("assisted-risk-ack").check();
-  await page.getByTestId("assisted-save").click();
+  const [corrected] = await Promise.all([
+    page.waitForResponse((response) => new URL(response.url()).pathname ===
+      `/api/v1/operator/network-listings/intake/${scenario.intake_id}/correct` && response.request().method() === "POST"),
+    page.getByTestId("assisted-save").click(),
+  ]);
+  expect(corrected.status(), await corrected.text()).toBe(200);
+  expect(corrected.request().headers()["idempotency-key"]).toBeTruthy();
   await expect(page.getByTestId("intake-parsed-lineage")).toBeVisible({
     timeout: 15_000,
   });
   await expect(page.getByTestId("intake-timeline-audit-section")).toContainText(
     "人工補錄",
   );
+  const restored = await reloadPgIntake(page, scenario);
+  expect(restored).toMatchObject({ id: scenario.intake_id, version: 2 });
+  await expect(page.getByTestId("intake-parsed-lineage")).toContainText("新北市板橋區府中路 26 號 1F");
+  const read = await api.get(`/api/v1/operator/network-listings/intake/${scenario.intake_id}`, {
+    headers: { ...MANAGER_HEADERS, "x-tenant-id": scenario.tenant_id, "x-subject-id": scenario.proposer_id },
+  });
+  expect(read.status(), await read.text()).toBe(200);
+  expect(await read.json()).toMatchObject({ originalUrl: scenario.original_url, policy: "ASSISTED_ENTRY_ONLY",
+    capturedAt: null, rawSnapshot: null, parserVersion: null, version: 2,
+    parsedFields: { address: { correctedValue: "新北市板橋區府中路 26 號 1F" } } });
+  } finally { await api.dispose(); }
 });
 
-test("canonical 3: possible match requires explicit reason and risk acknowledgement", async ({
+test("canonical 3: retained possible match requires explicit reason and risk acknowledgement", async ({
   page,
 }) => {
-  await openRadar(page);
-  await submitUrl(page, URLS.possible);
+  const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+  try {
+  expect(scenario.listing_id).toBeTruthy();
 
   await expect(page.getByTestId("intake-detail-stage")).toHaveText(
     "待人工覆核",
@@ -734,6 +738,16 @@ test("canonical 3: possible match requires explicit reason and risk acknowledgem
   await expect(page.getByTestId("intake-timeline-audit-section")).toContainText(
     "現場確認樓層",
   );
+  const restored = await reloadPgIntake(page, scenario);
+  expect(restored).toMatchObject({ id: scenario.intake_id, version: 2, stage: "READY" });
+  await expect(page.getByTestId("intake-detail-stage")).toHaveText("可決策");
+  const read = await api.get(`/api/v1/operator/network-listings/intake/${scenario.intake_id}`, {
+    headers: { ...MANAGER_HEADERS, "x-tenant-id": scenario.tenant_id, "x-subject-id": scenario.proposer_id },
+  });
+  expect(read.status(), await read.text()).toBe(200);
+  expect(await read.json()).toMatchObject({ id: scenario.intake_id, version: 2, stage: "READY",
+    matchResult: { outcome: "NEW" } });
+  } finally { await api.dispose(); }
 });
 
 
@@ -842,7 +856,22 @@ test("canonical 4: independent reviewer completes promotion with durable Candida
     await expect(page.getByTestId("promotion-receipt-reviewer")).toContainText(scenario.reviewer_id);
     await expect(page.getByTestId("promotion-audit-event-id")).not.toHaveText("");
     await expect(page.getByTestId("promotion-correlation-id")).not.toHaveText("");
-    await page.reload();
+    // The Intake GET, promotion lookup and job GET are separate protected
+    // reads. A document load (or just the Intake response) proves none of
+    // the later hydration. Bind all three without retrying any refusal.
+    const [promotionRead, jobRead, restored] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "GET"
+        && new URL(response.url()).pathname === `/api/v1/intakes/${scenario.intake_id}/promotion-decision`),
+      page.waitForResponse((response) => response.request().method() === "GET"
+        && new URL(response.url()).pathname === `/api/v1/jobs/${receipt.site_score_job_id}/receipt`),
+      reloadPgIntake(page, scenario),
+    ]);
+    expect(restored.id).toBe(scenario.intake_id);
+    expect(promotionRead.status(), await promotionRead.text()).toBe(200);
+    expect(await promotionRead.json()).toMatchObject({ promotion_decision_id: receipt.promotion_decision_id,
+      candidate_site_id: receipt.candidate_site_id, site_score_job_id: receipt.site_score_job_id, status: "COMPLETED" });
+    expect(jobRead.status(), await jobRead.text()).toBe(200);
+    expect(await jobRead.json()).toMatchObject({ job_id: receipt.site_score_job_id, status: "SUCCEEDED" });
     await expect(page.getByTestId("sitescore-job-id")).toHaveText(receipt.site_score_job_id);
     await expect(page.getByTestId("sitescore-job-state")).toContainText("SUCCEEDED");
     for (const [width, height] of [[1440, 1000], [1024, 900], [390, 844]]) {
@@ -980,29 +1009,69 @@ test("canonical 5 and 6: SCORE_FAILED retains Candidate and same-key replay queu
   } finally { await api.dispose(); }
 });
 
-test("source policy fails closed for blocked and unknown sources", async ({
-  page,
-}) => {
-  await openRadar(page);
-  for (const [url, policy] of [
-    [URLS.blocked, "來源封鎖"],
-    [URLS.unknown, "政策未知"],
-  ] as const) {
-    await submitUrl(page, url);
+test("canonical native: source policy fails closed for fresh blocked and unknown sources", async ({ page }) => {
+  const input = nativeBrowserInput();
+  await loginNativeSession(page, input);
+  await openNativeIntakeList(page);
+  for (const policy of ["SOURCE_BLOCKED", "POLICY_UNKNOWN"] as const) {
+    const source = input.policy_sources[policy];
+    await page.getByRole("button", { name: "從網址建立正式收件", exact: true }).click();
+    await expect(page.getByTestId("intake-submit-button")).toBeDisabled();
+    await page.getByTestId("intake-url-input").fill(source.original_url);
+    await page.getByRole("combobox", { name: /^正式收件範圍/ })
+      .selectOption({ label: `沿用收件 ${input.intake_id} 的範圍` });
+    const reason = `明確核對 ${policy} 的真實來源政策拒絕；送件回執不代表已獲准擷取。`;
+    await page.getByLabel("送件原因", { exact: true }).fill(reason);
+    const [response] = await Promise.all([
+      page.waitForResponse((candidate) => candidate.request().method() === "POST"
+        && new URL(candidate.url()).pathname === "/api/v1/canonical-intakes"),
+      page.getByTestId("intake-submit-button").click(),
+    ]);
+    expect(response.status(), await response.text()).toBe(201);
+    const receipt = await response.json() as CanonicalIntakeReceipt;
+    expect(receipt).toMatchObject({ processing_state: "SUBMITTED", version: 1, intake_method: "URL" });
+    const body = response.request().postDataJSON();
+    expect(body).toEqual({ intake_method: "URL", original_url: source.original_url, scope: input.fresh_scope, reason });
+    const headers = await response.request().allHeaders();
+    expect(headers["if-actor-match"]).toBe(input.actor_id);
+    expect(headers["if-tenant-match"]).toBe(input.tenant_id);
+    expect(headers["idempotency-key"]).toBeTruthy();
+    await expect(page.getByTestId("intake-detail-id")).toHaveText(receipt.intake_id);
+    const path = `/api/v1/canonical-intakes/${receipt.intake_id}?include_source=true&include_history=true&include_evidence=true`;
+    let observed: any;
+    // Read-only observation of the actual registered workers, not a retry of
+    // submission, legacy-fresh refusal, retained quarantine or mocked policy.
+    await expect.poll(async () => {
+      const read = await page.request.get(path);
+      expect(read.status(), await read.text()).toBe(200);
+      observed = await read.json();
+      return observed.processing_state;
+    }).toBe("QUARANTINED");
+    expect(observed).toMatchObject({ intake_id: receipt.intake_id, version: 4, resolution: null,
+      submitter_subject_id: input.actor_id, correlation_id: receipt.correlation_id,
+      source_info: { source_id: source.source_id, recorded_policy_state: policy },
+      processing_evidence: { items: [], next_cursor: null } });
+    expect(observed.processing_history.items.map((item: any) => item.to_state)).toEqual([
+      "SUBMITTED", "CHECKING_IDENTITY", "CHECKING_SOURCE_POLICY", "QUARANTINED",
+    ]);
+    await selectNativeIntake(page, receipt.intake_id, true);
     await expect(page.getByTestId("intake-detail-stage")).toHaveText("已隔離");
-    await expect(page.getByTestId("intake-detail-dialog")).toContainText(
-      policy,
-    );
-    await expect(page.getByTestId("decide-action-steward")).toBeVisible();
+    await expect(page.getByTestId("native-intake-evidence-panel")).toContainText(policy);
+    await expect(page.getByTestId("native-intake-stage-timeline")).toContainText("來源政策 → 已隔離");
+    // Native quarantine has no legacy steward/final-decision shortcut.
+    await expect(page.getByTestId("intake-detail-actions")).toHaveCount(0);
+    await expect(page.getByTestId("decide-action-create")).toHaveCount(0);
+    writeFileSync(join(dirname(process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE!), `native-policy-${policy}.json`),
+      JSON.stringify({ receipt, key: headers["idempotency-key"], body, observed }), { mode: 0o600 });
     await page.getByTestId("intake-return-button").click();
   }
 });
 
-test("retryable retrieval failure exposes code, correlation, recovery and preserved durable state", async ({
+test("retained retryable retrieval failure exposes code, correlation, recovery and preserved durable state", async ({
   page,
 }) => {
-  await openRadar(page);
-  await submitUrl(page, URLS.timeout);
+  const { api, scenario } = await openPgScenario(page, { retainedHistory: "retrieval-timeout" });
+  try {
   await expect(page.getByTestId("intake-detail-stage")).toHaveText("處理失敗");
   // Canonical Package 10 recovery surface (IntakeErrorRecovery).
   const failure = page.getByTestId("intake-error-recovery");
@@ -1015,12 +1084,29 @@ test("retryable retrieval failure exposes code, correlation, recovery and preser
     "UNAVAILABLE",
   );
   await expect(page.getByTestId("error-action-retry")).toBeVisible();
+  await page.getByTestId("error-toggle-preserved-input").click();
+  await expect(page.getByTestId("error-preserved-input-json")).toContainText(scenario.original_url);
+  const restored = await reloadPgIntake(page, scenario);
+  expect(restored).toMatchObject({ id: scenario.intake_id, version: 1, stage: "FAILED" });
+  await expect(page.getByTestId("error-code")).toHaveText("[ODP-INTAKE-RETRIEVAL-TIMEOUT]");
+  await expect(page.getByTestId("error-correlation-id")).not.toHaveText("UNAVAILABLE");
+  } finally { await api.dispose(); }
 });
 
-test("governance reviewer gets masked read-only intake while unrelated roles fail closed", async ({
+test("retained governance reviewer gets masked read-only intake while unrelated roles fail closed", async ({
   page,
 }) => {
-  await openRadar(page, "expansion-manager", "qa-role-seed-manager");
+  const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+  try {
+  const intakeId = scenario.intake_id;
+  const before = await api.get(`/api/v1/operator/network-listings/intake/${intakeId}`, {
+    headers: { ...MANAGER_HEADERS, "x-tenant-id": scenario.tenant_id, "x-subject-id": scenario.proposer_id },
+  });
+  expect(before.status(), await before.text()).toBe(200);
+  const original = await before.json();
+  expect(original.heatZoneId).toBeNull();
+  await page.goto(`${PG_WEB}/operator?ws=network&tab=radar`);
+  await expect(page.getByTestId("intake-inbox-view")).toBeVisible({ timeout: 15_000 });
   // The inherited area must be visible. Clearing it explicitly includes
   // unassigned intakes, and that choice must survive detail and role reloads.
   await expect(page.getByTestId("intake-filter-heat-zone")).toHaveValue("HZ-01");
@@ -1034,27 +1120,21 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
   ]);
   expect(allAreas.status()).toBe(200);
   await expect.poll(() => new URL(page.url()).searchParams.get("heatZoneId")).toBe("");
-  const [created, intakeId] = await Promise.all([
-    page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/operator/network-listings/intake/submit"
-      && response.request().method() === "POST"),
-    submitUrl(page, URLS.possible),
-  ]);
-  expect(created.status()).toBe(200);
-  expect((await created.json()).heatZoneId).toBeNull();
-  await page.getByTestId("intake-return-button").click();
-  // Returning to the inbox rewrites the durable URL asynchronously; reloading
-  // before it settles restores the full-page detail view without the tab bar.
-  await expect(page.getByTestId("intake-inbox-view")).toBeVisible({
-    timeout: 15_000,
-  });
+  await expect(page.getByTestId(`intake-inbox-row-${intakeId}`)).toBeVisible();
 
-  await setOperatorSession(page, "pm-audit", "qa-governance-reviewer");
+  // Explicit synthetic authenticated headers and UI subject must change
+  // together. A persona label alone never grants governance read authority.
+  await page.setExtraHTTPHeaders({ "x-roles": "auditor", "x-operator-role": "pm-audit",
+    "x-subject-id": "qa-governance-reviewer", "x-tenant-id": scenario.tenant_id });
+  await setOperatorSession(page, "pm-audit", "qa-governance-reviewer", scenario.tenant_id);
   await page.reload();
   await page.getByTestId("network-tab-1").click();
   await expect(page.getByTestId("intake-read-only")).toBeVisible({
     timeout: 15_000,
   });
   await expect(page.getByTestId("intake-add-button")).toHaveCount(0);
+  await expect(page.getByTestId("intake-filter-heat-zone")).toHaveValue("");
+  expect(new URL(page.url()).searchParams.get("heatZoneId")).toBe("");
   // The durable intake deep link can restore the detail after a role switch.
   // Only open the row when that restoration did not already happen.
   if (!(await page.getByTestId("intake-detail-dialog").isVisible())) {
@@ -1087,13 +1167,15 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
           "x-operator-role": role,
           "x-roles": systemRole,
           "x-subject-id": `qa-${role}`,
-          "x-tenant-id": "tenant-a",
+          "x-tenant-id": scenario.tenant_id,
         },
       },
     );
     expect(denied.status()).toBe(403);
 
-    await setOperatorSession(page, role, `qa-${role}`);
+    await page.setExtraHTTPHeaders({ "x-operator-role": role, "x-roles": systemRole,
+      "x-subject-id": `qa-${role}`, "x-tenant-id": scenario.tenant_id });
+    await setOperatorSession(page, role, `qa-${role}`, scenario.tenant_id);
     const [bootstrap] = await Promise.all([
       page.waitForResponse((response) =>
         response.url().includes("/api/v1/operator/bootstrap") &&
@@ -1126,4 +1208,10 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
       page.off("request", recordRequest);
     }
   }
+  const after = await api.get(`/api/v1/operator/network-listings/intake/${intakeId}`, {
+    headers: { ...MANAGER_HEADERS, "x-tenant-id": scenario.tenant_id, "x-subject-id": scenario.proposer_id },
+  });
+  expect(after.status(), await after.text()).toBe(200);
+  expect(await after.json()).toEqual(original);
+  } finally { await api.dispose(); }
 });

@@ -13,9 +13,14 @@ import pytest
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator, FormatChecker
 
-from apps.api.app.routes.listings import AssistedIntakeStore
+from apps.api.app.routes.listings import (
+    AssistedIntakeStore,
+    IntakeSubmissionReceipt,
+    UrlIntakeRequest,
+)
 from apps.api.oday_api.main import create_app
 from delivery_toolchain.openapi.generate_assisted_listing_intake_client import ARTIFACT
+from modules.listing.application.intake_workflow_bootstrap import initialize_intake_workflow
 from tests.intake_workflow_fixture import (
     SyntheticIntakeWorkflowPolicy,
     seed_synthetic_assignment_workflow,
@@ -327,6 +332,59 @@ HEADERS_B = {
 def client() -> TestClient:
     app = create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     return ContractTestClient(app)
+
+
+def _replay_retained_url(client, *, headers, **request):
+    """Arrange explicit V1 URL history, then exercise its actual HTTP replay.
+
+    These schema/lifecycle tests are not new URL producers. The fixture uses
+    the existing DTO, store, workflow bootstrap and original receipt namespace;
+    the real route must authorize it and leave every retained collection intact.
+    """
+    assert set(request) == {"json"}
+    body = UrlIntakeRequest.model_validate(request["json"])
+    actor, tenant, key = headers["x-subject-id"], headers["x-tenant-id"], headers["Idempotency-Key"]
+    # In this memory composition the router creates its local store; the
+    # persistence bundle's optional SQL-store slot is deliberately None.
+    store = AssistedIntakeStore._instances[-1]
+    iid, jid, cid = (str(uuid4()) for _ in range(3))
+    at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    intake = {
+        "intake_id": iid, "state": "SUBMITTED", "intake_method": "URL",
+        "scope": body.scope.model_dump(), "submitted_by": actor,
+        "submitted_at": at, "updated_at": at, "version": 1,
+        "job_id": jid, "correlation_id": cid,
+        "original_url": body.original_url, "canonical_url": body.original_url,
+        "policy_state": "POLICY_UNKNOWN", "fields": [], "audit": [],
+        "processing_history": [{
+            "transition_id": str(uuid4()), "from_state": None, "to_state": "SUBMITTED",
+            "occurred_at": at, "actor": actor, "version_after": 1,
+        }],
+    }
+    receipt = IntakeSubmissionReceipt(
+        intake_id=iid, state="SUBMITTED", version=1, job_id=jid,
+        correlation_id=cid, submitted_at=at,
+    ).model_dump(mode="json")
+    digest = hashlib.sha256(json.dumps(body.model_dump(), sort_keys=True, default=str).encode()).hexdigest()
+    replay_key = f"{tenant}:{actor}:submitUrlIntake:_collection:{key}"
+    assert replay_key not in store.replays
+    with store.transaction():
+        store.intakes[iid] = intake
+        initialize_intake_workflow(store, intake, SyntheticIntakeWorkflowPolicy())
+        store.jobs[jid] = {
+            "job_id": jid, "intake_id": iid, "tenant_id": tenant,
+            "status": "QUEUED", "checkpoint": "RETRIEVING", "attempt": 0,
+            "version": 1, "correlation_id": cid,
+        }
+        store.replays[replay_key] = (digest, copy.deepcopy(receipt), 202)
+        store.flush()
+    names = ("intakes", "jobs", "assignments", "slas", "replays", "workflow_audits", "workflow_outbox")
+    before = copy.deepcopy(tuple(getattr(store, name) for name in names))
+    response = client.post("/api/v1/intakes/url", headers=headers, **request)
+    assert response.status_code == 200 and response.json() == receipt, response.text
+    assert response.headers["Idempotency-Replayed"] == "true"
+    assert tuple(getattr(store, name) for name in names) == before
+    return response
 
 
 def _store_with_intake(intake_id: str) -> AssistedIntakeStore:
@@ -650,7 +708,7 @@ def test_authentication_and_tenant_isolation_boundary(client: TestClient) -> Non
 
 
 def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
-    # 1. submitUrlIntake (POST /api/v1/intakes/url)
+    # 1. submitUrlIntake only replays an explicitly retained legacy receipt.
     payload = {
         "original_url": "https://example.com/listings/123",
         "scope": {
@@ -661,10 +719,10 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     idem_key = f"idem-url-{uuid4()}"
     headers = {**HEADERS_A, "Idempotency-Key": idem_key}
 
-    resp = client.post("/api/v1/intakes/url", json=payload, headers=headers)
-    assert resp.status_code == 202
+    resp = _replay_retained_url(client, json=payload, headers=headers)
+    assert resp.status_code == 200
     assert "ETag" in resp.headers
-    assert resp.headers["Idempotency-Replayed"] == "false"
+    assert resp.headers["Idempotency-Replayed"] == "true"
 
     receipt = resp.json()
     intake_id = receipt["intake_id"]
@@ -892,8 +950,8 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     version_after_reopen = reopen_receipt["version_after"]
 
     # 8. cancelIntake on a separate SUBMITTED intake.
-    cancel_setup = client.post(
-        "/api/v1/intakes/url",
+    cancel_setup = _replay_retained_url(
+        client,
         json={"original_url": "https://example.com/listings/cancel", "scope": {"tenant_id": TENANT_A}},
         headers={**HEADERS_A, "Idempotency-Key": f"idem-cancel-setup-{uuid4()}"},
     )
@@ -1105,14 +1163,13 @@ def test_batch_intake_operation(client: TestClient) -> None:
 
 
 def test_job_retry_operation(client: TestClient) -> None:
-    # Set up a fake job in store
-    # Since our store is in memory, let's create a submitUrlIntake to auto-register a job
+    # Prepare a retained processing job and its bound legacy Intake.
     payload = {
         "original_url": "https://example.com/listings/job-test",
         "scope": {"tenant_id": TENANT_A}
     }
-    resp = client.post(
-        "/api/v1/intakes/url",
+    resp = _replay_retained_url(
+        client,
         json=payload,
         headers={**HEADERS_A, "Idempotency-Key": f"idem-job-{uuid4()}"}
     )
@@ -1166,8 +1223,8 @@ def test_expansion_staff_can_retry_their_own_failed_intake(
         "x-tenant-id": TENANT_A,
         "x-roles": "expansion_user",
     }
-    submitted = client.post(
-        "/api/v1/intakes/url",
+    submitted = _replay_retained_url(
+        client,
         json={
             "original_url": "https://example.com/listings/staff-owned-retry",
             "scope": {"tenant_id": TENANT_A},
@@ -1177,7 +1234,7 @@ def test_expansion_staff_can_retry_their_own_failed_intake(
             "Idempotency-Key": f"idem-staff-retry-setup-{uuid4()}",
         },
     )
-    assert submitted.status_code == 202
+    assert submitted.status_code == 200
     receipt = submitted.json()
     store = _store_with_intake(receipt["intake_id"])
     store.jobs[receipt["job_id"]]["status"] = "FAILED"
@@ -1209,8 +1266,8 @@ def test_retry_exact_replay_requires_current_ownership_authorization(
         "x-tenant-id": TENANT_A,
         "x-roles": "expansion_user",
     }
-    submitted = client.post(
-        "/api/v1/intakes/url",
+    submitted = _replay_retained_url(
+        client,
         json={
             "original_url": "https://example.com/listings/staff-retry-replay",
             "scope": {"tenant_id": TENANT_A},
@@ -1262,8 +1319,8 @@ def test_retry_exact_replay_requires_current_ownership_authorization(
 def test_retry_orphan_job_fails_closed_for_same_tenant_staff(
     client: TestClient,
 ) -> None:
-    submitted = client.post(
-        "/api/v1/intakes/url",
+    submitted = _replay_retained_url(
+        client,
         json={
             "original_url": "https://example.com/listings/orphan-retry",
             "scope": {"tenant_id": TENANT_A},
@@ -1339,8 +1396,8 @@ def test_assignment_actions(client: TestClient) -> None:
         "original_url": "https://example.com/listings/assign-test",
         "scope": {"tenant_id": TENANT_A}
     }
-    resp = client.post(
-        "/api/v1/intakes/url",
+    resp = _replay_retained_url(
+        client,
         json=payload,
         headers={**HEADERS_A, "Idempotency-Key": f"idem-assign-setup-{uuid4()}"}
     )
@@ -1443,11 +1500,11 @@ def test_assignment_actions(client: TestClient) -> None:
 
 
 def test_sla_actions(client: TestClient) -> None:
-    submitted = client.post(
-        "/api/v1/intakes/url", json={"original_url": "https://example.invalid/synthetic-sla", "scope": {"tenant_id": TENANT_A}},
+    submitted = _replay_retained_url(
+        client, json={"original_url": "https://example.invalid/synthetic-sla", "scope": {"tenant_id": TENANT_A}},
         headers={**HEADERS_A, "Idempotency-Key": f"synthetic-sla-submit-{uuid4()}"},
     )
-    assert submitted.status_code == 202, submitted.text
+    assert submitted.status_code == 200, submitted.text
     latest_store = AssistedIntakeStore._instances[-1]
     sla_id = next(s["sla_instance_id"] for s in latest_store.slas.values() if s.get("intake_id") == submitted.json()["intake_id"])
 
@@ -1602,8 +1659,8 @@ def test_identity_graph_mutations(client: TestClient) -> None:
 
 
 def test_stateful_idempotency_replay_returns_the_original_receipt(client: TestClient) -> None:
-    submitted = client.post(
-        "/api/v1/intakes/url",
+    submitted = _replay_retained_url(
+        client,
         json={"original_url": "https://example.com/replay", "scope": {"tenant_id": TENANT_A}},
         headers={**HEADERS_A, "Idempotency-Key": f"idem-replay-setup-{uuid4()}"},
     )
@@ -1634,8 +1691,8 @@ def test_stateful_idempotency_replay_returns_the_original_receipt(client: TestCl
 def test_unassigned_intake_is_not_owned_by_unrelated_same_tenant_staff(
     client: TestClient,
 ) -> None:
-    submitted = client.post(
-        "/api/v1/intakes/url",
+    submitted = _replay_retained_url(
+        client,
         json={
             "original_url": "https://example.com/unassigned-ownership",
             "scope": {"tenant_id": TENANT_A},
@@ -1677,8 +1734,8 @@ def test_unassigned_intake_is_not_owned_by_unrelated_same_tenant_staff(
 def test_restricted_v1_fields_are_masked_in_the_http_detail_response(
     client: TestClient,
 ) -> None:
-    submitted = client.post(
-        "/api/v1/intakes/url",
+    submitted = _replay_retained_url(
+        client,
         json={
             "original_url": "https://example.com/restricted-field-masking",
             "scope": {"tenant_id": TENANT_A},
@@ -1715,8 +1772,8 @@ def test_restricted_v1_fields_are_masked_in_the_http_detail_response(
 def test_assignment_replay_is_immutable_after_the_assignment_is_claimed(
     client: TestClient,
 ) -> None:
-    submitted = client.post(
-        "/api/v1/intakes/url",
+    submitted = _replay_retained_url(
+        client,
         json={
             "original_url": "https://example.com/assignment-receipt-replay",
             "scope": {"tenant_id": TENANT_A},
@@ -1773,8 +1830,8 @@ def test_staff_transfer_lost_response_replays_after_ownership_changes(
         "x-roles": "expansion_user",
         "x-operator-role": "expansion-staff",
     }
-    submitted = client.post(
-        "/api/v1/intakes/url",
+    submitted = _replay_retained_url(
+        client,
         json={
             "original_url": "https://example.com/staff-transfer-replay",
             "scope": {"tenant_id": TENANT_A},
@@ -1834,8 +1891,8 @@ def test_staff_transfer_lost_response_replays_after_ownership_changes(
 def test_assign_intake_rejects_a_second_active_assignment_with_fresh_etag(
     client: TestClient,
 ) -> None:
-    submitted = client.post(
-        "/api/v1/intakes/url",
+    submitted = _replay_retained_url(
+        client,
         json={
             "original_url": "https://example.com/active-owner-conflict",
             "scope": {"tenant_id": TENANT_A},
@@ -1886,8 +1943,8 @@ def test_assignment_idempotency_is_scoped_to_the_path_intake(
 ) -> None:
     intake_ids = []
     for suffix in ("first", "second"):
-        submitted = client.post(
-            "/api/v1/intakes/url",
+        submitted = _replay_retained_url(
+            client,
             json={
                 "original_url": f"https://example.com/resource-idempotency/{suffix}",
                 "scope": {"tenant_id": TENANT_A},
@@ -1897,7 +1954,7 @@ def test_assignment_idempotency_is_scoped_to_the_path_intake(
                 "Idempotency-Key": f"idem-resource-setup-{suffix}-{uuid4()}",
             },
         )
-        assert submitted.status_code == 202
+        assert submitted.status_code == 200
         intake_ids.append(submitted.json()["intake_id"])
 
     assignment_body = {
@@ -1941,8 +1998,8 @@ def test_expansion_staff_cannot_assign_an_owned_intake_across_users(
         "x-roles": "expansion_user",
         "x-operator-role": "expansion-staff",
     }
-    submitted = client.post(
-        "/api/v1/intakes/url",
+    submitted = _replay_retained_url(
+        client,
         json={
             "original_url": "https://example.com/staff-cross-user-assignment",
             "scope": {"tenant_id": TENANT_A},
@@ -1952,7 +2009,7 @@ def test_expansion_staff_cannot_assign_an_owned_intake_across_users(
             "Idempotency-Key": f"idem-staff-assign-setup-{uuid4()}",
         },
     )
-    assert submitted.status_code == 202
+    assert submitted.status_code == 200
     intake_id = submitted.json()["intake_id"]
 
     assigned = client.put(
@@ -1983,8 +2040,8 @@ def test_cursor_uses_configured_signing_and_keyset_snapshot_pagination(
 
     submitted_ids = []
     for index in range(3):
-        response = client.post(
-            "/api/v1/intakes/url",
+        response = _replay_retained_url(
+            client,
             json={
                 "original_url": f"https://example.com/cursor/{index}",
                 "scope": {"tenant_id": TENANT_A},
@@ -2014,8 +2071,8 @@ def test_cursor_uses_configured_signing_and_keyset_snapshot_pagination(
     assert "offset" not in cursor_payload
     assert cursor_payload["sort_tuple"][-1] == cursor_payload["last_resource_id"]
 
-    inserted_after_snapshot = client.post(
-        "/api/v1/intakes/url",
+    inserted_after_snapshot = _replay_retained_url(
+        client,
         json={
             "original_url": "https://example.com/cursor/post-snapshot",
             "scope": {"tenant_id": TENANT_A},
@@ -2048,8 +2105,8 @@ def test_every_effective_operation_has_a_schema_valid_runtime_response() -> None
 def test_job_receipt_retrying_delivery_state_with_running_and_queued(
     client: TestClient,
 ) -> None:
-    submitted = client.post(
-        "/api/v1/intakes/url",
+    submitted = _replay_retained_url(
+        client,
         json={
             "original_url": "https://example.com/listings/retrying-contract-test",
             "scope": {"tenant_id": TENANT_A},
@@ -2059,7 +2116,7 @@ def test_job_receipt_retrying_delivery_state_with_running_and_queued(
             "Idempotency-Key": f"idem-retrying-setup-{uuid4()}",
         },
     )
-    assert submitted.status_code == 202
+    assert submitted.status_code == 200
     intake_receipt = submitted.json()
     job_id = intake_receipt["job_id"]
     store = _store_with_intake(intake_receipt["intake_id"])
@@ -2092,8 +2149,8 @@ def test_job_receipt_retrying_delivery_state_with_running_and_queued(
 def test_job_receipt_dead_letter_delivery_state_with_failed_and_retry(
     client: TestClient,
 ) -> None:
-    submitted = client.post(
-        "/api/v1/intakes/url",
+    submitted = _replay_retained_url(
+        client,
         json={
             "original_url": "https://example.com/listings/dlq-contract-test",
             "scope": {"tenant_id": TENANT_A},
@@ -2103,7 +2160,7 @@ def test_job_receipt_dead_letter_delivery_state_with_failed_and_retry(
             "Idempotency-Key": f"idem-dlq-setup-{uuid4()}",
         },
     )
-    assert submitted.status_code == 202
+    assert submitted.status_code == 200
     intake_receipt = submitted.json()
     job_id = intake_receipt["job_id"]
     store = _store_with_intake(intake_receipt["intake_id"])
@@ -2142,8 +2199,8 @@ def test_job_receipt_dead_letter_delivery_state_with_failed_and_retry(
 def test_job_receipt_partial_outcome_status(
     client: TestClient,
 ) -> None:
-    submitted = client.post(
-        "/api/v1/intakes/url",
+    submitted = _replay_retained_url(
+        client,
         json={
             "original_url": "https://example.com/listings/partial-contract-test",
             "scope": {"tenant_id": TENANT_A},
@@ -2153,7 +2210,7 @@ def test_job_receipt_partial_outcome_status(
             "Idempotency-Key": f"idem-partial-setup-{uuid4()}",
         },
     )
-    assert submitted.status_code == 202
+    assert submitted.status_code == 200
     intake_receipt = submitted.json()
     job_id = intake_receipt["job_id"]
     store = _store_with_intake(intake_receipt["intake_id"])
@@ -2182,8 +2239,8 @@ def test_job_receipt_adapts_legacy_delivery_statuses(
     expected_status: str,
     expected_delivery_state: str,
 ) -> None:
-    submitted = client.post(
-        "/api/v1/intakes/url",
+    submitted = _replay_retained_url(
+        client,
         json={
             "original_url": f"https://example.com/listings/legacy-{legacy_status.lower()}",
             "scope": {"tenant_id": TENANT_A},
@@ -2193,7 +2250,7 @@ def test_job_receipt_adapts_legacy_delivery_statuses(
             "Idempotency-Key": f"idem-legacy-{legacy_status.lower()}-{uuid4()}",
         },
     )
-    assert submitted.status_code == 202
+    assert submitted.status_code == 200
     intake_receipt = submitted.json()
     job_id = intake_receipt["job_id"]
     store = _store_with_intake(intake_receipt["intake_id"])

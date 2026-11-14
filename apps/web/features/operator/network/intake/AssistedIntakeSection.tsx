@@ -35,7 +35,6 @@ import {
   buildIntakeClient,
   intakeApi,
   missingClientError,
-  newIdempotencyKey,
   newIntakeActionIdempotencyKey,
   newCorrelationId,
   toIntakeApiError,
@@ -66,7 +65,7 @@ export function AssistedIntakeSection({
   initialDialog,
   initialSelectedId,
   selectedHeatZoneId,
-  heatZoneOptions,
+  canonicalIntakeAvailable = false,
   targetListings = [],
 }: {
   activeRoleId: OperatorRoleId;
@@ -75,6 +74,7 @@ export function AssistedIntakeSection({
   initialSelectedId?: string;
   selectedHeatZoneId?: string;
   heatZoneOptions?: IntakeHeatZoneOptions;
+  canonicalIntakeAvailable?: boolean;
   targetListings?: TargetListingData[];
 }) {
   const router = useRouter();
@@ -180,7 +180,9 @@ export function AssistedIntakeSection({
     const newParams = serializeUrlState(nextState, navigationParams.current);
     navigationParams.current = newParams;
     const hash = intakeNavigationHash(window.location.hash);
-    router[historyMode](`${pathname}?${newParams.toString()}${hash}`, { scroll: false });
+    router[historyMode](nextState.intakeKind === "canonical"
+      ? buildInboxReturnHref(nextState, newParams, hash)
+      : `${pathname}?${newParams.toString()}${hash}`, { scroll: false });
   }, [selectedId, dialog, pathname, router, durableRouteSelectedId]);
   const updateInboxFilters = useCallback((next: IntakeInboxFilterState) => {
     const params = serializeInboxUrlState(next, navigationParams.current);
@@ -220,6 +222,13 @@ export function AssistedIntakeSection({
     scope: typeof decisionScope; error: IntakeApiError;
   } | null>(null);
   const busy = otherCommandBusy || pendingDecision === decisionScope;
+  // Old add links and the Inbox button enter the same native URL form. There
+  // is no legacy writer fallback when the account-bound reader is unavailable.
+  useEffect(() => {
+    if (dialog !== "add" || urlState.intakeKind || !canonicalIntakeAvailable || !canPerform("submit", activeRoleId) || busy) return;
+    updateUrlState({ intakeKind: "canonical", canonicalCursor: "", selectedId: null,
+      dialog: "add", fixFieldKey: null, decisionKind: null, receiptId: null });
+  }, [dialog, urlState.intakeKind, canonicalIntakeAvailable, activeRoleId, busy, updateUrlState]);
   const currentDecisionDraft = decisionDraft?.scope === decisionScope
     ? decisionDraft : { reason: "", riskAcknowledged: false };
   const commandContext = JSON.stringify([selectedId, dialog, asgKind]);
@@ -232,8 +241,6 @@ export function AssistedIntakeSection({
   }>());
   const resourceCommandPending = useRef(false);
   const refreshGeneration = useRef(0);
-  // Every submit attempt reuses one key so a network retry cannot double-create.
-  const submitKeyRef = useRef<string | null>(null);
   const correctionKeyRef = useRef<string | null>(null);
   const assistedEntryKeyRef = useRef<string | null>(null);
 
@@ -252,7 +259,10 @@ export function AssistedIntakeSection({
     if (generation !== refreshGeneration.current || client !== activeClient.current) return;
     if (result.ok) {
       setRecords((current) => {
-        if (dialog !== "detail" || !selectedId) return result.value.items;
+        // A directly read selection may be outside the filtered inbox. Keep
+        // it mounted throughout correction/decision dialogs too, so a pending
+        // list response cannot discard the draft or its same-key retry.
+        if (!["detail", "fix", "decide", "assignmentSla"].includes(dialog ?? "") || !selectedId) return result.value.items;
         if (result.value.items.some((item) => item.id === selectedId)) {
           return result.value.items;
         }
@@ -431,7 +441,6 @@ export function AssistedIntakeSection({
     }
     updateUrlState({ dialog: null, selectedId, fixFieldKey: null, decisionKind: null, receiptId: null });
     setActionError(null);
-    submitKeyRef.current = null;
     correctionKeyRef.current = null;
     assistedEntryKeyRef.current = null;
   }
@@ -456,37 +465,6 @@ export function AssistedIntakeSection({
       return next;
     });
     updateUrlState({ selectedId: record.id });
-  }
-
-  async function handleSubmit({ url, heatZoneId }: { url: string; heatZoneId: string }) {
-    if (!client || busy) return;
-    setBusy(true);
-    setActionError(null);
-    if (!submitKeyRef.current) submitKeyRef.current = newIdempotencyKey(url);
-
-    const result = await intakeApi.submit(
-      client,
-      {
-        url,
-        heatZoneId: heatZoneId || null,
-      },
-      { idempotencyKey: submitKeyRef.current },
-    );
-    setBusy(false);
-
-    if (!result.ok) {
-      setActionError(result.error);
-      return;
-    }
-    submitKeyRef.current = null;
-    applyRecord(result.value, "receipt");
-    updateUrlState({ dialog: "detail", selectedId: result.value.id });
-    setToast(
-      result.value.matchResult?.outcome === "EXACT_DUPLICATE"
-        ? `已於識別檢查攔截 — 此 URL 已存在（${result.value.matchResult.targetListingId ?? result.value.id}），未執行擷取`
-        : `收件 ${result.value.id} 已建立 — ${result.value.policyLabel}`,
-    );
-    void refresh();
   }
 
   async function handleFix({
@@ -978,15 +956,12 @@ export function AssistedIntakeSection({
     <>
       {!detailContextOpen ? <ListingInboxIntakeView
         activeRoleId={activeRoleId}
-        actionError={actionError}
         busy={busy}
         loadError={loadError}
         loadState={loadState}
-        addDialogRequested={dialog === "add"}
-        onAddDialogClosed={() => {
-          if (dialog === "add") updateUrlState({ dialog: null });
-        }}
-        onAddSubmit={handleSubmit}
+        onAddRequested={canonicalIntakeAvailable ? () => {
+          if (!busy) updateUrlState({ dialog: "add", selectedId: null }, "push");
+        } : undefined}
         onOpenDetail={openDetail}
         onRetryLoad={() => void refresh()}
         onRetryIntake={(intakeId) => void handleInboxRetry(intakeId)}
@@ -995,8 +970,11 @@ export function AssistedIntakeSection({
         pageData={pageData}
         records={records}
         selectedHeatZoneId={inboxQuery.selectedHeatZoneId}
-        heatZoneOptions={heatZoneOptions}
       /> : null}
+
+      {dialog === "add" && !canPerform("submit", activeRoleId) ? <p role="alert">
+        此角色無權新增正式收件，請確認登入與權限。
+      </p> : null}
 
       {/*
         The status/toast row is rendered after the detail layer: in a detail

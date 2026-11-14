@@ -10,8 +10,11 @@ fields did not prove the submission route could create those resources.
 
 The production operator factory now injects the canonical workflow store and
 its existing tenant-bound policy into `OperatorIntakeWorkflowRepository`.
-New submissions use the verified actor subject and actual submission time. The
-canonical document is the business authority; Assignment and SLA facts are read
+Retained Operator records and their subsequent commands use this bridge; it
+is no longer a URL fresh-create owner. New URL commands use the existing
+`CanonicalIntakeRepository.submit` SQL owner via `POST /api/v1/canonical-intakes`.
+The canonical document remains the authority for legacy workflow commands;
+Assignment and SLA facts are read
 only from matching tenant/intake/resource bindings, with their own versions.
 The existing operator aggregate may retain presentation caches, but a subsequent
 request reloads the canonical repository before serving or mutating Intake.
@@ -32,15 +35,31 @@ and an SLA state label is never sorted as a due timestamp.
 ## Submission and command transaction
 
 The bridge uses the existing canonical transaction owner and the same database
-engine as the operator replay repository. New Intake, workflow bootstrap, audit,
-outbox and actor-bound submission replay must commit or roll back together.
-A tenant advisory lock serializes duplicate submissions across application
-replicas. Repeating an accepted idempotency key returns its saved response
-without creating a second Intake, Assignment or SLA.
+engine as the operator replay repository. Retained-record edits, workflow, audit,
+outbox and actor-bound replay remain in their existing transaction boundaries.
+The tenant advisory lock and locked reload remain in place. Repeating an exact
+accepted idempotency key returns its saved response only after current-resource
+authorization, without creating a second Intake, Assignment or SLA.
 
-Approved retrieval through this production bridge requires the shared durable
-job queue. No external snapshot side effect should execute inside the HTTP
-submission transaction. The worker resolves the tenant-bound canonical Intake
+Both legacy URL endpoints are replay-only:
+`POST /api/v1/operator/network-listings/intake/submit` and
+`POST /api/v1/intakes/url`. An authorized, valid fresh request returns HTTP 422
+with `LEGACY_URL_CREATE_RETIRED` and directs callers to
+`POST /api/v1/canonical-intakes`; it does not redirect incompatible payloads.
+The existing error envelope is retained (including V1 `VALIDATION_FAILED`).
+A new key for the same URL is fresh and is refused, not deduplicated into an old
+receipt. There is no fixture-mode HTTP exception or automatic native fallback.
+The original actor/tenant/operation/key/fingerprint namespaces are unchanged;
+a changed body with the same bound key still conflicts. Unbound Operator
+receipts still require governed reconciliation rather than attribution from a
+display name. V1 retains both replay lookups and both current-target checks.
+Fresh refusal creates no Intake, Assignment, SLA, transition, business audit,
+outbox, retrieval job or replay receipt. Existing authorization-denial auditing
+is not a business creation side effect.
+
+Historical approved-retrieval jobs and their retry still require the shared
+durable job queue. Refused legacy submissions perform no retrieval or snapshot
+write. The worker resolves the tenant-bound canonical Intake
 repository and advances its version when saving progress. Retry must refer to
 the actual persisted job identity and retain the same workflow resource IDs.
 Missing workflow policy/store or a mismatched queue does not silently select a
@@ -59,11 +78,90 @@ field masking precede Inbox filters and counts. A transfer directory response
 is only a candidate list; command execution still revalidates actor, target,
 policy, version and scope.
 
+## Historical decision caller and URL creation cutover
+
+The existing six-journey business runner retains authorized historical Operator
+Intake GET and decision routes. Its final-decision actor must actually hold
+`site_reviewer`; `expansion-staff`/`expansion_user` alone is proposal authority,
+not a final-decision grant. The runner uses the manager persona only after
+verifying the scoped account's real role. It does not grant that role.
+
+The decision sends `If-Match` from the positive integer `version` returned by
+that exact legacy Intake GET. Missing or malformed versions stop the runner
+before business writes. Native Intake, Listing, Assignment and SLA versions
+are not substitutes. A stale decision is refused rather than retried with a
+guessed or refreshed token. The schema2 receipt retains the observed version
+and the independently read post-decision version. URL creation has no such
+version precondition; it must not inherit this decision header.
+
+The candidate for `ODP-URL-CREATE-CANONICAL-CUTOVER-261111` now retires both
+legacy HTTP fresh writers. This is source integration, not an approved runtime
+or deployment cutover, and does not promise compatibility for old fresh clients.
+The UI no longer produces those requests. The
+legacy Inbox add button and old `dialog=add` links enter the existing native
+picker, whose URL form uses `intakeKind=canonical&dialog=add` in the original
+navigation serializer. That link first reads the canonical collection;
+loading or denied reads do not expose a submit form. The user must explicitly
+select scope and enter a reason. Its SUBMITTED receipt navigates only to the
+native detail reader, never the legacy presentation aggregate. Closing the form
+returns to the same collection, and browser history can reopen it without a POST.
+
+An unavailable native reader leaves the add action explicitly unavailable;
+read-only roles cannot use the old link to obtain a submit form. The URL dialog
+now requires the native scope/reason contract only. It does not infer a scope
+from the selected legacy HeatZone or reinterpret a conflict as an `IN-...` link.
+Historical Inbox reads, decisions and manual-entry recovery remain separate.
+
+The same business runner's source-policy probe now submits only to the existing
+`POST /api/v1/canonical-intakes`. Its authorized schema2 scope must supply the
+actual `intake_method=URL`, HTTPS `original_url`, human-authored `reason`, and
+all four explicitly selected `scope` axes (including explicit nulls when that
+is the actual authorized choice). `source_ref` must match that URL and
+`source_id` names the authorized source. Legacy `url` bodies, missing axes and
+inferred principal/HeatZone defaults are not accepted scope authorizations.
+This supplies no new source approval or read-flag enrollment.
+
+The probe admits only the real 201/SUBMITTED receipt, then uses bounded GETs
+with source/history/evidence metadata to observe the existing worker's
+SOURCE_BLOCKED or POLICY_UNKNOWN quarantine. It neither retries the POST nor
+kicks a scheduler or completes processing itself. Current tenant, submitter,
+scope, source, original URL, submission correlation and version are bound to
+the durable read. Complete pre-retrieval transition history, no resolved
+Listing and an empty, unpaginated evidence page at that observed version are
+required. SUBMITTED/APPROVED/QUEUED/READY, masked or missing proof, a generic
+legacy-fresh refusal, or an authorization denial cannot stand in for source
+policy. The original receipt verifier rechecks the saved metadata; raw URLs,
+reasons and snapshot/parser content are not added to the receipt. The other
+five journeys and historical Intake decision remain unchanged.
+
+Backend retained-receipt fixtures and the original browser add/replay/durability/
+keyboard callers are migrated. The original network stepper case now preserves
+all five ordered paths and eleven legacy labels through the existing retained
+PG histories, with reload, accessible state/glyph and no-write checks. Their
+recorded policy is presentation history, not current source approval or proof
+of retrieval. No capture, parser run, native READY or transition history is
+manufactured for these records. The native timeline separately shows actual SQL
+transitions; the derived legacy stepper cannot attest those transitions.
+The network spec's five-policy fresh caller and full exact-head PostgreSQL/
+browser qualification remain pending at this intermediate checkpoint. Its old
+approved-HTML-retrieval/parser assertion cannot be transplanted as native parser
+success: `NativeParserAdmissionPrerequisites` uses the existing manual-input
+reader and requires `MANUAL_ENTRY`/`application/json`; the artifact owner supports
+only the fixed manual provider. A retrieved HTML snapshot or an admitted policy
+is not a parser run, matching result or READY. Do not add another provider,
+forge manual lineage or seed success to conceal this integration boundary.
+Historical GETs (UUID and `IN-...`),
+original Intake-version decisions, corrections, batch/schedule operations and
+existing job recovery remain supported. Native versions are never legacy
+version tokens. Offline HTTP/service controls do not execute or authorize the
+non-dispatchable live business
+acceptance, source admission, deployment, Human UAT or GO.
+
 ## Verification evidence required
 
 | Proof | Required observation |
 | --- | --- |
-| Actual PostgreSQL HTTP submission | Production operator factory creates one canonical UUID with verified actor, real timestamp, Assignment/SLA IDs and versions. |
+| Actual PostgreSQL URL submission | Native POST creates one SUBMITTED SQL graph with its real workflow/audit/outbox/receipt; exact replay creates no second graph. Both old HTTP fresh requests are refused with no new legacy/native graph or job. |
 | Cross-route lifecycle | The same UUID is assignable/transferable through V1; restarted operator list/detail return the resulting resource IDs, owner and versions. |
 | Replay and rollback | Replay creates no extra resources; policy, audit/outbox or replay persistence failure leaves no partial workflow or queued job. |
 | Scope | Another tenant cannot read the record; same-tenant out-of-scope duplicates do not reveal its ID. |
@@ -75,7 +173,7 @@ Use the recorded commands/results in the candidate's evidence package. Test
 names or mocked DTO fields alone do not satisfy these observations. Intermediate
 failures, skipped tests and incomplete proof remain visible in that package.
 
-The three native password-session PostgreSQL browser cases require the Web
+The native password-session PostgreSQL browser profiles require the Web
 production build from the same checkout. The existing `product-db` preparation
 step builds it once before SQL tests; local runs use the same command:
 
@@ -94,6 +192,67 @@ remain unchanged. This avoids counting development compilation after login as
 browser navigation. The isolated synthetic records, real session and worker
 checks, and existing service-identity requirement still apply; this is not
 human UAT or production data admission.
+
+The existing `run_native_identity_browser` composition now selects
+`canonical native:` cases from **both** original assisted-intake specs. Its
+original five profiles (UNSCOPED, REGION, CASE_CONTEXT,
+CASE_CONTEXT_APPEND_DIRECT, URL_MANUAL) retain the password/BFF/SQL identity,
+metadata transport and signed worker checks. Run them through the existing
+PostgreSQL fixture, after that build:
+
+```sh
+env UV_PYTHON=3.12 uv run --frozen pytest -q \
+  tests/integration/test_native_matching_case_command_postgresql.py \
+  -k test_native_browser_password_session_and_registered_worker_read_real_persisted_result
+```
+
+These cases exercise the old Inbox button and `dialog=add` through the same
+native form, explicit observed scope and human reason, actual 201/SUBMITTED,
+current native detail/history, reload, same-key replay/conflict, independent
+new keys for the same URL, and keyboard dismissal without writes. An empty
+legacy view does not imply an empty native collection. The harness independently
+reads each new SQL graph, transition, Assignment/SLA, audit, outbox and original
+receipt. The submission-only URLs have no source-policy decision, snapshot,
+parser, match case, resolved Listing or native processing job. A new key is not
+URL-based receipt recovery; matching and source admission remain later workers'
+responsibilities. The separate URL_MANUAL profile still drives actual admitted
+manual-entry jobs and the original lost-response/exact-GET recovery. Its current
+candidate composition also passes the fixture's explicit parser registry/release
+and real matcher boundary/credentials/policy through the same helper. The newly
+submitted UUID must continue through the registered parser worker, authenticated
+NEW proposal, original human confirmation and independent executor to READY.
+For URL_MANUAL, a separate actual SQL manager/password session confirms the
+material proposals; their submitting author retains no self-review authority.
+The original pre-parsed Intake remains MATCHING and cannot substitute for this
+fresh result. Independent SQL checks bind the manual snapshot, parser run/job,
+transition chain, confirmation and persisted fields to that same new UUID.
+This source integration still requires exact-head verification; it does not
+resolve the automatic HTML parser gap described above.
+
+Do not count a POC composition as these native cases or silently omit the native
+selection: missing owned scenario/credentials fails the migrated URL cases.
+Retained legacy browser cases remain separately selected against their existing
+isolated PG fixture; neither selection alone qualifies both full specs or
+source-policy admission. All failures and unexecuted cases remain evidence.
+
+The original assisted-spec blocked/unknown probe now uses that same password
+session, explicit scope/reason form and canonical POST. Two uniquely hosted
+synthetic registry rows supply only negative policy premises, not source-use
+approvals. The existing targeted browser admission helper drives their actual
+start, identity and source-policy jobs through the registered worker. The UI
+observes the resulting QUARANTINED detail and recorded policy; the fixture
+independently binds the accepted submission receipt, four transitions, three
+successful jobs, audits/outbox, one Assignment/SLA and no snapshot, parser,
+match case or legacy shadow. This is genuine fresh negative policy proof,
+not evidence of admitted retrieval or the remaining five-policy/11-stage flow.
+The original legacy steward shortcut is not offered on a native quarantine.
+
+Retained-record reload controls bind their real Intake GET before checking UI.
+The promotion reload separately binds its promotion lookup and job receipt
+GET, retaining actual status/body, independent actors, durable worker results
+and UI assertions. No retry, authorization bypass or numeric deadline change
+is introduced. Earlier reload failures remain recorded; a passing retained
+selection alone does not establish load qualification or both complete specs.
 
 ## Remaining release limits
 
@@ -134,8 +293,8 @@ discoverable after restart without creating a second candidate on replay.
 An exception while reserving or committing the job is a transaction failure;
 it cannot manufacture a retained receipt for work that was never accepted.
 
-Required isolated PostgreSQL evidence includes an actual Operator submission,
-correction and resolution command, V1 request, second synthetic actor review,
+Required isolated PostgreSQL evidence includes an explicitly retained Operator
+record followed by actual correction and resolution commands, V1 request, second synthetic actor review,
 fresh-process receipt/candidate readback, both-entry-point identity, replay,
 concurrent mutation and rollback. A measured synthetic Listing/Address fixture
 can establish local integration behavior; it cannot establish a live geocoder,
