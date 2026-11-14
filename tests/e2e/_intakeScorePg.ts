@@ -10,7 +10,7 @@ export type NativeBrowserInput = {
   context_property_ids: string[]; append_property_id: string | null; append_receipt_probe: boolean;
   independent_reviewer: { username: string; password: string; actor_id: string } | null;
   url_manual: { original_url: string; fields: { address: string; rent: number; areaPing: number } } | null;
-  fresh_urls: { presentation: string; durability: string; duplicate: string; replay: string };
+  fresh_urls: { presentation: string; durability: string; duplicate: string; replay: string; keyboard: string; landmarks: string };
   fresh_scope: NativeIntakeScope;
   policy_sources: Record<"SOURCE_BLOCKED" | "POLICY_UNKNOWN", { source_id: string; original_url: string }>;
 };
@@ -49,7 +49,8 @@ export async function openNativeIntakeList(page: Page) {
 }
 
 /** Both original specs submit the actual form, never the retired HTTP producer. */
-export async function submitNativeURL(page: Page, input: NativeBrowserInput, url: string, reason: string) {
+export async function submitNativeURL(page: Page, input: NativeBrowserInput, url: string, reason: string,
+  activation: "click" | "enter" = "click") {
   await expect(page.getByTestId("intake-add-dialog")).toBeVisible();
   await expect(page.getByTestId("intake-submit-button")).toBeDisabled();
   await expect(page.getByRole("combobox", { name: /^正式收件範圍/ })).toHaveValue("");
@@ -68,7 +69,8 @@ export async function submitNativeURL(page: Page, input: NativeBrowserInput, url
     const [response] = await Promise.all([
       page.waitForResponse((candidate) => candidate.request().method() === "POST"
         && new URL(candidate.url()).pathname === "/api/v1/canonical-intakes"),
-      page.getByTestId("intake-submit-button").click(),
+      activation === "enter" ? page.getByTestId("intake-url-input").press("Enter")
+        : page.getByTestId("intake-submit-button").click(),
     ]);
     expect(response.status(), await response.text()).toBe(201);
     const request = response.request(), headers = await request.allHeaders();

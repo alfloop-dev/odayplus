@@ -130,7 +130,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         "policy_sources": policy_sources,
         # Explicit test URLs, not admitted sources or a fixture retrieval path.
         "fresh_urls": {kind: "https://browser-fresh.example.invalid/" + ids["tenant"] + "/" + kind
-            for kind in ("presentation", "durability", "duplicate", "replay")},
+            for kind in ("presentation", "durability", "duplicate", "replay", "keyboard", "landmarks")},
         "independent_reviewer": {"actor_id": independent_reviewer, "username": "synthetic-manager-" + independent_reviewer,
             "password": password} if independent_reviewer else None}
     hash_script = "const a=require('argon2');a.hash(process.env.OWNED_BROWSER_PASSWORD,{type:a.argon2id,memoryCost:65536,timeCost:3,parallelism:1}).then(h=>process.stdout.write(h))"
@@ -413,6 +413,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             "ODP_NATIVE_BROWSER_SCENARIO_FILE": str(scenario)}
         browser = launch(["node", "node_modules/@playwright/test/cli.js", "test",
             "tests/e2e/operator-assisted-listing-intake.spec.ts", "tests/e2e/operator-network-assisted-intake.spec.ts",
+            "tests/e2e/operator-assisted-listing-intake-a11y.spec.ts",
             "--grep", "canonical native:",
             "--workers=1", "--retries=0", "--trace=off", "--output", str(private_dir / "browser-results")], browser_env, "browser")
         browser.wait(timeout=240)
@@ -488,9 +489,11 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                 ids["tenant"], actor, operation, entry["key"], resource)
             assert saved is not None and saved[1] == entry["receipt"] and saved[2] == (200 if is_review else 201)
         fresh_commands = [json.loads(path.read_text()) for path in sorted(private_dir.glob("native-url-command-*.json"))]
-        assert len(fresh_commands) == 5
-        assert len({entry["key"] for entry in fresh_commands}) == 5
-        assert len({entry["receipt"]["intake_id"] for entry in fresh_commands}) == 5
+        # Original five URL submissions plus the two migrated a11y positive
+        # callers; focus/Escape must not add another accepted command.
+        assert len(fresh_commands) == 7
+        assert len({entry["key"] for entry in fresh_commands}) == 7
+        assert len({entry["receipt"]["intake_id"] for entry in fresh_commands}) == 7
         with database.connect() as connection:
             # Independently verify the actual browser-to-SQL graph. No worker
             # admission was requested for these submission-only URLs; SUBMITTED
