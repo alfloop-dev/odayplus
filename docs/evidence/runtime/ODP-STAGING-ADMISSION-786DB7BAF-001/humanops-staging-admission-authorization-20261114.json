@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "record_kind": "humanops-runtime-release-staging-admission-authorization",
+  "status": "approved",
+  "is_approval": true,
+  "task_id": "ODP-STAGING-ADMISSION-786DB7BAF-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-STAGING-ADMISSION-20261114M",
+  "candidate_sha": "786db7bafee061382e8bc60ab60bf139a232176f",
+  "manifest_digest": "sha256:9a3a7b9e4163e10132319bd69dddb0130d68edd2da3d144c6a6a59eff8c722ec",
+  "manifest_run_id": "43554456263",
+  "target_environment": "staging",
+  "release_profile": "core-ops",
+  "approved_at": "2026-11-14T00:41:10Z",
+  "authorization_basis": {
+    "user_reply": "修 CVE，接著跑整條鍵 (Recommended)",
+    "context": "Asked after the 0b69b62d3 registry PR #1698 failed product-security (pip-audit: opentelemetry-api 1.45.1, CVE-2026-126360). The chosen option: Claude opens a task that only upgrades opentelemetry-api/sdk to 1.45.2 and regenerates uv.lock, NOTICE and SBOM, reviewed independently by Antigravity and merged; the new candidate is the dev tip right after that fix merges; the full A–F chain consented for 0b69b62d3 at 2026-11-13T23:01:28Z applies to it under the same conditions, with approval letter M, plus two added conditions: 0b69b62d3..candidate may change only those three files plus evidence, and the candidate's CI must actually run all 7 product lanes green and its dev deploy live E2E must be 77/77; any mismatch means stop and ask again. The chain: (A) dispatch the core-ops staging build; (B) HD-08m with the three deviations below; (C) HD-09m with approval HUMANOPS-STAGING-ADMISSION-20261114M and the scope limits below; (D) approve the registry PR as Human/Ops once it touches only docs/evidence/, the registry checker says GO, admission errors are empty and every CI job is green; (E) HD-10m: after the registry merges, sync the main checkout registry and manifest from origin/dev and register lease HUMANOPS-STAGING-LEASE-20261114M (new nonce, 6 hours, non_dispatchable); (F) HD-12m: approve the GitHub staging environment with ajoe734 only for the run that lease triggers. Before every step dev tip must still be the candidate (plus the evidence-only registry merge for E and F) with empty ancestry. B and C took effect only if the build succeeded, its manifest named the candidate with profile core-ops and 16 disabled sources with no credentials, npm audit reported 0 findings and all 5 staging targets read back absent. Checked facts: PR #1701 merged as 786db7baf; 0b69b62d3..786db7baf changes only uv.lock, NOTICE-THIRD-PARTY.md and docs/evidence/sbom.json; exact push CI 43547110665 and merge group CI 43542301696 on 786db7baf ran all 7 product lanes, all success; dev deploy 43552117814 passed on its first attempt with live E2E 77/77, 0 blockers, job validations ok and the egress probe denied; ancestry was empty; build 43554456263 met every B/C condition and produced manifest sha256:9a3a7b9e4163e10132319bd69dddb0130d68edd2da3d144c6a6a59eff8c722ec, the digest bound here.",
+    "interpretation": "Owner 蔡尚志 replied in the Claude Code conversation at 2026-11-14T00:41:10Z. Transcribed by Claude; not an external identity-system signature."
+  },
+  "authorized_scope": {
+    "max_release_requests": 1,
+    "max_short_lived_supervisor_leases": 1,
+    "runtime_release_deploy_phases": 1,
+    "allowed_environment": "staging",
+    "external_sources_enabled": false,
+    "production_changes": false,
+    "github_staging_environment_approval_still_required": true,
+    "supervisor_lease_still_required": true
+  },
+  "recorded_by": "Claude (interactive owner-response transcription; no external identity signature claimed)",
+  "evidence": {
+    "exact_ci": "docs/evidence/runtime/ODP-STAGING-ADMISSION-786DB7BAF-001/candidate-ci-786db7baf.json",
+    "staging_build_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/43554456263",
+    "dev_deploy_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/43552117814",
+    "exact_candidate_ci_workflow_urls": [
+      "https://github.com/alfloop-dev/odayplus/actions/runs/43547110665",
+      "https://github.com/alfloop-dev/odayplus/actions/runs/43542301696"
+    ],
+    "cve_fix_pull_request": "https://github.com/alfloop-dev/odayplus/pull/1701",
+    "voided_previous_candidate_failure_url": "https://github.com/alfloop-dev/odayplus/actions/runs/43526150351"
+  },
+  "decisions": {
+    "HD-08m": {
+      "decision": "approve",
+      "subject": "gate-2 Data Gate passed-with-deviation for this candidate's staging admission only, review_by 2026-11-27",
+      "accepted_deviations": [
+        "source contract and sample data reviewed: not applicable — the core-ops profile keeps every external source disabled (sources-off attestation in the build manifest: 16 sources audited, all disabled, zero credentials present).",
+        "point-in-time correctness checked for model-ready data: not applicable — core-ops serves no model (release_profile.model_readiness=not_claimed).",
+        "freshness and lineage evidence captured: check_live_production_data.py has never run against this candidate; deferred to the staging verify run and the production gates, not claimed as passed."
+      ]
+    },
+    "HD-09m": {
+      "decision": "approve",
+      "subject": "release.stage=dev-verified, admission_target=staging, decision=go for this exact candidate and the manifest produced by its staging build"
+    }
+  }
+}
