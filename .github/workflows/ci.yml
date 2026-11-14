@@ -1723,8 +1723,24 @@ jobs:
       # deterministic E2E runner. It must not manufacture production release
       # authority: a well-formed NO-GO Gate 0-6 registry is valid here, while
       # dev -> main promotion separately requires an authentic GO decision.
+      # The original native SQL/browser fixture starts the production Web
+      # build; the fixed130 Docker POC and retained-PG origins stay separate.
+      - name: Build production Web for the native portion of the product packet
+        env:
+          ODP_PRODUCT_MODE: production
+          NEXT_PUBLIC_ODP_PRODUCT_MODE: production
+          ODP_DATA_BINDING_MODE: live
+          NEXT_PUBLIC_ODP_DATA_BINDING_MODE: live
+          ODP_E2E_MODE: "false"
+          NEXT_PUBLIC_ODP_E2E_MODE: "false"
+        run: npm run build --workspace=@oday-plus/web
+
       - name: Run product E2E dev merge gate
         id: product_e2e
+        env:
+          # Only this original fixture subprocess uses the same job-owned
+          # service through its existing per-test create/drop allocator.
+          INTAKE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5438/odp_score_browser_ci
         run: make product-e2e-gate
 
       - name: Collect current-source product E2E evidence

@@ -83,7 +83,7 @@ def prepare_database(database_url):
 def run_native_identity_browser(database, ids, parsed, match_case, private_dir, monkeypatch, *, worm_sink_uri,
         manager_region_id=None, independent_reviewer=None, append_receipt_probe=True, url_manual_capture=None,
         url_manual_parser_registry=None, url_manual_parser_release=None,
-        matching_boundary=None, matching_credentials=None, matching_policy=None):
+        matching_boundary=None, matching_credentials=None, matching_policy=None, product_browser_phase=False):
     """Bridge existing native SQL fixtures to the existing browser composition.
 
     The parser/matcher and human accounts are actual owned preconditions. Login,
@@ -114,6 +114,12 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
     from shared.jobs.queue import JobStatus
 
     root = Path(__file__).resolve().parents[2]
+    if product_browser_phase:
+        # The full packet borrows this same owned lifecycle, not another native
+        # provider. Its POC/retained-PG origins remain supplied by the runner.
+        assert url_manual_capture is not None and match_case is not None
+        assert os.environ.get("ODP_OPERATOR_PRODUCT_GATE") == "1"
+        assert os.environ.get("INTAKE_TEST_DATABASE_URL")
     assert re.fullmatch(r"oday_native_parser_p_[0-9a-f]{16}", database.dbname), database.dbname
     private_dir.mkdir(mode=0o700)
     password, signing, session_secret, metadata_secret = (secrets.token_urlsafe(40) for _ in range(4))
@@ -409,15 +415,22 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         worker_bundle = build_persistence(mode="postgresql")
         worker_thread = threading.Thread(target=work, daemon=True)
         worker_thread.start()
-        browser_env = {**web_env, "OPSBOARD_PORT": str(web_port), "ODP_API_PORT": str(api_port),
-            "ODP_PLAYWRIGHT_API_HEALTH_URL": api_url + "/_synthetic/health", "ODP_PLAYWRIGHT_REUSE_EXISTING": "1",
-            "ODP_NATIVE_BROWSER_SCENARIO_FILE": str(scenario)}
-        browser = launch(["node", "node_modules/@playwright/test/cli.js", "test",
-            "tests/e2e/operator-assisted-listing-intake.spec.ts", "tests/e2e/operator-network-assisted-intake.spec.ts",
-            "tests/e2e/operator-assisted-listing-intake-a11y.spec.ts",
-            "--grep", "canonical native:",
-            "--workers=1", "--retries=0", "--trace=off", "--output", str(private_dir / "browser-results")], browser_env, "browser")
-        browser.wait(timeout=240)
+        if product_browser_phase:
+            browser_env = {**os.environ, "ODP_NATIVE_BROWSER_SCENARIO_FILE": str(scenario)}
+            browser_command = ["bash", "delivery_toolchain/e2e/run_product_e2e.sh", "--native-playwright-phase"]
+        else:
+            browser_env = {**web_env, "OPSBOARD_PORT": str(web_port), "ODP_API_PORT": str(api_port),
+                "ODP_PLAYWRIGHT_API_HEALTH_URL": api_url + "/_synthetic/health", "ODP_PLAYWRIGHT_REUSE_EXISTING": "1",
+                "ODP_NATIVE_BROWSER_SCENARIO_FILE": str(scenario)}
+            browser_command = ["node", "node_modules/@playwright/test/cli.js", "test",
+                "tests/e2e/operator-assisted-listing-intake.spec.ts", "tests/e2e/operator-network-assisted-intake.spec.ts",
+                "tests/e2e/operator-assisted-listing-intake-a11y.spec.ts",
+                "--grep", "canonical native:",
+                "--workers=1", "--retries=0", "--trace=off", "--output", str(private_dir / "browser-results")]
+        browser = launch(browser_command, browser_env, "browser")
+        # Native5 keeps its original per-profile deadline. The full packet is
+        # governed by the original product job's 45-minute boundary instead.
+        browser.wait(timeout=None if product_browser_phase else 240)
         browser_log = (private_dir / "browser.log").read_text()
         for value in (password, signing, session_secret, metadata_secret, metadata_token, database.url()):
             browser_log = browser_log.replace(value, "[REDACTED]")

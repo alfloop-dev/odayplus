@@ -577,6 +577,11 @@ def test_native_browser_password_session_and_registered_worker_read_real_persist
     current = canonical_graph[0].queue.get(previous["job_id"])
     canonical_graph[0].queue.update_status(current.job_id, JobStatus.SUCCEEDED,
         expected_version=current.version, fence_token=current.fence_token)
+    import os
+
+    product_browser_phase = os.environ.get("ODP_NATIVE_BROWSER_PRODUCT_PHASE") == "1"
+    if product_browser_phase:
+        assert url_manual_browser, "The original full packet uses the URL_MANUAL preconditions only"
     proposed = None if create_case else _match(matching_case)
     _add_sql_manager(database, ids["tenant"], ids["reviewer"])
     independent_reviewer = str(uuid4()) if create_case or url_manual_browser else None
@@ -592,12 +597,11 @@ def test_native_browser_password_session_and_registered_worker_read_real_persist
         url_manual_parser_registry=case[0].artifact_registry if url_manual_browser else None,
         url_manual_parser_release=case[4] if url_manual_browser else None,
         matching_boundary=matching_boundary, matching_credentials=matching_credentials,
-        matching_policy=matching_policy)
+        matching_policy=matching_policy, product_browser_phase=product_browser_phase)
     assert evidence["browser_returncode"] == 0 and evidence["active_real_sessions"] > 0
     assert evidence["service_identity_transport"] == "isolated-loopback-metadata-emulator"
     assert evidence["metadata_requests"]["accepted"] > 0 and evidence["metadata_requests"]["rejected"] == 2
     assert evidence["cloud_run_iam_verified"] is False
-    import os
 
     if path := os.environ.get("ODP_NATIVE_BROWSER_EVIDENCE_PATH"):
         profile = ("URL_MANUAL" if url_manual_browser else "CASE_CONTEXT_APPEND_DIRECT" if create_case and not append_receipt_probe else
