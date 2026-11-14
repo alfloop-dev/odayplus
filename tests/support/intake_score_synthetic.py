@@ -638,11 +638,14 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                     "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], new_intake)).fetchall()
                 assert len(snapshots) == 1 and snapshots[0][1] == "MANUAL_ENTRY"
                 assert snapshots[0][0] == run[1]
-                proposals = connection.execute("SELECT correction_id,field_path,corrected_value,status,source_snapshot_id,proposed_by "
-                    "FROM intake.human_corrections WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], new_intake)).fetchall()
+                proposals = connection.execute("SELECT correction_id,field_path,corrected_value,status,source_snapshot_id,proposed_by,"
+                    "reviewed_by,parser_run_id,listing_id FROM intake.human_corrections "
+                    "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], new_intake)).fetchall()
                 assert sorted(str(row[0]) for row in proposals) == sorted(manual["receipt"]["correction_ids"])
                 assert {row[1]: row[2] for row in proposals} == credentials["url_manual"]["fields"]
-                assert all(row[3] == "PROPOSED" and row[4] == snapshots[0][0] and str(row[5]) == ids["reviewer"] for row in proposals)
+                assert all(row[3] == "APPLIED" and row[4] == snapshots[0][0] and str(row[5]) == ids["reviewer"]
+                    and str(row[6]) == confirmation_actor and str(row[7]) == parser_admission["parser_run_id"]
+                    for row in proposals)
             for entry in recovered:
                 assert connection.execute("SELECT count(*) FROM audit.audit_events "
                     "WHERE tenant_id=%s AND audit_event_id=%s",
@@ -678,6 +681,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                 (confirmed_intake,)).fetchone()
             assert sessions > 0 and result[0] == "READY" and result[1]
             if submissions:
+                assert all(row[8] == result[1] for row in proposals)
                 effective = connection.execute("SELECT r.effective_values FROM expansion.listings l "
                     "JOIN expansion.listing_revisions r ON r.tenant_id=l.tenant_id "
                     "AND r.listing_revision_id=l.current_revision_id WHERE l.tenant_id=%s AND l.listing_id=%s",
