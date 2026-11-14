@@ -1,0 +1,170 @@
+{
+  "schema_version": 1,
+  "record_kind": "last-product-lane-run-reconciliation",
+  "candidate_sha": "b633a5b3ff445e0964bd310d15e3d3ee546c8dea",
+  "result": "pass",
+  "recorded_at": "2026-11-14T18:11:05Z",
+  "recorded_by": "Claude (exact candidate CI and Runtime Release run reconciliation via gh run view)",
+  "runs": [
+    {
+      "conclusion": "success",
+      "createdAt": "2026-11-14T15:44:19Z",
+      "databaseId": 43611776529,
+      "event": "push",
+      "headSha": "b633a5b3ff445e0964bd310d15e3d3ee546c8dea",
+      "jobs": [
+        {
+          "conclusion": "success",
+          "name": "change-scope",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43611776529/job/132498176418"
+        },
+        {
+          "conclusion": "success",
+          "name": "orchestrator",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43611776529/job/132498176706"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-node",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43611776529/job/132498228050"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-api-contract",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43611776529/job/132498228072"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-security",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43611776529/job/132498228081"
+        },
+        {
+          "conclusion": "success",
+          "name": "performance-gate",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43611776529/job/132498228096"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-db",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43611776529/job/132498228105"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-lint-unit",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43611776529/job/132498228108"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-e2e-gate",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43611776529/job/132498228116"
+        },
+        {
+          "conclusion": "success",
+          "name": "product",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43611776529/job/132509960343"
+        },
+        {
+          "conclusion": "success",
+          "name": "Request automatic dev release after checks",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43611776529/job/132510029485"
+        }
+      ],
+      "name": "CI",
+      "status": "completed",
+      "updatedAt": "2026-11-14T16:27:25Z",
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43611776529"
+    },
+    {
+      "conclusion": "success",
+      "createdAt": "2026-11-14T14:49:42Z",
+      "databaseId": 43606885353,
+      "event": "merge_group",
+      "headSha": "b633a5b3ff445e0964bd310d15e3d3ee546c8dea",
+      "jobs": [
+        {
+          "conclusion": "success",
+          "name": "change-scope",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43606885353/job/132483336632"
+        },
+        {
+          "conclusion": "success",
+          "name": "orchestrator",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43606885353/job/132483336744"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-db",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43606885353/job/132483394977"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-security",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43606885353/job/132483394992"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-lint-unit",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43606885353/job/132483394998"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-e2e-gate",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43606885353/job/132483395033"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-api-contract",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43606885353/job/132483395043"
+        },
+        {
+          "conclusion": "success",
+          "name": "performance-gate",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43606885353/job/132483395070"
+        },
+        {
+          "conclusion": "success",
+          "name": "product-node",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43606885353/job/132483395105"
+        },
+        {
+          "conclusion": "success",
+          "name": "product",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43606885353/job/132498025400"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "Request automatic dev release after checks",
+          "status": "completed",
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43606885353/job/132498101389"
+        }
+      ],
+      "name": "CI",
+      "status": "completed",
+      "updatedAt": "2026-11-14T15:44:03Z",
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43606885353"
+    }
+  ],
+  "descendant_candidate_sha": "5948eba26c4c1e8d9bb1e617ddd46030ee451774",
+  "note": "Last push and merge group CI before the candidate that actually ran all 7 product lanes; b633a5b3f..5948eba26 is PR #1710 only (delivery_toolchain/e2e/check_live_e2e_gate.py, tests/e2e/test_live_e2e_gate_dev_admin.py), classified development_tooling by classify_change_review_scope.py, so the candidate's own CI skipped the product lanes."
+}

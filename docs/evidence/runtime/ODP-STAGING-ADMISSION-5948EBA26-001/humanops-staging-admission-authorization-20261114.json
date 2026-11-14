@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "record_kind": "humanops-runtime-release-staging-admission-authorization",
+  "status": "approved",
+  "is_approval": true,
+  "task_id": "ODP-STAGING-ADMISSION-5948EBA26-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-STAGING-ADMISSION-20261114N",
+  "candidate_sha": "5948eba26c4c1e8d9bb1e617ddd46030ee451774",
+  "manifest_digest": "sha256:6a32f75f08de41f077ab1e574435474a569b3ae6536bc280778aff4e4e982f1d",
+  "manifest_run_id": "43624182684",
+  "target_environment": "staging",
+  "release_profile": "core-ops",
+  "approved_at": "2026-11-14T16:27:37Z",
+  "authorization_basis": {
+    "user_reply": "先解 registry 衝突，再跑鏈 N (Recommended)",
+    "user_reply_at": "2026-11-14T16:23:02Z",
+    "follow_up_reply": "窄幅放寬 dev gate (Recommended)",
+    "follow_up_reply_at": "2026-11-14T16:27:37Z",
+    "context": "Chain N was first consented at 2026-11-14T11:22:11Z ('修 probe，接著跑整條鏈 N') and re-based at 13:36:28Z ('以 24042fb6f 為基準跑鏈 N'), after staging deploy 43566488597 of 786db7baf failed on the web TCP liveness probe. Claude then stopped before step A: #1705 (product code) had merged, and the dev deploys failed live E2E 76/77 on models:registry_refused because seed-dev-data training registered 2 unapproved forecast versions in the dev registry. The owner chose: resolve the registry conflict first, then run chain N with candidate = the dev tip at that time, under these conditions: between the last commit whose CI actually ran all 7 product lanes green and the candidate there are only tooling-scope or evidence changes; the candidate's CI is all green; the dev deploy is 77/77; every other A–F condition unchanged, approval letter N. The follow-up chose the narrow dev gate relaxation (accept only unapproved, alias-free stage=dev versions when the target is dev; staging and production unchanged; Antigravity independent review; Codex's dev models kept), and to run chain N under that rule after it merged. The chain: (A) dispatch the core-ops staging build; (B) HD-08n with the three deviations below; (C) HD-09n with approval HUMANOPS-STAGING-ADMISSION-20261114N and the scope limits below; (D) approve the registry PR as Human/Ops once it touches only docs/evidence/, the registry checker says GO, admission errors are empty and every CI job is green; (E) HD-10n: after the registry merges, sync the main checkout registry and manifest from origin/dev and register lease HUMANOPS-STAGING-LEASE-20261114N (new nonce, 6 hours, non_dispatchable); (F) HD-12n: approve the GitHub staging environment with ajoe734 only for the run that lease triggers. Before every step dev tip must still be the candidate (plus the evidence-only registry merge for E and F) with empty ancestry. B and C took effect only if the build succeeded, its manifest named the candidate with profile core-ops and 16 disabled sources with no credentials, npm audit reported 0 findings and all 5 staging targets read back absent. Checked facts: PR #1710 merged as 5948eba26 (dev tip); the last 7-lane-green CI is on b633a5b3f (push 43611776529, merge group 43606885353); b633a5b3f..5948eba26 changes only delivery_toolchain/e2e/check_live_e2e_gate.py and tests/e2e/test_live_e2e_gate_dev_admin.py, classified development_tooling; the candidate's push CI 43620659160 and merge group CI 43619690890 succeeded with the product lanes skipped by scope; dev deploy 43621593504 passed on its first attempt with live E2E 77/77, 0 blockers, job validations ok and the egress probe denied; ancestry was empty; build 43624182684 met every B/C condition and produced manifest sha256:6a32f75f08de41f077ab1e574435474a569b3ae6536bc280778aff4e4e982f1d, the digest bound here.",
+    "interpretation": "Owner 蔡尚志 replied in the Claude Code conversation at 2026-11-14T16:23:02Z and 16:27:37Z. Transcribed by Claude; not an external identity-system signature."
+  },
+  "authorized_scope": {
+    "max_release_requests": 1,
+    "max_short_lived_supervisor_leases": 1,
+    "runtime_release_deploy_phases": 1,
+    "allowed_environment": "staging",
+    "external_sources_enabled": false,
+    "production_changes": false,
+    "github_staging_environment_approval_still_required": true,
+    "supervisor_lease_still_required": true
+  },
+  "recorded_by": "Claude (interactive owner-response transcription; no external identity signature claimed)",
+  "evidence": {
+    "exact_ci": "docs/evidence/runtime/ODP-STAGING-ADMISSION-5948EBA26-001/candidate-ci-5948eba26.json",
+    "last_product_lanes": "docs/evidence/runtime/ODP-STAGING-ADMISSION-5948EBA26-001/last-product-lanes-b633a5b3f.json",
+    "staging_build_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/43624182684",
+    "dev_deploy_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/43621593504",
+    "exact_candidate_ci_workflow_urls": [
+      "https://github.com/alfloop-dev/odayplus/actions/runs/43620659160",
+      "https://github.com/alfloop-dev/odayplus/actions/runs/43619690890"
+    ],
+    "last_product_lane_ci_workflow_urls": [
+      "https://github.com/alfloop-dev/odayplus/actions/runs/43611776529",
+      "https://github.com/alfloop-dev/odayplus/actions/runs/43606885353"
+    ],
+    "dev_gate_fix_pull_request": "https://github.com/alfloop-dev/odayplus/pull/1710",
+    "staging_probe_fix_pull_request": "https://github.com/alfloop-dev/odayplus/pull/1708",
+    "voided_previous_candidate_failure_url": "https://github.com/alfloop-dev/odayplus/actions/runs/43566488597"
+  },
+  "decisions": {
+    "HD-08n": {
+      "decision": "approve",
+      "subject": "gate-2 Data Gate passed-with-deviation for this candidate's staging admission only, review_by 2026-11-27",
+      "accepted_deviations": [
+        "source contract and sample data reviewed: not applicable — the core-ops profile keeps every external source disabled (sources-off attestation in the build manifest: 16 sources audited, all disabled, zero credentials present).",
+        "point-in-time correctness checked for model-ready data: not applicable — core-ops serves no model (release_profile.model_readiness=not_claimed).",
+        "freshness and lineage evidence captured: check_live_production_data.py has never run against this candidate; deferred to the staging verify run and the production gates, not claimed as passed."
+      ]
+    },
+    "HD-09n": {
+      "decision": "approve",
+      "subject": "release.stage=dev-verified, admission_target=staging, decision=go for this exact candidate and the manifest produced by its staging build"
+    }
+  }
+}
