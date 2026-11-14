@@ -50,6 +50,7 @@ CANDIDATE_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 TENANT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$")
 PROJECT_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
+PROJECT_NUMBER_PATTERN = re.compile(r"^[1-9][0-9]{5,19}$")
 SERVICE_ACCOUNT_EMAIL_PATTERN = re.compile(
     r"^[a-z][a-z0-9-]{5,29}@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$"
 )
@@ -170,6 +171,24 @@ def staging_smoke_token_audience(release_id: str) -> str:
     """The release-bound audience the staging API accepts smoke tokens for."""
 
     return STAGING_SMOKE_TOKEN_AUDIENCE_PREFIX + release_label_value(release_id)
+
+
+# ODP-STAGING-PASSWORD-RUNTIME-WIRING-261114: human password login on the
+# ephemeral staging release uses the existing Web password -> durable
+# identity/session/throttle -> local JWT -> API AuthenticationBoundary chain.
+# The Web signs and the API verifies the local JWT with a release-owned key
+# (Terraform secret ``<name_prefix>-identity-signing-key``), for the root
+# stack's local issuer and a release-bound audience that is distinct from the
+# smoke audience. Both values are pinned in
+# infra/terraform/modules/ephemeral_staging/main.tf and bound by tests.
+STAGING_LOCAL_IDENTITY_ISSUER = "urn:odp:identity:local"
+STAGING_LOCAL_IDENTITY_AUDIENCE_PREFIX = "urn:odp:staging-identity:"
+
+
+def staging_local_identity_audience(release_id: str) -> str:
+    """The release-bound audience of local (password-login) JWTs on staging."""
+
+    return STAGING_LOCAL_IDENTITY_AUDIENCE_PREFIX + release_label_value(release_id)
 
 
 def staging_live_gate_config(
@@ -464,6 +483,10 @@ class StagingConfig:
     project_id: str
     region: str = "asia-east1"
     tenant_id: str = ""
+    # Numeric number of project_id. The Web password sign-in flow derives its
+    # Cloud Run origin (ODP_WEB_BASE_URL) from it; a live create refuses to
+    # start without it and the module refuses to plan the Web without it.
+    project_number: str = ""
     cloud_sql_instance_name: str = "oday-staging-db"
     cloud_sql_connection_name: str = "project:asia-east1:oday-staging-db"
     cloud_sql_service_account_email: str = ""
@@ -728,6 +751,7 @@ def get_ephemeral_resource_names(
         "secret_db_url": f"{name_prefix}-database-url",
         "secret_cursor_key": f"{name_prefix}-cursor-signing-key",
         "secret_web_session": f"{name_prefix}-web-session",
+        "secret_identity_key": f"{name_prefix}-identity-signing-key",
         "scheduler_job": f"{name_prefix}-worker-trigger",
     }
 
@@ -840,6 +864,11 @@ def validate_staging_config(config: StagingConfig, now: datetime | None = None) 
             f"Invalid project_id: {config.project_id!r}. Must match valid GCP project ID format."
         )
 
+    if config.project_number and not PROJECT_NUMBER_PATTERN.fullmatch(config.project_number):
+        errors.append(
+            f"Invalid project_number: {config.project_number!r}. Must be the numeric GCP project number."
+        )
+
     if not config.cloud_sql_instance_name.strip():
         errors.append("cloud_sql_instance_name must be non-empty.")
 
@@ -924,6 +953,8 @@ def generate_tfvars(
     # this input existed is unchanged.
     if config.cloud_sql_service_account_email:
         tfvars["cloud_sql_service_account_email"] = config.cloud_sql_service_account_email
+    if config.project_number:
+        tfvars["project_number"] = config.project_number
     return tfvars
 
 
@@ -997,6 +1028,15 @@ def plan_staging_resources(
             resource_type="google_secret_manager_secret",
             resource_name=names["secret_web_session"],
             resource_id=f"projects/{config.project_id}/secrets/{names['secret_web_session']}",
+            release_id=config.release_id,
+            labels=labels,
+            created_at=created_iso,
+            expires_at=expires_iso,
+        ),
+        StagingResource(
+            resource_type="google_secret_manager_secret",
+            resource_name=names["secret_identity_key"],
+            resource_id=f"projects/{config.project_id}/secrets/{names['secret_identity_key']}",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -4791,6 +4831,7 @@ def _contract_probe_config() -> StagingConfig:
         candidate_sha="0" * 40,
         manifest_digest="sha256:" + "0" * 64,
         project_id="oday-staging-probe",
+        project_number="123456789012",
         owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
         kms_key_id="projects/oday-staging-probe/locations/asia-east1/keyRings/staging/cryptoKeys/release",
         deployer_service_account_email="deployer@oday-staging-probe.iam.gserviceaccount.com",
@@ -4890,6 +4931,7 @@ def validate_module_contract(module_dir: Path) -> list[str]:
         "random_password.staging_db.result",
         "random_password.staging_cursor_signing_key.result",
         "random_password.staging_web_session.result",
+        "random_password.staging_identity_token_signing_key.result",
         "secret_data",
         "password",
     )
@@ -4991,6 +5033,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--cloud-sql-service-account-email",
         default="",
         help="Service account of the Cloud SQL instance (backup/restore drill bucket access)",
+    )
+    create_p.add_argument(
+        "--project-number",
+        default="",
+        help="Numeric GCP project number of --project-id (Web password sign-in origin); required for a live create",
     )
     create_p.add_argument("--network-name", default="oday-staging-vpc", help="Staging VPC network")
     create_p.add_argument("--subnetwork-name", default="oday-staging-subnet", help="Staging VPC subnetwork")
@@ -5100,6 +5147,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
+        if not args.dry_run and not args.project_number:
+            print(
+                "ERROR: live staging create requires --project-number for the Web password sign-in origin",
+                file=sys.stderr,
+            )
+            return 1
         existing_created_at = ""
         if not args.created_at:
             _, existing_tfvars_path, existing_inventory_path = _terraform_state_paths(args.release_id, state_dir_path)
@@ -5125,6 +5178,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             candidate_sha=args.candidate_sha,
             manifest_digest=args.manifest_digest,
             project_id=args.project_id,
+            project_number=args.project_number,
             region=args.region,
             cloud_sql_instance_name=sql_instance,
             cloud_sql_connection_name=sql_connection,

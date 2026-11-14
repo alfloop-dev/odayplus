@@ -14,6 +14,17 @@ variable "region" {
   default     = "asia-east1"
 }
 
+variable "project_number" {
+  type        = string
+  description = "Numeric GCP project number of project_id. The Web password sign-in flow needs its deterministic Cloud Run origin (ODP_WEB_BASE_URL) in production mode, so creating or updating the Web service refuses a null value. Null is accepted only so a release created before this input existed can still be destroyed from its recorded tfvars."
+  default     = null
+
+  validation {
+    condition     = var.project_number == null || can(regex("^[1-9][0-9]{5,19}$", var.project_number))
+    error_message = "project_number must be the numeric GCP project number of project_id."
+  }
+}
+
 variable "release_id" {
   type        = string
   description = "Unique release identifier scoping all ephemeral staging resources."

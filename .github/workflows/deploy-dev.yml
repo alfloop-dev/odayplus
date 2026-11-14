@@ -2214,11 +2214,16 @@ jobs:
           # release bucket as the Cloud SQL instance's own service account.
           sql_service_account="$(gcloud sql instances describe "${GCP_CLOUD_SQL_INSTANCE##*:}" --project "${GCP_PROJECT}" --format='value(serviceAccountEmailAddress)')"
           : "${sql_service_account:?staging Cloud SQL instance service account readback is empty}"
+          # The release Web's password sign-in origin (ODP_WEB_BASE_URL) is its
+          # deterministic Cloud Run URL, which carries the project number.
+          project_number="$(gcloud projects describe "${GCP_PROJECT}" --format='value(projectNumber)')"
+          : "${project_number:?staging project number readback is empty}"
           python3 product_ops/deployment/staging_lifecycle.py create \
             --release-id "${STAGING_RELEASE_ID}" \
             --candidate-sha "${ODAY_RELEASE_SHA}" \
             --manifest-digest "${MANIFEST_DIGEST}" \
             --project-id "${GCP_PROJECT}" \
+            --project-number "${project_number}" \
             --region "${GCP_REGION}" \
             --cloud-sql-instance "${GCP_CLOUD_SQL_INSTANCE}" \
             --cloud-sql-service-account-email "${sql_service_account}" \

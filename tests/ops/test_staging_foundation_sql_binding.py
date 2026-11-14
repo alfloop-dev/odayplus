@@ -62,3 +62,43 @@ def test_cli_rejects_mismatch_before_writing(tmp_path: Path, instance: str, expl
     assert lifecycle.main(args) == 1
     assert not (tmp_path / "generated.tfvars.json").exists()
     assert not (tmp_path / "state").exists()
+
+
+# ODP-STAGING-PASSWORD-RUNTIME-WIRING-261114: the workflow resolves the project
+# number and the CLI carries it into the tfvars the module plans the Web
+# password sign-in origin from. Synthetic project number (test fixture).
+SYNTHETIC_PROJECT_NUMBER = "123456789012"
+
+
+def test_cli_carries_project_number_into_tfvars(tmp_path: Path) -> None:
+    args = create_args(tmp_path, INSTANCE) + ["--project-number", SYNTHETIC_PROJECT_NUMBER]
+    assert lifecycle.main(args) == 0
+    tfvars = json.loads((tmp_path / "generated.tfvars.json").read_text())
+    assert tfvars["project_number"] == SYNTHETIC_PROJECT_NUMBER
+    assert lifecycle.validate_tfvars_against_module(tfvars, lifecycle.DEFAULT_EPHEMERAL_MODULE_DIR) == []
+
+
+@pytest.mark.parametrize("number", ["0123456789", "12345", "oday-staging-proj", "1234567890a", " 123456789012"])
+def test_cli_rejects_a_malformed_project_number_before_writing(tmp_path: Path, number: str, monkeypatch) -> None:
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Invalid project number must not invoke Terraform")
+    monkeypatch.setattr(lifecycle, "_run_terraform", forbidden)
+    args = create_args(tmp_path, INSTANCE) + ["--project-number", number]
+    assert lifecycle.main(args) != 0
+    assert not (tmp_path / "generated.tfvars.json").exists()
+
+
+def test_live_create_without_project_number_is_refused_before_terraform(tmp_path: Path, monkeypatch, capsys) -> None:
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Missing project number must not invoke Terraform")
+    monkeypatch.setattr(lifecycle, "_run_terraform", forbidden)
+    args = [arg for arg in create_args(tmp_path, INSTANCE) if arg != "--dry-run"]
+    args += [
+        "--outputs-out", str(tmp_path / "outputs.json"),
+        "--terraform-backend-bucket", "synthetic-state-bucket",
+        "--terraform-backend-prefix", "oday-plus/ephemeral-staging/odp-sql-binding-001",
+    ]
+    assert lifecycle.main(args) == 1
+    assert "--project-number" in capsys.readouterr().err
+    assert not (tmp_path / "generated.tfvars.json").exists()
+    assert not (tmp_path / "state").exists()

@@ -363,7 +363,7 @@ class StagingIaCChangeScopeClassificationTests(unittest.TestCase):
 
 
 class EphemeralStagingTestCollectionIntegrityTests(unittest.TestCase):
-    EXPECTED_TEST_COUNT = 20
+    EXPECTED_TEST_COUNT = 22
 
     def test_ephemeral_staging_test_file_exists(self) -> None:
         self.assertTrue(
@@ -385,9 +385,10 @@ class EphemeralStagingTestCollectionIntegrityTests(unittest.TestCase):
             if attr.startswith("test_")
         ]
 
-        # EphemeralStagingModuleContractTests has 15 contract tests + 1 standalone plan test = 16
-        # EphemeralStagingDefaultTenantPlanTests has 4 default/empty/long/explicit tenant plan tests = 4
-        # Total = 20 tests
+        # EphemeralStagingModuleContractTests has 16 contract tests + 1 standalone plan test = 17
+        # EphemeralStagingDefaultTenantPlanTests has 4 default/empty/long/explicit tenant plan tests
+        # + 1 password-login runtime binding plan test = 5
+        # Total = 22 tests
         self.assertEqual(
             len(contract_tests) + len(plan_tests),
             self.EXPECTED_TEST_COUNT,
@@ -401,6 +402,8 @@ class EphemeralStagingTestCollectionIntegrityTests(unittest.TestCase):
         # ODP-STAGING-REHEARSAL-NETWORK-IDENTITY-001 (design §12.5.1 items 1-3).
         self.assertIn("test_verify_operator_identity_grants_are_release_scoped", contract_tests)
         self.assertIn("test_staging_api_is_reachable_by_the_runner_but_iam_only", contract_tests)
+        # ODP-STAGING-PASSWORD-RUNTIME-WIRING-261114.
+        self.assertIn("test_password_login_runtime_wiring_is_release_owned", contract_tests)
         self.assertIn("test_release_and_owner_identity_matches_python_normalization_order", contract_tests)
         self.assertIn("test_provider_configuration_and_resource_projects", contract_tests)
         self.assertIn("test_scheduler_worker_invoker_iam_binding", contract_tests)
@@ -415,6 +418,7 @@ class EphemeralStagingTestCollectionIntegrityTests(unittest.TestCase):
         self.assertIn("test_plan_tolerates_an_explicitly_empty_tenant_id", plan_tests)
         self.assertIn("test_terraform_and_python_derive_the_same_bounded_tenant", plan_tests)
         self.assertIn("test_explicit_tenant_still_wins_over_the_derived_one", plan_tests)
+        self.assertIn("test_generated_tfvars_bind_password_login_runtime_inputs", plan_tests)
 
     def test_ephemeral_staging_fails_closed_in_ci_when_terraform_missing(self) -> None:
         from infra.terraform.tests.test_ephemeral_staging import (

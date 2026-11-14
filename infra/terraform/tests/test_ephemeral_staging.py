@@ -242,6 +242,96 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertNotIn("allUsers", main_tf)
         self.assertNotIn("allAuthenticatedUsers", main_tf)
 
+    def test_password_login_runtime_wiring_is_release_owned(self) -> None:
+        """ODP-STAGING-PASSWORD-RUNTIME-WIRING-261114.
+
+        Web password -> durable identity/session/throttle -> local JWT -> API
+        verifier, wired only from release-owned resources. Precise declarations
+        added for review: one release-owned secret
+        (``<name_prefix>-identity-signing-key``) readable by exactly the runtime
+        (API verifier) and Web (signer) accounts; the Web account additionally
+        reads this release's database URL secret and holds
+        ``roles/cloudsql.client`` on the staging project, exactly like the
+        runtime account already does.
+        """
+
+        main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+        vars_tf = (MODULE_DIR / "variables.tf").read_text(encoding="utf-8")
+
+        def block(kind: str, name: str) -> str:
+            match = re.search(rf'resource "{kind}" "{name}" \{{\n(.*?)\n\}}', main_tf, re.DOTALL)
+            self.assertIsNotNone(match, f"{kind}.{name} is missing")
+            return match.group(1)
+
+        def service(name: str) -> str:
+            start = main_tf.index(f'resource "google_cloud_run_v2_service" "{name}"')
+            end = main_tf.index("\nresource ", start + 1)
+            return main_tf[start:end]
+
+        secret = block("google_secret_manager_secret", "staging_identity_token_signing_key")
+        self.assertIn('secret_id = "${local.name_prefix}-identity-signing-key"', secret)
+        self.assertIn("labels = local.resource_labels", secret)
+        version = block("google_secret_manager_secret_version", "staging_identity_token_signing_key")
+        self.assertIn("secret_data = random_password.staging_identity_token_signing_key.result", version)
+
+        # Exactly two readers of the signing key: API verifier and Web signer.
+        readers = re.findall(
+            r'secret_id = google_secret_manager_secret\.staging_identity_token_signing_key\.secret_id\n'
+            r'\s*role\s*= "roles/secretmanager\.secretAccessor"\n'
+            r'\s*member\s*= "serviceAccount:\$\{google_service_account\.(\w+)\.email\}"',
+            main_tf,
+        )
+        self.assertEqual(sorted(readers), ["staging_runtime", "staging_web"])
+        web_db = block("google_secret_manager_secret_iam_member", "staging_web_db_url")
+        self.assertIn("secret_id = google_secret_manager_secret.staging_database_url.secret_id", web_db)
+        self.assertIn("serviceAccount:${google_service_account.staging_web.email}", web_db)
+        web_sql = block("google_project_iam_member", "staging_web_cloudsql")
+        self.assertIn('role    = "roles/cloudsql.client"', web_sql)
+        self.assertIn("serviceAccount:${google_service_account.staging_web.email}", web_sql)
+
+        api = service("staging_api")
+        web = service("staging_web")
+        key_ref = (
+            "secret  = google_secret_manager_secret.staging_identity_token_signing_key.secret_id\n"
+            "            version = google_secret_manager_secret_version.staging_identity_token_signing_key.version"
+        )
+        db_ref = (
+            "secret  = google_secret_manager_secret.staging_database_url.secret_id\n"
+            "            version = google_secret_manager_secret_version.staging_database_url.version"
+        )
+        for text in (api, web):
+            self.assertRegex(text, r'name\s*=\s*"ODP_AUTH_MODE"\s*\n\s*value\s*=\s*"local"')
+            self.assertRegex(text, r'name\s*=\s*"ODP_AUTH_LOCAL_ISSUER"\s*\n\s*value\s*=\s*local\.local_identity_issuer')
+            self.assertRegex(text, r'name\s*=\s*"ODP_AUTH_LOCAL_AUDIENCES"\s*\n\s*value\s*=\s*local\.local_identity_audience')
+            # Pinned to the release-created version, never a floating "latest".
+            self.assertIn(key_ref, text)
+            self.assertIn(db_ref, text)
+        self.assertRegex(web, r'name\s*=\s*"ODP_WEB_BASE_URL"\s*\n\s*value\s*=\s*local\.web_base_url')
+        self.assertRegex(web, r'name\s*=\s*"ODP_WEB_ALLOW_LEGACY_TRUSTED_HEADERS"\s*\n\s*value\s*=\s*"false"')
+        self.assertIn("instances = [var.cloud_sql_connection_name]", web)
+        self.assertIn('mount_path = "/cloudsql"', web)
+        self.assertIn("condition     = var.project_number != null", web)
+
+        # Only the two services mount the key; jobs and the scheduler never do.
+        self.assertEqual(main_tf.count('name = "ODP_IDENTITY_TOKEN_SIGNING_KEY"'), 2)
+        self.assertNotIn("latest", re.sub(r"#.*", "", main_tf))
+        # Local and smoke audiences are distinct release-bound values.
+        self.assertIn('local_identity_audience = "urn:odp:staging-identity:${local.release_label}"', main_tf)
+        self.assertIn('smoke_token_audience = "urn:odp:staging-smoke:${local.release_label}"', main_tf)
+        # No OIDC, bootstrap, dev cohort or caller-supplied key input.
+        for forbidden in (
+            "ODP_WEB_OIDC",
+            "ODP_AUTH_OIDC",
+            "ODP_IDENTITY_BOOTSTRAP",
+            "ODP_DEV_ADMIN",
+            "ODP_AUTH_HS256_KEYS",
+            "ODP_AUTH_LOCAL_HS256_KEYS",
+            "identity_token_signing_key_ref",
+        ):
+            self.assertNotIn(forbidden, main_tf)
+            self.assertNotIn(forbidden, vars_tf)
+        self.assertNotRegex(vars_tf, r'variable\s+"[^"]*(signing|identity|session|secret)[^"]*"')
+
     def test_staging_api_is_reachable_by_the_runner_but_iam_only(self) -> None:
         main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
         match = re.search(
@@ -337,6 +427,8 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
 
         tfvars_content = {
             "project_id": "test-staging-proj",
+            # Synthetic project number (test fixture, not a real project).
+            "project_number": "123456789012",
             "region": "asia-east1",
             "release_id": "odp-20260824-001",
             "candidate_sha": "0" * 40,
@@ -416,6 +508,23 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
                 f"Terraform plan failed for valid inputs: {valid_plan.stderr}\n{valid_plan.stdout}",
             )
 
+            # 3. Without project_number the Web password sign-in origin cannot
+            # be derived, so creating the Web service fails closed at plan.
+            missing_vars = dict(valid_vars)
+            del missing_vars["project_number"]
+            (tmppath / "missing_project_number.tfvars.json").write_text(
+                json.dumps(missing_vars), encoding="utf-8"
+            )
+            missing_plan = run_terraform(
+                "plan",
+                "-no-color",
+                "-var-file=missing_project_number.tfvars.json",
+                chdir=tmppath,
+                home=scratch_home,
+            )
+            self.assertNotEqual(missing_plan.returncode, 0, "plan must refuse a Web without project_number")
+            self.assertIn("project_number is required", missing_plan.stderr + missing_plan.stdout)
+
 
 
 class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
@@ -473,6 +582,8 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
             candidate_sha="0" * 40,
             manifest_digest="sha256:" + "0" * 64,
             project_id="test-staging-proj",
+            # Synthetic project number (test fixture, not a real project).
+            project_number="123456789012",
             owner_task_id="ODP_TASK_001",
             api_image="asia-east1-docker.pkg.dev/test/repo/api@sha256:" + "0" * 64,
             web_image="asia-east1-docker.pkg.dev/test/repo/web@sha256:" + "0" * 64,
@@ -553,6 +664,68 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
 
         self.assertEqual(planned_tenant, derive_release_tenant_id(release_id))
         self.assertLessEqual(len(planned_tenant), MAX_TENANT_ID_LENGTH)
+
+    def test_generated_tfvars_bind_password_login_runtime_inputs(self) -> None:
+        """caller config -> generated tfvars -> planned API/Web runtime env.
+
+        Synthetic fixture values; this proves the planned binding only, not a
+        live sign-in, an account, or any UAT case.
+        """
+
+        from product_ops.deployment.staging_lifecycle import (
+            STAGING_LOCAL_IDENTITY_ISSUER,
+            generate_tfvars,
+            get_ephemeral_resource_names,
+            staging_local_identity_audience,
+            staging_smoke_token_audience,
+        )
+
+        release_id = "odp-20260824-001"
+        config = self._config(release_id)
+        tfvars = generate_tfvars(config)
+        self.assertEqual(tfvars["project_number"], config.project_number)
+        output = self._plan("password_login", tfvars)
+        names = get_ephemeral_resource_names(release_id, config.project_id)
+
+        def planned(address: str) -> str:
+            start = output.index(f"# {address} will be created")
+            end = output.find("\n  # ", start + 1)
+            return output[start:] if end < 0 else output[start:end]
+
+        def env_value(text: str, name: str) -> str:
+            match = re.search(rf'name\s+=\s+"{name}"\n\s+\+ value\s+=\s+"([^"]*)"', text)
+            self.assertIsNotNone(match, f"{name} is not planned")
+            return match.group(1)
+
+        def env_secret(text: str, name: str) -> str:
+            match = re.search(
+                rf'name\s+=\s+"{name}"\n\n\s+\+ value_source \{{\n\s+\+ secret_key_ref \{{\n'
+                rf'\s+\+ secret\s+=\s+"([^"]+)"',
+                text,
+            )
+            self.assertIsNotNone(match, f"{name} is not planned from Secret Manager")
+            return match.group(1)
+
+        audience = staging_local_identity_audience(release_id)
+        self.assertNotEqual(audience, staging_smoke_token_audience(release_id))
+        api = planned("google_cloud_run_v2_service.staging_api")
+        web = planned("google_cloud_run_v2_service.staging_web")
+        for text in (api, web):
+            self.assertEqual(env_value(text, "ODP_AUTH_MODE"), "local")
+            self.assertEqual(env_value(text, "ODP_AUTH_LOCAL_ISSUER"), STAGING_LOCAL_IDENTITY_ISSUER)
+            self.assertEqual(env_value(text, "ODP_AUTH_LOCAL_AUDIENCES"), audience)
+            self.assertEqual(env_secret(text, "ODP_IDENTITY_TOKEN_SIGNING_KEY"), names["secret_identity_key"])
+            self.assertEqual(env_secret(text, "ODAY_DATABASE_URL"), names["secret_db_url"])
+        self.assertEqual(
+            env_value(web, "ODP_WEB_BASE_URL"),
+            f"https://{names['cloud_run_web']}-{config.project_number}.{config.region}.run.app",
+        )
+        # The smoke audience stays the API's only service audience.
+        self.assertEqual(env_value(api, "ODP_AUTH_SERVICE_AUDIENCES"), staging_smoke_token_audience(release_id))
+        self.assertIn(
+            f'secret_id             = "{names["secret_identity_key"]}"',
+            planned("google_secret_manager_secret.staging_identity_token_signing_key"),
+        )
 
     def test_explicit_tenant_still_wins_over_the_derived_one(self) -> None:
         from product_ops.deployment.staging_lifecycle import generate_tfvars
