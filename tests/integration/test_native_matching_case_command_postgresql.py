@@ -568,7 +568,7 @@ def test_native_browser_password_session_and_registered_worker_read_real_persist
     from tests.integration.test_assisted_listing_identity import _execute
     from tests.support.intake_score_synthetic import run_native_identity_browser
 
-    case, parsed, _, _, _, _, _ = matching_case
+    case, parsed, _, matching_boundary, matching_credentials, matching_policy, _ = matching_case
     ids, database = case[1], case[2]
     # Finish the fixture's older already-accepted internal graph delivery via
     # its owner, then acknowledge that real committed result under its fence.
@@ -588,7 +588,11 @@ def test_native_browser_password_session_and_registered_worker_read_real_persist
     evidence = run_native_identity_browser(database, ids, parsed, proposed, tmp_path / "native-browser", monkeypatch,
         worm_sink_uri=canonical_graph[0].audit_sink.delivery.sink.sink_id, manager_region_id=manager_region_id,
         independent_reviewer=independent_reviewer, append_receipt_probe=append_receipt_probe,
-        url_manual_capture=case[5] if url_manual_browser else None)
+        url_manual_capture=case[5] if url_manual_browser else None,
+        url_manual_parser_registry=case[0].artifact_registry if url_manual_browser else None,
+        url_manual_parser_release=case[4] if url_manual_browser else None,
+        matching_boundary=matching_boundary, matching_credentials=matching_credentials,
+        matching_policy=matching_policy)
     assert evidence["browser_returncode"] == 0 and evidence["active_real_sessions"] > 0
     assert evidence["service_identity_transport"] == "isolated-loopback-metadata-emulator"
     assert evidence["metadata_requests"]["accepted"] > 0 and evidence["metadata_requests"]["rejected"] == 2

@@ -277,10 +277,26 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
         const actual = await page.request.get(`/api/v1/canonical-intakes/${newIntakeId}`);
         expect(actual.status(), await actual.text()).toBe(200);
         return (await actual.json()).processing_state;
-      }, { timeout: 60_000 }).toBe("PARSING");
+      }, { timeout: 60_000 }).toBe("MATCHING");
+      // Keep this exact fresh Intake through the original parser, service
+      // matcher, human confirmation and independent executor. The pre-parsed
+      // fixture is context only, never a substitute for the new submission.
+      let freshCase: { intake_id: string; match_case_id: string; outcome: string } | undefined;
+      await expect.poll(async () => {
+        const matched = await page.request.get(`/api/v1/intakes/${newIntakeId}/match-case`);
+        expect([200, 404], await matched.text()).toContain(matched.status());
+        if (matched.status() === 200) freshCase = await matched.json();
+        return matched.status();
+      }, { timeout: 60_000 }).toBe(200);
+      expect(freshCase).toBeDefined();
+      expect(freshCase!.intake_id).toBe(newIntakeId);
+      expect(freshCase!.outcome).toBe("NEW");
+      expect(freshCase!.match_case_id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(newIntakeId).not.toBe(input.intake_id);
+      input.intake_id = newIntakeId;
+      input.match_case_id = freshCase!.match_case_id;
       await page.getByRole("button", { name: "收起原操作回執", exact: true }).click();
-      await page.getByRole("button", { name: /返回收件匣/ }).click();
-      await page.getByRole("button", { name: new RegExp(input.intake_id) }).click();
+      await selectNativeIntake(page, input.intake_id, true);
     } else await selectNativeIntake(page, input.intake_id);
     const otherRecoveries: Array<Awaited<ReturnType<typeof recoverNativeCommandResponse<MatchCaseReceipt | CanonicalIdentityReceipt>>> & {
       operation: "createCanonicalMatchCase" | "reviewCanonicalIdentity"; resource_id: string; original_http_status: 200 | 201;
