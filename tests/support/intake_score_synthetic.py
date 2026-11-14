@@ -157,9 +157,9 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         # no audit row, job, age or five-minute admission guard is discarded.
         deferred_fixture_audits = [str(row[0]) for row in connection.execute(
             "UPDATE odp_runtime.durable_jobs SET available_at=clock_timestamp() "
-            "WHERE job_type='canonical-audit-delivery' AND status='QUEUED' "
+            "WHERE job_type='canonical-audit-delivery' AND status=%s "
             "AND payload_json->>'tenant_id'=%s AND available_at>clock_timestamp() RETURNING job_id",
-            (ids["tenant"],)).fetchall()]
+            (JobStatus.QUEUED.value, ids["tenant"])).fetchall()]
         assert deferred_fixture_audits
 
         # Explicit isolated negative registry premises. No legal/license,
