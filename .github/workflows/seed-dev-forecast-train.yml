@@ -28,8 +28,8 @@ jobs:
       ODP_MODEL_ARTIFACT_ROOT: gs://odayplus-runtime-20260825-model-artifacts/dev-model-releases
       ODP_RELEASE_COMMIT_SHA: ${{ github.sha }}
       ODP_MODEL_TRAINING_ACTOR: github-actions:seed-dev-forecast-train
-      MODEL_VERSIONS: dev-forecast-20261114-1,dev-forecast-20261114-2
-      TRAIN_START: '2025-09-15T00:00:00Z'
+      MODEL_VERSIONS: dev-forecast-20261114-3,dev-forecast-20261114-4
+      TRAIN_START: '2025-10-13T00:00:00Z'
       TRAIN_END: '2026-01-14T00:00:00Z'
     steps:
       - name: Checkout
