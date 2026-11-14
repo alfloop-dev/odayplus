@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import zipfile
 from datetime import UTC, datetime
+from typing import Any
 
 import numpy as np
 import pytest
@@ -188,3 +189,139 @@ def test_training_pipeline_default_call_persists_reloadable_model_and_real_metri
         abs(coverage - 0.8)
     )
     assert result.validation_run.calibration_summary["calibration_error"] != 0.02
+
+
+def test_grouped_backtest_keeps_every_group_in_one_fold() -> None:
+    from models.shared_ml.oss_estimators import _fold_assignments
+
+    groups = [f"store-{index % 7}" for index in range(70)]
+    folds = _fold_assignments(len(groups), groups=groups)
+
+    fold_of_group: dict[str, set[int]] = {}
+    for group, fold in zip(groups, folds, strict=True):
+        fold_of_group.setdefault(group, set()).add(fold)
+    assert all(len(assigned) == 1 for assigned in fold_of_group.values())
+    assert set(folds) == {0, 1, 2, 3, 4}
+    assert folds == _fold_assignments(len(groups), groups=groups)
+
+
+@pytest.mark.parametrize(
+    ("groups", "message"),
+    (
+        (["store-1"] * 4, "at least two distinct groups"),
+        (["store-1", "store-2", "store-1"], "row counts differ"),
+        (["store-1", " ", "store-2", "store-1"], "non-empty"),
+    ),
+)
+def test_grouped_backtest_fails_closed_on_unusable_groups(
+    groups: list[str],
+    message: str,
+) -> None:
+    from models.shared_ml.oss_estimators import OSSEstimatorError, _fold_assignments
+
+    with pytest.raises(OSSEstimatorError, match=message):
+        _fold_assignments(4, groups=groups)
+
+
+def test_grouped_backtest_calibrates_interval_on_unseen_groups() -> None:
+    """Overlapping rows of one entity must not calibrate each other's interval.
+
+    Each store has a level the features do not explain and many near-duplicate
+    rows (like overlapping forecast horizon windows). Random folds see the
+    store's own duplicates in training, so out-of-fold residuals are tiny and
+    the interval collapses; grouped folds measure error on unseen stores.
+    """
+    pytest.importorskip("lightgbm")
+    rng = np.random.default_rng(7)
+    rows: list[dict[str, Any]] = []
+    labels: list[float] = []
+    groups: list[str] = []
+    for store in range(10):
+        level = float(rng.uniform(100.0, 400.0))
+        for day in range(40):
+            rows.append({"store_id": f"store-{store}", "day": float(day)})
+            labels.append(level + float(rng.normal(0.0, 1.0)))
+            groups.append(f"store-{store}")
+    names = ("store_id", "day")
+
+    random_folds = train_oss_estimator(
+        algorithm="lightgbm_regressor",
+        feature_rows=rows,
+        labels=labels,
+        feature_names=names,
+    )
+    grouped = train_oss_estimator(
+        algorithm="lightgbm_regressor",
+        feature_rows=rows,
+        labels=labels,
+        feature_names=names,
+        backtest_groups=groups,
+    )
+
+    assert random_folds.estimator.conformal_radius is not None
+    assert grouped.estimator.conformal_radius is not None
+    assert grouped.estimator.conformal_radius > 10 * random_folds.estimator.conformal_radius
+    fold_of_group: dict[str, set[int]] = {}
+    for group, fold in zip(groups, grouped.backtest.fold_ids, strict=True):
+        fold_of_group.setdefault(group, set()).add(fold)
+    assert all(len(assigned) == 1 for assigned in fold_of_group.values())
+
+
+def test_training_pipeline_forwards_backtest_group_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("catboost")
+    import pipelines.training.model_training as model_training
+
+    captured: dict[str, Any] = {}
+    real_train = model_training.train_oss_estimator
+
+    def recording_train(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return real_train(**kwargs)
+
+    monkeypatch.setattr(model_training, "train_oss_estimator", recording_train)
+    service = LearningHubService()
+    artifacts = InMemoryArtifactStore()
+    moment = datetime(2026, 7, 1, 8, 0, tzinfo=UTC).isoformat()
+    snapshot = service.register_dataset_snapshot(
+        [
+            {
+                "view_name": "oss_training_view",
+                "view_version": "v1",
+                "entity_id": f"store-{index:03d}",
+                "feature_snapshot_time": moment,
+                "prediction_origin_time": datetime(2026, 7, 1, 9, 0, tzinfo=UTC).isoformat(),
+                "source_snapshot_ids": ["synthetic-oss-training"],
+                "data_quality_score": 0.98,
+                "confidence": 0.95,
+                "labels": {"target": LABELS[index]},
+                "label_maturity_time": moment,
+                "features": dict(FEATURE_ROWS[index]),
+            }
+            for index in range(len(FEATURE_ROWS))
+        ],
+        dataset_snapshot_id="oss-grouped-snapshot",
+    )
+    feature_artifact = FeaturePipelineRunner(
+        repository=service.repository,
+        artifact_store=artifacts,
+    ).run(
+        model_name="oss_forecast",
+        dataset_snapshot_id=snapshot.dataset_snapshot_id,
+        feature_schema_version="oss-training-v1",
+    )
+
+    TrainingPipelineRunner(service=service, artifact_store=artifacts).run(
+        model_name="oss_forecast",
+        model_version="1.0.0",
+        feature_artifact=feature_artifact,
+        label_name="target",
+        feature_schema_version="oss-training-v1",
+        label_version="target-v1",
+        thresholds=(),
+        backtest_group_fields=("region",),
+    )
+
+    assert sorted(set(captured["backtest_groups"])) == ["north", "south"]
+    assert len(captured["backtest_groups"]) == len(FEATURE_ROWS)

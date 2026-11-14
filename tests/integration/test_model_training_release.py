@@ -993,6 +993,39 @@ def test_forecast_binding_executes_actual_lightgbm_temporal_training() -> None:
     assert np_is_finite(report.metrics["normalized_mae"])
 
 
+def test_forecast_temporal_validation_backtests_by_store_group() -> None:
+    """Overlapping horizon rows of one store must share a backtest fold."""
+    spec = MODEL_SPECS["forecastops"]
+    assert spec.backtest_group_columns == ("tenant_id", "store_id")
+    prepared = prepare_model_rows(spec, _loaded(_raw_forecast_rows(120)))
+    training, holdout = _temporal_split(prepared, holdout_fraction=0.20)
+    captured: dict[str, Any] = {}
+
+    class Estimator:
+        def predict(self, rows: list[dict[str, Any]]) -> tuple[float, ...]:
+            return tuple(float(row["revenue_lag_1"]) for row in rows)
+
+        def predict_interval(
+            self,
+            rows: list[dict[str, Any]],
+        ) -> tuple[tuple[float, ...], tuple[float, ...]]:
+            point = self.predict(rows)
+            return point, point
+
+    def trainer(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return SimpleNamespace(estimator=Estimator(), resolved_algorithm="lightgbm_regressor")
+
+    _validate_regression_temporally(spec, training, holdout, trainer=trainer)
+
+    expected = [
+        f"{row.mapping['features']['tenant_id']}|{row.mapping['features']['store_id']}"
+        for row in training
+    ]
+    assert captured["backtest_groups"] == expected
+    assert len(set(expected)) >= 2
+
+
 def test_segment_validation_fails_when_holdout_has_no_sufficient_segment() -> None:
     spec = replace(MODEL_SPECS["forecastops"], minimum_segment_rows=100)
     prepared = prepare_model_rows(spec, _loaded(_raw_forecast_rows(120)))
