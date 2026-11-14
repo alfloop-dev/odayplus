@@ -216,7 +216,16 @@ receipt. The submission-only URLs have no source-policy decision, snapshot,
 parser, match case, resolved Listing or native processing job. A new key is not
 URL-based receipt recovery; matching and source admission remain later workers'
 responsibilities. The separate URL_MANUAL profile still drives actual admitted
-manual-entry jobs and the original lost-response/exact-GET recovery.
+manual-entry jobs and the original lost-response/exact-GET recovery. Its current
+candidate composition also passes the fixture's explicit parser registry/release
+and real matcher boundary/credentials/policy through the same helper. The newly
+submitted UUID must continue through the registered parser worker, authenticated
+NEW proposal, original human confirmation and independent executor to READY.
+The original pre-parsed Intake remains MATCHING and cannot substitute for this
+fresh result. Independent SQL checks bind the manual snapshot, parser run/job,
+transition chain, confirmation and persisted fields to that same new UUID.
+This source integration still requires exact-head verification; it does not
+resolve the automatic HTML parser gap described above.
 
 Do not count a POC composition as these native cases or silently omit the native
 selection: missing owned scenario/credentials fails the migrated URL cases.

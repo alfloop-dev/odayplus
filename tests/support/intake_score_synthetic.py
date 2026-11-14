@@ -602,6 +602,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                 parser_result = connection.execute("SELECT status,result FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s",
                     (ids["tenant"], parser_admission["job_id"])).fetchone()
                 assert parser_result[0] == "SUCCEEDED" and parser_result[1]["intake_id"] == new_intake
+                assert run[4] == credentials["url_manual"]["fields"]
                 for table, column, key in (("audit.audit_events", "audit_event_id", "audit_event_id"),
                         ("workflow.outbox_events", "event_id", "outbox_event_id")):
                     assert connection.execute(f"SELECT count(*) FROM {table} WHERE tenant_id=%s AND {column}=%s",
@@ -671,6 +672,12 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             result = connection.execute("SELECT processing_state,resolved_listing_id FROM intake.intakes WHERE intake_id=%s",
                 (confirmed_intake,)).fetchone()
             assert sessions > 0 and result[0] == "READY" and result[1]
+            if submissions:
+                effective = connection.execute("SELECT r.effective_values FROM expansion.listings l "
+                    "JOIN expansion.listing_revisions r ON r.tenant_id=l.tenant_id "
+                    "AND r.listing_revision_id=l.current_revision_id WHERE l.tenant_id=%s AND l.listing_id=%s",
+                    (ids["tenant"], str(result[1]))).fetchone()[0]
+                assert effective == run[4] == credentials["url_manual"]["fields"]
             regions = connection.execute("SELECT region_ids FROM identity.account_scopes WHERE account_id=%s",
                 (ids["reviewer"],)).fetchone()[0]
             assert regions == ([manager_region_id] if manager_region_id else [])
