@@ -1517,7 +1517,7 @@ def _approve_convertible_listing(database, harness, client):
     before_replay = _snapshot(harness.bundle)
     submitted = client.post(base + "/submit", json=body, headers=intake_headers())
     assert submitted.status_code == 200, submitted.text
-    assert submitted.json() == retained
+    assert submitted.json() == {**retained, "masked_fields": []}
     assert _snapshot(harness.bundle) == before_replay
     assert retained["stage"] == "AWAITING_ASSISTED_ENTRY"
     assert retained["assignmentId"] and retained["slaInstanceId"]
