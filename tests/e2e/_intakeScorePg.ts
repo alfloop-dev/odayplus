@@ -13,7 +13,8 @@ export type NativeBrowserInput = {
   fresh_urls: { presentation: string; durability: string; duplicate: string; replay: string; keyboard: string; landmarks: string; find_areas?: string };
   find_areas_zone_ids: string[];
   fresh_scope: NativeIntakeScope;
-  policy_sources: Record<"SOURCE_BLOCKED" | "POLICY_UNKNOWN", { source_id: string; original_url: string }>;
+  policy_sources: Record<"SOURCE_BLOCKED" | "POLICY_UNKNOWN", { source_id: string; original_url: string }>
+    & Partial<Record<"APPROVED_RETRIEVAL" | "ASSISTED_ENTRY_ONLY" | "AUTH_REQUIRED", { source_id: string; original_url: string }>>;
 };
 
 export function nativeBrowserInput(): NativeBrowserInput {
@@ -28,7 +29,8 @@ export function nativeBrowserInput(): NativeBrowserInput {
 // The original helper creates this origin together with its SQL credentials.
 export const test = playwrightTest.extend({
   baseURL: async ({ baseURL }, use, info) => {
-    await use(info.title.startsWith("canonical native:") ? nativeBrowserInput().web_url : baseURL);
+    await use(info.title.startsWith("canonical native:") || info.title.startsWith("canonical policy:")
+      ? nativeBrowserInput().web_url : baseURL);
   },
 });
 

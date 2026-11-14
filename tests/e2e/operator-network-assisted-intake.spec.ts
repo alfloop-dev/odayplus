@@ -1,8 +1,9 @@
 import {
   expect,
   request as playwrightRequest,
-  type Page,
 } from "@playwright/test";
+import { writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 /**
  * Assisted Listing Intake — product E2E (ODP-OC-R5-011 / ODP-OC-R5-004).
@@ -27,7 +28,7 @@ import {
  *    Retained match outcomes and real decisions.     | retained possible/revision and CREATE/REVISE/DUPLICATE audit cases
  *    Native SUBMITTED is not READY or a NEW match.   | original native identity case (other spec) retains signed execution
  * ----------------------------------------------------------------------------
- * 4. 5 Source Policies: APPROVED_RETRIEVAL,            | test("prove the correct fetch or no-fetch behavior...")
+ * 4. 5 Source Policies: APPROVED_RETRIEVAL,            | test("canonical policy: prove the correct fetch or no-fetch behavior...")
  *    ASSISTED_ENTRY_ONLY, AUTH_REQUIRED,               |
  *    SOURCE_BLOCKED, POLICY_UNKNOWN prove fetch behavior.|
  * ----------------------------------------------------------------------------
@@ -58,18 +59,6 @@ const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
 // Deliberate test input, not a production catalog choice.
 const SYNTHETIC_TARGET_FORMAT = "synthetic-manual-format:Audit/v1";
 
-const URLS = {
-  clean: "https://www.synthetic.example/detail-77120345.html", // → READY / NEW
-  revision: "https://www.synthetic.example/detail-88520242.html", // → READY / REVISION
-  possible: "https://www.synthetic.example/detail-99310418.html", // → NEEDS_REVIEW / POSSIBLE_MATCH
-  malformed: "https://www.synthetic.example/detail-40028801.html", // → AWAITING_ASSISTED_ENTRY
-  timeout: "https://www.synthetic.example/detail-50000001.html", // → FAILED (retryable)
-  assistedOnly: "https://www.591.com.tw/rent-detail-16244102.html", // ASSISTED_ENTRY_ONLY
-  blocked: "https://listing-aggregator.example/item/7731", // SOURCE_BLOCKED
-  unknown: "https://unknown-house.example.tw/item/7731", // POLICY_UNKNOWN → quarantine
-  authRequired: "https://www.housefun.com.tw/detail/12345", // AUTH_REQUIRED → AWAITING_ASSISTED_ENTRY
-};
-
 // Serial per original spec. Retained PG cases and native password-session
 // cases own their separate fixture databases; only remaining POC callers reset.
 test.describe.configure({ mode: "serial", timeout: 120_000 });
@@ -85,7 +74,8 @@ test.afterAll(() => {
 test.beforeEach(async ({}, info) => {
   // Retained history belongs to the separate physical PG composition. Do
   // not reset an unrelated legacy backend for these original UI journeys.
-  if (info.title.startsWith("retained ") || info.title.startsWith("canonical native:")) return;
+  if (info.title.startsWith("retained ") || info.title.startsWith("canonical native:")
+      || info.title.startsWith("canonical policy:")) return;
   const api = await playwrightRequest.newContext({
     baseURL: API_BASE_URL,
     extraHTTPHeaders: {
@@ -99,43 +89,6 @@ test.beforeEach(async ({}, info) => {
   expect(reset.status()).toBe(200);
   await api.dispose();
 });
-
-/** Open the Network workspace as 展店經理 — the only role holding listing grants. */
-async function openRadarAsExpansionManager(page: Page) {
-  // Keep the actual synthetic browser principal aligned with its session
-  // subject; the generic config identity must not impersonate this operator.
-  await page.setExtraHTTPHeaders({
-    "x-subject-id": "operator-expansion-manager",
-    "x-roles": "expansion_user,site_reviewer",
-    "x-operator-role": "expansion-manager",
-    "x-tenant-id": "tenant-a",
-  });
-  await page.addInitScript(() => {
-    window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
-    // The operator identity is fail-closed: without a session subject the UI
-    // disables every write action (no fabricated operator-<role> fallback
-    // since the OIDC BFF change). Establish the same subject the suite's API
-    // contexts use, exactly as a real authenticated session would.
-    window.sessionStorage.setItem(
-      "oday.operator.subject",
-      "operator-expansion-manager",
-    );
-  });
-  await page.goto("/operator?ws=network");
-  await page.getByTestId("network-tab-1").click();
-  await expect(page.getByTestId("intake-inbox-view")).toBeVisible();
-}
-
-async function submitUrl(page: Page, url: string) {
-  await page.getByTestId("intake-add-button").click();
-  const dialog = page.getByTestId("intake-add-dialog");
-  await expect(dialog).toBeVisible();
-  await page.getByTestId("intake-url-input").fill(url);
-  await page.getByTestId("intake-submit-button").click();
-  await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({
-    timeout: 15_000,
-  });
-}
 
 /** Helper to query direct API details of an intake record */
 async function getIntakeApi(id: string, scenario?: PgScenario) {
@@ -826,67 +779,96 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     } finally { await api.dispose(); }
   });
 
-  test("prove the correct fetch or no-fetch behavior per policy state", async ({
-    page,
-  }) => {
-    await openRadarAsExpansionManager(page);
-
-    // 1. APPROVED_RETRIEVAL
-    await submitUrl(page, URLS.clean);
-    const idClean = (
-      await page.getByTestId("intake-detail-id").textContent()
-    )?.trim()!;
-    const cleanData = await getIntakeApi(idClean);
-    expect(cleanData.policy).toBe("APPROVED_RETRIEVAL");
-    expect(cleanData.capturedAt).not.toBeNull();
-    expect(cleanData.rawSnapshot).not.toBeNull();
-    expect(cleanData.parserVersion).not.toBeNull();
-    await page.getByTestId("intake-return-button").click();
-
-    // 2. ASSISTED_ENTRY_ONLY
-    await submitUrl(page, URLS.assistedOnly);
-    const idAssisted = (
-      await page.getByTestId("intake-detail-id").textContent()
-    )?.trim()!;
-    const assistedData = await getIntakeApi(idAssisted);
-    expect(assistedData.policy).toBe("ASSISTED_ENTRY_ONLY");
-    expect(assistedData.capturedAt).toBeNull();
-    expect(assistedData.rawSnapshot).toBeNull();
-    await page.getByTestId("intake-return-button").click();
-
-    // 3. AUTH_REQUIRED
-    await submitUrl(page, URLS.authRequired);
-    const idAuth = (
-      await page.getByTestId("intake-detail-id").textContent()
-    )?.trim()!;
-    const authData = await getIntakeApi(idAuth);
-    expect(authData.policy).toBe("AUTH_REQUIRED");
-    expect(authData.capturedAt).toBeNull();
-    expect(authData.rawSnapshot).toBeNull();
-    await page.getByTestId("intake-return-button").click();
-
-    // 4. SOURCE_BLOCKED
-    await submitUrl(page, URLS.blocked);
-    const idBlocked = (
-      await page.getByTestId("intake-detail-id").textContent()
-    )?.trim()!;
-    const blockedData = await getIntakeApi(idBlocked);
-    expect(blockedData.policy).toBe("SOURCE_BLOCKED");
-    expect(blockedData.capturedAt).toBeNull();
-    expect(blockedData.rawSnapshot).toBeNull();
-    expect(blockedData.stage).toBe("QUARANTINED");
-    await page.getByTestId("intake-return-button").click();
-
-    // 5. POLICY_UNKNOWN
-    await submitUrl(page, URLS.unknown);
-    const idUnknown = (
-      await page.getByTestId("intake-detail-id").textContent()
-    )?.trim()!;
-    const unknownData = await getIntakeApi(idUnknown);
-    expect(unknownData.policy).toBe("POLICY_UNKNOWN");
-    expect(unknownData.capturedAt).toBeNull();
-    expect(unknownData.rawSnapshot).toBeNull();
-    expect(unknownData.stage).toBe("QUARANTINED");
+  test("canonical policy: prove the correct fetch or no-fetch behavior per policy state", async ({ page }) => {
+    const input = nativeBrowserInput();
+    await loginNativeSession(page, input);
+    await openNativeIntakeList(page);
+    const paths = [
+      { policy: "APPROVED_RETRIEVAL", state: "PARSING", label: "解析中" },
+      { policy: "ASSISTED_ENTRY_ONLY", state: "AWAITING_ASSISTED_ENTRY", label: "待人工補錄" },
+      // No separate account/manual approval is supplied: AUTH must wait, not fetch.
+      { policy: "AUTH_REQUIRED", state: "AWAITING_SOURCE_AUTHORIZATION", label: "待來源帳號授權" },
+      { policy: "SOURCE_BLOCKED", state: "QUARANTINED", label: "已隔離" },
+      { policy: "POLICY_UNKNOWN", state: "QUARANTINED", label: "已隔離" },
+    ] as const;
+    for (const path of paths) {
+      const source = input.policy_sources[path.policy];
+      expect(source, "The original full packet must supply all five owned policy premises").toBeTruthy();
+      const original_url = source!.original_url + "/FetchPolicy";
+      const reason = `核對 ${path.policy} 的真實來源政策與擷取界線，不將送件或政策核准宣稱為完成解析。`;
+      await page.getByRole("button", { name: "從網址建立正式收件", exact: true }).click();
+      await expect(page.getByTestId("intake-submit-button")).toBeDisabled();
+      await page.getByTestId("intake-url-input").fill(original_url);
+      await page.getByRole("combobox", { name: /^正式收件範圍/ })
+        .selectOption({ label: `沿用收件 ${input.intake_id} 的範圍` });
+      await page.getByLabel("送件原因", { exact: true }).fill(reason);
+      const writes: string[] = [];
+      const observe = (request: import("@playwright/test").Request) => {
+        if (request.method() !== "GET" && new URL(request.url()).pathname.startsWith("/api/v1/"))
+          writes.push(new URL(request.url()).pathname);
+      };
+      page.on("request", observe);
+      try {
+        const [response] = await Promise.all([
+          page.waitForResponse((candidate) => candidate.request().method() === "POST"
+            && new URL(candidate.url()).pathname === "/api/v1/canonical-intakes"),
+          page.getByTestId("intake-submit-button").click(),
+        ]);
+        expect(response.status(), await response.text()).toBe(201);
+        const receipt = await response.json();
+        expect(receipt).toMatchObject({ intake_method: "URL", processing_state: "SUBMITTED", version: 1 });
+        const body = response.request().postDataJSON(), headers = await response.request().allHeaders();
+        expect(body).toEqual({ intake_method: "URL", original_url, reason, scope: input.fresh_scope });
+        expect(headers["if-actor-match"]).toBe(input.actor_id);
+        expect(headers["if-tenant-match"]).toBe(input.tenant_id);
+        expect(headers["if-match"]).toBeUndefined();
+        expect(headers["idempotency-key"]).toBeTruthy();
+        await expect(page.getByTestId("intake-detail-id")).toHaveText(receipt.intake_id);
+        let observed: any;
+        await expect.poll(async () => {
+          const read = await page.request.get(`/api/v1/canonical-intakes/${receipt.intake_id}?include_source=true&include_history=true&include_evidence=true`);
+          expect(read.status(), await read.text()).toBe(200);
+          observed = await read.json();
+          return observed.processing_state;
+        }).toBe(path.state);
+        const retrieved = path.policy === "APPROVED_RETRIEVAL";
+        expect(observed).toMatchObject({ intake_id: receipt.intake_id, intake_method: "URL",
+          version: retrieved ? 5 : 4, resolution: null, submitter_subject_id: input.actor_id,
+          correlation_id: receipt.correlation_id, scope: input.fresh_scope,
+          source_info: { source_id: source!.source_id, recorded_policy_state: path.policy,
+            url_fields: [{ field_path: "originalUrl", effective: original_url, masked: false },
+              { field_path: "canonicalUrl", effective: original_url, masked: false }] } });
+        expect(observed.processing_history.items.map((item: any) => item.to_state)).toEqual([
+          "SUBMITTED", "CHECKING_IDENTITY", "CHECKING_SOURCE_POLICY",
+          ...(retrieved ? ["RETRIEVING", "PARSING"] : [path.state]),
+        ]);
+        expect(observed.processing_evidence.next_cursor).toBeNull();
+        expect(observed.processing_evidence.items).toHaveLength(retrieved ? 1 : 0);
+        if (retrieved) {
+          const snapshot = observed.processing_evidence.items[0];
+          expect(snapshot).toMatchObject({ kind: "SNAPSHOT", metadata: { intake_id: receipt.intake_id,
+            source_id: source!.source_id, capture_method: "SERVER_RETRIEVAL", media_type: "text/html", object_generation: "7" } });
+          expect(snapshot.metadata.byte_length).toBeGreaterThan(0);
+          expect(snapshot.metadata.content_sha256).toMatch(/^[a-f0-9]{64}$/);
+          expect(snapshot.metadata.captured_at).toBeTruthy();
+          // Native metadata never returns raw content or an invented parser version.
+          expect(snapshot.metadata.rawSnapshot).toBeUndefined();
+        }
+        const refresh = page.waitForResponse((candidate) => candidate.request().method() === "GET"
+          && new URL(candidate.url()).pathname === `/api/v1/canonical-intakes/${receipt.intake_id}`);
+        await page.getByTestId("intake-refresh-button").click();
+        expect((await refresh).status()).toBe(200);
+        await expect(page.getByTestId("intake-detail-stage")).toHaveText(path.label);
+        await expect(page.getByTestId("native-intake-evidence-panel")).toContainText(path.policy);
+        await expect(page.getByTestId("timeline-stepper")).toHaveCount(0);
+        if (path.policy === "AUTH_REQUIRED")
+          await expect(page.getByTestId("intake-assisted-entry")).toHaveCount(0);
+        expect(writes).toEqual(["/api/v1/canonical-intakes"]);
+        writeFileSync(join(dirname(process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE!), `native-fetch-policy-${path.policy}.json`),
+          JSON.stringify({ receipt, key: headers["idempotency-key"], body, observed }), { mode: 0o600 });
+      } finally { page.off("request", observe); }
+      await page.getByTestId("intake-return-button").click();
+    }
   });
 
   test("retained explicit assertion of all 11 stage labels, order and state in the UI stepper", async ({ page }) => {

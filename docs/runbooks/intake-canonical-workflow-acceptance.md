@@ -142,8 +142,8 @@ recorded policy is presentation history, not current source approval or proof
 of retrieval. No capture, parser run, native READY or transition history is
 manufactured for these records. The native timeline separately shows actual SQL
 transitions; the derived legacy stepper cannot attest those transitions.
-The network spec's five-policy fresh caller and full exact-head PostgreSQL/
-browser qualification remain pending at this intermediate checkpoint. Its old
+The network spec's five-policy fresh caller now uses the native form/reader;
+full exact-head PostgreSQL/browser qualification remains pending. Its old
 approved-HTML-retrieval/parser assertion cannot be transplanted as native parser
 success: `NativeParserAdmissionPrerequisites` uses the existing manual-input
 reader and requires `MANUAL_ENTRY`/`application/json`; the artifact owner supports
@@ -294,8 +294,8 @@ original per-test scratch allocator. The host production Web build is prepared
 with the command above; the Docker POC build remains separate. This is source
 integration, not full-packet qualification: native5 passed at `0845d09002bf`
 (exit 0, 619.16 seconds), while this new full-packet branch has not yet executed.
-The original five-policy fresh consumer still requires migration before final
-whole-packet qualification. The existing FindAreas case now uses this same
+The original five-policy fresh consumer's source migration is described below;
+its actual full-packet qualification remains required. The existing FindAreas case now uses this same
 native origin and password session, reads two explicitly synthetic recorded
 HeatZone rows through the original tenant result store, selects the nondefault
 row, and activates its original add action. The recorded-score inputs reuse the
@@ -336,6 +336,32 @@ successful jobs, audits/outbox, one Assignment/SLA and no snapshot, parser,
 match case or legacy shadow. This is genuine fresh negative policy proof,
 not evidence of admitted retrieval or the remaining five-policy/11-stage flow.
 The original legacy steward shortcut is not offered on a native quarantine.
+
+The network spec's existing five-policy case now runs in that same owned
+password-session/BFF/native SQL lifetime, using distinct URLs and actual human
+scope/reason inputs. Only the full130 composition supplies its three additional
+synthetic positive registry premises; native5 retains its two negative probes,
+original test selection and 240-second per-profile deadline. No case is added to
+the 130-case packet. All five use the same targeted admission helper, original
+registered workers and common independent receipt/transition/audit/outbox/SQL
+proof. ASSISTED_ENTRY_ONLY waits for human input. AUTH_REQUIRED deliberately
+has no separate manual/account approval and waits for source authorization,
+without an assisted form or retrieval. Blocked/unknown sources quarantine.
+Those four paths must have no snapshot, parser run or match case.
+
+For APPROVED_RETRIEVAL, the original `SyntheticIO` from the retrieval integration
+module supplies guarded synthetic HTTP/storage only; the normal retrieval owner
+must admit and execute its real fenced job, journal all five IO intents and
+commit a checksum/generation-bound SERVER_RETRIEVAL snapshot plus its event and
+PARSING transition. The SQL proof checks the one stored object against its actual
+bytes and browser metadata, and verifies that none of the other four URLs was
+fetched. The native reader exposes metadata, never raw snapshot content or a
+fabricated parser version. This case stops at PARSING: the existing manual-only
+parser cannot consume HTML, and no provider, registry or fake manual lineage is
+introduced. The separate URL_MANUAL journey still owns real parsing/matching,
+human confirmation and independent execution. Retired `submitUrl`/POC URL setup
+helpers were removed from this spec. This is an unqualified source increment:
+PG binding expired before this change; no five-policy/browser pass is claimed.
 
 Retained-record reload controls bind their real Intake GET before checking UI.
 The promotion reload separately binds its promotion lookup and job receipt
