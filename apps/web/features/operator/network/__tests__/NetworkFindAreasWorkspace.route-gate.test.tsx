@@ -339,8 +339,16 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
           expect(screen.getByTestId("intake-submit-button")).toBeDisabled();
         } else expect(screen.queryByTestId("canonical-intake-case-picker")).not.toBeInTheDocument();
         await act(async () => finish());
-        if (change.startsWith("query")) expect(await screen.findByText(/正式收件 .*已送出/)).toHaveTextContent(receipt.intake_id);
-        else expect(screen.queryByText(/正式收件 .*已送出/)).not.toBeInTheDocument();
+        if (change.startsWith("query")) {
+          // Selecting the submitted UUID legitimately replaces the modal tree
+          // with detail-first layout. The Console command owner, not an old
+          // form's local state, retains the receipt even when detail is denied.
+          const summary = await screen.findByRole("region", { name: "先前收件操作" });
+          await within(summary).findByText(/原操作已收到回執/);
+          expect(summary).toHaveTextContent(`收件 ${receipt.intake_id} · 版本 1 · SUBMITTED`);
+          expect(navigation.pathname).toBe(`/intake/${receipt.intake_id}`);
+          expect(await screen.findByText(/目前身分沒有執行此操作的權限/)).toBeVisible();
+        } else expect(screen.queryByRole("region", { name: "先前收件操作" })).not.toBeInTheDocument();
         expect(writes).toHaveLength(1);
         expect(new Headers(writes[0].headers).get("idempotency-key")).toBe(key);
       } finally {
