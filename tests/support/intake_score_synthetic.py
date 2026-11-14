@@ -340,10 +340,13 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             if worker_bundle.job_queue.get(url_admissions[-1]["job_id"]).status != JobStatus.SUCCEEDED:
                 return
             with database.connect() as connection:
-                intake_id, snapshot_id, version, state = connection.execute(
-                    "SELECT intake_id,source_snapshot_id,version,processing_state FROM intake.intakes "
-                    "WHERE tenant_id=%s AND original_url=%s",
-                    (ids["tenant"], credentials["url_manual"]["original_url"])).fetchone()
+                rows = connection.execute("SELECT i.intake_id,s.source_snapshot_id,i.version,i.processing_state "
+                    "FROM intake.intakes i JOIN intake.source_snapshots s "
+                    "ON s.tenant_id=i.tenant_id AND s.intake_id=i.intake_id "
+                    "WHERE i.tenant_id=%s AND i.original_url=%s AND s.capture_method='MANUAL_ENTRY'",
+                    (ids["tenant"], credentials["url_manual"]["original_url"])).fetchall()
+                assert len(rows) == 1
+                intake_id, snapshot_id, version, state = rows[0]
             assert str(intake_id) != parsed["intake_id"]
             if not url_parser_admissions:
                 assert state == "PARSING" and snapshot_id is not None
