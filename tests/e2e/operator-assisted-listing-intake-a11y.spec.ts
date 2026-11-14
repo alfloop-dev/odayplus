@@ -12,6 +12,8 @@ import { expect, request as playwrightRequest, test, type Page } from "@playwrig
  * - Zero serious/critical axe accessibility violations
  */
 
+import { openPgScenario, PG_WEB } from "./_intakeScorePg";
+
 import {
   acquireOperatorBackendLock,
   releaseOperatorBackendLock,
@@ -25,6 +27,9 @@ const URLS = {
 };
 
 test.describe.configure({ mode: "serial", timeout: 120_000 });
+// Retained PG cases bind their actual fixture actor/tenant, not the global
+// all-product identity. Native form consumers still require their own session.
+test.use({ extraHTTPHeaders: {} });
 
 test.beforeAll(async () => {
   await acquireOperatorBackendLock();
@@ -34,7 +39,8 @@ test.afterAll(() => {
   releaseOperatorBackendLock();
 });
 
-test.beforeEach(async () => {
+test.beforeEach(async ({}, info) => {
+  if (info.title.startsWith("retained ")) return;
   const api = await playwrightRequest.newContext({
     baseURL: API_BASE_URL,
     extraHTTPHeaders: {
@@ -118,16 +124,24 @@ test.describe("VDC-003 Screen Reader Landmarks & Accessibility Attributes", () =
     });
   });
 
-  test("respects prefers-reduced-motion media query", async ({ page }) => {
+  test("retained queue respects prefers-reduced-motion media query", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await openRadarAsExpansionManager(page);
-    await expect(page.getByTestId("intake-add-button")).toBeVisible();
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    try {
+      await page.goto(`${PG_WEB}/operator?ws=network&tab=radar&heatZoneId=`);
+      await expect(page.getByTestId(`intake-inbox-row-${scenario.intake_id}`)).toBeVisible();
+      await expect(page.getByTestId("intake-add-button")).toBeVisible();
+      expect(await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
+    } finally { await api.dispose(); }
   });
 });
 
 test.describe("VDC-003 Axe Automated Accessibility Scan", () => {
-  test("intake queue page passes axe accessibility scan", async ({ page }) => {
-    await openRadarAsExpansionManager(page);
+  test("retained populated intake queue passes axe accessibility scan", async ({ page }) => {
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    try {
+    await page.goto(`${PG_WEB}/operator?ws=network&tab=radar&heatZoneId=`);
+    await expect(page.getByTestId(`intake-inbox-row-${scenario.intake_id}`)).toBeVisible();
     await expect(page.getByTestId("intake-add-button")).toBeVisible();
 
     const results = await new AxeBuilder({ page })
@@ -146,14 +160,15 @@ test.describe("VDC-003 Axe Automated Accessibility Scan", () => {
         })),
       })),
     ).toEqual([]);
+    } finally { await api.dispose(); }
   });
 
-  test("intake detail dialog passes axe accessibility scan", async ({ page }) => {
-    await openRadarAsExpansionManager(page);
-    await page.getByTestId("intake-add-button").click();
-    await page.getByTestId("intake-url-input").fill(URLS.clean);
-    await page.getByTestId("intake-submit-button").click();
-    await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({ timeout: 15_000 });
+  test("retained intake detail passes axe accessibility scan", async ({ page }) => {
+    // Existing comparison history, not a new URL, fetched page or native READY.
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    try {
+    await expect(page.getByTestId("intake-detail-id")).toHaveText(scenario.intake_id);
+    await expect(page.getByTestId("compare-table-grid")).toBeVisible();
 
     const results = await new AxeBuilder({ page })
       .include('[data-testid="intake-detail-dialog"]')
@@ -171,5 +186,6 @@ test.describe("VDC-003 Axe Automated Accessibility Scan", () => {
         })),
       })),
     ).toEqual([]);
+    } finally { await api.dispose(); }
   });
 });
