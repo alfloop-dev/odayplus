@@ -689,6 +689,11 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                     "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], policy_id)).fetchall()
                 assert len(snapshots) == int(retrieved)
                 if retrieved:
+                    journal = connection.execute("SELECT payload->'attempt_intents' FROM workflow.jobs "
+                        "WHERE tenant_id=%s AND job_id=%s", (ids["tenant"], jobs[3][0])).fetchone()[0]
+                    assert [intent["operation"] for intent in journal] == fetch_io.calls
+                    assert all(intent["state"] == "FINISHED" and intent["attempt"] == 1
+                        and intent["worker"] == "owned-native-browser-worker" for intent in journal)
                     snapshot = snapshots[0]
                     assert str(snapshot[0]) == jobs[3][3]["source_snapshot_id"] == str(transitions[4][3])
                     assert snapshot[1:6] == (source["source_id"], "SERVER_RETRIEVAL", sha256(RAW).hexdigest(), len(RAW), 7)
