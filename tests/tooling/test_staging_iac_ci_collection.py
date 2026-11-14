@@ -45,7 +45,7 @@ PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 EPHEMERAL_TEST_PATH = REPO_ROOT / "infra" / "terraform" / "tests" / "test_ephemeral_staging.py"
 EPHEMERAL_TEST_RELPATH = EPHEMERAL_TEST_PATH.relative_to(REPO_ROOT)
 EPHEMERAL_NODE_PREFIX = f"{EPHEMERAL_TEST_RELPATH.as_posix()}::"
-EXPECTED_EPHEMERAL_TEST_COUNT = 20
+EXPECTED_EPHEMERAL_TEST_COUNT = 22
 EXACT_SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
 
