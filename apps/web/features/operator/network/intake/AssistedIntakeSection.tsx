@@ -245,6 +245,16 @@ export function AssistedIntakeSection({
   const assistedEntryKeyRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
+    // Keep the Inbox invoker mounted beneath native collection/add dialogs,
+    // but never resolve native navigation through the legacy list reader.
+    // Drop cached rows rather than exposing an old resource/context on return.
+    if (urlState.intakeKind) {
+      setRecords([]);
+      setPageData(undefined);
+      setLoadState("loading");
+      setLoadError(null);
+      return;
+    }
     // A role without listing:VIEW would get a guaranteed 403. That is a
     // permission state, not a failure, so don't issue the request at all.
     if (!canView(activeRoleId)) return;
@@ -284,6 +294,7 @@ export function AssistedIntakeSection({
     dialog,
     inboxQuery,
     selectedId,
+    urlState.intakeKind,
   ]);
 
   useEffect(() => {

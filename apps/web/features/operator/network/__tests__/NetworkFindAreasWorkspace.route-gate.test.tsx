@@ -214,6 +214,27 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     vi.unstubAllEnvs();
   });
 
+  it.each(["detail", "add"] as const)("cold-opens the native %s collection without legacy discovery", async (dialog) => {
+    radarProps.realPanel = true;
+    radarProps.showNativePicker = true;
+    navigation.search = `ws=network&tab=radar&intakeKind=canonical&canonicalCursor=&dialog=${dialog}`;
+    window.history.replaceState(null, "", `/operator?${navigation.search}`);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/v1/canonical-intakes") return new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 });
+      return forbiddenResponse("native-only-discovery", path);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<NetworkFindAreasWorkspace allowedTabIds={["radar"]} activeRoleId="expansion-manager"
+      createAuthenticatedReadGuard={(current) => async () => current()} />);
+    await screen.findByText("目前可讀範圍沒有收件。");
+    expect(screen.getByRole("heading", { name: "展店與店網" })).toBeVisible();
+    expect(screen.getByTestId("network-find-areas-workspace")).not.toHaveAttribute("data-intake-detail-open");
+    expect(fetchMock.mock.calls.filter(([path]) => String(path).includes("/api/v1/operator/network-listings/intake"))).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+    if (dialog === "add") expect(screen.getByTestId("intake-add-dialog")).toBeVisible();
+  });
+
   it("keeps the actual Inbox invoker mounted across native add navigation and restores focus without a write", async () => {
     radarProps.realPanel = true;
     radarProps.showNativePicker = true;

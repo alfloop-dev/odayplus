@@ -220,6 +220,10 @@ for selected native records (or durable routes), keeping collection/add dialogs
 under the original Network shell. Radar retains both the Inbox invoker and the
 same picker beneath those dialogs; selected native details still replace the
 legacy reader. The existing shared modal hook remains the sole focus owner.
+While that invoker stays mounted, native collection/add navigation suspends
+legacy list discovery and clears cached legacy rows into a loading state;
+returning to the legacy Inbox re-enters its original authorized list read.
+Native history restoration must not issue a legacy Intake GET as a fallback.
 The original workspace route/gate tests exercise this actual Radar path in
 addition to detail-first, authority and command-lifetime controls. The first
 five-profile run after this change passed the original focus-return case in
