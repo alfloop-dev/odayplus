@@ -1492,6 +1492,10 @@ def _approve_convertible_listing(database, harness, client):
     from tests.integration.test_operator_intake_workflow_postgresql import (
         _headers as intake_headers,
     )
+    from tests.integration.test_operator_intake_workflow_postgresql import (
+        _seed_historical_submission,
+        _snapshot,
+    )
 
     direct = client.post(
         f"{BASE}/network-listings/listings/{_CONVERTIBLE_LISTING_ID}/convert",
@@ -1506,18 +1510,33 @@ def _approve_convertible_listing(database, harness, client):
             conn.execute("INSERT INTO identity.account_roles(account_id,role,granted_by) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
                          (APPROVER, role, "isolated-synthetic-writer-test"))
     base = f"{BASE}/network-listings/intake"
-    submitted = client.post(base + "/submit", json={"url": "https://rent.591.com.tw/synthetic-writer"}, headers=intake_headers())
+    body = {"url": "https://rent.591.com.tw/synthetic-writer"}
+    # Retained history is prepared in the original same-engine bridge, not by
+    # either retired fresh HTTP writer. The POST below is exact receipt replay.
+    retained = _seed_historical_submission(harness.bundle, body["url"])
+    before_replay = _snapshot(harness.bundle)
+    submitted = client.post(base + "/submit", json=body, headers=intake_headers())
     assert submitted.status_code == 200, submitted.text
-    iid = submitted.json()["id"]
+    assert submitted.json() == retained
+    assert _snapshot(harness.bundle) == before_replay
+    assert retained["stage"] == "AWAITING_ASSISTED_ENTRY"
+    assert retained["assignmentId"] and retained["slaInstanceId"]
+    iid = retained["id"]
     corrected = client.post(f"{base}/{iid}/correct", json={"fields": {"floor": "1F"}, "reason": "Synthetic recorded input",
                             "riskSummary": "Synthetic local writer coverage", "riskAcknowledged": True},
                             headers=intake_headers(key="synthetic-writer-correct"))
     assert corrected.status_code == 200, corrected.text
     decided = client.post(f"{base}/{iid}/decide", json={"action": "revise", "targetListingId": _CONVERTIBLE_LISTING_ID,
                           "reason": "Synthetic measured listing", "riskSummary": "Synthetic local writer coverage", "riskAcknowledged": True},
-                          headers=_reviewer_headers("synthetic-writer-decide"))
+                          headers={**_reviewer_headers("synthetic-writer-decide"),
+                                   "If-Match": f'W/"{corrected.json()["version"]}"'})
     assert decided.status_code == 200, decided.text
     intake = decided.json()
+    assert intake["stage"] == "READY"
+    assert intake["matchResult"]["targetListingId"] == _CONVERTIBLE_LISTING_ID
+    assert intake["submittedBy"] == MANAGER
+    assert intake["assignmentId"] == retained["assignmentId"]
+    assert intake["slaInstanceId"] == retained["slaInstanceId"]
     # Read through the real metadata adapter; do not move PIT values onto the
     # stored Listing or construct/save a CandidateSiteDraft in the fixture.
     listing = V1ListingRepositoryAdapter(harness.listing(TENANT)).get_domain_listing(_CONVERTIBLE_LISTING_ID)
