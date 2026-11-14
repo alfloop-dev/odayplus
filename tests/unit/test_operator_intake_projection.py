@@ -83,22 +83,38 @@ def test_projection_masking_does_not_expose_canonical_raw_aliases_or_contact_val
 def test_nonterminal_duplicate_checks_resource_authority_before_disclosing_identity():
     from modules.opsboard.application.network_listings import (
         InMemoryAssistedIntakeRepository,
+        NetworkListingPolicyError,
         NetworkListingService,
     )
+    from tests.contract.test_operator_listing_actor_binding import OWNER, TENANT, _seed_submission
 
     repo = InMemoryAssistedIntakeRepository()
-    repo.save_intake({"id": "hidden-intake-uuid", "tenantId": "tenant-a",
-                      "canonicalUrl": "https://example.invalid/hidden", "stage": "SUBMITTED"})
-    service = NetworkListingService(intake_repository=repo)
+    original = _seed_submission(repo, key="retained-key", url="https://example.invalid/hidden", heat_zone_id=None)
+    original["stage"] = "SUBMITTED"
+    repo.save_intake(original)
+    service = NetworkListingService(intake_repository=repo, tenant_id=TENANT, seed_fixtures=False)
+    request = dict(url="https://example.invalid/hidden", heat_zone_id=None,
+                   actor_role_id="expansion_user", actor_name=OWNER, correlation_id="test-correlation")
     authorized = []
 
     def deny(resource):
-        authorized.append(resource["id"])
+        authorized.append(resource)
         raise PermissionError("SCOPE_DENIED")
 
+    before = deepcopy((repo.list_intakes(), repo.list_idempotency_records()))
+    # A new key is fresh even for the same URL: no target identity or scope is
+    # disclosed, and no receipt or business work is created.
+    with pytest.raises(NetworkListingPolicyError, match="^LEGACY_URL_CREATE_RETIRED:") as fresh:
+        service.submit_intake(**request, idempotency_key="different-submission-key", authorize_existing=deny)
+    assert original["id"] not in str(fresh.value) and authorized == []
+    assert (repo.list_intakes(), repo.list_idempotency_records()) == before
+
+    # A genuinely retained actor-bound receipt must reauthorize the CURRENT
+    # resource, not the original receipt's stale scope or terminal status.
+    current = {**original, "heatZoneId": "now-private-zone"}
+    repo.save_intake(current)
+    before = deepcopy((repo.list_intakes(), repo.list_idempotency_records()))
     with pytest.raises(PermissionError, match="^SCOPE_DENIED$"):
-        service.submit_intake(url="https://example.invalid/hidden", heat_zone_id=None,
-                              actor_role_id="expansion_user", actor_name="verified-subject",
-                              idempotency_key="different-submission-key", correlation_id="test-correlation",
-                              authorize_existing=deny)
-    assert authorized == ["hidden-intake-uuid"]
+        service.submit_intake(**request, idempotency_key="retained-key", authorize_existing=deny)
+    assert authorized == [current]
+    assert (repo.list_intakes(), repo.list_idempotency_records()) == before
