@@ -634,10 +634,11 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     );
     await fixtureApi.dispose();
     expect(markerCandidates).toHaveLength(1);
+    // Absent and null both mean no recorded point; the map adapter draws none.
     expect(
-      markerCandidates[0],
+      [markerCandidates[0].latitude ?? null, markerCandidates[0].longitude ?? null],
       "CS-1001 now has a recorded point: extend this case through its map marker click and reload.",
-    ).toMatchObject({ latitude: null, longitude: null });
+    ).toEqual([null, null]);
   });
 });
 
