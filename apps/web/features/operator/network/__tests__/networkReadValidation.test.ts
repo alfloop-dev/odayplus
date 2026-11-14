@@ -1260,7 +1260,7 @@ describe("rendered Network read contracts", () => {
 // Synthetic rendering fixture matching the pinned registry read allowlist.
 // It is not a grant, source activation, financial scenario or model admission.
 const targetFormat = {
-  format_code: "ODAY_G2", format_version: "2.0.0", format_name: "ODay G2 accepted untaxed package",
+  format_code: "ODAY_G2", format_version: "2.1.0", format_name: "ODay G2 accepted untaxed package",
   package_total_untaxed: 5546000, unallocated_package_cost: 200000, daily_operating_hours: 24,
   machine_mix: { items: [[27, 730000, 150], [17, 630000, 120]].map(([kg, cost, price]) => ({
     quantity: 3, machine_model: { model_id: `G2-COMBO-${kg}KG-V2`, machine_class: "COMBO", capacity_kg: kg,
@@ -1272,9 +1272,13 @@ const targetFormat = {
     .map(([kind, cost]) => ({ asset_id: `G2-${kind}-V2`, asset_kind: kind, quantity: 1, unit_capex: cost,
       useful_life_months: 60, residual_value_ratio: 0, monthly_fixed_operating_cost: null })),
   fitout_spec: { base_fitout_cost: 915245, fitout_useful_life_months: 60 },
-  utilities_spec: null, maintenance_spec: null, financing_spec: null, tax_spec: null, residual_spec: null,
+  utilities_spec: null, maintenance_spec: null, financing_spec: null, tax_spec: null,
+  residual_spec: { equipment_salvage_ratio: null, fitout_salvage_ratio: 0, recover_lease_deposit: null,
+    decommissioning_and_reinstatement_cost: null } as Record<string, unknown> | null,
   ramp_spec: null, seasonality_spec: null,
 };
+// Explicitly retained 2.0.0 read shape: no typed residual policy at all.
+const retainedTargetFormat = { ...targetFormat, format_version: "2.0.0", residual_spec: null };
 const emptyWithFormat = { source: "canonical", modelVersion: null, candidates: [], scorecards: [], batchResults: [],
   compare: { columns: [], metrics: [], recommendation: null, empty: true }, compareSet: [], targetFormat };
 const formatDamage: Array<[string, (value: any) => void]> = [
@@ -1300,6 +1304,17 @@ const formatDamage: Array<[string, (value: any) => void]> = [
   ["missing fitout", (x) => { x.fitout_spec = null; }],
   ["nonfinite fitout", (x) => { x.fitout_spec.base_fitout_cost = Infinity; }],
   ["non-null policy", (x) => { x.tax_spec = { corporate_tax_rate: 0.2 }; }],
+  ["unreviewed version", (x) => { x.format_version = "2.2.0"; }],
+  ["missing residual", (x) => { x.residual_spec = null; }],
+  ["unknown fitout residual", (x) => { x.residual_spec.fitout_salvage_ratio = null; }],
+  ["coercible fitout residual", (x) => { x.residual_spec.fitout_salvage_ratio = "0"; }],
+  ["out-of-range fitout residual", (x) => { x.residual_spec.fitout_salvage_ratio = 1.5; }],
+  ["unreviewed equipment residual", (x) => { x.residual_spec.equipment_salvage_ratio = 0.12; }],
+  ["unreviewed deposit recovery", (x) => { x.residual_spec.recover_lease_deposit = false; }],
+  ["unreviewed reinstatement", (x) => { x.residual_spec.decommissioning_and_reinstatement_cost = 0; }],
+  ["missing residual unknown", (x) => { delete x.residual_spec.recover_lease_deposit; }],
+  ["internal residual id", (x) => { x.residual_spec.spec_id = "RES-G2-ACCEPTED-V2"; }],
+  ["retained version with residual", (x) => { x.format_version = "2.0.0"; }],
 ];
 
 describe("read-only standard configuration in the existing SiteScore flow", () => {
@@ -1310,6 +1325,12 @@ describe("read-only standard configuration in the existing SiteScore flow", () =
     expect(scoring(legacy)).toBe("empty");
     expect(scoring({ ...emptyWithFormat, source: "fixture" })).toBe("seed");
     expect(scoring({ ...emptyWithFormat, source: "api" })).toBe("error");
+  });
+  it("keeps the explicitly retained 2.0.0 read shape without residual policy", () => {
+    expect(scoring({ ...emptyWithFormat, targetFormat: retainedTargetFormat })).toBe("empty");
+    const value: any = clone(emptyWithFormat);
+    value.targetFormat = { ...clone(retainedTargetFormat), residual_spec: targetFormat.residual_spec };
+    expect(scoring(value)).toBe("error");
   });
   it.each(formatDamage)("rejects %s at the API-to-UI boundary", (_name, damage) => {
     const value: any = clone(emptyWithFormat); damage(value.targetFormat);
@@ -1336,7 +1357,7 @@ describe("read-only standard configuration in the existing SiteScore flow", () =
     expect(summaries[0]).toHaveClass(styles.scoreMeta);
     expect(block.querySelector("table, thead, th, td")).toBeNull();
     expect(block.querySelector("input, select, textarea, button")).toBeNull();
-    expect(block).toHaveTextContent("ODAY_G2 · 2.0.0");
+    expect(block).toHaveTextContent("ODAY_G2 · 2.1.0");
     expect(block).toHaveTextContent("完整未稅套裝NT$5,546,000");
     expect(block).toHaveTextContent("套裝內未分配金額NT$200,000（已含於總價，非額外費用");
     expect(block).toHaveTextContent("24 小時／日");
@@ -1352,8 +1373,9 @@ describe("read-only standard configuration in the existing SiteScore flow", () =
       const asset = within(block).getByText(label, { selector: "dt" }).parentElement!;
       expect(asset.querySelector("dd")).toHaveTextContent(`1 件 × NT$${cost}；60 月／殘值比 0；每月營運成本 未知`);
     }
-    expect(block).toHaveTextContent("工程裝修（未稅）NT$915,245；60 月或較短租期");
-    expect(block).toHaveTextContent("水電費率、維護、融資、稅、殘值政策、爬坡與季節性：未知");
+    expect(block).toHaveTextContent("工程裝修（未稅）NT$915,245；60 月或較短租期／已確認工程殘值比 0");
+    expect(block).toHaveTextContent("水電費率、維護、融資、稅、設備整體殘值、押金回收、復原成本、爬坡與季節性：未知");
+    expect(block).not.toHaveTextContent("RES-G2-ACCEPTED-V2");
     expect(block).toHaveTextContent("未計算 ROI、折舊或報告 CAPEX");
     for (const { machine_model: model } of targetFormat.machine_mix.items) {
       expect(document.body).not.toHaveTextContent(model.model_id);
@@ -1400,6 +1422,17 @@ describe("read-only standard configuration in the existing SiteScore flow", () =
     expect(report).not.toContainElement(block);
     expect(report).not.toHaveTextContent("5,546,000");
     expect(fetchMock.mock.calls.every(([, init]) => !(init as RequestInit | undefined)?.method)).toBe(true);
+  });
+
+  it("renders retained 2.0.0 compatibility without claiming a confirmed residual", () => {
+    render(createElement(SiteScorePanel, { candidates: [], fallbackRows: [], scorecards: [],
+      targetFormat: retainedTargetFormat as any }));
+    const block = screen.getByTestId("sitescore-target-format");
+    expect(block).toHaveTextContent("ODAY_G2 · 2.0.0");
+    expect(block).toHaveTextContent("工程裝修（未稅）NT$915,245；60 月或較短租期");
+    expect(block).not.toHaveTextContent("已確認工程殘值比");
+    expect(block).toHaveTextContent("水電費率、維護、融資、稅、殘值政策、爬坡與季節性：未知");
+    expect(block).toHaveTextContent("未計算 ROI、折舊或報告 CAPEX");
   });
 
   it("keeps current template visually outside saved report CAPEX/rent assumptions", () => {

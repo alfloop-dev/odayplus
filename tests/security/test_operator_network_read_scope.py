@@ -374,7 +374,12 @@ def test_canonical_clean_empty_has_authorized_template_but_no_model_report_or_wr
     assert snap["candidates"] == snap["scorecards"] == snap["batchResults"] == snap["compareSet"] == []
     assert snap["compare"]["empty"] is True
     assert snap["counts"] == {"candidates": 0, "scored": 0, "gateBlocked": 0}
-    assert snap["targetFormat"]["format_version"] == "2.0.0"
+    assert snap["targetFormat"]["format_version"] == "2.1.0"
+    # Only reviewed residual data: accepted fitout 0, other policies explicit unknowns.
+    assert snap["targetFormat"]["residual_spec"] == {"equipment_salvage_ratio": None,
+        "fitout_salvage_ratio": 0.0, "recover_lease_deposit": None,
+        "decommissioning_and_reinstatement_cost": None}
+    assert "RES-G2-ACCEPTED-V2" not in response.text and "USER-013" not in response.text
     assert runtime.calls == 0 and engine.query("SELECT * FROM durable_documents") == before
     # A caller's filtering principal is not the trusted read principal.
     assert service.snapshot()["targetFormat"] is None
@@ -440,7 +445,7 @@ def test_entitled_registry_failure_is_original_503_not_v1_or_fixture_fallback(ca
 
     class UnavailableRegistry:
         def get(self, code, version):
-            assert (code, version) == ("ODAY_G2", "2.0.0")
+            assert (code, version) == ("ODAY_G2", "2.1.0")
             raise KeyError("unavailable")
 
     service._format_registry = UnavailableRegistry()
@@ -454,6 +459,34 @@ def test_entitled_registry_failure_is_original_503_not_v1_or_fixture_fallback(ca
     client, headers = mount(roles=("operator_viewer",))
     assert client.get("/api/v1/operator/network-scoring", headers=headers).json()["targetFormat"] is None
     assert client.get("/api/v1/operator/network-scoring").status_code == 401
+
+
+@pytest.mark.parametrize("change", [
+    {"equipment_salvage_ratio": 0.12}, {"recover_lease_deposit": False},
+    {"decommissioning_and_reinstatement_cost": 0.0}, {"fitout_salvage_ratio": None},
+    {"fitout_salvage_ratio": True}, {"fitout_salvage_ratio": 1.5}, "missing", "version"])
+def test_unreviewed_residual_policy_is_original_503_not_projected(canonical_scoring_read, change):
+    from dataclasses import replace
+
+    from modules.site_economics.domain.formats import TargetFormatRegistry
+
+    service, _, _, runtime, _, mount = canonical_scoring_read
+    current = TargetFormatRegistry().get("ODAY_G2", "2.1.0")
+
+    class UnreviewedRegistry:
+        def get(self, code, version):
+            if change == "version":
+                return replace(current, format_version="2.0.0", residual_spec=None)
+            if change == "missing":
+                return replace(current, residual_spec=None)
+            return replace(current, residual_spec=replace(current.residual_spec, **change))
+
+    service._format_registry = UnreviewedRegistry()
+    client, headers = mount()
+    response = client.get("/api/v1/operator/network-scoring", headers=headers)
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "SITESCORE_TARGET_FORMAT_UNAVAILABLE"
+    assert "targetFormat" not in response.text and runtime.calls == 0
 
 
 # The Console always sends selectedHeatZoneId once a zone is chosen. A filter
