@@ -211,12 +211,19 @@ The accessibility callers retain their original focus-return, Tab/Shift+Tab,
 Enter and screen-label assertions. The shared submission helper activates the
 same form through either click or Enter; both positive accessibility submissions
 must also pass the existing independent SQL graph checks. They do not use the
-legacy fresh writer or a synthetic READY response. Current real-browser runs
-still fail focus return: the outer Network workspace classifies the canonical
-collection/add route as full-page detail and remounts its Radar subtree. A
-Radar-only lifetime change passed a component test but did not fix the actual
-browser path and was removed. The outer caller requires scope coordination;
-these accessibility cases are not yet qualified.
+legacy fresh writer or a synthetic READY response. Earlier real-browser runs
+failed focus return: the outer Network workspace classified the canonical
+collection/add route as full-page detail and remounted its Radar subtree. The
+unsuccessful Radar-only change and its failure evidence remain in history.
+The workspace now uses the existing URL parser to reserve detail-first layout
+for selected native records (or durable routes), keeping collection/add dialogs
+under the original Network shell. Radar retains both the Inbox invoker and the
+same picker beneath those dialogs; selected native details still replace the
+legacy reader. The existing shared modal hook remains the sole focus owner.
+The original workspace route/gate tests exercise this actual Radar path in
+addition to detail-first, authority and command-lifetime controls. These changes
+still require the five real browser profiles; component tests alone do not
+qualify accessibility.
 
 These cases exercise the old Inbox button and `dialog=add` through the same
 native form, explicit observed scope and human reason, actual 201/SUBMITTED,
