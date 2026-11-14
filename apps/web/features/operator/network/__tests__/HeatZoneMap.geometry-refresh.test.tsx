@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cellToBoundary } from "h3-js";
 import { HeatZoneMap } from "../HeatZoneMap";
-import type { HeatZone } from "../mapTypes";
+import type { CandidateSite, HeatZone } from "../mapTypes";
 
 const maps = vi.hoisted(() => ({ instances: [] as any[], layers: [] as any[] }));
 vi.mock("@deck.gl/react", () => ({ default: ({ layers }: { layers: any[] }) => { maps.layers = layers; return null; } }));
@@ -58,6 +58,11 @@ function zone(id: string, centroid: [number, number]): HeatZone {
     competitorCapacity: 0, medianListingRent: 0, existingStoreCount: 0, dataQualityScore: 0.8 };
 }
 const freshness = { status: "FRESH", updatedAt: "", modelVersion: "unit-recorded", featureSnapshotTime: "", sourceSnapshotId: "unit-recorded" };
+function candidate(id: string, coordinates: [number, number] | null): CandidateSite {
+  return { id, address: id, status: "scored", heatZoneId: "HZ-01", coordinates, heatZoneScore: 80,
+    rentArea: "", geocode: "", feasibility: "OK", listingSource: "", siteScore: "80 / GO",
+    readiness: coordinates === null ? "blocked" : "ready" };
+}
 describe("map viewport follows a real geometry replacement", () => {
   beforeEach(() => {
     maps.instances = [];
@@ -121,6 +126,58 @@ describe("map viewport follows a real geometry replacement", () => {
     act(() => map.emit("load"));
     expect(map.getSource("odp-local-heatzones").data.features.map((feature: any) => feature.properties.id)).toEqual(["HZ-02"]);
     expect(map.getSource("odp-local-heatzones").setData.mock.lastCall[0].features.map((feature: any) => feature.properties.id)).toEqual(["HZ-02"]);
+  });
+
+  it("routes an actual canvas pick to the exact native candidate at its current geometry", () => {
+    const persistedId = "8f0c2c1e-1b7a-4a59-9a37-2f3c8b0d1e55";
+    const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+    try {
+      // Stale Intake locator, zone, review and candidate state from the prior view.
+      window.history.replaceState(null, "", "/operator?ws=network&tab=areas&layers=h3%2Ccandidates%2Cconfidence"
+        + "&selected=IN-stale&dialog=intake-detail&intakeKind=submission&section=evidence&zone=HZ-01"
+        + "&review=RV-stale&candidate=CS-stale#intake/IN-stale");
+      const props = { listings: [], freshness, productionMode: false, selectedZoneId: "far-zone",
+        zones: [zone("far-zone", [121, 24])] };
+      const initial = [candidate(persistedId, [121.56, 25.03]), candidate("CS-neighbor", [121.6, 25.03]),
+        candidate("CS-unlocated", null)];
+      const view = render(<HeatZoneMap {...props} candidates={initial} />);
+      const map = maps.instances[0];
+      map.project = vi.fn(([lng, lat]: [number, number]) => ({ x: (lng - 121.5) * 4000, y: (25.1 - lat) * 4000 }));
+      act(() => map.emit("load"));
+      const markerIds = () => maps.layers.find((layer) => layer.props.id === "odp-candidate-sites").props.data
+        .map((item: CandidateSite) => item.id);
+      expect(markerIds()).toEqual([persistedId, "CS-neighbor"]);
+      const canvas = screen.getByTestId("heat-zone-map-canvas");
+
+      fireEvent.click(canvas, { clientX: 250, clientY: 285 });
+      expect(assign).toHaveBeenCalledTimes(1);
+      const href = assign.mock.lastCall![0] as string;
+      expect(href).toBe(`/operator?ws=network&tab=candidates&layers=h3%2Ccandidates%2Cconfidence&candidate=${persistedId}`);
+      const url = new URL(href, "http://oday.local");
+      expect(url.searchParams.getAll("candidate")).toEqual([persistedId]);
+      for (const stale of ["selected", "drawer", "dialog", "intakeKind", "section", "zone", "review"]) {
+        expect(url.searchParams.has(stale)).toBe(false);
+      }
+      expect(href).not.toContain("/w/");
+
+      // A non-Intake hash and the existing view filters survive selection.
+      window.history.replaceState(null, "", "/operator?ws=network&tab=areas#find-areas-tray");
+      fireEvent.click(canvas, { clientX: 398, clientY: 282 });
+      expect(assign.mock.lastCall![0]).toBe("/operator?ws=network&tab=candidates&candidate=CS-neighbor#find-areas-tray");
+
+      // The refreshed recorded point replaces the old one; the old pixel and an
+      // empty pixel select nothing rather than the nearest other row.
+      view.rerender(<HeatZoneMap {...props} candidates={[candidate(persistedId, [121.53, 25.06]), initial[1], initial[2]]} />);
+      assign.mockClear();
+      fireEvent.click(canvas, { clientX: 250, clientY: 285 });
+      fireEvent.click(canvas, { clientX: 900, clientY: 900 });
+      expect(assign).not.toHaveBeenCalled();
+      fireEvent.click(canvas, { clientX: 122, clientY: 158 });
+      expect(assign).toHaveBeenCalledTimes(1);
+      expect(new URL(assign.mock.lastCall![0] as string, "http://oday.local").searchParams.getAll("candidate")).toEqual([persistedId]);
+    } finally {
+      assign.mockRestore();
+    }
   });
 
   it.each(["", "h3-synthetic-zone"])("keeps production zones with unavailable geometry off every polygon, label and pick target (%s)", (h3) => {

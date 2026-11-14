@@ -599,6 +599,45 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     await expect(page.getByTestId("listing-zone-filter-chip")).toContainText(
       "HZ-02",
     );
+
+    // Candidate marker -> native Candidates tab is not provable in this
+    // composition: the original fixture candidate has no recorded geocode, so
+    // the map draws no marker for it and nothing here may invent one. The
+    // marker pick and its exact href are covered by the HeatZoneMap canvas
+    // Vitest case; this check fails once a recorded point exists so the
+    // browser marker journey can be extended instead of silently skipped.
+    test.info().annotations.push({
+      type: "unverified",
+      description: "Browser candidate-marker click -> /operator?ws=network&tab=candidates&candidate=<id> -> reload: fixture CS-1001 has no recorded coordinates.",
+    });
+    const fixtureApi = await apiContext();
+    const converted = await fixtureApi.post(
+      "/api/v1/operator/network-listings/listings/L-2024/convert",
+      {
+        headers: {
+          "X-Correlation-Id": randomUUID(),
+          "Idempotency-Key": `fixture-map-marker-${randomUUID()}`,
+        },
+        data: {
+          actorRoleId: "expansion-manager",
+          reason: "Prepare the local synthetic Candidate map marker fixture.",
+          riskAcknowledged: true,
+          riskSummary: "Explicit local fixture setup for map marker read navigation.",
+        },
+      },
+    );
+    expect(converted.status(), await converted.text()).toBe(200);
+    const snapshot = await fixtureApi.get("/api/v1/operator/network-listings");
+    expect(snapshot.status()).toBe(200);
+    const markerCandidates = (await snapshot.json()).candidates.filter(
+      (candidate: { id: string }) => candidate.id === "CS-1001",
+    );
+    await fixtureApi.dispose();
+    expect(markerCandidates).toHaveLength(1);
+    expect(
+      markerCandidates[0],
+      "CS-1001 now has a recorded point: extend this case through its map marker click and reload.",
+    ).toMatchObject({ latitude: null, longitude: null });
   });
 });
 
