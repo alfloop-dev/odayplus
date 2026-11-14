@@ -149,6 +149,19 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
     with database.connect() as connection:
         from modules.listing.application.native_intake_url_identity import NATIVE_URL_RULE_VERSION
 
+        # The upstream parser fixture's defer_audit() postpones its own audit
+        # jobs by a day to isolate internal execution. That test-only deferral
+        # must not survive into this long-lived runtime composition: restore
+        # normal eligibility for only this tenant's queued deferred audits.
+        # The existing worker must actually deliver them to the original sink;
+        # no audit row, job, age or five-minute admission guard is discarded.
+        deferred_fixture_audits = [str(row[0]) for row in connection.execute(
+            "UPDATE odp_runtime.durable_jobs SET available_at=clock_timestamp() "
+            "WHERE job_type='canonical-audit-delivery' AND status='QUEUED' "
+            "AND payload_json->>'tenant_id'=%s AND available_at>clock_timestamp() RETURNING job_id",
+            (ids["tenant"],)).fetchall()]
+        assert deferred_fixture_audits
+
         # Explicit isolated negative registry premises. No legal/license,
         # account, retrieval or assisted-entry approval is supplied by these
         # rows. The actual identity and source-policy workers must classify them.
@@ -525,6 +538,12 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         assert len({entry["key"] for entry in fresh_commands}) == expected_submissions
         assert len({entry["receipt"]["intake_id"] for entry in fresh_commands}) == expected_submissions
         with database.connect() as connection:
+            for audit_job_id in deferred_fixture_audits:
+                audit_job = worker_bundle.job_queue.get(audit_job_id)
+                assert audit_job.status == JobStatus.SUCCEEDED
+                assert connection.execute("SELECT worm_object_uri FROM audit.audit_events "
+                    "WHERE tenant_id=%s AND audit_event_id=%s",
+                    (ids["tenant"], audit_job.payload["audit_event_id"])).fetchone()[0]
             # Independently verify the actual browser-to-SQL graph. No worker
             # admission was requested for these submission-only URLs; SUBMITTED
             # is not successful policy/retrieval, a match outcome or READY.

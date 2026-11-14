@@ -168,7 +168,17 @@ export async function openPgScenario(page: Page, options: {
       page.off("request", observe);
     }
   } else {
-    await page.goto(`${PG_WEB}/intake/${scenario.intake_id}?ws=network&tab=radar`);
+    // These retained records have no HeatZone. Explicitly open all areas,
+    // just as the Inbox entry above does, rather than inheriting HZ-01 and
+    // racing an omitted-row/direct-GET remount while testing local validation.
+    // The separate omission/503 regression still exercises that real reader.
+    const listing = page.waitForResponse((response) => response.request().method() === "GET"
+      && new URL(response.url()).pathname === "/api/v1/operator/network-listings/intake"
+      && !new URL(response.url()).searchParams.has("selectedHeatZoneId"));
+    await page.goto(`${PG_WEB}/intake/${scenario.intake_id}?ws=network&tab=radar&heatZoneId=`);
+    const observed = await listing;
+    expect(observed.status(), await observed.text()).toBe(200);
+    expect((await observed.json()).items.map((item: { id: string }) => item.id)).toContain(scenario.intake_id);
   }
   await expect(page.getByTestId("intake-detail-id")).toHaveText(scenario.intake_id, { timeout: 30_000 });
   const retainedStage = { "assisted-entry-only": "待人工補錄", "possible-match": "待人工覆核", "retrieval-timeout": "處理失敗", "revision": "可決策",

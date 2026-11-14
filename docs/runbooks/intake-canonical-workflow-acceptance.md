@@ -308,8 +308,22 @@ must retain that exact choice. No `HZ-01`-to-UUID conversion or inferred scope i
 used. Its accepted key joins the common independent SQL graph verification;
 only full130 selects this original shell case, so native5 keeps its original
 seven submission-only commands while full130 expects eight. This FindAreas
-source increment has not yet executed in the full packet and is not a passing
-browser or whole-packet qualification claim.
+increment executed in the original full packet at `c679bee80c8b`: the actual
+runner exited 1 after 862.52 seconds (98 passed, 3 failed, 29 skipped out of
+130). FindAreas reached the real form/submit but received 503
+`CANONICAL_AUDIT_UNAVAILABLE`, as did a later native submission. The upstream
+parser fixture had deferred its own audit jobs by one day; that deferral
+outlived the five-minute backlog guard in this longer composition. The helper
+now restores normal eligibility for only that tenant's queued deferred fixture
+audits before starting the runtime, and requires the original worker's real
+successful delivery and WORM receipt. It does not delete audits/jobs, change
+ages, weaken the backlog guard or add a publisher path. A retained local
+reason-validation check also failed during an omitted-row/direct-GET remount;
+the existing retained fixture entry now explicitly selects all areas for its
+unscoped records and binds the actual populated list, matching its existing
+Inbox entry. The separate omitted-row/503 regression remains unchanged.
+These repairs still need actual browser requalification; the failed full
+packet remains evidence, not a passing browser or whole-packet claim.
 
 The original assisted-spec blocked/unknown probe now uses that same password
 session, explicit scope/reason form and canonical POST. Two uniquely hosted
