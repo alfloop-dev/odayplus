@@ -259,10 +259,10 @@ export function AssistedIntakeSection({
     if (generation !== refreshGeneration.current || client !== activeClient.current) return;
     if (result.ok) {
       setRecords((current) => {
-        // A directly read selection may be outside the filtered inbox. Keep
-        // it mounted throughout correction/decision dialogs too, so a pending
-        // list response cannot discard the draft or its same-key retry.
-        if (!["detail", "fix", "decide", "assignmentSla"].includes(dialog ?? "") || !selectedId) return result.value.items;
+        // Only the detail view retains an off-page selection. Command dialogs
+        // must resolve list omissions through the direct reader; the parent's
+        // decision scope retains the draft and same-key retry across unmounts.
+        if (dialog !== "detail" || !selectedId) return result.value.items;
         if (result.value.items.some((item) => item.id === selectedId)) {
           return result.value.items;
         }
