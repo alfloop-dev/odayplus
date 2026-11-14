@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 import type { Listing, ListingSource } from "../types";
 import type { ListingRadarRow } from "../networkFindAreasViewModel";
@@ -13,6 +14,7 @@ import { AssistedIntakeSection } from "./intake/AssistedIntakeSection";
 import { CanonicalIntakeCasePicker } from "./intake/CanonicalIntakeCasePicker";
 import type { CanonicalIntakeReadContext } from "./intake/canonicalIntakeReadClient";
 import type { IntakeUrlState } from "./intake/types";
+import { intakePathSelection, parseUrlState } from "./intake/urlState";
 import { MERGE_DENIED_NOTE, canMergeListing } from "./listingPermissions";
 import { resolveListingAction, type ListingWriteContext } from "./listingActions";
 import { resolveListingNavigation, type ListingNavigation, type ListingNavigationTarget } from "./listingNavigation";
@@ -100,6 +102,9 @@ export function ListingRadarPanel({
   sources: ListingSource[];
   writeContext?: ListingWriteContext;
 }) {
+  const pathname = usePathname(), searchParams = useSearchParams();
+  const canonicalCollection = intakeKind === "canonical" && intakePathSelection(pathname) === undefined
+    && !parseUrlState(searchParams).selectedId;
   const [filterMode, setFilterMode] = useState<"selected" | "all">("selected");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [selectedListingId, setSelectedListingId] = useState("");
@@ -163,18 +168,21 @@ export function ListingRadarPanel({
         binding. The radar below is API-bound in production and may use fixtures
         only in local/POC mode.
       */}
-      {intakeKind ? intakeKind === "canonical" && canonicalIntakeReadContext
-        ? <CanonicalIntakeCasePicker context={canonicalIntakeReadContext} />
-        : <p role="alert">{intakeKind === "invalid" ? "收件連結的用途無效，請返回收件匣重新開啟。" : "目前無法驗證正式收件的讀取資格，請確認登入與權限。"}</p>
-        : <AssistedIntakeSection
+      {/* Keep the real Inbox invoker mounted under the native collection modal.
+          Replacing it destroys the shared dialog hook's focus-return target.
+          A selected native detail still unmounts the legacy reader entirely. */}
+      {!intakeKind || (canonicalCollection && canonicalIntakeReadContext) ? <AssistedIntakeSection
         activeRoleId={activeRoleId}
         canonicalIntakeAvailable={Boolean(canonicalIntakeReadContext)}
         selectedHeatZoneId={selectedHeatZoneId}
         heatZoneOptions={heatZoneOptions}
         targetListings={listings.map(toTargetListingData)}
-      />}
+      /> : intakeKind !== "canonical" || !canonicalIntakeReadContext
+        ? <p role="alert">{intakeKind === "invalid" ? "收件連結的用途無效，請返回收件匣重新開啟。" : "目前無法驗證正式收件的讀取資格，請確認登入與權限。"}</p>
+        : null}
 
-      {!intakeDetailOpen && !intakeKind && canonicalIntakeReadContext ? <CanonicalIntakeCasePicker context={canonicalIntakeReadContext} /> : null}
+      {canonicalIntakeReadContext && (intakeKind === "canonical" || (!intakeDetailOpen && !intakeKind))
+        ? <CanonicalIntakeCasePicker context={canonicalIntakeReadContext} /> : null}
 
       {navigationError ? <p role="alert">{navigationError}</p> : null}
       {listingsReadFailure ? (
