@@ -194,7 +194,8 @@ checks, and existing service-identity requirement still apply; this is not
 human UAT or production data admission.
 
 The existing `run_native_identity_browser` composition now selects
-`canonical native:` cases from **both** original assisted-intake specs. Its
+`canonical native:` cases from **both** original assisted-intake specs and the
+three original focus/keyboard/landmark cases in the accessibility spec. Its
 original five profiles (UNSCOPED, REGION, CASE_CONTEXT,
 CASE_CONTEXT_APPEND_DIRECT, URL_MANUAL) retain the password/BFF/SQL identity,
 metadata transport and signed worker checks. Run them through the existing
@@ -205,6 +206,17 @@ env UV_PYTHON=3.12 uv run --frozen pytest -q \
   tests/integration/test_native_matching_case_command_postgresql.py \
   -k test_native_browser_password_session_and_registered_worker_read_real_persisted_result
 ```
+
+The accessibility callers retain their original focus-return, Tab/Shift+Tab,
+Enter and screen-label assertions. The shared submission helper activates the
+same form through either click or Enter; both positive accessibility submissions
+must also pass the existing independent SQL graph checks. They do not use the
+legacy fresh writer or a synthetic READY response. Current real-browser runs
+still fail focus return: the outer Network workspace classifies the canonical
+collection/add route as full-page detail and remounts its Radar subtree. A
+Radar-only lifetime change passed a component test but did not fix the actual
+browser path and was removed. The outer caller requires scope coordination;
+these accessibility cases are not yet qualified.
 
 These cases exercise the old Inbox button and `dialog=add` through the same
 native form, explicit observed scope and human reason, actual 201/SUBMITTED,

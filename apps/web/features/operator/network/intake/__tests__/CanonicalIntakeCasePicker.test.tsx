@@ -234,25 +234,6 @@ function RadarWithCurrentIntakeRoute({ context, role = "expansion-manager" }: {
 }
 
 describe("native Intake and case selection", () => {
-  it("keeps the actual Inbox invoker mounted so the shared modal owner restores focus after native Escape", async () => {
-    const legacyFetch = vi.fn(async () => json({ items: [], total: 0, page: 1, pageSize: 10,
-      counts: {}, evidenceState: "complete" }));
-    vi.stubGlobal("fetch", legacyFetch);
-    const context = makeContext();
-    render(<CanonicalIntakeCommandProvider context={context}><RadarWithCurrentIntakeRoute context={context} /></CanonicalIntakeCommandProvider>);
-    const trigger = screen.getByTestId("intake-add-button");
-    trigger.focus(); fireEvent.click(trigger);
-    await screen.findByTestId("intake-add-dialog");
-    expect(screen.getByTestId("intake-add-button")).toBe(trigger);
-    expect(screen.getByTestId("intake-url-input")).toHaveFocus();
-    fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(screen.getByTestId("intake-add-button")).toBe(trigger);
-    expect(trigger).toHaveFocus();
-    expect(posts(context)).toHaveLength(0);
-    expect(new URL(window.location.href).searchParams.get("dialog")).toBeNull();
-  });
-
   it.each(["button", "legacy add URL"])("routes the actual legacy Inbox %s through the native picker/form/reader without an old POST", async (entry) => {
     if (entry === "legacy add URL") window.history.replaceState(null, "", "/operator?ws=network&tab=radar&dialog=add&selected=IN-old&decision=create&extra=a&extra=b#intake/IN-old");
     else window.history.replaceState(null, "", "/operator?ws=network&tab=radar&extra=a&extra=b");

@@ -950,8 +950,8 @@ export function AssistedIntakeSection({
     selected &&
     promotionHydration.intakeId === selected.id &&
     promotionHydration.state === "ready";
-  const detailContextOpen = urlState.intakeKind !== "canonical" && (
-    dialog === "detail" || dialog === "fix" || dialog === "decide" || dialog === "assignmentSla");
+  const detailContextOpen =
+    dialog === "detail" || dialog === "fix" || dialog === "decide" || dialog === "assignmentSla";
   return (
     <>
       {!detailContextOpen ? <ListingInboxIntakeView
