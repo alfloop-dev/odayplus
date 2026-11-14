@@ -1651,11 +1651,24 @@ def _check_model_lineage(
     )
 
 
+def _is_unpromoted_dev_version(item: Any) -> bool:
+    """A registered dev candidate that no approval or alias has touched."""
+
+    return (
+        isinstance(item, Mapping)
+        and item.get("stage") == "dev"
+        and item.get("aliases") == []
+        and item.get("approved_by") is None
+        and item.get("approved_at") is None
+    )
+
+
 def _check_model_registry_refused(
     response: HttpResponse,
     *,
     checks: list[CheckResult],
     registry_bound: bool = False,
+    allow_unpromoted_dev_versions: bool = False,
 ) -> None:
     """With production bindings unverified, the model registry must refuse.
 
@@ -1668,21 +1681,35 @@ def _check_model_registry_refused(
     When the runtime reports the remote registry as bound
     (``learninghubRegistryBound``) the reads do come from the approved
     registry, so an empty listing is the honest answer for "no verified
-    versions yet". Only an empty listing is accepted there: any served version
-    still blocks, because nothing has been verified for production.
+    versions yet". Outside dev only an empty listing is accepted there: any
+    served version still blocks, because nothing has been verified for
+    production.
+
+    ``allow_unpromoted_dev_versions`` is set only for a dev deployment. A dev
+    registry may then also hold trained candidates that were registered but
+    never promoted: every listed version must be at stage ``dev`` with no
+    alias and no approval. Any approved, aliased or later-stage version still
+    blocks, so nothing is ever presented as verified for production.
     """
 
     refused = (not response.failed) and response.status == 503
     expected = "503 while production bindings are unverified"
     if registry_bound and not refused:
         payload = _as_dict(response.payload)
-        refused = (
-            (not response.failed)
-            and response.status == 200
-            and payload.get("items") == []
-            and payload.get("count") == 0
-        )
+        items = payload.get("items")
+        served = (not response.failed) and response.status == 200 and isinstance(items, list)
+        refused = served and items == [] and payload.get("count") == 0
         expected = "503, or 200 with no model versions from the bound registry"
+        if allow_unpromoted_dev_versions:
+            refused = refused or (
+                served
+                and payload.get("count") == len(items)
+                and all(_is_unpromoted_dev_version(item) for item in items)
+            )
+            expected = (
+                "503, or 200 from the bound registry with no versions or only unpromoted "
+                "dev versions (stage=dev, no aliases, not approved)"
+            )
     _check(
         checks,
         refused,
@@ -3128,6 +3155,7 @@ def evaluate_gate(
                 models_response,
                 checks=checks,
                 registry_bound=runtime_models.get("learninghubRegistryBound") is True,
+                allow_unpromoted_dev_versions=config.expected_deployment == "dev",
             )
         else:
             _check_model_lineage(models_response, checks=checks)
