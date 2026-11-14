@@ -258,6 +258,84 @@ for (const width of [1440, 1024, 390]) {
         scope: scenario.scope, linked, createdNative, reopenedNative: reopenedDetail, writes, geometry: executiveGeometry,
       }, null, 2), contentType: "application/json" });
       await executiveDialog.screenshot({ path: testInfo.outputPath(`actual-area-native-reopened-${width}px.png`) });
+      if (width === 390) {
+        // Narrow window: the shared Modal is itself the scroll container, so its
+        // header close and footer cancel scroll with the body. A real wheel scroll
+        // (not Playwright's actionability auto-scroll) must bring each original
+        // control into the viewport; it is then pressed at that visible point and
+        // focus must return to this executive page's own launcher.
+        const executiveLaunch = executive.getByTestId("find-areas-zone-actions")
+          .getByRole("button", { name: "加入季度展店計畫", exact: true });
+        const scrollOf = (target: Locator) => target.evaluate(element => ({
+          top: element.scrollTop, max: element.scrollHeight - element.clientHeight }));
+        const wheelTo = async (target: Locator, end: "top" | "bottom") => {
+          const box = (await target.boundingBox())!;
+          await executive.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+          const before = await scrollOf(target);
+          await expect.poll(async () => {
+            await executive.mouse.wheel(0, end === "bottom" ? 400 : -400);
+            const now = await scrollOf(target);return end === "bottom" ? now.max - now.top : now.top;
+          }, { timeout: 15_000 }).toBeLessThanOrEqual(1);
+          const after = await scrollOf(target);
+          return { from: before.top, to: after.top, max: after.max };
+        };
+        // Visible inside both the window and the dialog's scrollport, and the
+        // topmost element at its centre is the control itself (nothing covers it).
+        const visibility = (control: Locator) => control.evaluate(element => {
+          const rect = element.getBoundingClientRect();
+          const port = element.closest('[role="dialog"]')!.getBoundingClientRect();
+          const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2, hit = document.elementFromPoint(x, y);
+          return { x, y, top: rect.top, bottom: rect.bottom, inViewport: rect.top >= Math.max(0, port.top) - 1
+            && rect.bottom <= Math.min(window.innerHeight, port.bottom) + 1 && rect.left >= 0 && rect.right <= window.innerWidth,
+          hit: hit !== null && element.contains(hit) };
+        });
+        const pressVisible = async (target: Locator, control: Locator, expectedTop: number) => {
+          const seen = await visibility(control);
+          expect(seen).toMatchObject({ inViewport: true, hit: true });
+          expect((await scrollOf(target)).top).toBe(expectedTop);
+          await executive.mouse.click(seen.x, seen.y);
+          await expect(target).toHaveCount(0);await expect(executiveLaunch).toBeFocused();
+          return seen;
+        };
+        const cancel = executiveDialog.getByRole("button", { name: "取消", exact: true });
+        const cancelBefore = await visibility(cancel);
+        expect(cancelBefore.inViewport).toBe(false);
+        const down = await wheelTo(executiveDialog, "bottom");
+        expect(down.to - down.from).toBeGreaterThan(0);
+        await executiveDialog.screenshot({ path: testInfo.outputPath(`actual-area-native-scrolled-cancel-${width}px.png`) });
+        const cancelPressed = await pressVisible(executiveDialog, cancel, down.to);
+
+        // Reopen the same persisted native-linked draft through the original
+        // launcher and fresh area/native GETs; nothing is re-created.
+        executiveDialog = await openAreaDialog(executive, scenario.zone_id);
+        const reopeningAgain = linkedReads(executive, id);
+        await executiveDialog.getByRole("button", { name: `${name} · v3 · 已建立 NetPlan`, exact: true }).click();
+        const [againArea, againNative] = await reopeningAgain;
+        expect(againArea.status(), await againArea.text()).toBe(200);expect(await againArea.json()).toEqual(linked);
+        expect(path(againNative)).toBe(nativeBase + scenarioId);
+        expect(againNative.status(), await againNative.text()).toBe(200);
+        const againDetail = await againNative.json();verifyNative(againDetail);
+        expect(againDetail.created_at).toBe(createdNative.created_at);
+        await verifyReadback(executiveDialog);
+        const close = executiveDialog.getByRole("button", { name: "關閉", exact: true });
+        const bottom = await wheelTo(executiveDialog, "bottom");
+        const closeBefore = await visibility(close);
+        expect(closeBefore.inViewport).toBe(false);
+        const up = await wheelTo(executiveDialog, "top");
+        expect(up.from - up.to).toBeGreaterThan(0);
+        await executiveDialog.screenshot({ path: testInfo.outputPath(`actual-area-native-scrolled-close-${width}px.png`) });
+        const closePressed = await pressVisible(executiveDialog, close, up.to);
+        await testInfo.attach(`actual-area-native-${width}-scroll-dismissal.json`, { body: JSON.stringify({
+          scope: scenario.scope, cancel: { before: cancelBefore, scroll: down, pressed: cancelPressed },
+          reopened: { draft: linked, nativeScenarioId: againDetail.scenario_id, createdAt: againDetail.created_at },
+          close: { bottom, before: closeBefore, scroll: up, pressed: closePressed }, writes,
+        }, null, 2), contentType: "application/json" });
+      }
+      // After every added interaction the persisted record is unchanged and the
+      // explicit materialize remains the only write.
+      const finalArea = await browserRequest(executive, `${base}/${id}`, { headers: { "x-operator-role": "expansion-manager" } });
+      expect(finalArea.status, finalArea.text).toBe(200);expect(finalArea.json).toEqual(linked);
+      expect(writes).toEqual([`POST ${base}/${id}/materialize`]);
     } finally { await other.close();await executiveContext.close();await controls.dispose(); }
   });
 }
