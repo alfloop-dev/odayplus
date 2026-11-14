@@ -246,3 +246,160 @@ def test_private_command_receipts_cannot_be_read_retried_or_forged_through_gener
         blocked = case.client.post(prefix, json=data, headers=hdrs)
         assert blocked.status_code == 422, blocked.text
     assert case.bundle.job_queue.get_by_idempotency_key(reserved) is None
+
+
+NATIVE = "/api/v1/netplan/scenarios"
+
+
+def complete(case, **changes):
+    return create(case, quarter="2027Q1", budget=2500000, candidateIds=[case.candidate], **changes)["draft"]
+
+
+def materialize(case, draft, *, actor="executive", key="synthetic-quarterly-materialize-key", version=None):
+    return case.client.post(
+        BASE + "/" + draft["draftId"] + "/materialize", headers=headers(case, actor, key=key),
+        json={"expectedVersion": draft["version"] if version is None else version},
+    )
+
+
+def receipt_count(case):
+    return len(case.bundle.engine.query("SELECT job_id FROM durable_jobs WHERE job_type = ?",
+                                        ("netplan-area-draft.command-receipt",)))
+
+
+def test_native_creator_materializes_complete_draft_and_reopens_the_original_native_draft(case):
+    draft = complete(case)
+    response = materialize(case, draft)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    scenario_id = DurableAreaPlanningDraftRepository.scenario_id_for_draft(draft["draftId"])
+    linked = result["draft"]
+    assert linked["status"] == "MATERIALIZED" and linked["version"] == 2
+    assert linked["nativeScenarioId"] == scenario_id
+    assert linked["materializedBy"] == case.actors["executive"] and linked["createdBy"] == case.actors["staff"]
+    assert len(result["auditEventIds"]) == 2 and not result["replayed"]
+    reopened = case.client.get(BASE + "/" + draft["draftId"], headers=headers(case, "executive"))
+    assert reopened.status_code == 200 and reopened.json() == linked
+    native = case.client.get(NATIVE + "/" + scenario_id, headers=headers(case, "executive"))
+    assert native.status_code == 200, native.text
+    detail = native.json()
+    assert detail["tenant_id"] == case.tenant and detail["status"] == "draft"
+    assert detail["scenario_name"] == draft["name"] and detail["planning_horizon"] == "2027Q1"
+    assert detail["constraints"]["max_budget"] == 2500000
+    assert list(detail["options_by_entity"]) == [case.candidate]
+    # ID-only original mapping: no source, model, currency or GM is invented.
+    assert all(option["source_snapshot_ids"] == [] for option in detail["options_by_entity"][case.candidate])
+    assert detail["solve"] is None and detail["approvals"] == [] and detail["status_history"] == []
+    assert detail["execution"] is None and detail["outcome"] is None
+    stored = case.native.get_scenario(scenario_id)
+    assert stored.tenant_id == case.tenant and [row.scenario_id for row in case.native.list_scenarios()] == [scenario_id]
+    events = {event.event_type: event for event in case.bundle.audit_log.list_events(tenant_id=case.tenant)}
+    assert events["netplan.scenario_created.v1"].actor == case.actors["executive"]
+    assert events["netplan.area_draft.materialize"].metadata["native_scenario_id"] == scenario_id
+
+
+def test_same_receipt_replay_never_creates_again_or_resets_an_advanced_native_draft(case):
+    draft = complete(case)
+    first = materialize(case, draft)
+    assert first.status_code == 200, first.text
+    scenario_id = first.json()["draft"]["nativeScenarioId"]
+    advanced = case.client.put(NATIVE + "/" + scenario_id, headers=headers(case, "executive", key="synthetic-native-edit"),
+                               json={"scenario_name": "Native edit after materialization"})
+    assert advanced.status_code == 200, advanced.text
+    receipts = receipt_count(case)
+    replay = materialize(case, draft)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["replayed"] and replay.json()["receiptId"] == first.json()["receiptId"]
+    assert replay.json()["draft"] == first.json()["draft"]
+    assert case.native.get_scenario(scenario_id).scenario_name == "Native edit after materialization"
+    again = materialize(case, draft, key="synthetic-second-materialize-key")
+    assert again.status_code == 409, again.text
+    assert receipt_count(case) == receipts
+    assert len(case.native.list_scenarios()) == 1
+    assert case.repository.get(draft["draftId"]).version == 2
+
+
+def test_planning_only_staff_cannot_use_area_update_to_create_native_scenario(case):
+    draft = complete(case)
+    receipts = receipt_count(case)
+    response = materialize(case, draft, actor="staff")
+    assert response.status_code == 403, response.text
+    assert case.native.list_scenarios() == [] and receipt_count(case) == receipts
+    assert case.repository.get(draft["draftId"]).status.value == "DRAFT"
+
+
+def test_incomplete_or_stale_draft_is_refused_before_any_native_creation(case):
+    incomplete = create(case, quarter="2027Q1", budget=None, candidateIds=[case.candidate])["draft"]
+    refused = materialize(case, incomplete)
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["detail"] == "AREA_PLANNING_DRAFT_INPUTS_INCOMPLETE"
+    draft = complete(case, key="synthetic-quarterly-second-create")
+    stale = materialize(case, draft, key="synthetic-stale-materialize-key", version=2)
+    assert stale.status_code == 409, stale.text
+    forged = case.client.post(BASE + "/" + draft["draftId"] + "/materialize",
+                              headers=headers(case, "executive", key="synthetic-forged-materialize"),
+                              json={"expectedVersion": 1, "scenarioId": "forged-native"})
+    assert forged.status_code == 422, forged.text
+    assert case.native.list_scenarios() == []
+    assert case.repository.get(draft["draftId"]).version == 1
+
+
+def test_existing_native_id_keeps_original_refusal_and_rolls_back_the_link(case):
+    draft = complete(case)
+    scenario_id = DurableAreaPlanningDraftRepository.scenario_id_for_draft(draft["draftId"])
+    squatter = case.client.post(NATIVE, headers=headers(case, "executive", key="synthetic-native-squatter"), json={
+        "tenant_id": case.tenant, "scenario_name": "Pre-existing native", "planning_horizon": "2027Q1",
+        "constraints": {"max_budget": 1}, "candidate_sites": [{"candidate_site_id": case.candidate}],
+        "scenario_id": scenario_id,
+    })
+    assert squatter.status_code == 201, squatter.text
+    receipts = receipt_count(case)
+    response = materialize(case, draft)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "NATIVE_SCENARIO_ID_ALREADY_EXISTS"
+    assert case.native.get_scenario(scenario_id).scenario_name == "Pre-existing native"
+    assert case.repository.get(draft["draftId"]).status.value == "DRAFT" and receipt_count(case) == receipts
+
+
+def test_revoked_candidate_blocks_materialize_and_its_replay(case):
+    draft = complete(case)
+    pending = complete(case, key="synthetic-revoked-second-create")
+    first = materialize(case, draft)
+    assert first.status_code == 200, first.text
+    changed = deepcopy(case.snapshot)
+    changed["candidates"] = []
+    case.native_state.save(case.tenant, changed)
+    replay = materialize(case, draft)
+    assert replay.status_code == 404, replay.text
+    # The refusal is decided inside the shared native transaction; its audit
+    # is still recorded after that transaction rolls back.
+    denials = [event for event in case.bundle.audit_log.list_events(tenant_id=case.tenant)
+               if event.event_type == "netplan.area_draft.authorization_denied"]
+    assert [event.metadata["reason"] for event in denials] == ["AREA_PLANNING_PARENT_NOT_FOUND"]
+    refused = materialize(case, pending, key="synthetic-revoked-new-materialize")
+    assert refused.status_code == 404, refused.text
+    assert len(case.native.list_scenarios()) == 1
+    assert case.repository.get(pending["draftId"]).status.value == "DRAFT"
+
+
+@pytest.mark.parametrize("failing", ["netplan.scenario_created.v1", "netplan.area_draft.materialize"])
+def test_audit_failure_rolls_back_native_draft_link_and_receipt_together(case, monkeypatch, failing):
+    draft = complete(case)
+    receipts = receipt_count(case)
+    actual_record = case.bundle.audit_log.record
+
+    def refuse(event):
+        if event.event_type == failing:
+            raise RuntimeError("Declared engineering audit failure")
+        return actual_record(event)
+
+    monkeypatch.setattr(case.bundle.audit_log, "record", refuse)
+    response = materialize(case, draft)
+    assert response.status_code == 500, response.text
+    assert case.native.list_scenarios() == [] and receipt_count(case) == receipts
+    current = case.repository.get(draft["draftId"])
+    assert current.status.value == "DRAFT" and current.version == 1
+    monkeypatch.setattr(case.bundle.audit_log, "record", actual_record)
+    retried = materialize(case, draft)
+    assert retried.status_code == 200 and not retried.json()["replayed"]
+    assert len(case.native.list_scenarios()) == 1

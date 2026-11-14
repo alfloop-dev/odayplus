@@ -141,6 +141,8 @@ def create_operator_router(
     netplan_production_executor: Any | None = None,
     netplan_policy_repository: Any | None = None,
     netplan_approval_verifier: Any | None = None,
+    netplan_request_owner: Any | None = None,
+    netplan_runtime_mode: str | None = None,
     evidence_store: Any | None = None,
     intake_repository: Any | None = None,
     intake_workflow_store: Any | None = None,
@@ -252,11 +254,67 @@ def create_operator_router(
             correlation_id=request.state.correlation_id,
         )
 
+    def area_planning_native_create_unavailable(request: Request):
+        raise HTTPException(503, "AREA_PLANNING_NATIVE_OWNER_UNAVAILABLE")
+
+    def area_planning_materialize_for_request(request: Request, identity: str,
+                                              payload: dict[str, Any], key: str):
+        # The original native request owner holds CREATE, current credential,
+        # tenant partition, SQL transaction and audit outbox. The proposal
+        # owner is built on its exact raw repository, so native creation,
+        # proposal CAS, receipt and audit share one physical transaction.
+        from apps.api.app.routes.netplan import (
+            NetPlanScenarioPayload,
+            create_native_scenario,
+            native_owned_service,
+        )
+
+        if netplan_request_owner is None or not callable(area_planning_zone_reader):
+            raise HTTPException(503, "AREA_PLANNING_NATIVE_OWNER_UNAVAILABLE")
+        area = None
+        try:
+            with netplan_request_owner.operation(request, Action.CREATE) as native:
+                area = AreaPlanningDraftOwner(
+                    principal=native.principal, native_repository=native.raw,
+                    audit_log=netplan_request_owner.audit, queue=netplan_request_owner.queue,
+                    heat_zone_reader=lambda: area_planning_zone_reader(request),
+                    candidate_snapshot_reader=netplan_request_owner.candidates,
+                    correlation_id=request.state.correlation_id,
+                )
+
+                def create_native(values: dict[str, Any]):
+                    body = NetPlanScenarioPayload(**values)
+                    # Original create-only admission: pinned identity, current
+                    # candidate parents and the existing-ID refusal.
+                    native.pin_body(body)
+                    native.admit_request(body)
+                    service = native_owned_service(
+                        native, production_executor=netplan_production_executor,
+                        approval_verifier=netplan_approval_verifier,
+                        policy_repository=netplan_policy_repository,
+                        runtime_mode=netplan_runtime_mode, feature_flags=feature_flags,
+                        job_queue=job_queue,
+                    )
+                    return create_native_scenario(service, body, request, netplan_request_owner.audit)
+
+                return area.materialize(identity=identity, payload=payload, key=key,
+                                        native=native, create_native=create_native)
+        except HTTPException:
+            # The shared native transaction has rolled back; keep the decided
+            # proposal refusal durable like the ordinary area commands.
+            if area is not None:
+                area.record_denial()
+            raise
+
     router.include_router(create_area_planning_draft_sub_router(
         require_view=require_operator_permission(AREA_PLANNING_DRAFT_RESOURCE, Action.VIEW, engine=authz_engine),
         require_create=require_operator_permission(AREA_PLANNING_DRAFT_RESOURCE, Action.CREATE, engine=authz_engine),
         require_update=require_operator_permission(AREA_PLANNING_DRAFT_RESOURCE, Action.UPDATE, engine=authz_engine),
         owner_for_request=area_planning_owner_for_request,
+        require_native_create=(netplan_request_owner.permission(Action.CREATE)
+                               if netplan_request_owner is not None
+                               else area_planning_native_create_unavailable),
+        materialize_for_request=area_planning_materialize_for_request,
     ))
 
     # FinanceLegal is an existing AVM principal, not an Operator display persona.

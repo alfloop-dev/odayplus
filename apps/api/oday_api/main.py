@@ -2696,6 +2696,10 @@ else:
                 netplan_production_executor=netplan_production_executor,
                 netplan_policy_repository=netplan_policy_repo,
                 netplan_approval_verifier=netplan_approval_verifier,
+                # Area materialization enters the original native NetPlan
+                # request owner with the same service configuration.
+                netplan_request_owner=native_netplan_owner,
+                netplan_runtime_mode=domain_runtime_mode,
                 evidence_store=evidence_store,
                 intake_repository=operator_intake_repository,
                 intake_workflow_store=assisted_intake_store,
