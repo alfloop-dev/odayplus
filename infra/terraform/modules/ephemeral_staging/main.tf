@@ -1029,16 +1029,10 @@ resource "google_cloud_run_v2_service" "staging_web" {
         }
       }
 
-      liveness_probe {
-        initial_delay_seconds = 30
-        timeout_seconds       = 3
-        period_seconds        = 30
-        failure_threshold     = 3
-
-        tcp_socket {
-          port = 3000
-        }
-      }
+      # No liveness probe: Cloud Run rejects a TCP socket liveness probe
+      # (CreateService INVALID_ARGUMENT, staging deploy 43566488597) and the
+      # Web serves no health path for an HTTP one. This matches the live dev
+      # oday-web service, which runs with the TCP startup probe only.
     }
   }
 
