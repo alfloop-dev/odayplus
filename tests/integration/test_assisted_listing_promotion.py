@@ -12,7 +12,6 @@ from apps.api.app.routes.listings import V1ListingRepositoryAdapter
 from apps.api.oday_api.main import create_app
 from modules.external_data.application.assisted_intake import RETRIEVAL_CORPUS, parse_snapshot
 from modules.listing.application.promotion import PromotionService
-from modules.opsboard.application.network_listings import IntakeIdempotencyRecord
 from modules.listing.domain.intake_states import (
     Actor,
     PrincipalRole,
@@ -20,6 +19,7 @@ from modules.listing.domain.intake_states import (
 )
 from modules.listing.domain.models import ListingDedupKey
 from modules.listing.tests.test_promotion_candidate_gate import _ExplicitTestDispatcher
+from modules.opsboard.application.network_listings import IntakeIdempotencyRecord
 from shared.auth import Role
 from shared.domain import AddressLocation, Listing
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle

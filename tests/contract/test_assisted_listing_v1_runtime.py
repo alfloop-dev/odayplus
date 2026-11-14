@@ -11,7 +11,11 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from apps.api.app.routes.listings import AssistedIntakeStore, IntakeSubmissionReceipt, UrlIntakeRequest
+from apps.api.app.routes.listings import (
+    AssistedIntakeStore,
+    IntakeSubmissionReceipt,
+    UrlIntakeRequest,
+)
 from apps.api.oday_api.main import create_app
 from apps.api.oday_api.security import dependencies as auth_dependencies
 from modules.listing.application.intake_workflow_bootstrap import initialize_intake_workflow

@@ -2260,9 +2260,18 @@ def test_runner_uses_actual_legacy_http_decision_version_and_role(fault: str, ex
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from apps.api.app.routes.operator_modules.network_listings import create_network_listings_sub_router
-    from apps.api.oday_api.security.dependencies import build_engine, require_operator_permission, reset_bound_persistence
-    from modules.opsboard.application.network_listings import InMemoryAssistedIntakeRepository, NetworkListingService
+    from apps.api.app.routes.operator_modules.network_listings import (
+        create_network_listings_sub_router,
+    )
+    from apps.api.oday_api.security.dependencies import (
+        build_engine,
+        require_operator_permission,
+        reset_bound_persistence,
+    )
+    from modules.opsboard.application.network_listings import (
+        InMemoryAssistedIntakeRepository,
+        NetworkListingService,
+    )
     from shared.audit import InMemoryAuditLog
     from shared.auth import Action
 

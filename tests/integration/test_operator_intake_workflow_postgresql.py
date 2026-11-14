@@ -17,7 +17,9 @@ from modules.opsboard.application import network_listings
 from modules.opsboard.application.operator_live_repository import OperatorLiveRepository
 from shared.auth import Role
 from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
-from shared.infrastructure.persistence.operator_intake_workflow import OperatorIntakeWorkflowRepository
+from shared.infrastructure.persistence.operator_intake_workflow import (
+    OperatorIntakeWorkflowRepository,
+)
 from shared.jobs.queue import JobRequest
 from tests.intake_registry_fixture import (
     AT,

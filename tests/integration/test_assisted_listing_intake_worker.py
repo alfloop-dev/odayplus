@@ -7,7 +7,9 @@ from apps.api.oday_api.main import create_app
 from shared.auth import Role
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.factory import _durable_bundle
-from shared.infrastructure.persistence.operator_network_listings import DurableAssistedIntakeRepository
+from shared.infrastructure.persistence.operator_network_listings import (
+    DurableAssistedIntakeRepository,
+)
 from shared.jobs.queue import JobRequest, JobStatus
 from tests.integration._authz import auth_headers
 

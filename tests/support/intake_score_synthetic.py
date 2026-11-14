@@ -24,7 +24,9 @@ from modules.sitescore.domain.scoring import SITESCORE_FEATURE_VERSION
 from shared.auth import Role
 from shared.domain.models import AddressLocation, Listing
 from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
-from shared.infrastructure.persistence.operator_intake_workflow import OperatorIntakeWorkflowRepository
+from shared.infrastructure.persistence.operator_intake_workflow import (
+    OperatorIntakeWorkflowRepository,
+)
 from tests.intake_registry_fixture import (
     APPROVER,
     MANAGER,
@@ -156,7 +158,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         scope_keys = ("brand_id", "region_id", "assigned_area_id", "heat_zone_id")
         actual_scope = connection.execute("SELECT brand_id,region_id,assigned_area_id,heat_zone_id FROM intake.intakes "
             "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], parsed["intake_id"])).fetchone()
-        credentials["fresh_scope"] = {key: str(value) if value is not None else None for key, value in zip(scope_keys, actual_scope)}
+        credentials["fresh_scope"] = {key: str(value) if value is not None else None for key, value in zip(scope_keys, actual_scope, strict=True)}
         assert credentials["fresh_scope"]["region_id"] == manager_region_id
         if manager_region_id:
             assert connection.execute("SELECT region_id FROM intake.intakes WHERE tenant_id=%s AND intake_id=%s",
@@ -249,9 +251,8 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
     policy_admissions = {policy: [] for policy in policy_sources}
 
     if url_manual_capture is not None:
-        from shared.infrastructure.persistence.factory import PersistenceBundle
-
         from modules.listing.application.native_intake_parser import NativeIntakeParserOwner
+        from shared.infrastructure.persistence.factory import PersistenceBundle
 
         assert independent_reviewer and independent_reviewer != ids["reviewer"]
         assert url_manual_parser_registry is not None and url_manual_parser_release is not None
@@ -513,7 +514,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                 assert row[3] == body["original_url"] and all(value is None for value in row[4:])
                 scope = connection.execute("SELECT brand_id,region_id,assigned_area_id,heat_zone_id FROM intake.intakes "
                     "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], fresh_id)).fetchone()
-                assert {key: str(value) if value is not None else None for key, value in zip(scope_keys, scope)} == credentials["fresh_scope"]
+                assert {key: str(value) if value is not None else None for key, value in zip(scope_keys, scope, strict=True)} == credentials["fresh_scope"]
                 transitions = connection.execute("SELECT transition_id,from_state,to_state,actor_subject_id,"
                     "resulting_version FROM intake.intake_stage_transitions WHERE tenant_id=%s AND intake_id=%s",
                     (ids["tenant"], fresh_id)).fetchall()

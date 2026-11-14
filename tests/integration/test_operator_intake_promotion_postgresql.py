@@ -160,7 +160,12 @@ def _snapshot(bundle):
 
 def test_browser_ready_fixture_uses_retained_history_without_fresh_http(intake_blank_db, monkeypatch):
     from modules.opsboard.application.network_listings import NetworkListingService
-    from tests.support.intake_score_synthetic import SCOPE, headers, prepare_database, ready_scenario
+    from tests.support.intake_score_synthetic import (
+        SCOPE,
+        headers,
+        prepare_database,
+        ready_scenario,
+    )
 
     db = intake_blank_db
     prepare_database(db.url())

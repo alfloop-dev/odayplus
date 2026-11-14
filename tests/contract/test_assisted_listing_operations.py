@@ -13,7 +13,11 @@ import pytest
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator, FormatChecker
 
-from apps.api.app.routes.listings import AssistedIntakeStore, IntakeSubmissionReceipt, UrlIntakeRequest
+from apps.api.app.routes.listings import (
+    AssistedIntakeStore,
+    IntakeSubmissionReceipt,
+    UrlIntakeRequest,
+)
 from apps.api.oday_api.main import create_app
 from delivery_toolchain.openapi.generate_assisted_listing_intake_client import ARTIFACT
 from modules.listing.application.intake_workflow_bootstrap import initialize_intake_workflow
