@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from shared.auth import DataClassification
+from tests.integration.test_assisted_listing_intake_persistence import _replay_retained_url
 
 HEADERS = {
     "x-subject-id": "operator-expansion-manager",
@@ -36,9 +37,9 @@ def reset_service_state():
 def test_tenant_isolation() -> None:
     client = TestClient(create_app())
 
-    # Submit an intake for tenant-a
-    submit_resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    # Retained history keeps the actual tenant/read authorization boundary.
+    submit_resp = _replay_retained_url(
+        client.app, client,
         json={"url": "https://www.synthetic.example/detail-77120345.html", "heatZoneId": "HZ-01"},
         headers=_write_headers("tenant-isolation-submit"),
     )
@@ -62,9 +63,9 @@ def test_tenant_isolation() -> None:
 def test_region_heatzone_scope_isolation() -> None:
     client = TestClient(create_app())
 
-    # Submit intake in HZ-01
-    submit_resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    # Retained history in HZ-01; restricted reads must still be denied.
+    submit_resp = _replay_retained_url(
+        client.app, client,
         json={"url": "https://www.synthetic.example/detail-77120345.html", "heatZoneId": "HZ-01"},
         headers=_write_headers("hz-isolation-submit"),
     )
@@ -96,8 +97,8 @@ def test_ownership_enforcement() -> None:
             "x-operator-role": "expansion-staff",
         },
     )
-    submit_resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    submit_resp = _replay_retained_url(
+        client.app, client,
         json={
             "url": "https://www.synthetic.example/detail-ownership-unique.html",
             "heatZoneId": "HZ-01",
@@ -144,8 +145,8 @@ def test_self_review_prohibition() -> None:
             "x-operator-role": "expansion-manager",
         },
     )
-    submit_resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    submit_resp = _replay_retained_url(
+        client.app, client, outcome="REVISION", target="L-2024",
         json={"url": "https://www.synthetic.example/detail-88520242.html", "heatZoneId": "HZ-01"},
         headers=headers_user_a,
     )
@@ -250,9 +251,9 @@ def test_second_actor_segregation() -> None:
 def test_risk_acknowledgement_required() -> None:
     client = TestClient(create_app())
 
-    # Submit intake
-    submit_resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    # Use retained history, then exercise the real correction risk guard.
+    submit_resp = _replay_retained_url(
+        client.app, client,
         json={"url": "https://www.synthetic.example/detail-77120345.html", "heatZoneId": "HZ-01"},
         headers=_write_headers("risk-ack-submit"),
     )
@@ -395,8 +396,8 @@ def test_staff_view_own_only_filtering() -> None:
             "x-operator-role": "expansion-staff",
         },
     )
-    submit_a = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    submit_a = _replay_retained_url(
+        client.app, client,
         json={"url": "https://www.synthetic.example/detail-filter-a.html", "heatZoneId": "HZ-01"},
         headers=headers_user_a,
     )
@@ -412,8 +413,8 @@ def test_staff_view_own_only_filtering() -> None:
             "x-operator-role": "expansion-staff",
         },
     )
-    submit_b = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    submit_b = _replay_retained_url(
+        client.app, client,
         json={"url": "https://www.synthetic.example/detail-filter-b.html", "heatZoneId": "HZ-01"},
         headers=headers_user_b,
     )

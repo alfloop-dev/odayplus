@@ -17,6 +17,7 @@ from modules.external_data.security import (
     contains_sensitive_submission_material,
     redact_sensitive_snapshot,
 )
+from tests.integration.test_assisted_listing_intake_persistence import _replay_retained_url
 
 WRITER_HEADERS = {
     "x-subject-id": "operator-expansion-manager",
@@ -327,7 +328,7 @@ def test_operator_rejects_credentials_embedded_in_extra_text_before_creating_int
     assert response.status_code == 422 and "PRIVATE" not in response.text
 
 
-def test_blocked_source_submit_and_retry_never_call_retrieve(
+def test_retained_blocked_source_retry_never_calls_retrieve(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = TestClient(create_app())
@@ -337,13 +338,15 @@ def test_blocked_source_submit_and_retry_never_call_retrieve(
 
     monkeypatch.setattr(assisted_intake, "retrieve", fail_retrieve)
 
-    assisted = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    # Replay is history, not proof of current fresh admission. Retry below
+    # rechecks the actual source policy and must never retrieve.
+    assisted = _replay_retained_url(
+        client.app, client, stage="AWAITING_ASSISTED_ENTRY", outcome=None,
         headers=WRITER_HEADERS,
         json={"url": "https://www.591.com.tw/rent-detail-12345.html", "heatZoneId": "HZ-01"},
     )
-    unknown = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    unknown = _replay_retained_url(
+        client.app, client, stage="FAILED", outcome=None,
         headers=WRITER_HEADERS,
         json={"url": "https://www.unknown-domain.com/rent/123", "heatZoneId": "HZ-01"},
     )
@@ -356,15 +359,21 @@ def test_blocked_source_submit_and_retry_never_call_retrieve(
     assert assisted.status_code == 200
     assert assisted.json()["stage"] == "AWAITING_ASSISTED_ENTRY"
     assert unknown.status_code == 200
-    assert unknown.json()["stage"] == "QUARANTINED"
     assert retry.status_code == 200
     assert retry.json()["stage"] == "AWAITING_ASSISTED_ENTRY"
+    unknown_retry = client.post(
+        f"/api/v1/operator/network-listings/intake/{unknown.json()['id']}/retry",
+        headers=_write_headers("unknown-policy-retry"), json={},
+    )
+    assert unknown_retry.status_code == 200, unknown_retry.text
+    assert unknown_retry.json()["stage"] == "QUARANTINED"
+    assert unknown_retry.json()["matchResult"]["outcome"] == "QUARANTINED"
 
 
 def test_read_only_reviewer_can_read_but_cannot_write_intake_or_listing_actions() -> None:
     client = TestClient(create_app())
-    writer_submit = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    writer_submit = _replay_retained_url(
+        client.app, client,
         headers=WRITER_HEADERS,
         json={"url": "https://www.synthetic.example/detail-88520242.html", "heatZoneId": "HZ-01"},
     )
@@ -430,8 +439,8 @@ def test_read_only_reviewer_can_read_but_cannot_write_intake_or_listing_actions(
 
 def test_identity_affecting_writes_require_idempotency_and_correlation() -> None:
     client = TestClient(create_app())
-    submit = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    submit = _replay_retained_url(
+        client.app, client,
         headers=WRITER_HEADERS,
         json={"url": "https://www.synthetic.example/detail-99310418.html", "heatZoneId": "HZ-02"},
     )
@@ -463,8 +472,8 @@ def test_identity_affecting_writes_require_idempotency_and_correlation() -> None
 
 def test_idempotent_high_impact_replay_does_not_append_audit() -> None:
     client = TestClient(create_app())
-    submit = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    submit = _replay_retained_url(
+        client.app, client,
         headers=WRITER_HEADERS,
         json={"url": "https://www.synthetic.example/detail-99310418.html", "heatZoneId": "HZ-02"},
     )
@@ -527,13 +536,20 @@ def test_raw_snapshot_redacts_contact_and_token_material(monkeypatch: pytest.Mon
     )
     client = TestClient(create_app())
 
-    response = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    retained = _replay_retained_url(
+        client.app, client, stage="FAILED", outcome=None,
         headers=WRITER_HEADERS,
         json={"url": url, "heatZoneId": "HZ-01"},
     )
+    assert "rawSnapshot" not in retained.json()
+    # The real retained retry performs gate.fetch, redaction and snapshot
+    # persistence. No pre-redacted fixture is used as its own evidence.
+    response = client.post(
+        f"/api/v1/operator/network-listings/intake/{retained.json()['id']}/retry",
+        headers=_write_headers("redaction-retry"), json={},
+    )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     raw_snapshot = response.json()["rawSnapshot"]
     serialized = json.dumps(raw_snapshot, ensure_ascii=False)
     assert "0912-345-678" not in serialized

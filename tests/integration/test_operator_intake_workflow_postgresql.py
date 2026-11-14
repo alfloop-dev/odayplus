@@ -313,6 +313,7 @@ def _claim_intake_job(bundle, job_id):
 
 def _seed_historical_submission(
     bundle, url, *, key="synthetic-operator-submit", linked_job=False, heat_zone_id=None,
+    tenant=TENANT, actor=MANAGER,
 ):
     """Prepare retained Operator data through its existing repository contract.
 
@@ -321,16 +322,16 @@ def _seed_historical_submission(
     transaction owns the retained row, optional job and actor-bound receipt.
     """
     repository = OperatorIntakeWorkflowRepository(
-        bundle.assisted_intake_store, bundle.operator_intake_repository_for_tenant(TENANT),
-        TENANT, bundle.assisted_intake_workflow_policy,
+        bundle.assisted_intake_store, bundle.operator_intake_repository_for_tenant(tenant),
+        tenant, bundle.assisted_intake_workflow_policy,
     )
     intake_id, correlation = str(uuid4()), str(uuid4())
     at = AT.isoformat().replace("+00:00", "Z")
-    actor_key = hashlib.sha256(MANAGER.encode()).hexdigest() + ":" + key
+    actor_key = hashlib.sha256(actor.encode()).hexdigest() + ":" + key
     record = {
-        "id": intake_id, "tenantId": TENANT, "intakeMethod": "URL",
+        "id": intake_id, "tenantId": tenant, "intakeMethod": "URL",
         "originalUrl": url, "canonicalUrl": url, "heatZoneId": heat_zone_id,
-        "submitter": MANAGER, "submittedBy": MANAGER, "owner": MANAGER,
+        "submitter": actor, "submittedBy": actor, "owner": actor,
         "submittedAt": at, "updatedAt": at, "lastObservedAt": None,
         "stage": "SUBMITTED" if linked_job else "AWAITING_ASSISTED_ENTRY",
         "version": 1, "sourceId": "synthetic.retained-source",
@@ -342,18 +343,18 @@ def _seed_historical_submission(
         if linked_job:
             job, created = bundle.job_queue.enqueue(JobRequest(
                 job_type="assisted-listing-intake", payload={
-                    "intake_id": intake_id, "url": url, "tenant_id": TENANT,
+                    "intake_id": intake_id, "url": url, "tenant_id": tenant,
                     "heat_zone_id": heat_zone_id, "actor_role_id": Role.SITE_REVIEWER.value,
-                    "actor_name": MANAGER,
+                    "actor_name": actor,
                 }, idempotency_key="intake-submit:" + hashlib.sha256(
-                    f"{TENANT}:{actor_key}".encode()).hexdigest(),
+                    f"{tenant}:{actor_key}".encode()).hexdigest(),
             ), correlation_id=correlation)
             assert created
             record["jobId"] = job.job_id
         repository.save_intake(record)
         repository.save_idempotency_record(network_listings.IntakeIdempotencyRecord(
             action="submit_intake", key=actor_key, response=deepcopy(record),
-            actor_subject_id=MANAGER, request_sha256=hashlib.sha256(json.dumps(
+            actor_subject_id=actor, request_sha256=hashlib.sha256(json.dumps(
                 {"url": url.strip(), "heat_zone_id": heat_zone_id, "async_intake": False},
                 sort_keys=True, separators=(",", ":"), allow_nan=False,
             ).encode()).hexdigest(),
