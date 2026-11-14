@@ -115,7 +115,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
     assert re.fullmatch(r"oday_native_parser_p_[0-9a-f]{16}", database.dbname), database.dbname
     private_dir.mkdir(mode=0o700)
     password, signing, session_secret, metadata_secret = (secrets.token_urlsafe(40) for _ in range(4))
-    append_property = str(uuid4()) if independent_reviewer else None
+    append_property = str(uuid4()) if match_case is None else None
     policy_sources = {policy: {"source_id": "browser-policy-" + uuid4().hex,
         "original_url": "https://policy-" + uuid4().hex + ".example.invalid/Listing"}
         for policy in ("SOURCE_BLOCKED", "POLICY_UNKNOWN")}
@@ -253,6 +253,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
 
         from modules.listing.application.native_intake_parser import NativeIntakeParserOwner
 
+        assert independent_reviewer and independent_reviewer != ids["reviewer"]
         assert url_manual_parser_registry is not None and url_manual_parser_release is not None
         assert matching_boundary is not None and matching_credentials is not None and matching_policy
         original_manual_factory = PersistenceBundle.canonical_intake_assisted_entry
@@ -421,16 +422,17 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         assert browser.returncode == 0, browser_log[-12000:]
         assert metadata_counts["accepted"] > 0 and metadata_counts["rejected"] == 2
         reload = json.loads((private_dir / "native-receipt-reload.json").read_text())
-        assert (reload["actor_id"], reload["tenant_id"]) == (ids["reviewer"], ids["tenant"])
+        confirmation_actor = independent_reviewer if url_manual_capture is not None else ids["reviewer"]
+        assert (reload["actor_id"], reload["tenant_id"]) == (confirmation_actor, ids["tenant"])
         assert reload["postCount"] == 1 and reload["whole_page_reload"] and reload["recovered_by_exact_GET"]
         assert reload["post_keys_seen"] == [reload["key"]]
         assert reload["storage_accessor_denial_gated"] and reload["storage_reference_preserved"]
         assert reload["storage_denial_uncaught_errors"] == 0 and reload["storage_recovery_POSTs"] == 0
-        original = worker_bundle.assisted_intake_store.read_command_replay(ids["tenant"], ids["reviewer"],
+        original = worker_bundle.assisted_intake_store.read_command_replay(ids["tenant"], confirmation_actor,
             "proposeCanonicalIdentity", reload["key"], reload["match_case_id"])
         assert original is not None and original[1] == reload["receipt"] and original[2] == 201
         recovered = reload["other_command_recoveries"]
-        expected_variants = {"case-create", "case-append", "identity-review"} if independent_reviewer else set()
+        expected_variants = {"case-create", "case-append", "identity-review"} if append_property else set()
         assert {entry["variant"] for entry in recovered} == expected_variants
         assert len(recovered) == len(expected_variants)
         submissions = reload["submission_command_recoveries"]
@@ -667,7 +669,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             assert connection.execute("SELECT count(*) FROM identity.match_decisions d JOIN identity.match_cases c "
                 "ON c.match_case_id=d.match_case_id WHERE d.tenant_id=%s AND d.match_decision_id=%s "
                 "AND d.proposer_subject_id=%s AND c.intake_id=%s AND d.status='EXECUTED'",
-                (ids["tenant"], reload["receipt"]["decision_id"], ids["reviewer"], confirmed_intake)).fetchone()[0] == 1
+                (ids["tenant"], reload["receipt"]["decision_id"], confirmation_actor, confirmed_intake)).fetchone()[0] == 1
             assert connection.execute("SELECT count(*) FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s",
                 (ids["tenant"], reload["receipt"]["job_id"])).fetchone()[0] == 1
             sessions = connection.execute("SELECT count(*) FROM identity.sessions WHERE account_id=%s AND revoked_at IS NULL",
@@ -693,6 +695,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                 reviewer_sessions = connection.execute("SELECT count(*) FROM identity.sessions WHERE account_id=%s AND revoked_at IS NULL",
                     (independent_reviewer,)).fetchone()[0]
                 assert reviewer_sessions > 0
+            if append_property:
                 graph_decision = connection.execute("SELECT d.proposer_subject_id,d.reviewer_subject_id,d.status "
                     "FROM identity.match_decisions d JOIN identity.match_cases c ON c.match_case_id=d.match_case_id "
                     "WHERE c.tenant_id=%s AND c.intake_id=%s AND d.decision_type='MERGE'",

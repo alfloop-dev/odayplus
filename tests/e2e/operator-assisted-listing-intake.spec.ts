@@ -229,6 +229,8 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
       expect(ownRegion.status(), await ownRegion.text()).toBe(200);
       expect((await ownRegion.json()).scope.region_id).toBe(input.manager_region_id);
     }
+    let confirmationContext: Awaited<ReturnType<typeof browser.newContext>> | undefined;
+    try {
     const submissionRecoveries: Array<Awaited<ReturnType<typeof recoverNativeCommandResponse<CanonicalIntakeReceipt | CanonicalIntakeAssistedEntryRequestReceipt>>> & {
       variant: "url-submit" | "manual-entry"; intake_id: string; original_http_status: 201 | 202;
     }> = [];
@@ -296,7 +298,16 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
       input.intake_id = newIntakeId;
       input.match_case_id = freshCase!.match_case_id;
       await page.getByRole("button", { name: "收起原操作回執", exact: true }).click();
-      await selectNativeIntake(page, input.intake_id, true);
+      // Material human proposals cannot be confirmed by their own author.
+      // Use a genuinely separate SQL manager and password session, retaining
+      // the same fresh Intake/case and every original server guard.
+      expect(input.independent_reviewer).toBeTruthy();
+      expect(input.independent_reviewer!.actor_id).not.toBe(input.actor_id);
+      confirmationContext = await browser.newContext({ baseURL: new URL(page.url()).origin, extraHTTPHeaders: {} });
+      page = await confirmationContext.newPage();
+      await loginNativeSession(page, input.independent_reviewer!);
+      input.actor_id = input.independent_reviewer!.actor_id;
+      await selectNativeIntake(page, input.intake_id);
     } else await selectNativeIntake(page, input.intake_id);
     const otherRecoveries: Array<Awaited<ReturnType<typeof recoverNativeCommandResponse<MatchCaseReceipt | CanonicalIdentityReceipt>>> & {
       operation: "createCanonicalMatchCase" | "reviewCanonicalIdentity"; resource_id: string; original_http_status: 200 | 201;
@@ -492,6 +503,9 @@ if (process.env.ODP_NATIVE_BROWSER_SCENARIO_FILE) {
         ...proof, postCount: count(), post_keys_seen: sentKeys(),
       })),
     }), { mode: 0o600 });
+    } finally {
+      await confirmationContext?.close();
+    }
   });
 }
 

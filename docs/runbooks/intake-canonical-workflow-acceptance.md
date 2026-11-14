@@ -221,6 +221,8 @@ candidate composition also passes the fixture's explicit parser registry/release
 and real matcher boundary/credentials/policy through the same helper. The newly
 submitted UUID must continue through the registered parser worker, authenticated
 NEW proposal, original human confirmation and independent executor to READY.
+For URL_MANUAL, a separate actual SQL manager/password session confirms the
+material proposals; their submitting author retains no self-review authority.
 The original pre-parsed Intake remains MATCHING and cannot substitute for this
 fresh result. Independent SQL checks bind the manual snapshot, parser run/job,
 transition chain, confirmation and persisted fields to that same new UUID.

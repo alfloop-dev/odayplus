@@ -579,7 +579,7 @@ def test_native_browser_password_session_and_registered_worker_read_real_persist
         expected_version=current.version, fence_token=current.fence_token)
     proposed = None if create_case else _match(matching_case)
     _add_sql_manager(database, ids["tenant"], ids["reviewer"])
-    independent_reviewer = str(uuid4()) if create_case else None
+    independent_reviewer = str(uuid4()) if create_case or url_manual_browser else None
     if independent_reviewer:
         _add_sql_manager(database, ids["tenant"], independent_reviewer)
     monkeypatch.setenv(IDENTITY_SIGNING_KEY_ENV, "Owned synthetic browser execution signing material only")
