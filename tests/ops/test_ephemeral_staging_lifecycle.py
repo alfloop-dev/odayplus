@@ -4576,19 +4576,67 @@ class StagingLiveE2EGateTests(unittest.TestCase):
             "ODP_OPERATOR_SMOKE",
             "ODP_AUTH_PRINCIPAL_MAP_SECRET",
             "ODP_IDENTITY_BOOTSTRAP",
-            "ODP_IDENTITY_TOKEN_SIGNING_KEY",
             "ODP_AUTH_HS256_KEYS",
         ):
             self.assertNotIn(forbidden, main_text)
             self.assertNotIn(forbidden, variables_text)
         self.assertNotRegex(variables_text, r'variable\s+"[^"]*(smoke|principal)[^"]*"')
-        # The release-scoped secrets are unchanged. The only IAM additions are the
-        # release-scoped verify grants from ODP-STAGING-REHEARSAL-NETWORK-IDENTITY-001.
+        # ODP-STAGING-PASSWORD-RUNTIME-WIRING-261114: the local identity signing
+        # key now exists for human password login, but never as a caller input
+        # (no dev/prod key cohort can be passed in) and never for the smoke
+        # principal: every mount is the release-owned secret's pinned version.
+        self.assertNotIn("ODP_IDENTITY_TOKEN_SIGNING_KEY", variables_text)
+        self.assertNotRegex(variables_text, r'variable\s+"[^"]*(signing|identity|session|secret)[^"]*"')
+        key_mounts = re.findall(
+            r'name = "ODP_IDENTITY_TOKEN_SIGNING_KEY"\n\s*value_source \{\n\s*secret_key_ref \{\n'
+            r'\s*secret\s*= (\S+)\n\s*version = (\S+)\n',
+            main_text,
+        )
+        self.assertEqual(main_text.count('"ODP_IDENTITY_TOKEN_SIGNING_KEY"'), len(key_mounts))
+        self.assertEqual(
+            key_mounts,
+            [
+                (
+                    "google_secret_manager_secret.staging_identity_token_signing_key.secret_id",
+                    "google_secret_manager_secret_version.staging_identity_token_signing_key.version",
+                )
+            ]
+            * 2,
+        )
+        principal_map = re.search(r'"ODP_AUTH_PRINCIPAL_MAP"\n\s*value\s*=\s*jsonencode\(\{(.*?)\}\)\n', main_text, re.S)
+        self.assertIsNotNone(principal_map)
+        self.assertNotIn("identity", principal_map.group(1))
+        # The original three release secrets are unchanged and keep their
+        # purpose; the only addition is the release-owned local identity key.
         self.assertEqual(
             re.findall(r'resource "google_secret_manager_secret" "(\w+)"', main_text),
-            ["staging_database_url", "staging_cursor_signing_key", "staging_web_session"],
+            [
+                "staging_database_url",
+                "staging_cursor_signing_key",
+                "staging_web_session",
+                "staging_identity_token_signing_key",
+            ],
         )
-        self.assertEqual(len(re.findall(r'resource "random_password"', main_text)), 3)
+        self.assertEqual(len(re.findall(r'resource "random_password"', main_text)), 4)
+        # Signer, cursor and session keys are three distinct secrets: none is
+        # reused for another purpose.
+        for env_name, secret in (
+            ("ODP_INTAKE_CURSOR_SIGNING_KEY", "staging_cursor_signing_key"),
+            ("ODP_WEB_SESSION_SECRET", "staging_web_session"),
+            ("ODP_IDENTITY_TOKEN_SIGNING_KEY", "staging_identity_token_signing_key"),
+        ):
+            refs = set(
+                re.findall(
+                    rf'name = "{env_name}"\n\s*value_source \{{\n\s*secret_key_ref \{{\n'
+                    r"\s*secret\s*= google_secret_manager_secret\.(\w+)\.secret_id",
+                    main_text,
+                )
+            )
+            self.assertEqual(refs, {secret}, env_name)
+        # The verify grants from ODP-STAGING-REHEARSAL-NETWORK-IDENTITY-001 are
+        # unchanged; the password-login grants are the last four, each scoped
+        # to one release-owned secret or the Cloud SQL client role the runtime
+        # account already holds.
         self.assertEqual(
             re.findall(r'resource "google_[a-z0-9_]*iam_member" "(\w+)"', main_text),
             [
@@ -4609,6 +4657,41 @@ class StagingLiveE2EGateTests(unittest.TestCase):
                 "staging_worker_subscriber",
                 "staging_runtime_cursor_key",
                 "staging_web_session",
+                "staging_runtime_identity_signing_key",
+                "staging_web_identity_signing_key",
+                "staging_web_cloudsql",
+                "staging_web_db_url",
+            ],
+        )
+        # Wrong-scope negatives: no project-wide secret access, the worker and
+        # deployer never read the signing key, and the smoke principal gains no
+        # secret grant.
+        self.assertNotRegex(
+            main_text,
+            r'resource "google_project_iam_member"[^}]*roles/secretmanager',
+        )
+        identity_members = re.findall(
+            r'secret_id = google_secret_manager_secret\.staging_identity_token_signing_key\.secret_id\n'
+            r'\s*role\s*= "([^"]+)"\n\s*member\s*= "([^"]+)"',
+            main_text,
+        )
+        self.assertEqual(
+            identity_members,
+            [
+                ("roles/secretmanager.secretAccessor", "serviceAccount:${google_service_account.staging_runtime.email}"),
+                ("roles/secretmanager.secretAccessor", "serviceAccount:${google_service_account.staging_web.email}"),
+            ],
+        )
+        project_members = re.findall(
+            r'resource "google_project_iam_member" "(\w+)" \{\n\s*project = var\.project_id\n'
+            r'\s*role\s*= "([^"]+)"\n\s*member\s*= "([^"]+)"',
+            main_text,
+        )
+        self.assertEqual(
+            project_members,
+            [
+                ("staging_runtime_cloudsql", "roles/cloudsql.client", "serviceAccount:${google_service_account.staging_runtime.email}"),
+                ("staging_web_cloudsql", "roles/cloudsql.client", "serviceAccount:${google_service_account.staging_web.email}"),
             ],
         )
 
@@ -5147,6 +5230,384 @@ def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:
     d = obj.to_dict()
     d.update(changes)
     return StagingConfig(**d)
+
+
+
+class StagingPasswordLoginRuntimeWiringTests(unittest.TestCase):
+    """ODP-STAGING-PASSWORD-RUNTIME-WIRING-261114.
+
+    The ephemeral release wires the existing Web password -> durable
+    identity/session/throttle -> local JWT -> API AuthenticationBoundary chain
+    from release-owned resources only. Every key, account and token below is a
+    SYNTHETIC fixture: these tests prove the configuration reaches the same
+    verifier and is refused when wrong. They are not a live sign-in, a real
+    account, or any UAT case.
+    """
+
+    SYNTHETIC_IDENTITY_KEY = "SYNTHETICidentitysigningkeyFORTESTSONLY0000000000000000000000000"
+    SYNTHETIC_DATABASE_URL = "postgresql://synthetic:synthetic@/synthetic?host=/cloudsql/synthetic"
+    #: Expected local JWT contract, written out here rather than imported: the
+    #: only runtime owner is the module's main.tf locals, which these pin.
+    LOCAL_ISSUER = "urn:odp:identity:local"
+    LOCAL_AUDIENCE_PREFIX = "urn:odp:staging-identity:"
+
+    def setUp(self) -> None:
+        self.release_id = "odp-20260824-001"
+        self.main_text = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+
+    def _local_audience(self, release_id: str | None = None) -> str:
+        return self.LOCAL_AUDIENCE_PREFIX + release_label_value(release_id or self.release_id)
+
+    def _config(self, release_id: str | None = None) -> StagingConfig:
+        return StagingConfig(
+            release_id=release_id or self.release_id,
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            project_id="oday-staging-proj",
+            owner_task_id="ODP-STAGING-PASSWORD-RUNTIME-WIRING-261114",
+            kms_key_id="projects/oday-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+            deployer_service_account_email="deployer@oday-staging-proj.iam.gserviceaccount.com",
+            created_at="2026-08-27T06:00:00Z",
+        )
+
+    def _service_block(self, name: str) -> str:
+        start = self.main_text.index(f'resource "google_cloud_run_v2_service" "{name}"')
+        end = self.main_text.index("\nresource ", start + 1)
+        return self.main_text[start:end]
+
+    def _rendered_env(self, service: str, release_id: str | None = None) -> dict[str, str]:
+        """Render the static env of one service for a release, with synthetic secrets.
+
+        Module variables come from the tfvars the lifecycle caller writes.
+        """
+
+        from product_ops.deployment.staging_lifecycle import (
+            generate_tfvars,
+            staging_smoke_token_audience,
+        )
+
+        release = release_id or self.release_id
+        tfvars = generate_tfvars(self._config(release))
+        locals_ = {
+            "local.local_identity_issuer": self.LOCAL_ISSUER,
+            "local.local_identity_audience": self._local_audience(release),
+            "local.smoke_token_audience": staging_smoke_token_audience(release),
+            "var.web_base_url": tfvars["web_base_url"],
+        }
+        secrets = {
+            "staging_identity_token_signing_key": self.SYNTHETIC_IDENTITY_KEY,
+            "staging_database_url": self.SYNTHETIC_DATABASE_URL,
+            "staging_cursor_signing_key": "SYNTHETIC-cursor-key",
+            "staging_web_session": "SYNTHETIC-web-session-secret",
+        }
+        env: dict[str, str] = {}
+        block = self._service_block(service)
+        for name, literal, expression in re.findall(
+            r'env \{\n\s*name\s*=\s*"([A-Z0-9_]+)"\n\s*value\s*=\s*(?:"([^"]*)"|(\S+))\n', block
+        ):
+            if literal or expression == "":
+                env[name] = literal
+            elif expression in locals_:
+                env[name] = locals_[expression]
+        for name, secret in re.findall(
+            r'env \{\n\s*name = "([A-Z0-9_]+)"\n\s*value_source \{\n\s*secret_key_ref \{\n'
+            r"\s*secret\s*= google_secret_manager_secret\.(\w+)\.secret_id",
+            block,
+        ):
+            env[name] = secrets[secret]
+        return env
+
+    def _boundary(self, env: Mapping[str, str], identity_store: Any = None, session_service: Any = None):
+        from modules.opsboard.auth import AuthenticationBoundary
+        from modules.opsboard.auth.config import config_from_env
+
+        config = config_from_env(env, identity_store=identity_store, session_service=session_service)
+        return config, AuthenticationBoundary(config)
+
+    def _local_token(
+        self,
+        *,
+        key: str | None = None,
+        kid: str = "local-default",
+        audience: str | None = None,
+        issuer: str = "urn:odp:identity:local",
+        sub: str | None = None,
+        sid: str | None = None,
+        tenant_id: str | None = None,
+    ) -> str:
+        """The claim shape apps/web/src/lib/auth/localJwt.ts mintLocalJwt signs."""
+
+        import time
+        from uuid import uuid4
+
+        from modules.opsboard.auth.jwt import SigningKey, encode_compact_jwt
+
+        now = int(time.time())
+        claims = {
+            "iss": issuer,
+            "aud": audience or self._local_audience(),
+            "sub": sub or str(uuid4()),
+            "sid": sid or str(uuid4()),
+            "tenant_id": tenant_id or str(uuid4()),
+            "iat": now,
+            "exp": now + 120,
+        }
+        signing = SigningKey(
+            kid=kid, algorithm="HS256", secret=(key or self.SYNTHETIC_IDENTITY_KEY).encode("utf-8")
+        )
+        return encode_compact_jwt(claims, signing)
+
+    def test_terraform_local_identity_contract_is_release_bound_and_distinct(self) -> None:
+        from product_ops.deployment import staging_lifecycle
+        from product_ops.deployment.staging_lifecycle import (
+            STAGING_SMOKE_TOKEN_AUDIENCE_PREFIX,
+            staging_smoke_token_audience,
+        )
+
+        issuer = re.search(r'local_identity_issuer\s*=\s*"([^"]+)"', self.main_text)
+        audience = re.search(r'local_identity_audience\s*=\s*"([^"]+)"', self.main_text)
+        self.assertIsNotNone(issuer)
+        self.assertIsNotNone(audience)
+        self.assertEqual(issuer.group(1), self.LOCAL_ISSUER)
+        # Same local issuer as the root stack and the Web signer.
+        self.assertRegex(
+            (ROOT / "infra/terraform/main.tf").read_text(encoding="utf-8"),
+            rf'ODP_AUTH_LOCAL_ISSUER\s*=\s*"{re.escape(self.LOCAL_ISSUER)}"',
+        )
+        self.assertEqual(audience.group(1), self.LOCAL_AUDIENCE_PREFIX + "${local.release_label}")
+        self.assertNotEqual(self.LOCAL_AUDIENCE_PREFIX, STAGING_SMOKE_TOKEN_AUDIENCE_PREFIX)
+        self.assertNotEqual(self._local_audience(), staging_smoke_token_audience(self.release_id))
+        # main.tf is the only owner: the lifecycle module carries no parallel
+        # local identity rule that production code never calls.
+        for name in dir(staging_lifecycle):
+            self.assertNotIn("LOCAL_IDENTITY", name.upper(), name)
+        # Alphanumeric key: config_from_env reads a key without ':' as the
+        # single kid "local-default" that the Web signer stamps.
+        key_block = re.search(
+            r'resource "random_password" "staging_identity_token_signing_key" \{\n(.*?)\n\}', self.main_text, re.S
+        )
+        self.assertIsNotNone(key_block)
+        self.assertIn("special = false", key_block.group(1))
+        self.assertIn("length  = 64", key_block.group(1))
+
+    def test_web_and_api_render_the_same_local_jwt_contract(self) -> None:
+        api = self._rendered_env("staging_api")
+        web = self._rendered_env("staging_web")
+        for name in ("ODP_AUTH_MODE", "ODP_AUTH_LOCAL_ISSUER", "ODP_AUTH_LOCAL_AUDIENCES",
+                     "ODP_IDENTITY_TOKEN_SIGNING_KEY", "ODAY_DATABASE_URL"):
+            self.assertIn(name, api, name)
+            self.assertEqual(api[name], web.get(name), name)
+        self.assertEqual(api["ODP_AUTH_MODE"], "local")
+        self.assertEqual(web["ODP_PRODUCT_MODE"], "production")
+        self.assertEqual(web["ODP_WEB_ALLOW_LEGACY_TRUSTED_HEADERS"], "false")
+        # Session seal, signer and cursor key stay distinct.
+        self.assertNotEqual(web["ODP_WEB_SESSION_SECRET"], web["ODP_IDENTITY_TOKEN_SIGNING_KEY"])
+        self.assertNotIn("ODP_WEB_SESSION_SECRET", api)
+        self.assertNotIn("ODP_INTAKE_CURSOR_SIGNING_KEY", web)
+        self.assertNotIn("ODP_AUTH_PRINCIPAL_MAP", web)
+        for name in web:
+            self.assertFalse(name.startswith(("ODP_WEB_OIDC", "ODP_AUTH_OIDC")), name)
+        for name in api:
+            self.assertFalse(name.startswith("ODP_AUTH_OIDC"), name)
+
+    def test_release_api_env_reaches_the_same_auth_boundary_and_refuses_wrong_tokens(self) -> None:
+        from modules.opsboard.auth import AuthFailureReason, Credentials
+        from product_ops.deployment.staging_lifecycle import staging_smoke_token_audience
+
+        config, boundary = self._boundary(self._rendered_env("staging_api"))
+        self.assertTrue(config.is_configured)
+        self.assertEqual(config.local_issuer, "urn:odp:identity:local")
+        self.assertEqual(set(config.local_signing_keys), {"local-default"})
+        self.assertEqual(config.local_audiences, frozenset({self._local_audience()}))
+        # The smoke service path is unchanged: Google issuer, smoke audience only.
+        self.assertEqual(config.service_issuer, "https://accounts.google.com")
+        self.assertEqual(config.service_audiences, frozenset({staging_smoke_token_audience(self.release_id)}))
+        self.assertFalse(config.oidc_enabled)
+
+        def reason(token: str) -> Any:
+            outcome = boundary.authenticate(Credentials(bearer_token=token))
+            self.assertFalse(outcome.authenticated)
+            return outcome.reason
+
+        # A correctly signed release token passes signature/issuer/audience and
+        # still needs the authoritative durable session: no store, no trust.
+        self.assertEqual(reason(self._local_token()), AuthFailureReason.BOUNDARY_NOT_CONFIGURED)
+        self.assertEqual(reason(self._local_token(key="SYNTHETICotherreleasekey" * 3)), AuthFailureReason.BAD_SIGNATURE)
+        self.assertEqual(reason(self._local_token(kid="dev-cohort")), AuthFailureReason.UNKNOWN_KEY)
+        self.assertEqual(
+            reason(self._local_token(audience=staging_smoke_token_audience(self.release_id))),
+            AuthFailureReason.AUDIENCE_MISMATCH,
+        )
+        self.assertEqual(
+            reason(self._local_token(audience=self._local_audience("odp-20260824-002"))),
+            AuthFailureReason.AUDIENCE_MISMATCH,
+        )
+        self.assertEqual(reason(self._local_token(issuer="urn:odp:identity:dev")), AuthFailureReason.ISSUER_MISMATCH)
+
+    def test_another_release_key_or_missing_key_is_refused(self) -> None:
+        from modules.opsboard.auth import AuthFailureReason, Credentials
+
+        env = self._rendered_env("staging_api")
+        # A token signed for a different release (its own key and audience).
+        _, boundary = self._boundary(env)
+        other = self._local_token(key="SYNTHETICanotherreleasekey" * 3)
+        self.assertEqual(
+            boundary.authenticate(Credentials(bearer_token=other)).reason, AuthFailureReason.BAD_SIGNATURE
+        )
+        # Missing signing key: local tokens never verify.
+        missing = dict(env)
+        missing.pop("ODP_IDENTITY_TOKEN_SIGNING_KEY")
+        config, boundary = self._boundary(missing)
+        self.assertEqual(config.local_signing_keys, {})
+        self.assertFalse(boundary.authenticate(Credentials(bearer_token=self._local_token())).authenticated)
+        # Missing local audience: no audience is accepted for local tokens.
+        no_audience = dict(env)
+        no_audience.pop("ODP_AUTH_LOCAL_AUDIENCES")
+        _, boundary = self._boundary(no_audience)
+        self.assertEqual(
+            boundary.authenticate(Credentials(bearer_token=self._local_token())).reason,
+            AuthFailureReason.AUDIENCE_MISMATCH,
+        )
+
+    def test_durable_account_row_not_token_claims_decides_tenant_and_roles(self) -> None:
+        """SYNTHETIC in-memory stores: exercises the boundary decision only."""
+
+        from uuid import uuid4
+
+        from modules.opsboard.auth import AuthFailureReason, Credentials
+        from shared.auth import Role
+        from shared.identity import (
+            Account,
+            InMemoryIdentityStore,
+            InMemorySessionRepository,
+            SessionConfig,
+            SessionService,
+        )
+
+        identity_store = InMemoryIdentityStore()
+        session_service = SessionService(repository=InMemorySessionRepository(), config=SessionConfig())
+        _, boundary = self._boundary(
+            self._rendered_env("staging_api"), identity_store=identity_store, session_service=session_service
+        )
+        account_id, tenant_id = uuid4(), uuid4()
+        identity_store.save_account(
+            Account(
+                account_id=account_id,
+                tenant_id=tenant_id,
+                username="synthetic_staging_user",
+                email="synthetic-staging-user@example.invalid",
+                status="active",
+            )
+        )
+        session = session_service.create_session(account_id=account_id, provider="local_password")
+
+        # Wrong tenant claim: the account row wins and the token is refused.
+        wrong_tenant = self._local_token(sub=str(account_id), sid=str(session.session_id), tenant_id=str(uuid4()))
+        self.assertEqual(
+            boundary.authenticate(Credentials(bearer_token=wrong_tenant)).reason, AuthFailureReason.TENANT_MISMATCH
+        )
+        # A session of another account is refused.
+        other_session = session_service.create_session(account_id=uuid4(), provider="local_password")
+        stolen = self._local_token(sub=str(account_id), sid=str(other_session.session_id), tenant_id=str(tenant_id))
+        self.assertFalse(boundary.authenticate(Credentials(bearer_token=stolen)).authenticated)
+
+        # Matching token: roles come from the durable store only (none granted).
+        token = self._local_token(sub=str(account_id), sid=str(session.session_id), tenant_id=str(tenant_id))
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+        self.assertTrue(outcome.authenticated)
+        self.assertEqual(outcome.principal.attributes["provider"], "local_password")
+        self.assertEqual(set(outcome.principal.roles), set())
+        identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+        self.assertEqual(set(outcome.principal.roles), {Role.OPERATIONS_MANAGER})
+
+    def test_identity_signing_key_secret_is_release_inventory_with_cleanup_labels(self) -> None:
+        cfg = self._config()
+        names = get_ephemeral_resource_names(self.release_id, cfg.project_id)
+        self.assertEqual(names["secret_identity_key"], f"{names['name_prefix']}-identity-signing-key")
+        planned = plan_staging_resources(cfg, now=datetime(2026, 8, 27, 7, 0, 0, tzinfo=UTC))
+        secrets = [r for r in planned if r.resource_type == "google_secret_manager_secret"]
+        self.assertEqual(
+            [r.resource_name for r in secrets],
+            [names["secret_db_url"], names["secret_cursor_key"], names["secret_web_session"],
+             names["secret_identity_key"]],
+        )
+        key = secrets[-1]
+        self.assertEqual(key.resource_id, f"projects/{cfg.project_id}/secrets/{names['secret_identity_key']}")
+        self.assertTrue(is_staging_ephemeral_resource(key.labels, self.release_id))
+        self.assertEqual(key.expires_at, secrets[0].expires_at)
+        # Terraform labels the secret with the same release labels used for cleanup.
+        secret_block = re.search(
+            r'resource "google_secret_manager_secret" "staging_identity_token_signing_key" \{\n(.*?)\n\}',
+            self.main_text,
+            re.S,
+        )
+        self.assertIsNotNone(secret_block)
+        self.assertIn("labels = local.resource_labels", secret_block.group(1))
+        # Never a module output.
+        outputs_text = (MODULE_DIR / "outputs.tf").read_text(encoding="utf-8")
+        self.assertNotIn("identity", outputs_text)
+        self.assertNotIn("signing", outputs_text)
+
+    def test_web_is_configured_with_the_governed_console_origin(self) -> None:
+        """caller config -> tfvars -> module variable -> Web ODP_WEB_BASE_URL.
+
+        The required staging console host must be the Web's configured origin:
+        the Web derives no alias for a custom domain, so a run.app origin would
+        send the post-login redirect off the host that received the host-only
+        session cookie. The app's Host/CSRF/cookie rules are not changed here.
+        """
+
+        from urllib.parse import urlsplit
+
+        from product_ops.deployment.staging_lifecycle import (
+            STAGING_WEB_PUBLIC_ORIGIN,
+            generate_tfvars,
+        )
+
+        self.assertEqual(STAGING_WEB_PUBLIC_ORIGIN, "https://console-staging.oday-plus.com.tw")
+        for release in (self.release_id, "odp-20260824-002"):
+            tfvars = generate_tfvars(self._config(release))
+            self.assertEqual(tfvars["web_base_url"], STAGING_WEB_PUBLIC_ORIGIN)
+            self.assertEqual(self._rendered_env("staging_web", release)["ODP_WEB_BASE_URL"], STAGING_WEB_PUBLIC_ORIGIN)
+            self.assertNotIn("project_number", tfvars)
+        parsed = urlsplit(STAGING_WEB_PUBLIC_ORIGIN)
+        self.assertEqual((parsed.scheme, parsed.path, parsed.query, parsed.port), ("https", "", "", None))
+        self.assertFalse(parsed.hostname.endswith(".run.app"))
+        # The API never receives the Web origin, and the Web reads it only
+        # from the module variable (no locally derived Cloud Run URL).
+        self.assertNotIn("ODP_WEB_BASE_URL", self._rendered_env("staging_api"))
+        self.assertRegex(
+            self._service_block("staging_web"), r'name\s*=\s*"ODP_WEB_BASE_URL"\n\s*value\s*=\s*var\.web_base_url\n'
+        )
+        self.assertNotIn("run.app", re.sub(r"#.*", "", self.main_text))
+        self.assertNotIn("project_number", self.main_text)
+
+    def test_workflow_passes_no_origin_override_and_no_shared_identity_secret_to_staging(self) -> None:
+        import yaml
+
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["deploy"]["steps"]
+        create = next(s for s in steps if "staging_lifecycle.py create" in str(s.get("run", "")))
+        run = str(create["run"])
+        # The governed origin is fixed by the lifecycle; the run cannot swap in
+        # the job's environment ODP_WEB_BASE_URL, a run.app URL or a number.
+        for override in ("--project-number", "--web-base-url", "projectNumber", "ODP_WEB_BASE_URL"):
+            self.assertNotIn(override, run)
+        # The release creates its own key; the shared dev/prod key and session
+        # secret references never reach the staging lifecycle.
+        staging_runs = "\n".join(
+            str(s.get("run", "")) for s in steps if "staging_lifecycle.py" in str(s.get("run", ""))
+        )
+        for forbidden in (
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY",
+            "ODP_WEB_SESSION_SECRET",
+            "ODP_DEV_ADMIN",
+            "ODP_OPERATOR_SMOKE",
+            "ODP_IDENTITY_BOOTSTRAP",
+        ):
+            self.assertNotIn(forbidden, staging_runs)
+            self.assertNotIn(forbidden, str(create.get("env", "")))
 
 
 if __name__ == "__main__":
