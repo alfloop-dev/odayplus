@@ -227,8 +227,13 @@ all five profiles, but each then failed the keyboard assertion because its
 unscoped Close locator matched three controls in the existing stacked shells.
 That assertion now targets the actual URL form's Close button, retaining the
 original Shift+Tab/focus check. The landmark case did not run in that failed
-serial selection. All five complete profiles still need qualification;
-component tests and a passing first case alone do not establish accessibility.
+serial selection. After narrowing that locator, all five original native
+PostgreSQL/password-session profiles completed successfully at `97ffa8a40b56`
+(exit 0, 609.27 seconds), including the three original accessibility cases and
+the fresh URL_MANUAL parser/matching/independent execution SQL checks. The prior
+failure remains evidence, not a pass. This qualifies that isolated native
+selection only: the original full product packet/shared lifecycle, five-policy
+retrieval boundary and final-head/current-base CI remain outstanding.
 
 These cases exercise the old Inbox button and `dialog=add` through the same
 native form, explicit observed scope and human reason, actual 201/SUBMITTED,
