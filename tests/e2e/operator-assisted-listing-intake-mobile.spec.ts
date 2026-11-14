@@ -14,7 +14,7 @@ import {
  * - Desktop side-by-side comparison view
  */
 
-import { openPgScenario, PG_WEB } from "./_intakeScorePg";
+import { openPgScenario } from "./_intakeScorePg";
 
 import {
   acquireOperatorBackendLock,
@@ -97,10 +97,8 @@ test.describe("VDC-002 Responsive Layout & Zero Overflow (390px Mobile)", () => 
   test("390px mobile viewport has zero horizontal overflow on intake queue", async ({
     page,
   }) => {
-    const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    const { api } = await openPgScenario(page, { entry: "inbox", retainedHistory: "possible-match" });
     try {
-      await page.goto(`${PG_WEB}/operator?ws=network&tab=radar&heatZoneId=`);
-      await expect(page.getByTestId(`intake-inbox-row-${scenario.intake_id}`)).toBeVisible();
       await expectNoPageOverflow(page, "390px mobile inbox", "intake-inbox-view");
       await captureScreenshotEvidence(page, "intake-390-inbox.png");
     } finally { await api.dispose(); }

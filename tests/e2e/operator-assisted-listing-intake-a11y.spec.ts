@@ -12,7 +12,7 @@ import { expect, request as playwrightRequest, test, type Page } from "@playwrig
  * - Zero serious/critical axe accessibility violations
  */
 
-import { openPgScenario, PG_WEB } from "./_intakeScorePg";
+import { openPgScenario } from "./_intakeScorePg";
 
 import {
   acquireOperatorBackendLock,
@@ -126,10 +126,8 @@ test.describe("VDC-003 Screen Reader Landmarks & Accessibility Attributes", () =
 
   test("retained queue respects prefers-reduced-motion media query", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
-    const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    const { api } = await openPgScenario(page, { entry: "inbox", retainedHistory: "possible-match" });
     try {
-      await page.goto(`${PG_WEB}/operator?ws=network&tab=radar&heatZoneId=`);
-      await expect(page.getByTestId(`intake-inbox-row-${scenario.intake_id}`)).toBeVisible();
       await expect(page.getByTestId("intake-add-button")).toBeVisible();
       expect(await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
     } finally { await api.dispose(); }
@@ -138,10 +136,8 @@ test.describe("VDC-003 Screen Reader Landmarks & Accessibility Attributes", () =
 
 test.describe("VDC-003 Axe Automated Accessibility Scan", () => {
   test("retained populated intake queue passes axe accessibility scan", async ({ page }) => {
-    const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    const { api } = await openPgScenario(page, { entry: "inbox", retainedHistory: "possible-match" });
     try {
-    await page.goto(`${PG_WEB}/operator?ws=network&tab=radar&heatZoneId=`);
-    await expect(page.getByTestId(`intake-inbox-row-${scenario.intake_id}`)).toBeVisible();
     await expect(page.getByTestId("intake-add-button")).toBeVisible();
 
     const results = await new AxeBuilder({ page })

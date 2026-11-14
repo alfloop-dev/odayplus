@@ -106,7 +106,7 @@ export type PgScenario = {
 };
 
 export async function openPgScenario(page: Page, options: {
-  entry?: "intake" | "radar";
+  entry?: "intake" | "radar" | "inbox";
   retainedHistory?: "assisted-entry-only" | "possible-match" | "retrieval-timeout" | "revision" | "auth-required" | "policy-unknown";
 } = {}) {
   const api = await playwrightRequest.newContext({ baseURL: PG_API, extraHTTPHeaders: { "x-synthetic-control": PG_CONTROL } });
@@ -123,6 +123,19 @@ export async function openPgScenario(page: Page, options: {
     if (!sessionStorage.getItem("oday.operator.subject")) sessionStorage.setItem("oday.operator.subject", proposer);
     sessionStorage.setItem("oday.operator.tenant", tenant);
   }, { tenant: scenario.tenant_id, proposer: scenario.proposer_id });
+  if (options.entry === "inbox") {
+    // The document navigation is not completion of the async inbox read.
+    // Bind the actual populated, all-area server page before layout/axe scans.
+    const listing = page.waitForResponse((response) => response.request().method() === "GET"
+      && new URL(response.url()).pathname === "/api/v1/operator/network-listings/intake"
+      && !new URL(response.url()).searchParams.has("selectedHeatZoneId"));
+    await page.goto(`${PG_WEB}/operator?ws=network&tab=radar&heatZoneId=`);
+    const observed = await listing;
+    expect(observed.status(), await observed.text()).toBe(200);
+    expect((await observed.json()).items.map((item: { id: string }) => item.id)).toContain(scenario.intake_id);
+    await expect(page.getByTestId(`intake-inbox-row-${scenario.intake_id}`)).toBeVisible({ timeout: 30_000 });
+    return { api, scenario };
+  }
   if (options.entry === "radar") {
     await openPgRadar(page, scenario);
     const action = page.getByTestId(`listing-navigate-${scenario.listing_id}`);
