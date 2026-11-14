@@ -50,6 +50,14 @@ async function dialogGeometry(dialog: Locator, width: number) {
   expect(geometry.fields.every(field => field.width > 0 && field.left >= geometry.left - 1 && field.right <= geometry.right + 1)).toBe(true);
   return geometry;
 }
+// The executive principal is granted ops-lead, expansion-manager and pm-audit
+// personas; the server starts it on ops-lead. The person then selects the
+// expansion persona in the normal header role menu (selection among grants only).
+async function selectExpansionManagerPersona(page: Page) {
+  await page.getByRole("button", { name: /營運主管/, expanded: false }).click();
+  await page.locator('[data-screen-label="Role Switch Menu"]').getByRole("button", { name: /^展店經理/ }).click();
+  await expect(page.getByRole("button", { name: /展店經理/, expanded: false })).toBeVisible();
+}
 async function openAreaDialog(page: Page, zoneId: string) {
   await page.locator(`[data-zone-id="${zoneId}"]`).click();
   const launch = page.getByTestId("find-areas-zone-actions").getByRole("button", { name: "加入季度展店計畫", exact: true });
@@ -184,7 +192,7 @@ for (const width of [1440, 1024, 390]) {
           writes.push(`${sent.method()} ${new URL(sent.url()).pathname}`);
         }
       });
-      await login(executive, scenario.executive_username);
+      await login(executive, scenario.executive_username);await selectExpansionManagerPersona(executive);
       let executiveDialog = await openAreaDialog(executive, scenario.zone_id);
       await executiveDialog.getByRole("button", { name: `${name} · v2`, exact: true }).click();
       await expect(executiveDialog.getByLabel("規劃季度", { exact: true })).toHaveValue("2027Q2");
@@ -233,6 +241,7 @@ for (const width of [1440, 1024, 390]) {
       await executiveDialog.screenshot({ path: testInfo.outputPath(`actual-area-native-created-${width}px.png`) });
 
       await executive.reload();await expect(executive).toHaveURL(url => url.pathname === "/operator");
+      await selectExpansionManagerPersona(executive);
       executiveDialog = await openAreaDialog(executive, scenario.zone_id);
       const reopening = linkedReads(executive, id);
       await executiveDialog.getByRole("button", { name: `${name} · v3 · 已建立 NetPlan`, exact: true }).click();
