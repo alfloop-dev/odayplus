@@ -820,6 +820,126 @@ def test_a_bound_registry_serving_versions_still_blocks_dev_admin(
     assert blockers(report)["models:registry_refused"] == dependency
 
 
+def unpromoted_dev_version(version: str) -> dict[str, Any]:
+    """A candidate the dev trainer registered (stage=dev) and nobody promoted."""
+
+    return {
+        "model_name": "forecast_revenue_interval",
+        "version": version,
+        "model_id": f"forecast_revenue_interval-{version}",
+        "artifact_uri": f"gs://odp-dev-artifacts/dev-model-releases/forecast/{version}",
+        "dataset_snapshot_id": "ds_dev_seed",
+        "stage": "dev",
+        "aliases": [],
+        "approved_by": None,
+        "approved_at": None,
+        "created_at": "2026-11-14T04:54:09+00:00",
+    }
+
+
+def unpromoted_dev_listing() -> dict[str, Any]:
+    return {"count": 2, "items": [unpromoted_dev_version("3"), unpromoted_dev_version("4")]}
+
+
+def bound_registry_serving(listing: dict[str, Any]) -> dict[str, Any]:
+    return api_routes(
+        **{
+            "anon GET /readiness": base.response(200, bound_registry_readiness()),
+            "GET /api/v1/learninghub/models": base.response(200, listing),
+        }
+    )
+
+
+def test_a_bound_dev_registry_with_only_unpromoted_dev_versions_passes_dev_admin() -> None:
+    """Dev may hold trained candidates that were registered but never promoted."""
+
+    _, report, _ = run_dev_admin(api=bound_registry_serving(unpromoted_dev_listing()))
+
+    assert "models:registry_refused" not in blockers(report)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda item: item.update(stage="production"), id="production-stage"),
+        pytest.param(lambda item: item.update(stage="shadow"), id="shadow-stage"),
+        pytest.param(lambda item: item.pop("stage"), id="missing-stage"),
+        pytest.param(lambda item: item.update(aliases=["production"]), id="production-alias"),
+        pytest.param(lambda item: item.update(aliases=["challenger"]), id="any-alias"),
+        pytest.param(lambda item: item.pop("aliases"), id="missing-aliases"),
+        pytest.param(lambda item: item.update(approved_by="release-officer"), id="approver"),
+        pytest.param(
+            lambda item: item.update(approved_at="2026-11-14T05:00:00+00:00"), id="approval-time"
+        ),
+    ],
+)
+def test_a_promoted_or_unclear_dev_version_still_blocks_dev_admin(mutate: Any) -> None:
+    listing = unpromoted_dev_listing()
+    mutate(listing["items"][1])
+
+    _, report, _ = run_dev_admin(api=bound_registry_serving(listing))
+
+    assert blockers(report)["models:registry_refused"] == "mlflow"
+
+
+@pytest.mark.parametrize(
+    "listing",
+    [
+        pytest.param({"count": 3, "items": unpromoted_dev_listing()["items"]}, id="count-mismatch"),
+        pytest.param({"items": unpromoted_dev_listing()["items"]}, id="missing-count"),
+        pytest.param({"count": 1, "items": ["forecast_revenue_interval-3"]}, id="non-object-item"),
+    ],
+)
+def test_a_malformed_dev_listing_still_blocks_dev_admin(listing: dict[str, Any]) -> None:
+    _, report, _ = run_dev_admin(api=bound_registry_serving(listing))
+
+    assert blockers(report)["models:registry_refused"] == "mlflow"
+
+
+def test_unpromoted_dev_versions_from_an_unbound_registry_still_block_dev_admin() -> None:
+    api = api_routes(
+        **{"GET /api/v1/learninghub/models": base.response(200, unpromoted_dev_listing())}
+    )
+
+    _, report, _ = run_dev_admin(api=api)
+
+    assert blockers(report)["models:registry_refused"] == "mlflow"
+
+
+@pytest.mark.parametrize("deployment", ["staging", "production"])
+def test_unpromoted_dev_versions_block_outside_dev(deployment: str) -> None:
+    readiness = missing_model_readiness("core-ops")
+    readiness["details"]["deploymentMode"] = deployment
+    readiness["details"]["models"]["learninghubRegistryBound"] = True
+    api = core_ops_api(
+        deployment,
+        **{
+            "anon GET /readiness": base.response(200, readiness),
+            "GET /api/v1/learninghub/models": base.response(200, unpromoted_dev_listing()),
+        },
+    )
+
+    _, report = base.run_gate(api, cfg=core_ops_config(deployment))
+
+    assert blockers(report)["models:registry_refused"] == "mlflow"
+
+
+def test_unpromoted_dev_versions_pass_core_ops_on_dev() -> None:
+    readiness = missing_model_readiness("core-ops")
+    readiness["details"]["models"]["learninghubRegistryBound"] = True
+    api = core_ops_api(
+        "dev",
+        **{
+            "anon GET /readiness": base.response(200, readiness),
+            "GET /api/v1/learninghub/models": base.response(200, unpromoted_dev_listing()),
+        },
+    )
+
+    _, report = base.run_gate(api, cfg=core_ops_config("dev"))
+
+    assert "models:registry_refused" not in blockers(report)
+
+
 # ---------------------------------------------------------------------------
 # Administration negatives -- each breaks exactly one fact of the journey
 # ---------------------------------------------------------------------------
