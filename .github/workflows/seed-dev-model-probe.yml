@@ -3,6 +3,7 @@ name: seed-dev-model-probe
 # Read-only: ask the dev API which production model bindings it actually resolved
 # at startup (GET /health -> modes.models.capabilities). Writes nothing. Used to
 # decide whether lighting the SiteScore decision panel is even possible in dev.
+# Re-run 2026-11-15: verify forecastops production alias after promote.
 on:
   push:
     branches: [seed-dev-data-backfill]
