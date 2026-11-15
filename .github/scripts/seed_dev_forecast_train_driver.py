@@ -68,6 +68,43 @@ def _promote(release) -> int:
     return 0
 
 
+def _print_state(release) -> int:
+    """Read-only: durable (Postgres) vs remote (MLflow) registry state."""
+    from modules.learninghub.domain import ModelAlias
+
+    settings = release.ProductionTrainingSettings.from_environment()
+    resources = release.build_production_resources(settings)
+    try:
+        service = resources.application.service
+        repo = service.repository
+        registry = service.registry
+        name = "forecast_revenue_interval"
+        for v in repo.list_model_versions(name):
+            mc = dict(v.monitoring_config)
+            print("DURABLE", v.version, "stage=", v.stage.value, "approved_by=", bool(v.approved_by),
+                  "requested_by=", mc.get("requested_by"), "release_id=", mc.get("release_id"), flush=True)
+        for alias in ModelAlias:
+            d = repo.get_alias(name, alias)
+            try:
+                r = registry.get_by_alias(model_name=name, alias=alias)
+            except Exception as exc:  # noqa: BLE001
+                r = f"ERR {type(exc).__name__}: {exc}"
+            print("ALIAS", alias.value, "durable=", getattr(d, "version", d),
+                  "remote=", getattr(r, "version", r), flush=True)
+        for saga in repo.list_release_sagas(name, include_terminal=True):
+            print("SAGA", saga.release_id, saga.operation, saga.state.value,
+                  "errors=", list(getattr(saga, "compensation_errors", ()) or ())[:3],
+                  "last_error=", str(getattr(saga, "last_error", "") or "")[:300], flush=True)
+        client = registry._require_client()
+        for mv in client.search_model_versions(filter_string=f"name = '{name}'"):
+            print("REMOTE", "v" + str(mv.version), mv.tags.get(registry._tag("domain_version")),
+                  "stage=", mv.current_stage, "aliases=", list(mv.aliases or []), flush=True)
+    finally:
+        resources.close()
+    print("RESULT: OK (state)", flush=True)
+    return 0
+
+
 def main() -> int:
     os.environ["ODAY_DATABASE_URL"] = _socket_dsn(
         os.environ["RAW_DB_URL"], os.environ["CLOUD_SQL_INSTANCE"]
@@ -89,6 +126,9 @@ def main() -> int:
     mlflow_cloud_run_auth.fetch_id_token = _wif_minted
 
     from product_ops.modeling import install_views, release
+
+    if os.environ.get("ACTION", "train") == "state":
+        return _print_state(release)
     from shared.governance.model_performance import (
         MODEL_PERFORMANCE_DRIFT_POLICY_KIND,
         MODEL_PERFORMANCE_DRIFT_POLICY_TENANT_ID,
