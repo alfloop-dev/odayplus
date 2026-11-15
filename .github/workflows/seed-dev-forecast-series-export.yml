@@ -1,0 +1,78 @@
+name: seed-dev-forecast-series-export
+
+# Dev only, read-only: export per-store daily net revenue (same definition as
+# model_ready.forecast_training_view) as the payload for the ForecastOps
+# timeseries ingest. The ingest itself goes through the API as an operator.
+on:
+  push:
+    branches: [seed-dev-data-backfill]
+    paths:
+      - .github/workflows/seed-dev-forecast-series-export.yml
+      - .github/scripts/seed_dev_forecast_series_export.py
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: dev
+    env:
+      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+      DB_URL_SECRET: ${{ vars.ODAY_DATABASE_URL_SECRET }}
+      TARGET_TENANT: d4fe5181-da2c-5438-bd12-230036ea6f59
+      LOOKBACK_DAYS: '60'
+      OUT_PATH: forecast-series.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Start Cloud SQL Auth Proxy (unix socket)
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /cloudsql && sudo chown "$(id -u)" /cloudsql
+          curl -sSL -o cloud-sql-proxy \
+            https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64
+          chmod +x cloud-sql-proxy
+          ./cloud-sql-proxy --unix-socket /cloudsql "${CLOUD_SQL_INSTANCE}" &
+          for i in $(seq 1 30); do
+            if [ -S "/cloudsql/${CLOUD_SQL_INSTANCE}/.s.PGSQL.5432" ]; then
+              echo "Cloud SQL proxy socket is up"; break
+            fi
+            sleep 1
+          done
+
+      - name: Export daily store revenue
+        run: |
+          set -euo pipefail
+          pip install -q 'psycopg[binary]>=3.2,<4'
+          RAW_DB_URL="$(gcloud secrets versions access latest \
+            --secret="${DB_URL_SECRET%%:*}" --project="${GCP_PROJECT}")"
+          echo "::add-mask::${RAW_DB_URL}"
+          export RAW_DB_URL
+          python .github/scripts/seed_dev_forecast_series_export.py
+
+      - name: Upload series
+        uses: actions/upload-artifact@v4
+        with:
+          name: forecast-series
+          path: forecast-series.json
+          retention-days: 7
