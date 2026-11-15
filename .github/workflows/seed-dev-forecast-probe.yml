@@ -62,7 +62,7 @@ jobs:
           except Exception as exc:
               print("not json:", open("m.json").read()[:300]); raise SystemExit(0)
           for m in d.get("registered_models", []) or []:
-              aliases = [a.get("alias") for a in m.get("aliases", []) or []]
+              aliases = [f'{a.get("alias")}->v{a.get("version")}' for a in m.get("aliases", []) or []]
               latest = [v.get("version") for v in m.get("latest_versions", []) or []]
               print("MODEL", m.get("name"), "aliases=", aliases, "latest=", latest)
           if not d.get("registered_models"):
