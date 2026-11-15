@@ -27,10 +27,10 @@ jobs:
       ODP_MLFLOW_CLOUD_RUN_AUDIENCE: ${{ vars.ODP_MLFLOW_CLOUD_RUN_AUDIENCE }}
       ODP_MODEL_ARTIFACT_ROOT: gs://odayplus-runtime-20260825-model-artifacts/dev-model-releases
       ODP_RELEASE_COMMIT_SHA: ${{ github.sha }}
-      ODP_MODEL_TRAINING_ACTOR: github-actions:seed-dev-forecast-train
+      ODP_MODEL_TRAINING_ACTOR: github-actions:dev-forecast-train
       ACTION: promote
       PROMOTIONS: >-
-        dev-forecast-20261114-3:.github/seed-dev-approvals/forecast-dev-forecast-20261114-3-shadow.json;dev-forecast-20261114-4:.github/seed-dev-approvals/forecast-dev-forecast-20261114-4-full.json:dev-forecast-20261114-3
+        dev-forecast-20261115-1:.github/seed-dev-approvals/forecast-dev-forecast-20261115-1-shadow.json;dev-forecast-20261115-2:.github/seed-dev-approvals/forecast-dev-forecast-20261115-2-full.json:dev-forecast-20261115-1
     steps:
       - name: Checkout
         uses: actions/checkout@v4

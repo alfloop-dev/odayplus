@@ -1,0 +1,11 @@
+{
+  "approval_id": "MRB-DEV-20261115-02",
+  "model_name": "forecast_revenue_interval",
+  "decision": "approved",
+  "approver": "蔡尚志（負責人）",
+  "role": "model-review-board",
+  "approved_at": "2026-11-15T10:59:44Z",
+  "model_version": "dev-forecast-20261115-2",
+  "release_type": "full",
+  "reason": "dev full release，rollback target 為 dev-forecast-20261115-1。temporal holdout nMAE 0.044、p80_coverage 0.921（門檻 0.35／0.65）。負責人蔡尚志 2026-11-15 於對話中明確同意並指示 Claude 執行。僅限 dev。"
+}
