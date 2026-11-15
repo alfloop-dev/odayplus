@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "record_kind": "humanops-runtime-release-staging-admission-authorization",
+  "status": "approved",
+  "is_approval": true,
+  "task_id": "ODP-STAGING-ADMISSION-4B2310C53-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-STAGING-ADMISSION-20261115P",
+  "candidate_sha": "4b2310c53101da3d0f534ad5d035f8200646f59c",
+  "manifest_digest": "sha256:cead6a30a94faf4bb8640a272921b8bef410c80f62407dc33569c111fae0bddb",
+  "manifest_run_id": "43725894635",
+  "target_environment": "staging",
+  "release_profile": "core-ops",
+  "approved_at": "2026-11-15T14:43:03Z",
+  "authorization_basis": {
+    "user_reply": "修這三個，接著跑鏈 P (Recommended)",
+    "user_reply_at": "2026-11-15T09:46:29Z",
+    "follow_up_reply": "記偏差跑鏈 P，只寬這兩項模型檢查 (Recommended)",
+    "follow_up_reply_at": "2026-11-15T14:43:03Z",
+    "context": "Chain O (60cf78695, registry PR #1713) used lease HUMANOPS-STAGING-LEASE-20261115O2; its staging deploy 43699516874 created the ephemeral release, then failed 7 of 10 verify stages on three causes. At 09:46:29Z the owner chose: fix the three causes in one task reviewed independently by Antigravity, then run chain P with candidate = the dev tip after the merge, conditioned on that tip's own CI actually running all 7 product lanes green and its dev deploy being 77/77, A–F otherwise unchanged, keeping the follow-the-tip rule (at most 3 switches up to 2026-11-17). PR #1715 merged as 4b2310c53. Its dev deploy 43717780340 passed 75 of 77 live E2E checks: models:registry_refused and models:no_surrogate_markers failed on dev-only model registry data promoted by the separate seed-dev-data work under dev-only owner approvals; every other check passed. Claude stopped before step A and asked. At 14:43:03Z the owner chose to run chain P recording a deviation: the dev deploy condition becomes 'of the 77 checks only models:registry_refused and models:no_surrogate_markers may fail, and preflight, migration, smoke, job validations and egress all pass', with the evidence stating the dev deploy failed, why, and that dev traffic stayed on 60cf78695; the same allowance applies to a later tip under the follow-the-tip rule; Claude does not touch seed-dev-data. The chain: (A) dispatch the core-ops staging build; (B) HD-08p with the three deviations below; (C) HD-09p with approval HUMANOPS-STAGING-ADMISSION-20261115P, the dev deploy deviation above and the scope limits below; (D) approve the registry PR as Human/Ops once it touches only docs/evidence/, the registry checker says GO, admission errors are empty and every CI job is green; (E) HD-10p: after the registry merges, sync the main checkout registry and manifest from origin/dev and register lease HUMANOPS-STAGING-LEASE-20261115P (new nonce, 6 hours, non_dispatchable); (F) HD-12p: approve the GitHub staging environment with ajoe734 only for the run that lease triggers. Before every step dev tip must still be the candidate (plus the evidence-only registry merge for E and F) with empty ancestry. B and C took effect only if the build succeeded, its manifest named the candidate with profile core-ops and 16 disabled sources with no credentials, npm audit reported 0 findings and all 5 staging targets read back absent. Checked facts: dev tip is 4b2310c53 (#1715 merge); its exact push CI 43713144763 and merge group CI 43709407968 ran all 7 product lanes, all success; the dev deploy deviation matched exactly the two allowed checks; ancestry was empty; build 43725894635 met every B/C condition and produced manifest sha256:cead6a30a94faf4bb8640a272921b8bef410c80f62407dc33569c111fae0bddb, the digest bound here.",
+    "interpretation": "Owner 蔡尚志 replied in the Claude Code conversation at 2026-11-15T09:46:29Z and 14:43:03Z. Transcribed by Claude; not an external identity-system signature."
+  },
+  "authorized_scope": {
+    "max_release_requests": 1,
+    "max_short_lived_supervisor_leases": 1,
+    "runtime_release_deploy_phases": 1,
+    "allowed_environment": "staging",
+    "external_sources_enabled": false,
+    "production_changes": false,
+    "github_staging_environment_approval_still_required": true,
+    "supervisor_lease_still_required": true
+  },
+  "recorded_by": "Claude (interactive owner-response transcription; no external identity signature claimed)",
+  "evidence": {
+    "exact_ci": "docs/evidence/runtime/ODP-STAGING-ADMISSION-4B2310C53-001/candidate-ci-4b2310c53.json",
+    "dev_deploy_deviation": "docs/evidence/runtime/ODP-STAGING-ADMISSION-4B2310C53-001/dev-deploy-deviation-4b2310c53.json",
+    "staging_build_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/43725894635",
+    "dev_deploy_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/43717780340",
+    "exact_candidate_ci_workflow_urls": [
+      "https://github.com/alfloop-dev/odayplus/actions/runs/43713144763",
+      "https://github.com/alfloop-dev/odayplus/actions/runs/43709407968"
+    ],
+    "verify_fix_pull_request": "https://github.com/alfloop-dev/odayplus/pull/1715",
+    "voided_previous_staging_deploy_url": "https://github.com/alfloop-dev/odayplus/actions/runs/43699516874"
+  },
+  "decisions": {
+    "HD-08p": {
+      "decision": "approve",
+      "subject": "gate-2 Data Gate passed-with-deviation for this candidate's staging admission only, review_by 2026-11-27",
+      "accepted_deviations": [
+        "source contract and sample data reviewed: not applicable — the core-ops profile keeps every external source disabled (sources-off attestation in the build manifest: 16 sources audited, all disabled, zero credentials present).",
+        "point-in-time correctness checked for model-ready data: not applicable — core-ops serves no model (release_profile.model_readiness=not_claimed).",
+        "freshness and lineage evidence captured: check_live_production_data.py has never run against this candidate; deferred to the staging verify run and the production gates, not claimed as passed."
+      ]
+    },
+    "HD-09p": {
+      "decision": "approve",
+      "subject": "release.stage=dev-verified, admission_target=staging, decision=go for this exact candidate and the manifest produced by its staging build",
+      "accepted_dev_deploy_deviation": "dev deploy 43717780340: live E2E 75/77; only models:registry_refused and models:no_surrogate_markers failed, on dev-only model registry data; all other checks passed; dev traffic stayed on 60cf78695."
+    }
+  }
+}
