@@ -1,0 +1,82 @@
+name: seed-dev-forecast-retire
+
+# Dev only: remove the dev-forecast-20261114-3/-4 registry versions from the
+# dev MLflow. Their release lineage carries a training actor named after this
+# seeding branch, which the deploy-dev live E2E gate (correctly) reads as a
+# surrogate marker, and the API cannot bind them until the stale forecastops
+# feature-schema constant in create_app is fixed. With them listed, every
+# automatic dev deploy fails and rolls back. Training artifacts in GCS and the
+# MLflow training runs are kept; only the registry versions are deleted, so the
+# registry returns to the pre-promotion state the gate accepted (00:47 deploy).
+on:
+  push:
+    branches: [seed-dev-data-backfill]
+    paths:
+      - .github/workflows/seed-dev-forecast-retire.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  retire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: dev
+    env:
+      MLFLOW_URL: ${{ vars.MLFLOW_TRACKING_URI }}
+      MODEL_NAME: forecast_revenue_interval
+      RETIRE_DOMAIN_VERSIONS: dev-forecast-20261114-3,dev-forecast-20261114-4
+    steps:
+      - name: Authenticate to GCP (WIF) + ID token for dev MLflow
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ vars.MLFLOW_TRACKING_URI }}
+          id_token_include_email: true
+
+      - name: Delete the listed registry versions (dev MLflow)
+        env:
+          ID_TOKEN: ${{ steps.auth.outputs.id_token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, urllib.parse, urllib.request
+
+          base = os.environ["MLFLOW_URL"].rstrip("/")
+          headers = {"Authorization": f"Bearer {os.environ['ID_TOKEN']}",
+                     "Content-Type": "application/json"}
+          name = os.environ["MODEL_NAME"]
+          wanted = {v.strip() for v in os.environ["RETIRE_DOMAIN_VERSIONS"].split(",") if v.strip()}
+
+          def call(method, path, body=None):
+              req = urllib.request.Request(base + path, method=method, headers=headers,
+                                           data=None if body is None else json.dumps(body).encode())
+              with urllib.request.urlopen(req, timeout=60) as resp:
+                  return json.loads(resp.read() or b"{}")
+
+          query = urllib.parse.urlencode({"filter": f"name='{name}'", "max_results": 200})
+          versions = call("GET", f"/api/2.0/mlflow/model-versions/search?{query}").get("model_versions", [])
+          for v in versions:
+              tags = {t["key"]: t["value"] for t in v.get("tags", []) or []}
+              domain = next((val for key, val in tags.items() if key.endswith("domain_version")), "")
+              print("FOUND", f"v{v['version']}", "domain=", domain, "aliases=", v.get("aliases"))
+          targets = []
+          for v in versions:
+              tags = {t["key"]: t["value"] for t in v.get("tags", []) or []}
+              domain = next((val for key, val in tags.items() if key.endswith("domain_version")), "")
+              if domain in wanted:
+                  targets.append((v["version"], domain))
+          if {d for _, d in targets} != wanted:
+              raise SystemExit(f"RESULT: FAILED (expected {sorted(wanted)}, matched {targets})")
+          for version, domain in targets:
+              call("DELETE", "/api/2.0/mlflow/model-versions/delete", {"name": name, "version": version})
+              print("DELETED", f"v{version}", domain)
+          left = call("GET", f"/api/2.0/mlflow/model-versions/search?{query}").get("model_versions", [])
+          print("REMAINING", [(v["version"], v.get("aliases")) for v in left])
+          print("RESULT: OK")
+          PY
