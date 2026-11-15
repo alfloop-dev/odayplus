@@ -1,0 +1,10 @@
+{
+  "kind": "dev-failed-live-step-readback-v2",
+  "environment": "dev",
+  "failed_candidate_sha": "4b2310c53101da3d0f534ad5d035f8200646f59c",
+  "run_id": "43717780340",
+  "run_attempt": "1",
+  "live_release": "60cf786952c78e49",
+  "scheduler_baseline_sha256": "315c7644b401a0970d0ac012f425a8108da7d506fc1d4c30593fab050b7efd31",
+  "observed_at": "2026-11-15T13:38:46+00:00"
+}
