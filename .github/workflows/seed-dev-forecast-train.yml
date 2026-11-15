@@ -17,7 +17,7 @@ permissions:
 jobs:
   train:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     environment: dev
     env:
       GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
@@ -27,8 +27,8 @@ jobs:
       ODP_MLFLOW_CLOUD_RUN_AUDIENCE: ${{ vars.ODP_MLFLOW_CLOUD_RUN_AUDIENCE }}
       ODP_MODEL_ARTIFACT_ROOT: gs://odayplus-runtime-20260825-model-artifacts/dev-model-releases
       ODP_RELEASE_COMMIT_SHA: ${{ github.sha }}
-      ODP_MODEL_TRAINING_ACTOR: github-actions:seed-dev-forecast-train
-      MODEL_VERSIONS: dev-forecast-20261114-4
+      ODP_MODEL_TRAINING_ACTOR: github-actions:dev-forecast-train
+      MODEL_VERSIONS: dev-forecast-20261115-1,dev-forecast-20261115-2
       TRAIN_START: '2025-10-13T00:00:00Z'
       TRAIN_END: '2026-01-14T00:00:00Z'
     steps:
