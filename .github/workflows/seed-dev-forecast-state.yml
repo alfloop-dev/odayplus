@@ -28,6 +28,7 @@ jobs:
       ODP_RELEASE_COMMIT_SHA: ${{ github.sha }}
       ODP_MODEL_TRAINING_ACTOR: github-actions:dev-forecast-train
       ACTION: state
+      STATE_RUN: "2"
       TRAIN_START: '2025-10-13T00:00:00Z'
       TRAIN_END: '2026-01-14T00:00:00Z'
     steps:

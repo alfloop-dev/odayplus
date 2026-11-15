@@ -70,7 +70,7 @@ def _promote(release) -> int:
 
 def _print_state(release) -> int:
     """Read-only: durable (Postgres) vs remote (MLflow) registry state."""
-    from modules.learninghub.domain import ModelAlias
+    from models.shared_ml.registry import ModelAlias
 
     settings = release.ProductionTrainingSettings.from_environment()
     resources = release.build_production_resources(settings)
