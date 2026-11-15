@@ -3736,17 +3736,22 @@ def make_live_rehearsal_executor(
             rollback_proofs: list[dict[str, Any]] = []
             candidate_sha = str(labels.get("candidate_sha", ""))[:12]
             revision_suffix = f"rb-{compute_release_hash(str(outputs['release_id']))}-{candidate_sha}"
-            for service_key, image_key, is_web in (
+            rollback_services = (
                 ("staging_api_service_name", "staging_api_image", False),
                 ("staging_web_service_name", "staging_web_image", True),
-            ):
+            )
+            # Check every service before the first one is mutated, so a web
+            # name that cannot carry the tag never leaves the API mid-rehearsal.
+            for service_key, _image_key, _is_web in rollback_services:
                 service_name = str(outputs[service_key]).strip()
-                expected_image = str(outputs[image_key]).strip()
                 if len(service_name) + len(_ROLLBACK_PROBE_TAG) > _CLOUD_RUN_TAG_AND_SERVICE_MAX:
                     raise RuntimeError(
                         f"{service_name} is too long for the rollback probe tag "
                         f"(Cloud Run caps tag plus service name at {_CLOUD_RUN_TAG_AND_SERVICE_MAX})"
                     )
+            for service_key, image_key, is_web in rollback_services:
+                service_name = str(outputs[service_key]).strip()
+                expected_image = str(outputs[image_key]).strip()
                 # The pre-existing non-zero allocation is the approved rollback
                 # target. It must be pinned and complete before any rehearsal
                 # mutation is attempted; an absent target fails closed.

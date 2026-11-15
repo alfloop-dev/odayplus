@@ -3076,11 +3076,16 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 self.assertLessEqual(len(names[key]) + len(ROLLBACK_PROBE_TAG), 46, names[key])
 
     def test_rollback_refuses_before_mutation_when_tag_would_not_fit(self) -> None:
+        too_long = "s" * (47 - len(ROLLBACK_PROBE_TAG))
+        for service_key in ("staging_api_service_name", "staging_web_service_name"):
+            with self.subTest(service_key=service_key):
+                self._assert_rollback_refused_before_mutation({**self._valid_outputs(), service_key: too_long})
+
+    def _assert_rollback_refused_before_mutation(self, outputs: dict[str, Any]) -> None:
         from unittest.mock import patch
 
         from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
 
-        outputs = {**self._valid_outputs(), "staging_api_service_name": "s" * (47 - len(ROLLBACK_PROBE_TAG))}
         with patch(
             "product_ops.deployment.staging_lifecycle._live_gcloud",
             side_effect=lambda argv, **kwargs: argv[3] if argv[0] == "iam" else "",
