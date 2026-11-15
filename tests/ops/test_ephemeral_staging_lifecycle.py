@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from product_ops.deployment.staging_lifecycle import _ROLLBACK_PROBE_TAG as ROLLBACK_PROBE_TAG
 from product_ops.deployment.staging_lifecycle import (
     MAX_TENANT_ID_LENGTH,
     TENANT_ID_PATTERN,
@@ -2956,6 +2957,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             "staging_api_service_name": names["cloud_run_api"],
             "staging_web_service_name": names["cloud_run_web"],
             "staging_database_name": names["database_name"],
+            "staging_database_user": names["database_user"],
             "staging_data_bucket": names["bucket_name"],
             "staging_tenant_id": names["tenant_id"],
             "staging_runtime_service_account": f"{names['sa_runtime']}@{self.project_id}.iam.gserviceaccount.com",
@@ -3034,6 +3036,74 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         # Restoring into the same release database: the dump drops before it creates.
         self.assertIn("--clean", sql_calls[0])
         self.assertIn("--if-exists", sql_calls[0])
+        # ...so the restore runs as the release user that owns those objects
+        # (staging deploy 43699516874: "permission denied for schema workflow").
+        self.assertIn(f"--user={outputs['staging_database_user']}", sql_calls[1])
+
+    def test_sql_rehearsal_refuses_without_the_release_database_user(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
+
+        for value in (None, " "):
+            outputs = self._valid_outputs()
+            if value is None:
+                del outputs["staging_database_user"]
+            else:
+                outputs["staging_database_user"] = value
+            with patch(
+                "product_ops.deployment.staging_lifecycle._live_gcloud",
+                side_effect=lambda argv, **kwargs: argv[3] if argv[0] == "iam" else "",
+            ) as cloud:
+                with self.assertRaisesRegex(ValueError, "staging_database_user"):
+                    make_live_rehearsal_executor(
+                        outputs,
+                        project_id=self.project_id,
+                        region="asia-east1",
+                        operator_identity=outputs["staging_runtime_service_account"],
+                        cloud_sql_instance=f"{self.project_id}:asia-east1:oday-staging-pg",
+                    )
+            self.assertFalse([call for call in cloud.call_args_list if call.args[0][0] == "sql"])
+
+    def test_rollback_probe_tag_fits_cloud_run_limit_for_every_release_name(self) -> None:
+        from product_ops.deployment.staging_lifecycle import get_ephemeral_resource_names
+
+        # Cloud Run caps tag plus service name at 46 characters; release names
+        # are fixed-width, so check a real-shaped release id and the long ones.
+        for release_id in ("odp-60cf786952c7", "odp-" + "f" * 12, "odp-" + "f" * 40):
+            names = get_ephemeral_resource_names(release_id, self.project_id)
+            for key in ("cloud_run_api", "cloud_run_web"):
+                self.assertLessEqual(len(names[key]) + len(ROLLBACK_PROBE_TAG), 46, names[key])
+
+    def test_rollback_refuses_before_mutation_when_tag_would_not_fit(self) -> None:
+        too_long = "s" * (47 - len(ROLLBACK_PROBE_TAG))
+        for service_key in ("staging_api_service_name", "staging_web_service_name"):
+            with self.subTest(service_key=service_key):
+                self._assert_rollback_refused_before_mutation({**self._valid_outputs(), service_key: too_long})
+
+    def _assert_rollback_refused_before_mutation(self, outputs: dict[str, Any]) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
+
+        with patch(
+            "product_ops.deployment.staging_lifecycle._live_gcloud",
+            side_effect=lambda argv, **kwargs: argv[3] if argv[0] == "iam" else "",
+        ) as cloud, patch(
+            "product_ops.deployment.staging_lifecycle._live_cloud_run_description",
+            return_value={"status": {"traffic": [{"revisionName": "s-a", "percent": 100}]}},
+        ):
+            executor = make_live_rehearsal_executor(
+                outputs,
+                project_id=self.project_id,
+                region="asia-east1",
+                operator_identity=outputs["staging_runtime_service_account"],
+            )
+            with self.assertRaisesRegex(RuntimeError, "too long for the rollback probe tag"):
+                executor("rollback_rehearsal", {})
+        self.assertFalse(
+            [call for call in cloud.call_args_list if call.args[0][:3] == ["run", "services", "update"]]
+        )
 
     @contextmanager
     def _rollback_rehearsal_runtime(
@@ -3074,7 +3144,9 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 trace.append(("create", name))
                 if name == failed_name and failure == "create":
                     raise RuntimeError("probe creation failed")
-                traffic[name].append({"revisionName": f"{name}-probe", "tag": "rollback-probe"})
+                # Record the tag gcloud was actually asked for, not an assumed one.
+                sent_tag = next(arg.removeprefix("--tag=") for arg in argv if arg.startswith("--tag="))
+                traffic[name].append({"revisionName": f"{name}-probe", "tag": sent_tag})
             if argv[:3] == ["run", "services", "update-traffic"]:
                 shares = dict(item.split("=") for item in argv[4].removeprefix("--to-revisions=").split(","))
                 switching = f"{name}-probe" in shares
@@ -3087,7 +3159,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                     if not switching and restore_failure == "mismatch":
                         return ""  # A successful CLI exit is not proof of restored traffic.
                     # A successful switch exit is not proof of the probe allocation either.
-                    probe = {"revisionName": f"{name}-probe", "tag": "rollback-probe"}
+                    probe = {"revisionName": f"{name}-probe", "tag": ROLLBACK_PROBE_TAG}
                     a, b = (f"{name}-a", f"{name}-b")
                     switched_readback = {
                         "switch-unchanged": None,
@@ -3165,7 +3237,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertEqual(len(result["rollback_targets"]), 2)
         for name, routes in traffic.items():
-            self.assertIn({"revisionName": f"{name}-probe", "tag": "rollback-probe"}, routes)
+            self.assertIn({"revisionName": f"{name}-probe", "tag": ROLLBACK_PROBE_TAG}, routes)
             self.assertCountEqual([r for r in routes if r.get("percent")], baseline[name])
             restore_index = trace.index(("restore", name))
             self.assertEqual(trace[restore_index + 1], ("read", name))
@@ -5608,6 +5680,81 @@ class StagingPasswordLoginRuntimeWiringTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, staging_runs)
             self.assertNotIn(forbidden, str(create.get("env", "")))
+
+
+class StagingIdentityTokenMintingTests(unittest.TestCase):
+    """The deployer mints release ID tokens via IAM generateIdToken, not gcloud impersonation."""
+
+    SA = "stg-odp-60cf78695-d1182418-rt@odayplus-runtime-20260825.iam.gserviceaccount.com"
+
+    def _mint(self, *, access_token: str = "deployer-access", response: Any = None, error: Exception | None = None):
+        import io
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        captured: dict[str, Any] = {}
+
+        class _Response(io.BytesIO):
+            def __enter__(self) -> _Response:
+                return self
+
+            def __exit__(self, *_exc: Any) -> None:
+                self.close()
+
+        def urlopen(request: Any, timeout: float) -> Any:
+            captured["request"] = request
+            captured["timeout"] = timeout
+            if error is not None:
+                raise error
+            return _Response(json.dumps(response).encode("utf-8"))
+
+        with patch.object(lifecycle, "_live_gcloud", return_value=access_token) as cloud, patch.object(
+            lifecycle.urllib.request, "urlopen", side_effect=urlopen
+        ):
+            try:
+                token = lifecycle._live_identity_token(audience="https://api.example.test", operator_identity=self.SA)
+            except RuntimeError as exc:
+                token = exc
+        return token, cloud, captured
+
+    def test_mints_with_the_deployer_token_and_never_impersonates(self) -> None:
+        token, cloud, captured = self._mint(response={"token": "id-token-value"})
+        self.assertEqual(token, "id-token-value")
+        # Only the deployer's own access token is read; no gcloud impersonation,
+        # which would call generateAccessToken and need serviceAccountTokenCreator.
+        self.assertEqual([call.args[0] for call in cloud.call_args_list], [["auth", "print-access-token"]])
+        request = captured["request"]
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(
+            request.full_url,
+            f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{self.SA}:generateIdToken",
+        )
+        self.assertEqual(request.get_header("Authorization"), "Bearer deployer-access")
+        self.assertEqual(
+            json.loads(request.data.decode("utf-8")),
+            {"audience": "https://api.example.test", "includeEmail": True},
+        )
+
+    def test_http_refusal_fails_closed_without_leaking_tokens(self) -> None:
+        import urllib.error
+
+        token, _cloud, _captured = self._mint(
+            error=urllib.error.HTTPError("https://iamcredentials.example", 403, "Forbidden", {}, None)
+        )
+        self.assertIsInstance(token, RuntimeError)
+        self.assertIn("HTTP 403", str(token))
+        self.assertNotIn("deployer-access", str(token))
+        self.assertIsNone(token.__cause__)
+
+    def test_empty_access_token_or_empty_id_token_fails_closed(self) -> None:
+        token, _cloud, captured = self._mint(access_token="")
+        self.assertIsInstance(token, RuntimeError)
+        self.assertNotIn("request", captured)
+        for response in ({}, {"token": "  "}, ["not", "an", "object"]):
+            token, _cloud, _captured = self._mint(response=response)
+            self.assertIsInstance(token, RuntimeError, response)
+            self.assertIn("empty output", str(token))
 
 
 if __name__ == "__main__":
