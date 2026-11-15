@@ -34,6 +34,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
@@ -85,6 +86,7 @@ REQUIRED_STAGING_OUTPUTS: tuple[str, ...] = (
     "staging_api_service_name",
     "staging_web_service_name",
     "staging_database_name",
+    "staging_database_user",
     "staging_data_bucket",
     "staging_tenant_id",
     "staging_runtime_service_account",
@@ -1456,6 +1458,7 @@ def validate_staging_outputs(
         "staging_api_service_name",
         "staging_web_service_name",
         "staging_database_name",
+        "staging_database_user",
         "staging_data_bucket",
         "staging_runtime_service_account",
         "staging_web_service_account",
@@ -2905,29 +2908,71 @@ def _live_cloud_run_description(
     return payload
 
 
+_IAM_CREDENTIALS_ENDPOINT = "https://iamcredentials.googleapis.com/v1"
+
+# Cloud Run rejects a traffic tag whose length plus the service name exceeds
+# 46 characters (ReplaceService INVALID_ARGUMENT, staging deploy 43699516874:
+# "rollback-probe" + "stg-odp-<12>-<8>-api" is 47). Release service names are
+# at most 41 characters (24-character slug), so the tag stays at 2.
+_ROLLBACK_PROBE_TAG = "rb"
+_CLOUD_RUN_TAG_AND_SERVICE_MAX = 46
+
+
 def _live_identity_token(
     *,
     audience: str,
     operator_identity: str,
     gcloud_bin: str = "gcloud",
 ) -> str:
-    """Mint a short-lived token only for the verified release-scoped identity."""
+    """Mint a short-lived token only for the verified release-scoped identity.
 
-    token = _live_gcloud(
-        [
-            "auth",
-            "print-identity-token",
-            f"--impersonate-service-account={operator_identity}",
-            f"--audiences={audience}",
-            "--include-email",
-        ],
+    The deployer calls IAM Credentials ``generateIdToken`` on the release
+    service account with its own access token, which needs only
+    ``roles/iam.serviceAccountOpenIdTokenCreator`` (granted per release by the
+    ephemeral staging module). ``gcloud auth print-identity-token
+    --impersonate-service-account`` first mints an access token *as* that
+    account (``generateAccessToken``), which needs the broader
+    ``serviceAccountTokenCreator``; staging deploy 43699516874 failed every
+    token-bearing verify stage on that.
+    """
+
+    access_token = _live_gcloud(
+        ["auth", "print-access-token"],
         gcloud_bin=gcloud_bin,
         timeout=60,
         capture_output=True,
     )
-    if not token:
+    if not access_token:
+        raise RuntimeError("deployer access token for identity token minting is empty")
+    url = (
+        f"{_IAM_CREDENTIALS_ENDPOINT}/projects/-/serviceAccounts/"
+        f"{urllib.parse.quote(operator_identity, safe='@.')}:generateIdToken"
+    )
+    request = urllib.request.Request(
+        url,
+        data=json.dumps({"audience": audience, "includeEmail": True}).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310 - fixed IAM endpoint
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(
+            f"generateIdToken for {operator_identity} failed with HTTP {exc.code}"
+        ) from None
+    except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
+        raise RuntimeError(
+            f"generateIdToken for {operator_identity} failed: {type(exc).__name__}"
+        ) from None
+    token = payload.get("token") if isinstance(payload, Mapping) else None
+    if not isinstance(token, str) or not token.strip():
         raise RuntimeError("release-scoped identity token minting returned empty output")
-    return token
+    return token.strip()
 
 
 def _live_json_get(url: str, token: str, *, timeout: float = 30.0) -> Mapping[str, Any]:
@@ -3586,6 +3631,8 @@ def make_live_rehearsal_executor(
                 raise RuntimeError("backup/restore rehearsal requires the protected Cloud SQL foundation input")
             bucket = str(outputs["staging_data_bucket"]).strip()
             database = str(outputs["staging_database_name"]).strip()
+            # Non-empty by construction: the executor refuses outputs without it.
+            database_user = str(outputs["staging_database_user"]).strip()
             backup_uri = f"gs://{bucket}/rehearsal/{outputs['release_id']}/database.sql"
             _live_gcloud(
                 [
@@ -3612,6 +3659,10 @@ def make_live_rehearsal_executor(
                     cloud_sql_instance,
                     backup_uri,
                     f"--database={database}",
+                    # The dump was taken with --clean, so the restore must run
+                    # as the release user that owns every object; the instance
+                    # default user is refused ("permission denied for schema").
+                    f"--user={database_user}",
                     f"--project={project_id}",
                     "--quiet",
                 ],
@@ -3691,6 +3742,11 @@ def make_live_rehearsal_executor(
             ):
                 service_name = str(outputs[service_key]).strip()
                 expected_image = str(outputs[image_key]).strip()
+                if len(service_name) + len(_ROLLBACK_PROBE_TAG) > _CLOUD_RUN_TAG_AND_SERVICE_MAX:
+                    raise RuntimeError(
+                        f"{service_name} is too long for the rollback probe tag "
+                        f"(Cloud Run caps tag plus service name at {_CLOUD_RUN_TAG_AND_SERVICE_MAX})"
+                    )
                 # The pre-existing non-zero allocation is the approved rollback
                 # target. It must be pinned and complete before any rehearsal
                 # mutation is attempted; an absent target fails closed.
@@ -3707,7 +3763,7 @@ def make_live_rehearsal_executor(
                             service_name,
                             f"--image={expected_image}",
                             "--no-traffic",
-                            "--tag=rollback-probe",
+                            f"--tag={_ROLLBACK_PROBE_TAG}",
                             f"--revision-suffix={revision_suffix}",
                             f"--region={region}",
                             f"--project={project_id}",
@@ -3718,7 +3774,7 @@ def make_live_rehearsal_executor(
                     probe_entries = [
                         entry
                         for entry in describe_traffic(service_name)
-                        if str(entry.get("tag") or "").strip() == "rollback-probe"
+                        if str(entry.get("tag") or "").strip() == _ROLLBACK_PROBE_TAG
                     ]
                     if len(probe_entries) != 1:
                         raise RuntimeError(f"{service_name} rollback rehearsal revision is missing")
