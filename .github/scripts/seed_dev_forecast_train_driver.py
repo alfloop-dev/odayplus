@@ -68,6 +68,54 @@ def _promote(release) -> int:
     return 0
 
 
+def _cleanup_retired_versions(release) -> int:
+    """Owner-approved (2026-11-15) dev-only removal of withdrawn registry versions.
+
+    CLEANUP_VERSIONS were already deleted from the dev MLflow; the durable
+    learninghub repository still lists them (and their aliases), which keeps
+    the deploy-dev gate red and blocks the next release. There is no product
+    API to delete a model version, so: aliases are cleared through the durable
+    repository's own clear_alias, then only the version documents are deleted.
+    Release decisions, sagas, model cards and audit events are kept.
+    """
+    from models.shared_ml.registry import ModelAlias
+
+    name = "forecast_revenue_interval"
+    targets = [v.strip() for v in os.environ["CLEANUP_VERSIONS"].split(",") if v.strip()]
+    settings = release.ProductionTrainingSettings.from_environment()
+    resources = release.build_production_resources(settings)
+    try:
+        repo = resources.application.service.repository
+        remote = resources.application.service.registry
+        client = remote._require_client()
+        live = {mv.tags.get(remote._tag("domain_version"))
+                for mv in client.search_model_versions(filter_string=f"name = '{name}'")}
+        if live & set(targets):
+            print(f"RESULT: FAILED (still in MLflow: {sorted(live & set(targets))})", flush=True)
+            return 1
+        for alias in ModelAlias:
+            held = repo.get_alias(name, alias)
+            if held is not None and held.version in targets:
+                repo.clear_alias(name, alias)
+                print("CLEARED alias", alias.value, "was", held.version, flush=True)
+        for version in targets:
+            if repo.get_model_version(name, version) is None:
+                print("ABSENT", version, flush=True)
+                continue
+            resources.engine.execute(
+                "DELETE FROM durable_documents WHERE collection = ? AND doc_id = ?",
+                ("learninghub.model_versions", f"{name}:{version}"),
+            )
+            gone = repo.get_model_version(name, version) is None
+            print("DELETED version doc", version, "verified=", gone, flush=True)
+            if not gone:
+                print("RESULT: FAILED (version document still present)", flush=True)
+                return 1
+    finally:
+        resources.close()
+    return 0
+
+
 def _print_state(release) -> int:
     """Read-only: durable (Postgres) vs remote (MLflow) registry state."""
     from models.shared_ml.registry import ModelAlias
@@ -128,6 +176,11 @@ def main() -> int:
     from product_ops.modeling import install_views, release
 
     if os.environ.get("ACTION", "train") == "state":
+        return _print_state(release)
+    if os.environ.get("ACTION", "train") == "cleanup":
+        rc = _cleanup_retired_versions(release)
+        if rc != 0:
+            return rc
         return _print_state(release)
     from shared.governance.model_performance import (
         MODEL_PERFORMANCE_DRIFT_POLICY_KIND,
