@@ -376,9 +376,10 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             else:
                 previous = receipts[-1]
                 intake_id = str(previous["intake_id"])
-                job = connection.execute("SELECT status,result FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s",
+                job = connection.execute("SELECT d.status,w.result FROM odp_runtime.durable_jobs d JOIN workflow.jobs w "
+                    "ON w.job_id::text=d.job_id WHERE w.tenant_id=%s AND w.job_id=%s",
                     (ids["tenant"], previous["job_id"])).fetchone()
-                if not job or job[0] != JobStatus.SUCCEEDED.value:
+                if not job or job[0] != JobStatus.SUCCEEDED.value or job[1] is None:
                     return
                 result = job[1]
                 assert result["intake_id"] == intake_id
@@ -405,8 +406,8 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         def match_browser_manual(connection):
             if len(url_admissions) != 4 or url_matches:
                 return
-            job = connection.execute("SELECT status FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s",
-                (ids["tenant"], url_admissions[-1]["job_id"])).fetchone()
+            job = connection.execute("SELECT status FROM odp_runtime.durable_jobs WHERE job_id=%s",
+                (str(url_admissions[-1]["job_id"]),)).fetchone()
             if not job or job[0] != JobStatus.SUCCEEDED.value:
                 return
             rows = connection.execute("SELECT i.intake_id,s.source_snapshot_id,i.version,i.processing_state "
@@ -423,8 +424,8 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                     ids["tenant"], str(intake_id), str(snapshot_id), url_manual_parser_release,
                     expected_version=version))
                 return
-            parser_job = connection.execute("SELECT status FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s",
-                (ids["tenant"], url_parser_admissions[0]["job_id"])).fetchone()
+            parser_job = connection.execute("SELECT status FROM odp_runtime.durable_jobs WHERE job_id=%s",
+                (str(url_parser_admissions[0]["job_id"]),)).fetchone()
             if not parser_job or parser_job[0] != JobStatus.SUCCEEDED.value:
                 return
             assert state == "MATCHING"
