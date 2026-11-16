@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -21,7 +21,6 @@ if str(ROOT) not in sys.path:
 
 from product_ops.deployment.staging_lifecycle import _ROLLBACK_PROBE_TAG as ROLLBACK_PROBE_TAG
 from product_ops.deployment.staging_lifecycle import (
-    MAX_TENANT_ID_LENGTH,
     TENANT_ID_PATTERN,
     UNVERIFIABLE_STATE_PREFIX,
     ReleaseIdentityConflict,
@@ -51,6 +50,30 @@ from product_ops.deployment.staging_lifecycle import (
 )
 
 MODULE_DIR = ROOT / "infra/terraform/modules/ephemeral_staging"
+
+# RFC 4122 URL namespace and the release tenant name prefix, written out so the
+# oracle below does not reuse the implementation's constants.
+RFC4122_URL_NAMESPACE = "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
+RELEASE_TENANT_NAME_PREFIX = "oday-plus:ephemeral-staging:tenant:"
+UUID_LOWER_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+
+
+def expected_release_tenant(release_id: str) -> str:
+    """RFC 4122 section 4.3 UUIDv5, computed by hand (SHA-1, version 5, variant 10)."""
+
+    import hashlib
+
+    digest = bytearray(
+        hashlib.sha1(  # noqa: S324 - RFC 4122 name-based UUID, not a security hash
+            bytes.fromhex(RFC4122_URL_NAMESPACE.replace("-", ""))
+            + (RELEASE_TENANT_NAME_PREFIX + release_id).encode("utf-8")
+        ).digest()[:16]
+    )
+    digest[6] = (digest[6] & 0x0F) | 0x50
+    digest[8] = (digest[8] & 0x3F) | 0x80
+    raw = digest.hex()
+    return f"{raw[:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:]}"
+
 
 
 class EphemeralStagingLifecycleTests(unittest.TestCase):
@@ -167,7 +190,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertEqual(labels["managed_by"], "terraform")
         self.assertEqual(labels["ephemeral"], "true")
         self.assertEqual(labels["release_id"], f"odp-20260824-001-{rel_hash}")
-        self.assertEqual(labels["tenant"], f"tenant-odp-20260824-001-{rel_hash}")
+        self.assertEqual(labels["tenant"], "cba32f7e-2135-5b95-83b7-7daec13fc2b8")
         self.assertEqual(labels["candidate_sha"], "a" * 40)
         self.assertEqual(labels["manifest_digest_prefix"], "b" * 16)
         self.assertEqual(labels["owner_task"], "odp-ephemeral-staging-iac-001")
@@ -175,7 +198,6 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertEqual(labels["expires_at"], "2026-08-25-12-00-00")
 
     def test_tenant_isolation_explicit_and_default(self) -> None:
-        rel_hash = compute_release_hash("odp-20260824-001")
         # Default tenant derived from release_id
         labels_default = generate_staging_labels(
             release_id="odp-20260824-001",
@@ -183,7 +205,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             manifest_digest="sha256:" + "b" * 64,
             owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
         )
-        self.assertEqual(labels_default["tenant"], f"tenant-odp-20260824-001-{rel_hash}")
+        self.assertEqual(labels_default["tenant"], "cba32f7e-2135-5b95-83b7-7daec13fc2b8")
 
         # Explicit tenant passed
         labels_explicit = generate_staging_labels(
@@ -1680,19 +1702,71 @@ variable "after_comment" {
 
         self.assertEqual(first, second)
         self.assertNotEqual(first, other)
-        self.assertEqual(first, f"tenant-{self.release_id}-{compute_release_hash(self.release_id)}")
+        # The value the runtime's PostgreSQL UUID tenant columns accept.
+        self.assertEqual(first, "cba32f7e-2135-5b95-83b7-7daec13fc2b8")
+        self.assertEqual(str(uuid.UUID(first)), first)
 
-    def test_derived_tenant_stays_within_module_length_limit(self) -> None:
-        long_release = "odp-" + "x" * 120
-        derived = derive_release_tenant_id(long_release)
+    def test_derived_tenant_is_lowercase_rfc4122_uuidv5_for_every_release_shape(self) -> None:
+        for release_id in (
+            self.release_id,
+            "REL_1.0",
+            "Odp.Release_2026-11-16",
+            "a.b",
+            "odp-" + "x" * 124,  # the 128-character maximum
+            "ODP_" + "Y" * 124,
+        ):
+            with self.subTest(release_id=release_id):
+                derived = derive_release_tenant_id(release_id)
+                self.assertEqual(derived, expected_release_tenant(release_id))
+                self.assertEqual(len(derived), 36)
+                self.assertRegex(derived, UUID_LOWER_PATTERN)
+                self.assertEqual(uuid.UUID(derived).version, 5)
+                self.assertIsNotNone(TENANT_ID_PATTERN.fullmatch(derived))
+                # Labels carry the tenant verbatim, no second hashing round.
+                labels = generate_staging_labels(
+                    release_id=release_id,
+                    candidate_sha="a" * 40,
+                    manifest_digest="sha256:" + "b" * 64,
+                    owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+                )
+                self.assertEqual(labels["tenant"], derived)
+        # The raw release id is hashed: case and punctuation stay distinct.
+        self.assertNotEqual(derive_release_tenant_id("REL_1.0"), derive_release_tenant_id("rel-1-0"))
+        self.assertNotEqual(
+            derive_release_tenant_id("odp-" + "x" * 124), derive_release_tenant_id("odp-" + "x" * 123 + "y")
+        )
 
-        self.assertLessEqual(len(derived), MAX_TENANT_ID_LENGTH)
-        self.assertIsNotNone(TENANT_ID_PATTERN.fullmatch(derived))
-        # Uniqueness survives truncation because the hash covers the raw release id.
-        self.assertNotEqual(derived, derive_release_tenant_id(long_release + "y"))
+    def test_blank_release_derives_no_tenant(self) -> None:
+        for release_id in ("", " ", "\t\n"):
+            with self.subTest(release_id=release_id):
+                self.assertEqual(derive_release_tenant_id(release_id), "")
 
+    def test_derived_tenant_satisfies_module_validation_for_long_release(self) -> None:
+        long_release = "odp-" + "x" * 124
         long_config = dataclasses_replace(self.config, release_id=long_release)
-        self.assertEqual(validate_tfvars_against_module(generate_tfvars(long_config), MODULE_DIR), [])
+        tfvars = generate_tfvars(long_config)
+        self.assertEqual(tfvars["tenant_id"], expected_release_tenant(long_release))
+        self.assertEqual(validate_tfvars_against_module(tfvars, MODULE_DIR), [])
+
+    def test_legacy_tenant_tfvars_still_validate_and_stay_immutable(self) -> None:
+        """Releases created before UUIDv5 recorded tenant-<slug>-<hash> explicitly."""
+        import tempfile
+
+        legacy_tenant = f"tenant-{self.release_id}-{compute_release_hash(self.release_id)}"
+        legacy = dataclasses_replace(self.config, tenant_id=legacy_tenant)
+        tfvars = generate_tfvars(legacy)
+        self.assertEqual(tfvars["tenant_id"], legacy_tenant)
+        # cleanup/hold destroy and plan with the recorded tfvars: still accepted.
+        self.assertEqual(validate_tfvars_against_module(tfvars, MODULE_DIR), [])
+        self.assertIsNotNone(TENANT_ID_PATTERN.fullmatch(legacy_tenant))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_root = Path(tmpdir)
+            (state_root / f"{self.release_id}.tfvars.json").write_text(json.dumps(tfvars), encoding="utf-8")
+            # The recorded legacy tenant passed back explicitly is the same release.
+            self.assertEqual(validate_immutable_release_identity(legacy, state_root), [])
+            # Silently re-deriving a different (UUID) tenant is a tenant change.
+            errors = validate_immutable_release_identity(self.config, state_root)
+            self.assertTrue(any("immutable tenant_id" in err for err in errors), errors)
 
     def test_tenant_resolution_is_shared_by_every_layer(self) -> None:
         derived = derive_release_tenant_id(self.release_id)
@@ -3065,57 +3139,93 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                     )
             self.assertFalse([call for call in cloud.call_args_list if call.args[0][0] == "sql"])
 
-    def test_rollback_probe_tag_fits_cloud_run_limit_for_every_release_name(self) -> None:
+    def test_rollback_probe_tag_and_revision_fit_cloud_run_limits_for_every_release_name(self) -> None:
         from product_ops.deployment.staging_lifecycle import get_ephemeral_resource_names
 
-        # Cloud Run caps tag plus service name at 46 characters; release names
-        # are fixed-width, so check a real-shaped release id and the long ones.
-        for release_id in ("odp-60cf786952c7", "odp-" + "f" * 12, "odp-" + "f" * 40):
+        # Cloud Run caps tag plus service name at 46 characters and a revision
+        # name at 63; release names are fixed-width, so check a real-shaped
+        # release id and the long ones.
+        suffix = f"rb-{'0' * 8}-{'a' * 8}"
+        self.assertEqual(len(suffix), 20)
+        for release_id in ("odp-60cf786952c7", "odp-" + "f" * 12, "odp-" + "f" * 40, "odp-" + "f" * 124):
             names = get_ephemeral_resource_names(release_id, self.project_id)
             for key in ("cloud_run_api", "cloud_run_web"):
                 self.assertLessEqual(len(names[key]) + len(ROLLBACK_PROBE_TAG), 46, names[key])
+                self.assertLessEqual(len(names[key]) + 1 + len(suffix), 63, names[key])
 
     def test_rollback_refuses_before_mutation_when_tag_would_not_fit(self) -> None:
         too_long = "s" * (47 - len(ROLLBACK_PROBE_TAG))
         for service_key in ("staging_api_service_name", "staging_web_service_name"):
             with self.subTest(service_key=service_key):
-                self._assert_rollback_refused_before_mutation({**self._valid_outputs(), service_key: too_long})
+                self._assert_rollback_refused_before_mutation(
+                    {**self._valid_outputs(), service_key: too_long}, "too long for the rollback probe tag"
+                )
 
-    def _assert_rollback_refused_before_mutation(self, outputs: dict[str, Any]) -> None:
+    def test_rollback_refuses_before_mutation_when_revision_would_not_fit(self) -> None:
+        # 43 characters still carries the 2-character tag (45 <= 46), but
+        # 43 + 1 + 20 = 64 exceeds the 63-character revision name cap.
+        too_long = "s" * 43
+        self.assertLessEqual(len(too_long) + len(ROLLBACK_PROBE_TAG), 46)
+        for service_key in ("staging_api_service_name", "staging_web_service_name"):
+            with self.subTest(service_key=service_key):
+                self._assert_rollback_refused_before_mutation(
+                    {**self._valid_outputs(), service_key: too_long}, "too long for the rollback probe revision"
+                )
+
+    def _assert_rollback_refused_before_mutation(self, outputs: dict[str, Any], message: str) -> None:
         from unittest.mock import patch
 
         from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
 
         with patch(
             "product_ops.deployment.staging_lifecycle._live_gcloud",
-            side_effect=lambda argv, **kwargs: argv[3] if argv[0] == "iam" else "",
+            side_effect=lambda argv, **kwargs: argv[3] if argv[0] == "iam" else "token",
         ) as cloud, patch(
             "product_ops.deployment.staging_lifecycle._live_cloud_run_description",
             return_value={"status": {"traffic": [{"revisionName": "s-a", "percent": 100}]}},
-        ):
+        ) as describe, patch(
+            "product_ops.deployment.staging_lifecycle._live_cloud_run_v2_request"
+        ) as v2:
             executor = make_live_rehearsal_executor(
                 outputs,
                 project_id=self.project_id,
                 region="asia-east1",
                 operator_identity=outputs["staging_runtime_service_account"],
             )
-            with self.assertRaisesRegex(RuntimeError, "too long for the rollback probe tag"):
+            with self.assertRaisesRegex(RuntimeError, message):
                 executor("rollback_rehearsal", {})
-        self.assertFalse(
-            [call for call in cloud.call_args_list if call.args[0][:3] == ["run", "services", "update"]]
-        )
+        # Neither service was read for mutation nor touched in any way.
+        v2.assert_not_called()
+        describe.assert_not_called()
+        self.assertFalse([call for call in cloud.call_args_list if call.args[0][:1] == ["run"]])
+
+    DEPLOYER_TOKEN = "ya29.deployer-secret-access-token"
 
     @contextmanager
     def _rollback_rehearsal_runtime(
-        self, *, failure: str = "", failed_service: str = "api", restore_failure: str = ""
+        self,
+        *,
+        failure: str = "",
+        failed_service: str = "api",
+        restore_failure: str = "",
+        live_image: str = "",
     ) -> Any:
-        """Exercise the real executor; only the Cloud Run and HTTP boundaries are doubles."""
+        """Exercise the real executor; only the Cloud Run v2/v1-readback and HTTP boundaries are doubles.
+
+        ``traffic`` is the live allocation in the shape ``gcloud run services
+        describe`` reports it (``status.traffic``); v2 PATCH bodies are applied
+        to it the way Cloud Run would, so every readback reflects what the
+        executor actually sent.
+        """
         from unittest.mock import patch
 
         from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
 
         outputs = self._valid_outputs()
         failed_name = outputs[f"staging_{failed_service}_service_name"]
+        images = {
+            outputs[f"staging_{kind}_service_name"]: outputs[f"staging_{kind}_image"] for kind in ("api", "web")
+        }
         baseline = {
             outputs[f"staging_{kind}_service_name"]: [
                 {"revisionName": f"{outputs[f'staging_{kind}_service_name']}-a", "percent": 70},
@@ -3125,6 +3235,9 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         }
         traffic = {name: [dict(route) for route in routes] for name, routes in baseline.items()}
         trace: list[tuple[str, str]] = []
+        requests: list[dict[str, Any]] = []
+        operations: dict[str, dict[str, Any]] = {}
+        base = f"https://run.googleapis.com/v2/projects/{self.project_id}/locations/asia-east1/services/"
 
         def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
             trace.append(("read", name))
@@ -3139,64 +3252,103 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         def cloud(argv: list[str], **_kwargs: Any) -> str:
             if argv[0] == "iam":
                 return argv[3]
-            name = argv[3]
-            if argv[:3] == ["run", "services", "update"]:
+            if argv == ["auth", "print-access-token"]:
+                return self.DEPLOYER_TOKEN
+            raise AssertionError(f"rollback rehearsal must not call gcloud {argv[:3]}")
+
+        def as_v1_status(routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            status = []
+            for route in routes:
+                self.assertEqual(route["type"], "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION")
+                entry: dict[str, Any] = {"revisionName": route["revision"]}
+                if route.get("percent"):
+                    entry["percent"] = route["percent"]
+                if route.get("tag"):
+                    entry["tag"] = route["tag"]
+                status.append(entry)
+            return status
+
+        def operation(name: str, kind: str) -> dict[str, Any]:
+            op_name = f"projects/{self.project_id}/locations/asia-east1/operations/op-{len(operations)}"
+            operations[op_name] = {"service": name, "kind": kind, "polls": 0}
+            return {"name": op_name, "done": False}
+
+        def v2(method: str, url: str, access_token: str, *, body: Any = None, **_kwargs: Any) -> dict[str, Any]:
+            self.assertEqual(access_token, self.DEPLOYER_TOKEN)
+            requests.append({"method": method, "url": url, "body": body})
+            if "/operations/" in url:
+                op_name = url.removeprefix("https://run.googleapis.com/v2/")
+                op = operations[op_name]
+                op["polls"] += 1
+                if op["service"] == failed_name and failure == f"lro-error-{op['kind']}":
+                    return {"name": op_name, "done": True, "error": {"code": 9, "message": "revision failed"}}
+                if op["service"] == failed_name and failure == f"lro-pending-{op['kind']}":
+                    return {"name": op_name, "done": False}
+                return {"name": op_name, "done": True, "response": {}}
+            path, _, query_text = url.removeprefix(base).partition("?")
+            name = path
+            self.assertIn(name, images)
+            if method == "GET":
+                self.assertEqual(query_text, "")
+                trace.append(("get", name))
+                return {
+                    "name": f"projects/{self.project_id}/locations/asia-east1/services/{name}",
+                    "template": {
+                        "serviceAccount": "runtime@example.iam.gserviceaccount.com",
+                        "containers": [{"image": live_image or images[name], "volumeMounts": [
+                            {"name": "cloudsql", "mountPath": "/cloudsql"}
+                        ]}],
+                        "volumes": [{"name": "cloudsql", "cloudSqlInstance": {"instances": ["p:r:i"]}}],
+                    },
+                    "traffic": [{"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 100}],
+                }
+            self.assertEqual(method, "PATCH")
+            query = dict(item.split("=", 1) for item in query_text.split("&"))
+            if query.get("forceNewRevision") == "true":
+                self.assertEqual(query, {"forceNewRevision": "true", "updateMask": "template%2Ctraffic"})
                 trace.append(("create", name))
                 if name == failed_name and failure == "create":
                     raise RuntimeError("probe creation failed")
-                # Record the tag gcloud was actually asked for, not an assumed one.
-                sent_tag = next(arg.removeprefix("--tag=") for arg in argv if arg.startswith("--tag="))
-                traffic[name].append({"revisionName": f"{name}-probe", "tag": sent_tag})
-            if argv[:3] == ["run", "services", "update-traffic"]:
-                shares = dict(item.split("=") for item in argv[4].removeprefix("--to-revisions=").split(","))
-                switching = f"{name}-probe" in shares
-                trace.append(("switch" if switching else "restore", name))
-                if name == failed_name:
-                    if switching and failure == "switch-before":
-                        raise subprocess.TimeoutExpired(["gcloud", *argv], 900)
-                    if not switching and restore_failure == "command":
-                        raise RuntimeError("restore command failed")
-                    if not switching and restore_failure == "mismatch":
-                        return ""  # A successful CLI exit is not proof of restored traffic.
-                    # A successful switch exit is not proof of the probe allocation either.
-                    probe = {"revisionName": f"{name}-probe", "tag": ROLLBACK_PROBE_TAG}
-                    a, b = (f"{name}-a", f"{name}-b")
-                    switched_readback = {
-                        "switch-unchanged": None,
-                        "switch-partial": [{"revisionName": a, "percent": 50}, {**probe, "percent": 50}],
-                        "switch-wrong-revision": [{"revisionName": a, "percent": 100}, probe],
-                        "switch-malformed": [{**probe, "percent": "all"}],
-                        "switch-missing": [],
-                        # Legitimate: the former targets stay listed at 0% and the
-                        # tag remains a separate tag-only route on the probe.
-                        "switch-zero-percent-routes": [
-                            {"revisionName": a, "percent": 0},
-                            {"revisionName": b, "percent": 0},
-                            {"revisionName": f"{name}-probe", "percent": 100},
-                            probe,
-                        ],
-                    }
-                    if switching and failure in switched_readback:
-                        if switched_readback[failure] is not None:
-                            traffic[name] = switched_readback[failure]
-                        return ""
-                traffic[name] = [
-                    {**route, "percent": int(shares[route["revisionName"]])}
-                    if route["revisionName"] in shares
-                    else {key: value for key, value in route.items() if key != "percent"}
-                    for route in traffic[name]
-                    # An untagged revision left out of the allocation drops off.
-                    if route["revisionName"] in shares or route.get("tag")
-                ]
-                listed = {route["revisionName"] for route in traffic[name]}
-                traffic[name] += [
-                    {"revisionName": revision, "percent": int(share)}
-                    for revision, share in shares.items()
-                    if revision not in listed
-                ]
-                if name == failed_name and switching and failure == "switch-after":
-                    raise subprocess.TimeoutExpired(["gcloud", *argv], 900)
-            return ""
+                traffic[name] = as_v1_status(body["traffic"])
+                return operation(name, "create")
+            self.assertEqual(query, {"updateMask": "traffic"})
+            self.assertEqual(set(body), {"traffic"})
+            switching = any(route.get("percent") == 100 and route.get("tag") for route in body["traffic"])
+            trace.append(("switch" if switching else "restore", name))
+            if name == failed_name:
+                if switching and failure == "switch-before":
+                    raise RuntimeError("Cloud Run Admin API v2 PATCH failed: TimeoutError")
+                if not switching and restore_failure == "command":
+                    raise RuntimeError("restore command failed")
+                if not switching and restore_failure == "mismatch":
+                    # A finished operation is not proof of restored traffic.
+                    return operation(name, "restore")
+                probe_name = next(route["revision"] for route in body["traffic"] if route.get("tag"))
+                probe = {"revisionName": probe_name, "tag": ROLLBACK_PROBE_TAG}
+                a, b = (f"{name}-a", f"{name}-b")
+                switched_readback = {
+                    "switch-unchanged": None,
+                    "switch-partial": [{"revisionName": a, "percent": 50}, {**probe, "percent": 50}],
+                    "switch-wrong-revision": [{"revisionName": a, "percent": 100}, probe],
+                    "switch-malformed": [{**probe, "percent": "all"}],
+                    "switch-missing": [],
+                    # Legitimate: the former targets stay listed at 0% and the
+                    # tag remains a separate tag-only route on the probe.
+                    "switch-zero-percent-routes": [
+                        {"revisionName": a, "percent": 0},
+                        {"revisionName": b, "percent": 0},
+                        {"revisionName": probe_name, "percent": 100},
+                        probe,
+                    ],
+                }
+                if switching and failure in switched_readback:
+                    if switched_readback[failure] is not None:
+                        traffic[name] = switched_readback[failure]
+                    return operation(name, "switch")
+            traffic[name] = as_v1_status(body["traffic"])
+            if name == failed_name and switching and failure == "switch-after":
+                raise RuntimeError("Cloud Run Admin API v2 PATCH failed: TimeoutError")
+            return operation(name, "switch" if switching else "restore")
 
         def health(kind: str) -> None:
             trace.append(("health", outputs[f"staging_{kind}_service_name"]))
@@ -3216,6 +3368,12 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         ), patch(
             "product_ops.deployment.staging_lifecycle._live_cloud_run_description", side_effect=describe
         ), patch(
+            "product_ops.deployment.staging_lifecycle._live_cloud_run_v2_request", side_effect=v2
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._CLOUD_RUN_V2_OPERATION_POLL_SECONDS", 0.01
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._CLOUD_RUN_V2_OPERATION_TIMEOUT_SECONDS", 0.05
+        ), patch(
             "product_ops.deployment.staging_lifecycle._live_identity_token", return_value="token"
         ), patch(
             "product_ops.deployment.staging_lifecycle._live_json_get", side_effect=api_health
@@ -3228,16 +3386,123 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 region="asia-east1",
                 operator_identity=outputs["staging_runtime_service_account"],
             )
-            yield executor, traffic, baseline, trace
+            yield executor, traffic, baseline, trace, requests, operations
+
+    def _probe_revision(self, service_name: str) -> str:
+        return f"{service_name}-rb-{compute_release_hash(self.release_id)}-{self.candidate_sha[:8]}"
+
+    def test_rollback_uses_native_cloud_run_v2_patches_with_pinned_traffic(self) -> None:
+        with self._rollback_rehearsal_runtime() as (executor, traffic, baseline, trace, requests, operations):
+            result = executor("rollback_rehearsal", {})
+        self.assertTrue(result["success"])
+        outputs = self._valid_outputs()
+        for kind, image_key in (("api", "staging_api_image"), ("web", "staging_web_image")):
+            name = outputs[f"staging_{kind}_service_name"]
+            probe = self._probe_revision(name)
+            self.assertEqual(len(probe.removeprefix(f"{name}-")), 20)
+            self.assertLessEqual(len(probe), 63)
+            service_requests = [r for r in requests if f"/services/{name}" in r["url"]]
+            self.assertEqual(
+                [(r["method"], r["url"].partition("?")[2]) for r in service_requests],
+                [
+                    ("GET", ""),
+                    ("PATCH", "forceNewRevision=true&updateMask=template%2Ctraffic"),
+                    ("PATCH", "updateMask=traffic"),
+                    ("PATCH", "updateMask=traffic"),
+                ],
+            )
+            _get, create, switch, restore = service_requests
+            # The probe is the live template (image, Cloud SQL volume) as a new
+            # named revision; no route may follow LATEST.
+            self.assertEqual(create["body"]["template"]["revision"], probe)
+            self.assertEqual(create["body"]["template"]["containers"][0]["image"], outputs[image_key])
+            self.assertEqual(create["body"]["template"]["volumes"][0]["name"], "cloudsql")
+            pinned = [
+                {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION", "revision": f"{name}-a", "percent": 70},
+                {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION", "revision": f"{name}-b", "percent": 30},
+            ]
+            probe_route = {
+                "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION", "revision": probe, "tag": ROLLBACK_PROBE_TAG,
+            }
+            self.assertEqual(create["body"]["traffic"], [*pinned, {**probe_route, "percent": 0}])
+            self.assertEqual(switch["body"], {"traffic": [{**probe_route, "percent": 100}]})
+            self.assertEqual(restore["body"], {"traffic": [*pinned, {**probe_route, "percent": 0}]})
+            # Every PATCH waited for its operation to finish.
+            self.assertEqual(
+                sorted(op["kind"] for op in operations.values() if op["service"] == name),
+                ["create", "restore", "switch"],
+            )
+            self.assertTrue(all(op["polls"] >= 1 for op in operations.values()))
+            # Restored: the approved allocation serves and the probe stays a 0% tag route.
+            self.assertCountEqual([r for r in traffic[name] if r.get("percent")], baseline[name])
+            self.assertIn({"revisionName": probe, "tag": ROLLBACK_PROBE_TAG}, traffic[name])
+            restore_index = trace.index(("restore", name))
+            self.assertEqual(trace[restore_index + 1], ("read", name))
+            proof = next(p for p in result["rollback_targets"] if p["service"] == name)
+            self.assertEqual(proof["rehearsal_revision"], probe)
+            self.assertEqual(proof["rollback_target"], sorted([f"{name}-a", f"{name}-b"]))
+
+    def test_rollback_refuses_before_mutation_when_live_image_differs(self) -> None:
+        with self._rollback_rehearsal_runtime(live_image="example.test/other@sha256:" + "0" * 64) as (
+            executor, traffic, baseline, trace, requests, _operations,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "image readback does not match"):
+                executor("rollback_rehearsal", {})
+        self.assertEqual([r["method"] for r in requests], ["GET"])
+        self.assertEqual(traffic, baseline)
+
+    def test_rollback_fails_closed_on_operation_error_or_timeout(self) -> None:
+        for service in ("api", "web"):
+            name = self._valid_outputs()[f"staging_{service}_service_name"]
+            for failure, message in (
+                ("lro-error-create", "operation failed with status code 9"),
+                ("lro-pending-create", "operation did not finish"),
+            ):
+                with self.subTest(service=service, failure=failure):
+                    with self._rollback_rehearsal_runtime(failure=failure, failed_service=service) as (
+                        executor, _traffic, _baseline, trace, _requests, _operations,
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, message) as ctx:
+                            executor("rollback_rehearsal", {})
+                    self.assertNotIn(self.DEPLOYER_TOKEN, str(ctx.exception))
+                    # No switch was attempted, so nothing is restored.
+                    self.assertNotIn(("switch", name), trace)
+                    self.assertNotIn(("restore", name), trace)
+            for failure, message in (
+                ("lro-error-switch", "operation failed with status code 9"),
+                ("lro-pending-switch", "operation did not finish"),
+            ):
+                with self.subTest(service=service, failure=failure):
+                    with self._rollback_rehearsal_runtime(failure=failure, failed_service=service) as (
+                        executor, traffic, baseline, trace, _requests, _operations,
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, message) as ctx:
+                            executor("rollback_rehearsal", {})
+                    self.assertNotIn(self.DEPLOYER_TOKEN, str(ctx.exception))
+                    self.assertNotIn(("health", name), trace)
+                    self.assertEqual(trace[-2:], [("restore", name), ("read", name)])
+                    self.assertCountEqual([r for r in traffic[name] if r.get("percent")], baseline[name])
+
+    def test_rollback_restore_operation_failure_fails_closed(self) -> None:
+        for service in ("api", "web"):
+            for failure in ("lro-error-restore", "lro-pending-restore"):
+                with self.subTest(service=service, failure=failure):
+                    with self._rollback_rehearsal_runtime(failure=failure, failed_service=service) as (
+                        executor, _traffic, _baseline, trace, _requests, _operations,
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "rollback target restore failed") as ctx:
+                            executor("rollback_rehearsal", {})
+                    self.assertNotIn(self.DEPLOYER_TOKEN, str(ctx.exception))
+                    self.assertIn(("restore", self._valid_outputs()[f"staging_{service}_service_name"]), trace)
 
     def test_rollback_restore_ignores_the_tag_only_probe_route(self) -> None:
-        """gcloud keeps the probe as a tag-only route (no percent) after restore."""
-        with self._rollback_rehearsal_runtime() as (executor, traffic, baseline, trace):
+        """The probe stays a tag-only route (no percent) after restore."""
+        with self._rollback_rehearsal_runtime() as (executor, traffic, baseline, trace, _requests, _ops):
             result = executor("rollback_rehearsal", {})
         self.assertTrue(result["success"])
         self.assertEqual(len(result["rollback_targets"]), 2)
         for name, routes in traffic.items():
-            self.assertIn({"revisionName": f"{name}-probe", "tag": ROLLBACK_PROBE_TAG}, routes)
+            self.assertIn({"revisionName": self._probe_revision(name), "tag": ROLLBACK_PROBE_TAG}, routes)
             self.assertCountEqual([r for r in routes if r.get("percent")], baseline[name])
             restore_index = trace.index(("restore", name))
             self.assertEqual(trace[restore_index + 1], ("read", name))
@@ -3248,7 +3513,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 with self.subTest(service=service, failure=failure):
                     with self._rollback_rehearsal_runtime(
                         failure=failure, failed_service=service
-                    ) as (executor, traffic, baseline, trace):
+                    ) as (executor, traffic, baseline, trace, _requests, _ops):
                         result = executor("rollback_rehearsal", {})
                     self.assertTrue(result["success"])
                     for name in traffic:
@@ -3271,7 +3536,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 with self.subTest(service=service, failure=failure):
                     with self._rollback_rehearsal_runtime(
                         failure=failure, failed_service=service
-                    ) as (executor, traffic, baseline, trace):
+                    ) as (executor, traffic, baseline, trace, _requests, _ops):
                         with self.assertRaisesRegex(RuntimeError, "rollback rehearsal switch readback"):
                             executor("rollback_rehearsal", {})
                     name = self._valid_outputs()[f"staging_{service}_service_name"]
@@ -3286,8 +3551,8 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 with self.subTest(service=service, failure=failure):
                     with self._rollback_rehearsal_runtime(
                         failure=failure, failed_service=service
-                    ) as (executor, traffic, baseline, trace):
-                        with self.assertRaises(subprocess.TimeoutExpired):
+                    ) as (executor, traffic, baseline, trace, _requests, _ops):
+                        with self.assertRaisesRegex(RuntimeError, "TimeoutError"):
                             executor("rollback_rehearsal", {})
                     name = self._valid_outputs()[f"staging_{service}_service_name"]
                     self.assertIn(("restore", name), trace)
@@ -3301,7 +3566,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             with self.subTest(service=service):
                 with self._rollback_rehearsal_runtime(
                     failure="health", failed_service=service
-                ) as (executor, traffic, baseline, trace):
+                ) as (executor, traffic, baseline, trace, _requests, _ops):
                     with self.assertRaisesRegex(RuntimeError, "probe health failed"):
                         executor("rollback_rehearsal", {})
                 name = self._valid_outputs()[f"staging_{service}_service_name"]
@@ -3315,7 +3580,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                     with self.subTest(service=service, failure=failure, restore=restore_failure):
                         with self._rollback_rehearsal_runtime(
                             failure=failure, failed_service=service, restore_failure=restore_failure
-                        ) as (executor, _traffic, _baseline, trace):
+                        ) as (executor, _traffic, _baseline, trace, _requests, _ops):
                             with self.assertRaisesRegex(RuntimeError, "rollback target (restore failed|readback)"):
                                 executor("rollback_rehearsal", {})
                         name = self._valid_outputs()[f"staging_{service}_service_name"]
@@ -3326,7 +3591,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             with self.subTest(service=service):
                 with self._rollback_rehearsal_runtime(
                     failure="create", failed_service=service
-                ) as (executor, traffic, baseline, trace):
+                ) as (executor, traffic, baseline, trace, _requests, _ops):
                     with self.assertRaisesRegex(RuntimeError, "probe creation failed"):
                         executor("rollback_rehearsal", {})
                 name = self._valid_outputs()[f"staging_{service}_service_name"]
@@ -3336,9 +3601,10 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
 
     def test_uncertain_rollback_fails_verification_and_preserves_holdable_state(self) -> None:
         for failure, service, error in (
-            ("switch-after", "api", "TimeoutExpired"),
+            ("switch-after", "api", "TimeoutError"),
             ("switch-unchanged", "api", "switch readback does not serve the probe revision"),
             ("switch-unchanged", "web", "switch readback does not serve the probe revision"),
+            ("lro-error-switch", "web", "operation failed with status code 9"),
         ):
             with self.subTest(failure=failure, service=service):
                 self._assert_rollback_failure_holds_verification(failure, service, error)
@@ -3349,7 +3615,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         outputs = self._valid_outputs()
         with tempfile.TemporaryDirectory() as tmpdir, self._rollback_rehearsal_runtime(
             failure=failure, failed_service=service
-        ) as (executor, traffic, baseline, _trace):
+        ) as (executor, traffic, baseline, _trace, _requests, _ops):
             state_dir = Path(tmpdir)
             self._seed_live_state(state_dir)
             marker_path = lifecycle._lifecycle_state_path(self.release_id, state_dir)
@@ -3374,13 +3640,163 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             self.assertFalse(receipt.success)
             self.assertTrue(receipt.remediation_required)
             self.assertEqual(json.loads(marker_path.read_text())["status"], "verification_failed")
-            self.assertFalse(json.loads(receipt_path.read_text())["success"])
+            receipt_text = receipt_path.read_text()
+            self.assertFalse(json.loads(receipt_text)["success"])
+            self.assertNotIn(self.DEPLOYER_TOKEN, receipt_text)
             stage = next(r for r in receipt.resources if r["stage"] == "rollback_rehearsal")
             self.assertEqual(stage["status"], "failed")
             self.assertNotIn("proof", stage)
             self.assertTrue(any("rollback_rehearsal" in item and error in item for item in receipt.errors))
             for name, routes in traffic.items():
                 self.assertCountEqual([r for r in routes if r.get("percent")], baseline[name])
+
+    @contextmanager
+    def _job_stage_runtime(
+        self, *, trigger_state: str = "PAUSED", worker_image: str = "", worker_egress: str = "ALL_TRAFFIC",
+        fail_execute: str = "",
+    ) -> Any:
+        """The real executor; only gcloud and the Cloud Run job description are doubles."""
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
+
+        outputs = self._valid_outputs()
+        images = {
+            outputs["staging_scheduler_job_name"]: outputs["staging_scheduler_image"],
+            outputs["staging_worker_job_name"]: worker_image or outputs["staging_worker_image"],
+        }
+        trace: list[tuple[str, ...]] = []
+
+        def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
+            self.assertEqual(kind, "job")
+            trace.append(("describe", name))
+            egress = worker_egress if name == outputs["staging_worker_job_name"] else "ALL_TRAFFIC"
+            return {"template": {"template": {"containers": [{"image": images[name]}], "vpcAccess": {"egress": egress}}}}
+
+        def cloud(argv: list[str], **_kwargs: Any) -> str:
+            if argv[0] == "iam":
+                return argv[3]
+            if argv[:3] == ["scheduler", "jobs", "describe"]:
+                trace.append(("trigger", argv[3]))
+                return trigger_state
+            if argv[:3] == ["run", "jobs", "execute"]:
+                trace.append(("execute", *argv[3:]))
+                if argv[3] == fail_execute:
+                    raise RuntimeError("gcloud run jobs execute failed with exit status 1")
+                return ""
+            raise AssertionError(f"unexpected gcloud call {argv[:3]}")
+
+        with patch(
+            "product_ops.deployment.staging_lifecycle._live_gcloud", side_effect=cloud
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_cloud_run_description", side_effect=describe
+        ):
+            executor = make_live_rehearsal_executor(
+                outputs,
+                project_id=self.project_id,
+                region="asia-east1",
+                operator_identity=outputs["staging_runtime_service_account"],
+            )
+            yield executor, outputs, trace
+
+    def test_scheduler_oneshot_drains_scheduled_work_with_the_release_worker(self) -> None:
+        with self._job_stage_runtime() as (executor, outputs, trace):
+            result = executor("scheduler_oneshot", {})
+        scheduler_job = outputs["staging_scheduler_job_name"]
+        worker_job = outputs["staging_worker_job_name"]
+        region_project = ("--region=asia-east1", f"--project={self.project_id}")
+        self.assertEqual(
+            trace,
+            [
+                ("trigger", outputs["staging_scheduler_trigger_name"]),
+                ("describe", scheduler_job),
+                ("execute", scheduler_job, *region_project, "--wait", "--quiet"),
+                # The worker image and egress are read back before it runs.
+                ("describe", worker_job),
+                (
+                    "execute",
+                    worker_job,
+                    *region_project,
+                    "--args=product_ops/deployment/cloud_run_job_entrypoint.py,worker,--max-jobs,4",
+                    "--wait",
+                    "--quiet",
+                ),
+            ],
+        )
+        self.assertTrue(result["success"])
+        self.assertEqual(result["job"], scheduler_job)
+        self.assertEqual(result["execution"], "succeeded")
+        self.assertEqual(
+            result["worker_drain"],
+            {
+                "job": worker_job,
+                "image_digest": outputs["staging_worker_image"],
+                "egress": "ALL_TRAFFIC",
+                "execution": "succeeded",
+                "args": ["product_ops/deployment/cloud_run_job_entrypoint.py", "worker", "--max-jobs", "4"],
+            },
+        )
+
+    def test_scheduler_oneshot_runs_nothing_unless_the_trigger_is_paused(self) -> None:
+        with self._job_stage_runtime(trigger_state="ENABLED") as (executor, outputs, trace):
+            with self.assertRaisesRegex(RuntimeError, "not paused"):
+                executor("scheduler_oneshot", {})
+        self.assertEqual(trace, [("trigger", outputs["staging_scheduler_trigger_name"])])
+
+    def test_scheduler_drain_refuses_an_unverified_worker_before_executing_it(self) -> None:
+        for kwargs, message in (
+            ({"worker_image": "example.test/other@sha256:" + "0" * 64}, "scheduler drain worker job image readback"),
+            ({"worker_egress": "PRIVATE_RANGES_ONLY"}, "scheduler drain worker job live VPC egress"),
+        ):
+            with self.subTest(**kwargs):
+                with self._job_stage_runtime(**kwargs) as (executor, outputs, trace):
+                    with self.assertRaisesRegex(RuntimeError, message):
+                        executor("scheduler_oneshot", {})
+                executed = [entry[1] for entry in trace if entry[0] == "execute"]
+                self.assertEqual(executed, [outputs["staging_scheduler_job_name"]])
+
+    def test_scheduler_drain_failure_fails_the_stage(self) -> None:
+        outputs = self._valid_outputs()
+        with self._job_stage_runtime(fail_execute=outputs["staging_worker_job_name"]) as (executor, _o, trace):
+            with self.assertRaisesRegex(RuntimeError, "exit status 1"):
+                executor("scheduler_oneshot", {})
+        self.assertEqual(trace[-1][:2], ("execute", outputs["staging_worker_job_name"]))
+
+    def test_public_egress_probe_runs_the_canary_args_on_the_verified_worker(self) -> None:
+        with self._job_stage_runtime() as (executor, outputs, trace):
+            result = executor("public_egress_denied_probe", {})
+        worker_job = outputs["staging_worker_job_name"]
+        self.assertEqual(
+            trace,
+            [
+                ("describe", worker_job),
+                (
+                    "execute",
+                    worker_job,
+                    "--region=asia-east1",
+                    f"--project={self.project_id}",
+                    "--args=product_ops/deployment/cloud_run_job_entrypoint.py,public-egress-probe",
+                    "--wait",
+                    "--quiet",
+                ),
+            ],
+        )
+        self.assertEqual(
+            result,
+            {
+                "success": True,
+                "job": worker_job,
+                "image_digest": outputs["staging_worker_image"],
+                "egress": "ALL_TRAFFIC",
+                "execution": "succeeded",
+                "probe": "public_egress_denied",
+                "status": "denied",
+            },
+        )
+        with self._job_stage_runtime(worker_egress="PRIVATE_RANGES_ONLY") as (executor, _outputs, trace):
+            with self.assertRaisesRegex(RuntimeError, "public egress probe job live VPC egress"):
+                executor("public_egress_denied_probe", {})
+        self.assertFalse([entry for entry in trace if entry[0] == "execute"])
 
     def test_provider_readback_uses_the_live_gate_consumer_only_rule(self) -> None:
         from unittest.mock import patch
@@ -5755,6 +6171,165 @@ class StagingIdentityTokenMintingTests(unittest.TestCase):
             token, _cloud, _captured = self._mint(response=response)
             self.assertIsInstance(token, RuntimeError, response)
             self.assertIn("empty output", str(token))
+
+
+
+class StagingCloudRunV2AdminApiTests(unittest.TestCase):
+    """The native Cloud Run Admin API v2 boundary used by the rollback rehearsal."""
+
+    TOKEN = "ya29.deployer-secret-access-token"
+    SERVICE = "stg-odp-20260824-001-1a2b3c4d-api"
+    BASE = "https://run.googleapis.com/v2/projects/oday-staging-proj/locations/asia-east1/services"
+
+    def _call(self, *, method: str = "GET", body: Any = None, response: Any = None, error: Exception | None = None):
+        import io
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        captured: dict[str, Any] = {}
+
+        class _Response(io.BytesIO):
+            def __enter__(self) -> _Response:
+                return self
+
+            def __exit__(self, *_exc: Any) -> None:
+                self.close()
+
+        def urlopen(request: Any, timeout: float) -> Any:
+            captured["request"] = request
+            if error is not None:
+                raise error
+            return _Response(json.dumps(response).encode("utf-8"))
+
+        with patch.object(lifecycle.urllib.request, "urlopen", side_effect=urlopen):
+            try:
+                result = lifecycle._live_cloud_run_v2_request(
+                    method, f"{self.BASE}/{self.SERVICE}?updateMask=traffic", self.TOKEN, body=body
+                )
+            except RuntimeError as exc:
+                result = exc
+        return result, captured
+
+    def _assert_no_token(self, exc: BaseException) -> None:
+        import traceback
+
+        self.assertNotIn(self.TOKEN, str(exc))
+        self.assertIsNone(exc.__cause__)
+        self.assertTrue(exc.__suppress_context__)
+        self.assertNotIn(self.TOKEN, "".join(traceback.format_exception(exc)))
+
+    def test_patch_sends_the_deployer_token_and_json_body(self) -> None:
+        result, captured = self._call(method="PATCH", body={"traffic": []}, response={"name": "op"})
+        self.assertEqual(result, {"name": "op"})
+        request = captured["request"]
+        self.assertEqual(request.get_method(), "PATCH")
+        self.assertEqual(request.full_url, f"{self.BASE}/{self.SERVICE}?updateMask=traffic")
+        self.assertEqual(request.get_header("Authorization"), f"Bearer {self.TOKEN}")
+        self.assertEqual(request.get_header("Content-type"), "application/json")
+        self.assertEqual(json.loads(request.data.decode("utf-8")), {"traffic": []})
+
+    def test_failures_fail_closed_without_leaking_the_token(self) -> None:
+        import io
+        import urllib.error
+
+        echoed = io.BytesIO(json.dumps({"error": {"message": f"bad token {self.TOKEN}"}}).encode())
+        for error, expected in (
+            (urllib.error.HTTPError(f"{self.BASE}/{self.SERVICE}", 400, "Bad Request", {}, echoed), "HTTP 400"),
+            (urllib.error.URLError(f"unreachable with {self.TOKEN}"), "URLError"),
+            (TimeoutError(self.TOKEN), "TimeoutError"),
+        ):
+            with self.subTest(expected=expected):
+                result, _captured = self._call(method="PATCH", body={}, error=error)
+                self.assertIsInstance(result, RuntimeError)
+                self.assertIn(expected, str(result))
+                self.assertIn(f"/services/{self.SERVICE}", str(result))
+                self._assert_no_token(result)
+        for response in (["not", "an", "object"], "text"):
+            result, _captured = self._call(response=response)
+            self.assertIsInstance(result, RuntimeError)
+            self.assertIn("non-object", str(result))
+
+    def test_patch_waits_for_the_operation_and_validates_it(self) -> None:
+        import traceback
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        op_name = "projects/oday-staging-proj/locations/asia-east1/operations/abc"
+        cases = {
+            "done-after-poll": ([{"name": op_name, "done": False}, {"name": op_name, "done": True}], None),
+            "malformed-name": ([{"name": "https://evil.example/x", "done": False}], "did not return an operation"),
+            "readback-mismatch": (
+                [{"name": op_name, "done": False}, {"name": op_name + "x", "done": True}],
+                "operation readback does not match",
+            ),
+            "error": (
+                [{"name": op_name, "done": False}, {"name": op_name, "done": True, "error": {"code": 3, "message": "x"}}],
+                "status code 3",
+            ),
+        }
+        for case, (responses, failure) in cases.items():
+            with self.subTest(case=case):
+                calls: list[tuple[str, str, str]] = []
+                queue = list(responses)
+
+                def request(
+                    method: str, url: str, token: str, *, calls: list = calls, queue: list = queue, **_kwargs: Any
+                ) -> Any:
+                    calls.append((method, url, token))
+                    return queue.pop(0)
+
+                with patch.object(lifecycle, "_live_cloud_run_v2_request", side_effect=request), patch.object(
+                    lifecycle, "_live_gcloud", return_value=self.TOKEN
+                ) as cloud, patch.object(lifecycle, "_CLOUD_RUN_V2_OPERATION_POLL_SECONDS", 0):
+                    services = lifecycle._LiveCloudRunV2Services(
+                        project_id="oday-staging-proj", region="asia-east1", gcloud_bin="gcloud"
+                    )
+                    if failure is None:
+                        services.patch(self.SERVICE, {"traffic": []}, update_mask="template,traffic",
+                                       force_new_revision=True)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, failure) as ctx:
+                            services.patch(self.SERVICE, {"traffic": []}, update_mask="traffic")
+                        self.assertNotIn(self.TOKEN, "".join(traceback.format_exception(ctx.exception)))
+                self.assertTrue(all(token == self.TOKEN for _m, _u, token in calls))
+                self.assertTrue(all(call.args[0] == ["auth", "print-access-token"] for call in cloud.call_args_list))
+                if failure is None:
+                    self.assertEqual(
+                        calls[0][:2],
+                        ("PATCH", f"{self.BASE}/{self.SERVICE}?forceNewRevision=true&updateMask=template%2Ctraffic"),
+                    )
+                    self.assertEqual(calls[1][:2], ("GET", f"https://run.googleapis.com/v2/{op_name}"))
+                if case == "malformed-name":
+                    self.assertEqual(len(calls), 1)
+
+    def test_operation_that_never_finishes_times_out(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        op = {"name": "projects/p/locations/r/operations/slow", "done": False}
+        with patch.object(lifecycle, "_live_cloud_run_v2_request", return_value=op), patch.object(
+            lifecycle, "_live_gcloud", return_value=self.TOKEN
+        ), patch.object(lifecycle, "_CLOUD_RUN_V2_OPERATION_TIMEOUT_SECONDS", 0):
+            services = lifecycle._LiveCloudRunV2Services(project_id="p", region="r", gcloud_bin="gcloud")
+            with self.assertRaisesRegex(RuntimeError, "did not finish") as ctx:
+                services.patch(self.SERVICE, {}, update_mask="traffic")
+        self.assertNotIn(self.TOKEN, str(ctx.exception))
+
+    def test_empty_deployer_token_refuses_before_any_request(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        with patch.object(lifecycle, "_live_cloud_run_v2_request") as request, patch.object(
+            lifecycle, "_live_gcloud", return_value=""
+        ):
+            services = lifecycle._LiveCloudRunV2Services(project_id="p", region="r", gcloud_bin="gcloud")
+            with self.assertRaisesRegex(RuntimeError, "access token for Cloud Run Admin API v2 is empty"):
+                services.get(self.SERVICE)
+        request.assert_not_called()
 
 
 if __name__ == "__main__":

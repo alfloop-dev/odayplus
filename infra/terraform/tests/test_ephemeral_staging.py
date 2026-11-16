@@ -667,21 +667,53 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
 
         self.assertEqual(planned_tenant, derive_release_tenant_id(release_id))
 
-    def test_terraform_and_python_derive_the_same_bounded_tenant(self) -> None:
+    def test_terraform_and_python_derive_the_same_uuidv5_tenant(self) -> None:
+        """Every valid release id shape plans to the Python-derived UUIDv5 tenant."""
+        import uuid
+
         from product_ops.deployment.staging_lifecycle import (
-            MAX_TENANT_ID_LENGTH,
             derive_release_tenant_id,
             generate_tfvars,
         )
 
-        release_id = "odp-" + "x" * 120
+        for index, release_id in enumerate(
+            (
+                "odp-20260824-001",
+                "REL_1.0",
+                "Odp.Release_2026-11-16",
+                "odp-" + "x" * 124,  # the 128-character maximum
+            )
+        ):
+            with self.subTest(release_id=release_id):
+                tfvars = generate_tfvars(self._config(release_id))
+                tfvars["tenant_id"] = ""
+
+                planned_tenant = self._planned_tenant(self._plan(f"uuid_tenant_{index}", tfvars))
+
+                # Written-out oracle: RFC 4122 URL namespace + the fixed name prefix.
+                expected = str(
+                    uuid.uuid5(
+                        uuid.UUID("6ba7b811-9dad-11d1-80b4-00c04fd430c8"),
+                        "oday-plus:ephemeral-staging:tenant:" + release_id,
+                    )
+                )
+                self.assertEqual(planned_tenant, expected)
+                self.assertEqual(planned_tenant, derive_release_tenant_id(release_id))
+                self.assertEqual(len(planned_tenant), 36)
+                self.assertEqual(planned_tenant, planned_tenant.lower())
+
+    def test_recorded_legacy_tenant_still_plans_for_cleanup_and_hold(self) -> None:
+        """Releases created before UUIDv5 carry tenant-<slug>-<hash> in their tfvars."""
+        from product_ops.deployment.staging_lifecycle import compute_release_hash, generate_tfvars
+
+        release_id = "odp-20260824-001"
+        legacy_tenant = f"tenant-{release_id}-{compute_release_hash(release_id)}"
         tfvars = generate_tfvars(self._config(release_id))
-        tfvars["tenant_id"] = ""
+        tfvars["tenant_id"] = legacy_tenant
 
-        planned_tenant = self._planned_tenant(self._plan("long_release_tenant", tfvars))
+        planned_tenant = self._planned_tenant(self._plan("legacy_tenant", tfvars))
 
-        self.assertEqual(planned_tenant, derive_release_tenant_id(release_id))
-        self.assertLessEqual(len(planned_tenant), MAX_TENANT_ID_LENGTH)
+        self.assertEqual(planned_tenant, legacy_tenant)
 
     def test_generated_tfvars_bind_password_login_runtime_inputs(self) -> None:
         """caller config -> generated tfvars -> planned API/Web runtime env.
