@@ -131,9 +131,20 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
     if product_browser_phase:
         from modules.listing.application.native_intake_retrieval import NativeIntakeRetrievalOwner
         from modules.listing.application.native_intake_retrieval_policy import (
-            POLICY_ENV as RETRIEVAL_POLICY, SIGNING_KEY_ENV as RETRIEVAL_KEY, STORAGE_ENV as RETRIEVAL_STORAGE,
+            POLICY_ENV as RETRIEVAL_POLICY,
         )
-        from tests.integration.test_native_intake_retrieval_postgresql import BUCKET, KMS, RAW, SyntheticIO
+        from modules.listing.application.native_intake_retrieval_policy import (
+            SIGNING_KEY_ENV as RETRIEVAL_KEY,
+        )
+        from modules.listing.application.native_intake_retrieval_policy import (
+            STORAGE_ENV as RETRIEVAL_STORAGE,
+        )
+        from tests.integration.test_native_intake_retrieval_postgresql import (
+            BUCKET,
+            KMS,
+            RAW,
+            SyntheticIO,
+        )
 
         # Reuse the original guarded synthetic HTTP/storage seam. These local
         # policy/storage inputs are not a production source-use approval.
