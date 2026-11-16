@@ -668,20 +668,39 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
         self.assertEqual(planned_tenant, derive_release_tenant_id(release_id))
 
     def test_terraform_and_python_derive_the_same_bounded_tenant(self) -> None:
+        """Every valid release id shape plans to the same bounded Python-derived UUIDv5 tenant."""
+        import uuid
+
         from product_ops.deployment.staging_lifecycle import (
-            MAX_TENANT_ID_LENGTH,
             derive_release_tenant_id,
             generate_tfvars,
         )
 
-        release_id = "odp-" + "x" * 120
-        tfvars = generate_tfvars(self._config(release_id))
-        tfvars["tenant_id"] = ""
+        for index, release_id in enumerate(
+            (
+                "odp-20260824-001",
+                "REL_1.0",
+                "Odp.Release_2026-11-16",
+                "odp-" + "x" * 124,  # the 128-character maximum
+            )
+        ):
+            with self.subTest(release_id=release_id):
+                tfvars = generate_tfvars(self._config(release_id))
+                tfvars["tenant_id"] = ""
 
-        planned_tenant = self._planned_tenant(self._plan("long_release_tenant", tfvars))
+                planned_tenant = self._planned_tenant(self._plan(f"uuid_tenant_{index}", tfvars))
 
-        self.assertEqual(planned_tenant, derive_release_tenant_id(release_id))
-        self.assertLessEqual(len(planned_tenant), MAX_TENANT_ID_LENGTH)
+                # Written-out oracle: RFC 4122 URL namespace + the fixed name prefix.
+                expected = str(
+                    uuid.uuid5(
+                        uuid.UUID("6ba7b811-9dad-11d1-80b4-00c04fd430c8"),
+                        "oday-plus:ephemeral-staging:tenant:" + release_id,
+                    )
+                )
+                self.assertEqual(planned_tenant, expected)
+                self.assertEqual(planned_tenant, derive_release_tenant_id(release_id))
+                self.assertEqual(len(planned_tenant), 36)
+                self.assertEqual(planned_tenant, planned_tenant.lower())
 
     def test_generated_tfvars_bind_password_login_runtime_inputs(self) -> None:
         """caller config -> generated tfvars -> planned API/Web runtime env.
@@ -745,15 +764,23 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
         )
 
     def test_explicit_tenant_still_wins_over_the_derived_one(self) -> None:
-        from product_ops.deployment.staging_lifecycle import generate_tfvars
+        """An explicit tenant_id wins, including the pre-UUIDv5 tenant-<slug>-<hash>
+        recorded in tfvars of releases that still need cleanup and hold."""
+        from product_ops.deployment.staging_lifecycle import compute_release_hash, generate_tfvars
 
-        config = self._config("odp-20260824-001")
-        tfvars = generate_tfvars(config)
-        tfvars["tenant_id"] = "custom-tenant-42"
+        release_id = "odp-20260824-001"
+        legacy_tenant = f"tenant-{release_id}-{compute_release_hash(release_id)}"
+        for workspace, explicit_tenant in (
+            ("explicit_tenant", "custom-tenant-42"),
+            ("legacy_tenant", legacy_tenant),
+        ):
+            with self.subTest(tenant_id=explicit_tenant):
+                tfvars = generate_tfvars(self._config(release_id))
+                tfvars["tenant_id"] = explicit_tenant
 
-        planned_tenant = self._planned_tenant(self._plan("explicit_tenant", tfvars))
+                planned_tenant = self._planned_tenant(self._plan(workspace, tfvars))
 
-        self.assertEqual(planned_tenant, "custom-tenant-42")
+                self.assertEqual(planned_tenant, explicit_tenant)
 
 
 if __name__ == "__main__":

@@ -36,6 +36,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -55,10 +56,13 @@ SERVICE_ACCOUNT_EMAIL_PATTERN = re.compile(
     r"^[a-z][a-z0-9-]{5,29}@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$"
 )
 
-# Derived tenant ids are bounded to a valid GCP label length so the same value is
-# accepted by the Terraform `tenant_id` validation and usable as a label verbatim.
-TENANT_ID_PREFIX = "tenant-"
-MAX_TENANT_ID_LENGTH = 63
+# Derived tenant ids are RFC 4122 UUIDv5 values: the runtime stores tenant_id in
+# PostgreSQL UUID columns (core.tenants, core.stores, identity.*, intake.*), so a
+# non-UUID tenant fails every tenant-scoped read. Terraform derives the same value
+# with uuidv5("url", ...); the lowercase 36-character form also satisfies the
+# module's tenant_id validation and is usable as a GCP label value verbatim.
+TENANT_ID_UUID_NAMESPACE = uuid.NAMESPACE_URL
+TENANT_ID_UUID_NAME_PREFIX = "oday-plus:ephemeral-staging:tenant:"
 
 DEFAULT_TTL_HOURS = 24
 MAX_TTL_HOURS = 168  # 7 days max allowed extension
@@ -653,22 +657,15 @@ def _authoritative_inventory_release_id(
 def derive_release_tenant_id(release_id: str) -> str:
     """Return the deterministic release-scoped tenant id used when none is supplied.
 
-    ``infra/terraform/modules/ephemeral_staging/main.tf`` derives the identical
-    value in ``local.tenant_derived``.  Both sides bound the result to
-    ``MAX_TENANT_ID_LENGTH`` so a derived tenant always satisfies the module's
-    ``tenant_id`` validation and stays usable as a GCP label value without a
-    second round of hashing.  The release hash is computed from the exact raw
-    release id, so truncating the readable slug never collapses two releases
-    onto one tenant.
+    The value is ``uuid5(NAMESPACE_URL, "oday-plus:ephemeral-staging:tenant:" +
+    release_id)`` over the exact raw release id, in its lowercase 36-character
+    form. ``infra/terraform/modules/ephemeral_staging/main.tf`` derives the
+    identical value in ``local.tenant_derived`` with ``uuidv5("url", ...)``.
+    A blank release id derives no tenant.
     """
     if not release_id.strip():
         return ""
-    clean = sanitize_release_suffix(release_id) or "rel"
-    rel_hash = compute_release_hash(release_id)
-    budget = MAX_TENANT_ID_LENGTH - len(TENANT_ID_PREFIX) - 1 - len(rel_hash)
-    if len(clean) > budget:
-        clean = clean[:budget].strip("-") or "rel"
-    return f"{TENANT_ID_PREFIX}{clean}-{rel_hash}"
+    return str(uuid.uuid5(TENANT_ID_UUID_NAMESPACE, f"{TENANT_ID_UUID_NAME_PREFIX}{release_id}"))
 
 
 def resolve_tenant_id(release_id: str, tenant_id: str = "") -> str:
@@ -2910,12 +2907,43 @@ def _live_cloud_run_description(
 
 _IAM_CREDENTIALS_ENDPOINT = "https://iamcredentials.googleapis.com/v1"
 
+# Container args for one-off release worker job executions. The job's own
+# Terraform args stay the idempotency probe's (--max-jobs 1 --require-job).
+STAGING_PUBLIC_EGRESS_PROBE_ARGS: tuple[str, ...] = (
+    "product_ops/deployment/cloud_run_job_entrypoint.py",
+    "public-egress-probe",
+)
+STAGING_SCHEDULER_DRAIN_WORKER_ARGS: tuple[str, ...] = (
+    "product_ops/deployment/cloud_run_job_entrypoint.py",
+    "worker",
+    "--max-jobs",
+    "4",
+)
+
 # Cloud Run rejects a traffic tag whose length plus the service name exceeds
 # 46 characters (ReplaceService INVALID_ARGUMENT, staging deploy 43699516874:
 # "rollback-probe" + "stg-odp-<12>-<8>-api" is 47). Release service names are
 # at most 41 characters (24-character slug), so the tag stays at 2.
 _ROLLBACK_PROBE_TAG = "rb"
 _CLOUD_RUN_TAG_AND_SERVICE_MAX = 46
+# A revision is named "<service>-<suffix>" and is capped at 63 characters, so
+# the probe suffix is "rb-<release hash 8>-<candidate sha 8>" (20 characters):
+# 41 + 1 + 20 = 62 for the longest release service name.
+_CLOUD_RUN_REVISION_NAME_MAX = 63
+
+
+def _live_deployer_access_token(*, gcloud_bin: str = "gcloud", purpose: str) -> str:
+    """Return the deployer's own OAuth access token; it never enters a message."""
+
+    access_token = _live_gcloud(
+        ["auth", "print-access-token"],
+        gcloud_bin=gcloud_bin,
+        timeout=60,
+        capture_output=True,
+    )
+    if not access_token:
+        raise RuntimeError(f"deployer access token for {purpose} is empty")
+    return access_token
 
 
 def _live_identity_token(
@@ -2936,14 +2964,9 @@ def _live_identity_token(
     token-bearing verify stage on that.
     """
 
-    access_token = _live_gcloud(
-        ["auth", "print-access-token"],
-        gcloud_bin=gcloud_bin,
-        timeout=60,
-        capture_output=True,
+    access_token = _live_deployer_access_token(
+        gcloud_bin=gcloud_bin, purpose="identity token minting"
     )
-    if not access_token:
-        raise RuntimeError("deployer access token for identity token minting is empty")
     url = (
         f"{_IAM_CREDENTIALS_ENDPOINT}/projects/-/serviceAccounts/"
         f"{urllib.parse.quote(operator_identity, safe='@.')}:generateIdToken"
@@ -2973,6 +2996,128 @@ def _live_identity_token(
     if not isinstance(token, str) or not token.strip():
         raise RuntimeError("release-scoped identity token minting returned empty output")
     return token.strip()
+
+
+_CLOUD_RUN_V2_ENDPOINT = "https://run.googleapis.com/v2"
+_CLOUD_RUN_V2_REVISION_TARGET = "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION"
+_CLOUD_RUN_V2_OPERATION_NAME = re.compile(r"^projects/[^/?#]+/locations/[^/?#]+/operations/[^/?#]+$")
+_CLOUD_RUN_V2_OPERATION_TIMEOUT_SECONDS = 900.0
+_CLOUD_RUN_V2_OPERATION_POLL_SECONDS = 5.0
+
+
+def _live_cloud_run_v2_request(
+    method: str,
+    url: str,
+    access_token: str,
+    *,
+    body: Mapping[str, Any] | None = None,
+    timeout: float = 60.0,
+) -> Mapping[str, Any]:
+    """Call the Cloud Run Admin API v2 with the deployer token.
+
+    Failures name only the method, the resource path and the HTTP status or
+    exception type: neither the token nor a response body ever reaches a
+    message or an exception chain.
+    """
+
+    path = urllib.parse.urlsplit(url).path
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8") if body is not None else None,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            **({"Content-Type": "application/json"} if body is not None else {}),
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed Cloud Run endpoint
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(
+            f"Cloud Run Admin API v2 {method} {path} failed with HTTP {exc.code}"
+        ) from None
+    except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
+        raise RuntimeError(
+            f"Cloud Run Admin API v2 {method} {path} failed: {type(exc).__name__}"
+        ) from None
+    if not isinstance(payload, Mapping):
+        raise RuntimeError(f"Cloud Run Admin API v2 {method} {path} returned a non-object payload")
+    return payload
+
+
+class _LiveCloudRunV2Services:
+    """Native Cloud Run Admin API v2 access to the release's services.
+
+    The services are ``google_cloud_run_v2_service`` resources. Their
+    ``volumes.cloud_sql_instance`` mount is an ALPHA CSI volume to the Knative
+    v1 surface, so ``gcloud run services update`` / ``update-traffic``
+    (ReplaceService) is refused outright; every mutation goes through v2
+    PATCH and waits for its long-running operation.
+    """
+
+    def __init__(self, *, project_id: str, region: str, gcloud_bin: str) -> None:
+        self._base = f"{_CLOUD_RUN_V2_ENDPOINT}/projects/{project_id}/locations/{region}/services"
+        self._gcloud_bin = gcloud_bin
+
+    def _token(self) -> str:
+        # Minted per request: an operation can be polled for many minutes.
+        return _live_deployer_access_token(gcloud_bin=self._gcloud_bin, purpose="Cloud Run Admin API v2")
+
+    def _service_url(self, service_name: str) -> str:
+        return f"{self._base}/{urllib.parse.quote(service_name, safe='')}"
+
+    def get(self, service_name: str) -> Mapping[str, Any]:
+        return _live_cloud_run_v2_request("GET", self._service_url(service_name), self._token())
+
+    def patch(
+        self,
+        service_name: str,
+        body: Mapping[str, Any],
+        *,
+        update_mask: str,
+        force_new_revision: bool = False,
+    ) -> Mapping[str, Any]:
+        """PATCH the service and return its finished operation (fail closed)."""
+
+        query = {"updateMask": update_mask}
+        if force_new_revision:
+            query = {"forceNewRevision": "true", **query}
+        operation = _live_cloud_run_v2_request(
+            "PATCH",
+            f"{self._service_url(service_name)}?{urllib.parse.urlencode(query)}",
+            self._token(),
+            body=body,
+        )
+        return self._wait(service_name, operation)
+
+    def _wait(self, service_name: str, operation: Mapping[str, Any]) -> Mapping[str, Any]:
+        name = str(operation.get("name") or "").strip()
+        if not _CLOUD_RUN_V2_OPERATION_NAME.fullmatch(name):
+            raise RuntimeError(f"{service_name} Cloud Run v2 update did not return an operation")
+        deadline = time.monotonic() + _CLOUD_RUN_V2_OPERATION_TIMEOUT_SECONDS
+        while True:
+            if operation.get("done") is True:
+                error = operation.get("error")
+                if error:
+                    # google.rpc.Status from the service; it never carries the
+                    # caller's bearer token.
+                    code = error.get("code") if isinstance(error, Mapping) else None
+                    message = str(error.get("message") or "")[:300] if isinstance(error, Mapping) else ""
+                    raise RuntimeError(
+                        f"{service_name} Cloud Run v2 operation failed with status code {code!r}: {message}"
+                    )
+                return operation
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"{service_name} Cloud Run v2 operation did not finish within "
+                    f"{int(_CLOUD_RUN_V2_OPERATION_TIMEOUT_SECONDS)} seconds"
+                )
+            time.sleep(_CLOUD_RUN_V2_OPERATION_POLL_SECONDS)
+            operation = _live_cloud_run_v2_request("GET", f"{_CLOUD_RUN_V2_ENDPOINT}/{name}", self._token())
+            if str(operation.get("name") or "").strip() != name:
+                raise RuntimeError(f"{service_name} Cloud Run v2 operation readback does not match")
 
 
 def _live_json_get(url: str, token: str, *, timeout: float = 30.0) -> Mapping[str, Any]:
@@ -3249,8 +3394,18 @@ def make_live_rehearsal_executor(
         }
 
     def execute_job(
-        output_name: str, image_output_name: str, kind: str, *, run: bool = True
+        output_name: str,
+        image_output_name: str,
+        kind: str,
+        *,
+        run: bool = True,
+        args: Sequence[str] = (),
     ) -> Mapping[str, Any]:
+        """Verify the live job's image and egress, then (with ``run``) execute it.
+
+        ``args`` overrides the container args for this execution only; the
+        image and ALL_TRAFFIC egress readback always precede the execution.
+        """
         job_name = str(outputs[output_name]).strip()
         expected_image = str(outputs[image_output_name]).strip()
         payload = _live_cloud_run_description(
@@ -3287,6 +3442,7 @@ def make_live_rehearsal_executor(
                 job_name,
                 f"--region={region}",
                 f"--project={project_id}",
+                *([f"--args={','.join(args)}"] if args else []),
                 "--wait",
                 "--quiet",
             ],
@@ -3303,52 +3459,13 @@ def make_live_rehearsal_executor(
     def execute_public_egress_probe() -> Mapping[str, Any]:
         """Run the fixed public canary from the release-scoped worker job."""
 
-        job_name = str(outputs["staging_worker_job_name"]).strip()
-        expected_image = str(outputs["staging_worker_image"]).strip()
-        payload = _live_cloud_run_description(
-            "job",
-            job_name,
-            project_id=project_id,
-            region=region,
-            gcloud_bin=gcloud_bin,
-        )
-        actual_image = _live_cloud_run_field(
-            payload,
-            (
-                ("template", "template", "containers", 0, "image"),
-                ("spec", "template", "spec", "template", "spec", "containers", 0, "image"),
-            ),
-            field_name="public egress probe job image",
-        )
-        if actual_image != expected_image:
-            raise RuntimeError(
-                "public egress probe job image readback does not match its immutable Terraform output"
-            )
-        actual_egress = _live_cloud_run_egress(payload, field_name="public egress probe job VPC egress")
-        if actual_egress != "ALL_TRAFFIC":
-            raise RuntimeError(
-                f"public egress probe job live VPC egress is {actual_egress!r}; expected ALL_TRAFFIC"
-            )
-        _live_gcloud(
-            [
-                "run",
-                "jobs",
-                "execute",
-                job_name,
-                f"--region={region}",
-                f"--project={project_id}",
-                "--args=product_ops/deployment/cloud_run_job_entrypoint.py,public-egress-probe",
-                "--wait",
-                "--quiet",
-            ],
-            gcloud_bin=gcloud_bin,
-        )
         return {
-            "success": True,
-            "job": job_name,
-            "image_digest": expected_image,
-            "egress": actual_egress,
-            "execution": "succeeded",
+            **execute_job(
+                "staging_worker_job_name",
+                "staging_worker_image",
+                "public egress probe",
+                args=STAGING_PUBLIC_EGRESS_PROBE_ARGS,
+            ),
             "probe": "public_egress_denied",
             "status": "denied",
         }
@@ -3625,7 +3742,31 @@ def make_live_rehearsal_executor(
                 raise RuntimeError(
                     "release-scoped scheduler trigger is not paused during rehearsal"
                 )
-            return execute_job("staging_scheduler_job_name", "staging_scheduler_image", "scheduler")
+            scheduler = execute_job("staging_scheduler_job_name", "staging_scheduler_image", "scheduler")
+            # Drain what the scheduler just enqueued (store-ops-materialize and
+            # the rest), as deploy_cloud_run_waji.sh does after its one-shot
+            # scheduler run. Left on the queue, the materialization never runs:
+            # the operator bootstrap stays unavailable and the work blocks the
+            # live E2E gate's queue. The release worker job's Terraform args
+            # (--max-jobs 1 --require-job) serve the idempotency probe, so this
+            # execution overrides them; execute_job reads back the worker image
+            # and ALL_TRAFFIC egress before it runs anything.
+            drain = execute_job(
+                "staging_worker_job_name",
+                "staging_worker_image",
+                "scheduler drain worker",
+                args=STAGING_SCHEDULER_DRAIN_WORKER_ARGS,
+            )
+            return {
+                **scheduler,
+                "worker_drain": {
+                    "job": drain["job"],
+                    "image_digest": drain["image_digest"],
+                    "egress": drain["egress"],
+                    "execution": drain["execution"],
+                    "args": list(STAGING_SCHEDULER_DRAIN_WORKER_ARGS),
+                },
+            }
         if stage_name == "backup_restore_drill":
             if not cloud_sql_instance:
                 raise RuntimeError("backup/restore rehearsal requires the protected Cloud SQL foundation input")
@@ -3715,33 +3856,57 @@ def make_live_rehearsal_executor(
                     raise RuntimeError(f"{service_name} rollback target is missing")
                 return revisions
 
-            def update_traffic(service_name: str, revisions: Mapping[str, int]) -> None:
-                to_revisions = ",".join(
-                    f"{revision}={percent}" for revision, percent in revisions.items()
-                )
-                _live_gcloud(
-                    [
-                        "run",
-                        "services",
-                        "update-traffic",
-                        service_name,
-                        f"--to-revisions={to_revisions}",
-                        f"--region={region}",
-                        f"--project={project_id}",
-                        "--quiet",
-                    ],
-                    gcloud_bin=gcloud_bin,
+            cloud_run = _LiveCloudRunV2Services(
+                project_id=project_id, region=region, gcloud_bin=gcloud_bin
+            )
+
+            def pinned_traffic(
+                revisions: Mapping[str, int], *, probe_revision: str = "", probe_percent: int = 0
+            ) -> list[dict[str, Any]]:
+                # Every v2 route is pinned to a named revision: a LATEST route
+                # would hand the freshly created probe the approved traffic.
+                routes: list[dict[str, Any]] = [
+                    {"type": _CLOUD_RUN_V2_REVISION_TARGET, "revision": revision, "percent": percent}
+                    for revision, percent in revisions.items()
+                    if percent and revision != probe_revision
+                ]
+                if probe_revision:
+                    routes.append(
+                        {
+                            "type": _CLOUD_RUN_V2_REVISION_TARGET,
+                            "revision": probe_revision,
+                            "percent": probe_percent,
+                            "tag": _ROLLBACK_PROBE_TAG,
+                        }
+                    )
+                return routes
+
+            def update_traffic(
+                service_name: str, revisions: Mapping[str, int], *, probe_revision: str, probe_percent: int
+            ) -> None:
+                cloud_run.patch(
+                    service_name,
+                    {
+                        "traffic": pinned_traffic(
+                            revisions, probe_revision=probe_revision, probe_percent=probe_percent
+                        )
+                    },
+                    update_mask="traffic",
                 )
 
+            def serving(revisions: Mapping[str, int]) -> dict[str, int]:
+                return {revision: percent for revision, percent in revisions.items() if percent}
+
             rollback_proofs: list[dict[str, Any]] = []
-            candidate_sha = str(labels.get("candidate_sha", ""))[:12]
+            candidate_sha = str(labels.get("candidate_sha", ""))[:8]
             revision_suffix = f"rb-{compute_release_hash(str(outputs['release_id']))}-{candidate_sha}"
             rollback_services = (
                 ("staging_api_service_name", "staging_api_image", False),
                 ("staging_web_service_name", "staging_web_image", True),
             )
             # Check every service before the first one is mutated, so a web
-            # name that cannot carry the tag never leaves the API mid-rehearsal.
+            # name that cannot carry the tag or the probe revision never leaves
+            # the API mid-rehearsal.
             for service_key, _image_key, _is_web in rollback_services:
                 service_name = str(outputs[service_key]).strip()
                 if len(service_name) + len(_ROLLBACK_PROBE_TAG) > _CLOUD_RUN_TAG_AND_SERVICE_MAX:
@@ -3749,32 +3914,48 @@ def make_live_rehearsal_executor(
                         f"{service_name} is too long for the rollback probe tag "
                         f"(Cloud Run caps tag plus service name at {_CLOUD_RUN_TAG_AND_SERVICE_MAX})"
                     )
+                if len(service_name) + 1 + len(revision_suffix) > _CLOUD_RUN_REVISION_NAME_MAX:
+                    raise RuntimeError(
+                        f"{service_name} is too long for the rollback probe revision "
+                        f"(Cloud Run caps revision names at {_CLOUD_RUN_REVISION_NAME_MAX})"
+                    )
             for service_key, image_key, is_web in rollback_services:
                 service_name = str(outputs[service_key]).strip()
                 expected_image = str(outputs[image_key]).strip()
+                probe_revision = f"{service_name}-{revision_suffix}"
                 # The pre-existing non-zero allocation is the approved rollback
                 # target. It must be pinned and complete before any rehearsal
                 # mutation is attempted; an absent target fails closed.
                 approved_traffic = normalize_traffic(service_name, describe_traffic(service_name))
                 baseline_revisions = set(approved_traffic)
+                if probe_revision in baseline_revisions:
+                    raise RuntimeError(f"{service_name} rollback rehearsal target is not distinct")
+                live_service = cloud_run.get(service_name)
+                template = live_service.get("template")
+                if not isinstance(template, Mapping):
+                    raise RuntimeError(f"{service_name} Cloud Run v2 template readback is missing")
+                actual_image = _live_cloud_run_field(
+                    live_service,
+                    (("template", "containers", 0, "image"),),
+                    field_name=f"{service_name} v2 template image",
+                )
+                if actual_image != expected_image:
+                    raise RuntimeError(
+                        f"{service_name} image readback does not match its immutable Terraform output"
+                    )
                 traffic_switch_attempted = False
-                probe_revision = ""
                 try:
-                    _live_gcloud(
-                        [
-                            "run",
-                            "services",
-                            "update",
-                            service_name,
-                            f"--image={expected_image}",
-                            "--no-traffic",
-                            f"--tag={_ROLLBACK_PROBE_TAG}",
-                            f"--revision-suffix={revision_suffix}",
-                            f"--region={region}",
-                            f"--project={project_id}",
-                            "--quiet",
-                        ],
-                        gcloud_bin=gcloud_bin,
+                    # The probe is the same template as a new named revision
+                    # behind the rb tag at 0%; the approved allocation is
+                    # pinned unchanged in the same update.
+                    cloud_run.patch(
+                        service_name,
+                        {
+                            "template": {**template, "revision": probe_revision},
+                            "traffic": pinned_traffic(approved_traffic, probe_revision=probe_revision),
+                        },
+                        update_mask="template,traffic",
+                        force_new_revision=True,
                     )
                     probe_entries = [
                         entry
@@ -3783,16 +3964,16 @@ def make_live_rehearsal_executor(
                     ]
                     if len(probe_entries) != 1:
                         raise RuntimeError(f"{service_name} rollback rehearsal revision is missing")
-                    probe_revision = str(
+                    tagged_revision = str(
                         probe_entries[0].get("revisionName") or probe_entries[0].get("revision") or ""
                     ).strip()
-                    if not probe_revision or probe_revision in baseline_revisions:
+                    if tagged_revision != probe_revision:
                         raise RuntimeError(f"{service_name} rollback rehearsal target is not distinct")
-                    # A timeout or CLI error cannot prove the remote switch
+                    # A timeout or API error cannot prove the remote switch
                     # did not commit. Arm restoration before issuing it.
                     traffic_switch_attempted = True
-                    update_traffic(service_name, {probe_revision: 100})
-                    # A successful CLI exit is not an allocation receipt. The
+                    update_traffic(service_name, {}, probe_revision=probe_revision, probe_percent=100)
+                    # A finished operation is not an allocation receipt. The
                     # health probe only proves the rehearsal target once the
                     # remote readback serves every request from the probe;
                     # zero-percent and tag-only routes may remain listed.
@@ -3813,15 +3994,17 @@ def make_live_rehearsal_executor(
                 finally:
                     if traffic_switch_attempted:
                         try:
-                            update_traffic(service_name, approved_traffic)
-                            # Read back on failure paths too: a successful
-                            # restore command alone does not prove recovery.
+                            update_traffic(
+                                service_name, approved_traffic, probe_revision=probe_revision, probe_percent=0
+                            )
+                            # Read back on failure paths too: a finished restore
+                            # operation alone does not prove recovery.
                             restored = normalize_traffic(service_name, describe_traffic(service_name))
                         except Exception as exc:
                             raise RuntimeError(
                                 f"{service_name} rollback target restore failed: {type(exc).__name__}"
                             ) from exc
-                        if restored != approved_traffic:
+                        if serving(restored) != serving(approved_traffic):
                             raise RuntimeError(
                                 f"{service_name} rollback target readback does not match the approved allocation"
                             )
