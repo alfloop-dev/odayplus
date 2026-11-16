@@ -1,5 +1,6 @@
 """Create real native Intake anchors without inventing processed evidence."""
 
+from copy import deepcopy
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -23,6 +24,42 @@ from shared.audit.backlog import CanonicalAuditBacklog
 from shared.auth import Principal, Role
 from shared.domain.events import DomainEvent
 from shared.jobs.queue import JobStatus
+
+# Catalogued payload contracts for the events the shared workflow commands emit.
+_WORKFLOW_EVENT_SCHEMAS = {
+    "assignment.assigned": "#/payloads/AssignmentChangedV1",
+    "assignment.transferred": "#/payloads/AssignmentChangedV1",
+    "assignment.claimed": "#/payloads/AssignmentStateChangedV1",
+    "assignment.completed": "#/payloads/AssignmentStateChangedV1",
+    "sla.state_changed": "#/payloads/SlaStateChangedV1",
+}
+
+
+def _instant(value) -> str | None:
+    """Normalize one recorded aware instant to the shared command text form."""
+    if value is None:
+        return None
+    at = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if at.utcoffset() is None:
+        raise IntakeWorkflowUnavailable("Recorded workflow time is not timezone-aware")
+    return at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _json_value(value):
+    from json import loads
+
+    return loads(value) if isinstance(value, str) else value
+
+
+class _NativeWorkflowState(SimpleNamespace):
+    """Request-local command surface for one locked native workflow.
+
+    It mirrors the shared command store interface for exactly the recorded
+    rows loaded in this SQL root. It is never flushed to durable_documents.
+    """
+
+    def canonical_audit_is_committed(self, audit) -> bool:
+        return any(audit is loaded for loaded in self.committed_audits)
 
 
 class CanonicalIntakeRepository:
@@ -210,6 +247,260 @@ class CanonicalIntakeRepository:
                 raise IntakeWorkflowUnavailable("Native Assignment/SLA binding differs")
             return {key: value for key, value in row.items()
                     if key not in {"tenant_id", "assignment_due_at", "bound_assignment_id"}}
+
+    def workflow_owner(self, tenant: str, *, intake_id: str | None = None, assignment_id: str | None = None,
+                       sla_instance_id: str | None = None) -> str | None:
+        """Return the owning native Intake only for an actual recorded native row.
+
+        A UUID alone is not provenance. Absence means this resource is not a
+        native workflow resource in the verified tenant; the caller keeps the
+        retained legacy behaviour for it rather than guessing.
+        """
+        selected = [value for value in (intake_id, assignment_id, sla_instance_id) if value is not None]
+        if len(selected) != 1:
+            raise ValueError("Exactly one native workflow resource is required")
+        UUID(selected[0])
+        with self.graph.transaction(tenant):
+            if intake_id is not None:
+                row = self.engine.query_one("SELECT intake_id FROM intake.intakes WHERE tenant_id=? AND intake_id=? "
+                    "AND deleted_at IS NULL", (tenant, intake_id))
+            elif assignment_id is not None:
+                row = self.engine.query_one("SELECT a.intake_id FROM workflow.assignments a JOIN intake.intakes i "
+                    "ON i.tenant_id=a.tenant_id AND i.intake_id=a.intake_id AND i.deleted_at IS NULL "
+                    "WHERE a.tenant_id=? AND a.assignment_id=?", (tenant, assignment_id))
+            else:
+                row = self.engine.query_one("SELECT s.intake_id FROM workflow.sla_instances s JOIN intake.intakes i "
+                    "ON i.tenant_id=s.tenant_id AND i.intake_id=s.intake_id AND i.deleted_at IS NULL "
+                    "WHERE s.tenant_id=? AND s.sla_instance_id=?", (tenant, sla_instance_id))
+            return None if row is None else row["intake_id"]
+
+    def workflow_clock(self, tenant: str) -> datetime:
+        """Use the same database clock as the native SQL owners."""
+        with self.graph.transaction(tenant):
+            at = self.engine.query_one("SELECT clock_timestamp() AS at")["at"]
+            return datetime.fromisoformat(at).astimezone(UTC)
+
+    def workflow_command_state(self, tenant: str, intake_id: str) -> _NativeWorkflowState:
+        """Lock one complete recorded native workflow into the shared command shape.
+
+        The caller holds this graph root for the whole command, replay receipt
+        and flush. Incomplete or historical rows without recorded facts stay
+        unavailable; nothing is defaulted from current policy or documents.
+        """
+        UUID(intake_id)
+        with self.graph.transaction(tenant):
+            intake = self.graph._one("SELECT * FROM intake.intakes WHERE tenant_id=? AND intake_id=? "
+                "AND deleted_at IS NULL", (tenant, intake_id))
+            assignments = self.engine.query("SELECT * FROM workflow.assignments WHERE tenant_id=? AND intake_id=? "
+                "ORDER BY assignment_id FOR UPDATE", (tenant, intake_id))
+            slas = self.engine.query("SELECT * FROM workflow.sla_instances WHERE tenant_id=? AND intake_id=? "
+                "FOR UPDATE", (tenant, intake_id))
+            if len(assignments) != 1 or len(slas) != 1:
+                raise IntakeWorkflowUnavailable("Native Assignment/SLA workflow is not recorded")
+            assignment, sla = assignments[0], slas[0]
+            if (sla["assignment_id"] != assignment["assignment_id"]
+                    or any(sla[key] is None for key in ("calendar_version", "due_soon_at", "breach_at"))):
+                raise IntakeWorkflowUnavailable("Historical native workflow binding is unavailable")
+            intervals = self.engine.query("SELECT * FROM workflow.sla_pause_intervals WHERE tenant_id=? "
+                "AND sla_instance_id=? ORDER BY paused_at,sla_pause_interval_id FOR UPDATE",
+                (tenant, sla["sla_instance_id"]))
+            if any(item["expected_resume_at"] is None for item in intervals):
+                # Never infer an old interval's expectation from its actual
+                # resume, the current SLA resume_at or today's calendar.
+                raise IntakeWorkflowUnavailable("Historical pause expectation is unavailable")
+            scope = {"tenant_id": tenant, **{key: intake[key] for key in (
+                "brand_id", "region_id", "assigned_area_id", "heat_zone_id")}}
+            pauses = [{"pause_interval_id": item["sla_pause_interval_id"], "sla_instance_id": sla["sla_instance_id"],
+                "tenant_id": tenant, "paused_at": _instant(item["paused_at"]),
+                "expected_resume_at": _instant(item["expected_resume_at"]),
+                "resumed_at": _instant(item["resumed_at"]), "reason": item["reason"],
+                "approved_by": item["approved_by"], "created_by": item["created_by"],
+                "version": item["version"]} for item in intervals]
+            active = [item for item in pauses if item["resumed_at"] is None]
+            if active and (_instant(sla["paused_at"]) != active[0]["paused_at"]
+                           or _instant(sla["resume_at"]) != active[0]["expected_resume_at"]):
+                raise IntakeWorkflowUnavailable("Recorded active pause differs from its SLA")
+            if not active and (sla["paused_at"] is not None or sla["resume_at"] is not None):
+                raise IntakeWorkflowUnavailable("Recorded SLA pause has no interval")
+            schedule = {"tenant_id": tenant, "policy_version": sla["policy_version"],
+                "calendar_version": sla["calendar_version"], **{key: _instant(sla[key]) for key in (
+                    "started_at", "due_soon_at", "due_at", "breach_at")}}
+            sla_shape = {"sla_instance_id": sla["sla_instance_id"], "assignment_id": sla["assignment_id"],
+                "tenant_id": tenant, "intake_id": intake_id, "state": sla["state"],
+                "policy_version": sla["policy_version"], "calendar_version": sla["calendar_version"],
+                **{key: schedule[key] for key in ("started_at", "due_soon_at", "due_at", "breach_at")},
+                "completed_at": _instant(sla["completed_at"]), "schedule": schedule, "pause_intervals": pauses,
+                "paused_duration_seconds": int(sum(
+                    (datetime.fromisoformat(item["resumed_at"].replace("Z", "+00:00"))
+                     - datetime.fromisoformat(item["paused_at"].replace("Z", "+00:00"))).total_seconds()
+                    for item in pauses if item["resumed_at"] is not None)),
+                "active_pause_interval_id": active[0]["pause_interval_id"] if active else None,
+                "version": sla["version"], "correlation_id": intake["correlation_id"]}
+            assignment_shape = {key: assignment[key] for key in (
+                "assignment_id", "tenant_id", "intake_id", "status", "queue_key", "owner_subject_id",
+                "owner_role", "previous_owner_subject_id", "assigned_by", "handoff_note", "version")}
+            assignment_shape.update({"due_at": _instant(assignment["due_at"]),
+                "created_at": _instant(assignment["created_at"]), "updated_at": _instant(assignment["updated_at"]),
+                "correlation_id": intake["correlation_id"]})
+            intake_shape = {"intake_id": intake_id, "tenant_id": tenant, "scope": scope,
+                "correlation_id": intake["correlation_id"], "submitted_by": intake["submitter_subject_id"],
+                "state": intake["processing_state"], "version": intake["version"],
+                "assigned_to": assignment["owner_subject_id"], "due_at": assignment_shape["due_at"],
+                "audit": [], "processing_history": []}
+            committed = []
+            # The original completion evaluator reads actual committed work.
+            # Only the canonical audit that recorded this current Intake
+            # version can prove its state; none is synthesized here.
+            audits = self.engine.query("SELECT audit_event_id,tenant_id,action,resource_type,resource_id,result,"
+                "after_value FROM audit.audit_events WHERE tenant_id=? AND resource_type='intake' AND resource_id=? "
+                "AND result='SUCCEEDED' AND after_value->>'version'=? ORDER BY sequence_no DESC LIMIT 1",
+                (tenant, intake_id, str(intake["version"])))
+            for audit in audits:
+                committed.append({**audit, "intake_id": audit["resource_id"],
+                                  "after_value": _json_value(audit["after_value"])})
+            if committed:
+                intake_shape["audit_event_id"] = committed[0]["audit_event_id"]
+            decisions = self.engine.query("SELECT d.match_decision_id AS decision_id,c.intake_id,d.tenant_id,"
+                "d.status,d.version,d.decision_type AS action FROM identity.match_decisions d "
+                "JOIN identity.match_cases c ON c.tenant_id=d.tenant_id AND c.match_case_id=d.match_case_id "
+                "WHERE d.tenant_id=? AND c.intake_id=?", (tenant, intake_id))
+            corrections = self.engine.query("SELECT correction_id,intake_id,tenant_id,status,version "
+                "FROM intake.human_corrections WHERE tenant_id=? AND intake_id=?", (tenant, intake_id))
+            promotions = self.engine.query("SELECT promotion_decision_id,intake_id,tenant_id,status,version "
+                "FROM expansion.promotion_decisions WHERE tenant_id=? AND intake_id=?", (tenant, intake_id))
+            jobs = self.engine.query("SELECT job_id,aggregate_id AS intake_id,tenant_id,status,version,job_type "
+                "FROM workflow.jobs WHERE tenant_id=? AND aggregate_type='intake' AND aggregate_id=?",
+                (tenant, intake_id))
+            return _NativeWorkflowState(
+                intake=intake, intakes={intake_id: intake_shape},
+                assignments={assignment["assignment_id"]: assignment_shape},
+                slas={sla["sla_instance_id"]: sla_shape},
+                decisions={row["decision_id"]: row for row in decisions},
+                corrections={row["correction_id"]: row for row in corrections},
+                promotions={row["promotion_decision_id"]: row for row in promotions},
+                jobs={row["job_id"]: row for row in jobs},
+                workflow_audits={audit["audit_event_id"]: audit for audit in committed},
+                committed_audits=tuple(committed), workflow_outbox={},
+                baseline={"assignments": deepcopy({assignment["assignment_id"]: assignment_shape}),
+                          "slas": deepcopy({sla["sla_instance_id"]: sla_shape})})
+
+    def persist_workflow_command(self, state: _NativeWorkflowState, *, actor: str, reason: str,
+                                 idempotency_key: str, at: datetime) -> None:
+        """Write one shared command's result to the original normalized rows.
+
+        Assignment/SLA rows, transitions, pause intervals, canonical audit and
+        outbox commit with the caller's replay receipt in this same SQL root.
+        The native Intake row is the processing fence for its pipeline workers
+        and is not changed by workflow commands; its Intake-resource evidence
+        from the shared command therefore has no native write to describe.
+        """
+        tenant = state.intake["tenant_id"]
+        intake_id = state.intake["intake_id"]
+        scope = state.intakes[intake_id]["scope"]
+        when = _instant(at)
+        with self.graph.transaction(tenant):
+            CanonicalAuditBacklog(self.engine).require_available(tenant)
+            for assignment_id, after in state.assignments.items():
+                before = state.baseline["assignments"][assignment_id]
+                if after["version"] == before["version"]:
+                    continue
+                if after["version"] <= before["version"] or after["intake_id"] != intake_id:
+                    raise IntakeWorkflowUnavailable("Assignment command did not advance its version")
+                if self.engine.execute(
+                    "UPDATE workflow.assignments SET status=?,owner_subject_id=?,owner_role=?,"
+                    "previous_owner_subject_id=?,assigned_by=?,handoff_note=?,queue_key=?,due_at=?,version=?,updated_at=? "
+                    "WHERE tenant_id=? AND intake_id=? AND assignment_id=? AND version=?",
+                    (after["status"], after["owner_subject_id"], after["owner_role"],
+                     before["owner_subject_id"] if after["owner_subject_id"] != before["owner_subject_id"]
+                     and before["owner_subject_id"] is not None else before["previous_owner_subject_id"],
+                     actor if before["status"] == "UNASSIGNED" and after["status"] != "UNASSIGNED"
+                     else before["assigned_by"], after.get("handoff_note"), after["queue_key"], after["due_at"],
+                     after["version"], when, tenant, intake_id, assignment_id, before["version"]),
+                ).rowcount != 1:
+                    raise IdentityConflictError("NATIVE_ASSIGNMENT_VERSION_CONFLICT")
+            for sla_id, after in state.slas.items():
+                before = state.baseline["slas"][sla_id]
+                if after["version"] == before["version"]:
+                    continue
+                if after["version"] <= before["version"]:
+                    raise IntakeWorkflowUnavailable("SLA command did not advance its version")
+                known = {item["pause_interval_id"]: item for item in before["pause_intervals"]}
+                for item in after["pause_intervals"]:
+                    prior = known.get(item["pause_interval_id"])
+                    if prior is None:
+                        UUID(item["pause_interval_id"])
+                        self.engine.execute(
+                            "INSERT INTO workflow.sla_pause_intervals (sla_pause_interval_id,tenant_id,sla_instance_id,"
+                            "paused_at,expected_resume_at,resumed_at,reason,approved_by,created_by,version) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                            (item["pause_interval_id"], tenant, sla_id, item["paused_at"], item["expected_resume_at"],
+                             item["resumed_at"], item["reason"], item["approved_by"], item["created_by"],
+                             item["version"]))
+                    elif item["resumed_at"] != prior["resumed_at"]:
+                        if (prior["resumed_at"] is not None or item["version"] != prior["version"] + 1
+                                or any(item[key] != prior[key] for key in (
+                                    "paused_at", "expected_resume_at", "reason", "approved_by", "created_by"))):
+                            raise IntakeWorkflowUnavailable("Recorded pause interval cannot be rewritten")
+                        if self.engine.execute(
+                            "UPDATE workflow.sla_pause_intervals SET resumed_at=?,version=? WHERE tenant_id=? "
+                            "AND sla_instance_id=? AND sla_pause_interval_id=? AND version=? AND resumed_at IS NULL",
+                            (item["resumed_at"], item["version"], tenant, sla_id, item["pause_interval_id"],
+                             prior["version"]),
+                        ).rowcount != 1:
+                            raise IdentityConflictError("NATIVE_SLA_PAUSE_VERSION_CONFLICT")
+                if {item["pause_interval_id"] for item in after["pause_intervals"]} < set(known):
+                    raise IntakeWorkflowUnavailable("Recorded pause history cannot be removed")
+                active = [item for item in after["pause_intervals"] if item["resumed_at"] is None]
+                if self.engine.execute(
+                    "UPDATE workflow.sla_instances SET state=?,due_soon_at=?,due_at=?,breach_at=?,paused_at=?,"
+                    "resume_at=?,completed_at=?,version=? WHERE tenant_id=? AND intake_id=? AND sla_instance_id=? "
+                    "AND version=?",
+                    (after["state"], after["due_soon_at"], after["due_at"], after["breach_at"],
+                     active[0]["paused_at"] if active else None, active[0]["expected_resume_at"] if active else None,
+                     after.get("completed_at"), after["version"], tenant, intake_id, sla_id, before["version"]),
+                ).rowcount != 1:
+                    raise IdentityConflictError("NATIVE_SLA_VERSION_CONFLICT")
+            for audit in state.workflow_audits.values():
+                if any(audit is loaded for loaded in state.committed_audits):
+                    continue
+                kind, before, after = audit["resource_type"], audit["before_value"], audit["after_value"]
+                if kind == "intake":
+                    continue
+                if kind == "assignment":
+                    sequence = self.engine.query_one("SELECT COALESCE(MAX(sequence_no),0)+1 AS next FROM "
+                        "workflow.assignment_transitions WHERE tenant_id=? AND assignment_id=?",
+                        (tenant, audit["resource_id"]))["next"]
+                    self.engine.execute(
+                        "INSERT INTO workflow.assignment_transitions (assignment_transition_id,tenant_id,assignment_id,"
+                        "sequence_no,from_status,to_status,actor_subject_id,permission,reason,owner_before,owner_after,"
+                        "expected_version,resulting_version,idempotency_key,correlation_id,occurred_at) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (str(uuid4()), tenant, audit["resource_id"], sequence, before["status"], after["status"],
+                         audit["actor_subject_id"], audit["action"], reason,
+                         before["owner_subject_id"], after["owner_subject_id"], before["version"], after["version"],
+                         idempotency_key, audit["correlation_id"], when))
+                elif kind == "sla_instance":
+                    sequence = self.engine.query_one("SELECT COALESCE(MAX(sequence_no),0)+1 AS next FROM "
+                        "workflow.sla_transitions WHERE tenant_id=? AND sla_instance_id=?",
+                        (tenant, audit["resource_id"]))["next"]
+                    self.engine.execute(
+                        "INSERT INTO workflow.sla_transitions (sla_transition_id,tenant_id,sla_instance_id,sequence_no,"
+                        "from_state,to_state,actor_subject_id,permission,reason,due_at_before,due_at_after,"
+                        "expected_version,resulting_version,idempotency_key,correlation_id,occurred_at) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (str(uuid4()), tenant, audit["resource_id"], sequence, before["state"], after["state"],
+                         audit["actor_subject_id"], audit["action"], reason,
+                         before["due_at"], after["due_at"], before["version"], after["version"],
+                         idempotency_key, audit["correlation_id"], when))
+                else:
+                    raise IntakeWorkflowUnavailable("Workflow command produced unsupported evidence")
+                self.graph.audit_sink.persist(audit, scope)
+            for value in state.workflow_outbox.values():
+                self.graph._outbox(DomainEvent(
+                    **{**value, "occurred_at": datetime.fromisoformat(value["occurred_at"].replace("Z", "+00:00"))},
+                    actor_ref=actor, policy_version=state.slas[next(iter(state.slas))]["policy_version"],
+                    schema_ref=_WORKFLOW_EVENT_SCHEMAS[value["event_type"]],
+                ))
 
     def _initialize_workflow(self, row: dict, *, reason: str, idempotency_key: str) -> None:
         """Persist the shared bootstrap in this native submission's SQL unit.

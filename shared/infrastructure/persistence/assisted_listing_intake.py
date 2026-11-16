@@ -64,6 +64,10 @@ _UPGRADE_STEPS: tuple[tuple[str, str], ...] = (
         "006_workflow_schedule.sql",
         "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0006_WORKFLOW_SCHEDULE_PATCH.sql",
     ),
+    (
+        "007_workflow_pause_expectation.sql",
+        "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0007_WORKFLOW_PAUSE_EXPECTATION_PATCH.sql",
+    ),
 )
 DOWNGRADE_FILE = "downgrade.sql"
 
@@ -684,9 +688,9 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
 
     steps = migration_steps()
     statements = upgrade_statements()
-    prefixes = ((4, "001-004"), (5, "001-005"), (6, "001-006"))
+    prefixes = ((4, "001-004"), (5, "001-005"), (6, "001-006"), (7, "001-007"))
     expected_manifests = {name: manifest_checksum(steps[:count]) for count, name in prefixes}
-    expected_manifest = expected_manifests["001-006"]
+    expected_manifest = expected_manifests["001-007"]
     try:
         with psycopg.connect(
             _psycopg_url(database_url),
@@ -763,6 +767,17 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
                                     "Recorded workflow schedule is missing; repair is not an upgrade"
                                 )
                             connection.execute(_without_transaction_control(statements[count - 1][1]))
+                        elif marker == "001-007":
+                            present = connection.execute(
+                                "SELECT count(*) AS present FROM pg_attribute WHERE attrelid="
+                                "to_regclass('workflow.sla_pause_intervals') AND NOT attisdropped "
+                                "AND attname='expected_resume_at'"
+                            ).fetchone()["present"]
+                            if present != 1:
+                                raise AssistedIntakeSchemaError(
+                                    "Recorded pause expectation is missing; repair is not an upgrade"
+                                )
+                            connection.execute(_without_transaction_control(statements[count - 1][1]))
                         installed_count = count
                         continue
                     for _name, sql in statements[installed_count:count]:
@@ -797,7 +812,7 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
         raise
     except Exception as exc:
         raise AssistedIntakeSchemaError(
-            "Unable to apply the Assisted Listing Intake 001-006 schema stack"
+            "Unable to apply the Assisted Listing Intake 001-007 schema stack"
         ) from exc
 
     return MigrationApplyResult(

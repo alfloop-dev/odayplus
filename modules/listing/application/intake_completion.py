@@ -69,6 +69,17 @@ class CompletionRequirement:
         return cls(kind, frozenset(states), count, audited, action)
 
 
+def _audited_state(kind: str, after: Mapping[str, Any]) -> Any:
+    """Read the state a committed audit recorded, in its producer's own field.
+
+    Native SQL Intake producers record ``processing_state``; retained document
+    producers record ``state``. Neither is translated into the other.
+    """
+    if kind != "intake":
+        return after.get("status")
+    return after["state"] if "state" in after else after.get("processing_state")
+
+
 def verify_completion(
     store: Any, intake: Mapping[str, Any], requirements: Any
 ) -> list[dict[str, Any]]:
@@ -143,10 +154,7 @@ def verify_completion(
                     or audit.get("resource_id") != record_id
                     or audit.get("result") != "SUCCEEDED"
                     or audit.get("after_value", {}).get("version") != row["version"]
-                    or audit.get("after_value", {}).get(
-                        "state" if requirement.kind == "intake" else "status"
-                    )
-                    != state
+                    or _audited_state(requirement.kind, audit.get("after_value", {})) != state
                 ):
                     raise IntakeWorkIncomplete("Required work has no current bound audit evidence")
             proofs.append(

@@ -1972,16 +1972,16 @@ else:
             except AssistedIntakePersistenceConflict as exc:
                 raise HTTPException(409, "VERSION_CONFLICT: Assisted Intake state changed in another replica") from exc
 
-        def linked_intake(value: dict[str, Any]) -> dict[str, Any] | None:
+        def linked_intake(value: dict[str, Any], store: Any = None) -> dict[str, Any] | None:
             intake_id = value.get("intake_id")
-            return active.intakes.get(intake_id) if intake_id else None
+            return (active if store is None else store).intakes.get(intake_id) if intake_id else None
 
-        def require_workflow_resource_scope(principal: Principal, value: dict[str, Any]) -> None:
+        def require_workflow_resource_scope(principal: Principal, value: dict[str, Any], store: Any = None) -> None:
             # Authorize against the authoritative linked Intake, not a less
             # specific child envelope. A dangling or foreign link cannot grant
             # access from the child's own tenant metadata.
             if value.get("intake_id"):
-                intake = linked_intake(value)
+                intake = linked_intake(value, store)
                 if intake is None:
                     raise HTTPException(403, "SCOPE_DENIED")
                 if intake.get("scope", {}).get("tenant_id") != principal.tenant_id:
@@ -2011,6 +2011,130 @@ else:
                     raise IntakeWorkflowUnavailable("SLA registry is unavailable")
                 workflow_policy.authorize_sla_actor(schedule_from_record(value), scope, actor_id)
                 if scope != original_scope:
+                    raise IntakeWorkflowUnavailable("Provider changed the authorized SLA scope")
+            except PermissionError as exc:
+                raise HTTPException(403, "ROLE_DENIED") from exc
+            except Exception as exc:
+                raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+
+        def workflow_roles(request: Request, principal: Principal) -> tuple[bool, bool, bool]:
+            """Return (manager, staff, steward) from the existing role grants."""
+            operator_role_id = get_operator_role_id(request)
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
+                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
+            )
+            is_staff = (principal.has_role(Role.EXPANSION_USER) or operator_role_id in (
+                "expansion-staff", "expansionStaff", "expansion-user", "expansion_user"
+            )) and not is_manager
+            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
+            return is_manager, is_staff, is_steward
+
+        def workflow_role(is_manager: bool, is_steward: bool) -> PrincipalRole:
+            if is_manager:
+                return PrincipalRole.EXPANSION_MANAGER
+            return PrincipalRole.DATA_STEWARD if is_steward else PrincipalRole.EXPANSION_STAFF
+
+        def run_assignment_command(store: Any, working: dict[str, Any], policy: Any, *,
+                                   permission_denial: str, **command: Any) -> dict[str, Any]:
+            """Map the shared Assignment command outcome for legacy and native stores."""
+            try:
+                return change_assignment(store, working, policy, **command)
+            except PermissionError as exc:
+                raise HTTPException(403, permission_denial) from exc
+            except IntakeWorkIncomplete as exc:
+                raise HTTPException(409, "WORK_INCOMPLETE") from exc
+            except DomainValidationError as exc:
+                raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
+            except (IntakeWorkflowUnavailable, KeyError, AttributeError) as exc:
+                raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+            except ValueError as exc:
+                raise HTTPException(422, "VALIDATION_FAILED") from exc
+
+        def run_sla_command(store: Any, working: dict[str, Any], policy: Any, *, permission_denial: str,
+                            state_denial: str, **command: Any) -> dict[str, Any]:
+            """Map the shared SLA command outcome for legacy and native stores."""
+            try:
+                return change_sla(store, working, policy, **command)
+            except PermissionError as exc:
+                raise HTTPException(403, permission_denial) from exc
+            except DomainValidationError as exc:
+                raise HTTPException(409, state_denial) from exc
+            except Exception as exc:
+                raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+
+        def native_workflow_owner(request: Request, tenant_id: str, **resource: str) -> tuple[Any, str] | None:
+            """Find an actual native workflow row; None keeps the retained legacy path.
+
+            Only reached after the retained document collection has no such
+            resource. A found native resource never falls back to legacy.
+            """
+            engine = getattr(active, "_engine", None)
+            bundle = getattr(request.app.state, "persistence_bundle", None)
+            factory = getattr(bundle, "canonical_intakes", None)
+            if getattr(engine, "dialect", None) != "postgresql" or bundle is None or not callable(factory):
+                return None
+            if getattr(bundle, "assisted_intake_store", None) is not active or getattr(bundle, "engine", None) is not engine:
+                raise HTTPException(503, "CANONICAL_INTAKE_STORAGE_UNAVAILABLE")
+            try:
+                repo = factory()
+            except (ValueError, RuntimeError) as exc:
+                raise HTTPException(503, "CANONICAL_INTAKE_STORAGE_UNAVAILABLE") from exc
+            from apps.api.app.routes.canonical_match_cases import _http_errors
+            with _http_errors():
+                intake_id = repo.workflow_owner(tenant_id, **resource)
+            return None if intake_id is None else (repo, intake_id)
+
+        @contextmanager
+        def native_workflow_unit(request: Request, tenant_id: str, repo: Any, intake_id: str):
+            """Hold the original native Graph root around the shared command and receipt."""
+            from apps.api.app.routes.canonical_match_cases import (
+                _check_canonical_principal,
+                _http_errors,
+            )
+
+            principal = get_principal(request)
+            with _http_errors():
+                _check_canonical_principal(request, principal)
+                with repo.graph.transaction(tenant_id):
+                    active.refresh(tenant_id)
+                    state = repo.workflow_command_state(tenant_id, intake_id)
+                    native_intake = state.intakes[intake_id]
+                    if native_intake["scope"]["tenant_id"] != tenant_id:
+                        raise HTTPException(403, "TENANT_SCOPE_DENIED")
+                    require_intake_scope(principal, native_intake)
+                    yield principal, state
+
+        def native_workflow_command(request: Request, tenant_id: str, repo: Any, state: Any, principal: Principal, *,
+                                    key: str, body: Any, operation_id: str, resource_id: str,
+                                    receipt_model: Any, command: Callable[[datetime], tuple[dict[str, Any], str]],
+                                    ) -> tuple[dict[str, Any], int, bool]:
+            """Run one native command through the original replay receipt and flush."""
+
+            def make() -> tuple[dict[str, Any], int]:
+                at = repo.workflow_clock(tenant_id)
+                updated, reason = command(at)
+                repo.persist_workflow_command(state, actor=principal.subject_id, reason=reason,
+                                              idempotency_key=key, at=at)
+                return receipt_model(**updated).model_dump(), 200
+
+            return replay(key, body, tenant_id, principal.subject_id, operation_id, make, resource_id=resource_id)
+
+        def native_assignment_authority(state: Any, assignment: dict[str, Any], principal: Principal) -> None:
+            try:
+                authorize_assignment_read(state, assignment, state.workflow_policy, principal.subject_id)
+            except PermissionError as exc:
+                raise HTTPException(403, "ROLE_DENIED") from exc
+            except Exception as exc:
+                raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+
+        def native_sla_authority(state: Any, sla: dict[str, Any], principal: Principal) -> None:
+            scope = state.intakes[sla["intake_id"]]["scope"]
+            authorized = copy.deepcopy(scope)
+            try:
+                if state.workflow_policy is None:
+                    raise IntakeWorkflowUnavailable("SLA registry is unavailable")
+                state.workflow_policy.authorize_sla_actor(schedule_from_record(sla), authorized, principal.subject_id)
+                if authorized != scope:
                     raise IntakeWorkflowUnavailable("Provider changed the authorized SLA scope")
             except PermissionError as exc:
                 raise HTTPException(403, "ROLE_DENIED") from exc
@@ -3149,9 +3273,62 @@ else:
         ) -> AssignmentReceipt:
             active.refresh(tenant_id)
             validate_idempotency_key(key)
+            target = body.model_dump()
+
+            def authorize_assign(store: Any, policy: Any, bound: list[dict[str, Any]], actor_id: str) -> None:
+                if len(bound) != 1:
+                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
+                # A stored receipt retains its outcome, never revoked actor, target
+                # or policy authority. State/version checks remain fresh-only.
+                try:
+                    authorize_initial_assignment(store, bound[0], policy, actor_id=actor_id, target=target)
+                except PermissionError as exc:
+                    raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED") from exc
+                except Exception as exc:
+                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+
+            def assign_command(store: Any, policy: Any, principal: Principal, is_manager: bool,
+                               current_time: datetime) -> dict[str, Any]:
+                actor_id = principal.subject_id
+                working_intake = store.intakes[intake_id]
+                require_intake_scope(principal, working_intake)
+                require_version(if_match, working_intake["version"])
+                assignments = [value for value in store.assignments.values()
+                               if value.get("intake_id") == intake_id]
+                if len(assignments) != 1:
+                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
+                working = assignments[0]
+                if working.get("status") not in {"UNASSIGNED", "COMPLETED"}:
+                    raise HTTPException(409, "OWNER_CONFLICT")
+                return run_assignment_command(
+                    store, working, policy, permission_denial="ASSIGNMENT_SCOPE_DENIED", action="assign",
+                    actor_id=actor_id,
+                    role=PrincipalRole.EXPANSION_MANAGER if is_manager else PrincipalRole.DATA_STEWARD,
+                    reason=body.reason,
+                    correlation_id=request.headers.get("x-correlation-id") or str(uuid4()),
+                    current_time=current_time, target=target,
+                )
+
             current = active.intakes.get(intake_id)
             if current is None:
-                raise HTTPException(404, "intake not found")
+                native = native_workflow_owner(request, tenant_id, intake_id=intake_id)
+                if native is None:
+                    raise HTTPException(404, "intake not found")
+                repo, _ = native
+                with native_workflow_unit(request, tenant_id, repo, intake_id) as (principal, state):
+                    is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE)
+                    if not (is_manager or principal.has_role(Role.DATA_OWNER)):
+                        raise HTTPException(403, "ROLE_DENIED")
+                    authorize_assign(state, state.workflow_policy, list(state.assignments.values()),
+                                     principal.subject_id)
+                    val, code, _ = native_workflow_command(
+                        request, tenant_id, repo, state, principal, key=key, body=target,
+                        operation_id="assignIntake", resource_id=intake_id, receipt_model=AssignmentReceipt,
+                        command=lambda at: (assign_command(state, state.workflow_policy, principal, is_manager, at),
+                                           body.reason))
+                response.status_code = code
+                response.headers["ETag"] = f'W/"{val["version"]}"'
+                return AssignmentReceipt(**val)
             if current.get("scope", {}).get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
@@ -3163,50 +3340,11 @@ else:
             if not (is_manager or is_steward):
                 raise HTTPException(403, "ROLE_DENIED")
             actor_id = principal.subject_id
-            target = body.model_dump()
-            bound = [value for value in active.assignments.values()
-                     if value.get("intake_id") == intake_id]
-            if len(bound) != 1:
-                raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
-            # A stored receipt retains its outcome, never revoked actor, target
-            # or policy authority. State/version checks remain fresh-only.
-            try:
-                authorize_initial_assignment(
-                    active, bound[0], workflow_policy, actor_id=actor_id, target=target,
-                )
-            except PermissionError as exc:
-                raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED") from exc
-            except Exception as exc:
-                raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+            authorize_assign(active, workflow_policy, [value for value in active.assignments.values()
+                                                       if value.get("intake_id") == intake_id], actor_id)
 
             def make() -> tuple[dict[str, Any], int]:
-                working_intake = active.intakes[intake_id]
-                require_intake_scope(principal, working_intake)
-                require_version(if_match, working_intake["version"])
-                assignments = [value for value in active.assignments.values()
-                               if value.get("intake_id") == intake_id]
-                if len(assignments) != 1:
-                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
-                working = assignments[0]
-                if working.get("status") not in {"UNASSIGNED", "COMPLETED"}:
-                    raise HTTPException(409, "OWNER_CONFLICT")
-                try:
-                    value = change_assignment(
-                        active, working, workflow_policy, action="assign", actor_id=actor_id,
-                        role=PrincipalRole.EXPANSION_MANAGER if is_manager else PrincipalRole.DATA_STEWARD,
-                        reason=body.reason,
-                        correlation_id=request.headers.get("x-correlation-id") or str(uuid4()),
-                        current_time=datetime.now(UTC), target=target,
-                    )
-                except PermissionError as exc:
-                    raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED") from exc
-                except DomainValidationError as exc:
-                    raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
-                except (IntakeWorkflowUnavailable, KeyError, AttributeError) as exc:
-                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
-                except ValueError as exc:
-                    raise HTTPException(422, "VALIDATION_FAILED") from exc
-                return value, 200
+                return assign_command(active, workflow_policy, principal, is_manager, datetime.now(UTC)), 200
 
             val, code, was_replayed = replay(
                 key,
@@ -4380,9 +4518,40 @@ else:
         ) -> AssignmentReceipt:
             active.refresh(tenant_id)
             validate_idempotency_key(key)
+
+            def claim_command(store: Any, policy: Any, principal: Principal, working: dict[str, Any],
+                               current_time: datetime) -> dict[str, Any]:
+                require_workflow_resource_scope(principal, working, store)
+                require_version(if_match, working["version"])
+                is_manager, _, is_steward = workflow_roles(request, principal)
+                return run_assignment_command(
+                    store, working, policy, permission_denial="OWNERSHIP_REQUIRED", action="claim",
+                    actor_id=principal.subject_id, role=workflow_role(is_manager, is_steward),
+                    reason=body.reason, correlation_id=request.headers.get("x-correlation-id") or str(uuid4()),
+                    current_time=current_time,
+                )
+
             current = active.assignments.get(assignment_id)
             if current is None:
-                raise HTTPException(404, "assignment not found")
+                native = native_workflow_owner(request, tenant_id, assignment_id=assignment_id)
+                if native is None:
+                    raise HTTPException(404, "assignment not found")
+                repo, intake_id = native
+                with native_workflow_unit(request, tenant_id, repo, intake_id) as (principal, state):
+                    if not any(workflow_roles(request, principal)):
+                        raise HTTPException(403, "ROLE_DENIED")
+                    working = state.assignments.get(assignment_id)
+                    if working is None:
+                        raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
+                    native_assignment_authority(state, working, principal)
+                    val, code, was_replayed = native_workflow_command(
+                        request, tenant_id, repo, state, principal, key=key, body=body.model_dump(),
+                        operation_id="claimAssignment", resource_id=assignment_id, receipt_model=AssignmentReceipt,
+                        command=lambda at: (claim_command(state, state.workflow_policy, principal, working, at),
+                                            body.reason))
+                response.status_code = 200 if was_replayed else code
+                response.headers["ETag"] = f'W/"{val["version"]}"'
+                return AssignmentReceipt(**val)
             assignment_tenant = current.get("tenant_id")
             if not assignment_tenant:
                 intake = active.intakes.get(current.get("intake_id", ""))
@@ -4392,45 +4561,17 @@ else:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             principal = get_principal(request)
-            operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
             require_workflow_resource_scope(principal, current)
 
-            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
-                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
-            )
-            is_staff = (principal.has_role(Role.EXPANSION_USER) or operator_role_id in (
-                "expansion-staff", "expansionStaff", "expansion-user", "expansion_user"
-            )) and not is_manager
-            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
-
-            if not (is_manager or is_staff or is_steward):
+            if not any(workflow_roles(request, principal)):
                 raise HTTPException(403, "ROLE_DENIED")
 
             require_assignment_registry_authority(current, actor_id)
 
             def make() -> tuple[dict[str, Any], int]:
                 working = active.assignments[assignment_id]
-                require_workflow_resource_scope(principal, working)
-                require_version(if_match, working["version"])
-                try:
-                    updated = change_assignment(
-                        active, working, workflow_policy, action="claim", actor_id=actor_id,
-                        role=PrincipalRole.EXPANSION_MANAGER if is_manager else (PrincipalRole.DATA_STEWARD if is_steward else PrincipalRole.EXPANSION_STAFF),
-                        reason=body.reason, correlation_id=request.headers.get("x-correlation-id") or str(uuid4()),
-                        current_time=datetime.now(UTC),
-                    )
-                except PermissionError as exc:
-                    raise HTTPException(403, "OWNERSHIP_REQUIRED") from exc
-                except IntakeWorkIncomplete as exc:
-                    raise HTTPException(409, "WORK_INCOMPLETE") from exc
-                except DomainValidationError as exc:
-                    raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
-                except (IntakeWorkflowUnavailable, KeyError, AttributeError) as exc:
-                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
-                except ValueError as exc:
-                    raise HTTPException(422, "VALIDATION_FAILED") from exc
-                return updated, 200
+                return claim_command(active, workflow_policy, principal, working, datetime.now(UTC)), 200
 
             val, code, was_replayed = replay(
                 key,
@@ -4458,21 +4599,33 @@ else:
             tenant_id: str = Depends(require_actor),
         ) -> AssignmentTransferTargetPage:
             active.refresh(tenant_id)
+
+            def transfer_targets(store: Any, policy: Any, current: dict[str, Any]) -> dict[str, Any]:
+                try:
+                    return list_assignment_transfer_targets(store, current, policy, principal.subject_id)
+                except PermissionError as exc:
+                    raise HTTPException(403, "OWNERSHIP_REQUIRED") from exc
+                except Exception as exc:
+                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+
             current = active.assignments.get(assignment_id)
             if current is None:
-                raise HTTPException(404, "assignment not found")
+                native = native_workflow_owner(request, tenant_id, assignment_id=assignment_id)
+                if native is None:
+                    raise HTTPException(404, "assignment not found")
+                repo, intake_id = native
+                with native_workflow_unit(request, tenant_id, repo, intake_id) as (principal, state):
+                    working = state.assignments.get(assignment_id)
+                    if working is None:
+                        raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
+                    result = transfer_targets(state, state.workflow_policy, working)
+                response.headers["Cache-Control"] = "no-store"
+                return AssignmentTransferTargetPage(**result)
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
             require_workflow_resource_scope(principal, current)
-            try:
-                result = list_assignment_transfer_targets(
-                    active, current, workflow_policy, principal.subject_id,
-                )
-            except PermissionError as exc:
-                raise HTTPException(403, "OWNERSHIP_REQUIRED") from exc
-            except Exception as exc:
-                raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+            result = transfer_targets(active, workflow_policy, current)
             response.headers["Cache-Control"] = "no-store"
             return AssignmentTransferTargetPage(**result)
 
@@ -4501,9 +4654,43 @@ else:
         ) -> AssignmentReceipt:
             active.refresh(tenant_id)
             validate_idempotency_key(key)
+
+            def transfer_command(store: Any, policy: Any, principal: Principal, working: dict[str, Any],
+                               current_time: datetime) -> dict[str, Any]:
+                require_workflow_resource_scope(principal, working, store)
+                require_version(if_match, working["version"])
+                is_manager, _, is_steward = workflow_roles(request, principal)
+                return run_assignment_command(
+                    store, working, policy, permission_denial="OWNERSHIP_REQUIRED", action="transfer",
+                    actor_id=principal.subject_id, role=workflow_role(is_manager, is_steward),
+                    reason=body.reason, correlation_id=request.headers.get("x-correlation-id") or str(uuid4()),
+                    current_time=current_time,
+                    target={"owner_subject_id": body.target_owner_subject_id, "owner_role": body.target_owner_role,
+                        "handoff_note": body.handoff_note,
+                        "due_at": datetime.fromisoformat(body.due_at.replace("Z", "+00:00")) if body.due_at else None},
+                )
+
             current = active.assignments.get(assignment_id)
             if current is None:
-                raise HTTPException(404, "assignment not found")
+                native = native_workflow_owner(request, tenant_id, assignment_id=assignment_id)
+                if native is None:
+                    raise HTTPException(404, "assignment not found")
+                repo, intake_id = native
+                with native_workflow_unit(request, tenant_id, repo, intake_id) as (principal, state):
+                    if not any(workflow_roles(request, principal)):
+                        raise HTTPException(403, "ROLE_DENIED")
+                    working = state.assignments.get(assignment_id)
+                    if working is None:
+                        raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
+                    native_assignment_authority(state, working, principal)
+                    val, code, was_replayed = native_workflow_command(
+                        request, tenant_id, repo, state, principal, key=key, body=body.model_dump(),
+                        operation_id="transferAssignment", resource_id=assignment_id, receipt_model=AssignmentReceipt,
+                        command=lambda at: (transfer_command(state, state.workflow_policy, principal, working, at),
+                                            body.reason))
+                response.status_code = 200 if was_replayed else code
+                response.headers["ETag"] = f'W/"{val["version"]}"'
+                return AssignmentReceipt(**val)
             assignment_tenant = current.get("tenant_id")
             if not assignment_tenant:
                 intake = active.intakes.get(current.get("intake_id", ""))
@@ -4513,47 +4700,17 @@ else:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             principal = get_principal(request)
-            operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
             require_workflow_resource_scope(principal, current)
 
-            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
-                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
-            )
-            is_staff = (principal.has_role(Role.EXPANSION_USER) or operator_role_id in (
-                "expansion-staff", "expansionStaff", "expansion-user", "expansion_user"
-            )) and not is_manager
-            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
-
-            if not (is_manager or is_staff or is_steward):
+            if not any(workflow_roles(request, principal)):
                 raise HTTPException(403, "ROLE_DENIED")
 
             require_assignment_registry_authority(current, actor_id)
 
             def make() -> tuple[dict[str, Any], int]:
                 working = active.assignments[assignment_id]
-                require_workflow_resource_scope(principal, working)
-                require_version(if_match, working["version"])
-                try:
-                    updated = change_assignment(
-                        active, working, workflow_policy, action="transfer", actor_id=actor_id,
-                        role=PrincipalRole.EXPANSION_MANAGER if is_manager else (PrincipalRole.DATA_STEWARD if is_steward else PrincipalRole.EXPANSION_STAFF),
-                        reason=body.reason, correlation_id=request.headers.get("x-correlation-id") or str(uuid4()),
-                        current_time=datetime.now(UTC), target={"owner_subject_id": body.target_owner_subject_id, "owner_role": body.target_owner_role,
-                                    "handoff_note": body.handoff_note,
-                                    "due_at": datetime.fromisoformat(body.due_at.replace("Z", "+00:00")) if body.due_at else None},
-                    )
-                except PermissionError as exc:
-                    raise HTTPException(403, "OWNERSHIP_REQUIRED") from exc
-                except IntakeWorkIncomplete as exc:
-                    raise HTTPException(409, "WORK_INCOMPLETE") from exc
-                except DomainValidationError as exc:
-                    raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
-                except (IntakeWorkflowUnavailable, KeyError, AttributeError) as exc:
-                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
-                except ValueError as exc:
-                    raise HTTPException(422, "VALIDATION_FAILED") from exc
-                return updated, 200
+                return transfer_command(active, workflow_policy, principal, working, datetime.now(UTC)), 200
 
             val, code, was_replayed = replay(
                 key,
@@ -4593,9 +4750,40 @@ else:
         ) -> AssignmentReceipt:
             active.refresh(tenant_id)
             validate_idempotency_key(key)
+
+            def complete_command(store: Any, policy: Any, principal: Principal, working: dict[str, Any],
+                               current_time: datetime) -> dict[str, Any]:
+                require_workflow_resource_scope(principal, working, store)
+                require_version(if_match, working["version"])
+                is_manager, _, is_steward = workflow_roles(request, principal)
+                return run_assignment_command(
+                    store, working, policy, permission_denial="OWNERSHIP_REQUIRED", action="complete",
+                    actor_id=principal.subject_id, role=workflow_role(is_manager, is_steward),
+                    reason=body.reason, correlation_id=request.headers.get("x-correlation-id") or str(uuid4()),
+                    current_time=current_time,
+                )
+
             current = active.assignments.get(assignment_id)
             if current is None:
-                raise HTTPException(404, "assignment not found")
+                native = native_workflow_owner(request, tenant_id, assignment_id=assignment_id)
+                if native is None:
+                    raise HTTPException(404, "assignment not found")
+                repo, intake_id = native
+                with native_workflow_unit(request, tenant_id, repo, intake_id) as (principal, state):
+                    if not any(workflow_roles(request, principal)):
+                        raise HTTPException(403, "ROLE_DENIED")
+                    working = state.assignments.get(assignment_id)
+                    if working is None:
+                        raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
+                    native_assignment_authority(state, working, principal)
+                    val, code, was_replayed = native_workflow_command(
+                        request, tenant_id, repo, state, principal, key=key, body=body.model_dump(),
+                        operation_id="completeAssignment", resource_id=assignment_id, receipt_model=AssignmentReceipt,
+                        command=lambda at: (complete_command(state, state.workflow_policy, principal, working, at),
+                                            body.reason))
+                response.status_code = 200 if was_replayed else code
+                response.headers["ETag"] = f'W/"{val["version"]}"'
+                return AssignmentReceipt(**val)
             assignment_tenant = current.get("tenant_id")
             if not assignment_tenant:
                 intake = active.intakes.get(current.get("intake_id", ""))
@@ -4605,45 +4793,17 @@ else:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             principal = get_principal(request)
-            operator_role_id = get_operator_role_id(request)
             actor_id = principal.subject_id
             require_workflow_resource_scope(principal, current)
 
-            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
-                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
-            )
-            is_staff = (principal.has_role(Role.EXPANSION_USER) or operator_role_id in (
-                "expansion-staff", "expansionStaff", "expansion-user", "expansion_user"
-            )) and not is_manager
-            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
-
-            if not (is_manager or is_staff or is_steward):
+            if not any(workflow_roles(request, principal)):
                 raise HTTPException(403, "ROLE_DENIED")
 
             require_assignment_registry_authority(current, actor_id)
 
             def make() -> tuple[dict[str, Any], int]:
                 working = active.assignments[assignment_id]
-                require_workflow_resource_scope(principal, working)
-                require_version(if_match, working["version"])
-                try:
-                    updated = change_assignment(
-                        active, working, workflow_policy, action="complete", actor_id=actor_id,
-                        role=PrincipalRole.EXPANSION_MANAGER if is_manager else (PrincipalRole.DATA_STEWARD if is_steward else PrincipalRole.EXPANSION_STAFF),
-                        reason=body.reason, correlation_id=request.headers.get("x-correlation-id") or str(uuid4()),
-                        current_time=datetime.now(UTC),
-                    )
-                except PermissionError as exc:
-                    raise HTTPException(403, "OWNERSHIP_REQUIRED") from exc
-                except IntakeWorkIncomplete as exc:
-                    raise HTTPException(409, "WORK_INCOMPLETE") from exc
-                except DomainValidationError as exc:
-                    raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
-                except (IntakeWorkflowUnavailable, KeyError, AttributeError) as exc:
-                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
-                except ValueError as exc:
-                    raise HTTPException(422, "VALIDATION_FAILED") from exc
-                return updated, 200
+                return complete_command(active, workflow_policy, principal, working, datetime.now(UTC)), 200
 
             val, code, was_replayed = replay(
                 key,
@@ -4683,45 +4843,58 @@ else:
         ) -> SlaReceipt:
             active.refresh(tenant_id)
             validate_idempotency_key(key)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            def pause_command(store: Any, policy: Any, principal: Principal, working: dict[str, Any],
+                               current_time: datetime) -> dict[str, Any]:
+                if working.get("state") not in {"ON_TRACK", "DUE_SOON", "OVERDUE"}:
+                    raise HTTPException(409, "SLA_PAUSE_DENIED")
+                require_version(if_match, working["version"])
+                parent = linked_intake(working, store)
+                is_manager, _, _ = workflow_roles(request, principal)
+                return run_sla_command(
+                    store, working, policy, permission_denial="SLA_PAUSE_DENIED", state_denial="SLA_PAUSE_DENIED",
+                    scope=parent["scope"] if parent is not None else working["scope"], actor_id=principal.subject_id,
+                    role=PrincipalRole.EXPANSION_MANAGER if is_manager else PrincipalRole.DATA_STEWARD,
+                    reason=body.reason, correlation_id=correlation_id or str(uuid4()),
+                    current_time=current_time,
+                    expected_resume_at=datetime.fromisoformat(body.expected_resume_at.replace("Z", "+00:00")),
+                )
+
             current = active.slas.get(sla_instance_id)
             if current is None:
-                raise HTTPException(404, "SLA instance not found")
+                native = native_workflow_owner(request, tenant_id, sla_instance_id=sla_instance_id)
+                if native is None:
+                    raise HTTPException(404, "SLA instance not found")
+                repo, intake_id = native
+                with native_workflow_unit(request, tenant_id, repo, intake_id) as (principal, state):
+                    is_manager, _, is_steward = workflow_roles(request, principal)
+                    if not (is_manager or is_steward):
+                        raise HTTPException(403, "ROLE_DENIED")
+                    working = state.slas.get(sla_instance_id)
+                    if working is None:
+                        raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
+                    native_sla_authority(state, working, principal)
+                    val, code, was_replayed = native_workflow_command(
+                        request, tenant_id, repo, state, principal, key=key, body=body.model_dump(),
+                        operation_id="pauseSla", resource_id=sla_instance_id, receipt_model=SlaReceipt,
+                        command=lambda at: (pause_command(state, state.workflow_policy, principal, working, at),
+                                            body.reason))
+                response.status_code = 200 if was_replayed else code
+                response.headers["ETag"] = f'W/"{val["version"]}"'
+                return SlaReceipt(**val)
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
             require_workflow_resource_scope(principal, current)
-            operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
-            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
-                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
-            )
-            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
+            is_manager, _, is_steward = workflow_roles(request, principal)
             if not (is_manager or is_steward):
                 raise HTTPException(403, "ROLE_DENIED")
 
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
-                if current.get("state") not in {"ON_TRACK", "DUE_SOON", "OVERDUE"}:
-                    raise HTTPException(409, "SLA_PAUSE_DENIED")
-                require_version(if_match, current["version"])
-                parent = linked_intake(current)
-                scope = parent["scope"] if parent is not None else current["scope"]
-                try:
-                    updated = change_sla(
-                        active, current, workflow_policy, scope=scope, actor_id=actor_id,
-                        role=PrincipalRole.EXPANSION_MANAGER if is_manager else PrincipalRole.DATA_STEWARD,
-                        reason=body.reason, correlation_id=correlation_id or str(uuid4()),
-                        current_time=datetime.now(UTC),
-                        expected_resume_at=datetime.fromisoformat(body.expected_resume_at.replace("Z", "+00:00")),
-                    )
-                except PermissionError as exc:
-                    raise HTTPException(403, "SLA_PAUSE_DENIED") from exc
-                except DomainValidationError as exc:
-                    raise HTTPException(409, "SLA_PAUSE_DENIED") from exc
-                except Exception as exc:
-                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
-                return updated, 200
+                return pause_command(active, workflow_policy, principal, current, datetime.now(UTC)), 200
 
             require_sla_registry_authority(current, actor_id)
             val, code, was_replayed = replay(
@@ -4762,44 +4935,57 @@ else:
         ) -> SlaReceipt:
             active.refresh(tenant_id)
             validate_idempotency_key(key)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            def resume_command(store: Any, policy: Any, principal: Principal, working: dict[str, Any],
+                               current_time: datetime) -> dict[str, Any]:
+                if working.get("state") != "PAUSED":
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
+                require_version(if_match, working["version"])
+                parent = linked_intake(working, store)
+                is_manager, _, _ = workflow_roles(request, principal)
+                return run_sla_command(
+                    store, working, policy, permission_denial="ROLE_DENIED", state_denial="WORKFLOW_STATE_DENIED",
+                    scope=parent["scope"] if parent is not None else working["scope"], actor_id=principal.subject_id,
+                    role=PrincipalRole.EXPANSION_MANAGER if is_manager else PrincipalRole.DATA_STEWARD,
+                    reason=body.reason, correlation_id=correlation_id or str(uuid4()),
+                    current_time=current_time,
+                )
+
             current = active.slas.get(sla_instance_id)
             if current is None:
-                raise HTTPException(404, "SLA instance not found")
+                native = native_workflow_owner(request, tenant_id, sla_instance_id=sla_instance_id)
+                if native is None:
+                    raise HTTPException(404, "SLA instance not found")
+                repo, intake_id = native
+                with native_workflow_unit(request, tenant_id, repo, intake_id) as (principal, state):
+                    is_manager, _, is_steward = workflow_roles(request, principal)
+                    if not (is_manager or is_steward):
+                        raise HTTPException(403, "ROLE_DENIED")
+                    working = state.slas.get(sla_instance_id)
+                    if working is None:
+                        raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
+                    native_sla_authority(state, working, principal)
+                    val, code, was_replayed = native_workflow_command(
+                        request, tenant_id, repo, state, principal, key=key, body=body.model_dump(),
+                        operation_id="resumeSla", resource_id=sla_instance_id, receipt_model=SlaReceipt,
+                        command=lambda at: (resume_command(state, state.workflow_policy, principal, working, at),
+                                            body.reason))
+                response.status_code = 200 if was_replayed else code
+                response.headers["ETag"] = f'W/"{val["version"]}"'
+                return SlaReceipt(**val)
             if current.get("tenant_id") != tenant_id:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
             principal = get_principal(request)
             require_workflow_resource_scope(principal, current)
-            operator_role_id = get_operator_role_id(request)
-            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
-            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
-                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
-            )
-            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
+            is_manager, _, is_steward = workflow_roles(request, principal)
             if not (is_manager or is_steward):
                 raise HTTPException(403, "ROLE_DENIED")
 
             actor_id = principal.subject_id
 
             def make() -> tuple[dict[str, Any], int]:
-                if current.get("state") != "PAUSED":
-                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
-                require_version(if_match, current["version"])
-                parent = linked_intake(current)
-                scope = parent["scope"] if parent is not None else current["scope"]
-                try:
-                    updated = change_sla(
-                        active, current, workflow_policy, scope=scope, actor_id=actor_id,
-                        role=PrincipalRole.EXPANSION_MANAGER if is_manager else PrincipalRole.DATA_STEWARD,
-                        reason=body.reason, correlation_id=correlation_id or str(uuid4()),
-                        current_time=datetime.now(UTC),
-                    )
-                except PermissionError as exc:
-                    raise HTTPException(403, "ROLE_DENIED") from exc
-                except DomainValidationError as exc:
-                    raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
-                except Exception as exc:
-                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
-                return updated, 200
+                return resume_command(active, workflow_policy, principal, current, datetime.now(UTC)), 200
 
             require_sla_registry_authority(current, actor_id)
             val, code, was_replayed = replay(
@@ -4814,6 +5000,142 @@ else:
             response.status_code = 200 if was_replayed else code
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return SlaReceipt(**val)
+
+        def observe_workflow_receipt(
+            request: Request, response: Response, tenant_id: str, key: str, *, operation_id: str,
+            resource: dict[str, str], receipt_model: Any,
+            authorize: Callable[[Principal, Any], dict[str, Any]],
+        ) -> Any:
+            """Read one original native action receipt; never resend or rebuild it.
+
+            The six thin observers below share this server-fixed namespace read.
+            Current scope, role and registry authority are rechecked first; a
+            committed receipt must still name the current native resource.
+            """
+            from apps.api.app.routes.canonical_match_cases import (
+                NativeReceiptCommitted,
+                _receipt_observation,
+            )
+
+            native = native_workflow_owner(request, tenant_id, **resource)
+            if native is None:
+                raise HTTPException(404, "NATIVE_WORKFLOW_RESOURCE_NOT_FOUND")
+            repo, intake_id = native
+            resource_id = next(iter(resource.values()))
+            with native_workflow_unit(request, tenant_id, repo, intake_id) as (principal, state):
+                bound = authorize(principal, state)
+                prior = active.read_command_replay(tenant_id, principal.subject_id, operation_id, key, resource_id)
+                observed = _receipt_observation(receipt_model, prior[1] if prior else None,
+                    prior[2] if prior else None, expected_status=200)
+                identity = "sla_instance_id" if receipt_model is SlaReceipt else "assignment_id"
+                if isinstance(observed, NativeReceiptCommitted) and getattr(observed.receipt, identity) != bound[identity]:
+                    raise HTTPException(503, "CANONICAL_INTAKE_STORAGE_UNAVAILABLE")
+            response.headers["Cache-Control"] = "no-store"
+            return observed
+
+        def receipt_assignment(request: Request, assignment_id: str | None, *, managers_only: bool):
+            def authorize(principal: Principal, state: Any) -> dict[str, Any]:
+                is_manager, is_staff, is_steward = workflow_roles(request, principal)
+                if not (is_manager or is_steward or (is_staff and not managers_only)):
+                    raise HTTPException(403, "ROLE_DENIED")
+                bound = list(state.assignments.values())
+                if len(bound) != 1 or (assignment_id is not None and bound[0]["assignment_id"] != assignment_id):
+                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
+                native_assignment_authority(state, bound[0], principal)
+                return bound[0]
+            return authorize
+
+        def receipt_sla(request: Request, sla_instance_id: str):
+            def authorize(principal: Principal, state: Any) -> dict[str, Any]:
+                is_manager, _, is_steward = workflow_roles(request, principal)
+                if not (is_manager or is_steward):
+                    raise HTTPException(403, "ROLE_DENIED")
+                working = state.slas.get(sla_instance_id)
+                if working is None:
+                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
+                native_sla_authority(state, working, principal)
+                return working
+            return authorize
+
+        from apps.api.app.routes.canonical_match_cases import (
+            _CANONICAL_PRINCIPAL_PRECONDITIONS,
+            NativeReceiptCommitted,
+            NativeReceiptNotObserved,
+        )
+
+        receipt_errors = api_error_responses(401, 403, 404, 422, 503)
+
+        @router.get(
+            "/intakes/{intake_id}/assignment/receipt",
+            operation_id="getAssignIntakeReceipt",
+            response_model=NativeReceiptCommitted[AssignmentReceipt] | NativeReceiptNotObserved,
+            responses=receipt_errors,
+            openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS,
+            description="Observe the stored native assignIntake receipt for this key; never resends the command.",
+        )
+        def get_assign_intake_receipt(
+            intake_id: UuidString,
+            request: Request,
+            response: Response,
+            tenant_id: str = Depends(require_actor),
+            key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
+        ):
+            return observe_workflow_receipt(
+                request, response, tenant_id, key, operation_id="assignIntake", resource={"intake_id": intake_id},
+                receipt_model=AssignmentReceipt, authorize=receipt_assignment(request, None, managers_only=True))
+
+        for action, operation_id in (("claim", "claimAssignment"), ("transfer", "transferAssignment"),
+                                     ("complete", "completeAssignment")):
+            def assignment_receipt_route(operation_id: str = operation_id):
+                def observe(
+                    assignment_id: UuidString,
+                    request: Request,
+                    response: Response,
+                    tenant_id: str = Depends(require_actor),
+                    key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
+                ):
+                    return observe_workflow_receipt(
+                        request, response, tenant_id, key, operation_id=operation_id,
+                        resource={"assignment_id": assignment_id}, receipt_model=AssignmentReceipt,
+                        authorize=receipt_assignment(request, assignment_id, managers_only=False))
+                return observe
+
+            router.add_api_route(
+                f"/assignments/{{assignment_id}}/actions/{action}/receipt",
+                assignment_receipt_route(),
+                methods=["GET"],
+                operation_id=f"get{operation_id[0].upper()}{operation_id[1:]}Receipt",
+                response_model=NativeReceiptCommitted[AssignmentReceipt] | NativeReceiptNotObserved,
+                responses=receipt_errors,
+                openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS,
+                description=f"Observe the stored native {operation_id} receipt for this key; never resends the command.",
+            )
+
+        for action, operation_id in (("pause", "pauseSla"), ("resume", "resumeSla")):
+            def sla_receipt_route(operation_id: str = operation_id):
+                def observe(
+                    sla_instance_id: UuidString,
+                    request: Request,
+                    response: Response,
+                    tenant_id: str = Depends(require_actor),
+                    key: IdempotencyKeyValue = IDEMPOTENCY_KEY_HEADER,
+                ):
+                    return observe_workflow_receipt(
+                        request, response, tenant_id, key, operation_id=operation_id,
+                        resource={"sla_instance_id": sla_instance_id}, receipt_model=SlaReceipt,
+                        authorize=receipt_sla(request, sla_instance_id))
+                return observe
+
+            router.add_api_route(
+                f"/sla-instances/{{sla_instance_id}}/actions/{action}/receipt",
+                sla_receipt_route(),
+                methods=["GET"],
+                operation_id=f"get{operation_id[0].upper()}{operation_id[1:]}Receipt",
+                response_model=NativeReceiptCommitted[SlaReceipt] | NativeReceiptNotObserved,
+                responses=receipt_errors,
+                openapi_extra=_CANONICAL_PRINCIPAL_PRECONDITIONS,
+                description=f"Observe the stored native {operation_id} receipt for this key; never resends the command.",
+            )
 
         @router.post(
             "/promotion-decisions/{promotion_decision_id}/actions/review",

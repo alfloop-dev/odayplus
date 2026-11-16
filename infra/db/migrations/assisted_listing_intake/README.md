@@ -15,14 +15,22 @@ rollout runbook).
 | 4 | `004_tenant_rls_lineage.sql`  | `..._SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql` |
 | 5 | `005_decision_service_actor.sql` | `..._SCHEMA_0005_DECISION_SERVICE_ACTOR_PATCH.sql` |
 | 6 | `006_workflow_schedule.sql` | `..._SCHEMA_0006_WORKFLOW_SCHEDULE_PATCH.sql` |
+| 7 | `007_workflow_pause_expectation.sql` | `..._SCHEMA_0007_WORKFLOW_PAUSE_EXPECTATION_PATCH.sql` |
 
 The original four-artifact receipt remains immutable. The existing loader
-records the five- and six-step prefixes separately and retains prior checksums
-and application timestamps. Engineering extensions do not approve production
+records the five-, six- and seven-step prefixes separately and retains prior
+checksums and application timestamps; files 001-006 and their recorded prefix
+receipts are unchanged by step 007. Engineering extensions do not approve production
 activation. Step 006 adds the original Assignment/SLA binding and recorded
 calendar/warning/breach checkpoints without supplying values for historical
 rows. Its replay rejects partial or changed columns/constraints; a recorded
 upgrade cannot authorize silent recreation of removed fields.
+Step 007 appends a nullable per-interval `expected_resume_at` to the original
+`workflow.sla_pause_intervals` table. Historical intervals keep NULL (unknown);
+nothing is backfilled from `resumed_at`, the SLA's single current `resume_at`,
+a later schedule or the current policy/calendar, and an interval without its
+recorded expectation remains unavailable to native SLA commands. Step 007 is an
+engineering schema change only: it grants no live DDL, activation or cutover.
 
 Each file is a byte-for-byte copy of the reviewed contract artifact so the
 production migration cannot silently drop or alter an approved type, enum,
