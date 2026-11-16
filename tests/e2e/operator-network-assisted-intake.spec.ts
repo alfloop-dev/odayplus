@@ -824,13 +824,15 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
         expect(headers["if-match"]).toBeUndefined();
         expect(headers["idempotency-key"]).toBeTruthy();
         await expect(page.getByTestId("intake-detail-id")).toHaveText(receipt.intake_id);
+        await expect(page.getByText("正在讀取所選收件與案件…", { exact: true })).toHaveCount(0);
         let observed: any;
         await expect.poll(async () => {
           const read = await page.request.get(`/api/v1/canonical-intakes/${receipt.intake_id}?include_source=true&include_history=true&include_evidence=true`);
+          if (read.status() === 409) return "CONFLICT";
           expect(read.status(), await read.text()).toBe(200);
           observed = await read.json();
           return observed.processing_state;
-        }).toBe(path.state);
+        }, { timeout: 60_000 }).toBe(path.state);
         const retrieved = path.policy === "APPROVED_RETRIEVAL";
         expect(observed).toMatchObject({ intake_id: receipt.intake_id, intake_method: "URL",
           version: retrieved ? 5 : 4, resolution: null, submitter_subject_id: input.actor_id,

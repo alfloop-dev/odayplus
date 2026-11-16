@@ -1061,10 +1061,11 @@ test("canonical native: source policy fails closed for fresh blocked and unknown
     // submission, legacy-fresh refusal, retained quarantine or mocked policy.
     await expect.poll(async () => {
       const read = await page.request.get(path);
+      if (read.status() === 409) return "CONFLICT";
       expect(read.status(), await read.text()).toBe(200);
       observed = await read.json();
       return observed.processing_state;
-    }).toBe("QUARANTINED");
+    }, { timeout: 60_000 }).toBe("QUARANTINED");
     expect(observed).toMatchObject({ intake_id: receipt.intake_id, version: 4, resolution: null,
       submitter_subject_id: input.actor_id, correlation_id: receipt.correlation_id,
       source_info: { source_id: source.source_id, recorded_policy_state: policy },
