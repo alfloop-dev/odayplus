@@ -20,6 +20,7 @@ from modules.external_data.application.market_data_facade import (
     CUTOVER_MODE_LEGACY_ONLY,
     FACADE_MODE_ENV,
 )
+from modules.forecastops.model_contract import FORECASTOPS_FEATURE_SCHEMA_ID
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
 from tests.integration._authz import EXTERNAL_DATA_HEADERS
 from tests.production_composition_binding import bind_offline_score_participants
@@ -304,7 +305,10 @@ def test_governed_disabled_services_stay_fail_closed_while_platform_is_ready(
         bundle.engine.close()
 
     capabilities = app.state.production_model_capabilities
-    assert {service for service, _version in runtime.resolutions} == {"forecastops"}
+    # Startup binding asks for the same canonical training schema the
+    # ForecastOps executor and the trainer register; a stale schema id makes
+    # MLflow lineage validation refuse every trained forecastops version.
+    assert runtime.resolutions == [("forecastops", FORECASTOPS_FEATURE_SCHEMA_ID)]
     assert app.state.scoring_bindings.keys() == {"forecastops"}
     assert capabilities["forecastops"]["available"] is True
     for service in ("avm", "heatzone", "sitescore"):

@@ -2170,11 +2170,6 @@ else:
             scoring_bindings: dict[str, Any] = {}
             production_composition_errors: list[str] = []
             try:
-                from modules.avm.application.production import avm_artifact_schema_from_environment
-                from modules.forecastops.domain import FORECASTOPS_FEATURE_VERSION
-                from modules.heatzone.domain import HEATZONE_FEATURE_VERSION
-                from modules.sitescore.domain import SITESCORE_FEATURE_VERSION
-
                 # Model aliases are read before the Learning Hub adapter exists.
                 # Configure the SDK's identity provider before that first read.
                 tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "")
@@ -2197,12 +2192,7 @@ else:
                             production_composition_errors.append(f"{service}: {exc.code}: {exc}")
                 model_runtime = None
             if model_runtime is not None:
-                feature_schema_versions = {
-                    "avm": avm_artifact_schema_from_environment(),
-                    "forecastops": FORECASTOPS_FEATURE_VERSION,
-                    "heatzone": HEATZONE_FEATURE_VERSION,
-                    "sitescore": SITESCORE_FEATURE_VERSION,
-                }
+                feature_schema_versions = production_feature_schema_versions()
                 for service, feature_schema_version in feature_schema_versions.items():
                     if service in _governed_disabled:
                         # Governed-disabled services have no production alias by definition.

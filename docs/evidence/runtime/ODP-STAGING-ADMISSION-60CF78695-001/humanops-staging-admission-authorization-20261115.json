@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "record_kind": "humanops-runtime-release-staging-admission-authorization",
+  "status": "approved",
+  "is_approval": true,
+  "task_id": "ODP-STAGING-ADMISSION-60CF78695-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-STAGING-ADMISSION-20261115O",
+  "candidate_sha": "60cf786952c78e498372fa1ffb58d2c40860708c",
+  "manifest_digest": "sha256:62450c57d949c0de533cee6231c48c6be36efe1f8f00844da683f2fc2e54c9ee",
+  "manifest_run_id": "43659963695",
+  "target_environment": "staging",
+  "release_profile": "core-ops",
+  "approved_at": "2026-11-15T00:41:20Z",
+  "authorization_basis": {
+    "user_reply": "換到 60cf78695 跑鏈 O，可自動跟 tip (Recommended)",
+    "user_reply_at": "2026-11-15T00:41:20Z",
+    "context": "Chain N (owner replies 2026-11-14T16:23:02Z '先解 registry 衝突，再跑鏈 N' and 16:27:37Z '窄幅放寬 dev gate') bound candidate 5948eba26 (registry PR #1712). Before step D, the apps/web product PR #1711 merged to dev at 2026-11-14T20:52Z, so ancestry was no longer empty; Claude stopped and asked. The chosen option: run the full A–F chain on 60cf78695 with approval letter O, all other conditions unchanged; close #1712 and supersede its task; and, if dev is advanced again by a product PR before D or E, switch to the new tip and rerun (letters P, Q, ...) only when that tip's own CI actually ran all 7 product lanes green and its dev deploy is 77/77, at most 3 switches up to 2026-11-17, after which Claude stops and asks. The chain: (A) dispatch the core-ops staging build; (B) HD-08o with the three deviations below; (C) HD-09o with approval HUMANOPS-STAGING-ADMISSION-20261115O and the scope limits below; (D) approve the registry PR as Human/Ops once it touches only docs/evidence/, the registry checker says GO, admission errors are empty and every CI job is green; (E) HD-10o: after the registry merges, sync the main checkout registry and manifest from origin/dev and register lease HUMANOPS-STAGING-LEASE-20261115O (new nonce, 6 hours, non_dispatchable); (F) HD-12o: approve the GitHub staging environment with ajoe734 only for the run that lease triggers. Before every step dev tip must still be the candidate (plus the evidence-only registry merge for E and F) with empty ancestry. B and C took effect only if the build succeeded, its manifest named the candidate with profile core-ops and 16 disabled sources with no credentials, npm audit reported 0 findings and all 5 staging targets read back absent. Checked facts: dev tip is 60cf78695 (#1711 merge); its exact push CI 43643491051 and merge group CI 43639788576 ran all 7 product lanes, all success; dev deploy 43648043409 passed on its first attempt with live E2E 77/77, 0 blockers, job validations ok and the egress probe denied; ancestry was empty; build 43659963695 met every B/C condition and produced manifest sha256:62450c57d949c0de533cee6231c48c6be36efe1f8f00844da683f2fc2e54c9ee, the digest bound here.",
+    "interpretation": "Owner 蔡尚志 replied in the Claude Code conversation at 2026-11-15T00:41:20Z. Transcribed by Claude; not an external identity-system signature."
+  },
+  "authorized_scope": {
+    "max_release_requests": 1,
+    "max_short_lived_supervisor_leases": 1,
+    "runtime_release_deploy_phases": 1,
+    "allowed_environment": "staging",
+    "external_sources_enabled": false,
+    "production_changes": false,
+    "github_staging_environment_approval_still_required": true,
+    "supervisor_lease_still_required": true
+  },
+  "recorded_by": "Claude (interactive owner-response transcription; no external identity signature claimed)",
+  "evidence": {
+    "exact_ci": "docs/evidence/runtime/ODP-STAGING-ADMISSION-60CF78695-001/candidate-ci-60cf78695.json",
+    "staging_build_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/43659963695",
+    "dev_deploy_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/43648043409",
+    "exact_candidate_ci_workflow_urls": [
+      "https://github.com/alfloop-dev/odayplus/actions/runs/43643491051",
+      "https://github.com/alfloop-dev/odayplus/actions/runs/43639788576"
+    ],
+    "dev_gate_fix_pull_request": "https://github.com/alfloop-dev/odayplus/pull/1710",
+    "staging_probe_fix_pull_request": "https://github.com/alfloop-dev/odayplus/pull/1708",
+    "voided_registry_pull_request": "https://github.com/alfloop-dev/odayplus/pull/1712",
+    "voided_previous_staging_deploy_url": "https://github.com/alfloop-dev/odayplus/actions/runs/43566488597"
+  },
+  "decisions": {
+    "HD-08o": {
+      "decision": "approve",
+      "subject": "gate-2 Data Gate passed-with-deviation for this candidate's staging admission only, review_by 2026-11-27",
+      "accepted_deviations": [
+        "source contract and sample data reviewed: not applicable — the core-ops profile keeps every external source disabled (sources-off attestation in the build manifest: 16 sources audited, all disabled, zero credentials present).",
+        "point-in-time correctness checked for model-ready data: not applicable — core-ops serves no model (release_profile.model_readiness=not_claimed).",
+        "freshness and lineage evidence captured: check_live_production_data.py has never run against this candidate; deferred to the staging verify run and the production gates, not claimed as passed."
+      ]
+    },
+    "HD-09o": {
+      "decision": "approve",
+      "subject": "release.stage=dev-verified, admission_target=staging, decision=go for this exact candidate and the manifest produced by its staging build"
+    }
+  }
+}

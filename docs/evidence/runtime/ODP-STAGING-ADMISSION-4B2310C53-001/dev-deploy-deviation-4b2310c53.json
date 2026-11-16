@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "record_kind": "dev-deploy-owner-accepted-deviation",
+  "candidate_sha": "4b2310c53101da3d0f534ad5d035f8200646f59c",
+  "run": {
+    "conclusion": "failure",
+    "createdAt": "2026-11-15T13:12:25Z",
+    "databaseId": 43717780340,
+    "event": "workflow_dispatch",
+    "headSha": "4b2310c53101da3d0f534ad5d035f8200646f59c",
+    "jobs": [
+      {
+        "conclusion": "success",
+        "name": "Validate release phase inputs",
+        "status": "completed",
+        "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43717780340/job/132822935298"
+      },
+      {
+        "conclusion": "success",
+        "name": "Build once and publish the immutable artifact handoff",
+        "status": "completed",
+        "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43717780340/job/132823608179"
+      },
+      {
+        "conclusion": "success",
+        "name": "Verify standing dev authority and exact built manifest",
+        "status": "completed",
+        "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43717780340/job/132826569995"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "Verify the Supervisor lease authorises this deploy",
+        "status": "completed",
+        "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43717780340/job/132826571468"
+      },
+      {
+        "conclusion": "failure",
+        "name": "Deploy the admitted artifact by immutable digest",
+        "status": "completed",
+        "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43717780340/job/132826768701"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "Verify production watch and clean up ephemeral staging",
+        "status": "completed",
+        "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43717780340/job/132829969346"
+      }
+    ],
+    "name": "Runtime Release dev auto 4b2310c53101da3d0f534ad5d035f8200646f59c",
+    "status": "completed",
+    "updatedAt": "2026-11-15T13:38:54Z",
+    "url": "https://github.com/alfloop-dev/odayplus/actions/runs/43717780340"
+  },
+  "live_e2e": {
+    "checks": 77,
+    "passed": 75,
+    "failed_checks": [
+      "models:registry_refused",
+      "models:no_surrogate_markers"
+    ],
+    "blockers": [
+      {
+        "check": "models:registry_refused",
+        "dependency": "mlflow",
+        "detail": "status=200 (expected 503, or 200 from the bound registry with no versions or only unpromoted dev versions (stage=dev, no aliases, not approved)) body={\"count\": 4, \"items\": [{\"aliases\": [\"shadow\"], \"approved_at\": \"2026-11-14T11:22:25+00:00\", \"approved_by\": \"\\u8521\\u5c1a\\u5fd7\\uff08\\u8ca0\\u8cac\\u4eba\\uff09\", \"artifact_uri\": \"gs://odayplus-runtime-20260825-model-artifacts/dev-model-releases/models/forecast_revenue_interval/dev-forecast-20261114-3/model/sha256/9c89c681ac141caf8ef7a08d778ac308614e4859509729f9cd78348752814d09\", \"created_at\": \"2026-11",
+        "next_action": "Publish/approve the MLflow model versions and point the 'production' alias at them (MLFLOW_TRACKING_URI registry)."
+      },
+      {
+        "check": "models:no_surrogate_markers",
+        "dependency": "data-binding",
+        "detail": "paths=['$.items[0].monitoring_config.requested_by', '$.items[1].monitoring_config.requested_by']",
+        "next_action": "A fixture/mock/seed surrogate reached a live response. Remove the fallback and rebind the runtime to live data."
+      }
+    ]
+  },
+  "other_validations": {
+    "cloud-run-jobs/migration-validation.json": true,
+    "cloud-run-jobs/scheduler-validation.json": true,
+    "cloud-run-jobs/worker-validation.json": true,
+    "cloud-run-migration-compatibility.json": true,
+    "cloud-run-preflight.json": true,
+    "cloud-run-smoke.json": true,
+    "public-egress-probe.json": "passed"
+  },
+  "dev_live_release_after_failure": "60cf786952c78e49",
+  "accepted_under": "HUMANOPS-STAGING-ADMISSION-20261115P (HD-09p): only these two model checks may fail; every other check passed",
+  "recorded_at": "2026-11-15T14:53:20Z",
+  "recorded_by": "Claude (gh run view and the run's own validation artifacts)"
+}
