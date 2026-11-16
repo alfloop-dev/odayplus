@@ -2102,6 +2102,7 @@ else:
                     if native_intake["scope"]["tenant_id"] != tenant_id:
                         raise HTTPException(403, "TENANT_SCOPE_DENIED")
                     require_intake_scope(principal, native_intake)
+                    state.workflow_policy = repo.workflow_policy
                     yield principal, state
 
         def native_workflow_command(request: Request, tenant_id: str, repo: Any, state: Any, principal: Principal, *,

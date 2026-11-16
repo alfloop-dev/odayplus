@@ -6,7 +6,8 @@ import {
   readCanonicalIntakeEvidence,
   readCanonicalIntakeParserFields,
   readCanonicalURLReceipt, readCanonicalMatchCaseReceipt, readCanonicalIdentityReceipt, readCanonicalAssistedEntryReceipt,
-  canonicalMatchCaseReceiptReference,
+  canonicalMatchCaseReceiptReference, parseCanonicalCommandReceiptReference, readCanonicalCommandReceipt,
+  readCanonicalAssignmentTransferTargets, submitCanonicalWorkflow,
   type CanonicalURLCommand, type CanonicalIdentityCommand, type CanonicalAssistedEntryCommand,
   type CanonicalIntakeReadContext, type CanonicalMatchCaseCommand,
 } from "../canonicalIntakeReadClient";
@@ -372,6 +373,63 @@ describe("exact original command receipt observations", () => {
     const { value, signal, fetchImpl } = context(json({ detail: "current authority refused" }, 403));
     await expect(exactReceiptOperation(kind).lookup(value, signal)).rejects.toMatchObject({ status: 403, code: "CANONICAL_READ_FAILED" });
     expect(fetchImpl).toHaveBeenCalledTimes(1); expect(fetchImpl.mock.calls[0][1]?.method).toBeUndefined();
+  });
+});
+
+describe("native Assignment/SLA original action receipts", () => {
+  const assignment = { assignment_id: id(61), status: "TRANSFERRED", owner_subject_id: id(13), due_at: "2026-10-15T10:00:00Z",
+    version: 4, audit_event_id: id(70) };
+  const resumed = { sla_instance_id: id(62), state: "ON_TRACK", due_at: "2026-10-15T10:30:00Z", paused_duration_seconds: 1800,
+    version: 5, audit_event_id: id(71), correlation_id: id(72), due_soon_at: "2026-10-15T09:30:00Z", active_pause_interval_id: null };
+  const transfer = { kind: "workflow", key: "canonical-workflow:synthetic-01", action: "transfer", resourceId: id(61), expectedVersion: 3 } as const;
+  const resume = { kind: "workflow", key: "canonical-workflow:synthetic-02", action: "resume", resourceId: id(62), expectedVersion: 4 } as const;
+
+  it("accepts only the closed workflow reference shape", () => {
+    expect(parseCanonicalCommandReceiptReference(transfer)).toEqual(transfer);
+    expect(parseCanonicalCommandReceiptReference({ ...transfer, action: "assign" })).toBeNull();
+    expect(parseCanonicalCommandReceiptReference({ ...transfer, body: { reason: "x" } })).toBeNull();
+    expect(parseCanonicalCommandReceiptReference({ ...transfer, resourceId: "not-a-uuid" })).toBeNull();
+  });
+  it.each([[transfer, assignment, `/api/v1/assignments/${id(61)}/actions/transfer/receipt`],
+    [resume, resumed, `/api/v1/sla-instances/${id(62)}/actions/resume/receipt`]] as const)(
+    "observes %j through its original action namespace as a GET without packet or If-Match", async (reference, receipt, path) => {
+      const envelope = { observation: "RECEIPT_COMMITTED", observed_at: "2026-10-29T07:00:00Z", original_http_status: 200, receipt };
+      const { value, signal, fetchImpl } = context(json(envelope));
+      expect(await readCanonicalCommandReceipt(value, reference, signal)).toEqual(envelope);
+      const [called, init] = fetchImpl.mock.calls[0];
+      expect(called).toBe(path); expect(init?.method).toBeUndefined(); expect(init?.body).toBeUndefined();
+      expect(new Headers(init?.headers).get("idempotency-key")).toBe(reference.key);
+      expect(new Headers(init?.headers).has("if-match")).toBe(false);
+    });
+  it.each([
+    [transfer, { ...assignment, assignment_id: id(99) }], [transfer, { ...assignment, status: "DONE" }],
+    [resume, { ...resumed, state: "PAUSED" }], [resume, { ...resumed, sla_instance_id: id(99) }],
+  ] as const)("refuses a committed receipt that is not the original resource outcome: %j", async (reference, receipt) => {
+    const { value, signal } = context(json({ observation: "RECEIPT_COMMITTED", observed_at: "2026-10-29T07:00:00Z",
+      original_http_status: 200, receipt }));
+    await expect(readCanonicalCommandReceipt(value, reference, signal)).rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
+  });
+  it("keeps an authorized absence distinct from execution", async () => {
+    const { value, signal, fetchImpl } = context(json({ observation: "NOT_OBSERVED", observed_at: "2026-10-29T07:00:00Z" }));
+    expect(await readCanonicalCommandReceipt(value, resume, signal)).toEqual({ observation: "NOT_OBSERVED", observed_at: "2026-10-29T07:00:00Z" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+  it("sends the original POST with captured If-Match, key and body", async () => {
+    const { value, signal, fetchImpl } = context(json(assignment));
+    const body = { target_owner_subject_id: id(13), target_owner_role: "expansion_user", reason: "Synthetic transfer",
+      handoff_note: "Synthetic handoff" };
+    await submitCanonicalWorkflow(value, { ...transfer, body }, signal);
+    const [path, init] = fetchImpl.mock.calls[0];
+    expect(path).toBe(`/api/v1/assignments/${id(61)}/actions/transfer`);
+    expect(init?.method).toBe("POST"); expect(JSON.parse(String(init?.body))).toEqual(body);
+    expect(new Headers(init?.headers).get("If-Match")).toBe('W/"3"');
+    expect(new Headers(init?.headers).get("Idempotency-Key")).toBe(transfer.key);
+  });
+  it("binds transfer targets to the captured Assignment version", async () => {
+    const page = { assignment_id: id(61), assignment_version: 3, items: [{ subject_id: id(13), display_name: "Synthetic", owner_role: "expansion_user" }] };
+    const { value, signal } = context(json(page), json({ ...page, assignment_version: 4 }));
+    expect(await readCanonicalAssignmentTransferTargets(value, id(61), 3, signal)).toEqual(page);
+    await expect(readCanonicalAssignmentTransferTargets(value, id(61), 3, signal)).rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
   });
 });
 

@@ -445,7 +445,7 @@ describe("native Intake and case selection", () => {
     expect(await screen.findByRole("alert")).toBeVisible();
     expect(posts(second)).toHaveLength(0);
   });
-  it("shows fresh persisted assignment and SLA before a match case exists without exposing unconnected actions", async () => {
+  it("shows fresh persisted assignment and SLA before a match case exists and offers only its connected legal actions", async () => {
     const parent = { ...intake(1), processing_state: "SUBMITTED", workflow: {
       assignment_id: id(61), assignment_version: 2, assignment_status: "UNASSIGNED", owner_subject_id: null, owner_role: null,
       queue_key: "existing-synthetic-queue", sla_instance_id: id(62), sla_version: 3, sla_state: "ON_TRACK",
@@ -462,13 +462,39 @@ describe("native Intake and case selection", () => {
     expect(within(summary).getByTestId("asg-sla-status")).toHaveTextContent("正常 (On Track)");
     expect(summary).not.toHaveTextContent(id(61));
     expect(summary).not.toHaveTextContent(id(62));
-    expect(within(summary).queryByRole("button")).not.toBeInTheDocument();
+    // UNASSIGNED work has no claim/transfer/complete; the ON_TRACK SLA may be paused.
+    expect(within(summary).getAllByRole("button").map((button) => button.dataset.testid)).toEqual(["asg-btn-pause"]);
     expect(summary).not.toHaveTextContent("RESOURCE_VERSION_UNAVAILABLE");
     expect(posts(context)).toHaveLength(0);
     expect(screen.getByText("這筆收件目前沒有比對案件。")).toBeVisible();
     view.rerender(<CanonicalIntakeCasePicker context={{ ...context, contextKey: "B" }} />);
     expect(screen.queryByTestId("assignment-sla-summary")).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("restores an uncertain native workflow reference after provider replacement and only probes its receipt", async () => {
+    const reference = { kind: "workflow", key: "canonical-workflow:restored-0001", action: "transfer",
+      resourceId: id(61), expectedVersion: 2 };
+    const owner = { subject: id(91), tenantId: id(10), roleId: "expansion-manager" };
+    window.sessionStorage.setItem("oday.canonicalIntake.receipt.v1:" + JSON.stringify([owner.subject, owner.tenantId, owner.roleId]),
+      JSON.stringify(reference));
+    const context = { ...makeContext((path) => path.endsWith("/actions/transfer/receipt")
+      ? json({ observation: "NOT_OBSERVED", observed_at: "2026-10-15T08:00:00Z" })
+      : json({ items: [], next_cursor: null })), receiptOwner: owner };
+    render(<CanonicalIntakeCasePicker context={context} />);
+    expect(await screen.findByText(`指派 ${id(61)} 的先前操作`)).toBeInTheDocument();
+    expect(await screen.findByText(/這次查詢尚未觀察到原回執/)).toBeInTheDocument();
+    expect(posts(context)).toHaveLength(0);
+    const probe = vi.mocked(context.fetchImpl).mock.calls.find(([path]) => String(path).endsWith("/receipt"))!;
+    expect(String(probe[0])).toBe(`/api/v1/assignments/${id(61)}/actions/transfer/receipt`);
+    expect(probe[1]?.method).toBeUndefined();
+    expect(probe[1]?.body).toBeUndefined();
+    const headers = new Headers(probe[1]?.headers);
+    expect(headers.get("Idempotency-Key")).toBe(reference.key);
+    expect(headers.get("If-Match")).toBeNull();
+    expect(headers.get("If-Actor-Match")).toBe(owner.subject);
+    expect(screen.queryByRole("button", { name: "重試原操作" })).not.toBeInTheDocument();
+    window.sessionStorage.clear();
   });
 
   it("appends observed manual roots to the original case, retries the captured versions, and requires fresh read before a plan", async () => {

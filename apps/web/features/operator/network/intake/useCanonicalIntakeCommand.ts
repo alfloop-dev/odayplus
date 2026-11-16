@@ -24,6 +24,10 @@ function receiptDescription(reference: CanonicalCommandReceiptReference, receipt
     return `比對案件 ${receipt.match_case_id} · 版本 ${receipt.match_case_version} · 決策 ${receipt.decision_id} · 版本 ${receipt.version} · ${receipt.status}`;
   if (reference.kind === "manual" && "request_id" in receipt)
     return `收件 ${receipt.intake_id} · 版本 ${receipt.version} · 補錄提案 ${receipt.request_id} · ${receipt.status}`;
+  if (reference.kind === "workflow" && "assignment_id" in receipt)
+    return `指派 ${receipt.assignment_id} · 版本 ${receipt.version} · ${receipt.status}`;
+  if (reference.kind === "workflow" && "sla_instance_id" in receipt)
+    return `SLA ${receipt.sla_instance_id} · 版本 ${receipt.version} · ${receipt.state}`;
   throw new CanonicalIntakeReadError(200, "CANONICAL_RESPONSE_INVALID", "");
 }
 
@@ -68,7 +72,9 @@ function useCommandOwner(context: CanonicalIntakeReadContext | null, requireRefe
           if (initialBinding.current && initialBinding.current !== active.context) active.referenceBlocked = true;
           else active.command = { source: Symbol("restored canonical receipt"), reference,
             description: reference.kind === "url" ? "先前網址送件" : reference.kind === "identity"
-              ? `案件 ${reference.matchCaseId} 的先前操作` : `收件 ${reference.intakeId} 的先前操作`,
+              ? `案件 ${reference.matchCaseId} 的先前操作` : reference.kind === "workflow"
+                ? `${reference.action === "pause" || reference.action === "resume" ? "SLA" : "指派"} ${reference.resourceId} 的先前操作`
+                : `收件 ${reference.intakeId} 的先前操作`,
             notObserved: false, uncertain: true, receipt: null, receiptDescription: null };
         }
         // StrictMode can repeat setup for this same binding. A later account,

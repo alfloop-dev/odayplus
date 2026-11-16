@@ -20,6 +20,8 @@ from shared.infrastructure.persistence.assisted_listing_intake import (
     ALL_TABLES,
     AssistedIntakePersistenceConflict,
     apply_upgrade_to_database,
+    manifest_checksum,
+    migration_steps,
 )
 from shared.infrastructure.persistence.factory import build_persistence
 from shared.infrastructure.persistence.postgresql import (
@@ -232,6 +234,7 @@ def test_full_assisted_intake_stack_applies_and_validates(
         "004_tenant_rls_lineage.sql",
         "005_decision_service_actor.sql",
         "006_workflow_schedule.sql",
+        "007_workflow_pause_expectation.sql",
     )
     assert result.required_tables == ALL_TABLES
     with intake_blank_db.connect() as connection:
@@ -320,11 +323,16 @@ def test_full_stack_composes_after_canonical_migration_and_is_idempotent(
             """
             SELECT manifest_sha256
             FROM odp_runtime.assisted_intake_schema_migrations
-            WHERE migration_name = '001-006'
+            WHERE migration_name = '001-007'
             """
         ).fetchone()
         assert marker is not None
         assert marker[0] == first.manifest_sha256
+        six_step = connection.execute(
+            "SELECT manifest_sha256 FROM odp_runtime.assisted_intake_schema_migrations "
+            "WHERE migration_name = '001-006'"
+        ).fetchone()
+        assert six_step == (manifest_checksum(migration_steps()[:6]),)
         for relation, columns in {
             "expansion.listings": {
                 "tenant_id",
