@@ -360,39 +360,40 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         admissions = [worker_bundle.canonical_intake_start, worker_bundle.canonical_intake_identity,
             worker_bundle.canonical_intake_source_policy, worker_bundle.canonical_intake_assisted_entry]
 
-        def admit_browser_event(original_url, receipts, phases, *, retrieval=False):
+        def admit_browser_event(connection, original_url, receipts, phases, *, retrieval=False):
             if len(receipts) == phases:
                 return
-            with database.connect() as connection:
+            if not receipts:
                 row = connection.execute("SELECT intake_id FROM intake.intakes WHERE tenant_id=%s AND original_url=%s",
                     (ids["tenant"], original_url)).fetchall()
                 if not row:
                     return
                 assert len(row) == 1
                 intake_id = str(row[0][0])
-                if not receipts:
-                    events = connection.execute("SELECT event_id FROM workflow.outbox_events WHERE tenant_id=%s "
-                        "AND aggregate_type='intake' AND aggregate_id=%s AND event_type='intake.submitted'",
-                        (ids["tenant"], intake_id)).fetchall()
+                events = connection.execute("SELECT event_id FROM workflow.outbox_events WHERE tenant_id=%s "
+                    "AND aggregate_type='intake' AND aggregate_id=%s AND event_type='intake.submitted'",
+                    (ids["tenant"], intake_id)).fetchall()
+            else:
+                previous = receipts[-1]
+                intake_id = str(previous["intake_id"])
+                job = connection.execute("SELECT status,result FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s",
+                    (ids["tenant"], previous["job_id"])).fetchone()
+                if not job or job[0] != JobStatus.SUCCEEDED.value:
+                    return
+                result = job[1]
+                assert result["intake_id"] == intake_id
+                if len(receipts) < 3 or retrieval:
+                    if len(receipts) == 3:
+                        assert phases == 4 and result["processing_state"] == "RETRIEVING"
+                    events = [(result["outbox_event_id"],)]
                 else:
-                    previous = receipts[-1]
-                    if worker_bundle.job_queue.get(previous["job_id"]).status != JobStatus.SUCCEEDED:
+                    assert phases == 4 and result["processing_state"] == "AWAITING_ASSISTED_ENTRY"
+                    events = connection.execute("SELECT event_id FROM workflow.outbox_events WHERE tenant_id=%s "
+                        "AND aggregate_type='intake_assisted_entry' AND event_type='intake.assisted_entry_requested' "
+                        "AND payload->'payload'->>'intake_id'=%s", (ids["tenant"], intake_id)).fetchall()
+                    if not events:
                         return
-                    result = connection.execute("SELECT result FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s",
-                        (ids["tenant"], previous["job_id"])).fetchone()[0]
-                    assert result["intake_id"] == intake_id
-                    if len(receipts) < 3 or retrieval:
-                        if len(receipts) == 3:
-                            assert phases == 4 and result["processing_state"] == "RETRIEVING"
-                        events = [(result["outbox_event_id"],)]
-                    else:
-                        assert phases == 4 and result["processing_state"] == "AWAITING_ASSISTED_ENTRY"
-                        events = connection.execute("SELECT event_id FROM workflow.outbox_events WHERE tenant_id=%s "
-                            "AND aggregate_type='intake_assisted_entry' AND event_type='intake.assisted_entry_requested' "
-                            "AND payload->'payload'->>'intake_id'=%s", (ids["tenant"], intake_id)).fetchall()
-                        if not events:
-                            return
-                assert len(events) == 1
+            assert len(events) == 1
             factory = worker_bundle.canonical_intake_retrieval if retrieval and len(receipts) == 3 else admissions[len(receipts)]
             receipt = factory().admit_event(ids["tenant"], str(events[0][0]))
             assert receipt["intake_id"] == intake_id
@@ -401,19 +402,20 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                 fetch_io.job_id = receipt["job_id"]
             receipts.append(receipt)
 
-        def match_browser_manual():
+        def match_browser_manual(connection):
             if len(url_admissions) != 4 or url_matches:
                 return
-            if worker_bundle.job_queue.get(url_admissions[-1]["job_id"]).status != JobStatus.SUCCEEDED:
+            job = connection.execute("SELECT status FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s",
+                (ids["tenant"], url_admissions[-1]["job_id"])).fetchone()
+            if not job or job[0] != JobStatus.SUCCEEDED.value:
                 return
-            with database.connect() as connection:
-                rows = connection.execute("SELECT i.intake_id,s.source_snapshot_id,i.version,i.processing_state "
-                    "FROM intake.intakes i JOIN intake.source_snapshots s "
-                    "ON s.tenant_id=i.tenant_id AND s.intake_id=i.intake_id "
-                    "WHERE i.tenant_id=%s AND i.original_url=%s AND s.capture_method='MANUAL_ENTRY'",
-                    (ids["tenant"], credentials["url_manual"]["original_url"])).fetchall()
-                assert len(rows) == 1
-                intake_id, snapshot_id, version, state = rows[0]
+            rows = connection.execute("SELECT i.intake_id,s.source_snapshot_id,i.version,i.processing_state "
+                "FROM intake.intakes i JOIN intake.source_snapshots s "
+                "ON s.tenant_id=i.tenant_id AND s.intake_id=i.intake_id "
+                "WHERE i.tenant_id=%s AND i.original_url=%s AND s.capture_method='MANUAL_ENTRY'",
+                (ids["tenant"], credentials["url_manual"]["original_url"])).fetchall()
+            assert len(rows) == 1
+            intake_id, snapshot_id, version, state = rows[0]
             assert str(intake_id) != parsed["intake_id"]
             if not url_parser_admissions:
                 assert state == "PARSING" and snapshot_id is not None
@@ -421,7 +423,9 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                     ids["tenant"], str(intake_id), str(snapshot_id), url_manual_parser_release,
                     expected_version=version))
                 return
-            if worker_bundle.job_queue.get(url_parser_admissions[0]["job_id"]).status != JobStatus.SUCCEEDED:
+            parser_job = connection.execute("SELECT status FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s",
+                (ids["tenant"], url_parser_admissions[0]["job_id"])).fetchone()
+            if not parser_job or parser_job[0] != JobStatus.SUCCEEDED.value:
                 return
             assert state == "MATCHING"
             proposal = worker_bundle.canonical_match_cases().match_parser_result(
@@ -430,22 +434,24 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             assert proposal["intake_id"] == str(intake_id) and proposal["outcome"] == "NEW"
             url_matches.append(proposal)
 
-        while not stop.is_set():
-            try:
-                if credentials["url_manual"] is not None:
-                    admit_browser_event(credentials["url_manual"]["original_url"], url_admissions, 4)
-                    match_browser_manual()
-                for policy, receipts in policy_admissions.items():
-                    admit_browser_event(policy_sources[policy]["original_url"], receipts, 3)
-                for policy, receipts in fetch_policy_admissions.items():
-                    retrieval = policy == "APPROVED_RETRIEVAL"
-                    admit_browser_event(policy_sources[policy]["original_url"] + "/FetchPolicy", receipts,
-                        4 if retrieval else 3, retrieval=retrieval)
-                if not worker.run_once():
-                    stop.wait(0.1)
-            except Exception as error:
-                worker_errors.append(type(error).__name__ + ": " + str(error))
-                return
+        with database.connect() as connection:
+            connection.autocommit = True
+            while not stop.is_set():
+                try:
+                    if credentials["url_manual"] is not None:
+                        admit_browser_event(connection, credentials["url_manual"]["original_url"], url_admissions, 4)
+                        match_browser_manual(connection)
+                    for policy, receipts in policy_admissions.items():
+                        admit_browser_event(connection, policy_sources[policy]["original_url"], receipts, 3)
+                    for policy, receipts in fetch_policy_admissions.items():
+                        retrieval = policy == "APPROVED_RETRIEVAL"
+                        admit_browser_event(connection, policy_sources[policy]["original_url"] + "/FetchPolicy", receipts,
+                            4 if retrieval else 3, retrieval=retrieval)
+                    if not worker.run_once():
+                        stop.wait(0.1)
+                except Exception as error:
+                    worker_errors.append(type(error).__name__ + ": " + str(error))
+                    return
 
     try:
         worker_bundle = build_persistence(mode="postgresql")
