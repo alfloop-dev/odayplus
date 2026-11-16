@@ -29,6 +29,7 @@ jobs:
       ODP_RELEASE_COMMIT_SHA: ${{ github.sha }}
       ODP_MODEL_TRAINING_ACTOR: github-actions:dev-forecast-train
       ACTION: promote
+      PROMOTE_RUN: "2"
       PROMOTIONS: >-
         dev-forecast-20261115-1:.github/seed-dev-approvals/forecast-dev-forecast-20261115-1-shadow.json;dev-forecast-20261115-2:.github/seed-dev-approvals/forecast-dev-forecast-20261115-2-full.json:dev-forecast-20261115-1
     steps:

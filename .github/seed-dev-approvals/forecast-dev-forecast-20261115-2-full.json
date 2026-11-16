@@ -1,5 +1,5 @@
 {
-  "approval_id": "MRB-DEV-20261115-02",
+  "approval_id": "MRB-DEV-20261115-04",
   "model_name": "forecast_revenue_interval",
   "decision": "approved",
   "approver": "蔡尚志（負責人）",
@@ -7,5 +7,5 @@
   "approved_at": "2026-11-15T10:59:44Z",
   "model_version": "dev-forecast-20261115-2",
   "release_type": "full",
-  "reason": "dev full release，rollback target 為 dev-forecast-20261115-1。temporal holdout nMAE 0.044、p80_coverage 0.921（門檻 0.35／0.65）。負責人蔡尚志 2026-11-15 於對話中明確同意並指示 Claude 執行。僅限 dev。"
+  "reason": "dev full release，rollback target 為 dev-forecast-20261115-1。temporal holdout nMAE 0.044、p80_coverage 0.921（門檻 0.35／0.65）。負責人蔡尚志 2026-11-15 於對話中明確同意並指示 Claude 執行。僅限 dev。 本核准重發自 MRB-DEV-20261115-02（同一次核准；前次 release 因已撤下的 -3 alias 補償失敗而中止，該 idempotency key 不可重用）。"
 }
