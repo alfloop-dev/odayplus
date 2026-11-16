@@ -854,6 +854,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
           // Native metadata never returns raw content or an invented parser version.
           expect(snapshot.metadata.rawSnapshot).toBeUndefined();
         }
+        await expect(page.getByText("正在讀取所選收件與案件…", { exact: true })).toHaveCount(0);
         const refresh = page.waitForResponse((candidate) => candidate.request().method() === "GET"
           && new URL(candidate.url()).pathname === `/api/v1/canonical-intakes/${receipt.intake_id}`);
         await page.getByTestId("intake-refresh-button").click();

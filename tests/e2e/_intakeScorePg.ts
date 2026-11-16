@@ -79,6 +79,9 @@ export async function submitNativeURL(page: Page, input: NativeBrowserInput, url
   };
   page.on("request", observe);
   try {
+    const detail = () => page.waitForResponse((candidate) => candidate.request().method() === "GET"
+      && new URL(candidate.url()).pathname.startsWith("/api/v1/canonical-intakes/"));
+    const pendingDetail = detail();
     const [response] = await Promise.all([
       page.waitForResponse((candidate) => candidate.request().method() === "POST"
         && new URL(candidate.url()).pathname === "/api/v1/canonical-intakes"),
@@ -96,6 +99,14 @@ export async function submitNativeURL(page: Page, input: NativeBrowserInput, url
     const receipt = await response.json() as CanonicalIntakeReceipt;
     expect(receipt).toMatchObject({ intake_method: "URL", processing_state: "SUBMITTED", version: 1 });
     await expect(page.getByTestId("intake-detail-id")).toHaveText(receipt.intake_id);
+    let detailResponse = await pendingDetail;
+    if (detailResponse.status() === 409 || detailResponse.status() === 503) {
+      await expect(page.getByTestId("canonical-intake-case-picker").getByRole("alert")).toBeVisible();
+      const reloaded = detail();
+      await page.getByTestId("intake-refresh-button").click();
+      detailResponse = await reloaded;
+    }
+    expect(detailResponse.status(), await detailResponse.text()).toBe(200);
     await expect(page.getByTestId("intake-detail-stage")).toHaveText("已送出");
     const selected = new URL(page.url());
     expect(selected.pathname).toBe(`/intake/${receipt.intake_id}`);

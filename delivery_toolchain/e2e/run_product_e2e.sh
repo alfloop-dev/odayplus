@@ -173,13 +173,14 @@ python3 delivery_toolchain/e2e/seed_product_e2e_data.py \
   --web-url "http://127.0.0.1:${WEB_PORT}" \
   --diagnostics-dir "$DIAGNOSTICS_DIR"
 
-python3 - <<'PY'
+python3 - "http://127.0.0.1:${WEB_PORT}/operator?ws=network" <<'PY'
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
 
-for url in (os.environ["ODP_SCORE_BROWSER_API_URL"] + "/_synthetic/health", os.environ["ODP_SCORE_BROWSER_WEB_URL"]):
+for url in (os.environ["ODP_SCORE_BROWSER_API_URL"] + "/_synthetic/health", os.environ["ODP_SCORE_BROWSER_WEB_URL"], sys.argv[1]):
     deadline = time.monotonic() + 120
     while True:
         try:
