@@ -36,6 +36,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -55,9 +56,11 @@ SERVICE_ACCOUNT_EMAIL_PATTERN = re.compile(
     r"^[a-z][a-z0-9-]{5,29}@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$"
 )
 
-# Derived tenant ids are bounded to a valid GCP label length so the same value is
-# accepted by the Terraform `tenant_id` validation and usable as a label verbatim.
-TENANT_ID_PREFIX = "tenant-"
+# The product stores tenant_id as a UUID (core.tenants), so the derived release
+# tenant is a deterministic UUIDv5 of the raw release id. Terraform derives the
+# identical value with uuidv5("url", ...); a UUID is 36 characters, satisfies the
+# module's tenant_id validation and is usable as a label value verbatim.
+STAGING_TENANT_UUID_NAME_PREFIX = "urn:odp:staging-tenant:"
 MAX_TENANT_ID_LENGTH = 63
 
 DEFAULT_TTL_HOURS = 24
@@ -654,21 +657,16 @@ def derive_release_tenant_id(release_id: str) -> str:
     """Return the deterministic release-scoped tenant id used when none is supplied.
 
     ``infra/terraform/modules/ephemeral_staging/main.tf`` derives the identical
-    value in ``local.tenant_derived``.  Both sides bound the result to
-    ``MAX_TENANT_ID_LENGTH`` so a derived tenant always satisfies the module's
-    ``tenant_id`` validation and stays usable as a GCP label value without a
-    second round of hashing.  The release hash is computed from the exact raw
-    release id, so truncating the readable slug never collapses two releases
-    onto one tenant.
+    value in ``local.tenant_derived`` (``uuidv5("url", ...)``). It must be a
+    UUID: every product ``tenant_id`` column is a UUID referencing
+    ``core.tenants``, and staging deploy 43742101252 failed its worker and
+    operator checks on the previous ``tenant-<slug>-<hash>`` form
+    (``invalid input syntax for type uuid``). The name covers the exact raw
+    release id, so two releases never share a tenant.
     """
     if not release_id.strip():
         return ""
-    clean = sanitize_release_suffix(release_id) or "rel"
-    rel_hash = compute_release_hash(release_id)
-    budget = MAX_TENANT_ID_LENGTH - len(TENANT_ID_PREFIX) - 1 - len(rel_hash)
-    if len(clean) > budget:
-        clean = clean[:budget].strip("-") or "rel"
-    return f"{TENANT_ID_PREFIX}{clean}-{rel_hash}"
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{STAGING_TENANT_UUID_NAME_PREFIX}{release_id}"))
 
 
 def resolve_tenant_id(release_id: str, tenant_id: str = "") -> str:
@@ -2913,8 +2911,10 @@ _IAM_CREDENTIALS_ENDPOINT = "https://iamcredentials.googleapis.com/v1"
 # Cloud Run rejects a traffic tag whose length plus the service name exceeds
 # 46 characters (ReplaceService INVALID_ARGUMENT, staging deploy 43699516874:
 # "rollback-probe" + "stg-odp-<12>-<8>-api" is 47). Release service names are
-# at most 41 characters (24-character slug), so the tag stays at 2.
-_ROLLBACK_PROBE_TAG = "rb"
+# at most 41 characters (24-character slug), and Cloud Run also requires a tag
+# of at least 3 characters (staging deploy 43742101252: "rb" was refused).
+_ROLLBACK_PROBE_TAG = "rbp"
+_CLOUD_RUN_TAG_MIN = 3
 _CLOUD_RUN_TAG_AND_SERVICE_MAX = 46
 
 

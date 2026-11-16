@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -167,7 +168,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertEqual(labels["managed_by"], "terraform")
         self.assertEqual(labels["ephemeral"], "true")
         self.assertEqual(labels["release_id"], f"odp-20260824-001-{rel_hash}")
-        self.assertEqual(labels["tenant"], f"tenant-odp-20260824-001-{rel_hash}")
+        self.assertEqual(labels["tenant"], derive_release_tenant_id("odp-20260824-001"))
         self.assertEqual(labels["candidate_sha"], "a" * 40)
         self.assertEqual(labels["manifest_digest_prefix"], "b" * 16)
         self.assertEqual(labels["owner_task"], "odp-ephemeral-staging-iac-001")
@@ -175,7 +176,6 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertEqual(labels["expires_at"], "2026-08-25-12-00-00")
 
     def test_tenant_isolation_explicit_and_default(self) -> None:
-        rel_hash = compute_release_hash("odp-20260824-001")
         # Default tenant derived from release_id
         labels_default = generate_staging_labels(
             release_id="odp-20260824-001",
@@ -183,7 +183,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             manifest_digest="sha256:" + "b" * 64,
             owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
         )
-        self.assertEqual(labels_default["tenant"], f"tenant-odp-20260824-001-{rel_hash}")
+        self.assertEqual(labels_default["tenant"], derive_release_tenant_id("odp-20260824-001"))
 
         # Explicit tenant passed
         labels_explicit = generate_staging_labels(
@@ -1680,7 +1680,10 @@ variable "after_comment" {
 
         self.assertEqual(first, second)
         self.assertNotEqual(first, other)
-        self.assertEqual(first, f"tenant-{self.release_id}-{compute_release_hash(self.release_id)}")
+        # Product tenant_id columns are UUIDs (core.tenants); staging deploy
+        # 43742101252 failed on the former tenant-<slug>-<hash> form.
+        self.assertEqual(first, str(uuid.uuid5(uuid.NAMESPACE_URL, f"urn:odp:staging-tenant:{self.release_id}")))
+        self.assertEqual(str(uuid.UUID(first)), first)
 
     def test_derived_tenant_stays_within_module_length_limit(self) -> None:
         long_release = "odp-" + "x" * 120
@@ -3064,6 +3067,12 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                         cloud_sql_instance=f"{self.project_id}:asia-east1:oday-staging-pg",
                     )
             self.assertFalse([call for call in cloud.call_args_list if call.args[0][0] == "sql"])
+
+    def test_rollback_probe_tag_meets_cloud_run_minimum_length(self) -> None:
+        # Cloud Run refuses a traffic tag shorter than 3 characters
+        # (staging deploy 43742101252: "must be at least 3 characters long").
+        self.assertGreaterEqual(len(ROLLBACK_PROBE_TAG), 3)
+        self.assertRegex(ROLLBACK_PROBE_TAG, r"^[a-z][a-z0-9-]*$")
 
     def test_rollback_probe_tag_fits_cloud_run_limit_for_every_release_name(self) -> None:
         from product_ops.deployment.staging_lifecycle import get_ephemeral_resource_names
