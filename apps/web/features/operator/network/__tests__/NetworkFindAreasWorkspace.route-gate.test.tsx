@@ -52,18 +52,20 @@ vi.mock("next/navigation", async () => {
   };
 });
 
-const radarProps = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>>, showNativePicker: false }));
+const radarProps = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>>, showNativePicker: false, realPanel: false }));
 const reviewPanelControl = vi.hoisted(() => ({ latest: null as unknown }));
 
-vi.mock("../ListingRadarPanel", () => ({
-  ListingRadarPanel: (props: Record<string, unknown>) => {
+vi.mock("../ListingRadarPanel", async (importOriginal) => {
+  const { ListingRadarPanel } = await importOriginal<typeof import("../ListingRadarPanel")>();
+  return { ListingRadarPanel: (props: ComponentProps<typeof ListingRadarPanel>) => {
     radarProps.calls.push(props);
-    const context = props.canonicalIntakeReadContext as ComponentProps<typeof CanonicalIntakeCasePicker>["context"] | undefined;
+    if (radarProps.realPanel) return <ListingRadarPanel {...props} />;
+    const context = props.canonicalIntakeReadContext;
     return <div data-testid="listing-radar-panel">Listing Radar
       {radarProps.showNativePicker && (!props.intakeDetailOpen || props.intakeKind === "canonical") && context ? <CanonicalIntakeCasePicker context={context} /> : null}
     </div>;
-  },
-}));
+  } };
+});
 
 vi.mock("../ReviewPanel", async (importOriginal) => ({
   // The workspace counts through the real queue selector; only the panel is stubbed.
@@ -196,6 +198,7 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     });
     radarProps.calls.length = 0;
     radarProps.showNativePicker = false;
+    radarProps.realPanel = false;
     reviewPanelControl.latest = null;
     window.history.replaceState(null, "", "/operator?ws=network&tab=radar");
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
@@ -209,6 +212,56 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+  });
+
+  it.each(["detail", "add"] as const)("cold-opens the native %s collection without legacy discovery", async (dialog) => {
+    radarProps.realPanel = true;
+    radarProps.showNativePicker = true;
+    navigation.search = `ws=network&tab=radar&intakeKind=canonical&canonicalCursor=&dialog=${dialog}`;
+    window.history.replaceState(null, "", `/operator?${navigation.search}`);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/v1/canonical-intakes") return new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 });
+      return forbiddenResponse("native-only-discovery", path);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<NetworkFindAreasWorkspace allowedTabIds={["radar"]} activeRoleId="expansion-manager"
+      createAuthenticatedReadGuard={(current) => async () => current()} />);
+    await screen.findByText("目前可讀範圍沒有收件。");
+    expect(screen.getByRole("heading", { name: "展店與店網" })).toBeVisible();
+    expect(screen.getByTestId("network-find-areas-workspace")).not.toHaveAttribute("data-intake-detail-open");
+    expect(fetchMock.mock.calls.filter(([path]) => String(path).includes("/api/v1/operator/network-listings/intake"))).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+    if (dialog === "add") expect(screen.getByTestId("intake-add-dialog")).toBeVisible();
+  });
+
+  it("keeps the actual Inbox invoker mounted across native add navigation and restores focus without a write", async () => {
+    radarProps.realPanel = true;
+    radarProps.showNativePicker = true;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/v1/canonical-intakes") return new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 });
+      return forbiddenResponse("native-modal-route", path);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<NetworkFindAreasWorkspace allowedTabIds={["radar"]} activeRoleId="expansion-manager"
+      createAuthenticatedReadGuard={(current) => async () => current()} />);
+    const invoker = await screen.findByTestId("intake-add-button");
+    const radar = screen.getByTestId("network-panel-listings");
+    invoker.focus();
+    fireEvent.click(invoker);
+    await screen.findByTestId("intake-add-dialog");
+    expect(screen.getByTestId("network-panel-listings")).toBe(radar);
+    expect(screen.getByTestId("intake-add-button")).toBe(invoker);
+    expect(screen.getByTestId("network-find-areas-workspace")).not.toHaveAttribute("data-intake-detail-open");
+    expect(screen.getByRole("heading", { name: "展店與店網" })).toBeVisible();
+    expect(screen.getByTestId("intake-url-input")).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByTestId("intake-add-button")).toBe(invoker);
+    expect(invoker).toHaveFocus();
+    expect(new URL(window.location.href).searchParams.has("intakeKind")).toBe(false);
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
   });
 
   it.each(["tab", "intake detail"])("retains the original unknown URL command when the real workspace removes the picker for %s", async (surface) => {
@@ -307,8 +360,16 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
           expect(screen.getByTestId("intake-submit-button")).toBeDisabled();
         } else expect(screen.queryByTestId("canonical-intake-case-picker")).not.toBeInTheDocument();
         await act(async () => finish());
-        if (change.startsWith("query")) expect(await screen.findByText(/正式收件 .*已送出/)).toHaveTextContent(receipt.intake_id);
-        else expect(screen.queryByText(/正式收件 .*已送出/)).not.toBeInTheDocument();
+        if (change.startsWith("query")) {
+          // Selecting the submitted UUID legitimately replaces the modal tree
+          // with detail-first layout. The Console command owner, not an old
+          // form's local state, retains the receipt even when detail is denied.
+          const summary = await screen.findByRole("region", { name: "先前收件操作" });
+          await within(summary).findByText(/原操作已收到回執/);
+          expect(summary).toHaveTextContent(`收件 ${receipt.intake_id} · 版本 1 · SUBMITTED`);
+          expect(navigation.pathname).toBe(`/intake/${receipt.intake_id}`);
+          expect(await screen.findByText(/目前身分沒有執行此操作的權限/)).toBeVisible();
+        } else expect(screen.queryByRole("region", { name: "先前收件操作" })).not.toBeInTheDocument();
         expect(writes).toHaveLength(1);
         expect(new Headers(writes[0].headers).get("idempotency-key")).toBe(key);
       } finally {
@@ -711,6 +772,8 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
   // stay below, inside the same single production graph.
   it.each([
     ["durable intake route", "/intake/IN-3001", ""],
+    ["durable canonical route", "/intake/00000000-0000-0000-0000-000000000095", "intakeKind=canonical&dialog=detail"],
+    ["selected canonical detail", "/operator", "ws=network&tab=radar&intakeKind=canonical&selected=00000000-0000-0000-0000-000000000095&dialog=detail"],
     ["operator detail query context", "/operator", "ws=network&tab=radar&selected=IN-3001&dialog=detail"],
     ["operator field-fix context", "/operator", "ws=network&tab=radar&selected=IN-3001&dialog=fix&field=address_raw"],
     ["operator decision context", "/operator", "ws=network&tab=radar&selected=IN-3001&dialog=decide&decision=dup"],
@@ -739,8 +802,14 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     expect(screen.queryByTestId("operator-data-unavailable")).toBeNull();
   });
 
-  it("keeps the Network workspace chrome in the ordinary inbox context", () => {
-    navigation.search = "ws=network&tab=radar&selected=IN-3001";
+  it.each([
+    "selected=IN-3001",
+    "intakeKind=canonical&canonicalCursor=&dialog=detail",
+    "intakeKind=canonical&canonicalCursor=&dialog=add",
+    "intakeKind=invalid&dialog=add",
+    "intakeKind=canonical&selected=one&selected=two&dialog=detail",
+  ])("keeps the Network workspace chrome without a unique detail target (%s)", (selection) => {
+    navigation.search = `ws=network&tab=radar&${selection}`;
 
     render(
       <NetworkFindAreasWorkspace

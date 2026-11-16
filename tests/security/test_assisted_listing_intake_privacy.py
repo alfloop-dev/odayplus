@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from modules.listing.domain.intake_states import DenialCode
+from tests.integration.test_assisted_listing_intake_persistence import _replay_retained_url
 
 STAFF_HEADERS = {
     "x-subject-id": "operator-expansion-staff",
@@ -182,10 +183,10 @@ def test_purge_execution_and_conflict_fail_closed() -> None:
     app = create_app()
     client = TestClient(app)
 
-    # Submit an intake first
+    # Retained history remains subject to real retention and hold checks.
     url = "https://www.synthetic.example/purge-test.html"
-    submit_resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    submit_resp = _replay_retained_url(
+        app, client,
         json={"url": url, "heatZoneId": "HZ-01"},
         headers=_headers_with_idem(STAFF_HEADERS, "purge-submit"),
     )
@@ -282,10 +283,10 @@ def test_residency_enforcement_on_export() -> None:
         },
     )
     assert resp_valid.status_code == 404
-    # Submit an intake first
+    # Export retained history through the original privacy owner.
     url = "https://www.synthetic.example/export-test.html"
-    submit_resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    submit_resp = _replay_retained_url(
+        app, client,
         json={"url": url, "heatZoneId": "HZ-01"},
         headers=_headers_with_idem(STAFF_HEADERS, "export-submit"),
     )

@@ -53,6 +53,9 @@ from tests.integration.test_intake_registry_calendar_postgresql import (
     _insert_policy,
 )
 from tests.integration.test_operator_intake_workflow_postgresql import (
+    _seed_historical_submission,
+)
+from tests.integration.test_operator_intake_workflow_postgresql import (
     bridge_database as bridge_database,
 )
 
@@ -1137,7 +1140,7 @@ def test_live_router_without_document_store_mounts_routes_and_returns_503(
 
 
 @pytest.mark.requires_live_env
-def test_live_intake_write_and_idempotency_survive_restart(
+def test_live_retained_intake_and_idempotency_survive_restart(
     bridge_database, monkeypatch,
 ) -> None:
     tenant_id = TENANT
@@ -1150,6 +1153,9 @@ def test_live_intake_write_and_idempotency_survive_restart(
 
     first_app, first_bundle = _postgres_live_app(bridge_database, monkeypatch)
     try:
+        retained = _seed_historical_submission(
+            first_bundle, payload["url"], key="idem-live-a-1", tenant=tenant_id, actor=MANAGER,
+        )
         with TestClient(first_app) as client:
             first = client.post(
                 f"{BASE}/network-listings/intake/submit",
@@ -1158,6 +1164,7 @@ def test_live_intake_write_and_idempotency_survive_restart(
             )
             assert first.status_code == 200, first.text
             intake_id = first.json()["id"]
+            assert intake_id == retained["id"]
     finally:
         first_bundle.engine.close()
 
@@ -1195,6 +1202,10 @@ def test_live_domain_state_and_idempotency_are_tenant_isolated(
                  "x-subject-id": actor_b, "x-correlation-id": str(uuid4())}
     app, bundle = _postgres_live_app(bridge_database, monkeypatch)
     try:
+        retained_a = _seed_historical_submission(
+            bundle, "https://example.com/property/tenant-a", key="shared-key",
+            tenant=tenant_a_id, actor=MANAGER,
+        )
         with TestClient(app) as client:
             tenant_a = client.post(
                 f"{BASE}/network-listings/intake/submit",
@@ -1204,6 +1215,10 @@ def test_live_domain_state_and_idempotency_are_tenant_isolated(
             tenant_b_list = client.get(
                 f"{BASE}/network-listings/intake",
                 headers=headers_b,
+            )
+            retained_b = _seed_historical_submission(
+                bundle, "https://example.com/property/tenant-b", key="shared-key",
+                tenant=tenant_b_id, actor=actor_b,
             )
             tenant_b = client.post(
                 f"{BASE}/network-listings/intake/submit",
@@ -1217,6 +1232,8 @@ def test_live_domain_state_and_idempotency_are_tenant_isolated(
 
         assert tenant_a.status_code == 200, tenant_a.text
         assert tenant_b.status_code == 200, tenant_b.text
+        assert tenant_a.json()["id"] == retained_a["id"]
+        assert tenant_b.json()["id"] == retained_b["id"]
         assert tenant_a.json()["id"] != tenant_b.json()["id"]
         assert tenant_b_list.status_code == 200, tenant_b_list.text
         assert tenant_b_list.json()["items"] == []
@@ -1224,6 +1241,29 @@ def test_live_domain_state_and_idempotency_are_tenant_isolated(
         assert "tenant-b" not in str(tenant_a_list.json())
     finally:
         bundle.engine.close()
+
+    reopened_app, reopened_bundle = _postgres_live_app(bridge_database, monkeypatch)
+    try:
+        with TestClient(reopened_app) as client:
+            for headers, retained in ((headers_a, retained_a), (headers_b, retained_b)):
+                detail = client.get(
+                    f"{BASE}/network-listings/intake/{retained['id']}", headers=headers,
+                )
+                assert detail.status_code == 200, detail.text
+                assert detail.json()["submittedBy"] == headers["x-subject-id"]
+                replay = client.post(
+                    f"{BASE}/network-listings/intake/submit", headers=headers,
+                    json={"url": retained["originalUrl"]},
+                )
+                assert replay.status_code == 200, replay.text
+                assert replay.json() == detail.json()
+                other = headers_b if headers is headers_a else headers_a
+                denied = client.get(
+                    f"{BASE}/network-listings/intake/{retained['id']}", headers=other,
+                )
+                assert denied.status_code == 404, denied.text
+    finally:
+        reopened_bundle.engine.close()
 
 
 def test_live_governance_export_refuses_metadata_only_success_after_restart(tmp_path: Path) -> None:

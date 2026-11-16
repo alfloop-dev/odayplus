@@ -1,11 +1,15 @@
 import "@testing-library/jest-dom/vitest";
 import { StrictMode } from "react";
+import { flushSync } from "react-dom";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalIntakeCasePicker as CasePicker, CanonicalIntakeCommandStatus } from "../CanonicalIntakeCasePicker";
 import { CanonicalIntakeCommandProvider } from "../useCanonicalIntakeCommand";
 import type { CanonicalIntakeReadContext } from "../canonicalIntakeReadClient";
 import type { CanonicalIdentityPlanningContext } from "@oday-plus/openapi-client";
+import { buildInboxReturnHref, parseUrlState } from "../urlState";
+import { useSearchParams } from "next/navigation";
+import { ListingRadarPanel } from "../../ListingRadarPanel";
 
 vi.mock("next/navigation", async () => {
   const { useSyncExternalStore } = await import("react");
@@ -221,7 +225,149 @@ describe("sole native owner reference after complete provider replacement", () =
   });
 });
 
+function RadarWithCurrentIntakeRoute({ context, role = "expansion-manager" }: {
+  context?: CanonicalIntakeReadContext; role?: "expansion-manager" | "pm-audit";
+}) {
+  const params = useSearchParams();
+  return <ListingRadarPanel activeRoleId={role} canonicalIntakeReadContext={context}
+    intakeKind={parseUrlState(params).intakeKind} listings={[]} rows={[]} sources={[]} selectedHeatZoneId="legacy-zone" />;
+}
+
 describe("native Intake and case selection", () => {
+  it.each(["button", "legacy add URL"])("routes the actual legacy Inbox %s through the native picker/form/reader without an old POST", async (entry) => {
+    if (entry === "legacy add URL") window.history.replaceState(null, "", "/operator?ws=network&tab=radar&dialog=add&selected=IN-old&decision=create&extra=a&extra=b#intake/IN-old");
+    else window.history.replaceState(null, "", "/operator?ws=network&tab=radar&extra=a&extra=b");
+    const legacyFetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json({ items: [], total: 0, page: 1, pageSize: 10,
+      counts: { needsReview: 0, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 }, evidenceState: "complete" }));
+    vi.stubGlobal("fetch", legacyFetch);
+    const pending = deferred<Response>();
+    const context = makeContext((path, init) => {
+      if (init?.method === "POST") return json(reloadReceipt(), 201);
+      if (path.startsWith("/api/v1/canonical-intakes?")) return pending.promise;
+      if (path.endsWith("/match-case")) return json({ detail: "CANONICAL_MATCH_CASE_NOT_FOUND" }, 404);
+      return json({ ...intake(95), intake_method: "URL", processing_state: "SUBMITTED", version: 1,
+        processing_history: { ...intake(95).processing_history, intake_version: 1 },
+        processing_evidence: { ...intake(95).processing_evidence, intake_version: 1 } });
+    });
+    render(<CanonicalIntakeCommandProvider context={context}><RadarWithCurrentIntakeRoute context={context} /></CanonicalIntakeCommandProvider>);
+    if (entry === "button") fireEvent.click(screen.getByTestId("intake-add-button"));
+    expect(await screen.findByText("正在讀取收件…")).toBeVisible();
+    expect(screen.queryByTestId("intake-add-dialog")).not.toBeInTheDocument();
+    await act(async () => pending.resolve(json({ items: [intake(1)], next_cursor: null })));
+    await screen.findByTestId("intake-add-dialog");
+    const url = new URL(window.location.href);
+    expect(url.searchParams.get("intakeKind")).toBe("canonical");
+    expect(url.searchParams.get("dialog")).toBe("add");
+    expect(url.searchParams.has("selected")).toBe(false);
+    expect(url.searchParams.has("decision")).toBe(false);
+    expect(url.searchParams.getAll("extra")).toEqual(["a", "b"]);
+    expect(url.hash).toBe("");
+    expect(screen.getByLabelText("正式收件範圍")).toHaveValue("");
+    expect(screen.getByLabelText("送件原因")).toHaveValue("");
+    fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://source.example/actual-inbox-opener" } });
+    fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "人工確認此頁應送正式收件" } });
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    await waitFor(() => expect(screen.getByTestId("intake-detail-stage")).toHaveTextContent("已送出"));
+    await screen.findByText("這筆收件目前沒有比對案件。");
+    expect(window.location.pathname).toBe(`/intake/${id(95)}`);
+    expect(posts(context)).toHaveLength(1);
+    expect(posts(context)[0][0]).toBe("/api/v1/canonical-intakes");
+    expect(new Headers(posts(context)[0][1]?.headers).has("if-match")).toBe(false);
+    expect(legacyFetch.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+  });
+
+  it.each(["no native reader", "read only"])("keeps a legacy add URL explicit and does not fall back with %s", async (state) => {
+    window.history.replaceState(null, "", "/operator?ws=network&tab=radar&dialog=add");
+    const legacyFetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json({ items: [], total: 0, page: 1, pageSize: 10, counts: {}, evidenceState: "complete" }));
+    vi.stubGlobal("fetch", legacyFetch);
+    const context = makeContext();
+    render(<CanonicalIntakeCommandProvider context={context}><RadarWithCurrentIntakeRoute
+      context={state === "no native reader" ? undefined : context} role={state === "read only" ? "pm-audit" : "expansion-manager"} /></CanonicalIntakeCommandProvider>);
+    expect(await screen.findByText(state === "no native reader" ? /無法驗證正式收件的讀取資格/ : /此角色無權新增正式收件/)).toBeVisible();
+    expect(screen.queryByTestId("intake-add-dialog")).not.toBeInTheDocument();
+    expect(context.fetchImpl).not.toHaveBeenCalled();
+    expect(legacyFetch.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+  });
+
+  it("restores the native add URL through the existing collection, submits explicit input and follows only its native reader", async () => {
+    const params = new URLSearchParams(`ws=network&selected=IN-old&dialog=decide&decision=create&extra=a&extra=b&heatZoneId=HZ-old`);
+    const href = buildInboxReturnHref({ ...parseUrlState(params), intakeKind: "canonical", canonicalCursor: "",
+      selectedId: null, dialog: "add", fixFieldKey: null, decisionKind: null, receiptId: null }, params, "#intake/IN-old");
+    window.history.replaceState(null, "", href);
+    const pending = deferred<Response>();
+    const receipt = reloadReceipt();
+    const saved = { ...intake(95), intake_method: "URL", processing_state: "SUBMITTED", version: 1,
+      processing_history: { ...intake(95).processing_history, intake_version: 1 },
+      processing_evidence: { ...intake(95).processing_evidence, intake_version: 1 } };
+    const context = makeContext((path, init) => {
+      if (init?.method === "POST") return json(receipt, 201);
+      if (path.startsWith("/api/v1/canonical-intakes?")) return pending.promise;
+      if (path.endsWith("/match-case")) return json({ detail: "CANONICAL_MATCH_CASE_NOT_FOUND" }, 404);
+      return json(saved);
+    });
+    render(<CanonicalIntakeCasePicker context={context} />);
+    expect(screen.getByText("正在讀取收件…")).toBeVisible();
+    expect(screen.queryByTestId("intake-add-dialog")).not.toBeInTheDocument();
+    expect(posts(context)).toHaveLength(0);
+    await act(async () => pending.resolve(json({ items: [intake(1)], next_cursor: null })));
+    await screen.findByTestId("intake-add-dialog");
+    expect(screen.getByLabelText("正式收件範圍")).toHaveValue("");
+    expect(screen.getByLabelText("送件原因")).toHaveValue("");
+    expect(screen.queryByTestId("intake-area-select")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://source.example/explicit-url" } });
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    expect(posts(context)).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "明確選取範圍後提交這個正式來源頁" } });
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    await screen.findByTestId("intake-detail-id");
+    await screen.findByText("這筆收件目前沒有比對案件。");
+    expect(screen.getByTestId("intake-detail-id")).toHaveTextContent(id(95));
+    expect(screen.getByTestId("intake-detail-stage")).toHaveTextContent("已送出");
+    expect(screen.queryByTestId("intake-add-dialog")).not.toBeInTheDocument();
+    const sent = posts(context);
+    expect(sent).toHaveLength(1);
+    expect(sent[0][0]).toBe("/api/v1/canonical-intakes");
+    expect(JSON.parse(String(sent[0][1]?.body))).toEqual({ intake_method: "URL", original_url: "https://source.example/explicit-url",
+      reason: "明確選取範圍後提交這個正式來源頁", scope: intake(1).scope });
+    expect(new Headers(sent[0][1]?.headers).has("if-match")).toBe(false);
+    expect(vi.mocked(context.fetchImpl).mock.calls.map(([path]) => String(path)).every((path) => !path.includes("network-listings"))).toBe(true);
+    const current = new URL(window.location.href);
+    expect(current.pathname).toBe(`/intake/${id(95)}`);
+    expect(current.searchParams.get("intakeKind")).toBe("canonical");
+    expect(current.searchParams.get("dialog")).toBe("detail");
+    expect(current.searchParams.getAll("extra")).toEqual(["a", "b"]);
+    expect(current.hash).toBe("");
+  });
+
+  it.each([401, 403, 503])("does not expose the URL form when a native add collection read returns %s", async (status) => {
+    // An add deep link without a cursor still opens the same first collection.
+    window.history.replaceState(null, "", "/operator?ws=network&tab=radar&intakeKind=canonical&dialog=add");
+    const context = makeContext(() => json({ detail: "current native reader refused" }, status));
+    render(<CanonicalIntakeCasePicker context={context} />);
+    expect(await screen.findByRole("alert")).toBeVisible();
+    expect(screen.queryByTestId("intake-add-dialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("目前可讀範圍沒有收件。")).not.toBeInTheDocument();
+    expect(posts(context)).toHaveLength(0);
+  });
+
+  it("records native form open and close in the existing URL and restores it through history without submitting", async () => {
+    const context = makeContext();
+    render(<CanonicalIntakeCasePicker context={context} />); open();
+    fireEvent.click(await screen.findByRole("button", { name: "從網址建立正式收件" }));
+    await screen.findByTestId("intake-add-dialog");
+    const addHref = window.location.href;
+    expect(new URL(addHref).searchParams.get("dialog")).toBe("add");
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.queryByTestId("intake-add-dialog")).not.toBeInTheDocument();
+    expect(new URL(window.location.href).searchParams.get("dialog")).toBe("detail");
+    act(() => { window.history.replaceState(null, "", addHref); window.dispatchEvent(new PopStateEvent("popstate")); });
+    await screen.findByTestId("intake-add-dialog");
+    expect(posts(context)).toHaveLength(0);
+    expect(vi.mocked(context.fetchImpl)).toHaveBeenCalledTimes(1);
+  });
+
   it("restores exact URL selections across history and refuses late detail JSON from a departed selection", async () => {
     const firstHref = "/intake/" + id(1) + "?intakeKind=canonical&unrelated=a&unrelated=b#identity";
     const secondHref = "/intake/" + id(2) + "?intakeKind=canonical&unrelated=a&unrelated=b#identity";
@@ -254,7 +400,7 @@ describe("native Intake and case selection", () => {
     expect(window.location.hash).toBe("#identity");
     expect(posts(context)).toHaveLength(0);
   });
-  it("isolates the earlier receipt when transport and unrelated URL state change together", async () => {
+  it.each(["new", "old"] as const)("isolates the earlier receipt when transport and unrelated URL state change together (%s reader observes navigation)", async (observer) => {
     const receipt = { intake_id: id(95), intake_method: "URL", processing_state: "SUBMITTED", version: 1,
       submitted_at: "2026-10-19T08:00:00Z", correlation_id: id(96), transition_id: id(97), audit_event_id: id(98), outbox_event_id: id(99) };
     const first = entryContext("AWAITING_SOURCE_AUTHORIZATION", () => json(receipt, 201));
@@ -269,11 +415,32 @@ describe("native Intake and case selection", () => {
     const second = makeContext(() => secondRead.promise, "new-account");
     act(() => {
       const url = new URL(window.location.href); url.searchParams.set("unrelated", "changed");
-      window.history.replaceState(null, "", url);
-      view.rerender(<CanonicalIntakeCasePicker context={second} />);
+      // External-store navigation is synchronous but a root rerender may be
+      // queued. Explicitly cover both real orderings rather than let scheduler
+      // timing decide which context observed the URL. Neither may retain the
+      // earlier receipt; only a new-reader navigation can reopen its own read.
+      const navigate = () => {
+        window.history.replaceState(null, "", url);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      };
+      if (observer === "old") flushSync(navigate);
+      flushSync(() => view.rerender(<CanonicalIntakeCasePicker context={second} />));
+      if (observer === "new") navigate();
     });
     expect(screen.queryByText(/正式收件 .*已送出/)).not.toBeInTheDocument();
     expect(screen.queryByText(/第一個已驗證帳號/)).not.toBeInTheDocument();
+    expect(new URL(window.location.href).searchParams.get("unrelated")).toBe("changed");
+    if (observer === "old") {
+      // A URL observed by the departed context is not the new account's intent
+      // to open a reader. The existing exact URL remains, with no stale dialog.
+      expect(second.fetchImpl).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("canonical-intake-case-picker")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("intake-detail-dialog")).not.toBeInTheDocument();
+      expect(posts(second)).toHaveLength(0);
+      return;
+    }
+    await waitFor(() => expect(second.fetchImpl, window.location.href).toHaveBeenCalledOnce());
+    expect(String(vi.mocked(second.fetchImpl).mock.calls[0][0])).toContain("/api/v1/canonical-intakes/" + id(95));
     await act(async () => { secondRead.resolve(json({ detail: "current account denied" }, 403)); });
     expect(await screen.findByRole("alert")).toBeVisible();
     expect(posts(second)).toHaveLength(0);

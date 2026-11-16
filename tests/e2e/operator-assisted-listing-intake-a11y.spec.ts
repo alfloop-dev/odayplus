@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, request as playwrightRequest, test, type Page } from "@playwright/test";
+import { expect } from "@playwright/test";
 
 /**
  * Assisted Listing Intake — Accessibility & Keyboard Product Gates (VDC-003)
@@ -12,19 +12,17 @@ import { expect, request as playwrightRequest, test, type Page } from "@playwrig
  * - Zero serious/critical axe accessibility violations
  */
 
+import { test, loginNativeSession, nativeBrowserInput, openPgScenario, submitNativeURL } from "./_intakeScorePg";
+
 import {
   acquireOperatorBackendLock,
   releaseOperatorBackendLock,
 } from "./_operatorBackendLock";
 
-const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
-
-const URLS = {
-  clean: "https://www.synthetic.example/detail-77120345.html",
-  possible: "https://www.synthetic.example/detail-99310418.html",
-};
-
 test.describe.configure({ mode: "serial", timeout: 120_000 });
+// Retained PG cases bind their actual fixture actor/tenant, not the global
+// all-product identity. Native form consumers still require their own session.
+test.use({ extraHTTPHeaders: {} });
 
 test.beforeAll(async () => {
   await acquireOperatorBackendLock();
@@ -34,40 +32,12 @@ test.afterAll(() => {
   releaseOperatorBackendLock();
 });
 
-test.beforeEach(async () => {
-  const api = await playwrightRequest.newContext({
-    baseURL: API_BASE_URL,
-    extraHTTPHeaders: {
-      "x-subject-id": "operator-expansion-manager",
-      "x-roles": "expansion_user,operations_manager,site_reviewer,data_owner,auditor,executive",
-      "x-operator-role": "expansion-manager",
-      "x-tenant-id": "tenant-a",
-    },
-  });
-  const reset = await api.post("/api/v1/operator/network-listings/reset");
-  expect(reset.status()).toBe(200);
-  await api.dispose();
-});
-
-async function openRadarAsExpansionManager(page: Page) {
-  await page.addInitScript(() => {
-    window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
-    window.localStorage.setItem("oday.operator.role", "expansion-manager");
-  });
-  await page.goto("/operator?ws=network");
-  await page.evaluate(() => {
-    window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
-    window.localStorage.setItem("oday.operator.role", "expansion-manager");
-  });
-  await page.getByTestId("network-tab-1").click();
-  await expect(page.getByTestId("intake-add-button")).toBeVisible({ timeout: 15_000 });
-}
-
 test.describe("VDC-003 Keyboard Navigation & Focus Management", () => {
-  test("focus lands inside dialog on open and Escape key restores focus to trigger button", async ({
+  test("canonical native: focus lands inside dialog on open and Escape key restores focus to trigger button", async ({
     page,
   }) => {
-    await openRadarAsExpansionManager(page);
+    const input = nativeBrowserInput();
+    await loginNativeSession(page, input);
 
     const addButton = page.getByTestId("intake-add-button");
     await addButton.click();
@@ -80,54 +50,74 @@ test.describe("VDC-003 Keyboard Navigation & Focus Management", () => {
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("intake-add-dialog")).toBeHidden();
     await expect(addButton).toBeFocused();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(new URL(page.url()).searchParams.get("dialog")).toBeNull();
   });
 
-  test("dialog controls are navigable via Tab and Enter", async ({ page }) => {
-    await openRadarAsExpansionManager(page);
+  test("canonical native: dialog controls are navigable via Tab and Enter", async ({ page }) => {
+    const input = nativeBrowserInput();
+    await loginNativeSession(page, input);
     await page.getByTestId("intake-add-button").click();
     await expect(page.getByTestId("intake-add-dialog")).toBeVisible();
 
-    await page.getByTestId("intake-url-input").fill(URLS.clean);
+    await expect(page.getByTestId("intake-url-input")).toBeFocused();
     await page.keyboard.press("Shift+Tab");
-    await expect(page.getByRole("button", { name: "關閉" })).toBeFocused();
+    await expect(page.getByTestId("intake-add-dialog").getByRole("button", { name: "關閉", exact: true })).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(page.getByTestId("intake-url-input")).toBeFocused();
-    await page.getByTestId("intake-url-input").press("Enter");
-
-    await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({ timeout: 15_000 });
+    // URL alone is not a valid command. Tab through the actual explicit scope
+    // and reason fields, then activate the same submit owner via Enter.
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("combobox", { name: /^正式收件範圍/ })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByLabel("送件原因", { exact: true })).toBeFocused();
+    const { receipt } = await submitNativeURL(page, input, input.fresh_urls.keyboard,
+      "鍵盤操作正式收件表單，明確選取已讀範圍並驗證已送出回執。", "enter");
+    await expect(page.getByTestId("intake-detail-id")).toHaveText(receipt.intake_id);
+    await expect(page.getByTestId("intake-detail-stage")).toHaveText("已送出");
   });
 });
 
 test.describe("VDC-003 Screen Reader Landmarks & Accessibility Attributes", () => {
-  test("screen-reader stage labels and aria landmarks are correctly populated", async ({
+  test("canonical native: screen-reader stage labels and aria landmarks are correctly populated", async ({
     page,
   }) => {
-    await openRadarAsExpansionManager(page);
+    const input = nativeBrowserInput();
+    await loginNativeSession(page, input);
 
     await expect(page.locator('[data-screen-label="Listing Inbox 收件匣"]')).toBeVisible();
 
     // Add dialog screen label
     await page.getByTestId("intake-add-button").click();
     await expect(page.locator('[data-screen-label="Dialog 從網址新增物件"]')).toBeVisible();
-    await page.getByTestId("intake-url-input").fill(URLS.clean);
-    await page.getByTestId("intake-submit-button").click();
+    await expect(page.getByRole("dialog", { name: "從網址新增物件", exact: true })).toHaveAttribute("aria-modal", "true");
+    const { receipt } = await submitNativeURL(page, input, input.fresh_urls.landmarks,
+      "以正式收件實際送件回執核對讀屏標籤與收件處理詳情地標。");
 
     // Detail dialog screen label
     await expect(page.locator('[data-screen-label="Intake 收件處理詳情頁"]')).toBeVisible({
       timeout: 15_000,
     });
+    await expect(page.getByRole("region", { name: "收件處理詳情", exact: true })).toBeVisible();
+    await expect(page.getByTestId("intake-detail-id")).toHaveText(receipt.intake_id);
+    await expect(page.getByTestId("intake-detail-stage")).toHaveText("已送出");
+    await expect(page.getByTestId("native-intake-stage-timeline")).toContainText(receipt.transition_id);
   });
 
-  test("respects prefers-reduced-motion media query", async ({ page }) => {
+  test("retained queue respects prefers-reduced-motion media query", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await openRadarAsExpansionManager(page);
-    await expect(page.getByTestId("intake-add-button")).toBeVisible();
+    const { api } = await openPgScenario(page, { entry: "inbox", retainedHistory: "possible-match" });
+    try {
+      await expect(page.getByTestId("intake-add-button")).toBeVisible();
+      expect(await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
+    } finally { await api.dispose(); }
   });
 });
 
 test.describe("VDC-003 Axe Automated Accessibility Scan", () => {
-  test("intake queue page passes axe accessibility scan", async ({ page }) => {
-    await openRadarAsExpansionManager(page);
+  test("retained populated intake queue passes axe accessibility scan", async ({ page }) => {
+    const { api } = await openPgScenario(page, { entry: "inbox", retainedHistory: "possible-match" });
+    try {
     await expect(page.getByTestId("intake-add-button")).toBeVisible();
 
     const results = await new AxeBuilder({ page })
@@ -146,14 +136,15 @@ test.describe("VDC-003 Axe Automated Accessibility Scan", () => {
         })),
       })),
     ).toEqual([]);
+    } finally { await api.dispose(); }
   });
 
-  test("intake detail dialog passes axe accessibility scan", async ({ page }) => {
-    await openRadarAsExpansionManager(page);
-    await page.getByTestId("intake-add-button").click();
-    await page.getByTestId("intake-url-input").fill(URLS.clean);
-    await page.getByTestId("intake-submit-button").click();
-    await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({ timeout: 15_000 });
+  test("retained intake detail passes axe accessibility scan", async ({ page }) => {
+    // Existing comparison history, not a new URL, fetched page or native READY.
+    const { api, scenario } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    try {
+    await expect(page.getByTestId("intake-detail-id")).toHaveText(scenario.intake_id);
+    await expect(page.getByTestId("compare-table-grid")).toBeVisible();
 
     const results = await new AxeBuilder({ page })
       .include('[data-testid="intake-detail-dialog"]')
@@ -171,5 +162,6 @@ test.describe("VDC-003 Axe Automated Accessibility Scan", () => {
         })),
       })),
     ).toEqual([]);
+    } finally { await api.dispose(); }
   });
 });

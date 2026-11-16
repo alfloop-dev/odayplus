@@ -203,7 +203,7 @@ describe("cold read metadata passed to the existing detail renderer", () => {
   it("renders an existing manual intake with no canonical URL in the inbox", () => {
     const value = { ...record(), originalUrl: null, canonicalUrl: null, parserVersion: null } as AssistedIntake;
     render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready"
-      onAddSubmit={vi.fn()} onOpenDetail={vi.fn()} records={[value]} />);
+      onAddRequested={vi.fn()} onOpenDetail={vi.fn()} records={[value]} />);
     expect(screen.getByTestId("intake-inbox-row-OWN-INTAKE")).toHaveTextContent("UNAVAILABLE");
   });
   it.each(["submittedAt", "submitted_at", "assignmentId", "assignmentStatus", "slaInstanceId", "slaState", "dueAt", "slaDueAt",

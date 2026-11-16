@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+from copy import deepcopy
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import quote
@@ -9,7 +13,9 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from apps.api.app.routes.listings import IntakeSubmissionReceipt, UrlIntakeRequest
 from apps.api.oday_api.main import create_app
+from modules.listing.application.intake_workflow_bootstrap import initialize_intake_workflow
 from shared.infrastructure.persistence.assisted_listing_intake import (
     ALL_TABLES,
     AssistedIntakePersistenceConflict,
@@ -147,6 +153,46 @@ def _headers(subject_id: str, *, key: str | None = None) -> dict[str, str]:
     if key is not None:
         headers["Idempotency-Key"] = key
     return headers
+
+
+def _retain_url_submission(app, *, key, url):
+    """Persist retained V1 history through its real document/workflow owner.
+
+    The old receipt owns a queued legacy job, not a native parser result. This
+    setup never invokes either fresh HTTP URL writer.
+    """
+    store = app.state.assisted_intake_store
+    request = UrlIntakeRequest(original_url=url, scope={"tenant_id": TENANT_ID})
+    iid, jid, cid = (str(uuid4()) for _ in range(3))
+    at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    intake = {
+        "intake_id": iid, "state": "SUBMITTED", "intake_method": "URL",
+        "scope": request.scope.model_dump(), "submitted_by": ACTOR_ID,
+        "submitted_at": at, "updated_at": at, "version": 1,
+        "job_id": jid, "correlation_id": cid,
+        "original_url": url, "canonical_url": url, "policy_state": "POLICY_UNKNOWN",
+        "fields": [], "audit": [], "processing_history": [{
+            "transition_id": str(uuid4()), "from_state": None, "to_state": "SUBMITTED",
+            "occurred_at": at, "actor": ACTOR_ID, "version_after": 1,
+        }],
+    }
+    receipt = IntakeSubmissionReceipt(
+        intake_id=iid, state="SUBMITTED", version=1, job_id=jid,
+        correlation_id=cid, submitted_at=at,
+    ).model_dump(mode="json")
+    digest = hashlib.sha256(json.dumps(request.model_dump(), sort_keys=True, default=str).encode()).hexdigest()
+    store.refresh(TENANT_ID)
+    with store.transaction():
+        store.intakes[iid] = intake
+        initialize_intake_workflow(store, intake, SyntheticIntakeWorkflowPolicy())
+        store.jobs[jid] = {
+            "job_id": jid, "intake_id": iid, "tenant_id": TENANT_ID,
+            "status": "QUEUED", "checkpoint": "RETRIEVING", "attempt": 0,
+            "version": 1, "correlation_id": cid,
+        }
+        store.replays[f"{TENANT_ID}:{ACTOR_ID}:submitUrlIntake:_collection:{key}"] = (digest, deepcopy(receipt), 202)
+        store.flush()
+    return receipt
 
 
 def _configure_production(
@@ -361,6 +407,7 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
     )
     client = TestClient(app)
     submit_key = f"production-submit-{uuid4()}"
+    retained = _retain_url_submission(app, key=submit_key, url="https://example.com/listings/production-1")
     submitted = client.post(
         "/api/v1/intakes/url",
         json={
@@ -369,8 +416,10 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
         },
         headers=_headers(ACTOR_ID, key=submit_key),
     )
-    assert submitted.status_code == 202, submitted.text
+    assert submitted.status_code == 200, submitted.text
+    assert submitted.headers["Idempotency-Replayed"] == "true"
     receipt = submitted.json()
+    assert receipt == retained
 
     assigned = client.put(
         f"/api/v1/intakes/{receipt['intake_id']}/assignment",
@@ -510,9 +559,11 @@ def test_initial_workflow_and_evidence_survive_postgresql_restart(intake_blank_d
     key = f"synthetic-workflow-restart-{uuid4()}"
     body = {"original_url": "https://example.invalid/workflow-restart", "scope": {"tenant_id": TENANT_ID}}
     try:
+        retained = _retain_url_submission(app, key=key, url=body["original_url"])
         with TestClient(app) as client:
             submitted = client.post("/api/v1/intakes/url", json=body, headers=_headers(ACTOR_ID, key=key))
-            assert submitted.status_code == 202, submitted.text
+            assert submitted.status_code == 200 and submitted.json() == retained, submitted.text
+            assert submitted.headers["Idempotency-Replayed"] == "true"
             intake_id = submitted.json()["intake_id"]
             detail = client.get(f"/api/v1/intakes/{intake_id}", headers=_headers(ACTOR_ID)).json()
             assignment_id, sla_id = detail["assignment_id"], detail["sla_instance_id"]
@@ -560,22 +611,35 @@ def test_partial_database_flush_rolls_back_workflow_and_retry_is_fresh(intake_bl
             raise RuntimeError("synthetic crash after three SQL writes")
 
     key = f"synthetic-workflow-flush-{uuid4()}"
-    body = {"original_url": "https://example.invalid/workflow-flush", "scope": {"tenant_id": TENANT_ID}}
+    # New supported manual work still proves physical SQL rollback and retry.
+    # Do not reopen retired HTTP URL creation merely to arrange a fixture.
+    body = {"batch_id": str(uuid4()), "method": "MANUAL", "scope": {"tenant_id": TENANT_ID},
+            "rows": [{"address_raw": "Synthetic workflow flush address"}]}
     try:
         with TestClient(app, raise_server_exceptions=False) as client:
             with monkeypatch.context() as patch:
                 patch.setattr(store._store, "put", failing_put)
-                failed = client.post("/api/v1/intakes/url", json=body, headers=_headers(ACTOR_ID, key=key))
+                failed = client.post("/api/v1/intake-batches", json=body, headers=_headers(ACTOR_ID, key=key))
             assert failed.status_code == 500, failed.text
             assert calls == 3
             store.refresh(TENANT_ID)
             for name in ("intakes", "jobs", "assignments", "slas", "replays", "workflow_audits", "workflow_outbox"):
                 assert not getattr(store, name), name
-            retried = client.post("/api/v1/intakes/url", json=body, headers=_headers(ACTOR_ID, key=key))
+            retried = client.post("/api/v1/intake-batches", json=body, headers=_headers(ACTOR_ID, key=key))
             assert retried.status_code == 202, retried.text
             store.refresh(TENANT_ID)
-            assert len(store.intakes) == len(store.assignments) == len(store.slas) == len(store.jobs) == len(store.replays) == 1
+            assert len(store.intakes) == len(store.assignments) == len(store.slas) == len(store.replays) == 1
+            assert not store.jobs
             assert len(store.workflow_audits) == 3 and len(store.workflow_outbox) == 2
+            committed = deepcopy(tuple(getattr(store, name) for name in (
+                "intakes", "assignments", "slas", "replays", "workflow_audits", "workflow_outbox",
+            )))
+            replayed = client.post("/api/v1/intake-batches", json=body, headers=_headers(ACTOR_ID, key=key))
+            assert replayed.status_code == 202 and replayed.json() == retried.json()
+            store.refresh(TENANT_ID)
+            assert tuple(getattr(store, name) for name in (
+                "intakes", "assignments", "slas", "replays", "workflow_audits", "workflow_outbox",
+            )) == committed
     finally:
         app.state.persistence_bundle.engine.close()
 

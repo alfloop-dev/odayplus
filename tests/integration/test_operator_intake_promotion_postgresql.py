@@ -11,12 +11,13 @@ import pytest
 from modules.listing.domain.models import ListingDedupKey
 from shared.auth import Role
 from shared.domain.models import AddressLocation, Listing
-from tests.intake_registry_fixture import APPROVER, MANAGER, TENANT
+from tests.intake_registry_fixture import APPROVER, MANAGER, OWNER, TENANT
 from tests.integration.test_intake_registry_calendar_postgresql import _bundle
 from tests.integration.test_operator_intake_workflow_postgresql import (
     BASE,
     _client,
     _headers,
+    _seed_historical_submission,
 )
 from tests.integration.test_operator_intake_workflow_postgresql import (
     bridge_database as bridge_database,
@@ -75,11 +76,16 @@ def _ready_intake(db, bundle, client):
                                          source_listing_id=listing.source_listing_id,
                                          normalized_address=address.normalized_address,
                                          rent_amount=listing.rent_amount, area_ping=listing.area_ping))
-    submitted = client.post(f"{BASE}/intake/submit", json={"url": "https://rent.591.com.tw/synthetic-promotion",
-                                                       "heatZoneId": "synthetic-permitted-zone"},
-                            headers=_headers())
+    # Promotion acts on retained Operator work, not either retired URL fresh
+    # writer. The original bridge initializes its actual Assignment/SLA in SQL.
+    retained = _seed_historical_submission(
+        bundle, "https://rent.591.com.tw/synthetic-promotion",
+        heat_zone_id="synthetic-permitted-zone",
+    )
+    submitted = client.get(f"{BASE}/intake/{retained['id']}", headers=_headers())
     assert submitted.status_code == 200, submitted.text
     initial = submitted.json()
+    assert initial["stage"] == "AWAITING_ASSISTED_ENTRY"
     iid = initial["id"]
     corrected = client.post(f"{BASE}/intake/{iid}/correct",
                             json={"fields": {"floor": "1F"}, "reason": "Synthetic measured revision",
@@ -150,6 +156,242 @@ def _snapshot(bundle):
         "delivery_jobs": bundle.engine.query("SELECT job_id,status,version FROM durable_jobs ORDER BY job_id"),
         "matching_events": listing_search_events(bundle, TENANT),
         "score_jobs": bundle.engine.query("SELECT job_id,status,version,payload FROM workflow.jobs WHERE job_type='intake-sitescore' ORDER BY job_id")})
+
+
+def test_browser_ready_fixture_uses_retained_history_without_fresh_http(intake_blank_db, monkeypatch):
+    from modules.opsboard.application.network_listings import NetworkListingService
+    from tests.support.intake_score_synthetic import (
+        SCOPE,
+        headers,
+        prepare_database,
+        ready_scenario,
+    )
+
+    db = intake_blank_db
+    prepare_database(db.url())
+    bundle = _bundle(db, monkeypatch)
+
+    def forbid_fresh(*_args, **_kwargs):
+        pytest.fail("The browser's retained setup must not invoke either fresh writer")
+
+    monkeypatch.setattr(NetworkListingService, "submit_intake", forbid_fresh)
+    try:
+        client = _promotion_client(bundle)
+        case = ready_scenario(db.url(), bundle, client)
+        assert case["scope"] == SCOPE
+        record = client.get(f"{BASE}/intake/{case['intake_id']}", headers=headers())
+        assert record.status_code == 200, record.text
+        intake = record.json()
+        assert (intake["stage"], intake["version"]) == ("READY", 4)
+        assert intake["submittedBy"] == MANAGER
+        assert intake["assignmentId"] and intake["slaInstanceId"]
+        assert intake["matchResult"]["targetListingId"] == case["listing_id"]
+        assert [event["action"] for event in intake["auditEvents"]] == [
+            "intake.correct", "intake.decide.revise",
+        ]
+        assert [event["actorName"] for event in intake["auditEvents"]] == [MANAGER, APPROVER]
+        assert intake["parsedFields"]["floor"]["correctedValue"] == "1F"
+        assert intake["rawSnapshot"] is None and intake["parserVersion"] is None
+        store = bundle.assisted_intake_store
+        store.refresh(TENANT)
+        assert len(store.intakes) == len(store.assignments) == len(store.slas) == 1
+        assert not store.promotions and not store.jobs
+        assert all(
+            replay.action != "submit_intake"
+            for replay in bundle.operator_intake_repository_for_tenant(TENANT).list_idempotency_records()
+        )
+        with db.connect() as conn:
+            # The explicit manual source/snapshot fixture is unchanged. It is
+            # not a native URL command, parser output or worker result.
+            assert conn.execute("SELECT intake_method,processing_state FROM intake.intakes WHERE intake_id=%s",
+                                (case["intake_id"],)).fetchone() == ("MANUAL", "READY")
+            assert conn.execute("SELECT capture_method FROM intake.source_snapshots WHERE intake_id=%s",
+                                (case["intake_id"],)).fetchone() == ("MANUAL_ENTRY",)
+            assert conn.execute("SELECT count(*) FROM workflow.jobs").fetchone()[0] == 0
+        assert bundle.engine.query_one(
+            "SELECT count(*) AS count FROM durable_jobs WHERE job_type='assisted-listing-intake'",
+        )["count"] == 0
+        # The original promotion API still sees the real resolved listing and
+        # linked workflow version, rather than a fabricated browser receipt.
+        requested = _request(client, intake, key="synthetic-browser-retained-promotion")
+        assert requested.status_code == 202, requested.text
+        assert requested.json()["status"] == "PENDING_REVIEW"
+        assert requested.json()["listing_id"] == case["listing_id"]
+        assert bundle.listing_repository_for_tenant(TENANT).list_candidates() == []
+    finally:
+        bundle.engine.close()
+
+
+@pytest.mark.parametrize("history", ["possible-match", "retrieval-timeout", "revision"])
+def test_browser_retained_review_and_failure_keep_real_guards(intake_blank_db, monkeypatch, history):
+    from modules.opsboard.application.network_listings import NetworkListingService
+    from tests.support.intake_score_synthetic import headers, prepare_database, ready_scenario
+
+    db = intake_blank_db
+    prepare_database(db.url())
+    bundle = _bundle(db, monkeypatch)
+
+    def forbid_fresh(*_args, **_kwargs):
+        pytest.fail("Retained browser setup must not submit or retrieve a fresh URL")
+
+    monkeypatch.setattr(NetworkListingService, "submit_intake", forbid_fresh)
+    monkeypatch.setattr(NetworkListingService, "_get_snapshot_service", forbid_fresh)
+    try:
+        client = _promotion_client(bundle)
+        case = ready_scenario(db.url(), bundle, client, retained_history=history)
+        path = f"{BASE}/intake/{case['intake_id']}"
+        observed = client.get(path, headers=headers())
+        assert observed.status_code == 200, observed.text
+        initial = observed.json()
+        assert initial["version"] == 1 and initial["auditEvents"] == []
+        # These retained original synthetic retrieval histories preserve their
+        # recorded policy for legacy presentation. They confer no current
+        # source approval and contain no manufactured capture/parser evidence.
+        assert initial["policy"] == "APPROVED_RETRIEVAL"
+        assert initial["originalUrl"] == case["original_url"]
+        assert initial["originalUrl"].startswith("https://www.synthetic.example/retained-")
+        assert initial["assignmentId"] and initial["slaInstanceId"]
+        for field in ("rawSnapshot", "snapshotId", "capturedAt", "parserVersion", "lastObservedAt"):
+            assert initial[field] is None
+        assert client.get(path, headers={**headers(), "x-tenant-id": str(uuid4())}).status_code == 404
+        prepared = _snapshot(bundle)
+        assert not bundle.operator_intake_repository_for_tenant(TENANT).list_idempotency_records()
+        with db.connect() as connection:
+            for table in ("intake.intakes", "intake.source_registry", "intake.source_snapshots", "workflow.jobs"):
+                assert connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+        if history == "retrieval-timeout":
+            assert initial["stage"] == "FAILED" and case["listing_id"] is None
+            assert initial["failure"]["code"] == "ODP-INTAKE-RETRIEVAL-TIMEOUT"
+            assert initial["failure"]["retryable"] and initial["failure"]["nextAction"]
+            assert initial["correlationId"] and initial["parsedFields"] == {}
+            assert bundle.listing_repository_for_tenant(TENANT).list_listings() == []
+            record = initial
+        else:
+            revision = history == "revision"
+            assert initial["stage"] == ("READY" if revision else "NEEDS_REVIEW")
+            assert initial["matchResult"]["outcome"] == ("REVISION" if revision else "POSSIBLE_MATCH")
+            assert initial["matchResult"]["targetListingId"] == case["listing_id"]
+            assert initial["matchResult"]["agreeingSignals"] and initial["matchResult"]["contradictingSignals"]
+            assert initial["parsedFields"]["address"]["sourceValue"]
+            if revision:
+                target = bundle.listing_repository_for_tenant(TENANT).get_listing(case["listing_id"])
+                address = bundle.listing_repository_for_tenant(TENANT).get_address(target.address_id)
+                assert target.source_listing_id == initial["parsedFields"]["providerListingId"]["normalizedValue"]
+                assert address.normalized_address == initial["parsedFields"]["address"]["normalizedValue"]
+                assert target.rent_amount == 58000
+            body = {"action": "revise" if revision else "create", "reason": "Explicit retained browser human decision",
+                    "riskSummary": "Retained ambiguous history; no new source acquisition", "riskAcknowledged": True}
+            for precondition, status in ((None, 428), ('W/"9"', 409)):
+                response = client.post(path + "/decide", json=body,
+                    headers={**headers(), **({"If-Match": precondition} if precondition else {})})
+                assert response.status_code == status, response.text
+                assert _snapshot(bundle) == prepared
+            denied = client.post(path + "/decide", json=body,
+                headers={**_headers(OWNER), "If-Match": 'W/"1"'})
+            assert denied.status_code == 422, denied.text
+            assert _snapshot(bundle) == prepared
+            command_headers = {**headers(key="synthetic-retained-browser-decision"), "If-Match": 'W/"1"'}
+            decided = client.post(path + "/decide", json=body, headers=command_headers)
+            assert decided.status_code == 200, decided.text
+            record = decided.json()
+            assert (record["stage"], record["version"]) == ("READY", 2)
+            assert record["matchResult"]["outcome"] == ("REVISION" if revision else "NEW")
+            if revision:
+                assert record["matchResult"]["targetListingId"] == case["listing_id"]
+                target = bundle.listing_repository_for_tenant(TENANT).get_listing(case["listing_id"])
+                assert target.rent_amount == initial["parsedFields"]["rent"]["normalizedValue"]
+                assert record["auditEvents"][0]["metadata"]["beforeAfter"]["target_rent"] == {
+                    "before": 58000, "after": target.rent_amount,
+                }
+            else:
+                assert record["matchResult"]["targetListingId"] != case["listing_id"]
+            assert [event["action"] for event in record["auditEvents"]] == ["intake.decide.revise" if revision else "intake.decide.create"]
+            assert record["parsedFields"] == initial["parsedFields"]
+            assert record["parserVersion"] is record["snapshotId"] is record["rawSnapshot"] is None
+            committed = _snapshot(bundle)
+            replay = client.post(path + "/decide", json=body, headers=command_headers)
+            assert replay.status_code == 200 and replay.json() == record
+            assert _snapshot(bundle) == committed
+            assert len(bundle.listing_repository_for_tenant(TENANT).list_listings()) == (1 if revision else 2)
+        assert record["assignmentId"] == initial["assignmentId"]
+        assert record["slaInstanceId"] == initial["slaInstanceId"]
+        assert bundle.listing_repository_for_tenant(TENANT).list_candidates() == []
+        assert bundle.engine.query_one(
+            "SELECT count(*) AS count FROM durable_jobs WHERE job_type='assisted-listing-intake'",
+        )["count"] == 0
+    finally:
+        bundle.engine.close()
+    replica = _bundle(db, monkeypatch)
+    try:
+        read = _promotion_client(replica).get(path, headers=headers())
+        assert read.status_code == 200 and read.json() == record
+    finally:
+        replica.engine.close()
+
+
+def test_browser_retained_assisted_entry_preserves_real_correction_without_fresh_http(intake_blank_db, monkeypatch):
+    from modules.opsboard.application.network_listings import NetworkListingService
+    from tests.support.intake_score_synthetic import headers, prepare_database, ready_scenario
+
+    db = intake_blank_db
+    prepare_database(db.url())
+    bundle = _bundle(db, monkeypatch)
+
+    def forbid_fresh(*_args, **_kwargs):
+        pytest.fail("Retained manual-entry setup must not invoke a fresh writer")
+
+    monkeypatch.setattr(NetworkListingService, "submit_intake", forbid_fresh)
+    try:
+        client = _promotion_client(bundle)
+        case = ready_scenario(db.url(), bundle, client, retained_history="assisted-entry-only")
+        assert case["listing_id"] is None
+        path = f"{BASE}/intake/{case['intake_id']}"
+        initial = client.get(path, headers=headers()).json()
+        assert (initial["stage"], initial["version"]) == ("AWAITING_ASSISTED_ENTRY", 1)
+        assert initial["originalUrl"] == case["original_url"]
+        assert initial["parsedFields"] == {} and initial["auditEvents"] == []
+        assert initial["assignmentId"] and initial["slaInstanceId"]
+        body = {"fields": {"address": "Synthetic retained manual address", "rent": "54000", "areaPing": "22"},
+                "reason": "Explicit retained manual-entry correction", "riskSummary": "No retrieved evidence",
+                "riskAcknowledged": True}
+        command_headers = headers(key="synthetic-retained-manual-correction")
+        corrected = client.post(path + "/correct", json=body, headers=command_headers)
+        assert corrected.status_code == 200, corrected.text
+        record = corrected.json()
+        assert record["version"] == 2
+        assert record["assignmentId"] == initial["assignmentId"]
+        assert record["slaInstanceId"] == initial["slaInstanceId"]
+        assert [event["action"] for event in record["auditEvents"]] == ["intake.correct"]
+        assert record["auditEvents"][0]["actorName"] == MANAGER
+        for name in ("capturedAt", "rawSnapshot", "snapshotId", "parserVersion", "lastObservedAt"):
+            assert record[name] is None
+        replay = client.post(path + "/correct", json=body, headers=command_headers)
+        assert replay.status_code == 200 and replay.json() == record
+        assert client.get(path, headers={**headers(), "x-tenant-id": str(uuid4())}).status_code == 404
+        store = bundle.assisted_intake_store
+        store.refresh(TENANT)
+        assert len(store.intakes) == len(store.assignments) == len(store.slas) == 1
+        assert not store.jobs and not store.promotions
+        assert bundle.listing_repository_for_tenant(TENANT).list_listings() == []
+        assert bundle.listing_repository_for_tenant(TENANT).list_candidates() == []
+        receipts = bundle.operator_intake_repository_for_tenant(TENANT).list_idempotency_records()
+        assert [receipt.action for receipt in receipts] == ["correct_intake"]
+        assert bundle.engine.query_one(
+            "SELECT count(*) AS count FROM durable_jobs WHERE job_type='assisted-listing-intake'",
+        )["count"] == 0
+        with db.connect() as connection:
+            # Historical Operator presentation has not manufactured a native
+            # Intake, source approval, snapshot, worker result or command.
+            for table in ("intake.intakes", "intake.source_registry", "intake.source_snapshots", "workflow.jobs"):
+                assert connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+    finally:
+        bundle.engine.close()
+    replica = _bundle(db, monkeypatch)
+    try:
+        read = _promotion_client(replica).get(path, headers=headers())
+        assert read.status_code == 200 and read.json() == record
+    finally:
+        replica.engine.close()
 
 
 def test_canonical_promotion_positive_restart_and_replay(bridge_database, monkeypatch):

@@ -14,8 +14,8 @@ from tests.integration.test_operator_intake_workflow_postgresql import (
     BASE,
     _client,
     _headers,
+    _seed_historical_submission,
     _snapshot,
-    _synthetic_approved_policy,
     bridge_database,
 )
 
@@ -24,14 +24,10 @@ pytestmark = pytest.mark.requires_live_env
 assert bridge_database
 
 
-def _failed_submission(bundle, monkeypatch):
-    _synthetic_approved_policy(monkeypatch)
-    response = _client(bundle).post(
-        f"{BASE}/intake/submit", json={"url": "https://example.invalid/single-job"},
-        headers=_headers(),
+def _failed_submission(bundle):
+    record = _seed_historical_submission(
+        bundle, "https://example.invalid/single-job", linked_job=True,
     )
-    assert response.status_code == 200, response.text
-    record = response.json()
     store = bundle.assisted_intake_store
     store.refresh(TENANT)
     with store.transaction():
@@ -45,7 +41,7 @@ def _failed_submission(bundle, monkeypatch):
 def test_single_job_read_and_retry_use_canonical_owner_and_complete_scope(bridge_database, monkeypatch):
     bundle = _bundle(bridge_database, monkeypatch)
     try:
-        record = _failed_submission(bundle, monkeypatch)
+        record = _failed_submission(bundle)
         job_id, iid = record["jobId"], record["id"]
         client = TestClient(create_app(persistence=bundle))
         before, job_before = _snapshot(bundle), bundle.job_queue.get(job_id).to_dict()
@@ -104,7 +100,7 @@ def test_single_job_read_and_retry_use_canonical_owner_and_complete_scope(bridge
 def test_single_job_retry_uses_the_operator_transaction_and_actor_bound_replay(bridge_database, monkeypatch):
     bundle = _bundle(bridge_database, monkeypatch)
     try:
-        record = _failed_submission(bundle, monkeypatch)
+        record = _failed_submission(bundle)
         iid, job_id = record["id"], record["jobId"]
         store = bundle.assisted_intake_store
         store.refresh(TENANT)
@@ -155,7 +151,7 @@ def test_single_job_retry_uses_the_operator_transaction_and_actor_bound_replay(b
 def test_single_job_retry_rolls_back_queue_and_intake_when_receipt_write_fails(bridge_database, monkeypatch):
     bundle = _bundle(bridge_database, monkeypatch)
     try:
-        record = _failed_submission(bundle, monkeypatch)
+        record = _failed_submission(bundle)
         client = TestClient(create_app(persistence=bundle))
         job_id = record["jobId"]
         before, job_before = _snapshot(bundle), bundle.job_queue.get(job_id).to_dict()
@@ -178,7 +174,7 @@ def test_single_job_retry_rolls_back_queue_and_intake_when_receipt_write_fails(b
 def test_single_job_retry_refuses_nonretryable_and_active_linked_jobs(bridge_database, monkeypatch):
     bundle = _bundle(bridge_database, monkeypatch)
     try:
-        record = _failed_submission(bundle, monkeypatch)
+        record = _failed_submission(bundle)
         client = TestClient(create_app(persistence=bundle))
         job_id, iid = record["jobId"], record["id"]
         for state in (JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.SUCCEEDED, JobStatus.CANCELLED):
@@ -214,7 +210,7 @@ def test_generic_and_operator_retry_recheck_fresh_ownership_and_scope_before_wri
     bundle = _bundle(bridge_database, monkeypatch)
     revocation_bundle = _bundle(bridge_database, monkeypatch)
     try:
-        record = _failed_submission(bundle, monkeypatch)
+        record = _failed_submission(bundle)
         generic = TestClient(create_app(persistence=bundle))
         operator = _client(bundle)
         iid, job_id = record["id"], record["jobId"]
