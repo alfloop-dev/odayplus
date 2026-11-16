@@ -735,3 +735,127 @@ def test_assignment_transitions_and_sla_completion_are_durable_atomic_and_replay
         assert (store.workflow_audits, store.workflow_outbox) == before
     finally:
         bundle.engine.close()
+
+
+def test_native_workflow_actions_use_live_sql_registry_directory_and_approver(intake_blank_db, monkeypatch):
+    """Original V1 actions on a fresh native Intake, against the real SQL registry."""
+    from apps.api.app.routes import canonical_intakes
+    from apps.api.oday_api.security import dependencies
+    from shared.audit import InMemoryAuditLog
+    from shared.auth import Principal, Scope
+    from tests.intake_workflow_fixture import seed_synthetic_intake_read_flag
+
+    db = intake_blank_db
+    _upgrade(db, "head")
+    apply_upgrade_to_database(db.url())
+    row = _workflow_row()
+    parameters = deepcopy(row.parameters)
+    parameters["assignee_role_bindings"]["site-reviewer"] = Role.SITE_REVIEWER.value
+    with db.connect() as conn:
+        _seed_identities(conn)
+        _insert_policy(conn, replace(row, parameters=parameters))
+        _insert_policy(conn, _calendar_row())
+        _insert_policy(conn, _audit_retention_row())
+    caller = {}
+    roles = {MANAGER: Role.SITE_REVIEWER, OWNER: Role.EXPANSION_USER}
+
+    def act(actor):
+        caller["principal"] = Principal(actor, frozenset({roles[actor]}), Scope(tenant_id=TENANT))
+
+    monkeypatch.setattr(canonical_intakes, "principal_from_headers", lambda _: caller["principal"])
+    monkeypatch.setattr(dependencies, "principal_from_headers", lambda _: caller["principal"])
+    bundle = _bundle(db, monkeypatch)
+    tables = ("workflow.assignments", "workflow.sla_instances", "workflow.assignment_transitions",
+              "workflow.sla_transitions", "workflow.sla_pause_intervals", "audit.audit_events",
+              "workflow.outbox_events", "odp_runtime.durable_documents")
+
+    def counts():
+        with db.connect() as conn:
+            return [conn.execute("SELECT count(*) FROM " + table).fetchone()[0] for table in tables]
+
+    def account(account_id, status):
+        with db.connect() as conn:
+            conn.execute("UPDATE identity.accounts SET status=%s WHERE account_id=%s", (status, account_id))
+
+    try:
+        seed_synthetic_intake_read_flag(bundle.feature_flag_registry, TENANT)
+        app = FastAPI()
+        app.state.persistence_bundle, app.state.audit_log = bundle, InMemoryAuditLog()
+        app.include_router(listings.create_assisted_intake_router(
+            bundle.assisted_intake_store, workflow_policy=bundle.assisted_intake_workflow_policy), prefix="/api/v1")
+        with TestClient(app) as client:
+            act(MANAGER)
+            created = client.post("/api/v1/canonical-intakes", headers={"Idempotency-Key": "synthetic-native-registry-001"},
+                json={"intake_method": "MANUAL", "scope": {}, "reason": "Explicit synthetic SQL native workflow"})
+            assert created.status_code == 201, created.text
+            iid = created.json()["intake_id"]
+            workflow = client.get("/api/v1/canonical-intakes/" + iid).json()["workflow"]
+            aid, sid = workflow["assignment_id"], workflow["sla_instance_id"]
+            body = {"owner_subject_id": OWNER, "owner_role": "expansion-staff", "due_at": workflow["due_at"],
+                    "reason": "Synthetic SQL native assignment"}
+            assign_headers = {"Idempotency-Key": "synthetic-native-reg-assign", "If-Match": 'W/"1"'}
+            assigned = client.put(f"/api/v1/intakes/{iid}/assignment", json=body, headers=assign_headers)
+            assert assigned.status_code == 200, assigned.text
+            # A stored receipt never retains a revoked target's authority.
+            account(OWNER, "disabled")
+            before = counts()
+            assert client.put(f"/api/v1/intakes/{iid}/assignment", json=body, headers=assign_headers).status_code == 403
+            # The reader's own authority is current, so the stored outcome is
+            # observable; observation re-grants nothing and writes nothing.
+            observed = client.get(f"/api/v1/intakes/{iid}/assignment/receipt",
+                headers={"Idempotency-Key": "synthetic-native-reg-assign"})
+            assert observed.status_code == 200 and observed.json()["receipt"] == assigned.json()
+            assert counts() == before
+            account(OWNER, "active")
+            replayed = client.put(f"/api/v1/intakes/{iid}/assignment", json=body, headers=assign_headers)
+            assert replayed.status_code == 200 and replayed.json() == assigned.json()
+
+            act(OWNER)
+            claimed = client.post(f"/api/v1/assignments/{aid}/actions/claim", json={"reason": "Synthetic SQL claim"},
+                headers={"Idempotency-Key": "synthetic-native-reg-claim", "If-Match": f'W/"{assigned.json()["version"]}"'})
+            assert claimed.status_code == 200, claimed.text
+            directory = client.get(f"/api/v1/assignments/{aid}/transfer-targets")
+            assert directory.status_code == 200, directory.text
+            assert directory.json() == {"assignment_id": aid, "assignment_version": claimed.json()["version"],
+                "items": [{"subject_id": MANAGER, "display_name": MANAGER, "owner_role": "site-reviewer"}]}
+            account(MANAGER, "disabled")
+            assert client.get(f"/api/v1/assignments/{aid}/transfer-targets").json()["items"] == []
+            before = counts()
+            transfer = {"target_owner_subject_id": MANAGER, "target_owner_role": "site-reviewer",
+                        "reason": "Synthetic SQL transfer", "handoff_note": "Synthetic SQL handoff"}
+            transfer_headers = {"Idempotency-Key": "synthetic-native-reg-transfer",
+                                "If-Match": f'W/"{claimed.json()["version"]}"'}
+            assert client.post(f"/api/v1/assignments/{aid}/actions/transfer", json=transfer,
+                               headers=transfer_headers).status_code == 403
+            assert counts() == before
+            account(MANAGER, "active")
+            transferred = client.post(f"/api/v1/assignments/{aid}/actions/transfer", json=transfer, headers=transfer_headers)
+            assert transferred.status_code == 200, transferred.text
+            assert transferred.json()["status"] == "TRANSFERRED"
+
+            act(MANAGER)
+            accepted = client.post(f"/api/v1/assignments/{aid}/actions/claim", json={"reason": "Synthetic SQL accept"},
+                headers={"Idempotency-Key": "synthetic-native-reg-accept", "If-Match": f'W/"{transferred.json()["version"]}"'})
+            assert accepted.status_code == 200, accepted.text
+            assert accepted.json()["status"] == "CLAIMED" and accepted.json()["owner_subject_id"] == MANAGER
+            sla_version = client.get("/api/v1/canonical-intakes/" + iid).json()["workflow"]["sla_version"]
+            with db.connect() as conn:
+                now = conn.execute("SELECT clock_timestamp()").fetchone()[0]
+            expected = (now + (datetime(2026, 1, 2, tzinfo=UTC) - datetime(2026, 1, 1, tzinfo=UTC))).isoformat()
+            paused = client.post(f"/api/v1/sla-instances/{sid}/actions/pause",
+                json={"reason": "Synthetic approved hold", "expected_resume_at": expected},
+                headers={"Idempotency-Key": "synthetic-native-reg-pause", "If-Match": f'W/"{sla_version}"'})
+            assert paused.status_code == 200, paused.text
+            resumed = client.post(f"/api/v1/sla-instances/{sid}/actions/resume", json={"reason": "Synthetic SQL resume"},
+                headers={"Idempotency-Key": "synthetic-native-reg-resume", "If-Match": f'W/"{paused.json()["version"]}"'})
+            assert resumed.status_code == 200, resumed.text
+            with db.connect() as conn:
+                pause = conn.execute("SELECT approved_by::text,created_by::text,expected_resume_at,resumed_at "
+                                     "FROM workflow.sla_pause_intervals WHERE sla_instance_id=%s", (sid,)).fetchall()
+            assert len(pause) == 1 and pause[0][0] == APPROVER and pause[0][1] == MANAGER
+            assert pause[0][2] == datetime.fromisoformat(expected) and pause[0][3] is not None
+            bundle.assisted_intake_store.refresh(TENANT)
+            assert iid not in bundle.assisted_intake_store.intakes
+            assert aid not in bundle.assisted_intake_store.assignments and sid not in bundle.assisted_intake_store.slas
+    finally:
+        bundle.engine.close()

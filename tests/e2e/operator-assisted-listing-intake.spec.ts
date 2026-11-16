@@ -650,6 +650,37 @@ test("canonical native: 1 exact submission replay keeps one durable Intake witho
   await page.reload();
   await expect(page.getByTestId("intake-detail-id")).toHaveText(command.receipt.intake_id);
   await expect(page.getByTestId("intake-detail-stage")).toHaveText("已送出");
+  // The original V1 SLA controls on this fresh native SQL workflow, through the
+  // real session, account-bound command owner and actual SQL registry policy.
+  const summary = page.getByTestId("assignment-sla-summary");
+  await expect(summary.getByTestId("asg-sla-status")).toContainText("正常 (On Track)");
+  await expect(summary.getByTestId("asg-btn-claim")).toHaveCount(0);
+  await summary.getByTestId("asg-btn-pause").click();
+  const resumeAt = new Date(Date.now() + 26 * 3_600_000);
+  const local = new Date(resumeAt.getTime() - resumeAt.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+  await page.getByTestId("native-pause-reason").fill("Synthetic approved hold");
+  await page.getByTestId("native-pause-resume-at").fill(local);
+  const slaAction = (action: string) => (response: { url(): string; request(): { method(): string } }) =>
+    /\/api\/v1\/sla-instances\/[0-9a-f-]{36}\/actions\//.test(new URL(response.url()).pathname)
+    && new URL(response.url()).pathname.endsWith("/" + action) && response.request().method() === "POST";
+  const [paused] = await Promise.all([page.waitForResponse(slaAction("pause")), page.getByTestId("native-pause-submit").click()]);
+  expect(paused.status(), await paused.text()).toBe(200);
+  const pauseKey = paused.request().headers()["idempotency-key"];
+  expect(pauseKey).toMatch(/^canonical-workflow:/);
+  await expect(page.getByTestId("native-workflow-receipt")).toContainText("PAUSED");
+  await page.getByRole("button", { name: "重新讀取指派與 SLA" }).click();
+  await expect(summary.getByTestId("asg-sla-status")).toContainText("已暫停 (Paused)");
+  const [resumed] = await Promise.all([page.waitForResponse(slaAction("resume")), summary.getByTestId("asg-btn-resume").click()]);
+  expect(resumed.status(), await resumed.text()).toBe(200);
+  expect(resumed.request().headers()["idempotency-key"]).not.toBe(pauseKey);
+  await expect(page.getByTestId("native-workflow-receipt")).not.toContainText("PAUSED");
+  await page.reload();
+  await expect(page.getByTestId("intake-detail-id")).toHaveText(command.receipt.intake_id);
+  await expect(summary.getByTestId("asg-sla-status")).not.toContainText("已暫停");
+  const observed = await page.request.get(new URL(paused.url()).pathname + "/receipt", {
+    headers: { "Idempotency-Key": pauseKey, "If-Actor-Match": input.actor_id, "If-Tenant-Match": input.tenant_id } });
+  expect(observed.status(), await observed.text()).toBe(200);
+  expect((await observed.json()).receipt).toEqual(await paused.json());
   await page.getByTestId("intake-return-button").click();
   await expect(page.getByRole("button", { name: new RegExp(command.receipt.intake_id) })).toHaveCount(1);
   if (process.env.ODP_OPERATOR_PRODUCT_GATE === "1") {
