@@ -1122,3 +1122,306 @@ def test_processing_evidence_keeps_safe_mime_profile_urls_and_observes_current_r
     assert second["intake_version"] == first["intake_version"]
     assert second["items"][1]["metadata"]["version"] == first["items"][1]["metadata"]["version"] + 1
     assert datetime.fromisoformat(second["observed_at"]) >= datetime.fromisoformat(first["observed_at"])
+
+
+def _native_workflow_actors(ids, monkeypatch, caller):
+    """Synthetic manager/assignee/recipient principals for the original V1 routes."""
+    from apps.api.oday_api.security import dependencies
+
+    monkeypatch.setattr(dependencies, "principal_from_headers", lambda _: caller["principal"])
+    people = {name: str(uuid4()) for name in ("manager", "assignee", "recipient")}
+    roles = {"manager": Role.SITE_REVIEWER, "assignee": Role.EXPANSION_USER, "recipient": Role.EXPANSION_USER}
+
+    def act(name):
+        subject = ids["actor"] if name == "submitter" else people[name]
+        role = Role.EXPANSION_USER if name == "submitter" else roles[name]
+        caller["principal"] = Principal(subject, frozenset({role}), Scope(tenant_id=ids["tenant"]))
+        return subject
+
+    return people, act
+
+
+def _native_detail(client, intake_id):
+    detail = client.get("/api/v1/canonical-intakes/" + intake_id)
+    assert detail.status_code == 200, detail.text
+    return detail.json()
+
+
+def _workflow_rows(case, intake_id):
+    graph, ids, _, _ = case
+    with graph.transaction(ids["tenant"]):
+        query = graph.engine.query
+        assignment, = query("SELECT * FROM workflow.assignments WHERE tenant_id=? AND intake_id=?", (ids["tenant"], intake_id))
+        sla, = query("SELECT * FROM workflow.sla_instances WHERE tenant_id=? AND intake_id=?", (ids["tenant"], intake_id))
+        return {"assignment": assignment, "sla": sla,
+            "assignment_transitions": query("SELECT * FROM workflow.assignment_transitions WHERE tenant_id=? "
+                "AND assignment_id=? ORDER BY sequence_no", (ids["tenant"], assignment["assignment_id"])),
+            "sla_transitions": query("SELECT * FROM workflow.sla_transitions WHERE tenant_id=? "
+                "AND sla_instance_id=? ORDER BY sequence_no", (ids["tenant"], sla["sla_instance_id"])),
+            "pauses": query("SELECT * FROM workflow.sla_pause_intervals WHERE tenant_id=? AND sla_instance_id=? "
+                "ORDER BY paused_at", (ids["tenant"], sla["sla_instance_id"])),
+            "intake": query("SELECT version,processing_state FROM intake.intakes WHERE tenant_id=? AND intake_id=?",
+                (ids["tenant"], intake_id))[0]}
+
+
+def _legacy_business_documents(case):
+    rows = snapshot(case)["documents"]
+    return [row for row in rows if row["collection"] in {
+        "operator.assisted_intakes", "assisted_intake.assignments", "assisted_intake.slas",
+        "assisted_intake.workflow_audits", "assisted_intake.workflow_outbox"}]
+
+
+def test_native_assignment_and_sla_commands_persist_original_sql_rows_across_restart(
+        canonical_graph, native_api, monkeypatch):
+    from tests.integration.test_assisted_listing_identity import independent_canonical_graph
+
+    graph, ids, _, db = canonical_graph
+    client, caller, _ = native_api
+    people, act = _native_workflow_actors(ids, monkeypatch, caller)
+    act("submitter")
+    receipt = client.post("/api/v1/canonical-intakes", json=command(),
+        headers={"Idempotency-Key": "synthetic-native-workflow-submit-001"}).json()
+    intake_id = receipt["intake_id"]
+    workflow = _native_detail(client, intake_id)["workflow"]
+    assignment_id, sla_id = workflow["assignment_id"], workflow["sla_instance_id"]
+
+    act("manager")
+    assign_body = {"owner_subject_id": people["assignee"], "owner_role": "expansion_user",
+        "due_at": workflow["due_at"], "reason": "Synthetic native assignment"}
+    assign_headers = {"Idempotency-Key": "synthetic-native-assign-0001", "If-Match": 'W/"1"'}
+    assigned = client.put(f"/api/v1/intakes/{intake_id}/assignment", json=assign_body, headers=assign_headers)
+    assert assigned.status_code == 200, assigned.text
+    assert assigned.json()["status"] == "ASSIGNED" and assigned.json()["version"] == 2
+    assert assigned.json()["owner_subject_id"] == people["assignee"]
+    # Same key/body returns the stored outcome; another body is refused.
+    replayed = client.put(f"/api/v1/intakes/{intake_id}/assignment", json=assign_body, headers=assign_headers)
+    assert replayed.status_code == 200 and replayed.json() == assigned.json()
+    assert client.put(f"/api/v1/intakes/{intake_id}/assignment", headers=assign_headers,
+        json={**assign_body, "reason": "Another synthetic intent"}).status_code == 409
+    observed = client.get(f"/api/v1/intakes/{intake_id}/assignment/receipt",
+        headers={"Idempotency-Key": assign_headers["Idempotency-Key"]})
+    assert observed.status_code == 200, observed.text
+    assert observed.json()["observation"] == "RECEIPT_COMMITTED" and observed.json()["receipt"] == assigned.json()
+    assert observed.headers["Cache-Control"] == "no-store"
+    unseen = client.get(f"/api/v1/intakes/{intake_id}/assignment/receipt",
+        headers={"Idempotency-Key": "synthetic-native-assign-unseen"})
+    assert unseen.status_code == 200 and unseen.json()["observation"] == "NOT_OBSERVED"
+
+    act("assignee")
+    claim_headers = {"Idempotency-Key": "synthetic-native-claim-00001", "If-Match": 'W/"2"'}
+    claimed = client.post(f"/api/v1/assignments/{assignment_id}/actions/claim",
+        json={"reason": "Synthetic native claim"}, headers=claim_headers)
+    assert claimed.status_code == 200, claimed.text
+    assert claimed.json()["status"] == "CLAIMED" and claimed.json()["version"] == 3
+
+    act("manager")
+    sla_version = _workflow_rows(canonical_graph, intake_id)["sla"]["version"]
+    resumed_due = []
+    for round_no in (1, 2):
+        expected = (datetime.fromisoformat(graph.engine.query_one("SELECT clock_timestamp() AS at")["at"])
+                    + timedelta(hours=round_no)).isoformat()
+        paused = client.post(f"/api/v1/sla-instances/{sla_id}/actions/pause",
+            json={"reason": "Synthetic approved hold", "expected_resume_at": expected},
+            headers={"Idempotency-Key": f"synthetic-native-pause-{round_no:05d}", "If-Match": f'W/"{sla_version}"'})
+        assert paused.status_code == 200, paused.text
+        assert paused.json()["state"] == "PAUSED" and paused.json()["active_pause_interval_id"]
+        sla_version = paused.json()["version"]
+        resumed = client.post(f"/api/v1/sla-instances/{sla_id}/actions/resume",
+            json={"reason": "Synthetic hold released"},
+            headers={"Idempotency-Key": f"synthetic-native-resume-{round_no:04d}", "If-Match": f'W/"{sla_version}"'})
+        assert resumed.status_code == 200, resumed.text
+        assert resumed.json()["state"] == "ON_TRACK" and resumed.json()["active_pause_interval_id"] is None
+        sla_version = resumed.json()["version"]
+        resumed_due.append(resumed.json()["due_at"])
+        pause_receipt = client.get(f"/api/v1/sla-instances/{sla_id}/actions/pause/receipt",
+            headers={"Idempotency-Key": f"synthetic-native-pause-{round_no:05d}"})
+        assert pause_receipt.json()["receipt"] == paused.json()
+    rows = _workflow_rows(canonical_graph, intake_id)
+    assert len(rows["pauses"]) == 2 and all(p["resumed_at"] is not None for p in rows["pauses"])
+    for pause in rows["pauses"]:
+        # Each interval keeps its own recorded expectation, distinct from its actual resume.
+        assert pause["expected_resume_at"] != pause["resumed_at"]
+        assert pause["approved_by"] != pause["created_by"] and pause["version"] == 2
+    assert rows["sla"]["paused_at"] is None and rows["sla"]["resume_at"] is None
+    assert [t["permission"] for t in rows["sla_transitions"]] == [
+        "sla.create", "sla.schedule_resolved", "sla.pause", "sla.resume", "sla.pause", "sla.resume"]
+    assert [t["resulting_version"] for t in rows["sla_transitions"]] == list(range(1, 7))
+    # Resume moved the deadline; the bound Assignment follows in the same unit.
+    assert datetime.fromisoformat(rows["assignment"]["due_at"]) == datetime.fromisoformat(resumed_due[-1].replace("Z", "+00:00"))
+    assert rows["assignment"]["version"] == 5
+    assert rows["intake"] == {"version": 1, "processing_state": "SUBMITTED"}
+
+    act("assignee")
+    transferred = client.post(f"/api/v1/assignments/{assignment_id}/actions/transfer",
+        json={"target_owner_subject_id": people["recipient"], "target_owner_role": "expansion_user",
+              "reason": "Synthetic native transfer", "handoff_note": "Synthetic handoff context"},
+        headers={"Idempotency-Key": "synthetic-native-transfer-001", "If-Match": 'W/"5"'})
+    assert transferred.status_code == 200, transferred.text
+    assert transferred.json()["status"] == "TRANSFERRED" and transferred.json()["owner_subject_id"] == people["recipient"]
+
+    act("recipient")
+    accepted = client.post(f"/api/v1/assignments/{assignment_id}/actions/claim",
+        json={"reason": "Synthetic recipient claim"},
+        headers={"Idempotency-Key": "synthetic-native-claim-00002", "If-Match": 'W/"6"'})
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["status"] == "CLAIMED" and accepted.json()["version"] == 8
+    before_complete = snapshot(canonical_graph)
+    incomplete = client.post(f"/api/v1/assignments/{assignment_id}/actions/complete",
+        json={"reason": "Synthetic completion attempt"},
+        headers={"Idempotency-Key": "synthetic-native-complete-01", "If-Match": 'W/"8"'})
+    # The original evaluator needs the Intake's committed terminal work.
+    assert incomplete.status_code == 409 and "WORK_INCOMPLETE" in incomplete.text
+    assert snapshot(canonical_graph) == before_complete
+    complete_probe = client.get(f"/api/v1/assignments/{assignment_id}/actions/complete/receipt",
+        headers={"Idempotency-Key": "synthetic-native-complete-01"})
+    assert complete_probe.status_code == 200 and complete_probe.json()["observation"] == "NOT_OBSERVED"
+
+    rows = _workflow_rows(canonical_graph, intake_id)
+    assert [(t["from_status"], t["to_status"], t["permission"]) for t in rows["assignment_transitions"]] == [
+        (None, "UNASSIGNED", "assignment.create"), ("UNASSIGNED", "ASSIGNED", "assignment.assign"),
+        ("ASSIGNED", "CLAIMED", "assignment.claim"), ("CLAIMED", "CLAIMED", "sla.deadline_adjusted"),
+        ("CLAIMED", "CLAIMED", "sla.deadline_adjusted"), ("CLAIMED", "TRANSFERRED", "assignment.transfer"),
+        ("TRANSFERRED", "ASSIGNED", "assignment.accept"), ("ASSIGNED", "CLAIMED", "assignment.claim")]
+    assert [t["resulting_version"] for t in rows["assignment_transitions"]] == list(range(1, 9))
+    assert rows["assignment"]["previous_owner_subject_id"] == people["assignee"]
+    assert rows["assignment"]["assigned_by"] == people["manager"]
+    after = snapshot(canonical_graph)
+    actions = sorted(r["action"] for r in after["audit.audit_events"]
+                     if r["resource_type"] in {"assignment", "sla_instance"})
+    assert actions.count("assignment.claim") == 2 and actions.count("sla.pause") == 2
+    events = [json.loads(r["payload"]) if isinstance(r["payload"], str) else r["payload"]
+              for r in after["workflow.outbox_events"]]
+    assert all(validate_event(event) == [] for event in events)
+    assert {"assignment.assigned", "assignment.claimed", "assignment.transferred"} <= {e["event_type"] for e in events}
+    assert _legacy_business_documents(canonical_graph) == []
+    assert graph.audit_sink.writer.verify_chain(ids["tenant"]).ok
+
+    act("manager")
+    detail = _native_detail(client, intake_id)["workflow"]
+    with independent_canonical_graph(graph, db) as reopened_graph:
+        reopened = DurableAssistedIntakeStore(PostgresDocumentStore(reopened_graph.engine))
+        reopened.configure_canonical_audit(reopened_graph.audit_sink)
+        bundle = SimpleNamespace(engine=reopened_graph.engine, job_queue=reopened_graph.queue,
+            assisted_intake_store=reopened, assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
+            feature_flag_registry=reopened_graph.queue._flags)
+        for name in ("canonical_identity_graph", "canonical_intakes"):
+            setattr(bundle, name, MethodType(getattr(PersistenceBundle, name), bundle))
+        app = FastAPI()
+        app.state.persistence_bundle, app.state.audit_log = bundle, InMemoryAuditLog()
+        app.include_router(create_assisted_intake_router(reopened), prefix="/api/v1")
+        with TestClient(app) as restarted:
+            assert _native_detail(restarted, intake_id)["workflow"] == detail
+            assert detail["assignment_version"] == 8 and detail["assignment_status"] == "CLAIMED"
+            assert detail["owner_subject_id"] == people["recipient"] and detail["sla_version"] == 7
+            act("assignee")
+            again = restarted.post(f"/api/v1/assignments/{assignment_id}/actions/claim",
+                json={"reason": "Synthetic native claim"}, headers=claim_headers)
+            assert again.status_code == 200 and again.json() == claimed.json()
+            observed = restarted.get(f"/api/v1/assignments/{assignment_id}/actions/claim/receipt",
+                headers={"Idempotency-Key": claim_headers["Idempotency-Key"]})
+            assert observed.json()["receipt"] == claimed.json()
+    assert snapshot(canonical_graph) == after
+
+
+def test_native_workflow_commands_refuse_stale_foreign_and_unauthorized_without_writes(
+        canonical_graph, native_api, monkeypatch):
+    graph, ids, _, _ = canonical_graph
+    client, caller, _ = native_api
+    people, act = _native_workflow_actors(ids, monkeypatch, caller)
+    act("submitter")
+    intake_id = client.post("/api/v1/canonical-intakes", json=command(),
+        headers={"Idempotency-Key": "synthetic-native-negative-submit"}).json()["intake_id"]
+    workflow = _native_detail(client, intake_id)["workflow"]
+    body = {"owner_subject_id": people["assignee"], "owner_role": "expansion_user",
+            "due_at": workflow["due_at"], "reason": "Synthetic native assignment"}
+    before = snapshot(canonical_graph)
+    # Staff cannot assign; stale Intake version is a conflict; captured
+    # principal fences refuse before any storage.
+    assert client.put(f"/api/v1/intakes/{intake_id}/assignment", json=body,
+        headers={"Idempotency-Key": "synthetic-native-neg-assign-1", "If-Match": 'W/"1"'}).status_code == 403
+    act("manager")
+    assert client.put(f"/api/v1/intakes/{intake_id}/assignment", json=body,
+        headers={"Idempotency-Key": "synthetic-native-neg-assign-2", "If-Match": 'W/"7"'}).status_code == 409
+    assert client.put(f"/api/v1/intakes/{intake_id}/assignment", json=body,
+        headers={"Idempotency-Key": "synthetic-native-neg-assign-3", "If-Match": 'W/"1"',
+                 "If-Actor-Match": str(uuid4())}).status_code in {403, 409}
+    # Unclaimed SLA pause by a manager with a non-approved reason is denied.
+    assert client.post(f"/api/v1/sla-instances/{workflow['sla_instance_id']}/actions/pause",
+        json={"reason": "Not an approved hold", "expected_resume_at": "2099-01-01T00:00:00Z"},
+        headers={"Idempotency-Key": "synthetic-native-neg-pause-1", "If-Match": 'W/"1"'}).status_code == 409
+    # Another tenant cannot see the native resource at all.
+    caller["principal"] = Principal(people["manager"], frozenset({Role.SITE_REVIEWER}), Scope(tenant_id=str(uuid4())))
+    assert client.post(f"/api/v1/assignments/{workflow['assignment_id']}/actions/claim",
+        json={"reason": "Synthetic foreign claim"},
+        headers={"Idempotency-Key": "synthetic-native-neg-claim-1", "If-Match": 'W/"1"'}).status_code == 404
+    assert snapshot(canonical_graph) == before
+    assert _legacy_business_documents(canonical_graph) == []
+
+
+@pytest.mark.parametrize("mutation", ["audit", "outbox", "receipt", "transition"])
+def test_native_workflow_failure_rolls_back_rows_audit_outbox_and_receipt_then_same_key_succeeds(
+        canonical_graph, native_api, monkeypatch, mutation):
+    graph, ids, _, _ = canonical_graph
+    client, caller, store = native_api
+    people, act = _native_workflow_actors(ids, monkeypatch, caller)
+    act("submitter")
+    intake_id = client.post("/api/v1/canonical-intakes", json=command(),
+        headers={"Idempotency-Key": "synthetic-native-rollback-sub"}).json()["intake_id"]
+    workflow = _native_detail(client, intake_id)["workflow"]
+    act("manager")
+    body = {"owner_subject_id": people["assignee"], "owner_role": "expansion_user",
+            "due_at": workflow["due_at"], "reason": "Synthetic native assignment"}
+    headers = {"Idempotency-Key": "synthetic-native-rollback-assign", "If-Match": 'W/"1"'}
+    before = snapshot(canonical_graph)
+    with monkeypatch.context() as patch:
+        def fail(*args, **kwargs):
+            raise CanonicalAuditUnavailable("Explicit synthetic transaction failure")
+
+        if mutation == "audit":
+            patch.setattr(graph.audit_sink, "persist", fail)
+        elif mutation == "outbox":
+            patch.setattr(type(graph), "_outbox", fail)
+        elif mutation == "transition":
+            execute = graph.engine.execute
+
+            def fail_transition(sql, *args, **kwargs):
+                if sql.startswith("INSERT INTO workflow.sla_transitions"):
+                    fail()
+                return execute(sql, *args, **kwargs)
+
+            patch.setattr(graph.engine, "execute", fail_transition)
+        else:
+            patch.setattr(store, "flush", fail)
+        failed = client.put(f"/api/v1/intakes/{intake_id}/assignment", json=body, headers=headers)
+        assert failed.status_code == 503, failed.text
+    assert snapshot(canonical_graph) == before
+    probe = client.get(f"/api/v1/intakes/{intake_id}/assignment/receipt",
+        headers={"Idempotency-Key": headers["Idempotency-Key"]})
+    assert probe.status_code == 200 and probe.json()["observation"] == "NOT_OBSERVED"
+    retried = client.put(f"/api/v1/intakes/{intake_id}/assignment", json=body, headers=headers)
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["status"] == "ASSIGNED"
+
+
+def test_historical_pause_without_recorded_expectation_stays_unavailable(canonical_graph, native_api, monkeypatch):
+    graph, ids, _, _ = canonical_graph
+    client, caller, _ = native_api
+    people, act = _native_workflow_actors(ids, monkeypatch, caller)
+    act("submitter")
+    intake_id = client.post("/api/v1/canonical-intakes", json=command(),
+        headers={"Idempotency-Key": "synthetic-native-history-sub1"}).json()["intake_id"]
+    workflow = _native_detail(client, intake_id)["workflow"]
+    with graph.transaction(ids["tenant"]):
+        # An older closed interval with no recorded expectation (pre-007 row).
+        graph.engine.execute("INSERT INTO workflow.sla_pause_intervals (tenant_id,sla_instance_id,paused_at,resumed_at,"
+            "reason,approved_by,created_by) VALUES (?,?,?,?,?,?,?)",
+            (ids["tenant"], workflow["sla_instance_id"], workflow["started_at"],
+             (datetime.fromisoformat(workflow["started_at"]) + timedelta(minutes=5)).isoformat(),
+             "Synthetic approved hold", str(uuid4()), str(uuid4())))
+    before = snapshot(canonical_graph)
+    act("manager")
+    response = client.post(f"/api/v1/sla-instances/{workflow['sla_instance_id']}/actions/pause",
+        json={"reason": "Synthetic approved hold", "expected_resume_at": "2099-01-01T00:00:00Z"},
+        headers={"Idempotency-Key": "synthetic-native-history-pause", "If-Match": 'W/"1"'})
+    assert response.status_code == 503 and "INTAKE_WORKFLOW_POLICY_UNAVAILABLE" in response.text
+    assert snapshot(canonical_graph) == before

@@ -5,6 +5,7 @@ import type {
   CanonicalMatchCasePropertyPage, CreateMatchCaseRequest, MatchCaseReceipt,
   DuplicateProposal, IdentityReviewRequest, ListingConfirmation, MatchCaseSummary, MergeProposal, NativeAssistedEntryCommand, SplitProposal, SubmitCanonicalIntakeRequest,
   NativeReceiptCommitted_CanonicalIntakeReceipt_, NativeReceiptNotObserved,
+  AssignmentReceipt, AssignmentTransferRequest, AssignmentTransferTargetPage, ReasonCommand, SlaPauseRequest, SlaReceipt,
 } from "@oday-plus/openapi-client";
 
 import { CanonicalIntakeReadError, type CanonicalIntakeReadContext } from "./canonicalIntakeTransport";
@@ -570,20 +571,81 @@ export async function readCanonicalAssistedEntryReceipt(context: CanonicalIntake
     signal, command, 202, (value) => assistedEntryReceipt(value, command));
 }
 
+// Existing V1 Assignment/SLA actions on a native workflow resource. The POST
+// URL/body/If-Match are unchanged; the closed reference names only the action,
+// resource, key and captured version for the thin GET receipt observation.
+export type CanonicalWorkflowAction = "claim" | "transfer" | "complete" | "pause" | "resume";
+export type CanonicalWorkflowCommand = { key: string; action: CanonicalWorkflowAction; resourceId: string;
+  expectedVersion: number; body: ReasonCommand | AssignmentTransferRequest | SlaPauseRequest };
+export type CanonicalWorkflowReceiptReference = Pick<CanonicalWorkflowCommand, "key" | "action" | "resourceId" | "expectedVersion">;
+export type CanonicalWorkflowReceipt = AssignmentReceipt | SlaReceipt;
+const WORKFLOW_ACTIONS: readonly CanonicalWorkflowAction[] = ["claim", "transfer", "complete", "pause", "resume"];
+const ASSIGNMENT_STATES = ["UNASSIGNED", "ASSIGNED", "CLAIMED", "TRANSFERRED", "ESCALATED", "COMPLETED"];
+const SLA_STATES = ["ON_TRACK", "DUE_SOON", "OVERDUE", "BREACHED", "COMPLETED", "PAUSED"];
+
+function workflowPath(reference: Pick<CanonicalWorkflowReceiptReference, "action" | "resourceId">): string {
+  if (!WORKFLOW_ACTIONS.includes(reference.action) || !uuid(reference.resourceId))
+    throw new CanonicalIntakeReadError(422, "CANONICAL_COMMAND_INVALID", "");
+  const family = reference.action === "pause" || reference.action === "resume" ? "sla-instances" : "assignments";
+  return `/api/v1/${family}/${encodeURIComponent(reference.resourceId)}/actions/${reference.action}`;
+}
+
+function workflowReceipt(v: unknown, reference: Pick<CanonicalWorkflowReceiptReference, "action" | "resourceId">): CanonicalWorkflowReceipt {
+  const sla = reference.action === "pause" || reference.action === "resume";
+  if (!object(v) || !version(v.version) || !uuid(v.audit_event_id) || !timestamp(v.due_at)
+    || (sla ? !(v.sla_instance_id === reference.resourceId && typeof v.state === "string" && SLA_STATES.includes(v.state)
+        && Number.isSafeInteger(v.paused_duration_seconds) && Number(v.paused_duration_seconds) >= 0 && uuid(v.correlation_id)
+        && (v.due_soon_at === undefined || v.due_soon_at === null || timestamp(v.due_soon_at))
+        && (v.active_pause_interval_id === undefined || nullableUuid(v.active_pause_interval_id))
+        && (reference.action === "pause") === (v.state === "PAUSED") && (reference.action === "pause") === uuid(v.active_pause_interval_id))
+      : !(v.assignment_id === reference.resourceId && typeof v.status === "string" && ASSIGNMENT_STATES.includes(v.status)
+        && uuid(v.owner_subject_id))))
+    throw new CanonicalIntakeReadError(200, "CANONICAL_RESPONSE_INVALID", "");
+  return v as CanonicalWorkflowReceipt;
+}
+
+export async function submitCanonicalWorkflow(context: CanonicalIntakeReadContext, command: CanonicalWorkflowCommand,
+  signal: AbortSignal): Promise<CanonicalWorkflowReceipt> {
+  // Captured once by the shared owner; an uncertain result is retried with the
+  // same key, body and If-Match, never a fresh command.
+  return workflowReceipt(await read(context, workflowPath(command), signal, command), command);
+}
+
+export async function readCanonicalWorkflowReceipt(context: CanonicalIntakeReadContext, reference: CanonicalWorkflowReceiptReference,
+  signal: AbortSignal): Promise<CanonicalReceiptObservation<CanonicalWorkflowReceipt>> {
+  return readReceipt(context, workflowPath(reference) + "/receipt", signal, { key: reference.key }, 200,
+    (value) => workflowReceipt(value, reference));
+}
+
+export async function readCanonicalAssignmentTransferTargets(context: CanonicalIntakeReadContext, assignmentId: string,
+  expectedVersion: number, signal: AbortSignal): Promise<AssignmentTransferTargetPage> {
+  if (!uuid(assignmentId) || !version(expectedVersion)) throw new CanonicalIntakeReadError(422, "CANONICAL_COMMAND_INVALID", "");
+  const v = await read(context, `/api/v1/assignments/${encodeURIComponent(assignmentId)}/transfer-targets`, signal);
+  if (!object(v) || v.assignment_id !== assignmentId || v.assignment_version !== expectedVersion || !Array.isArray(v.items)
+    || v.items.length > 200 || !v.items.every((item) => object(item) && uuid(item.subject_id) && text(item.display_name)
+      && text(item.owner_role, 128)))
+    throw new CanonicalIntakeReadError(200, "CANONICAL_RESPONSE_INVALID", "");
+  return v as AssignmentTransferTargetPage;
+}
+
 // References contain no command input, credentials, headers or authority.
 // Both captured and restored lookups use the original typed receipt readers.
 export type CanonicalCommandReceiptReference = { kind: "url"; key: string }
   | ({ kind: "case" } & CanonicalMatchCaseReceiptReference)
   | ({ kind: "identity" } & CanonicalIdentityReceiptReference)
-  | ({ kind: "manual" } & Pick<CanonicalAssistedEntryCommand, "key" | "intakeId" | "expectedVersion">);
+  | ({ kind: "manual" } & Pick<CanonicalAssistedEntryCommand, "key" | "intakeId" | "expectedVersion">)
+  | ({ kind: "workflow" } & CanonicalWorkflowReceiptReference);
 export type CanonicalCommandReceipt = CanonicalIntakeReceipt | MatchCaseReceipt
-  | CanonicalIdentityReceipt | CanonicalIntakeAssistedEntryRequestReceipt;
+  | CanonicalIdentityReceipt | CanonicalIntakeAssistedEntryRequestReceipt | CanonicalWorkflowReceipt;
 
 export function parseCanonicalCommandReceiptReference(value: unknown): CanonicalCommandReceiptReference | null {
   if (!object(value) || typeof value.key !== "string" || !/^[A-Za-z0-9._:-]{16,128}$/.test(value.key)) return null;
   const only = (keys: string[]) => Object.keys(value).every((key) => ["kind", "key", ...keys].includes(key));
   if (value.kind === "url" && only([])) return value as CanonicalCommandReceiptReference;
   if (!version(value.expectedVersion)) return null;
+  if (value.kind === "workflow" && only(["expectedVersion", "action", "resourceId"])
+    && WORKFLOW_ACTIONS.includes(value.action as CanonicalWorkflowAction) && uuid(value.resourceId))
+    return value as CanonicalCommandReceiptReference;
   if (value.kind === "identity" && only(["expectedVersion", "matchCaseId", "decisionId"])
     && uuid(value.matchCaseId) && (value.decisionId === undefined || uuid(value.decisionId))) return value as CanonicalCommandReceiptReference;
   if (!uuid(value.intakeId)) return null;
@@ -605,5 +667,6 @@ export async function readCanonicalCommandReceipt(context: CanonicalIntakeReadCo
     case "case": return readCanonicalMatchCaseReceipt(context, reference, signal);
     case "identity": return readCanonicalIdentityReceipt(context, reference, signal);
     case "manual": return readCanonicalAssistedEntryReceipt(context, reference, signal);
+    case "workflow": return readCanonicalWorkflowReceipt(context, reference, signal);
   }
 }

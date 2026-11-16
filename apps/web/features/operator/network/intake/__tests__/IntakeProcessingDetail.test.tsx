@@ -20,6 +20,7 @@ import { decisionOptions, matchConfidence } from "../intakeTypes";
 import { IntakeStageTimeline, jobStatusBadgeColors } from "../IntakeStageTimeline";
 import { EvidencePanel } from "../EvidencePanel";
 import type { CanonicalIntakeReadContext } from "../canonicalIntakeReadClient";
+import { CanonicalIntakeCommandProvider } from "../useCanonicalIntakeCommand";
 import { isSnapshotStale } from "../intakeFreshness";
 
 const nav = vi.hoisted(() => {
@@ -1512,8 +1513,11 @@ describe("native recorded history in the original continuous detail", () => {
       sla_state: "ON_TRACK", policy_version: "synthetic-policy-v1", calendar_version: "synthetic-calendar-v1",
       started_at: "2026-10-15T08:00:00Z", due_soon_at: "2026-10-15T09:00:00Z", due_at: "2026-10-15T10:00:00Z", breach_at: "2026-10-15T11:00:00Z" };
     const context = nativeContext();
-    render(<IntakeProcessingDetail canonical={canonical} readContext={context} matchCase={null} intakeId={canonical.intake_id}
-      detailHref={`/intake/${canonical.intake_id}`} onClose={vi.fn()} onRefresh={vi.fn()}><p>Original identity owner</p></IntakeProcessingDetail>);
+    // Production always renders native detail under the account-bound owner.
+    render(<CanonicalIntakeCommandProvider context={context}>
+      <IntakeProcessingDetail canonical={canonical} readContext={context} matchCase={null} intakeId={canonical.intake_id}
+        detailHref={`/intake/${canonical.intake_id}`} onClose={vi.fn()} onRefresh={vi.fn()}><p>Original identity owner</p></IntakeProcessingDetail>
+    </CanonicalIntakeCommandProvider>);
     const root = screen.getByTestId("intake-detail-dialog");
     const ids = ["intake-submission-summary", "assignment-sla-summary", "intake-processing-stages", "intake-source-policy-evidence"];
     const positions = ids.map((id) => Array.from(root.querySelectorAll("[data-testid]")).indexOf(screen.getByTestId(id)));
@@ -1523,6 +1527,79 @@ describe("native recorded history in the original continuous detail", () => {
     expect(screen.queryByTestId("timeline-stepper")).toBeNull();
     expect(screen.queryByText("100%")).toBeNull();
     expect(context.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("wires native shared summary actions to the original V1 routes with captured version and one key", async () => {
+    const canonical = nativeDetail();
+    canonical.workflow = { assignment_id: nativeId(61), assignment_version: 2, assignment_status: "ASSIGNED",
+      owner_subject_id: nativeId(13), owner_role: "expansion_user", queue_key: "synthetic-original-queue",
+      sla_instance_id: nativeId(62), sla_version: 3, sla_state: "ON_TRACK", policy_version: "synthetic-policy-v1",
+      calendar_version: "synthetic-calendar-v1", started_at: "2026-10-15T08:00:00Z", due_soon_at: "2026-10-15T09:00:00Z",
+      due_at: "2026-10-15T10:00:00Z", breach_at: "2026-10-15T11:00:00Z" };
+    const sent: { path: string; init: RequestInit }[] = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      sent.push({ path: String(input), init: init ?? {} });
+      if (sent.length === 1) throw new TypeError("isolated uncertain claim reply");
+      return nativeJson({ assignment_id: nativeId(61), status: "CLAIMED", owner_subject_id: nativeId(13),
+        due_at: "2026-10-15T10:00:00Z", version: 3, audit_event_id: nativeId(70) });
+    });
+    const context = nativeContext(fetchImpl);
+    const refresh = vi.fn();
+    render(<CanonicalIntakeCommandProvider context={context}>
+      <IntakeProcessingDetail canonical={canonical} readContext={context} matchCase={null} intakeId={canonical.intake_id}
+        detailHref={`/intake/${canonical.intake_id}`} onClose={vi.fn()} onRefresh={refresh}><p>Original identity owner</p></IntakeProcessingDetail>
+    </CanonicalIntakeCommandProvider>);
+    const summary = screen.getByTestId("assignment-sla-summary");
+    expect(within(summary).queryByTestId("asg-btn-complete")).toBeNull();
+    expect(within(summary).queryByTestId("asg-btn-resume")).toBeNull();
+    fireEvent.click(within(summary).getByTestId("asg-btn-claim"));
+    expect(await screen.findByText(/結果尚未確認/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重試同一指派／SLA 操作" }));
+    expect(await screen.findByTestId("native-workflow-receipt")).toHaveTextContent("CLAIMED");
+    expect(sent).toHaveLength(2);
+    for (const { path, init } of sent) {
+      expect(path).toBe(`/api/v1/assignments/${nativeId(61)}/actions/claim`);
+      expect(init.method).toBe("POST");
+      expect(new Headers(init.headers).get("If-Match")).toBe('W/"2"');
+    }
+    const keys = sent.map(({ init }) => new Headers(init.headers).get("Idempotency-Key"));
+    expect(keys[0]).toMatch(/^canonical-workflow:/);
+    expect(keys[1]).toBe(keys[0]);
+    expect(sent[1]!.init.body).toBe(sent[0]!.init.body);
+    fireEvent.click(screen.getByRole("button", { name: "重新讀取指派與 SLA" }));
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("pauses the native SLA only with an explicit reason and expected resume, against the SLA version", async () => {
+    const canonical = nativeDetail();
+    canonical.workflow = { assignment_id: nativeId(61), assignment_version: 2, assignment_status: "UNASSIGNED",
+      owner_subject_id: null, owner_role: null, queue_key: "synthetic-original-queue",
+      sla_instance_id: nativeId(62), sla_version: 3, sla_state: "ON_TRACK", policy_version: "synthetic-policy-v1",
+      calendar_version: "synthetic-calendar-v1", started_at: "2026-10-15T08:00:00Z", due_soon_at: "2026-10-15T09:00:00Z",
+      due_at: "2026-10-15T10:00:00Z", breach_at: "2026-10-15T11:00:00Z" };
+    const fetchImpl = vi.fn<typeof fetch>(async () => nativeJson({ sla_instance_id: nativeId(62), state: "PAUSED",
+      due_at: "2026-10-15T10:00:00Z", paused_duration_seconds: 0, version: 4, audit_event_id: nativeId(71),
+      correlation_id: nativeId(72), due_soon_at: "2026-10-15T09:00:00Z", active_pause_interval_id: nativeId(73) }));
+    const context = nativeContext(fetchImpl);
+    render(<CanonicalIntakeCommandProvider context={context}>
+      <IntakeProcessingDetail canonical={canonical} readContext={context} matchCase={null} intakeId={canonical.intake_id}
+        detailHref={`/intake/${canonical.intake_id}`} onClose={vi.fn()} onRefresh={vi.fn()}><p>Original identity owner</p></IntakeProcessingDetail>
+    </CanonicalIntakeCommandProvider>);
+    const summary = screen.getByTestId("assignment-sla-summary");
+    expect(within(summary).queryByTestId("asg-btn-claim")).toBeNull();
+    fireEvent.click(within(summary).getByTestId("asg-btn-pause"));
+    expect(screen.getByTestId("native-pause-submit")).toBeDisabled();
+    fireEvent.change(screen.getByTestId("native-pause-reason"), { target: { value: "Synthetic approved hold" } });
+    fireEvent.change(screen.getByTestId("native-pause-resume-at"), { target: { value: "2026-10-15T12:30" } });
+    fireEvent.click(screen.getByTestId("native-pause-submit"));
+    expect(await screen.findByTestId("native-workflow-receipt")).toHaveTextContent("PAUSED");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [path, init] = fetchImpl.mock.calls[0]!;
+    expect(String(path)).toBe(`/api/v1/sla-instances/${nativeId(62)}/actions/pause`);
+    expect(new Headers(init?.headers).get("If-Match")).toBe('W/"3"');
+    const body = JSON.parse(String(init?.body));
+    expect(body.reason).toBe("Synthetic approved hold");
+    expect(Date.parse(body.expected_resume_at)).toBe(new Date("2026-10-15T12:30").getTime());
   });
 
   it("reads only actual later/earlier pages through the existing injected GET transport", async () => {

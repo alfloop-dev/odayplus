@@ -7,7 +7,11 @@ import type {
   CanonicalIntakeParserRunMetadata, CanonicalIntakeParserFields,
 } from "@oday-plus/openapi-client";
 import { AssistedEntryForm } from "./AssistedEntryForm";
-import { CANONICAL_INTAKE_STAGE_LABEL, readCanonicalIntakeParserFields, type CanonicalIntakeReadContext } from "./canonicalIntakeReadClient";
+import {
+  CANONICAL_INTAKE_STAGE_LABEL, readCanonicalAssignmentTransferTargets, readCanonicalIntakeParserFields, submitCanonicalWorkflow,
+  type CanonicalIntakeReadContext, type CanonicalWorkflowAction, type CanonicalWorkflowCommand, type CanonicalWorkflowReceipt,
+} from "./canonicalIntakeReadClient";
+import { useCanonicalIntakeCommand } from "./useCanonicalIntakeCommand";
 import { CanonicalInputFields, CanonicalIntakeFailure } from "./CanonicalIdentityDecisionPanel";
 import { AssignmentSlaSummary } from "./AssignmentSlaSummary";
 import { DurableReceiptPanel } from "./DurableReceiptPanel";
@@ -121,16 +125,17 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
       </header>
       {native ? <>
         {canonical ? <NativeIntakeSections canonical={canonical} context={props.readContext} busy={busy}
-          recovery={props.recovery} onLineageSelect={() => props.onSectionChange?.("lineage")} /> : props.recovery}
+          recovery={props.recovery} onLineageSelect={() => props.onSectionChange?.("lineage")}
+          onRefresh={props.onRefresh} /> : props.recovery}
         {props.children}
       </> : <AssistedIntakeSections {...props} />}
     </section>
   );
 }
 
-function NativeIntakeSections({ canonical, context, recovery, busy, onLineageSelect }: {
+function NativeIntakeSections({ canonical, context, recovery, busy, onLineageSelect, onRefresh }: {
   canonical: CanonicalIntakeDetail; context: CanonicalIntakeReadContext; recovery?: ReactNode;
-  busy: boolean; onLineageSelect: () => void;
+  busy: boolean; onLineageSelect: () => void; onRefresh: () => void;
 }) {
   const epoch = useRef(0);
   const frame = useMemo(() => ({ canonical, context }), [canonical, context]);
@@ -156,15 +161,8 @@ function NativeIntakeSections({ canonical, context, recovery, busy, onLineageSel
         <Meta label="HeatZone 識別碼" value={canonical.scope.heat_zone_id ?? null} />
       </div>
     </section>
-    {canonical.workflow ? <AssignmentSlaSummary record={{
-      owner: null, ownerSubjectId: canonical.workflow.owner_subject_id,
-      assignedQueue: canonical.workflow.queue_key,
-      assignmentId: canonical.workflow.assignment_id,
-      assignmentStatus: canonical.workflow.assignment_status,
-      slaInstanceId: canonical.workflow.sla_instance_id,
-      slaState: canonical.workflow.sla_state, dueAt: canonical.workflow.due_at,
-    }} assignmentResourceVersion={canonical.workflow.assignment_version}
-      slaResourceVersion={canonical.workflow.sla_version} />
+    {canonical.workflow ? <NativeWorkflowControls key={`${canonical.workflow.assignment_id}:${canonical.workflow.assignment_version}:${canonical.workflow.sla_version}`}
+      workflow={canonical.workflow} context={context} busy={busy} onRefresh={onRefresh} />
       : <p>尚無可讀取的指派與 SLA 資料。</p>}
     <section data-intake-section="processing" data-testid="intake-processing-stages">
       <IntakeStageTimeline canonical={canonical} context={context} />
@@ -201,6 +199,104 @@ function NativeIntakeSections({ canonical, context, recovery, busy, onLineageSel
     </section>
   </>;
 }
+
+type NativeWorkflow = NonNullable<CanonicalIntakeDetail["workflow"]>;
+type WorkflowForm = { action: "transfer" | "pause" } | null;
+
+/** Native detail wires the shared summary to the original V1 actions.
+ * One account-bound owner captures each command; retries reuse its key/body/version. */
+function NativeWorkflowControls({ workflow, context, busy, onRefresh }: {
+  workflow: NativeWorkflow; context: CanonicalIntakeReadContext; busy: boolean; onRefresh: () => void;
+}) {
+  const command = useCanonicalIntakeCommand<CanonicalWorkflowCommand, CanonicalWorkflowReceipt>(context,
+    (packet, signal) => submitCanonicalWorkflow(context, packet, signal),
+    (packet) => `${WORKFLOW_ACTION_LABEL[packet.action]}：${packet.resourceId}`,
+    (packet) => ({ kind: "workflow", key: packet.key, action: packet.action, resourceId: packet.resourceId,
+      expectedVersion: packet.expectedVersion }));
+  const [form, setForm] = useState<WorkflowForm>(null);
+  const [reason, setReason] = useState("");
+  const [handoff, setHandoff] = useState("");
+  const [resumeAt, setResumeAt] = useState("");
+  const [target, setTarget] = useState("");
+  const [targets, setTargets] = useState<{ status: "idle" | "loading" } | { status: "error"; error: unknown }
+    | { status: "ready"; items: { subject_id: string; display_name: string; owner_role: string }[] }>({ status: "idle" });
+  const locked = busy || command.busy || command.blocked || command.hasPending || Boolean(command.receipt);
+  const status = workflow.assignment_status, sla = workflow.sla_state;
+  const send = (action: CanonicalWorkflowAction, body: CanonicalWorkflowCommand["body"]) => {
+    const sla = action === "pause" || action === "resume";
+    void command.submit(() => ({ key: `canonical-workflow:${crypto.randomUUID()}`, action,
+      resourceId: sla ? workflow.sla_instance_id : workflow.assignment_id,
+      expectedVersion: sla ? workflow.sla_version : workflow.assignment_version, body }));
+  };
+  const explicit = (value: string) => value.trim().length >= 3;
+  const openTransfer = () => {
+    setForm({ action: "transfer" }); setTargets({ status: "loading" });
+    const controller = new AbortController();
+    void readCanonicalAssignmentTransferTargets(context, workflow.assignment_id, workflow.assignment_version, controller.signal).then(
+      (page) => setTargets({ status: "ready", items: page.items }), (error) => setTargets({ status: "error", error }));
+  };
+  const selected = targets.status === "ready" ? targets.items.find((item) => item.subject_id === target) : undefined;
+  return <div data-testid="native-workflow-controls">
+    <AssignmentSlaSummary record={{
+      owner: null, ownerSubjectId: workflow.owner_subject_id,
+      assignedQueue: workflow.queue_key,
+      assignmentId: workflow.assignment_id,
+      assignmentStatus: workflow.assignment_status,
+      slaInstanceId: workflow.sla_instance_id,
+      slaState: workflow.sla_state, dueAt: workflow.due_at,
+    }} assignmentResourceVersion={workflow.assignment_version}
+      slaResourceVersion={workflow.sla_version} busy={locked}
+      onClaim={["ASSIGNED", "TRANSFERRED", "ESCALATED"].includes(status) ? () => { setForm(null); send("claim", { reason: "認領指派的收件處理工作" }); } : undefined}
+      onOpenTransfer={["ASSIGNED", "CLAIMED"].includes(status) ? openTransfer : undefined}
+      onOpenPause={["ON_TRACK", "DUE_SOON", "OVERDUE"].includes(sla) ? () => setForm({ action: "pause" }) : undefined}
+      onResume={sla === "PAUSED" ? () => { setForm(null); send("resume", { reason: "恢復 SLA 計時" }); } : undefined}
+      onComplete={["CLAIMED", "ESCALATED"].includes(status) ? () => { setForm(null); send("complete", { reason: "完成收件處理工作" }); } : undefined} />
+    {form?.action === "pause" ? <form aria-label="暫停 SLA" className={styles.sectionBox} onSubmit={(event) => {
+      event.preventDefault();
+      if (!explicit(reason) || !resumeAt) return;
+      send("pause", { reason: reason.trim(), expected_resume_at: new Date(resumeAt).toISOString() });
+    }}>
+      <label>暫停原因<input data-testid="native-pause-reason" value={reason} disabled={locked} onChange={(event) => setReason(event.target.value)} /></label>
+      <label>預計恢復時間<input data-testid="native-pause-resume-at" type="datetime-local" value={resumeAt} disabled={locked}
+        onChange={(event) => setResumeAt(event.target.value)} /></label>
+      <button className={styles.primaryButton} data-testid="native-pause-submit" disabled={locked || !explicit(reason) || !resumeAt} type="submit">送出暫停</button>
+      <button className={styles.secondaryButton} disabled={locked} type="button" onClick={() => setForm(null)}>取消</button>
+    </form> : null}
+    {form?.action === "transfer" ? <form aria-label="轉交指派" className={styles.sectionBox} onSubmit={(event) => {
+      event.preventDefault();
+      if (!selected || !explicit(reason) || !explicit(handoff)) return;
+      send("transfer", { target_owner_subject_id: selected.subject_id, target_owner_role: selected.owner_role,
+        reason: reason.trim(), handoff_note: handoff.trim() });
+    }}>
+      {targets.status === "loading" ? <p role="status">正在讀取可轉交對象…</p> : targets.status === "error"
+        ? <CanonicalIntakeFailure error={targets.error} /> : targets.status === "ready" ? (targets.items.length === 0
+          ? <p>目前沒有可轉交的對象。</p> : <label>轉交對象<select data-testid="native-transfer-target" value={target} disabled={locked}
+            onChange={(event) => setTarget(event.target.value)}>
+            <option value="">請選擇</option>
+            {targets.items.map((item) => <option key={item.subject_id} value={item.subject_id}>{item.display_name} · {item.owner_role}</option>)}
+          </select></label>) : null}
+      <label>轉交原因<input data-testid="native-transfer-reason" value={reason} disabled={locked} onChange={(event) => setReason(event.target.value)} /></label>
+      <label>交接說明<input data-testid="native-transfer-handoff" value={handoff} disabled={locked} onChange={(event) => setHandoff(event.target.value)} /></label>
+      <button className={styles.primaryButton} data-testid="native-transfer-submit" disabled={locked || !selected || !explicit(reason) || !explicit(handoff)} type="submit">送出轉交</button>
+      <button className={styles.secondaryButton} disabled={locked} type="button" onClick={() => setForm(null)}>取消</button>
+    </form> : null}
+    {command.receipt ? <div role="status" className={styles.noteBox} data-testid="native-workflow-receipt">
+      <p>{"assignment_id" in command.receipt ? `指派 ${command.receipt.assignment_id} · ${command.receipt.status}`
+        : `SLA ${command.receipt.sla_instance_id} · ${command.receipt.state}`} · 版本 {command.receipt.version}</p>
+      <p>稽核紀錄 {command.receipt.audit_event_id}；請重新讀取收件以取得最新的指派與 SLA 狀態。</p>
+      <button className={styles.secondaryButton} type="button" onClick={onRefresh}>重新讀取指派與 SLA</button>
+    </div> : null}
+    {command.error ? <><CanonicalIntakeFailure error={command.error} />
+      {command.hasPending ? <><p>結果尚未確認；重試會沿用同一請求識別、內容與版本。</p>
+        <button className={styles.secondaryButton} type="button" disabled={command.busy}
+          onClick={() => void command.submit(() => { throw new Error("CAPTURED_COMMAND_REQUIRED"); })}>重試同一指派／SLA 操作</button></> : null}</> : null}
+    {command.blocked && !command.hasPending ? <p role="status">先前收件操作尚待確認；請先核對頁面上的原操作狀態。</p> : null}
+  </div>;
+}
+
+const WORKFLOW_ACTION_LABEL: Record<CanonicalWorkflowAction, string> = {
+  claim: "認領指派", transfer: "轉交指派", complete: "完成指派", pause: "暫停 SLA", resume: "恢復 SLA",
+};
 
 function NativeParserFields({ canonical, context, selected }: {
   canonical: CanonicalIntakeDetail; context: CanonicalIntakeReadContext; selected: CanonicalIntakeParserRunMetadata;

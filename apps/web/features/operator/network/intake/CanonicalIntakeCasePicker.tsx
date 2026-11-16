@@ -267,7 +267,7 @@ export function CanonicalIntakeCommandStatus() {
   return <section aria-label="先前收件操作" className={styles.noteBox}>
     <p>{command.description}</p>
     {command.receipt ? <>
-      <p role="status">原操作已收到回執 · 稽核紀錄 {command.receipt.audit_event_id} · 查詢編號 {command.receipt.correlation_id}</p>
+      <p role="status">原操作已收到回執 · 稽核紀錄 {command.receipt.audit_event_id} · 查詢編號 {"correlation_id" in command.receipt ? command.receipt.correlation_id : "未提供"}</p>
       <p>{command.receiptDescription}</p>
       <p>回執僅表示這次請求已受理；後續處理結果請重新讀取原收件或案件。</p>
       <button type="button" className={styles.secondaryButton} onClick={owner.dismissReceipt}>收起原操作回執</button>

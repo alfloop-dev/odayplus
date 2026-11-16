@@ -633,7 +633,22 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                     "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], fresh_id)).fetchall()
                 sla, = connection.execute("SELECT assignment_id,version FROM workflow.sla_instances "
                     "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], fresh_id)).fetchall()
-                assert assignment[1:] == ("UNASSIGNED", 1) and sla == (assignment[0], 1)
+                if body["original_url"] != credentials["fresh_urls"]["replay"]:
+                    assert assignment[1:] == ("UNASSIGNED", 1) and sla == (assignment[0], 1)
+                else:
+                    # The browser paused and resumed this SLA through the
+                    # original V1 controls; the native Intake row is untouched.
+                    assert sla == (assignment[0], 3) and assignment[1] == "UNASSIGNED" and assignment[2] in {1, 2}
+                    assert [str(r[0]) for r in connection.execute("SELECT permission FROM workflow.sla_transitions "
+                        "WHERE tenant_id=%s AND sla_instance_id=(SELECT sla_instance_id FROM workflow.sla_instances "
+                        "WHERE tenant_id=%s AND intake_id=%s) ORDER BY sequence_no",
+                        (ids["tenant"], ids["tenant"], fresh_id)).fetchall()] == ["sla.create", "sla.pause", "sla.resume"]
+                    pause, = connection.execute("SELECT created_by,approved_by,expected_resume_at,resumed_at,version "
+                        "FROM workflow.sla_pause_intervals WHERE tenant_id=%s AND sla_instance_id=(SELECT sla_instance_id "
+                        "FROM workflow.sla_instances WHERE tenant_id=%s AND intake_id=%s)",
+                        (ids["tenant"], ids["tenant"], fresh_id)).fetchall()
+                    assert str(pause[0]) == ids["reviewer"] and pause[1] != pause[0]
+                    assert pause[2] is not None and pause[3] is not None and pause[2] != pause[3] and pause[4] == 2
                 for table in ("workflow.assignment_transitions", "workflow.sla_transitions"):
                     assert connection.execute(f"SELECT count(*) FROM {table} WHERE tenant_id=%s AND correlation_id=%s",
                         (ids["tenant"], receipt["correlation_id"])).fetchone()[0] == 1

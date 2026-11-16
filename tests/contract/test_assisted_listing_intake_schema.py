@@ -21,6 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
+import psycopg
 import pytest
 
 from shared.infrastructure.persistence import assisted_listing_intake as intake
@@ -94,6 +95,7 @@ def test_migration_reproduces_reviewed_contract_artifacts_byte_for_byte() -> Non
         "004_tenant_rls_lineage.sql",
         "005_decision_service_actor.sql",
         "006_workflow_schedule.sql",
+        "007_workflow_pause_expectation.sql",
     ]
     # Every ordered migration file must be a byte-for-byte copy of the artifact
     # it converts, so no approved constraint can be dropped or altered in transit.
@@ -134,12 +136,54 @@ def test_five_step_workflow_upgrade_retains_rows_unknowns_and_original_receipts(
     upgraded = intake.apply_upgrade_to_database(db.url())
     assert intake.apply_upgrade_to_database(db.url()) == upgraded
     with db.connect() as conn:
-        assert conn.execute("SELECT * FROM odp_runtime.assisted_intake_schema_migrations WHERE migration_name<>'001-006' ORDER BY migration_name").fetchall() == receipts
-        assert conn.execute("SELECT manifest_sha256 FROM odp_runtime.assisted_intake_schema_migrations WHERE migration_name='001-006'").fetchone() == (upgraded.manifest_sha256,)
+        assert conn.execute("SELECT * FROM odp_runtime.assisted_intake_schema_migrations WHERE migration_name NOT IN ('001-006','001-007') ORDER BY migration_name").fetchall() == receipts
+        assert conn.execute("SELECT manifest_sha256 FROM odp_runtime.assisted_intake_schema_migrations WHERE migration_name='001-006'").fetchone() == (intake.manifest_checksum(intake.migration_steps()[:6]),)
+        assert conn.execute("SELECT manifest_sha256 FROM odp_runtime.assisted_intake_schema_migrations WHERE migration_name='001-007'").fetchone() == (upgraded.manifest_sha256,)
         assert conn.execute("SELECT row_to_json(a) FROM workflow.assignments a").fetchone()[0] == old_assignment
         current = conn.execute("SELECT row_to_json(s) FROM workflow.sla_instances s").fetchone()[0]
         assert all(current.pop(key) is None for key in ("assignment_id", "calendar_version", "due_soon_at", "breach_at"))
         assert current == old_sla
+
+
+@live
+def test_six_step_install_upgrades_pause_history_without_inventing_expectations(intake_blank_db):
+    db = intake_blank_db
+    tenant, actor, iid, aid, sid, pid, correlation = (str(uuid4()) for _ in range(7))
+    with db.connect() as conn:
+        for _, sql in intake.upgrade_statements()[:6]:
+            conn.execute(intake._without_transaction_control(sql))
+        conn.execute("CREATE SCHEMA odp_runtime")
+        conn.execute("CREATE TABLE odp_runtime.assisted_intake_schema_migrations "
+                     "(migration_name text PRIMARY KEY,manifest_sha256 char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())")
+        for count in (4, 5, 6):
+            conn.execute("INSERT INTO odp_runtime.assisted_intake_schema_migrations VALUES (%s,%s,now())",
+                         (f"001-00{count}", intake.manifest_checksum(intake.migration_steps()[:count])))
+        conn.execute("INSERT INTO intake.intakes (intake_id,tenant_id,submitter_subject_id,intake_method,processing_state,correlation_id) "
+                     "VALUES (%s,%s,%s,'MANUAL','SUBMITTED',%s)", (iid, tenant, actor, correlation))
+        conn.execute("INSERT INTO workflow.sla_instances (sla_instance_id,tenant_id,intake_id,policy_version,state,started_at,due_at) "
+                     "VALUES (%s,%s,%s,'synthetic-old-policy','ON_TRACK','2026-10-13T00:00:00Z','2026-10-13T04:00:00Z')",
+                     (sid, tenant, iid))
+        conn.execute("INSERT INTO workflow.sla_pause_intervals (sla_pause_interval_id,tenant_id,sla_instance_id,paused_at,"
+                     "resumed_at,reason,approved_by,created_by) VALUES (%s,%s,%s,'2026-10-13T01:00:00Z',"
+                     "'2026-10-13T01:30:00Z','synthetic old hold',%s,%s)", (pid, tenant, sid, aid, actor))
+        receipts = conn.execute("SELECT * FROM odp_runtime.assisted_intake_schema_migrations ORDER BY migration_name").fetchall()
+        old_pause = conn.execute("SELECT row_to_json(p) FROM workflow.sla_pause_intervals p").fetchone()[0]
+    upgraded = intake.apply_upgrade_to_database(db.url())
+    assert intake.apply_upgrade_to_database(db.url()) == upgraded
+    with db.connect() as conn:
+        assert conn.execute("SELECT * FROM odp_runtime.assisted_intake_schema_migrations "
+                            "WHERE migration_name<>'001-007' ORDER BY migration_name").fetchall() == receipts
+        assert conn.execute("SELECT manifest_sha256 FROM odp_runtime.assisted_intake_schema_migrations "
+                            "WHERE migration_name='001-007'").fetchone() == (upgraded.manifest_sha256,)
+        current = conn.execute("SELECT row_to_json(p) FROM workflow.sla_pause_intervals p").fetchone()[0]
+        # The historical interval keeps an unknown expectation; nothing is
+        # derived from its actual resume or the SLA's current resume_at.
+        assert current.pop("expected_resume_at") is None
+        assert current == old_pause
+        with pytest.raises(psycopg.errors.CheckViolation), conn.transaction():
+            conn.execute("INSERT INTO workflow.sla_pause_intervals (tenant_id,sla_instance_id,paused_at,expected_resume_at,"
+                         "reason,approved_by,created_by) VALUES (%s,%s,'2026-10-13T02:00:00Z','2026-10-13T02:00:00Z',"
+                         "'synthetic new hold',%s,%s)", (tenant, sid, aid, actor))
 
 
 @live
