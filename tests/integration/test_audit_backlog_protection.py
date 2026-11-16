@@ -26,7 +26,7 @@ def case(intake_blank_db, monkeypatch, tmp_path):
 def _prepare(bundle):
     response = source._submit(bundle)
     assert response.status_code == 202, response.text
-    iid = response.json()["intake_id"]
+    iid = response.json()["rows"][0]["intake_id"]
     store = bundle.assisted_intake_store
     store.refresh(source.TENANT)
     # Controlled workflow precondition, not a parser execution claim.

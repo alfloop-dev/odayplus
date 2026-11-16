@@ -4,6 +4,56 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
+# One original Playwright producer for the full packet. The existing native
+# fixture calls only this phase while it owns SQL/session/worker lifetime;
+# stack setup, source binding, compilation and cleanup remain below.
+PLAYWRIGHT_COMMAND=(
+  npx playwright test
+  tests/e2e/e2e-network-find-areas-api-binding.spec.ts
+  tests/e2e/e2e-operator-console.spec.ts
+  tests/e2e/market_intelligence.spec.ts
+  tests/e2e/operator-assisted-listing-intake-a11y.spec.ts
+  tests/e2e/operator-assisted-listing-intake-mobile.spec.ts
+  tests/e2e/operator-assisted-listing-intake.spec.ts
+  tests/e2e/operator-governance.spec.ts
+  tests/e2e/operator-growth.spec.ts
+  tests/e2e/operator-network-assisted-intake.spec.ts
+  tests/e2e/operator-network-listings.spec.ts
+  tests/e2e/operator-network-rebalance.spec.ts
+  tests/e2e/operator-network-review.spec.ts
+  tests/e2e/operator-network-scoring.spec.ts
+  tests/e2e/operator-shell-layout.spec.ts
+  tests/e2e/operator-shell-today.spec.ts
+  tests/e2e/operator-store-ops.spec.ts
+  tests/e2e/product-e2e-env.spec.ts
+  tests/e2e/shell-resource-binding.spec.ts
+  --workers=1
+  --retries=0
+  --trace=retain-on-failure
+  --project=chromium
+  --reporter=json
+)
+if [[ "${1:-}" == "--native-playwright-phase" ]]; then
+  : "${ODP_NATIVE_BROWSER_SCENARIO_FILE:?Owned native browser context required}"
+  : "${ODP_E2E_PLAYWRIGHT_EXIT_FILE:?Original runner exit receipt required}"
+  : "${PLAYWRIGHT_JSON_OUTPUT_NAME:?Original Playwright payload required}"
+  test "${ODP_NATIVE_BROWSER_PRODUCT_PHASE:-}" = "1"
+  test "${ODP_OPERATOR_PRODUCT_GATE:-}" = "1"
+  test "${ODP_E2E_TESTED_SOURCE_SHA:-}" = "$(git rev-parse HEAD)"
+  test "${ODP_E2E_TESTED_TREE_SHA:-}" = "$(git rev-parse HEAD^{tree})"
+  if "${PLAYWRIGHT_COMMAND[@]}"; then
+    phase_status=0
+  else
+    phase_status=$?
+  fi
+  printf '%s\n' "$phase_status" >"$ODP_E2E_PLAYWRIGHT_EXIT_FILE"
+  exit "$phase_status"
+fi
+if [[ "$#" -ne 0 ]]; then
+  printf 'Unknown product E2E runner argument\n' >&2
+  exit 2
+fi
+
 if [[ -f .env.e2e ]]; then
   set -a
   # shellcheck disable=SC1091
@@ -26,6 +76,8 @@ export ODP_SCORE_BROWSER_CONTROL_KEY="synthetic-browser-control-20261013-local-o
 DIAGNOSTICS_DIR="${ODP_E2E_DIAGNOSTICS_DIR:-.odp_data/e2e-diagnostics}"
 COMPOSE=(docker compose -p "$PROJECT" -f infra/docker/docker-compose.e2e.yml)
 PLAYWRIGHT_PAYLOAD="$(mktemp "${TMPDIR:-/tmp}/odp-playwright-payload.XXXXXX.json")"
+ODP_E2E_PLAYWRIGHT_EXIT_FILE="$(mktemp "${TMPDIR:-/tmp}/odp-playwright-exit.XXXXXX")"
+export ODP_E2E_PLAYWRIGHT_EXIT_FILE
 PLAYWRIGHT_ARTIFACT="docs/evidence/e2e/raw_playwright_results.json"
 COMPOSE_STARTED=0
 DIAGNOSTICS_CAPTURED=0
@@ -57,7 +109,7 @@ cleanup() {
   # before disposable volumes and containers disappear. Never replace the
   # original test/startup exit status with a diagnostics/teardown error.
   capture_diagnostics
-  rm -f "$PLAYWRIGHT_PAYLOAD" || true
+  rm -f "$PLAYWRIGHT_PAYLOAD" "$ODP_E2E_PLAYWRIGHT_EXIT_FILE" || true
   if [[ "$COMPOSE_STARTED" == "1" && "${ODP_E2E_KEEP_STACK:-0}" != "1" ]]; then
     "${COMPOSE[@]}" down --remove-orphans --volumes || true
   fi
@@ -92,6 +144,7 @@ done < <(
   } | sort -u
 )
 
+: "${INTAKE_TEST_DATABASE_URL:?Bind the same job-owned PostGIS service for the original native scratch allocator}"
 "${PYTHON_COMMAND[@]}" delivery_toolchain/e2e/check_chromium_prerequisites.py
 
 python3 - "$DIAGNOSTICS_DIR/source-identity.json" "$TESTED_SOURCE_SHA" "$TESTED_TREE_SHA" <<'PY'
@@ -120,13 +173,14 @@ python3 delivery_toolchain/e2e/seed_product_e2e_data.py \
   --web-url "http://127.0.0.1:${WEB_PORT}" \
   --diagnostics-dir "$DIAGNOSTICS_DIR"
 
-python3 - <<'PY'
+python3 - "http://127.0.0.1:${WEB_PORT}/operator?ws=network" <<'PY'
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
 
-for url in (os.environ["ODP_SCORE_BROWSER_API_URL"] + "/_synthetic/health", os.environ["ODP_SCORE_BROWSER_WEB_URL"]):
+for url in (os.environ["ODP_SCORE_BROWSER_API_URL"] + "/_synthetic/health", os.environ["ODP_SCORE_BROWSER_WEB_URL"], sys.argv[1]):
     deadline = time.monotonic() + 120
     while True:
         try:
@@ -140,48 +194,39 @@ for url in (os.environ["ODP_SCORE_BROWSER_API_URL"] + "/_synthetic/health", os.e
         time.sleep(1)
 PY
 
-PLAYWRIGHT_COMMAND=(
-  npx playwright test
-  tests/e2e/e2e-network-find-areas-api-binding.spec.ts
-  tests/e2e/e2e-operator-console.spec.ts
-  tests/e2e/market_intelligence.spec.ts
-  tests/e2e/operator-assisted-listing-intake-a11y.spec.ts
-  tests/e2e/operator-assisted-listing-intake-mobile.spec.ts
-  tests/e2e/operator-assisted-listing-intake.spec.ts
-  tests/e2e/operator-governance.spec.ts
-  tests/e2e/operator-growth.spec.ts
-  tests/e2e/operator-network-assisted-intake.spec.ts
-  tests/e2e/operator-network-listings.spec.ts
-  tests/e2e/operator-network-rebalance.spec.ts
-  tests/e2e/operator-network-review.spec.ts
-  tests/e2e/operator-network-scoring.spec.ts
-  tests/e2e/operator-shell-layout.spec.ts
-  tests/e2e/operator-shell-today.spec.ts
-  tests/e2e/operator-store-ops.spec.ts
-  tests/e2e/product-e2e-env.spec.ts
-  tests/e2e/shell-resource-binding.spec.ts
-  --workers=1
-  --retries=0
-  --trace=retain-on-failure
-  --project=chromium
-  --reporter=json
-)
 printf -v PLAYWRIGHT_COMMAND_TEXT '%q ' "${PLAYWRIGHT_COMMAND[@]}"
 PLAYWRIGHT_COMMAND_TEXT="${PLAYWRIGHT_COMMAND_TEXT% }"
 PLAYWRIGHT_VERSION="$(npx playwright --version)"
 PLAYWRIGHT_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-set +e
-ODP_API_BASE_URL="http://127.0.0.1:${API_PORT}" \
-OPSBOARD_PORT="$WEB_PORT" \
-ODP_PLAYWRIGHT_REUSE_EXISTING=1 \
-ODP_OPERATOR_PRODUCT_GATE=1 \
-PLAYWRIGHT_JSON_OUTPUT_NAME="$PLAYWRIGHT_PAYLOAD" \
-"${PLAYWRIGHT_COMMAND[@]}"
-playwright_status=$?
+# The existing URL_MANUAL fixture owns the native context until this ONE full
+# Playwright phase and its independent SQL verification have both finished.
+# Do not redirect the POC/retained-PG consumers to that native origin.
+if ODP_API_BASE_URL="http://127.0.0.1:${API_PORT}" \
+  ODP_API_PORT="$API_PORT" \
+  OPSBOARD_PORT="$WEB_PORT" \
+  ODP_PLAYWRIGHT_REUSE_EXISTING=1 \
+  ODP_OPERATOR_PRODUCT_GATE=1 \
+  ODP_NATIVE_BROWSER_PRODUCT_PHASE=1 \
+  PLAYWRIGHT_JSON_OUTPUT_NAME="$PLAYWRIGHT_PAYLOAD" \
+  "${PYTHON_COMMAND[@]}" -m pytest -q \
+    tests/integration/test_native_matching_case_command_postgresql.py::test_native_browser_password_session_and_registered_worker_read_real_persisted_result \
+    -k URL_MANUAL; then
+  native_status=0
+else
+  native_status=$?
+fi
+# Retain the actual Playwright terminal exit separately from bootstrap/SQL
+# verification. An absent receipt is unknown/failure, never inferred success.
+playwright_status=2
+if [[ -s "$ODP_E2E_PLAYWRIGHT_EXIT_FILE" ]]; then
+  read -r playwright_status <"$ODP_E2E_PLAYWRIGHT_EXIT_FILE"
+else
+  printf 'Playwright phase supplied no terminal exit receipt\n' >&2
+fi
 PLAYWRIGHT_ENDED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-python3 delivery_toolchain/e2e/record_playwright_results.py \
+if python3 delivery_toolchain/e2e/record_playwright_results.py \
   --payload "$PLAYWRIGHT_PAYLOAD" \
   --output "$PLAYWRIGHT_ARTIFACT" \
   --source-sha "$TESTED_SOURCE_SHA" \
@@ -193,23 +238,32 @@ python3 delivery_toolchain/e2e/record_playwright_results.py \
   --exit-code "$playwright_status" \
   --project chromium \
   --workers 1 \
-  --retries 0
-playwright_record_status=$?
+  --retries 0; then
+  playwright_record_status=0
+else
+  playwright_record_status=$?
+fi
 
-"${PYTHON_COMMAND[@]}" delivery_toolchain/e2e/run_python_e2e_tests.py
-pytest_status=$?
+if "${PYTHON_COMMAND[@]}" delivery_toolchain/e2e/run_python_e2e_tests.py; then
+  pytest_status=0
+else
+  pytest_status=$?
+fi
 
-"${PYTHON_COMMAND[@]}" delivery_toolchain/e2e/generate_product_e2e_receipt.py
-receipt_status=$?
+if "${PYTHON_COMMAND[@]}" delivery_toolchain/e2e/generate_product_e2e_receipt.py; then
+  receipt_status=0
+else
+  receipt_status=$?
+fi
 
 capture_diagnostics
-set -e
 
 printf "Product E2E diagnostics written to %s\n" "$DIAGNOSTICS_DIR"
-printf "Runner status: playwright=%s recorder=%s pytest=%s receipt=%s\n" \
-  "$playwright_status" "$playwright_record_status" "$pytest_status" "$receipt_status"
+printf "Runner status: native=%s playwright=%s recorder=%s pytest=%s receipt=%s\n" \
+  "$native_status" "$playwright_status" "$playwright_record_status" "$pytest_status" "$receipt_status"
 
 for status in \
+  "$native_status" \
   "$playwright_status" \
   "$playwright_record_status" \
   "$pytest_status" \

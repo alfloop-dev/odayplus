@@ -42,10 +42,10 @@ export function CanonicalIntakeCasePicker({ context }: { context: CanonicalIntak
   const { busy } = useCanonicalIntakeCommandState();
   const navigate = (href: string) => router.push(href, { scroll: false });
   const detailLink = (id: string) => buildDurableDetailHref(id, { ...state, intakeKind: "canonical" }, params, typeof window === "undefined" ? "" : window.location.hash);
-  const browse = (cursor: string | null = null) => {
+  const browse = (cursor: string | null = null, dialog: "detail" | "add" = "detail") => {
     setOpened(binding);
     navigate(buildInboxReturnHref({ ...state, intakeKind: "canonical", canonicalCursor: cursor ?? "",
-      selectedId: null, dialog: "detail", fixFieldKey: null, decisionKind: null, receiptId: null }, params, window.location.hash));
+      selectedId: null, dialog, fixFieldKey: null, decisionKind: null, receiptId: null }, params, window.location.hash));
   };
   const select = (id: string) => navigate(detailLink(id));
   const close = () => {
@@ -57,8 +57,11 @@ export function CanonicalIntakeCasePicker({ context }: { context: CanonicalIntak
     <div className={selectedId && state.intakeKind === "canonical" ? undefined : styles.timelineActions}>
       {!selectedId || state.intakeKind !== "canonical" ? <button className={styles.secondaryButton} disabled={busy} type="button" onClick={() => browse()}>選取收件／比對案件</button> : null}
       {state.intakeKind === "canonical" && (opened === binding || navigation.current.binding === binding)
-        ? <SelectionDialog key={navigation.current.version} context={binding} selectedId={selectedId} cursor={state.canonicalCursor ?? undefined}
+        ? <SelectionDialog key={navigation.current.version} context={binding} selectedId={selectedId}
+          cursor={state.canonicalCursor ?? (state.dialog === "add" ? "" : undefined)}
           onClose={close} onSelect={select} onPage={browse}
+          adding={state.dialog === "add" && selectedId === null}
+          onAdd={() => browse(state.canonicalCursor ?? null, "add")}
           detailHref={selectedId ? detailLink(selectedId) : ""}
           activeSection={state.activeSection} onSectionChange={(activeSection) => {
             const next = new URLSearchParams(params.toString()); next.set("section", activeSection);
@@ -68,9 +71,10 @@ export function CanonicalIntakeCasePicker({ context }: { context: CanonicalIntak
   );
 }
 
-function SelectionDialog({ context, selectedId, cursor, onClose, onSelect, onPage, detailHref, activeSection, onSectionChange }: {
+function SelectionDialog({ context, selectedId, cursor, onClose, onSelect, onPage, adding, onAdd, detailHref, activeSection, onSectionChange }: {
   context: CanonicalIntakeReadContext; selectedId: string | null; cursor: string | undefined;
   onClose: () => void; onSelect: (id: string) => void; onPage: (cursor: string | null) => void;
+  adding: boolean; onAdd: () => void;
   detailHref: string; activeSection?: string | null; onSectionChange: (section: string) => void;
 }) {
   const [reload, setReload] = useState(0);
@@ -78,7 +82,6 @@ function SelectionDialog({ context, selectedId, cursor, onClose, onSelect, onPag
   const list: Load<CanonicalIntakePage> = loadedList?.cursor === cursor && loadedList?.reload === reload
     ? loadedList.value : { status: "loading" };
   const { busy: commandBusy } = useCanonicalIntakeCommandState();
-  const [adding, setAdding] = useState(false);
   const [created, setCreated] = useState<CanonicalIntakeReceipt | null>(null);
   const [loadedDetail, setDetail] = useState<{ id: string; reload: number; value: Load<Awaited<ReturnType<typeof readCanonicalIntakeCase>>> } | null>(null);
   const detail: Load<Awaited<ReturnType<typeof readCanonicalIntakeCase>>> = loadedDetail?.id === selectedId && loadedDetail?.reload === reload
@@ -142,7 +145,7 @@ function SelectionDialog({ context, selectedId, cursor, onClose, onSelect, onPag
   const submission = (adding && list.status === "ready" ? <CanonicalURLSubmission context={context}
         scopes={[{ label: "不指定範圍（依目前帳號權限核對）", scope: { brand_id: null, region_id: null, assigned_area_id: null, heat_zone_id: null } },
           ...list.value.items.map((row) => ({ label: `沿用收件 ${row.intake_id} 的範圍`, scope: row.scope }))]}
-        onClose={() => setAdding(false)} onCreated={(value) => { setCreated(value); setAdding(false); onSelect(value.intake_id); }} /> : null);
+        onClose={() => onPage(cursor ?? null)} onCreated={(value) => { setCreated(value); onSelect(value.intake_id); }} /> : null);
   if (selectedId) return <IntakeProcessingDetail intakeId={selectedId}
     readContext={context}
     canonical={detail.status === "ready" ? detail.value.intake : null}
@@ -170,7 +173,7 @@ function SelectionDialog({ context, selectedId, cursor, onClose, onSelect, onPag
       <div className={styles.dialogBody}>
         <p>選取收件以查看目前的比對案件與候選主體。</p>
         {cursor !== undefined && list.status === "ready" ? <button className={styles.secondaryButton} disabled={commandBusy} type="button"
-          onClick={() => setAdding(true)}>從網址建立正式收件</button> : null}
+          onClick={onAdd}>從網址建立正式收件</button> : null}
         {createdReceipt}
 
         {cursor === undefined ? <button className={styles.secondaryButton} disabled={commandBusy} type="button" onClick={() => onPage(null)}>選取其他收件</button> : list.status === "loading" ? <p role="status">正在讀取收件…</p> : list.status === "error" ? <ReadFailure error={list.error} /> : (

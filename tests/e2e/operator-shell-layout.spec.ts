@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { test, loginNativeSession, nativeBrowserInput, submitNativeURL } from "./_intakeScorePg";
 import { openOperatorWorkspace } from "./_operatorPersona";
 import type { OperatorHeatZone } from "../../apps/web/features/operator/types";
 
@@ -618,12 +619,54 @@ test.describe("Network Find Areas Package 10 layout", () => {
     expect(g.trayTop).toBeGreaterThan(g.detailTop);
   });
 
-  test("從網址新增物件 opens the intake dialog pre-set to the selected zone", async ({ page }) => {
-    await openFindAreas(page, 1440);
-    await page.getByRole("button", { name: "＋ 從網址新增物件（帶入本區）" }).click();
+  test("canonical native: 從網址新增物件 preserves the selected zone context and opens the formal URL form", async ({ page }) => {
+    const input = nativeBrowserInput();
+    expect(input.find_areas_zone_ids).toHaveLength(2);
+    expect(input.fresh_urls.find_areas).toBeTruthy();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await loginNativeSession(page, input);
+    const reading = page.waitForResponse((response) => response.request().method() === "GET"
+      && new URL(response.url()).pathname === "/api/v1/operator/network-listings");
+    await page.goto("/operator?ws=network");
+    const response = await reading;
+    expect(response.status(), await response.text()).toBe(200);
+    const snapshot = await response.json();
+    expect(snapshot).toMatchObject({ source: "api",
+      selectedHeatZoneId: input.find_areas_zone_ids[0],
+      heatZoneAvailability: { state: "available", source: "canonical-heatzone" } });
+    expect(snapshot.heatZones.map((zone: OperatorHeatZone) => zone.id)).toEqual(input.find_areas_zone_ids);
+    // Select a different actual scoped row. Neither the default HZ-01 label nor
+    // a display name can be treated as an authenticated native scope UUID.
+    const selected = input.find_areas_zone_ids[1];
+    const zone = snapshot.heatZones.find((row: OperatorHeatZone) => row.id === selected)!;
+    const tray = page.getByTestId("find-areas-tray");
+    await tray.locator(`button[data-zone-id="${selected}"]`).click();
+    await expect(tray.locator('button[aria-current="true"]')).toHaveAttribute("data-zone-id", selected);
+    await expect(page.getByTestId("find-areas-zone-detail").getByRole("heading", { level: 3 })).toHaveText(zone.label);
+    const add = page.getByRole("button", { name: "＋ 從網址新增物件（帶入本區）" });
+    await expect(add).toBeEnabled();
+    await add.click();
     await expect(page.getByTestId("intake-url-input")).toBeVisible({ timeout: 30_000 });
-    await expect(page).toHaveURL(/tab=radar/);
-    await expect(page).toHaveURL(/dialog=add/);
-    await expect(page.getByTestId("intake-area-select")).toHaveValue("HZ-01");
+    const opened = new URL(page.url());
+    expect(opened.searchParams.get("tab")).toBe("radar");
+    expect(opened.searchParams.get("dialog")).toBe("add");
+    expect(opened.searchParams.get("heatZoneId")).toBe(selected);
+    expect(opened.searchParams.get("intakeKind")).toBe("canonical");
+    await expect(page.getByTestId("intake-area-select")).toHaveCount(0);
+    // The existing form requires a genuinely explicit scope and reason. The
+    // carried navigation context must not silently become command authority.
+    const { receipt, body } = await submitNativeURL(page, input, input.fresh_urls.find_areas!,
+      "從實際選取的合成區域送件，明確選擇正式範圍；區域導航不代替送件授權。");
+    expect(body.scope).toEqual(input.fresh_scope);
+    expect(body.scope.heat_zone_id).toBeNull();
+    expect(new URL(page.url()).searchParams.get("heatZoneId")).toBe(selected);
+    const read = await page.request.get(`/api/v1/canonical-intakes/${receipt.intake_id}`);
+    expect(read.status(), await read.text()).toBe(200);
+    expect(await read.json()).toMatchObject({ intake_id: receipt.intake_id,
+      processing_state: "SUBMITTED", version: 1, scope: input.fresh_scope, resolution: null });
+    await page.reload();
+    await expect(page.getByTestId("intake-detail-id")).toHaveText(receipt.intake_id);
+    await expect(page.getByTestId("intake-detail-stage")).toHaveText("已送出");
+    expect(new URL(page.url()).searchParams.get("heatZoneId")).toBe(selected);
   });
 });

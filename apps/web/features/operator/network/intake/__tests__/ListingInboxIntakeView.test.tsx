@@ -93,7 +93,7 @@ const mockRecords: AssistedIntake[] = [
 ];
 
 describe("ListingInboxIntakeView", () => {
-  const mockOnAddSubmit = vi.fn().mockResolvedValue(undefined);
+  const mockOnAddRequested = vi.fn();
   const mockOnOpenDetail = vi.fn();
   const mockOnRetryLoad = vi.fn();
 
@@ -108,7 +108,7 @@ describe("ListingInboxIntakeView", () => {
     window.history.replaceState(null, "", "/operator?ws=network&selected=IN-101&extra=a&extra=b");
     const onQueryChange = vi.fn();
     const props = { activeRoleId: "expansion-manager" as const, busy: false, loadState: "ready" as const,
-      selectedHeatZoneId: "HZ-01", onAddSubmit: mockOnAddSubmit, onOpenDetail: mockOnOpenDetail,
+      selectedHeatZoneId: "HZ-01", onAddRequested: mockOnAddRequested, onOpenDetail: mockOnOpenDetail,
       onQueryChange, records: mockRecords, pageData: { items: mockRecords, total: 37, page: 1, pageSize: 10,
         counts: { needsReview: 20, awaitingEntry: 0, processing: 7, blocked: 0, ready: 10 }, evidenceState: "complete" as const } };
     const view = render(<ListingInboxIntakeView {...props} />);
@@ -134,7 +134,7 @@ describe("ListingInboxIntakeView", () => {
         activeRoleId="expansion-manager"
         busy={false}
         loadState="ready"
-        onAddSubmit={mockOnAddSubmit}
+        onAddRequested={mockOnAddRequested}
         onOpenDetail={mockOnOpenDetail}
         records={mockRecords}
       />
@@ -151,7 +151,7 @@ describe("ListingInboxIntakeView", () => {
   });
 
   it("provides separate native open and action controls without nesting interactive rows", () => {
-    render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready" onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail} records={mockRecords} />);
+    render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready" onAddRequested={mockOnAddRequested} onOpenDetail={mockOnOpenDetail} records={mockRecords} />);
     const row = screen.getByTestId("intake-inbox-row-IN-101");
     expect(row).not.toHaveAttribute("role", "button");
     expect(screen.getByRole("button", { name: "開啟收件 IN-101" })).toBeInTheDocument();
@@ -162,7 +162,7 @@ describe("ListingInboxIntakeView", () => {
 
   it("uses the server total for the all view and never invents missing counts from page length", () => {
     const props = { activeRoleId: "expansion-manager" as const, busy: false, loadState: "ready" as const,
-      onAddSubmit: mockOnAddSubmit, onOpenDetail: mockOnOpenDetail, records: mockRecords };
+      onAddRequested: mockOnAddRequested, onOpenDetail: mockOnOpenDetail, records: mockRecords };
     const { rerender } = render(<ListingInboxIntakeView {...props} />);
     expect(screen.getByTestId("intake-tab-all")).toHaveTextContent(/^全部物件$/);
     expect(screen.getByTestId("intake-tab-needsReview")).toHaveTextContent(/^需覆核$/);
@@ -180,7 +180,7 @@ describe("ListingInboxIntakeView", () => {
 
   it("offers exactly the canonical API assignment and SLA states", () => {
     render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready"
-      onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail} records={mockRecords} />);
+      onAddRequested={mockOnAddRequested} onOpenDetail={mockOnOpenDetail} records={mockRecords} />);
     const options = (id: string) => within(screen.getByTestId(id)).getAllByRole("option").map((option) => (option as HTMLOptionElement).value);
     expect(options("intake-filter-assignment")).toEqual(["", "UNASSIGNED", "ASSIGNED", "CLAIMED", "TRANSFERRED", "ESCALATED", "COMPLETED"]);
     expect(options("intake-filter-sla")).toEqual(["", "ON_TRACK", "DUE_SOON", "OVERDUE", "BREACHED", "PAUSED", "COMPLETED"]);
@@ -193,7 +193,7 @@ describe("ListingInboxIntakeView", () => {
         activeRoleId="expansion-manager"
         busy={false}
         loadState="ready"
-        onAddSubmit={mockOnAddSubmit}
+        onAddRequested={mockOnAddRequested}
         onOpenDetail={mockOnOpenDetail}
         onQueryChange={onQueryChange}
         records={mockRecords}
@@ -213,7 +213,7 @@ describe("ListingInboxIntakeView", () => {
         activeRoleId="expansion-manager"
         busy={false}
         loadState="ready"
-        onAddSubmit={mockOnAddSubmit}
+        onAddRequested={mockOnAddRequested}
         onOpenDetail={mockOnOpenDetail}
         onQueryChange={onQueryChange}
         records={mockRecords}
@@ -242,7 +242,7 @@ describe("ListingInboxIntakeView", () => {
     window.history.replaceState(null, "", "/operator/network?page=8&selected=IN-101&section=identity");
     const onQueryChange = vi.fn();
     render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready"
-      onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail} onQueryChange={onQueryChange} records={mockRecords} />);
+      onAddRequested={mockOnAddRequested} onOpenDetail={mockOnOpenDetail} onQueryChange={onQueryChange} records={mockRecords} />);
     const control = screen.getByTestId(String(testId));
     expect(control).toHaveAccessibleName();
     fireEvent.change(control, { target: { value } });
@@ -263,7 +263,7 @@ describe("ListingInboxIntakeView", () => {
   ])("encodes local %s as a timezone-bearing ISO bound and clears it without inventing a timestamp", async (testId, field) => {
     const onQueryChange = vi.fn();
     render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready"
-      onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail} onQueryChange={onQueryChange} records={mockRecords} />);
+      onAddRequested={mockOnAddRequested} onOpenDetail={mockOnOpenDetail} onQueryChange={onQueryChange} records={mockRecords} />);
     const control = screen.getByTestId(testId!);
     expect(control).toHaveValue("");
     const local = "2026-10-13T08:15:30.250";
@@ -279,7 +279,7 @@ describe("ListingInboxIntakeView", () => {
   it.each(["submittedAt", "lastObservedAt", "dueAt"])("sorts %s through the server contract and URL", async (field) => {
     const onQueryChange = vi.fn();
     render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready"
-      onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail} onQueryChange={onQueryChange} records={mockRecords} />);
+      onAddRequested={mockOnAddRequested} onOpenDetail={mockOnOpenDetail} onQueryChange={onQueryChange} records={mockRecords} />);
     fireEvent.click(screen.getByTestId(`intake-sort-${field}`));
     await waitFor(() => expect(onQueryChange).toHaveBeenLastCalledWith(expect.objectContaining({ sortBy: field, sortOrder: "asc", page: 1 })));
     fireEvent.click(screen.getByTestId(`intake-sort-${field}`));
@@ -295,7 +295,7 @@ describe("ListingInboxIntakeView", () => {
       capturedAt: "1999-01-01T00:00:00Z", auditEvents: [{ occurredAt: "2030-01-01T00:00:00Z" }] as AssistedIntake["auditEvents"],
     });
     render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready"
-      onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail} records={[record]} />);
+      onAddRequested={mockOnAddRequested} onOpenDetail={mockOnOpenDetail} records={[record]} />);
     const row = screen.getByTestId(`intake-inbox-row-${record.id}`);
     expect(within(row).getByTestId(`intake-row-submitted-by-${record.id}`)).toHaveTextContent("SUBJECT-SUBMITTED");
     expect(within(row).getByTestId(`intake-row-owner-${record.id}`)).toHaveTextContent("SUBJECT-OWNER");
@@ -313,7 +313,7 @@ describe("ListingInboxIntakeView", () => {
   it("marks absent projection fields unknown instead of inventing method, owner, update time or restriction", () => {
     const record = intake({ id: "IN-UNKNOWN", sourceId: null, submitter: null, owner: null, capturedAt: "1999-01-01T00:00:00Z" });
     render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready"
-      onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail} records={[record]} />);
+      onAddRequested={mockOnAddRequested} onOpenDetail={mockOnOpenDetail} records={[record]} />);
     const row = screen.getByTestId(`intake-inbox-row-${record.id}`);
     expect(row).toHaveTextContent("收件方式 尚未提供");
     expect(row).toHaveTextContent("負責人 尚未提供");
@@ -330,7 +330,7 @@ describe("ListingInboxIntakeView", () => {
         activeRoleId="expansion-manager"
         busy={false}
         loadState="ready"
-        onAddSubmit={mockOnAddSubmit}
+        onAddRequested={mockOnAddRequested}
         onOpenDetail={mockOnOpenDetail}
         records={mockRecords}
       />
@@ -356,7 +356,7 @@ describe("ListingInboxIntakeView", () => {
         activeRoleId="expansion-manager"
         busy={false}
         loadState="ready"
-        onAddSubmit={mockOnAddSubmit}
+        onAddRequested={mockOnAddRequested}
         onOpenDetail={mockOnOpenDetail}
         onQueryChange={onQueryChange}
         records={mockRecords}
@@ -379,7 +379,7 @@ describe("ListingInboxIntakeView", () => {
         activeRoleId="expansion-manager"
         busy={false}
         loadState="ready"
-        onAddSubmit={mockOnAddSubmit}
+        onAddRequested={mockOnAddRequested}
         onOpenDetail={mockOnOpenDetail}
         records={mockRecords}
       />
@@ -403,7 +403,7 @@ describe("ListingInboxIntakeView", () => {
         activeRoleId="expansion-manager"
         busy={false}
         loadState="ready"
-        onAddSubmit={mockOnAddSubmit}
+        onAddRequested={mockOnAddRequested}
         onOpenDetail={mockOnOpenDetail}
         onRetryIntake={onRetryIntake}
         pageData={{ items: [failed], total: 1, page: 1, pageSize: 10, counts: { needsReview: 0, awaitingEntry: 0, processing: 0, blocked: 1, ready: 0 }, evidenceState: "degraded" }}
@@ -423,7 +423,7 @@ describe("ListingInboxIntakeView", () => {
         activeRoleId="ops-lead"
         busy={false}
         loadState="ready"
-        onAddSubmit={mockOnAddSubmit}
+        onAddRequested={mockOnAddRequested}
         onOpenDetail={mockOnOpenDetail}
         records={mockRecords}
       />
@@ -439,7 +439,7 @@ describe("ListingInboxIntakeView", () => {
         activeRoleId="expansion-manager"
         busy={false}
         loadState="loading"
-        onAddSubmit={mockOnAddSubmit}
+        onAddRequested={mockOnAddRequested}
         onOpenDetail={mockOnOpenDetail}
         records={[]}
       />
@@ -461,7 +461,7 @@ describe("ListingInboxIntakeView", () => {
           retryable: true,
         }}
         loadState="error"
-        onAddSubmit={mockOnAddSubmit}
+        onAddRequested={mockOnAddRequested}
         onOpenDetail={mockOnOpenDetail}
         onRetryLoad={mockOnRetryLoad}
         records={[]}
@@ -471,13 +471,23 @@ describe("ListingInboxIntakeView", () => {
     expect(screen.getByTestId("intake-inbox-error")).toBeDefined();
   });
 
-  it("passes the current native HeatZone options through the normal add opener", () => {
+  it("opens the canonical form by navigation rather than submitting the selected legacy heat zone", () => {
     render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready"
-      records={[]} selectedHeatZoneId="native-inbox-zone" onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail}
-      heatZoneOptions={{ state: "ready", options: [{ id: "native-inbox-zone", label: "原生收件區域" }] }} />);
+      records={[]} selectedHeatZoneId="native-inbox-zone" onAddRequested={mockOnAddRequested} onOpenDetail={mockOnOpenDetail} />);
     fireEvent.click(screen.getByTestId("intake-add-button"));
-    expect(screen.getByTestId("intake-area-select")).toHaveValue("native-inbox-zone");
-    expect(screen.getByRole("option", { name: "原生收件區域" })).toHaveValue("native-inbox-zone");
+    expect(mockOnAddRequested).toHaveBeenCalledExactlyOnceWith();
+    expect(screen.queryByTestId("intake-add-dialog")).not.toBeInTheDocument();
+    expect(mockOnOpenDetail).not.toHaveBeenCalled();
+  });
+
+  it.each(["unavailable", "busy"])("does not open another form while canonical access is %s", (state) => {
+    render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={state === "busy"} loadState="ready"
+      records={[]} onAddRequested={state === "unavailable" ? undefined : mockOnAddRequested} onOpenDetail={mockOnOpenDetail} />);
+    expect(screen.getByTestId("intake-add-button")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("intake-add-button"));
+    expect(mockOnAddRequested).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("status").some((node) => /讀取資格|處理中/.test(node.textContent ?? ""))).toBe(true);
+    expect(screen.queryByTestId("intake-add-dialog")).not.toBeInTheDocument();
   });
 
 });

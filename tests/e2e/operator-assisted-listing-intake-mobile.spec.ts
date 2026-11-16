@@ -1,6 +1,5 @@
 import {
   expect,
-  request as playwrightRequest,
   test,
   type Page,
 } from "@playwright/test";
@@ -15,23 +14,22 @@ import {
  * - Desktop side-by-side comparison view
  */
 
+import { openPgScenario } from "./_intakeScorePg";
+
 import {
   acquireOperatorBackendLock,
   releaseOperatorBackendLock,
 } from "./_operatorBackendLock";
 
-const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
-
-const URLS = {
-  possible: "https://www.synthetic.example/detail-99310418.html",
-  clean: "https://www.synthetic.example/detail-77120345.html",
-};
 const SCREENSHOT_DIR =
   "docs/evidence/completion/ODP-INTAKE-UX-QA-001/screenshots";
 const UPDATE_SCREENSHOT_EVIDENCE =
   process.env.ODP_UPDATE_SCREENSHOT_EVIDENCE === "1";
 
 test.describe.configure({ mode: "serial", timeout: 120_000 });
+// Original retained PostgreSQL composition supplies the actual actor/tenant.
+// Layout is not evidence of fresh URL admission, parsing or native READY.
+test.use({ extraHTTPHeaders: {} });
 
 test.beforeAll(async () => {
   await acquireOperatorBackendLock();
@@ -40,38 +38,6 @@ test.beforeAll(async () => {
 test.afterAll(() => {
   releaseOperatorBackendLock();
 });
-
-test.beforeEach(async () => {
-  const api = await playwrightRequest.newContext({
-    baseURL: API_BASE_URL,
-    extraHTTPHeaders: {
-      "x-subject-id": "operator-expansion-manager",
-      "x-roles":
-        "expansion_user,operations_manager,site_reviewer,data_owner,auditor,executive",
-      "x-operator-role": "expansion-manager",
-      "x-tenant-id": "tenant-a",
-    },
-  });
-  const reset = await api.post("/api/v1/operator/network-listings/reset");
-  expect(reset.status()).toBe(200);
-  await api.dispose();
-});
-
-async function openRadarAsExpansionManager(page: Page) {
-  await page.addInitScript(() => {
-    window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
-    window.localStorage.setItem("oday.operator.role", "expansion-manager");
-  });
-  await page.goto("/operator?ws=network");
-  await page.evaluate(() => {
-    window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
-    window.localStorage.setItem("oday.operator.role", "expansion-manager");
-  });
-  await page.getByTestId("network-tab-1").click();
-  await expect(page.getByTestId("intake-add-button")).toBeVisible({
-    timeout: 15_000,
-  });
-}
 
 async function expectNoPageOverflow(
   page: Page,
@@ -131,29 +97,22 @@ test.describe("VDC-002 Responsive Layout & Zero Overflow (390px Mobile)", () => 
   test("390px mobile viewport has zero horizontal overflow on intake queue", async ({
     page,
   }) => {
-    await openRadarAsExpansionManager(page);
-    await expectNoPageOverflow(page, "390px mobile inbox", "intake-inbox-view");
-    await captureScreenshotEvidence(page, "intake-390-inbox.png");
+    const { api } = await openPgScenario(page, { entry: "inbox", retainedHistory: "possible-match" });
+    try {
+      await expectNoPageOverflow(page, "390px mobile inbox", "intake-inbox-view");
+      await captureScreenshotEvidence(page, "intake-390-inbox.png");
+    } finally { await api.dispose(); }
   });
 
   test("390px mobile viewport shows desktop-required warning on compare panel", async ({
     page,
   }) => {
-    await openRadarAsExpansionManager(page);
-    await page.getByTestId("intake-add-button").click();
-    await page.getByTestId("intake-url-input").fill(URLS.possible);
-    await page.getByTestId("intake-submit-button").click();
-
-    await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({
-      timeout: 15_000,
-    });
-    await expect(page.getByTestId("intake-desktop-required")).toBeVisible();
-    await expectNoPageOverflow(
-      page,
-      "390px mobile detail",
-      "intake-detail-dialog",
-    );
-    await captureScreenshotEvidence(page, "intake-390-detail.png");
+    const { api } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    try {
+      await expect(page.getByTestId("intake-desktop-required")).toBeVisible();
+      await expectNoPageOverflow(page, "390px mobile detail", "intake-detail-dialog");
+      await captureScreenshotEvidence(page, "intake-390-detail.png");
+    } finally { await api.dispose(); }
   });
 });
 
@@ -163,20 +122,12 @@ test.describe("VDC-002 Responsive Layout & Zero Overflow (1024px Tablet)", () =>
   test("1024px tablet viewport folds 5-up meta grid and has zero horizontal overflow", async ({
     page,
   }) => {
-    await openRadarAsExpansionManager(page);
-    await page.getByTestId("intake-add-button").click();
-    await page.getByTestId("intake-url-input").fill(URLS.clean);
-    await page.getByTestId("intake-submit-button").click();
-
-    await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({
-      timeout: 15_000,
-    });
-    await expectNoPageOverflow(
-      page,
-      "1024px tablet detail",
-      "intake-detail-dialog",
-    );
-    await captureScreenshotEvidence(page, "intake-1024-detail.png");
+    const { api } = await openPgScenario(page, { retainedHistory: "revision" });
+    try {
+      await expect(page.getByTestId("intake-submission-summary")).toBeVisible();
+      await expectNoPageOverflow(page, "1024px tablet detail", "intake-detail-dialog");
+      await captureScreenshotEvidence(page, "intake-1024-detail.png");
+    } finally { await api.dispose(); }
   });
 });
 
@@ -186,20 +137,12 @@ test.describe("VDC-002 Responsive Layout & Zero Overflow (1440px Desktop)", () =
   test("1440px desktop viewport displays full side-by-side comparison and zero overflow", async ({
     page,
   }) => {
-    await openRadarAsExpansionManager(page);
-    await page.getByTestId("intake-add-button").click();
-    await page.getByTestId("intake-url-input").fill(URLS.possible);
-    await page.getByTestId("intake-submit-button").click();
-
-    await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({
-      timeout: 15_000,
-    });
-    await expect(page.getByTestId("intake-desktop-required")).toBeHidden();
-    await expectNoPageOverflow(
-      page,
-      "1440px desktop detail",
-      "intake-detail-dialog",
-    );
-    await captureScreenshotEvidence(page, "intake-1440-detail.png");
+    const { api } = await openPgScenario(page, { retainedHistory: "possible-match" });
+    try {
+      await expect(page.getByTestId("intake-desktop-required")).toBeHidden();
+      await expect(page.getByTestId("compare-table-grid")).toBeVisible();
+      await expectNoPageOverflow(page, "1440px desktop detail", "intake-detail-dialog");
+      await captureScreenshotEvidence(page, "intake-1440-detail.png");
+    } finally { await api.dispose(); }
   });
 });

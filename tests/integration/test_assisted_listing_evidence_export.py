@@ -45,15 +45,20 @@ def test_evidence_export_manifest_verification_and_download() -> None:
     app = create_app()
     client = TestClient(app)
 
-    # 1. Submit an intake first to export
-    url = "https://www.synthetic.example/evidence-export-test.html"
-    submit_resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
-        json={"url": url, "heatZoneId": "HZ-01"},
-        headers=_headers_with_idem(STAFF_HEADERS, "export-test-submit"),
+    # 1. Evidence export must remain available for retained legacy records.
+    # Prepare that history directly, not through a retired fresh URL command.
+    intake_id = "IN-HISTORICAL-EVIDENCE-EXPORT"
+    app.state.operator_intake_repository.save_intake({
+        "id": intake_id, "tenantId": "tenant-a", "intakeMethod": "URL",
+        "originalUrl": "https://www.synthetic.example/evidence-export-test.html",
+        "owner": STAFF_HEADERS["x-subject-id"], "submitter": STAFF_HEADERS["x-subject-id"],
+        "stage": "FAILED", "version": 1, "heatZoneId": "HZ-01",
+        "parsedFields": {}, "matchResult": None, "auditEvents": [],
+    })
+    retained = client.get(
+        f"/api/v1/operator/network-listings/intake/{intake_id}", headers=STAFF_HEADERS,
     )
-    assert submit_resp.status_code == 200
-    intake_id = submit_resp.json()["id"]
+    assert retained.status_code == 200 and retained.json()["id"] == intake_id, retained.text
 
     # 2. Export evidence
     export_resp = client.post(

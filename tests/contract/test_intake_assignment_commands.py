@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.app.routes import listings
 from modules.listing.application import intake_assignment_commands
+from modules.listing.application.intake_workflow_bootstrap import initialize_intake_workflow
 from shared.auth import Role, Scope
 from shared.domain.events import validate_event
 from shared.identity.store import Account
@@ -27,6 +28,35 @@ def _headers(actor=MANAGER):
         "x-tenant-id": TENANT,
         "x-roles": "site_reviewer,expansion_user" if actor == MANAGER else "expansion_user",
     }
+
+
+def _retained_unassigned_intake(store, provider, *, actor=MANAGER):
+    """Retained V1 task precondition, not a fresh URL command or native result."""
+    intake_id, job_id, correlation_id = (str(uuid4()) for _ in range(3))
+    at = AT.isoformat().replace("+00:00", "Z")
+    intake = {
+        "intake_id": intake_id, "state": "SUBMITTED", "intake_method": "URL",
+        "scope": {"tenant_id": TENANT}, "submitted_by": actor,
+        "submitted_at": at, "updated_at": at, "version": 1,
+        "original_url": "https://example.invalid/retained-assignment",
+        "canonical_url": "https://example.invalid/retained-assignment",
+        "policy_state": "POLICY_UNKNOWN", "job_id": job_id,
+        "correlation_id": correlation_id, "fields": [], "audit": [],
+        "processing_history": [{
+            "transition_id": str(uuid4()), "from_state": None, "to_state": "SUBMITTED",
+            "occurred_at": at, "actor": actor, "version_after": 1,
+        }],
+    }
+    with store.transaction():
+        store.intakes[intake_id] = intake
+        initialize_intake_workflow(store, intake, provider)
+        store.jobs[job_id] = {
+            "job_id": job_id, "intake_id": intake_id, "tenant_id": TENANT,
+            "status": "QUEUED", "checkpoint": "RETRIEVING", "attempt": 0,
+            "version": 1, "correlation_id": correlation_id,
+        }
+        store.flush()
+    return intake_id
 
 
 @pytest.fixture
@@ -56,13 +86,7 @@ def journey(monkeypatch):
         listings.create_assisted_intake_router(store, workflow_policy=provider), prefix="/api/v1"
     )
     client = TestClient(app)
-    r = client.post(
-        "/api/v1/intakes/url",
-        json={"original_url": "https://example.invalid/assignment", "scope": {"tenant_id": TENANT}},
-        headers={**_headers(), "Idempotency-Key": "synthetic-journey-" + str(uuid4())},
-    )
-    assert r.status_code == 202, r.text
-    iid = r.json()["intake_id"]
+    iid = _retained_unassigned_intake(store, provider)
     r = client.put(
         f"/api/v1/intakes/{iid}/assignment",
         json={
@@ -79,6 +103,8 @@ def journey(monkeypatch):
     )
     assert r.status_code == 200, r.text
     aid = r.json()["assignment_id"]
+    # Retain the actual registry owner for the second unassigned task fixture.
+    Clock.workflow_policy = provider
     return client, store, iid, aid, identities, Clock
 
 
@@ -249,15 +275,8 @@ def _snapshot(store):
 
 
 def _initial_request(journey, *, actor=MANAGER):
-    client, store, _, _, _, _ = journey
-    response = client.post(
-        "/api/v1/intakes/url",
-        json={"original_url": "https://example.invalid/initial-assignment",
-              "scope": {"tenant_id": TENANT}},
-        headers={**_headers(actor), "Idempotency-Key": "synthetic-initial-" + str(uuid4())},
-    )
-    assert response.status_code == 202, response.text
-    intake_id = response.json()["intake_id"]
+    _, store, _, _, _, clock = journey
+    intake_id = _retained_unassigned_intake(store, clock.workflow_policy, actor=actor)
     body = {"owner_subject_id": TARGET, "owner_role": "expansion-staff",
             "due_at": "2026-10-13T02:30:00Z", "reason": "Synthetic initial routing"}
     headers = {**_headers(actor), "Idempotency-Key": "synthetic-assignment-" + str(uuid4()),

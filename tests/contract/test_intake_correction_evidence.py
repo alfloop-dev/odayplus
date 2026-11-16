@@ -1,6 +1,7 @@
 """Synthetic HTTP commands: preserve lineage and commit attributable evidence."""
 
 from copy import deepcopy
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -13,6 +14,7 @@ from modules.listing.application.intake_completion import (
     IntakeWorkIncomplete,
     verify_completion,
 )
+from modules.listing.application.intake_workflow_bootstrap import initialize_intake_workflow
 from shared.audit.integrity import sha256_hex
 from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy
 
@@ -39,13 +41,32 @@ def case():
         prefix="/api/v1",
     )
     client = TestClient(app)
-    submitted = client.post(
-        "/api/v1/intakes/url",
-        json={"original_url": "https://example.invalid/correction", "scope": {"tenant_id": TENANT}},
-        headers={**HEADERS, "Idempotency-Key": f"synthetic-submit-{uuid4()}"},
-    )
-    assert submitted.status_code == 202, submitted.text
-    intake = store.intakes[submitted.json()["intake_id"]]
+    # Retained V1 data behind the real correction commands, not a fresh HTTP
+    # submission or evidence that the native parser completed.
+    intake_id, job_id, correlation_id = (str(uuid4()) for _ in range(3))
+    at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    intake = {
+        "intake_id": intake_id, "state": "SUBMITTED", "intake_method": "URL",
+        "scope": {"tenant_id": TENANT}, "submitted_by": ACTOR,
+        "submitted_at": at, "updated_at": at, "version": 1,
+        "original_url": "https://example.invalid/retained-correction",
+        "canonical_url": "https://example.invalid/retained-correction",
+        "policy_state": "POLICY_UNKNOWN", "job_id": job_id,
+        "correlation_id": correlation_id, "fields": [], "audit": [],
+        "processing_history": [{
+            "transition_id": str(uuid4()), "from_state": None, "to_state": "SUBMITTED",
+            "occurred_at": at, "actor": ACTOR, "version_after": 1,
+        }],
+    }
+    with store.transaction():
+        store.intakes[intake_id] = intake
+        initialize_intake_workflow(store, intake, SyntheticIntakeWorkflowPolicy())
+        store.jobs[job_id] = {
+            "job_id": job_id, "intake_id": intake_id, "tenant_id": TENANT,
+            "status": "QUEUED", "checkpoint": "RETRIEVING", "attempt": 0,
+            "version": 1, "correlation_id": correlation_id,
+        }
+        store.flush()
     # Controlled parser precondition, not a claim of parser or real UAT coverage.
     intake.update(state="NEEDS_REVIEW", source_snapshot_id=str(uuid4()), parser_run_id=str(uuid4()))
     intake["fields"] = [

@@ -20,7 +20,6 @@ import {
   type IntakeCorrectPayload,
   type IntakeDecidePayload,
   type IntakeInboxPage,
-  type IntakeSubmitPayload,
   type JobReceipt,
   type OdpApiClient,
   type AssignmentReceipt,
@@ -210,24 +209,6 @@ export const intakeApi = {
     intakeId: string,
   ): Promise<IntakeResult<PromotionDecisionReceipt>> {
     return guardPromotion(() => client.getIntakePromotionDecision(intakeId));
-  },
-
-  /**
-   * `idempotencyKey` is what makes a double-submit safe server-side; the UI
-   * additionally disables the button while in flight, but the key is the
-   * durable guarantee (a retried request must not create a second record).
-   */
-  submit(
-    client: OdpApiClient,
-    payload: IntakeSubmitPayload,
-    options: { idempotencyKey: string; correlationId?: string },
-  ): Promise<IntakeResult<AssistedIntake>> {
-    return guard(() =>
-      client.submitIntake(payload, {
-        idempotencyKey: options.idempotencyKey,
-        correlationId: options.correlationId ?? newCorrelationId(),
-      }),
-    );
   },
 
   correct(
@@ -455,11 +436,6 @@ export const intakeApi = {
 };
 
 export { newCorrelationId };
-
-/** Stable per-submission key so a retry of the *same* submission dedups server-side. */
-export function newIdempotencyKey(url: string): string {
-  return `intake-${canonicalKeyPart(url)}-${randomToken()}`;
-}
 
 /** A key identifying one high-impact intake write, stable across retries. */
 export function newIntakeActionIdempotencyKey(
