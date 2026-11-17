@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "record_kind": "exact-candidate-contract-review",
+  "gate": "gate-1",
+  "candidate_sha": "be095f9f405fb98b9a3f4f552c895702f252fab9",
+  "baseline_sha": "60cf786952c78e498372fa1ffb58d2c40860708c",
+  "baseline_reason": "60cf786952c78e49 is the release live on dev (deploy run 43648043409); the review covers exactly what this deploy changes.",
+  "result": "pass",
+  "recorded_at": "2026-11-17T03:16:02Z",
+  "recorded_by": "Claude (exact-candidate contract diff review)",
+  "commits_reviewed": 114,
+  "checks": {
+    "openapi": {
+      "artifact": "packages/openapi-client/openapi.json",
+      "method": "docs/evidence/runtime/ODP-DEV-ADMISSION-BE095F9F4-001/openapi_breaking_diff.py.txt (run with python3) <baseline openapi> <candidate openapi>",
+      "output": [
+        "ops a 396 b 402 removed 0 added 6",
+        "ADDED OP ('/api/v1/assignments/{assignment_id}/actions/claim/receipt', 'get')",
+        "ADDED OP ('/api/v1/assignments/{assignment_id}/actions/complete/receipt', 'get')",
+        "ADDED OP ('/api/v1/assignments/{assignment_id}/actions/transfer/receipt', 'get')",
+        "ADDED OP ('/api/v1/intakes/{intake_id}/assignment/receipt', 'get')",
+        "ADDED OP ('/api/v1/sla-instances/{sla_instance_id}/actions/pause/receipt', 'get')",
+        "ADDED OP ('/api/v1/sla-instances/{sla_instance_id}/actions/resume/receipt', 'get')",
+        "ISSUES 0"
+      ],
+      "component_schemas": "326 -> 328; none removed; no removed properties, newly required properties or enum changes on existing schemas",
+      "finding": "additive only: 6 new GET receipt endpoints, 2 new schemas; 0 removed operations, 0 newly required request fields/params, 0 narrowed request enums or type changes, 0 removed response fields"
+    },
+    "events": {
+      "finding": "no event schema or AsyncAPI files changed in the range"
+    },
+    "data_contracts": {
+      "changed": [
+        "infra/db/migrations/assisted_listing_intake/007_workflow_pause_expectation.sql",
+        "infra/db/migrations/assisted_listing_intake/README.md"
+      ],
+      "finding": "assisted_listing_intake migration 007 adds nullable workflow.sla_pause_intervals.expected_resume_at with CHECK (NULL or > paused_at); additive, no backfill, older code unaffected, rollback-compatible. model_ready view SQL unchanged."
+    },
+    "model_io": {
+      "finding": "PR #1714 makes create_app bind forecastops on FORECASTOPS_FEATURE_SCHEMA_ID (forecast-training-view-v2), the schema the trainer registers and the executor already used. Rollback to 60cf786 reverts to the stale id, which fails closed (forecastops unavailable), not wrong output."
+    },
+    "staging_lifecycle": {
+      "finding": "4644da18e..be095f9f4 is PR #1719 only: the ephemeral staging rollback probe traffic tag becomes 3 characters (product_ops/deployment/staging_lifecycle.py) plus its test; no API, event, data or model contract change."
+    },
+    "contract_tests": {
+      "finding": "product-api-contract passed on the candidate in push CI 44001410032 and merge group CI 43994081518"
+    }
+  },
+  "breaking_changes": [],
+  "migration_rollback_plan": "not required: no breaking change"
+}
