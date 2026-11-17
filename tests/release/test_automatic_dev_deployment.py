@@ -281,7 +281,7 @@ def test_workflow_keeps_one_deployment_implementation_and_manual_gate():
     policy_checkout = next(
         step for step in jobs["release_phase"]["steps"] if str(step.get("uses", "")).startswith("actions/checkout@")
     )["with"]["ref"]
-    assert "inputs.phase == 'auto' && github.sha" in policy_checkout
+    assert "(inputs.phase == 'auto' || inputs.phase == 'cleanup') && github.sha" in policy_checkout
     manual = jobs["admission"]
     assert "inputs.phase == 'deploy'" in manual["if"]
     assert manual["environment"]["name"] == "${{ inputs.environment }}"

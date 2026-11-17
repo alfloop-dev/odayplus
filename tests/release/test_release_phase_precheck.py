@@ -373,3 +373,91 @@ def test_a_refused_deploy_receipt_still_names_the_manifest_coordinates(
         "run_id": MANIFEST_RUN_ID,
         "manifest_digest": MANIFEST_DIGEST,
     }
+
+
+# --------------------------------------------------------------------------
+# ODP-STAGING-RETAINED-CLEANUP-261117: cleanup of a held staging release
+#
+# Cleanup destroys infrastructure, so its input gate is the narrowest: staging
+# only, and nothing but environment, release_sha and task_id may carry a value.
+# --------------------------------------------------------------------------
+
+
+def cleanup_errors(**overrides) -> list[str]:
+    kwargs = {
+        "phase": "cleanup",
+        "release_sha": SHA,
+        "environment": "staging",
+        "images": dict.fromkeys(HANDOFF_COMPONENTS, ""),
+        "lease_supplied": False,
+        "dispatch_inputs": dict(check_release_phase.CLEANUP_INPUT_DEFAULTS),
+    }
+    kwargs.update(overrides)
+    return phase_errors(**kwargs)
+
+
+def test_a_staging_cleanup_with_only_its_three_inputs_is_admitted() -> None:
+    assert cleanup_errors() == []
+
+
+@pytest.mark.parametrize("environment", ["dev", "production", ""])
+def test_cleanup_is_refused_outside_staging(environment: str) -> None:
+    assert any("cleanup 階段僅限 staging" in error for error in cleanup_errors(environment=environment))
+
+
+def test_cleanup_refuses_a_lease_handoff_manifest_or_profile() -> None:
+    assert any("Supervisor lease" in error for error in cleanup_errors(lease_supplied=True))
+    assert any("image handoff" in error for error in cleanup_errors(images=images()))
+    assert any(
+        "manifest_run_id" in error
+        for error in cleanup_errors(manifest_run_id=MANIFEST_RUN_ID, manifest_digest=MANIFEST_DIGEST)
+    )
+    assert any("release_profile" in error for error in cleanup_errors(release_profile="core-ops"))
+
+
+@pytest.mark.parametrize("name", sorted(check_release_phase.CLEANUP_INPUT_DEFAULTS))
+def test_cleanup_refuses_any_other_input_that_left_its_default(name: str) -> None:
+    supplied = dict(check_release_phase.CLEANUP_INPUT_DEFAULTS)
+    supplied[name] = "true" if name == "initial_release_recovery" else "x"
+    errors = cleanup_errors(dispatch_inputs=supplied)
+    assert any(name in error and "維持預設值" in error for error in errors)
+
+
+def test_cleanup_fails_closed_when_the_other_inputs_were_not_passed_to_the_gate() -> None:
+    assert any("未傳入檢查" in error for error in cleanup_errors(dispatch_inputs=None))
+    assert any("未知的 dispatch 輸入" in error for error in cleanup_errors(
+        dispatch_inputs={**check_release_phase.CLEANUP_INPUT_DEFAULTS, "surprise": ""}
+    ))
+
+
+def test_other_phases_ignore_the_cleanup_only_dispatch_inputs() -> None:
+    """Build/deploy behaviour must not change because the gate now sees more inputs."""
+
+    supplied = dict.fromkeys(check_release_phase.CLEANUP_INPUT_DEFAULTS, "x")
+    assert errors_for(dispatch_inputs=supplied) == []
+    assert errors_for(
+        phase="build",
+        images=dict.fromkeys(HANDOFF_COMPONENTS, ""),
+        lease_supplied=False,
+        dispatch_inputs=supplied,
+    ) == []
+
+
+def test_the_cleanup_cli_reads_dispatch_inputs_as_name_value_pairs(tmp_path: Path) -> None:
+    base = ["--phase", "cleanup", "--environment", "staging", "--release-sha", SHA]
+    defaults = [
+        f"--dispatch-input={name}={value}"
+        for name, value in check_release_phase.CLEANUP_INPUT_DEFAULTS.items()
+    ]
+    code, receipt = _run(tmp_path, *base, *defaults)
+    assert code == 0
+    assert receipt["admitted"] is True
+    assert receipt["phase"] == "cleanup"
+
+    code, receipt = _run(tmp_path, *base, *defaults, "--dispatch-input=rollback_manifest={}")
+    assert code == 1
+    assert any("rollback_manifest" in error for error in receipt["blockers_zh_tw"])
+
+    code, receipt = _run(tmp_path, *base)
+    assert code == 1
+    assert any("未傳入檢查" in error for error in receipt["blockers_zh_tw"])

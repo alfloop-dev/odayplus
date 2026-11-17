@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runtime Release 的階段前置檢查：build、deploy 與 dev auto 的入場條件。
+"""Runtime Release 的階段前置檢查：build、deploy、dev auto 與 staging cleanup 的入場條件。
 
 為什麼需要這一關
 ----------------
@@ -19,6 +19,13 @@
   reference，以及一張只授權 ``deploy`` 動作的簽章 Supervisor lease。
 * ``auto``：僅限 dev，採用 build 的輸入形狀；實際授權由 automatic_dev.py
   驗證 protected dev 的成功 CI 與同一執行產出的 manifest，接續既有 deploy。
+* ``cleanup``：僅限 staging。驗證失敗而被 hold 保留的 ephemeral staging 沒有
+  任何既有路徑會銷毀（唯一的 cleanup 呼叫者 ``staging_closeout`` 只在 production
+  部署成功後執行），所以由 operator 對單一 release_sha 觸發既有的
+  ``staging_lifecycle.py cleanup``。它不 build、不 deploy、不消費 lease 或
+  handoff；除了 environment、release_sha、task_id 之外，所有輸入都必須維持空值
+  或預設值，任何多餘輸入一律拒絕。staging environment 的 required reviewers 是
+  人工核准閘。
 
 這個模組是各階段共用的 fail-closed **輸入形狀**檢查：phase 是否合法、
 release_sha 是否為 exact SHA、handoff 是否齊備且 immutable、lease 該不該在。
@@ -51,7 +58,23 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     build_release_profile,
 )
 
-PHASES = ("build", "deploy", "auto")
+PHASES = ("build", "deploy", "auto", "cleanup")
+
+# cleanup 只接受 environment、release_sha、task_id。下列 dispatch 輸入在 cleanup
+# 必須維持 workflow 宣告的預設值（多數為空字串）；帶入任何值都代表呼叫者以為
+# 這次執行會 build、deploy 或改變 release 內容，一律拒絕。release_lease 只以
+# lease_supplied 進來，image handoff、manifest 座標與 release_profile 另有參數。
+CLEANUP_INPUT_DEFAULTS = {
+    "auto_ci_run_id": "",
+    "data_snapshot_id": "",
+    "data_snapshot_uri": "",
+    "data_snapshot_object_generation": "",
+    "data_snapshot_content_sha": "",
+    "data_snapshot_file": "",
+    "rollback_manifest": "",
+    "initial_release_recovery": "false",
+    "external_sources_enabled": "",
+}
 
 # `deploy_cloud_run_waji.sh` 以 deploy-by-digest 部署這四個 target；migration job
 # 與 worker 共用同一個 image，所以 handoff 只需要四個 reference。
@@ -76,8 +99,14 @@ def phase_errors(
     manifest_run_id: str = "",
     manifest_digest: str = "",
     release_profile: str = RELEASE_PROFILE_FULL,
+    dispatch_inputs: dict[str, str] | None = None,
 ) -> list[str]:
-    """回傳所有阻擋這個階段開始執行的理由（中文）；空 list 代表通過。"""
+    """回傳所有阻擋這個階段開始執行的理由（中文）；空 list 代表通過。
+
+    ``dispatch_inputs`` 是其餘 workflow_dispatch 輸入（名稱 -> 值），目前只有
+    cleanup 階段判讀：它必須涵蓋 ``CLEANUP_INPUT_DEFAULTS`` 的每一個名稱且全部
+    維持預設值。
+    """
 
     errors: list[str] = []
 
@@ -94,6 +123,49 @@ def phase_errors(
 
     if phase == "auto" and environment != "dev":
         errors.append("auto 階段僅限 dev；staging 與 production 必須人工核准。")
+
+    if phase == "cleanup":
+        if environment != "staging":
+            errors.append(
+                "cleanup 階段僅限 staging；它只銷毀驗證失敗而被 hold 保留的 "
+                f"ephemeral staging release，實際值為 {environment!r}。"
+            )
+        if supplied:
+            errors.append(
+                "cleanup 階段不得帶入 image handoff（"
+                + "、".join(sorted(supplied))
+                + "）；cleanup 不部署任何 artifact。"
+            )
+        if lease_supplied:
+            errors.append("cleanup 階段不得帶入 Supervisor lease；lease 只授權 deploy 階段。")
+        if manifest_run_id.strip() or manifest_digest.strip():
+            errors.append("cleanup 階段不得帶入 manifest_run_id 或 manifest_digest。")
+        if release_profile != RELEASE_PROFILE_FULL:
+            errors.append(
+                f"cleanup 階段不得帶入 release_profile（實際值為 {release_profile!r}）；"
+                "必須維持預設值。"
+            )
+        provided = dispatch_inputs or {}
+        missing_inputs = sorted(set(CLEANUP_INPUT_DEFAULTS) - set(provided))
+        if missing_inputs:
+            errors.append(
+                "cleanup 階段無法確認下列 dispatch 輸入維持預設值（未傳入檢查）："
+                + "、".join(missing_inputs)
+                + "。"
+            )
+        unknown_inputs = sorted(set(provided) - set(CLEANUP_INPUT_DEFAULTS))
+        if unknown_inputs:
+            errors.append("cleanup 階段收到未知的 dispatch 輸入：" + "、".join(unknown_inputs) + "。")
+        changed = sorted(
+            name
+            for name, default in CLEANUP_INPUT_DEFAULTS.items()
+            if name in provided and provided[name].strip() != default
+        )
+        if changed:
+            errors.append(
+                "cleanup 階段只接受 environment、release_sha 與 task_id；下列輸入必須"
+                "維持預設值：" + "、".join(changed) + "。"
+            )
 
     if phase in {"build", "auto"}:
         if supplied:
@@ -266,11 +338,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest-run-id", default="")
     parser.add_argument("--manifest-digest", default="")
     parser.add_argument("--release-profile", default=RELEASE_PROFILE_FULL)
+    # 其餘 dispatch 輸入，形如 NAME=VALUE；cleanup 階段要求它們全部維持預設值。
+    parser.add_argument("--dispatch-input", action="append", default=[])
     parser.add_argument("--receipt", type=Path, default=None)
     args = parser.parse_args(argv)
 
     images = {name: getattr(args, f"{name}_image") or "" for name in HANDOFF_COMPONENTS}
     lease_supplied = _boolean(args.lease_supplied)
+    dispatch_inputs = dict(item.partition("=")[::2] for item in args.dispatch_input)
 
     errors = phase_errors(
         phase=args.phase,
@@ -281,6 +356,7 @@ def main(argv: list[str] | None = None) -> int:
         manifest_run_id=args.manifest_run_id or "",
         manifest_digest=args.manifest_digest or "",
         release_profile=args.release_profile,
+        dispatch_inputs=dispatch_inputs,
     )
     receipt = build_receipt(
         phase=args.phase,
