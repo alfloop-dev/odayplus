@@ -3140,12 +3140,9 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             self.assertFalse([call for call in cloud.call_args_list if call.args[0][0] == "sql"])
 
     def test_rollback_probe_tag_meets_cloud_run_minimum_length(self) -> None:
-        from product_ops.deployment.staging_lifecycle import _CLOUD_RUN_TAG_MIN
-
         # Cloud Run refuses a traffic tag shorter than 3 characters
         # (staging deploy 43742101252: "must be at least 3 characters long").
-        self.assertEqual(_CLOUD_RUN_TAG_MIN, 3)
-        self.assertGreaterEqual(len(ROLLBACK_PROBE_TAG), _CLOUD_RUN_TAG_MIN)
+        self.assertGreaterEqual(len(ROLLBACK_PROBE_TAG), 3)
         self.assertRegex(ROLLBACK_PROBE_TAG, r"^[a-z][a-z0-9-]*$")
 
     def test_rollback_probe_tag_and_revision_fit_cloud_run_limits_for_every_release_name(self) -> None:

@@ -2927,7 +2927,6 @@ STAGING_SCHEDULER_DRAIN_WORKER_ARGS: tuple[str, ...] = (
 # shorter than 3 characters (staging deploy 43742101252: "rb" was rejected with
 # "must be at least 3 characters long"), so the tag is exactly 3.
 _ROLLBACK_PROBE_TAG = "rbp"
-_CLOUD_RUN_TAG_MIN = 3
 _CLOUD_RUN_TAG_AND_SERVICE_MAX = 46
 # A revision is named "<service>-<suffix>" and is capped at 63 characters, so
 # the probe suffix is "rb-<release hash 8>-<candidate sha 8>" (20 characters):
