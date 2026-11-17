@@ -2923,8 +2923,11 @@ STAGING_SCHEDULER_DRAIN_WORKER_ARGS: tuple[str, ...] = (
 # Cloud Run rejects a traffic tag whose length plus the service name exceeds
 # 46 characters (ReplaceService INVALID_ARGUMENT, staging deploy 43699516874:
 # "rollback-probe" + "stg-odp-<12>-<8>-api" is 47). Release service names are
-# at most 41 characters (24-character slug), so the tag stays at 2.
-_ROLLBACK_PROBE_TAG = "rb"
+# at most 41 characters (24-character slug). Cloud Run also refuses a tag
+# shorter than 3 characters (staging deploy 43742101252: "rb" was rejected with
+# "must be at least 3 characters long"), so the tag is exactly 3.
+_ROLLBACK_PROBE_TAG = "rbp"
+_CLOUD_RUN_TAG_MIN = 3
 _CLOUD_RUN_TAG_AND_SERVICE_MAX = 46
 # A revision is named "<service>-<suffix>" and is capped at 63 characters, so
 # the probe suffix is "rb-<release hash 8>-<candidate sha 8>" (20 characters):
