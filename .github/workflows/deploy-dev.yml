@@ -2304,6 +2304,9 @@ jobs:
           export ODP_STAGING_DEPLOY_URL="$(python3 -c 'import json, os; print(json.load(open(os.environ["STAGING_OUTPUTS_FILE"], encoding="utf-8"))["staging_web_uri"])')"
           export ODP_STAGING_API_URL="$(python3 -c 'import json, os; print(json.load(open(os.environ["STAGING_OUTPUTS_FILE"], encoding="utf-8"))["staging_api_uri"])')"
           export ODP_STAGING_SECRET_OWNER="$(python3 -c 'import json, os; print(json.load(open(os.environ["STAGING_OUTPUTS_FILE"], encoding="utf-8"))["staging_runtime_service_account"])')"
+          # Same release-scoped identity the rehearsal verification mints its
+          # tokens for; the WIF deployer cannot print an identity token itself.
+          export ODP_STAGING_OPERATOR_IDENTITY="${ODP_STAGING_SECRET_OWNER}"
           python3 delivery_toolchain/e2e/check_remote_staging_proof.py \
             --expected-sha "$ODAY_RELEASE_SHA" \
             --correlation-id "corr-staging-${GITHUB_RUN_ID}" \
@@ -2908,6 +2911,11 @@ jobs:
       # `status == "held"` is what proves `staging_lifecycle.py hold` succeeded.
       # The state the hold retained is recorded only in that run's hold
       # receipt, which the next steps fetch and check.
+      # One other shape is admitted: a `verified` sidecar. Before hold accepted
+      # a verified release, a run that failed after verification (staging deploy
+      # 44261935709) had its hold refused and left the verify-time state. A
+      # successful run leaves the same sidecar, so this shape proves nothing by
+      # itself: the receipt step requires that run's refused hold receipt.
       - name: Require a held failed staging release in the recovery bundle
         id: retained-hold
         run: |
@@ -2963,18 +2971,23 @@ jobs:
               run_id, attempt, path = max(holds)
               hold = load(path) or {}
               identity = hold.get("identity") or {}
-              if hold.get("status") != "held":
-                  errors.append(f"latest hold sidecar {path.name} has status {hold.get('status')!r}, not 'held'")
+              sidecar_status = hold.get("status")
+              if sidecar_status not in ("held", "verified"):
+                  errors.append(f"latest hold sidecar {path.name} has status {sidecar_status!r}, not 'held'")
               if hold.get("release_id") != release_id or identity.get("release_id") != release_id:
                   errors.append(f"latest hold sidecar {path.name} names a different release")
-              if not tfvars.get("created_at") or identity.get("created_at") != tfvars.get("created_at"):
+              if sidecar_status == "verified":
+                  if identity.get("candidate_sha") != release_sha:
+                      errors.append(f"latest hold sidecar {path.name} does not bind the release to release_sha")
+              elif not tfvars.get("created_at") or identity.get("created_at") != tfvars.get("created_at"):
                   errors.append(f"latest hold sidecar {path.name} does not match the release creation time")
           if errors:
               raise SystemExit("Refusing cleanup of " + release_id + ": " + "; ".join(errors))
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write(f"hold_run_id={run_id}\nhold_run_attempt={attempt}\n")
               out.write(f"hold_owner_task_id={identity.get('owner_task_id', '')}\n")
-          print(f"{release_id} was held by run {run_id} attempt {attempt}")
+              out.write(f"hold_sidecar_status={sidecar_status}\n")
+          print(f"{release_id} was left {sidecar_status} by run {run_id} attempt {attempt}")
           PY
 
       - name: Download the hold receipt of the run that retained the release
@@ -2989,6 +3002,7 @@ jobs:
         env:
           HOLD_RECEIPT: .odp_data/staging-lifecycle/hold-run/staging-lifecycle-hold.json
           HOLD_OWNER_TASK_ID: ${{ steps.retained-hold.outputs.hold_owner_task_id }}
+          HOLD_SIDECAR_STATUS: ${{ steps.retained-hold.outputs.hold_sidecar_status }}
         run: |
           python3 -I - <<'PY'
           import json
@@ -3004,13 +3018,37 @@ jobs:
           metadata = receipt.get("metadata") or {}
           resources = receipt.get("resources") or []
           errors = []
-          if receipt.get("action") != "hold" or receipt.get("success") is not True:
-              errors.append("hold receipt does not record a successful hold")
+          sidecar_status = os.environ.get("HOLD_SIDECAR_STATUS", "")
+          state_status = metadata.get("state_status")
+          sidecar_owner = os.environ.get("HOLD_OWNER_TASK_ID", "")
+          receipt_owner = str(metadata.get("owner_task_id") or "")
+          # The hold step runs only when the staging run failed, so its receipt
+          # is what separates a retained release from a successful one.
+          if sidecar_status == "verified":
+              # Pre-fix shape: the run failed after verification and hold
+              # refused the verified state, for exactly that reason and no other.
+              refusal = (
+                  f"release {release_id!r} has lifecycle status 'verified'; "
+                  "expected one of ['created', 'held', 'verification_failed']"
+              )
+              if (
+                  receipt.get("action") != "hold"
+                  or receipt.get("success") is not False
+                  or receipt.get("errors") != [refusal]
+                  or state_status != "verified"
+              ):
+                  errors.append("hold receipt does not record a hold refused only because the release was verified")
+              # Verification lower-cases the owner task in the state it writes.
+              owner_matches = bool(sidecar_owner) and receipt_owner.lower() == sidecar_owner.lower()
+          else:
+              if receipt.get("action") != "hold" or receipt.get("success") is not True:
+                  errors.append("hold receipt does not record a successful hold")
+              if state_status not in ("verification_failed", "verified"):
+                  errors.append(f"held state was {state_status!r}, not 'verification_failed' or 'verified'")
+              owner_matches = bool(sidecar_owner) and receipt_owner == sidecar_owner
           if receipt.get("release_id") != release_id:
               errors.append("hold receipt names a different release")
-          if metadata.get("state_status") != "verification_failed":
-              errors.append(f"held state was {metadata.get('state_status')!r}, not 'verification_failed'")
-          if not os.environ.get("HOLD_OWNER_TASK_ID") or metadata.get("owner_task_id") != os.environ["HOLD_OWNER_TASK_ID"]:
+          if not owner_matches:
               errors.append("hold receipt owner task does not match the hold sidecar")
           if not resources or any(
               not isinstance(row, dict) or row.get("release_id") != release_id or row.get("status") != "retained_for_debugging"
@@ -3019,7 +3057,7 @@ jobs:
               errors.append("hold receipt does not retain only this release's resources")
           if errors:
               raise SystemExit("Refusing cleanup of " + release_id + ": " + "; ".join(errors))
-          print(f"{release_id} hold receipt records a failed verification")
+          print(f"{release_id} hold receipt records a release retained by a failed staging run ({state_status})")
           PY
 
       - name: Cleanup held staging release after failed verification

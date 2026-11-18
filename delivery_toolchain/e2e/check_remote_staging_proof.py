@@ -7,6 +7,8 @@ verifies:
 
 - staging URLs are present;
 - secret ownership metadata is present;
+- the release-scoped operator identity is present, and an identity token for
+  the API can be minted for it;
 - `/platform/health` is reachable;
 - `/platform/version.release_sha` matches the supplied release PR head SHA.
 
@@ -18,7 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -27,6 +29,11 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from product_ops.deployment import staging_lifecycle  # noqa: E402
+
 DEFAULT_OUTPUT = ROOT / ".odp_data" / "remote-staging-proof" / "remote-staging-proof-report.json"
 
 
@@ -34,6 +41,7 @@ REQUIRED_ENV_VARS = (
     "ODP_STAGING_DEPLOY_URL",
     "ODP_STAGING_API_URL",
     "ODP_STAGING_SECRET_OWNER",
+    "ODP_STAGING_OPERATOR_IDENTITY",
 )
 
 
@@ -48,23 +56,18 @@ def normalize_url(value: str) -> str:
     return value.rstrip("/")
 
 
-def fetch_identity_token(audience: str) -> str:
-    """Obtain an identity token from the current WIF-backed gcloud identity."""
-    cmd = ["gcloud", "auth", "print-identity-token", f"--audiences={audience}"]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    except Exception as exc:
-        raise RuntimeError("Failed to invoke gcloud identity-token minting") from exc
+def fetch_identity_token(audience: str, operator_identity: str) -> str:
+    """Mint an identity token for the release-scoped operator identity.
 
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"gcloud identity-token minting failed with exit status {proc.returncode}"
-        )
+    This is the rehearsal verification's own minting path. The deploy job runs
+    as a Workload Identity Federation principal, for which ``gcloud auth
+    print-identity-token`` cannot issue a token (staging deploy 44261935709
+    failed here after all ten verification stages passed).
+    """
 
-    token = proc.stdout.strip()
-    if not token:
-        raise RuntimeError("gcloud identity-token minting returned empty output")
-    return token
+    return staging_lifecycle._live_identity_token(
+        audience=audience, operator_identity=operator_identity
+    )
 
 
 def get_json(
@@ -111,6 +114,7 @@ def run_checks(args: argparse.Namespace) -> tuple[list[CheckResult], dict[str, A
             "deploy_url": env["ODP_STAGING_DEPLOY_URL"] or None,
             "api_url": env["ODP_STAGING_API_URL"] or None,
             "secret_owner": env["ODP_STAGING_SECRET_OWNER"] or None,
+            "operator_identity": env["ODP_STAGING_OPERATOR_IDENTITY"] or None,
             "secret_values_redacted": True,
         },
     }
@@ -123,7 +127,7 @@ def run_checks(args: argparse.Namespace) -> tuple[list[CheckResult], dict[str, A
 
     token = None
     try:
-        token = fetch_identity_token(audience)
+        token = fetch_identity_token(audience, env["ODP_STAGING_OPERATOR_IDENTITY"])
         checks.append(
             CheckResult(
                 ok=True,

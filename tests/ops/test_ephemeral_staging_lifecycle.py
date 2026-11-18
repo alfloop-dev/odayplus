@@ -4522,6 +4522,33 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         self.assertEqual(receipt.resources[0]["expires_at"], "2026-08-28T06:00:00Z")
         self.assertTrue(receipt.metadata.get("secret_values_redacted"))
 
+    def test_hold_retains_a_release_whose_run_failed_after_verification(self) -> None:
+        """Staging deploy 44261935709 failed in a step after verify; hold refused 'verified'."""
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        for status, holdable in (("verified", True), ("verification_failed", True), ("cleaned", False)):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmpdir:
+                state_dir = Path(tmpdir)
+                self._seed_live_state(state_dir)
+                marker_path = lifecycle._lifecycle_state_path(self.release_id, state_dir)
+                seeded = json.loads(marker_path.read_text(encoding="utf-8"))
+                marker_path.write_text(json.dumps({**seeded, "status": status}), encoding="utf-8")
+                receipt = lifecycle.hold_ephemeral_staging(
+                    release_id=self.release_id,
+                    project_id=self.project_id,
+                    owner_task_id="ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+                    reason="Automated hold after a staging failure",
+                    ttl_hours=24,
+                    state_dir=state_dir,
+                    now=self.now,
+                )
+                self.assertEqual(receipt.success, holdable)
+                self.assertEqual(receipt.metadata["state_status"], status)
+                marker_status = json.loads(marker_path.read_text(encoding="utf-8"))["status"]
+                self.assertEqual(marker_status, "held" if holdable else status)
+                if not holdable:
+                    self.assertTrue(any("lifecycle status 'cleaned'" in item for item in receipt.errors))
+
     def test_hold_ephemeral_staging_missing_reason(self) -> None:
         from product_ops.deployment.staging_lifecycle import hold_ephemeral_staging
 
