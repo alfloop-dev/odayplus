@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Protocol
 
+from modules.forecastops.domain.forecasting import is_green_alert_level
 from modules.opsboard.application.today_metrics import build_today_metrics
 
 # Exception-derived public messages share stable wording. Static dependency
@@ -149,6 +150,19 @@ def _status(value: Any) -> str:
 
 def _roles(*role_ids: str) -> list[str]:
     return list(role_ids)
+
+
+def _is_surfaced_forecast_alert(alert: Any) -> bool:
+    """Whether a ForecastOps alert row belongs in the active operator views.
+
+    Closed alerts are done, and GREEN rows record an in-band forecast rather
+    than something to act on, so neither may reach the work queue, risk
+    snapshot or notifications.
+    """
+
+    if _status(_value(alert, "status")).lower() == "closed":
+        return False
+    return not is_green_alert_level(_status(_value(alert, "alert_level")))
 
 
 _INTERVENTION_TERMINAL = {
@@ -904,8 +918,7 @@ class OperatorLiveRepository:
 
         rows: list[dict[str, Any]] = []
         for alert in alerts:
-            status = _status(_value(alert, "status")).lower()
-            if status == "closed":
+            if not _is_surfaced_forecast_alert(alert):
                 continue
             level = _status(_value(alert, "alert_level")).lower()
             alert_id = str(_value(alert, "alert_id"))
@@ -986,9 +999,9 @@ class OperatorLiveRepository:
     def _alert_tasks(self, alerts: list[Any]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for alert in alerts:
-            status = _status(_value(alert, "status")).lower()
-            if status == "closed":
+            if not _is_surfaced_forecast_alert(alert):
                 continue
+            status = _status(_value(alert, "status")).lower()
             level = _status(_value(alert, "alert_level")).lower()
             alert_id = str(_value(alert, "alert_id"))
             store_id = str(_value(alert, "store_id"))
@@ -1210,8 +1223,7 @@ class OperatorLiveRepository:
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for alert in alerts:
-            status = _status(_value(alert, "status")).lower()
-            if status == "closed":
+            if not _is_surfaced_forecast_alert(alert):
                 continue
             level = _status(_value(alert, "alert_level")).lower()
             alert_id = str(_value(alert, "alert_id"))

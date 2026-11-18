@@ -67,6 +67,19 @@ class AlertLevel(StrEnum):
     RED = "red"
 
 
+def is_green_alert_level(level: object) -> bool:
+    """Return whether a stored alert level is GREEN (inside the expected band).
+
+    Every scoring run persists an ``Alert`` row, but GREEN is the normal
+    forecast outcome rather than something an operator must act on. Consumers
+    that build queues, notifications, risk views or precision denominators use
+    this single rule so a GREEN row is never surfaced as an alert. Accepts the
+    enum or its persisted string form.
+    """
+
+    return str(level or "").strip().lower() == AlertLevel.GREEN.value
+
+
 class AlertDisposition(StrEnum):
     """The canonical alert evaluation dispositions (ODP-FR-FCT-006)."""
 
