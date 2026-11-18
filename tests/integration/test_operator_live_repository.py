@@ -163,6 +163,53 @@ def test_live_repository_projects_persisted_rows_and_real_kpis() -> None:
     assert envelope["meta"]["source"] == "operator-shell-production"
 
 
+def test_green_in_band_alerts_never_reach_active_operator_views() -> None:
+    """GREEN is the persisted in-band outcome of every scoring run, not an alert."""
+    bundle = replace(_memory_bundle(), mode="postgresql")
+    bundle.store_repository.save_store(
+        Store(
+            store_id="store-live-1",
+            tenant_id="tenant-live-1",
+            brand_id="brand-live-1",
+            store_name="Live Store",
+            store_status="open",
+        )
+    )
+    bundle.forecastops_repository.save_alert(_alert())
+    bundle.forecastops_repository.save_alert(
+        replace(
+            _alert("alert-green-1"),
+            alert_level=AlertLevel.GREEN,
+            alert_reason_code="within_expected_band",
+        )
+    )
+    repository = OperatorLiveRepository(bundle)
+    service = OperatorStateService(
+        require_live_data=True,
+        persistence_mode="postgresql",
+        provider_mode="live",
+        live_repository=repository,
+    )
+
+    envelope = service.get_today(role_id="ops-lead", tenant_id="tenant-live-1")
+
+    assert [item["id"] for item in envelope["workQueue"]] == ["alert-live-1"]
+    assert [item["id"] for item in envelope["notifications"]] == [
+        "notification-alert-live-1"
+    ]
+    assert [item["id"] for item in envelope["today"]["riskRows"]] == [
+        "risk-alert-live-1"
+    ]
+    task_ids = [
+        record["taskId"]
+        for record in repository.load_state(tenant_id="tenant-live-1")[
+            "taskCenterRecords"
+        ]["records"]
+    ]
+    assert "forecastops.alert:alert-live-1" in task_ids
+    assert "forecastops.alert:alert-green-1" not in task_ids
+
+
 def test_live_repository_reads_rows_after_process_restart(tmp_path: Any) -> None:
     db_path = tmp_path / "operator-live-restart.sqlite3"
     first = _durable_bundle(db_path)
