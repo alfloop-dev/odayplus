@@ -2224,6 +2224,37 @@ def test_retained_cleanup_admits_a_bundle_held_by_a_failed_run(fake_cloud: dict[
         "hold_run_id": "43699516874",
         "hold_run_attempt": "1",
         "hold_owner_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+        "hold_sidecar_status": "held",
+    }
+
+
+def _verified_sidecar(**identity: str) -> dict:
+    """The verify-time state the always() persist copies when hold was refused."""
+
+    return {
+        "release_id": RETAINED_RELEASE_ID,
+        "status": "verified",
+        "identity": {
+            "release_id": RETAINED_RELEASE_ID,
+            "candidate_sha": RETAINED_SHA,
+            "owner_task_id": "odp-ephemeral-staging-rollout-001",
+            **identity,
+        },
+    }
+
+
+def test_retained_cleanup_admits_the_verified_state_a_refused_hold_left(fake_cloud: dict[str, object]) -> None:
+    """Staging deploy 44261935709: failed after verify, hold refused 'verified'."""
+
+    state_dir = _retained_bundle(fake_cloud, hold=_verified_sidecar())
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_HOLD_STEP, _retained_env(fake_cloud, state_dir))
+
+    assert result.returncode == 0, result.stderr
+    assert _outputs(fake_cloud) == {
+        "hold_run_id": "43699516874",
+        "hold_run_attempt": "1",
+        "hold_owner_task_id": "odp-ephemeral-staging-rollout-001",
+        "hold_sidecar_status": "verified",
     }
 
 
@@ -2231,10 +2262,10 @@ def test_retained_cleanup_admits_a_bundle_held_by_a_failed_run(fake_cloud: dict[
     ("hold", "tfvars", "reason"),
     [
         (None, {}, "no hold sidecar"),
-        # The always() hold persist copies whatever state the run left; a
-        # refused hold leaves a sidecar that is not `held`.
-        (_held(status="verified"), {}, "not 'held'"),
+        # The always() hold persist copies whatever state the run left.
+        (_verified_sidecar(candidate_sha="b" * 40), {}, "does not bind the release to release_sha"),
         (_held(status="created"), {}, "not 'held'"),
+        (_held(status="verification_failed"), {}, "not 'held'"),
         (_held(release_id="odp-000000000000"), {}, "names a different release"),
         (_held(identity={"release_id": RETAINED_RELEASE_ID, "created_at": "2026-11-16T00:00:00Z"}), {}, "creation time"),
         (_held(), {"candidate_sha": "b" * 40}, "candidate_sha does not match"),
@@ -2276,14 +2307,83 @@ def _hold_receipt(fake: dict[str, object], **overrides: object) -> Path:
     return path
 
 
-def _receipt_env(fake: dict[str, object], receipt: Path) -> dict[str, str]:
+def _receipt_env(
+    fake: dict[str, object],
+    receipt: Path,
+    *,
+    sidecar_status: str = "held",
+    owner: str = "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+) -> dict[str, str]:
     env = dict(fake["env"])  # type: ignore[arg-type]
     env.update(
         STAGING_RELEASE_ID=RETAINED_RELEASE_ID,
         HOLD_RECEIPT=str(receipt),
-        HOLD_OWNER_TASK_ID="ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+        HOLD_OWNER_TASK_ID=owner,
+        HOLD_SIDECAR_STATUS=sidecar_status,
     )
     return env
+
+
+_VERIFIED_HOLD_REFUSAL = (
+    f"release '{RETAINED_RELEASE_ID}' has lifecycle status 'verified'; "
+    "expected one of ['created', 'held', 'verification_failed']"
+)
+_VERIFIED_METADATA = {"state_status": "verified", "owner_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001"}
+
+
+def test_retained_cleanup_admits_a_hold_of_a_release_that_failed_after_verification(
+    fake_cloud: dict[str, object],
+) -> None:
+    result = _run_step(
+        _release_jobs()[RETAINED_CLEANUP_JOB],
+        RETAINED_RECEIPT_STEP,
+        _receipt_env(fake_cloud, _hold_receipt(fake_cloud, metadata=_VERIFIED_METADATA)),
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def _refused_hold_env(fake: dict[str, object], **overrides: object) -> dict[str, str]:
+    receipt = {"success": False, "errors": [_VERIFIED_HOLD_REFUSAL], "metadata": _VERIFIED_METADATA}
+    receipt.update(overrides)
+    return _receipt_env(
+        fake,
+        _hold_receipt(fake, **receipt),
+        sidecar_status="verified",
+        owner="odp-ephemeral-staging-rollout-001",
+    )
+
+
+def test_retained_cleanup_admits_the_refused_hold_of_a_verified_release(fake_cloud: dict[str, object]) -> None:
+    """The receipt staging deploy 44261935709 left: hold refused only for the verified status."""
+
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, _refused_hold_env(fake_cloud))
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("overrides", "reason"),
+    [
+        # A hold that succeeded would have left a `held` sidecar, not `verified`.
+        ({"success": True, "errors": []}, "refused only because the release was verified"),
+        ({"errors": [_VERIFIED_HOLD_REFUSAL, "Invalid project_id format: 'x'"]}, "refused only because"),
+        ({"errors": ["hold requires a non-empty verified release ownership inventory"]}, "refused only because"),
+        (
+            {"metadata": {"state_status": "verification_failed", "owner_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001"}},
+            "refused only because",
+        ),
+        ({"metadata": {"state_status": "verified", "owner_task_id": "OTHER-TASK"}}, "owner task"),
+        ({"release_id": "odp-bbbbbbbbbbbb"}, "different release"),
+        ({"resources": []}, "only this release"),
+    ],
+)
+def test_retained_cleanup_refuses_a_verified_sidecar_without_that_refused_hold(
+    fake_cloud: dict[str, object], overrides: dict, reason: str
+) -> None:
+    result = _run_step(
+        _release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, _refused_hold_env(fake_cloud, **overrides)
+    )
+    assert result.returncode != 0
+    assert "Refusing cleanup" in result.stderr and reason in result.stderr
 
 
 def test_retained_cleanup_admits_a_hold_receipt_of_a_failed_verification(fake_cloud: dict[str, object]) -> None:

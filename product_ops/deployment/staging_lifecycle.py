@@ -4355,10 +4355,13 @@ def hold_ephemeral_staging(
     state_marker: dict[str, Any] | None = None
     inventory: list[dict[str, Any]] = []
     if require_live_state and not errors:
+        # "verified" is holdable too: the staging run can fail in a step after
+        # the rehearsal verification (staging deploy 44261935709 failed in the
+        # remote proof), and that release must still be retained for cleanup.
         state_marker, inventory, state_errors = _load_live_state_for_release(
             release_id,
             Path(state_dir),
-            require_statuses=frozenset({"created", "verification_failed", "held"}),
+            require_statuses=frozenset({"created", "verification_failed", "verified", "held"}),
             remote_state_verified=remote_state_verified,
         )
         errors.extend(state_errors)
