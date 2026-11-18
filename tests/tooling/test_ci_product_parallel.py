@@ -1057,18 +1057,18 @@ def test_quarterly_password_browser_is_a_required_isolated_supplement() -> None:
 PROTECTED_CHECKOUT_WORKFLOWS = {
     "assisted-intake-design-validation.yml": 1,
     "ci.yml": 11,
-    "deploy-dev.yml": 6,
+    "deploy-dev.yml": 7,
     "emgi-consumer-boundary.yml": 1,
     "merge-queue-review-gate.yml": 1,
     "promote-dev-to-main.yml": 1,
     "tooling-scope-review-gate.yml": 1,
 }
-PROTECTED_CHECKOUT_TOTAL = 22
+PROTECTED_CHECKOUT_TOTAL = 23
 # Jobs whose gates diff, walk or prove ancestry; a shallow clone would silently weaken them.
 FULL_HISTORY_JOBS = {
     "assisted-intake-design-validation.yml": {"validate-contract-package"},
     "ci.yml": {"change-scope", "product-lint-unit", "product-db", "product-api-contract", "product-e2e-gate"},
-    "deploy-dev.yml": {"release_phase", "build", "admission", "automatic_admission", "deploy", "staging_closeout"},
+    "deploy-dev.yml": {"release_phase", "build", "admission", "automatic_admission", "deploy", "staging_closeout", "staging_retained_cleanup"},
     "emgi-consumer-boundary.yml": {"boundary"},
     "merge-queue-review-gate.yml": {"review-gate"},
     "promote-dev-to-main.yml": {"promote"},
@@ -1090,12 +1090,13 @@ COMPARED_COMMITS = {
 }
 # The exact trusted or dispatched ref each job checks out; every other job takes the event default.
 CHECKOUT_REFS = {
-    ("deploy-dev.yml", "release_phase"): "${{ inputs.phase == 'auto' && github.sha || inputs.release_sha }}",
+    ("deploy-dev.yml", "release_phase"): "${{ (inputs.phase == 'auto' || inputs.phase == 'cleanup') && github.sha || inputs.release_sha }}",
     ("deploy-dev.yml", "build"): "${{ inputs.release_sha }}",
     ("deploy-dev.yml", "admission"): "${{ github.sha }}",
     ("deploy-dev.yml", "automatic_admission"): "${{ inputs.release_sha }}",
     ("deploy-dev.yml", "deploy"): "${{ inputs.release_sha }}",
     ("deploy-dev.yml", "staging_closeout"): "${{ inputs.release_sha }}",
+    ("deploy-dev.yml", "staging_retained_cleanup"): "${{ inputs.release_sha }}",
     ("merge-queue-review-gate.yml", "review-gate"): "${{ github.event.merge_group.head_sha }}",
     ("promote-dev-to-main.yml", "promote"): "${{ github.event.workflow_run.head_sha }}",
 }
@@ -1117,10 +1118,12 @@ RELEASE_SHA_INPUT = "${{ inputs.release_sha }}"
 # Nothing but this exact equality may run before the proof, so no extra read or
 # command can touch a denied body and no weakened comparison can pass.
 IDENTITY_ASSERTIONS = {
+    # Auto proves its trusted checkout equals inputs.release_sha; cleanup validates
+    # an older retained release with the workflow commit it checked out.
     ("deploy-dev.yml", "release_phase"): (
         "Assert exact release SHA is checked out",
-        "set -euo pipefail\n" + _head_equality_script("RELEASE_SHA", "inputs.release_sha"),
-        "RELEASE_SHA", RELEASE_SHA_INPUT, "step",
+        "set -euo pipefail\n" + _head_equality_script("POLICY_SHA", "the phase policy commit"),
+        "POLICY_SHA", "${{ inputs.phase == 'cleanup' && github.sha || inputs.release_sha }}", "step",
     ),
     ("deploy-dev.yml", "build"): (
         "Assert exact release SHA is checked out",
@@ -1147,6 +1150,11 @@ IDENTITY_ASSERTIONS = {
         "ODAY_RELEASE_SHA", RELEASE_SHA_INPUT, "job",
     ),
     ("deploy-dev.yml", "staging_closeout"): (
+        "Assert exact release SHA is checked out",
+        "set -euo pipefail\n" + _head_equality_script("ODAY_RELEASE_SHA", "ODAY_RELEASE_SHA"),
+        "ODAY_RELEASE_SHA", RELEASE_SHA_INPUT, "job",
+    ),
+    ("deploy-dev.yml", "staging_retained_cleanup"): (
         "Assert exact release SHA is checked out",
         "set -euo pipefail\n" + _head_equality_script("ODAY_RELEASE_SHA", "ODAY_RELEASE_SHA"),
         "ODAY_RELEASE_SHA", RELEASE_SHA_INPUT, "job",
