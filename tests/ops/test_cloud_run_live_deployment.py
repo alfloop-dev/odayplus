@@ -3798,6 +3798,7 @@ def test_docker_python_runtime_images_install_from_frozen_uv_lock() -> None:
         "worker": ROOT / "infra/docker/worker.Dockerfile",
         "scheduler": ROOT / "infra/docker/scheduler.Dockerfile",
     }
+    lightgbm_locked = '\nname = "lightgbm"\n' in (ROOT / "uv.lock").read_text(encoding="utf-8")
 
     # Verify canonical three live Python Dockerfiles exist
     for role, path in live_dockerfiles.items():
@@ -3847,6 +3848,13 @@ def test_docker_python_runtime_images_install_from_frozen_uv_lock() -> None:
         assert '"psycopg[binary,pool]>=' not in content, (
             f"{role}.Dockerfile must not hand-pin psycopg; uv.lock is authority"
         )
+
+        # LightGBM wheels need the OpenMP runtime the slim base lacks; dev deploy
+        # 44028045679 crashed loading a promoted model without it.
+        if lightgbm_locked:
+            assert "apt-get install -y --no-install-recommends libgomp1" in content, (
+                f"{role}.Dockerfile must install libgomp1 because uv.lock locks lightgbm"
+            )
 
     # No parallel requirements files maintained in infra/docker
     docker_dir = ROOT / "infra/docker"
