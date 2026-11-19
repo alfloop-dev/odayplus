@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "record_kind": "humanops-runtime-release-staging-admission-authorization",
+  "status": "approved",
+  "is_approval": true,
+  "task_id": "ODP-STAGING-ADMISSION-615F3EAA7-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-STAGING-ADMISSION-20261119S",
+  "candidate_sha": "615f3eaa7fb5d6fe1fad129d2e58485a408fd8d5",
+  "manifest_digest": "sha256:225bd242c37f889615326900d715915e6d9f5872301dee04b39295bae6536290",
+  "manifest_run_id": "44426728206",
+  "target_environment": "staging",
+  "release_profile": "core-ops",
+  "approved_at": "2026-11-18T08:06:48Z",
+  "authorization_basis": {
+    "user_reply": "修這兩個，接著跑鏈 S (Recommended)",
+    "user_reply_at": "2026-11-18T08:06:48Z",
+    "follow_up_reply": "對 615f3eaa7 重送，最多 2 次 (Recommended)",
+    "follow_up_reply_at": "2026-11-18T23:41:54Z",
+    "context": "Chain R admitted a060115fb to staging (registry PR #1723, approval HUMANOPS-STAGING-ADMISSION-20261118R) and deployed it once under lease HUMANOPS-STAGING-LEASE-20261118R, which is consumed. That deploy, 44261935709, passed all 10 staging verify stages for the first time and then failed in the remote staging proof: the checker minted its identity token with gcloud auth print-identity-token, which the workload identity federation credential cannot do. The hold that followed was refused because the lifecycle status was already verified. At 2026-11-18T08:06:48Z the owner chose: open one task that (1) makes the remote staging proof use the same token path staging verify already uses (generateIdToken) instead of a second implementation and (2) lets a release whose run failed after verify passed be held, with the cleanup entry accepting that case too; add tests; review by Antigravity. After the merge, run chain S under the chain R rules: candidate = the dev tip at that time, its own CI must actually run all 7 product lanes green, the dev deploy may fail only models:registry_refused and models:no_surrogate_markers, A-F otherwise unchanged, follow-the-tip until 2026-11-22 with at most 3 switches, and the a060115fb leftovers are removed through the cleanup entry after the fix merges. PR #1724 implemented that fix, was approved by Antigravity and merged as 9191d0e17. Its CI-requested automatic dev deploy 44337860835 was refused in preflight with 'GitHub read/dispatch failed' before any build. The owner agreed to dispatch a new run for 9191d0e17, but PR #1725 (GREEN forecast alerts hidden from operator views) merged first as 615f3eaa7, so nothing was dispatched for 9191d0e17; this is tip switch 1 of 3. The CI-requested automatic dev deploy 44355300563 of 615f3eaa7 was refused the same way. A read-only local replay of the preflight with identical inputs passed; it makes 327 GitHub reads with no retry. At 2026-11-18T23:41:54Z the owner chose to dispatch a new phase=auto dev run for 615f3eaa7, at most twice, and to continue chain S if it succeeded or failed only the two model checks. The first new run, 44422952022, succeeded. No failed run was rerun. The chain: (A) dispatch the core-ops staging build; (B) HD-08s with the three deviations below; (C) HD-09s with approval HUMANOPS-STAGING-ADMISSION-20261119S and the scope limits below; (D) approve the registry PR as Human/Ops once it touches only docs/evidence/, the registry checker says GO, admission errors are empty and every CI job is green; (E) HD-10s: after the registry merges, sync the main checkout registry and manifest from origin/dev and register lease HUMANOPS-STAGING-LEASE-20261119S (new nonce, 6 hours, non_dispatchable); (F) HD-12s: approve the GitHub staging environment with ajoe734 only for the run that lease triggers. Before every step dev tip must still be the candidate (plus the evidence-only registry merge for E and F) with empty ancestry. B and C took effect only if the build succeeded, its manifest named the candidate with profile core-ops and 16 disabled sources with no credentials, npm audit reported 0 findings and all 5 staging targets read back absent. Checked facts: dev tip is 615f3eaa7 (#1725 merge, containing #1723 and #1724); its exact push CI 44343517064 (11/11 jobs) and merge group CI 44333329658 (10/11, the dispatch-only automatic dev release job skipped) ran all 7 product lanes, all success; dev deploy 44422952022 of 615f3eaa7 succeeded with live E2E 83 of 83 checks passing and no blockers, so no dev deploy deviation is needed; ancestry was empty; build 44426728206 met every B/C condition and produced manifest sha256:225bd242c37f889615326900d715915e6d9f5872301dee04b39295bae6536290, the digest bound here. Not yet verified anywhere: the new proof token path and the proof's /platform/health and /platform/version checks have never run on staging, and the #1724 workflow change has never run for real.",
+    "interpretation": "Owner 蔡尚志 replied in the Claude Code conversation at 2026-11-18T08:06:48Z and at 2026-11-18T23:41:54Z. Transcribed by Claude; not an external identity-system signature."
+  },
+  "authorized_scope": {
+    "max_release_requests": 1,
+    "max_short_lived_supervisor_leases": 1,
+    "runtime_release_deploy_phases": 1,
+    "allowed_environment": "staging",
+    "external_sources_enabled": false,
+    "production_changes": false,
+    "github_staging_environment_approval_still_required": true,
+    "supervisor_lease_still_required": true
+  },
+  "recorded_by": "Claude (interactive owner-response transcription; no external identity signature claimed)",
+  "evidence": {
+    "exact_ci": "docs/evidence/runtime/ODP-STAGING-ADMISSION-615F3EAA7-001/candidate-ci-615f3eaa7.json",
+    "staging_build_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/44426728206",
+    "dev_deploy_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/44422952022",
+    "exact_candidate_ci_workflow_urls": [
+      "https://github.com/alfloop-dev/odayplus/actions/runs/44343517064",
+      "https://github.com/alfloop-dev/odayplus/actions/runs/44333329658"
+    ],
+    "refused_automatic_dev_deploy_urls": [
+      "https://github.com/alfloop-dev/odayplus/actions/runs/44337860835",
+      "https://github.com/alfloop-dev/odayplus/actions/runs/44355300563"
+    ],
+    "staging_proof_fix_pull_request": "https://github.com/alfloop-dev/odayplus/pull/1724",
+    "operator_alert_filter_pull_request": "https://github.com/alfloop-dev/odayplus/pull/1725",
+    "failed_staging_deploy_url": "https://github.com/alfloop-dev/odayplus/actions/runs/44261935709"
+  },
+  "decisions": {
+    "HD-08s": {
+      "decision": "approve",
+      "subject": "gate-2 Data Gate passed-with-deviation for this candidate's staging admission only, review_by 2026-11-27",
+      "accepted_deviations": [
+        "source contract and sample data reviewed: not applicable — the core-ops profile keeps every external source disabled (sources-off attestation in the build manifest: 16 sources audited, all disabled, zero credentials present).",
+        "point-in-time correctness checked for model-ready data: not applicable — core-ops serves no model (release_profile.model_readiness=not_claimed).",
+        "freshness and lineage evidence captured: check_live_production_data.py has never run against this candidate; deferred to the staging verify run and the production gates, not claimed as passed."
+      ]
+    },
+    "HD-09s": {
+      "decision": "approve",
+      "subject": "release.stage=dev-verified, admission_target=staging, decision=go for this exact candidate and the manifest produced by its staging build",
+      "dev_deploy_result": "dev deploy 44422952022 (phase auto, newly dispatched by the owner's decision after 44355300563 was refused in preflight) succeeded: live E2E 83/83, no blockers; the allowance for the two model checks was not needed."
+    }
+  }
+}
