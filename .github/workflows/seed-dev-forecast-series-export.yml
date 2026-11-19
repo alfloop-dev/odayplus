@@ -1,15 +1,28 @@
 name: seed-dev-forecast-series-export
 
-# Dev only, read-only: export per-store daily net revenue (same definition as
-# model_ready.forecast_training_view) as the payload for the ForecastOps
-# timeseries ingest. The ingest itself goes through the API as an operator.
+# Dev only: export per-store daily net revenue (same definition as
+# model_ready.forecast_training_view, read-only) as the payload for the
+# ForecastOps timeseries ingest; when run_forecast is true, ingest it and run one
+# forecast job per store through the API as the dedicated dev operator
+# dev-forecast-bot (operations_manager only). seed-dev-orders-daily calls this
+# with run_forecast=true after each newly closed day is loaded.
 on:
   push:
     branches: [seed-dev-data-backfill]
     paths:
       - .github/workflows/seed-dev-forecast-series-export.yml
       - .github/scripts/seed_dev_forecast_series_export.py
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      run_forecast:
+        description: Ingest the series and run forecast jobs as dev-forecast-bot
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      run_forecast:
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -18,7 +31,7 @@ permissions:
 jobs:
   export:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     environment: dev
     env:
       GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
@@ -76,3 +89,17 @@ jobs:
           name: forecast-series
           path: forecast-series.json
           retention-days: 7
+
+      - name: Set up Node
+        if: ${{ inputs.run_forecast }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Ingest series and run forecast jobs (dev-forecast-bot)
+        if: ${{ inputs.run_forecast }}
+        env:
+          WEB_BASE_URL: ${{ vars.ODP_WEB_BASE_URL }}
+          FORECAST_BOT_USERNAME: dev-forecast-bot
+          FORECAST_BOT_PASSWORD: ${{ secrets.ODP_DEV_FORECAST_BOT_PASSWORD }}
+        run: node .github/scripts/seed_dev_forecast_run.cjs forecast-series.json

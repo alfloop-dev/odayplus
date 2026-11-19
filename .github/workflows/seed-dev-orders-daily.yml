@@ -87,3 +87,11 @@ jobs:
           export RAW_DB_URL
           PYTHONPATH="${GITHUB_WORKSPACE}" UV_PYTHON=3.12 \
             uv run --frozen python .github/scripts/seed_dev_orders_daily_driver.py
+
+  forecast:
+    # Refresh the ForecastOps series and forecasts once the new day is canonical.
+    needs: append-day
+    uses: ./.github/workflows/seed-dev-forecast-series-export.yml
+    with:
+      run_forecast: true
+    secrets: inherit

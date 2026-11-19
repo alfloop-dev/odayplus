@@ -16,6 +16,13 @@ Per run (idempotent, catch-up capped):
      partition (no already-canonical rows in the window -> reconcile passes);
   4. report how many forecast origins now have an incremental 28-day horizon.
 
+Simulated decline (owner request 2026-11-19, dev only): from DECLINE_START the
+ticket size of three stores ramps down linearly over DECLINE_RAMP_DAYS to a
+per-store floor, so the ForecastOps panel has stores that really underperform.
+Only the amount is scaled; order counts are unchanged so no store loses a
+transaction day (inference needs 28 contiguous days). Days already canonical
+are never rewritten.
+
 Env: RAW_DB_URL, CLOUD_SQL_INSTANCE, ODP_DATA_MONGO_URI, TARGET_TENANT,
 INCREMENTAL_START (first day of the incremental feed). No secrets printed.
 """
@@ -27,6 +34,32 @@ import urllib.parse
 from datetime import UTC, date, datetime, timedelta
 
 MAX_CATCHUP_DAYS = 7
+
+# Simulated store decline: place suffix -> ticket-size floor reached after the ramp.
+DECLINE_START = date(2026, 11, 18)
+DECLINE_RAMP_DAYS = 10
+DECLINE_FLOORS = {
+    "-STORE-003": 0.50,  # 台北市中山區
+    "-STORE-008": 0.40,  # 桃園市中壢區
+    "-STORE-012": 0.28,  # 台南市東區
+}
+
+
+def _decline_factor(place_id: str, day: date) -> float:
+    if day < DECLINE_START:
+        return 1.0
+    for suffix, floor in DECLINE_FLOORS.items():
+        if place_id.endswith(suffix):
+            progress = min(1.0, ((day - DECLINE_START).days + 1) / DECLINE_RAMP_DAYS)
+            return 1.0 - (1.0 - floor) * progress
+    return 1.0
+
+
+def _apply_decline(doc: dict, day: date) -> dict:
+    factor = _decline_factor(doc["place"]["_id"], day)
+    if factor != 1.0:
+        doc = {**doc, "amount": round(doc["amount"] * factor, 2)}
+    return doc
 
 
 def _proxy_dsn(raw: str) -> str:
@@ -56,7 +89,7 @@ def _orders_for_day(day: date) -> list[dict]:
     dataset = SyntheticDataset(SyntheticConfig(as_of=_midnight(day + timedelta(days=1))))
     tag = f"-ORD-{day.strftime('%Y%m%d')}-"
     return [
-        coerce_dates(SourceKind.ORDERS, doc)
+        coerce_dates(SourceKind.ORDERS, _apply_decline(doc, day))
         for doc in dataset.documents(SourceKind.ORDERS)
         if tag in doc["_id"]
     ]
@@ -116,7 +149,10 @@ def main() -> int:
                 ordered=False,
             )
         expected += len(docs)
-        print(f"MONGO day={day} orders={len(docs)}", flush=True)
+        scaled = {
+            suffix: round(_decline_factor(f"x{suffix}", day), 3) for suffix in DECLINE_FLOORS
+        }
+        print(f"MONGO day={day} orders={len(docs)} decline_factors={scaled}", flush=True)
 
     from product_ops.data_platform.backfill import main as backfill_main
 

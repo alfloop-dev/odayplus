@@ -10,6 +10,15 @@ runtime requires lineage for every history day. machine_cycles is the day's
 transaction count. data_quality_score follows the view (1.0 when every
 transaction has lineage from a completed ingestion run, else 0.0).
 
+SIMULATED SiteScore baseline (owner request 2026-11-19, dev only): SiteScore is
+governed-disabled in dev, so no real baseline exists and every alert would be
+green (gap ratio 0). Each observation therefore carries a simulated
+site_score_baseline_p50 = BASELINE_FACTOR x the store's median daily revenue over
+the fixed reference window BASELINE_REF_START..BASELINE_REF_END (before any
+simulated decline). It is NOT a SiteScore model output; it is only an input the
+forecast alert policy compares the latest day against. It is not a model
+feature, so forecasts themselves do not change.
+
 Env: RAW_DB_URL, CLOUD_SQL_INSTANCE, TARGET_TENANT, LOOKBACK_DAYS, OUT_PATH.
 Writes JSON; prints counts only.
 """
@@ -23,6 +32,26 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
 import psycopg
+
+BASELINE_REF_START = "2026-09-19"
+BASELINE_REF_END = "2026-10-13"
+BASELINE_FACTOR = 0.6
+
+BASELINE_SQL = """
+SELECT store_id::text, percentile_cont(0.5) WITHIN GROUP (ORDER BY revenue)
+FROM (
+    SELECT txn.store_id, (txn.event_time AT TIME ZONE 'UTC')::date AS day,
+           sum(txn.net_amount)::double precision AS revenue
+    FROM core.transactions AS txn
+    JOIN core.stores AS store ON store.store_id = txn.store_id
+    WHERE store.tenant_id = %(tenant)s
+      AND txn.transaction_status = 'succeeded'
+      AND txn.currency = 'TWD'
+      AND (txn.event_time AT TIME ZONE 'UTC')::date BETWEEN %(start)s AND %(end)s
+    GROUP BY 1, 2
+) AS daily
+GROUP BY 1
+"""
 
 SQL = """
 WITH txn AS (
@@ -88,6 +117,14 @@ def main() -> int:
     start = yesterday - timedelta(days=int(os.environ.get("LOOKBACK_DAYS", "60")) - 1)
     with psycopg.connect(dsn, connect_timeout=30) as conn:
         rows = conn.execute(SQL, {"tenant": tenant, "start": start, "end": yesterday}).fetchall()
+        baselines = {
+            store_id: round(BASELINE_FACTOR * float(median), 2)
+            for store_id, median in conn.execute(
+                BASELINE_SQL,
+                {"tenant": tenant, "start": BASELINE_REF_START, "end": BASELINE_REF_END},
+            ).fetchall()
+            if median is not None
+        }
 
     by_store: dict[str, list[dict]] = defaultdict(list)
     for store_id, day, revenue, txn_count, quality_ok, snapshot_ids in rows:
@@ -99,6 +136,7 @@ def main() -> int:
                 "machine_cycles": int(txn_count),
                 "data_quality_score": 1.0 if quality_ok else 0.0,
                 "source_snapshot_ids": list(snapshot_ids or []),
+                "site_score_baseline_p50": baselines.get(store_id),
             }
         )
 
@@ -118,11 +156,20 @@ def main() -> int:
                 "contiguous_days_to_yesterday": run,
                 "days_without_lineage": no_lineage,
                 "last_day": max(dates),
+                "simulated_site_score_baseline_p50": baselines.get(store_id),
             }
+        )
+        latest = max(days, key=lambda d: d["business_date"])
+        baseline = baselines.get(store_id)
+        gap = (
+            round((latest["actual_revenue"] - baseline) / baseline, 3)
+            if baseline
+            else None
         )
         print(
             f"STORE {store_id} days={len(days)} contiguous_to_{yesterday}={run} "
-            f"no_lineage={no_lineage} last={max(dates)}",
+            f"no_lineage={no_lineage} last={max(dates)} baseline={baseline} "
+            f"latest_revenue={latest['actual_revenue']} gap={gap}",
             flush=True,
         )
 
@@ -130,6 +177,10 @@ def main() -> int:
         "tenant_id": tenant,
         "window": [start.isoformat(), yesterday.isoformat()],
         "prediction_origin_time": f"{(yesterday + timedelta(days=1)).isoformat()}T00:00:00Z",
+        "simulated_baseline": {
+            "factor": BASELINE_FACTOR,
+            "reference_window": [BASELINE_REF_START, BASELINE_REF_END],
+        },
         "stores": summary,
         "observations": [d for days in by_store.values() for d in days],
     }
