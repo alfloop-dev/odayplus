@@ -1,0 +1,59 @@
+{
+  "checks": [
+    {
+      "detail": "exact release SHA is present in image/env/labels",
+      "name": "jobs-smoke:scheduler:release_sha",
+      "ok": true
+    },
+    {
+      "detail": "bounded scheduler entrypoint is configured",
+      "name": "jobs-smoke:scheduler:entrypoint",
+      "ok": true
+    },
+    {
+      "detail": "no external providers selected (consumer-only deployment)",
+      "name": "jobs-smoke:scheduler:provider_selection",
+      "ok": true
+    },
+    {
+      "detail": "database and every selected provider secret are bound to Secret Manager references: ODAY_DATABASE_URL",
+      "name": "jobs-smoke:scheduler:secret_bindings",
+      "ok": true
+    },
+    {
+      "detail": "latest execution completed with succeededCount>=1 and failedCount=0",
+      "name": "jobs-smoke:scheduler:execution",
+      "ok": true
+    },
+    {
+      "detail": "execution has a queryable Cloud Run status receipt",
+      "name": "jobs-smoke:scheduler:execution_receipt",
+      "ok": true
+    },
+    {
+      "detail": "job and completed execution bind the exact immutable image and release",
+      "name": "jobs-smoke:scheduler:immutable_binding",
+      "ok": true
+    }
+  ],
+  "execution_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:6c3966e3172f9323ab52dd109924515b962abecd44f5c3fbe946fa48cd9745dc",
+  "execution_job_name": "oday-scheduler-r-49ef699a6c08",
+  "execution_name": "oday-scheduler-r-49ef699a6c08-ffnsk",
+  "expected_sha": "49ef699a6c086f117463be5b73d0efc66d8ebb31",
+  "generated_at": "2026-11-19T08:55:59Z",
+  "job_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:6c3966e3172f9323ab52dd109924515b962abecd44f5c3fbe946fa48cd9745dc",
+  "job_kind": "scheduler",
+  "job_name": "oday-scheduler-r-49ef699a6c08",
+  "ok": true,
+  "release_sha": "49ef699a6c086f117463be5b73d0efc66d8ebb31",
+  "required_secret_env_vars": [
+    "ODAY_DATABASE_URL"
+  ],
+  "schema_version": 1,
+  "secret_bound_env_vars": [
+    "ODAY_DATABASE_URL"
+  ],
+  "secret_values_redacted": true,
+  "selected_provider_ids": [],
+  "unselected_provider_secret_env_vars": []
+}
