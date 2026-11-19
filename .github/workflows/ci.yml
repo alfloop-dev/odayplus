@@ -159,7 +159,11 @@ jobs:
           echo "scope=$scope" >> "$GITHUB_OUTPUT"
 
   orchestrator:
-    runs-on: ubuntu-latest
+    # Pinned: on the ubuntu-26.04 image that ubuntu-latest now resolves to,
+    # Bubblewrap fails with "setting up uid map: Permission denied" under the
+    # reviewed profile, so every protected-execution test fails. Unpin once
+    # .orchestrator/profiles/bwrap works there.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       # Below this Git, actions/checkout silently falls back to a REST archive
