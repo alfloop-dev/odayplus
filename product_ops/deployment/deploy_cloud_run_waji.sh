@@ -600,7 +600,9 @@ build_publish_sign() {
   fi
   if [ "${ODP_SKIP_BUILD:-false}" != "true" ]; then
     echo "Building and publishing ${name} image..."
-    docker build --platform linux/amd64 \
+    # --provenance=false keeps a single-platform manifest (not an OCI index)
+    # so the digest matches what Cloud Run records for the running image.
+    docker build --platform linux/amd64 --provenance=false \
       --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
       --label "com.oday-plus.data-binding=live" "$@" -t "${image}" -f "${dockerfile}" . || return 1
     docker push "${image}" || return 1
