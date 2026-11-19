@@ -285,6 +285,19 @@ def test_ci_workflow_product_lanes_isolated(ci_workflow: dict[str, Any]) -> None
         assert "needs.change-scope.outputs.scope != 'development_tooling'" in if_cond
 
 
+def test_ci_workflow_orchestrator_runner_supports_the_sandbox(ci_workflow: dict[str, Any]) -> None:
+    """The orchestrator job runs the real Bubblewrap enforcement tests.
+
+    They fail on the ubuntu-26.04 image ("setting up uid map: Permission denied"),
+    so the job must not float with ubuntu-latest until the profile works there.
+    """
+    job = ci_workflow["jobs"]["orchestrator"]
+
+    assert job.get("runs-on") == "ubuntu-24.04"
+    install = next(step for step in job["steps"] if step.get("name") == "Install sandbox dependency")
+    assert ".orchestrator/profiles/bwrap" in install["run"]
+
+
 def test_ci_workflow_product_aggregate_job(ci_workflow: dict[str, Any]) -> None:
     jobs = ci_workflow["jobs"]
     product_job = jobs["product"]
