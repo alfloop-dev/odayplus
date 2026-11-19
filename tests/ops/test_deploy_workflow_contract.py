@@ -3168,3 +3168,38 @@ def test_deploy_job_already_binds_the_private_api_transport_identities() -> None
         "${{ vars.ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}"
     )
     assert "ODP_API_INVOKER_TOKEN" not in RELEASE_WORKFLOW.read_text(encoding="utf-8")
+
+
+def _docker_build_commands(text: str) -> list[str]:
+    """Every `docker build` invocation, joined across its continuation lines."""
+
+    commands = []
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if re.search(r"\bdocker build\b", line) and not line.lstrip().startswith("#"):
+            command = [line]
+            while command[-1].rstrip().endswith("\\") and index + len(command) < len(lines):
+                command.append(lines[index + len(command)])
+            commands.append(" ".join(part.strip().rstrip("\\") for part in command))
+    return commands
+
+
+def test_release_images_are_built_as_single_platform_manifests() -> None:
+    """Cloud Run records the platform manifest digest on revisions and executions.
+
+    On the ubuntu-26.04 runner image docker build pushes an OCI index with a
+    provenance attestation by default, so the built digest no longer equals the
+    digest of the running image and the immutable binding checks fail (dev deploy
+    44448038532). Every release image build must opt out explicitly.
+    """
+
+    sources = {
+        RELEASE_WORKFLOW.name: RELEASE_WORKFLOW.read_text(encoding="utf-8"),
+        DEPLOY_SCRIPT.name: _deploy_script_text(),
+    }
+    for name, text in sources.items():
+        commands = _docker_build_commands(text)
+        assert commands, f"{name} no longer builds images; update this contract"
+        for command in commands:
+            assert "--platform linux/amd64" in command, (name, command)
+            assert "--provenance=false" in command, (name, command)

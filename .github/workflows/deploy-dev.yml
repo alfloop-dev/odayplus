@@ -773,8 +773,13 @@ jobs:
               local tagged="$2"
               local dockerfile="$3"
               echo "Building immutable ${name} image..."
+              # A single-platform manifest, not an OCI index: Cloud Run records
+              # the platform manifest digest on revisions and executions, so an
+              # index (buildx adds a provenance attestation by default on newer
+              # runners) breaks the immutable image binding checks.
               docker build \
                 --platform linux/amd64 \
+                --provenance=false \
                 --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
                 --label "com.oday-plus.data-binding=live" \
                 -t "${tagged}" \
