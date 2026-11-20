@@ -102,3 +102,18 @@ output "runtime_kms_key" {
   value       = module.runtime_foundation.kms_crypto_key_id
   description = "CMEK resource id. No key material is exposed."
 }
+
+output "web_load_balancer_ip" {
+  value       = one(google_compute_global_address.web_lb[*].address)
+  description = "Reserved static IP of the custom-domain load balancer. The registrar A record of every web_load_balancer_hosts entry must point here. Null when web_load_balancer_enabled is false."
+}
+
+output "web_load_balancer_hosts" {
+  value       = local.web_lb_enabled ? local.web_lb_domains : []
+  description = "Host names on the Google-managed certificate: the DNS A records the owner adds at the registrar."
+}
+
+output "web_load_balancer_backend_service" {
+  value       = one(google_compute_backend_service.web_lb_release[*].name)
+  description = "Staging only: the backend service staging_lifecycle.py attaches each verified release's serverless NEG to."
+}

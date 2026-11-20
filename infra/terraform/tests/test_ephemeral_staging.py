@@ -234,12 +234,13 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
                 invoker,
             )
 
-        # Neither grant is widened to the project, and no service is public.
+        # Neither grant is widened to the project. The only public invoker is
+        # the Web's (test_staging_api_is_reachable_by_the_runner_but_iam_only).
         self.assertNotRegex(
             main_tf,
             r'google_project_iam_(member|binding|policy)"[^}]*(serviceAccountOpenIdTokenCreator|run\.invoker)',
         )
-        self.assertNotIn("allUsers", main_tf)
+        self.assertEqual(main_tf.count('"allUsers"'), 1)
         self.assertNotIn("allAuthenticatedUsers", main_tf)
 
     def test_password_login_runtime_wiring_is_release_owned(self) -> None:
@@ -345,9 +346,55 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         # The GitHub-hosted verify runner reads the API directly (§12.5 item 3).
         self.assertRegex(header, r'(?m)^  ingress\s*=\s*"INGRESS_TRAFFIC_ALL"$')
         self.assertNotIn("INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER", header)
-        # Reachability never means public: no service grants anonymous invoke.
-        self.assertNotIn("allUsers", main_tf)
+        # Reachability never means public for the API. The only anonymous
+        # invoker is the Web's, which the console-staging load balancer needs
+        # (it forwards browsers without a Cloud Run token).
         self.assertNotIn("allAuthenticatedUsers", main_tf)
+        public = re.findall(
+            r'resource "google_cloud_run_v2_service_iam_member" "([^"]+)" \{\n(.*?)\n\}',
+            main_tf,
+            re.DOTALL,
+        )
+        public = [(name, body) for name, body in public if '"allUsers"' in body]
+        self.assertEqual([name for name, _ in public], ["staging_web_public"])
+        self.assertIn("name     = google_cloud_run_v2_service.staging_web.name", public[0][1])
+        self.assertEqual(main_tf.count('"allUsers"'), 1)
+
+    def test_release_owns_only_its_web_neg_for_the_persistent_load_balancer(self) -> None:
+        """The release adds a serverless NEG for its own Web and nothing of the LB.
+
+        The persistent IP, certificate, URL map, proxy, forwarding rule and
+        backend service belong to the staging foundation (load_balancer.tf).
+        """
+        from product_ops.deployment.staging_lifecycle import REQUIRED_STAGING_OUTPUTS
+
+        main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+        outputs_tf = (MODULE_DIR / "outputs.tf").read_text(encoding="utf-8")
+        match = re.search(
+            r'resource "google_compute_region_network_endpoint_group" "staging_web" \{\n(.*?)\n\}',
+            main_tf,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        neg = match.group(1)
+        self.assertIn('name                  = "${local.name_prefix}-web-neg"', neg)
+        self.assertIn('network_endpoint_type = "SERVERLESS"', neg)
+        self.assertIn("service = google_cloud_run_v2_service.staging_web.name", neg)
+        self.assertIn('web_neg              = "${local.name_prefix}-web-neg"', main_tf)
+        for persistent in (
+            "google_compute_global_address",
+            "google_compute_managed_ssl_certificate",
+            "google_compute_backend_service",
+            "google_compute_url_map",
+            "google_compute_target_https_proxy",
+            "google_compute_global_forwarding_rule",
+        ):
+            self.assertNotIn(persistent, main_tf)
+        self.assertIn("staging_web_network_endpoint_group", REQUIRED_STAGING_OUTPUTS)
+        self.assertIn(
+            "value       = google_compute_region_network_endpoint_group.staging_web.name",
+            outputs_tf,
+        )
 
     def test_tenant_isolation_contract(self) -> None:
         vars_tf = (MODULE_DIR / "variables.tf").read_text(encoding="utf-8")
@@ -762,6 +809,33 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
             f'secret_id             = "{names["secret_identity_key"]}"',
             planned("google_secret_manager_secret.staging_identity_token_signing_key"),
         )
+
+    def test_planned_web_neg_is_the_one_the_lifecycle_attaches_and_detaches(self) -> None:
+        """The NEG name Terraform plans is the name cleanup derives from release_id."""
+
+        from product_ops.deployment.staging_lifecycle import (
+            generate_tfvars,
+            get_ephemeral_resource_names,
+        )
+
+        release_id = "odp-49ef699a6c08"
+        config = self._config(release_id)
+        output = self._plan("web_neg", generate_tfvars(config))
+        names = get_ephemeral_resource_names(release_id, config.project_id)
+
+        def planned(address: str) -> str:
+            start = output.index(f"# {address} will be created")
+            end = output.find("\n  # ", start + 1)
+            return output[start:] if end < 0 else output[start:end]
+
+        neg = planned("google_compute_region_network_endpoint_group.staging_web")
+        self.assertRegex(neg, rf'\+ name\s+=\s+"{re.escape(names["web_neg"])}"')
+        self.assertRegex(neg, r'\+ network_endpoint_type\s+=\s+"SERVERLESS"')
+        self.assertRegex(neg, rf'\+ service\s+=\s+"{re.escape(names["cloud_run_web"])}"')
+        self.assertLessEqual(len(names["web_neg"]), 63)
+        public = planned("google_cloud_run_v2_service_iam_member.staging_web_public")
+        self.assertRegex(public, r'\+ member\s+=\s+"allUsers"')
+        self.assertRegex(public, rf'\+ name\s+=\s+"{re.escape(names["cloud_run_web"])}"')
 
     def test_explicit_tenant_still_wins_over_the_derived_one(self) -> None:
         """An explicit tenant_id wins, including the pre-UUIDv5 tenant-<slug>-<hash>

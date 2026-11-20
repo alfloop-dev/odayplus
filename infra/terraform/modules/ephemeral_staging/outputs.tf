@@ -18,6 +18,11 @@ output "staging_web_service_name" {
   description = "Release-scoped staging Web Cloud Run service name."
 }
 
+output "staging_web_network_endpoint_group" {
+  value       = google_compute_region_network_endpoint_group.staging_web.name
+  description = "Release-scoped serverless NEG staging_lifecycle.py attaches to the persistent console-staging load balancer."
+}
+
 output "staging_database_name" {
   value       = google_sql_database.staging.name
   description = "Release-scoped staging database name."

@@ -88,6 +88,23 @@ variable "web_base_url" {
   default     = ""
 }
 
+variable "web_load_balancer_enabled" {
+  type        = bool
+  description = "Serve web_base_url (and api_public_host, when set) through the environment's persistent global external HTTPS Application Load Balancer: reserved static IP, Google-managed certificate and serverless NEG backends (load_balancer.tf). DNS A records for the hosts are added at the external registrar and must point at the web_load_balancer_ip output. Production requires it."
+  default     = false
+}
+
+variable "api_public_host" {
+  type        = string
+  description = "Bare host name the load balancer routes to the IAM-only API (for example the host of ODP_PROD_API_URL). The API ingress is internal-and-load-balancer only, so this is the only external path the production live E2E gate and the API uptime check can use. Empty routes no API host. Staging must leave it empty: its API is release-scoped."
+  default     = ""
+
+  validation {
+    condition     = var.api_public_host == "" || can(regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", var.api_public_host))
+    error_message = "api_public_host must be empty or a bare lowercase DNS host name without scheme, port, or path."
+  }
+}
+
 variable "web_oidc_client_id" {
   type        = string
   description = "OIDC client id registered for the ODay Plus web application."

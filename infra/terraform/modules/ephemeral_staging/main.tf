@@ -10,6 +10,8 @@
 #   - Dedicated service accounts with minimal IAM
 #   - Release-scoped Pub/Sub messaging (jobs + DLQ) with CMEK encryption
 #   - Release-scoped Cloud Run services (API + Web)
+#   - A serverless NEG for the Web, attached to the persistent
+#     console-staging load balancer by staging_lifecycle.py
 #   - Release-owned local identity JWT signing key for human password login
 #   - Cloud Scheduler trigger starting paused
 #   - Label-capable resources tagged with owner/created_at/expires_at labels;
@@ -172,6 +174,7 @@ resource "terraform_data" "staging_ownership" {
       name_prefix          = local.name_prefix
       api_service          = "${local.name_prefix}-api"
       web_service          = "${local.name_prefix}-web"
+      web_neg              = "${local.name_prefix}-web-neg"
       migration_job        = local.migration_job_name
       worker_job           = local.worker_job_name
       scheduler_job        = local.scheduler_job_name
@@ -424,6 +427,37 @@ resource "google_cloud_run_v2_service_iam_member" "staging_runtime_invokes_web" 
   name     = google_cloud_run_v2_service.staging_web.name
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.staging_runtime.email}"
+}
+
+# --- Custom domain (console-staging.oday-plus.com.tw) ---
+#
+# The staging foundation owns the persistent global external HTTPS load
+# balancer, static IP and managed certificate (infra/terraform/load_balancer.tf).
+# A load balancer forwards browser requests without a Cloud Run identity
+# token, so the Web -- and only the Web -- is publicly invocable, as the
+# production Web is (its web_invoker_members is public). Its application
+# routes stay behind the password sign-in session; the API stays IAM-only.
+resource "google_cloud_run_v2_service_iam_member" "staging_web_public" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.staging_web.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+# The release owns only its serverless NEG. staging_lifecycle.py attaches it to
+# the foundation backend service in the web_custom_domain verify stage and
+# detaches it before this state is destroyed (a NEG still in use cannot be
+# deleted). NEGs carry no labels; the ownership manifest records it.
+resource "google_compute_region_network_endpoint_group" "staging_web" {
+  project               = var.project_id
+  name                  = "${local.name_prefix}-web-neg"
+  region                = var.region
+  network_endpoint_type = "SERVERLESS"
+
+  cloud_run {
+    service = google_cloud_run_v2_service.staging_web.name
+  }
 }
 
 # --- Pub/Sub Messaging ---

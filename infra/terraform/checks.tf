@@ -151,6 +151,19 @@ resource "terraform_data" "production_contract" {
       )
       error_message = "Production monitoring requires at least one alert notification target, a reachable API uptime host, and the Cloud SQL max_connections used for saturation alerts."
     }
+
+    # The API ingress is internal-and-load-balancer only, so the persistent
+    # load balancer is the only external path to it: the production live E2E
+    # gate (ODP_PROD_API_URL in deploy_cloud_run_waji.sh) and the API uptime
+    # check both use api_public_host.
+    precondition {
+      condition = !local.is_prod || (
+        var.web_load_balancer_enabled
+        && var.api_public_host != ""
+        && var.monitoring_api_uptime_host == var.api_public_host
+      )
+      error_message = "Production serves its Web and API custom domains through the persistent load balancer: set web_load_balancer_enabled = true, set api_public_host, and use the same host as monitoring_api_uptime_host."
+    }
   }
 }
 

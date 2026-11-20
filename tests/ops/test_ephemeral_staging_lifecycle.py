@@ -2253,6 +2253,7 @@ class ReleaseScopedAutoCleanupTests(unittest.TestCase):
     def test_fully_expired_release_is_still_cleaned_as_one_unit(self) -> None:
         """The grouping gate must not block a release that really is finished."""
         import tempfile
+        import unittest.mock as mock
 
         from product_ops.deployment.staging_lifecycle import _terraform_state_paths
 
@@ -2275,22 +2276,33 @@ class ReleaseScopedAutoCleanupTests(unittest.TestCase):
             state_root = Path(tmpdir)
             state_p, vars_p, inv_p = _terraform_state_paths(self.release_id, state_root)
             state_p.write_text('{"live": "terraform state"}', encoding="utf-8")
-            vars_p.write_text(json.dumps({"release_id": self.release_id}), encoding="utf-8")
+            vars_p.write_text(
+                json.dumps(
+                    {"release_id": self.release_id, "project_id": "oday-staging-proj", "region": "asia-east1"}
+                ),
+                encoding="utf-8",
+            )
             inv_p.write_text("[]", encoding="utf-8")
 
-            result = scan_orphans(
-                project_id="oday-staging-proj",
-                resource_inventory=inventory,
-                now=self.now,
-                auto_cleanup=True,
-                deletion_executor=make_terraform_deletion_executor(
-                    self.release_id,
-                    module_dir=MODULE_DIR,
-                    state_dir=state_root,
-                    terraform_bin="/bin/true",
-                    initialize=False,
-                ),
-            )
+            # No staging load balancer backend service is listed, so there is
+            # no release Web NEG to detach before the destroy.
+            with mock.patch(
+                "product_ops.deployment.staging_lifecycle._live_gcloud", return_value="[]"
+            ) as cloud:
+                result = scan_orphans(
+                    project_id="oday-staging-proj",
+                    resource_inventory=inventory,
+                    now=self.now,
+                    auto_cleanup=True,
+                    deletion_executor=make_terraform_deletion_executor(
+                        self.release_id,
+                        module_dir=MODULE_DIR,
+                        state_dir=state_root,
+                        terraform_bin="/bin/true",
+                        initialize=False,
+                    ),
+                )
+            self.assertEqual(cloud.call_args.args[0][:3], ["compute", "backend-services", "list"])
 
             self.assertEqual(result.cleaned_count, 2)
             self.assertEqual(result.failed_cleanups, 0)
@@ -3030,6 +3042,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             "staging_web_uri": "https://staging-web.example.test",
             "staging_api_service_name": names["cloud_run_api"],
             "staging_web_service_name": names["cloud_run_web"],
+            "staging_web_network_endpoint_group": names["web_neg"],
             "staging_database_name": names["database_name"],
             "staging_database_user": names["database_user"],
             "staging_data_bucket": names["bucket_name"],
@@ -4769,7 +4782,7 @@ class StagingLiveE2EGateTests(unittest.TestCase):
         from product_ops.deployment.staging_lifecycle import REHEARSAL_STAGE_NAMES
 
         self.assertEqual(REHEARSAL_STAGE_NAMES[-1], "live_e2e_gate")
-        self.assertEqual(len(set(REHEARSAL_STAGE_NAMES)), 10)
+        self.assertEqual(len(set(REHEARSAL_STAGE_NAMES)), 11)
 
     def test_core_ops_staging_passes_the_complete_gate_with_missing_models_refused(self) -> None:
         from product_ops.deployment.staging_lifecycle import (
@@ -5174,6 +5187,9 @@ class StagingLiveE2EGateTests(unittest.TestCase):
                 "staging_worker_invokes_api",
                 "staging_runtime_invokes_api",
                 "staging_runtime_invokes_web",
+                # Web only: the console-staging load balancer forwards browsers
+                # without a Cloud Run token (the API stays IAM-only).
+                "staging_web_public",
                 "staging_runtime_publisher",
                 "staging_worker_subscriber",
                 "staging_runtime_cursor_key",
@@ -6363,6 +6379,412 @@ class StagingCloudRunV2AdminApiTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "access token for Cloud Run Admin API v2 is empty"):
                 services.get(self.SERVICE)
         request.assert_not_called()
+
+
+class _FakeStagingLoadBalancer:
+    """In-memory gcloud for the persistent console-staging load balancer.
+
+    Answers only the compute commands the lifecycle issues and records every
+    call, so tests can assert the order of backend mutations.
+    """
+
+    PROJECT = "oday-staging-proj"
+    REGION = "asia-east1"
+    ADDRESS = "34.120.0.10"
+
+    def __init__(
+        self,
+        *,
+        groups: Sequence[str] = (),
+        exists: bool = True,
+        neg_services: Mapping[str, str] | None = None,
+        cert_status: str = "ACTIVE",
+        domain_status: str = "ACTIVE",
+        ssl_policy: str = "oday-staging-web-lb",
+        min_tls_version: str = "TLS_1_2",
+    ) -> None:
+        self.ssl_policy = ssl_policy
+        self.min_tls_version = min_tls_version
+        self.groups = list(groups)
+        self.exists = exists
+        self.neg_services = dict(neg_services or {})
+        self.cert_status = cert_status
+        self.domain_status = domain_status
+        self.calls: list[list[str]] = []
+
+    @classmethod
+    def neg_url(cls, name: str, region: str = "") -> str:
+        return (
+            "https://www.googleapis.com/compute/v1/projects/"
+            f"{cls.PROJECT}/regions/{region or cls.REGION}/networkEndpointGroups/{name}"
+        )
+
+    def __call__(self, args: Sequence[str], **_kwargs: Any) -> str:
+        from product_ops.deployment.staging_lifecycle import STAGING_WEB_LOAD_BALANCER_NAME as name
+
+        argv = list(args)
+        self.calls.append(argv)
+        option = {a.split("=", 1)[0]: a.split("=", 1)[1] for a in argv if a.startswith("--") and "=" in a}
+        base = "https://www.googleapis.com/compute/v1/projects/" + self.PROJECT
+        if argv[:3] == ["compute", "backend-services", "list"]:
+            assert option["--filter"] == f"name={name}"
+            if not self.exists:
+                return "[]"
+            return json.dumps([{"name": name, "backends": [{"group": g} for g in self.groups]}])
+        if argv[:3] == ["compute", "backend-services", "remove-backend"]:
+            assert argv[3] == name and "--global" in argv
+            self.groups.remove(
+                self.neg_url(option["--network-endpoint-group"], option["--network-endpoint-group-region"])
+            )
+            return ""
+        if argv[:3] == ["compute", "backend-services", "add-backend"]:
+            assert argv[3] == name and "--global" in argv
+            region = option["--network-endpoint-group-region"]
+            if any(f"/regions/{region}/" in group for group in self.groups):
+                raise RuntimeError("a backend service holds one serverless NEG per region")
+            self.groups.append(self.neg_url(option["--network-endpoint-group"], region))
+            return ""
+        if argv[:3] == ["compute", "network-endpoint-groups", "describe"]:
+            return json.dumps({"name": argv[3], "cloudRun": {"service": self.neg_services.get(argv[3], "")}})
+        if argv[:3] == ["compute", "forwarding-rules", "describe"]:
+            return json.dumps(
+                {
+                    "IPAddress": self.ADDRESS,
+                    "portRange": "443-443",
+                    "target": f"{base}/global/targetHttpsProxies/{name}",
+                }
+            )
+        if argv[:3] == ["compute", "target-https-proxies", "describe"]:
+            return json.dumps(
+                {
+                    "sslCertificates": [f"{base}/global/sslCertificates/{name}-abcd1234"],
+                    **({"sslPolicy": f"{base}/global/sslPolicies/{self.ssl_policy}"} if self.ssl_policy else {}),
+                }
+            )
+        if argv[:3] == ["compute", "ssl-policies", "describe"]:
+            assert argv[3] == name and "--global" in argv
+            return json.dumps({"name": name, "profile": "MODERN", "minTlsVersion": self.min_tls_version})
+        if argv[:3] == ["compute", "ssl-certificates", "describe"]:
+            return json.dumps(
+                {
+                    "type": "MANAGED",
+                    "managed": {
+                        "domains": ["console-staging.oday-plus.com.tw"],
+                        "status": self.cert_status,
+                        "domainStatus": {"console-staging.oday-plus.com.tw": self.domain_status},
+                    },
+                }
+            )
+        if argv[0] == "iam":
+            return argv[3]
+        raise AssertionError(f"unexpected gcloud call {argv}")
+
+    def mutations(self) -> list[tuple[str, str]]:
+        return [
+            (call[2], next(a.split("=", 1)[1] for a in call if a.startswith("--network-endpoint-group=")))
+            for call in self.calls
+            if call[:2] == ["compute", "backend-services"] and call[2] in {"add-backend", "remove-backend"}
+        ]
+
+
+class StagingWebLoadBalancerBackendTests(unittest.TestCase):
+    """One step moves console-staging.oday-plus.com.tw between releases."""
+
+    def _set(self, cloud: _FakeStagingLoadBalancer, neg: str, *, attached: bool) -> list[str]:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        with patch.object(lifecycle, "_live_gcloud", side_effect=cloud):
+            return lifecycle.set_staging_web_load_balancer_backend(
+                project_id=cloud.PROJECT,
+                region=cloud.REGION,
+                network_endpoint_group=neg,
+                attached=attached,
+            )
+
+    def test_attach_replaces_the_previous_release_before_adding_this_one(self) -> None:
+        cloud = _FakeStagingLoadBalancer(groups=[_FakeStagingLoadBalancer.neg_url("stg-old-web-neg")])
+        final = self._set(cloud, "stg-new-web-neg", attached=True)
+        self.assertEqual(
+            cloud.mutations(), [("remove-backend", "stg-old-web-neg"), ("add-backend", "stg-new-web-neg")]
+        )
+        self.assertEqual(final, [_FakeStagingLoadBalancer.neg_url("stg-new-web-neg")])
+
+    def test_attach_is_idempotent(self) -> None:
+        cloud = _FakeStagingLoadBalancer(groups=[_FakeStagingLoadBalancer.neg_url("stg-new-web-neg")])
+        self._set(cloud, "stg-new-web-neg", attached=True)
+        self.assertEqual(cloud.mutations(), [])
+
+    def test_attach_fails_closed_without_the_persistent_load_balancer(self) -> None:
+        cloud = _FakeStagingLoadBalancer(exists=False)
+        with self.assertRaisesRegex(RuntimeError, "oday-staging-web-lb does not exist.*load_balancer.tf"):
+            self._set(cloud, "stg-new-web-neg", attached=True)
+        self.assertEqual(cloud.mutations(), [])
+
+    def test_detach_removes_only_this_release_and_never_a_newer_one(self) -> None:
+        newer = _FakeStagingLoadBalancer.neg_url("stg-new-web-neg")
+        cloud = _FakeStagingLoadBalancer(groups=[newer])
+        self.assertEqual(self._set(cloud, "stg-old-web-neg", attached=False), [newer])
+        self.assertEqual(cloud.mutations(), [])
+
+        cloud = _FakeStagingLoadBalancer(groups=[_FakeStagingLoadBalancer.neg_url("stg-old-web-neg")])
+        self.assertEqual(self._set(cloud, "stg-old-web-neg", attached=False), [])
+        self.assertEqual(cloud.mutations(), [("remove-backend", "stg-old-web-neg")])
+
+    def test_detach_without_a_load_balancer_is_a_no_op(self) -> None:
+        cloud = _FakeStagingLoadBalancer(exists=False)
+        self.assertEqual(self._set(cloud, "stg-old-web-neg", attached=False), [])
+        self.assertEqual(cloud.mutations(), [])
+
+    def test_a_backend_that_is_not_a_release_neg_in_this_project_is_refused(self) -> None:
+        foreign = "https://www.googleapis.com/compute/v1/projects/other-proj/regions/asia-east1/networkEndpointGroups/x"
+        cloud = _FakeStagingLoadBalancer(groups=[foreign])
+        with self.assertRaisesRegex(RuntimeError, "refusing to change it"):
+            self._set(cloud, "stg-new-web-neg", attached=True)
+        self.assertEqual(cloud.mutations(), [])
+
+
+class StagingWebCustomDomainStageTests(unittest.TestCase):
+    """The web_custom_domain verify stage: attach, then DNS, certificate, HTTPS."""
+
+    def setUp(self) -> None:
+        self.release_id = "odp-20260824-001"
+        self.candidate_sha = "a" * 40
+        self.manifest_digest = "sha256:" + "b" * 64
+        self.project_id = _FakeStagingLoadBalancer.PROJECT
+        self.now = datetime(2026, 8, 27, 6, 0, 0, tzinfo=UTC)
+        self.outputs = EphemeralStagingVerificationAndHoldTests._valid_outputs(self)
+
+    def _run(
+        self,
+        cloud: _FakeStagingLoadBalancer,
+        *,
+        resolved: Sequence[str],
+        https: Sequence[tuple[bool, str]] = ((True, ""),),
+    ) -> tuple[Mapping[str, Any], list[tuple[str, str]]]:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        readbacks: list[tuple[str, str]] = []
+        answers = list(https)
+
+        def web(origin: str, *, transport_token: str, correlation_id: str) -> tuple[bool, str]:
+            readbacks.append((origin, transport_token))
+            return answers.pop(0) if len(answers) > 1 else answers[0]
+
+        with patch.object(lifecycle, "_live_gcloud", side_effect=cloud), \
+                patch.object(lifecycle, "_live_resolved_addresses", return_value=list(resolved)), \
+                patch.object(lifecycle, "_live_web_operator_requires_login", side_effect=web), \
+                patch.object(lifecycle, "STAGING_WEB_CUSTOM_DOMAIN_POLL_SECONDS", 0.0), \
+                patch.object(lifecycle, "STAGING_WEB_CUSTOM_DOMAIN_DEADLINE_SECONDS", 0.0):
+            executor = lifecycle.make_live_rehearsal_executor(
+                self.outputs,
+                project_id=self.project_id,
+                region=cloud.REGION,
+                operator_identity=self.outputs["staging_runtime_service_account"],
+            )
+            return executor("web_custom_domain", {}), readbacks
+
+    def _cloud(self, **kwargs: Any) -> _FakeStagingLoadBalancer:
+        return _FakeStagingLoadBalancer(
+            neg_services={
+                self.outputs["staging_web_network_endpoint_group"]: self.outputs["staging_web_service_name"]
+            },
+            **kwargs,
+        )
+
+    def test_dns_readback_returns_every_address_or_nothing(self) -> None:
+        import socket
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        answers = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("34.120.0.10", 443)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("34.120.0.10", 443)),
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:db8::1", 443, 0, 0)),
+        ]
+        with patch.object(lifecycle.socket, "getaddrinfo", return_value=answers):
+            self.assertEqual(lifecycle._live_resolved_addresses("h"), ["2001:db8::1", "34.120.0.10"])
+        with patch.object(lifecycle.socket, "getaddrinfo", side_effect=socket.gaierror("NXDOMAIN")):
+            self.assertEqual(lifecycle._live_resolved_addresses("h"), [])
+
+    def test_stage_sits_after_the_web_smoke_and_before_the_gate(self) -> None:
+        from product_ops.deployment.staging_lifecycle import REHEARSAL_STAGE_NAMES
+
+        index = REHEARSAL_STAGE_NAMES.index("web_custom_domain")
+        self.assertEqual(REHEARSAL_STAGE_NAMES[index - 1], "api_web_authenticated_smoke")
+        self.assertLess(index, REHEARSAL_STAGE_NAMES.index("live_e2e_gate"))
+
+    def test_serving_domain_attaches_this_release_and_proves_https_anonymously(self) -> None:
+        from product_ops.deployment.staging_lifecycle import STAGING_WEB_PUBLIC_ORIGIN
+
+        cloud = self._cloud(groups=[_FakeStagingLoadBalancer.neg_url("stg-previous-web-neg")])
+        result, readbacks = self._run(cloud, resolved=[cloud.ADDRESS])
+
+        self.assertTrue(result["success"], result)
+        self.assertEqual(result["endpoint"], f"{STAGING_WEB_PUBLIC_ORIGIN}/operator")
+        neg = self.outputs["staging_web_network_endpoint_group"]
+        self.assertEqual(cloud.mutations(), [("remove-backend", "stg-previous-web-neg"), ("add-backend", neg)])
+        self.assertEqual(cloud.groups, [_FakeStagingLoadBalancer.neg_url(neg)])
+        # Through the load balancer as a browser: no Cloud Run transport token.
+        self.assertEqual(readbacks, [(STAGING_WEB_PUBLIC_ORIGIN, "")])
+        proof = result["custom_domain"]
+        self.assertEqual(proof["host"], "console-staging.oday-plus.com.tw")
+        self.assertEqual(proof["address"], cloud.ADDRESS)
+        self.assertEqual(proof["dns"], [cloud.ADDRESS])
+        self.assertEqual((proof["certificate_status"], proof["domain_status"]), ("ACTIVE", "ACTIVE"))
+        self.assertEqual((proof["ssl_policy"], proof["min_tls_version"]), ("oday-staging-web-lb", "TLS_1_2"))
+        self.assertEqual(proof["network_endpoint_group"], neg)
+
+    def test_proxy_without_the_tls12_ssl_policy_fails(self) -> None:
+        for overrides, message in (
+            ({"ssl_policy": ""}, "does not carry the oday-staging-web-lb SSL policy"),
+            ({"ssl_policy": "other-policy"}, "does not carry the oday-staging-web-lb SSL policy"),
+            ({"min_tls_version": "TLS_1_0"}, "allows TLS_1_0 minimum TLS; expected TLS_1_2"),
+        ):
+            with self.subTest(**overrides):
+                cloud = self._cloud(**overrides)
+                with self.assertRaisesRegex(RuntimeError, message):
+                    self._run(cloud, resolved=[cloud.ADDRESS])
+
+    def test_unpointed_dns_fails_naming_the_registrar_a_record(self) -> None:
+        cloud = self._cloud(cert_status="PROVISIONING", domain_status="FAILED_NOT_VISIBLE")
+        result, readbacks = self._run(cloud, resolved=[])
+
+        self.assertFalse(result["success"])
+        self.assertIn(f"A record console-staging.oday-plus.com.tw -> {cloud.ADDRESS}", result["detail"])
+        self.assertIn("PROVISIONING", result["detail"])
+        self.assertEqual(readbacks, [], "HTTPS must not be probed before DNS and the certificate are ready")
+        # The release is still attached: the domain follows it once DNS points.
+        self.assertEqual(len(cloud.groups), 1)
+
+    def test_dns_pointing_elsewhere_or_extra_records_fail(self) -> None:
+        for resolved in (["203.0.113.7"], [_FakeStagingLoadBalancer.ADDRESS, "2001:db8::1"]):
+            with self.subTest(resolved=resolved):
+                result, _ = self._run(self._cloud(), resolved=resolved)
+                self.assertFalse(result["success"])
+                self.assertIn("the registrar must publish only an A record", result["detail"])
+
+    def test_https_failure_after_the_deadline_fails(self) -> None:
+        cloud = self._cloud()
+        result, readbacks = self._run(cloud, resolved=[cloud.ADDRESS], https=[(False, "status=502")])
+        self.assertFalse(result["success"])
+        self.assertIn(
+            "HTTPS readback of https://console-staging.oday-plus.com.tw/operator failed: status=502",
+            result["detail"],
+        )
+        self.assertEqual(len(readbacks), 1)
+
+    def test_a_neg_routing_to_another_service_is_never_attached(self) -> None:
+        cloud = _FakeStagingLoadBalancer(
+            neg_services={self.outputs["staging_web_network_endpoint_group"]: "other-web"}
+        )
+        with self.assertRaisesRegex(RuntimeError, "does not route to this release's Web service"):
+            self._run(cloud, resolved=[cloud.ADDRESS])
+        self.assertEqual(cloud.mutations(), [])
+
+    def test_receipt_carries_the_secret_free_domain_proof(self) -> None:
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        proof = {"host": "console-staging.oday-plus.com.tw", "address": "34.120.0.10"}
+
+        def executor(stage: str, _context: Mapping[str, Any]) -> Mapping[str, Any]:
+            if stage == "web_custom_domain":
+                return {"success": False, "status": "failed", "detail": "DNS not pointed", "custom_domain": proof}
+            return {"success": True}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            EphemeralStagingVerificationAndHoldTests._seed_live_state(self, state_dir)
+            marker_path = lifecycle._lifecycle_state_path(self.release_id, state_dir)
+            seeded = json.loads(marker_path.read_text(encoding="utf-8"))
+            marker_path.write_text(json.dumps({**seeded, "outputs": self.outputs}), encoding="utf-8")
+            receipt = lifecycle.verify_ephemeral_staging(
+                release_id=self.release_id,
+                candidate_sha=self.candidate_sha,
+                manifest_digest=self.manifest_digest,
+                project_id=self.project_id,
+                state_dir=state_dir,
+                operator_identity=self.outputs["staging_runtime_service_account"],
+                lifecycle_outputs=self.outputs,
+                stage_executor=executor,
+                now=self.now,
+                release_profile="core-ops",
+            )
+        self.assertFalse(receipt.success)
+        stage = next(row for row in receipt.resources if row["stage"] == "web_custom_domain")
+        self.assertEqual(stage["proof"]["custom_domain"], proof)
+        self.assertTrue(any("web_custom_domain failed. DNS not pointed" in error for error in receipt.errors))
+
+
+class StagingWebNegDetachBeforeDestroyTests(unittest.TestCase):
+    """Cleanup detaches the release's NEG before terraform destroy deletes it."""
+
+    release_id = "odp-detach-001"
+
+    def _executor(self, state_root: Path, tfvars: Mapping[str, Any]) -> Any:
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths
+
+        state_p, vars_p, inv_p = _terraform_state_paths(self.release_id, state_root)
+        state_p.write_text('{"live": "terraform state"}', encoding="utf-8")
+        vars_p.write_text(json.dumps(dict(tfvars)), encoding="utf-8")
+        inv_p.write_text("[]", encoding="utf-8")
+        return make_terraform_deletion_executor(
+            self.release_id, module_dir=MODULE_DIR, state_dir=state_root, terraform_bin="/bin/true", initialize=False
+        )
+
+    def test_detach_runs_before_destroy(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        neg = get_ephemeral_resource_names(self.release_id, _FakeStagingLoadBalancer.PROJECT)["web_neg"]
+        cloud = _FakeStagingLoadBalancer(groups=[_FakeStagingLoadBalancer.neg_url(neg)])
+        order: list[str] = []
+        real_run = lifecycle._run_terraform
+
+        def terraform(**kwargs: Any) -> Any:
+            order.append(f"terraform {kwargs['arguments'][0]}")
+            return real_run(**kwargs)
+
+        def gcloud(args: Sequence[str], **kwargs: Any) -> str:
+            order.append(" ".join(args[:3]))
+            return cloud(args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            execute = self._executor(
+                Path(tmpdir),
+                {"release_id": self.release_id, "project_id": cloud.PROJECT, "region": cloud.REGION},
+            )
+            with patch.object(lifecycle, "_live_gcloud", side_effect=gcloud), \
+                    patch.object(lifecycle, "_run_terraform", side_effect=terraform):
+                self.assertTrue(execute({}))
+        self.assertEqual(cloud.groups, [])
+        self.assertEqual(
+            order,
+            [
+                "compute backend-services list",
+                "compute backend-services remove-backend",
+                "compute backend-services list",
+                "terraform destroy",
+            ],
+        )
+
+    def test_tfvars_without_project_or_region_refuse_destroy(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            execute = self._executor(Path(tmpdir), {"release_id": self.release_id})
+            with patch.object(lifecycle, "_live_gcloud") as cloud, patch.object(lifecycle, "_run_terraform") as tf:
+                with self.assertRaisesRegex(RuntimeError, "cannot be detached"):
+                    execute({})
+        cloud.assert_not_called()
+        tf.assert_not_called()
 
 
 if __name__ == "__main__":

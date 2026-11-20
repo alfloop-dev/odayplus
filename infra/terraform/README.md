@@ -15,7 +15,9 @@ memory persistence.
 | Cloud Storage | Separate CMEK-encrypted, versioned artifact and source-snapshot buckets plus the WORM audit-evidence module. |
 | Pub/Sub | CMEK job topic, ordered subscription, bounded retry, DLQ topic/subscription, regional persistence. |
 | IAM | Separate API, worker, audit-writer, and audit-retention identities with resource-level grants. |
+| Staging deployer IAM | `iam.tf` (staging only): the hand-granted deployer project grants written back exactly as live (2026-11-20) plus the `stagingWebLbAttach` custom role; `import` blocks adopt the existing ones (Terraform >= 1.7), and the resources name the deployer by email so a targeted apply never touches `google_service_account.github_deployer`. |
 | Cloud Monitoring | `monitoring.tf`: Web `/login` uptime check, optional API `/platform/health` uptime check (Monitoring service agent OIDC), alert policies for uptime failure, API/Web 5xx ratio, API p95 latency (3.0 s ratified budget), failed Cloud Run job executions, and Cloud SQL CPU/disk/connection saturation. Notification targets come only from variables. |
+| Custom-domain load balancer | `load_balancer.tf` (`web_load_balancer_enabled`): persistent global external HTTPS Application Load Balancer, reserved static IP (`prevent_destroy`), Google-managed certificate for the `web_base_url` host and `api_public_host`, 443 forwarding rule with a `MODERN`/TLS 1.2-minimum SSL policy, and a port-80 forwarding rule whose URL map only 301-redirects to HTTPS. Dev/prod route to Terraform-owned serverless NEGs; staging owns only the backend service and `staging_lifecycle.py` attaches each release's Web NEG (`web_custom_domain` verify stage) and detaches it before destroy. The `oday-plus.com.tw` zone is at an external registrar: add an A record per `web_load_balancer_hosts` entry pointing at `web_load_balancer_ip`; the certificate stays `PROVISIONING` until they resolve. |
 | VPC | Custom regional subnet, Direct VPC egress, Private Service Access, default-deny egress firewall with restricted RFC1918 and Google API CIDR allow rules, no Cloud NAT, no Cloud SQL public IPv4. |
 
 Use `/liveness` for Cloud Run probes and external process checks. Google lists
@@ -42,6 +44,9 @@ A production plan fails when any of the following is true:
 - no alert notification target (`monitoring_notification_emails` or
   `monitoring_notification_channel_ids`), no `monitoring_api_uptime_host`, or no
   `monitoring_cloud_sql_max_connections` is supplied.
+- `web_load_balancer_enabled` is false, `api_public_host` is empty, or
+  `monitoring_api_uptime_host` differs from `api_public_host` (the API ingress is
+  internal-and-load-balancer only, so the load balancer is its only external path).
 
 The authoritative blocker is
 `terraform_data.production_contract.lifecycle.precondition`. Terraform `check`
