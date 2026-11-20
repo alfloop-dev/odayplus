@@ -95,6 +95,11 @@ export function TodayWorkspace({
   const greeting = today.hero.name
     ? `早安，${today.hero.name}${today.hero.roleLabel ? ` — ${today.hero.roleLabel}` : ""}`
     : "今日工作";
+  // A row without a measured score is listed but never plotted at a guessed x.
+  const scoredRiskRows = today.riskRows.flatMap((row) =>
+    row.score === null ? [] : [{ row, score: row.score }],
+  );
+  const riskStoreCount = new Set(today.riskRows.map((row) => row.storeId ?? row.label)).size;
 
   return (
     <div
@@ -246,36 +251,38 @@ export function TodayWorkspace({
           <section className={styles.todayRailPanel} data-today-rail-section="risk">
             <header className={styles.todayRailHeader}>
               <h2>門市風險快照</h2>
-              <span>{today.riskRows.length} 門市</span>
+              <span>{riskStoreCount} 門市</span>
             </header>
             {today.riskRows.length ? (
               <>
-                <div className={styles.todayRiskPlot} aria-label="門市風險分布">
-                  {today.riskRows.map((row, index) => {
-                    const x = Math.max(12, Math.min(88, row.score));
-                    const y = 22 + (index % 4) * 19;
-                    return (
-                      <i
-                        aria-label={`${interventionLabel(row.label)} 風險分數 ${row.score}`}
-                        data-tone={row.tone ?? "neutral"}
-                        key={row.label}
-                        role="img"
-                        style={
-                          {
-                            "--today-risk-x": `${x}%`,
-                            "--today-risk-y": `${y}%`,
-                          } as CSSProperties
-                        }
-                      />
-                    );
-                  })}
-                </div>
+                {scoredRiskRows.length ? (
+                  <div className={styles.todayRiskPlot} aria-label="門市風險分布">
+                    {scoredRiskRows.map(({ row, score }, index) => {
+                      const x = Math.max(12, Math.min(88, score));
+                      const y = 22 + (index % 4) * 19;
+                      return (
+                        <i
+                          aria-label={`${interventionLabel(row.label)} 風險分數 ${score}`}
+                          data-tone={row.tone ?? "neutral"}
+                          key={row.id ?? row.label}
+                          role="img"
+                          style={
+                            {
+                              "--today-risk-x": `${x}%`,
+                              "--today-risk-y": `${y}%`,
+                            } as CSSProperties
+                          }
+                        />
+                      );
+                    })}
+                  </div>
+                ) : null}
                 <div className={styles.todayRiskList} data-testid="operator-risk-snapshot">
                   {today.riskRows.map((row) => (
-                    <div key={row.label}>
+                    <div key={row.id ?? row.label}>
                       <i aria-hidden="true" data-tone={row.tone ?? "neutral"} />
                       <strong title={row.label}>{interventionLabel(row.label)}</strong>
-                      <span>{row.signal}</span>
+                      <span>{interventionLabel(row.signal)}</span>
                     </div>
                   ))}
                 </div>
