@@ -30,6 +30,7 @@ import importlib.util
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -89,6 +90,7 @@ REQUIRED_STAGING_OUTPUTS: tuple[str, ...] = (
     "staging_web_uri",
     "staging_api_service_name",
     "staging_web_service_name",
+    "staging_web_network_endpoint_group",
     "staging_database_name",
     "staging_database_user",
     "staging_data_bucket",
@@ -177,6 +179,16 @@ STAGING_EXTERNAL_PROVIDER_MODE = "disabled"
 # without the cookie. generate_tfvars writes it; the module's staging_web
 # refuses to plan without it.
 STAGING_WEB_PUBLIC_ORIGIN = "https://console-staging.oday-plus.com.tw"
+# The staging foundation serves that origin through one persistent global
+# external HTTPS load balancer (infra/terraform/load_balancer.tf with
+# environment = "staging"); every load balancer resource carries this name,
+# and the Google-managed certificate is attached to its target proxy. Each
+# release's serverless NEG is attached to its backend service by the
+# web_custom_domain verify stage and detached before the release is destroyed.
+STAGING_WEB_LOAD_BALANCER_NAME = "oday-staging-web-lb"
+# A backend change reaches every Google front end within minutes.
+STAGING_WEB_CUSTOM_DOMAIN_DEADLINE_SECONDS = 600.0
+STAGING_WEB_CUSTOM_DOMAIN_POLL_SECONDS = 15.0
 STAGING_LIVE_E2E_WORKER_DEADLINE_SECONDS = 600.0
 STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS = 10.0
 
@@ -726,6 +738,7 @@ def get_ephemeral_resource_names(
         "bucket_name": bucket_name,
         "cloud_run_api": f"{name_prefix}-api",
         "cloud_run_web": f"{name_prefix}-web",
+        "web_neg": f"{name_prefix}-web-neg",
         "cloud_run_migration_job": f"{name_prefix}-migration",
         "cloud_run_worker_job": f"{name_prefix}-worker",
         "cloud_run_scheduler_job": f"{name_prefix}-scheduler",
@@ -1454,6 +1467,7 @@ def validate_staging_outputs(
         "staging_web_uri",
         "staging_api_service_name",
         "staging_web_service_name",
+        "staging_web_network_endpoint_group",
         "staging_database_name",
         "staging_database_user",
         "staging_data_bucket",
@@ -2130,12 +2144,15 @@ def make_terraform_deletion_executor(
     initialize: bool = True,
     backend_bucket: str = "",
     backend_prefix: str = "",
+    gcloud_bin: str = "gcloud",
 ) -> Callable[[Mapping[str, Any]], bool]:
     """Build a release-scoped live destroy executor.
 
     The first exact-label match performs one destroy against that release's
     state. Later matches are acknowledged because the same Terraform destroy
     removed the complete release graph. No project-wide destroy is possible.
+    The release's Web NEG is first detached from the persistent staging load
+    balancer (a NEG in use cannot be deleted); a newer release's stays.
     """
     module_path = module_dir.expanduser().resolve()
     state_path_root = state_dir.expanduser().resolve()
@@ -2175,6 +2192,21 @@ def make_terraform_deletion_executor(
             # Do not let `destroy` turn an unavailable/empty backend into a
             # successful no-op. The release state must already be present.
             _terraform_state_pull(module_dir=module_path, terraform_bin=terraform_bin)
+        release_vars = _read_json_object(tfvars_path) or {}
+        release_project = str(release_vars.get("project_id") or "").strip()
+        release_region = str(release_vars.get("region") or "").strip()
+        if not release_project or not release_region:
+            raise RuntimeError(
+                f"Release tfvars for {release_id!r} do not record project_id and region; the release "
+                "Web NEG cannot be detached from the staging load balancer before destroy"
+            )
+        set_staging_web_load_balancer_backend(
+            project_id=release_project,
+            region=release_region,
+            network_endpoint_group=get_ephemeral_resource_names(release_id, release_project)["web_neg"],
+            attached=False,
+            gcloud_bin=gcloud_bin,
+        )
         destroy_arguments = [
             "destroy",
             "-input=false",
@@ -2757,6 +2789,11 @@ REHEARSAL_STAGE_NAMES: tuple[str, ...] = (
     "db_expand_migration",
     "data_platform_snapshot",
     "api_web_authenticated_smoke",
+    # The governed console origin: this release becomes the persistent load
+    # balancer's backend, then DNS, the managed certificate and HTTPS on the
+    # custom domain are read back. Fails closed until the registrar A record
+    # points at the load balancer and the certificate is ACTIVE.
+    "web_custom_domain",
     "worker_idempotency",
     "scheduler_oneshot",
     "backup_restore_drill",
@@ -2883,7 +2920,7 @@ def _live_cloud_run_description(
     """Fetch a Cloud Run service/job description without exposing its env block."""
 
     collection = "services" if resource_kind == "service" else "jobs"
-    raw = _live_gcloud(
+    return _live_gcloud_json(
         [
             "run",
             collection,
@@ -2891,18 +2928,135 @@ def _live_cloud_run_description(
             resource_name,
             f"--region={region}",
             f"--project={project_id}",
-            "--format=json",
         ],
+        what=f"Cloud Run {resource_kind} description",
         gcloud_bin=gcloud_bin,
-        capture_output=True,
     )
+
+
+def _live_gcloud_json(
+    args: Sequence[str],
+    *,
+    what: str,
+    gcloud_bin: str = "gcloud",
+    expect: type = Mapping,
+) -> Any:
+    """Run one read-only gcloud command and return its JSON object (or list)."""
+
+    raw = _live_gcloud([*args, "--format=json"], gcloud_bin=gcloud_bin, capture_output=True)
     try:
         payload = json.loads(raw)
     except (TypeError, ValueError) as exc:
-        raise RuntimeError(f"Cloud Run {resource_kind} description is not valid JSON") from exc
-    if not isinstance(payload, Mapping):
-        raise RuntimeError(f"Cloud Run {resource_kind} description is not a JSON object")
+        raise RuntimeError(f"{what} is not valid JSON") from exc
+    if not isinstance(payload, expect):
+        raise RuntimeError(f"{what} is not a JSON {'object' if expect is Mapping else 'array'}")
     return payload
+
+
+_COMPUTE_REGION_NEG = re.compile(r"(?:^|/)projects/([^/]+)/regions/([^/]+)/networkEndpointGroups/([^/]+)$")
+
+
+def set_staging_web_load_balancer_backend(
+    *,
+    project_id: str,
+    region: str,
+    network_endpoint_group: str,
+    attached: bool,
+    gcloud_bin: str = "gcloud",
+) -> list[str]:
+    """Move console-staging.oday-plus.com.tw onto (or off) one release's Web.
+
+    This is the only step that changes which release the persistent staging
+    load balancer serves. ``attached=True`` (the web_custom_domain verify
+    stage) leaves exactly this release's serverless NEG on the backend
+    service, replacing a previous release's -- a backend service holds one
+    serverless NEG per region. ``attached=False`` (before a release's
+    ``terraform destroy``) removes this release's NEG only, so cleaning up an
+    older release never takes the domain from a newer one; with no load
+    balancer applied there is nothing to detach. Any backend that is not a
+    serverless NEG in this project is refused rather than changed. Returns the
+    read-back backend groups.
+    """
+
+    own = f"projects/{project_id}/regions/{region}/networkEndpointGroups/{network_endpoint_group}"
+    name = STAGING_WEB_LOAD_BALANCER_NAME
+
+    def read_groups() -> list[str] | None:
+        listed = _live_gcloud_json(
+            ["compute", "backend-services", "list", f"--project={project_id}", f"--filter=name={name}"],
+            what=f"staging Web load balancer backend service {name} listing",
+            gcloud_bin=gcloud_bin,
+            expect=list,
+        )
+        services = [entry for entry in listed if isinstance(entry, Mapping) and entry.get("name") == name]
+        if not services:
+            return None
+        if len(services) != 1:
+            raise RuntimeError(f"staging Web load balancer backend service {name} is not unique in {project_id}")
+        backends = services[0].get("backends") or []
+        if not isinstance(backends, list):
+            raise RuntimeError(f"staging Web load balancer backend service {name} backends are unreadable")
+        return [str(backend.get("group") or "") for backend in backends if isinstance(backend, Mapping)]
+
+    def is_own(group: str) -> bool:
+        return group == own or group.endswith(f"/{own}")
+
+    def change(action: str, neg_name: str, neg_region: str) -> None:
+        _live_gcloud(
+            [
+                "compute",
+                "backend-services",
+                action,
+                name,
+                "--global",
+                f"--network-endpoint-group={neg_name}",
+                f"--network-endpoint-group-region={neg_region}",
+                f"--project={project_id}",
+                "--quiet",
+            ],
+            gcloud_bin=gcloud_bin,
+        )
+
+    groups = read_groups()
+    if groups is None:
+        if attached:
+            raise RuntimeError(
+                f"persistent staging Web load balancer backend service {name} does not exist in "
+                f"{project_id}: apply infra/terraform/load_balancer.tf in the staging foundation "
+                "(web_load_balancer_enabled = true) before verifying a release"
+            )
+        return []
+    for group in groups:
+        if is_own(group) == attached:
+            continue
+        match = _COMPUTE_REGION_NEG.search(group)
+        if match is None or match.group(1) != project_id:
+            raise RuntimeError(
+                f"staging Web load balancer backend {group!r} is not a serverless NEG in {project_id}; "
+                "refusing to change it"
+            )
+        change("remove-backend", match.group(3), match.group(2))
+    if attached and not any(is_own(group) for group in groups):
+        change("add-backend", network_endpoint_group, region)
+
+    final = read_groups() or []
+    if attached and not (len(final) == 1 and is_own(final[0])):
+        raise RuntimeError(
+            f"staging Web load balancer backend readback is {final!r}; expected only this release's NEG {own}"
+        )
+    if not attached and any(is_own(group) for group in final):
+        raise RuntimeError(f"staging Web load balancer still serves this release's NEG {own} after detaching it")
+    return final
+
+
+def _live_resolved_addresses(host: str) -> list[str]:
+    """Every address public DNS returns for ``host`` (A and AAAA); empty if none."""
+
+    try:
+        infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError):
+        return []
+    return sorted({str(info[4][0]) for info in infos})
 
 
 _IAM_CREDENTIALS_ENDPOINT = "https://iamcredentials.googleapis.com/v1"
@@ -3517,6 +3671,138 @@ def make_live_rehearsal_executor(
             raise RuntimeError(f"release-scoped Web /operator readback failed: {detail}")
         return {"success": True, "endpoint": f"{web_uri}/operator", "status": "verified"}
 
+    def web_custom_domain() -> Mapping[str, Any]:
+        """Serve STAGING_WEB_PUBLIC_ORIGIN from this release and prove it.
+
+        The release's NEG (Terraform output) must route to this release's Web
+        service; it then becomes the persistent load balancer's only backend.
+        The domain is accepted only when public DNS resolves it to exactly the
+        load balancer's address, the HTTPS proxy carries the TLS 1.2 minimum
+        SSL policy, the Google-managed certificate and its domain are ACTIVE,
+        and an anonymous HTTPS request to /operator on the custom
+        domain is redirected to sign-in -- through the load balancer, with the
+        certificate validated and no Cloud Run token. Until the registrar A
+        record points at the address, this stage fails naming the record.
+        """
+
+        neg_name = str(outputs["staging_web_network_endpoint_group"]).strip()
+        web_service = str(outputs["staging_web_service_name"]).strip()
+        neg = _live_gcloud_json(
+            ["compute", "network-endpoint-groups", "describe", neg_name, f"--region={region}", f"--project={project_id}"],
+            what=f"release Web NEG {neg_name} description",
+            gcloud_bin=gcloud_bin,
+        )
+        cloud_run = neg.get("cloudRun")
+        if not isinstance(cloud_run, Mapping) or str(cloud_run.get("service") or "") != web_service:
+            raise RuntimeError(f"release Web NEG {neg_name} does not route to this release's Web service {web_service}")
+        set_staging_web_load_balancer_backend(
+            project_id=project_id,
+            region=region,
+            network_endpoint_group=neg_name,
+            attached=True,
+            gcloud_bin=gcloud_bin,
+        )
+
+        name = STAGING_WEB_LOAD_BALANCER_NAME
+        host = str(urllib.parse.urlsplit(STAGING_WEB_PUBLIC_ORIGIN).hostname)
+        rule = _live_gcloud_json(
+            ["compute", "forwarding-rules", "describe", name, "--global", f"--project={project_id}"],
+            what=f"staging Web load balancer forwarding rule {name} description",
+            gcloud_bin=gcloud_bin,
+        )
+        address = str(rule.get("IPAddress") or "").strip()
+        if not address or not str(rule.get("target") or "").endswith(f"/targetHttpsProxies/{name}"):
+            raise RuntimeError(f"staging Web load balancer forwarding rule {name} does not front its HTTPS proxy")
+        if str(rule.get("portRange") or "") not in {"443", "443-443"}:
+            raise RuntimeError(f"staging Web load balancer forwarding rule {name} does not serve port 443")
+        proxy = _live_gcloud_json(
+            ["compute", "target-https-proxies", "describe", name, "--global", f"--project={project_id}"],
+            what=f"staging Web load balancer HTTPS proxy {name} description",
+            gcloud_bin=gcloud_bin,
+        )
+        # The foundation pins a minimum of TLS 1.2 on the HTTPS frontend.
+        if not str(proxy.get("sslPolicy") or "").endswith(f"/sslPolicies/{name}"):
+            raise RuntimeError(f"staging Web load balancer HTTPS proxy {name} does not carry the {name} SSL policy")
+        ssl_policy = _live_gcloud_json(
+            ["compute", "ssl-policies", "describe", name, "--global", f"--project={project_id}"],
+            what=f"staging Web load balancer SSL policy {name} description",
+            gcloud_bin=gcloud_bin,
+        )
+        min_tls_version = str(ssl_policy.get("minTlsVersion") or "")
+        if min_tls_version != "TLS_1_2":
+            raise RuntimeError(
+                f"staging Web load balancer SSL policy {name} allows {min_tls_version or 'an unknown'} minimum TLS; expected TLS_1_2"
+            )
+        certificate: tuple[str, str, str] | None = None
+        for certificate_url in proxy.get("sslCertificates") or []:
+            certificate_name = str(certificate_url).rstrip("/").rsplit("/", 1)[-1]
+            payload = _live_gcloud_json(
+                ["compute", "ssl-certificates", "describe", certificate_name, "--global", f"--project={project_id}"],
+                what=f"staging Web certificate {certificate_name} description",
+                gcloud_bin=gcloud_bin,
+            )
+            managed = payload.get("managed")
+            if payload.get("type") == "MANAGED" and isinstance(managed, Mapping) and host in (managed.get("domains") or []):
+                domain_status = managed.get("domainStatus")
+                certificate = (
+                    certificate_name,
+                    str(managed.get("status") or ""),
+                    str(domain_status.get(host) or "") if isinstance(domain_status, Mapping) else "",
+                )
+                break
+        if certificate is None:
+            raise RuntimeError(f"staging Web load balancer {name} has no Google-managed certificate for {host}")
+        resolved = _live_resolved_addresses(host)
+        proof = {
+            "host": host,
+            "load_balancer": name,
+            "address": address,
+            "ssl_policy": name,
+            "min_tls_version": min_tls_version,
+            "dns": resolved,
+            "certificate": certificate[0],
+            "certificate_status": certificate[1],
+            "domain_status": certificate[2],
+            "network_endpoint_group": neg_name,
+        }
+        problems: list[str] = []
+        if resolved != [address]:
+            problems.append(
+                f"DNS for {host} resolves to {resolved or 'nothing'}; the registrar must publish only "
+                f"an A record {host} -> {address}"
+            )
+        if certificate[1:] != ("ACTIVE", "ACTIVE"):
+            problems.append(
+                f"managed certificate {certificate[0]} is {certificate[1] or 'unknown'} "
+                f"({host}: {certificate[2] or 'unknown'}); Google provisions it only after {host} resolves to {address}"
+            )
+        if not problems:
+            correlation_id = f"staging-web-domain-{outputs['resource_labels']['candidate_sha'][:12]}"
+            deadline = time.monotonic() + STAGING_WEB_CUSTOM_DOMAIN_DEADLINE_SECONDS
+            while True:
+                ok, detail = _live_web_operator_requires_login(
+                    STAGING_WEB_PUBLIC_ORIGIN, transport_token="", correlation_id=correlation_id
+                )
+                if ok:
+                    break
+                if time.monotonic() >= deadline:
+                    problems.append(f"HTTPS readback of {STAGING_WEB_PUBLIC_ORIGIN}/operator failed: {detail}")
+                    break
+                time.sleep(STAGING_WEB_CUSTOM_DOMAIN_POLL_SECONDS)
+        if problems:
+            return {
+                "success": False,
+                "status": "failed",
+                "detail": "staging Web custom domain is not serving this release: " + "; ".join(problems),
+                "custom_domain": proof,
+            }
+        return {
+            "success": True,
+            "status": "verified",
+            "endpoint": f"{STAGING_WEB_PUBLIC_ORIGIN}/operator",
+            "custom_domain": proof,
+        }
+
     def release_profile_readback(context: Mapping[str, Any]) -> dict[str, Any]:
         """Fail closed unless the runtime serves the admitted profile truthfully.
 
@@ -3724,6 +4010,8 @@ def make_live_rehearsal_executor(
             endpoint("/platform/version")
             profile_proof = release_profile_readback(_context)
             return {**web_operator_requires_login(), "release_profile": profile_proof}
+        if stage_name == "web_custom_domain":
+            return web_custom_domain()
         if stage_name == "worker_idempotency":
             return execute_worker_idempotency(_context)
         if stage_name == "scheduler_oneshot":
@@ -4058,11 +4346,12 @@ def verify_ephemeral_staging(
     remote_state_verified: bool = False,
     release_profile: str = "",
 ) -> StagingLifecycleReceipt:
-    """Execute the 10-stage rehearsal verification on ephemeral staging resources.
+    """Execute the 11-stage rehearsal verification on ephemeral staging resources.
 
     Guarantees:
     1. Rehearses DB expand migration, data platform snapshot materialization,
-       authenticated API/Web smoke, worker idempotency, scheduler one-shot,
+       authenticated API/Web smoke, the Web custom domain (load balancer
+       backend, DNS, managed certificate, HTTPS), worker idempotency, scheduler one-shot,
        backup/restore drill, rollback target reversal, public egress denial,
        external-sources disabled readback, and the complete live E2E gate
        held to the admitted release profile.
@@ -4205,6 +4494,7 @@ def verify_ephemeral_staging(
                             "rollback_targets",
                             "release_profile",
                             "worker_idempotency",
+                            "custom_domain",
                             "live_e2e_gate",
                         ):
                             if key in stage_result:
@@ -5276,7 +5566,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     add_terraform_options(create_p)
 
     # verify
-    verify_p = subparsers.add_parser("verify", help="Run 10-stage rehearsal verification on ephemeral staging")
+    verify_p = subparsers.add_parser("verify", help="Run 11-stage rehearsal verification on ephemeral staging")
     verify_p.add_argument("--release-id", required=True, help="Release identifier")
     verify_p.add_argument("--candidate-sha", required=True, help="Exact 40-character commit SHA")
     verify_p.add_argument("--manifest-digest", required=True, help="SHA256 manifest digest")

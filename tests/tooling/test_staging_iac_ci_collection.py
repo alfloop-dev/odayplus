@@ -45,7 +45,7 @@ PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 EPHEMERAL_TEST_PATH = REPO_ROOT / "infra" / "terraform" / "tests" / "test_ephemeral_staging.py"
 EPHEMERAL_TEST_RELPATH = EPHEMERAL_TEST_PATH.relative_to(REPO_ROOT)
 EPHEMERAL_NODE_PREFIX = f"{EPHEMERAL_TEST_RELPATH.as_posix()}::"
-EXPECTED_EPHEMERAL_TEST_COUNT = 22
+EXPECTED_EPHEMERAL_TEST_COUNT = 24
 EXACT_SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
 
@@ -363,7 +363,7 @@ class StagingIaCChangeScopeClassificationTests(unittest.TestCase):
 
 
 class EphemeralStagingTestCollectionIntegrityTests(unittest.TestCase):
-    EXPECTED_TEST_COUNT = 22
+    EXPECTED_TEST_COUNT = 24
 
     def test_ephemeral_staging_test_file_exists(self) -> None:
         self.assertTrue(
@@ -385,10 +385,10 @@ class EphemeralStagingTestCollectionIntegrityTests(unittest.TestCase):
             if attr.startswith("test_")
         ]
 
-        # EphemeralStagingModuleContractTests has 16 contract tests + 1 standalone plan test = 17
+        # EphemeralStagingModuleContractTests has 17 contract tests + 1 standalone plan test = 18
         # EphemeralStagingDefaultTenantPlanTests has 4 default/empty/long/explicit tenant plan tests
-        # + 1 password-login runtime binding plan test = 5
-        # Total = 22 tests
+        # + 1 password-login runtime binding plan test + 1 Web NEG plan test = 6
+        # Total = 24 tests
         self.assertEqual(
             len(contract_tests) + len(plan_tests),
             self.EXPECTED_TEST_COUNT,
@@ -419,6 +419,9 @@ class EphemeralStagingTestCollectionIntegrityTests(unittest.TestCase):
         self.assertIn("test_terraform_and_python_derive_the_same_bounded_tenant", plan_tests)
         self.assertIn("test_explicit_tenant_still_wins_over_the_derived_one", plan_tests)
         self.assertIn("test_generated_tfvars_bind_password_login_runtime_inputs", plan_tests)
+        # Custom domain: the release's Web NEG for the persistent load balancer.
+        self.assertIn("test_release_owns_only_its_web_neg_for_the_persistent_load_balancer", contract_tests)
+        self.assertIn("test_planned_web_neg_is_the_one_the_lifecycle_attaches_and_detaches", plan_tests)
 
     def test_ephemeral_staging_fails_closed_in_ci_when_terraform_missing(self) -> None:
         from infra.terraform.tests.test_ephemeral_staging import (

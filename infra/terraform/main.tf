@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.7.0"
 
   backend "gcs" {}
 
@@ -33,6 +33,17 @@ locals {
   is_prod      = var.environment == "prod"
   oidc_enabled = var.auth_mode == "oidc"
   name_prefix  = "oday-${var.environment}"
+
+  # Cloud Run service names, shared by cloud_run.tf and the load balancer's
+  # serverless NEGs. The NEGs name the service rather than reference the
+  # resource, so a targeted apply of the staging load balancer
+  # (load_balancer.tf) never pulls the root stack's own services into its graph.
+  api_service_name = "${local.name_prefix}-api"
+  web_service_name = "${local.name_prefix}-web"
+
+  # Host of the governed public Web origin. The uptime check and the custom
+  # domain load balancer both use this one parse of web_base_url.
+  web_public_host = var.web_base_url != "" ? regex("^https?://([^/:]+)", var.web_base_url)[0] : ""
 
   # ODP_AUTH_ISSUER / ODP_AUTH_JWKS_URI / ODP_AUTH_AUDIENCES verify two kinds of
   # token: end-user OIDC tokens and the Cloud Run service-identity token the
@@ -243,6 +254,7 @@ locals {
       var.database_user,
       var.mlflow_tracking_uri,
       var.web_base_url,
+      var.api_public_host,
       local.auth_issuer,
       local.auth_jwks_uri,
       var.monitoring_api_uptime_host,

@@ -21,7 +21,15 @@ oidc_issuer    = "https://REPLACE_WITH_IDP_ISSUER"
 oidc_audiences = ["REPLACE_WITH_API_AUDIENCE"]
 oidc_jwks_uri  = "https://REPLACE_WITH_IDP_JWKS"
 
-web_base_url      = "https://REPLACE_WITH_ODAY_PLUS_WEB_ORIGIN"
+web_base_url      = "https://console.oday-plus.com.tw"
+
+# Persistent custom-domain load balancer (load_balancer.tf). After apply, add
+# registrar A records for console.oday-plus.com.tw and api_public_host pointing
+# at the web_load_balancer_ip output; the managed certificate stays
+# PROVISIONING until they resolve. API host: owner decision 2026-11-20.
+web_load_balancer_enabled = true
+api_public_host           = "api.oday-plus.com.tw"
+
 web_oidc_client_id = "REPLACE_WITH_WEB_OIDC_CLIENT_ID"
 web_oidc_client_secret_ref = {
   secret_id = "REPLACE_WITH_WEB_OIDC_CLIENT_SECRET_ID"
@@ -58,5 +66,5 @@ web_invoker_members = [
 # never commit personal addresses.
 monitoring_notification_emails       = []
 monitoring_notification_channel_ids  = ["projects/REPLACE_WITH_PRODUCTION_PROJECT_ID/notificationChannels/REPLACE_WITH_CHANNEL_ID"]
-monitoring_api_uptime_host           = "REPLACE_WITH_API_HOST_REACHABLE_BY_UPTIME_CHECKERS"
+monitoring_api_uptime_host           = "api.oday-plus.com.tw" # must equal api_public_host
 monitoring_cloud_sql_max_connections = 0 # REPLACE_WITH_EFFECTIVE_MAX_CONNECTIONS

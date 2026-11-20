@@ -1,5 +1,5 @@
 resource "google_cloud_run_v2_service" "api" {
-  name     = "${local.name_prefix}-api"
+  name     = local.api_service_name
   location = var.region
   ingress  = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
 
@@ -166,7 +166,7 @@ resource "google_cloud_run_v2_service_iam_member" "web_invokes_api" {
 }
 
 resource "google_cloud_run_v2_service" "web" {
-  name     = "${local.name_prefix}-web"
+  name     = local.web_service_name
   location = var.region
   ingress  = "INGRESS_TRAFFIC_ALL"
 

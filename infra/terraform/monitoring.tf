@@ -35,8 +35,8 @@ locals {
   )
 
   monitoring_web_uptime_host = (
-    var.web_base_url != ""
-    ? regex("^https?://([^/:]+)", var.web_base_url)[0]
+    local.web_public_host != ""
+    ? local.web_public_host
     : trimprefix(google_cloud_run_v2_service.web.uri, "https://")
   )
 
