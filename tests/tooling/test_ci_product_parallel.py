@@ -286,16 +286,25 @@ def test_ci_workflow_product_lanes_isolated(ci_workflow: dict[str, Any]) -> None
 
 
 def test_ci_workflow_orchestrator_runner_supports_the_sandbox(ci_workflow: dict[str, Any]) -> None:
-    """The orchestrator job runs the real Bubblewrap enforcement tests.
+    """The orchestrator job measures the boundary under the reviewed profile alone.
 
-    They fail on the ubuntu-26.04 image ("setting up uid map: Permission denied"),
-    so the job must not float with ubuntu-latest until the profile works there.
+    Ubuntu 26.04 (ubuntu-latest) enables its own bwrap-userns-restrict profile
+    for /usr/bin/bwrap. Loading the reviewed profile beside it is an attachment
+    conflict the kernel resolves by confining neither, so Bubblewrap fails with
+    "setting up uid map: Permission denied". The job stays on the release that
+    matches the host contract and refuses that collision before loading.
     """
     job = ci_workflow["jobs"]["orchestrator"]
 
     assert job.get("runs-on") == "ubuntu-24.04"
     install = next(step for step in job["steps"] if step.get("name") == "Install sandbox dependency")
-    assert ".orchestrator/profiles/bwrap" in install["run"]
+    script = install["run"]
+    refuse = script.index("[ -e /etc/apparmor.d/bwrap-userns-restrict ]")
+    load = script.index("sudo install -m 0644 .orchestrator/profiles/bwrap /etc/apparmor.d/bwrap")
+    assert refuse < load
+    assert "::error::" in script[refuse:load]
+    assert "exit 1" in script[refuse:load]
+    assert "sudo apparmor_parser -r /etc/apparmor.d/bwrap" in script[load:]
 
 
 def test_ci_workflow_product_aggregate_job(ci_workflow: dict[str, Any]) -> None:

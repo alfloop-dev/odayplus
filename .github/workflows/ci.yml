@@ -159,10 +159,13 @@ jobs:
           echo "scope=$scope" >> "$GITHUB_OUTPUT"
 
   orchestrator:
-    # Pinned: on the ubuntu-26.04 image that ubuntu-latest now resolves to,
-    # Bubblewrap fails with "setting up uid map: Permission denied" under the
-    # reviewed profile, so every protected-execution test fails. Unpin once
-    # .orchestrator/profiles/bwrap works there.
+    # Pinned to Ubuntu 24.04, the release whose AppArmor policy matches the
+    # host contract: the reviewed .orchestrator/profiles/bwrap is the only
+    # profile attaching to /usr/bin/bwrap (the rollout preflight requires it
+    # installed byte-for-byte). ubuntu-26.04, which ubuntu-latest now resolves
+    # to, already enables Ubuntu's own bwrap-userns-restrict profile for that
+    # path; the kernel then refuses both attachments, so the two cannot be
+    # combined. Move this pin only together with that host contract.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -339,6 +342,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends bubblewrap
+          # A second profile for /usr/bin/bwrap makes AppArmor refuse both
+          # ("conflicting profile attachments"): bwrap then runs unconfined,
+          # is demoted to unprivileged_userns, and every enforcement test fails
+          # with "setting up uid map: Permission denied". Name that cause once.
+          if [ -e /etc/apparmor.d/bwrap-userns-restrict ]; then
+            echo "::error::this image enables Ubuntu's bwrap-userns-restrict profile for /usr/bin/bwrap; the reviewed .orchestrator/profiles/bwrap cannot be loaded beside it"
+            exit 1
+          fi
           sudo install -m 0644 .orchestrator/profiles/bwrap /etc/apparmor.d/bwrap
           sudo apparmor_parser -r /etc/apparmor.d/bwrap
 
