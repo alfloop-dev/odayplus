@@ -223,7 +223,8 @@ def test_template_is_exact_registry_allowlist_preserving_unknowns_and_v1_history
 
     registry = DEFAULT_FORMAT_REGISTRY
     historical = registry.get("ODAY_G2", "1.0.0").to_dict()
-    original = registry.get("ODAY_G2", "2.0.0").to_dict()
+    retained = registry.get("ODAY_G2", "2.0.0").to_dict()
+    original = registry.get("ODAY_G2", "2.1.0").to_dict()
     calls = []
 
     def exact_get(code, version):
@@ -234,7 +235,7 @@ def test_template_is_exact_registry_allowlist_preserving_unknowns_and_v1_history
     service._format_registry = SimpleNamespace(get=exact_get)
     principal = Principal("reader", frozenset({Role.SITE_REVIEWER}), Scope(tenant_id=TENANT))
     projected = service.snapshot(read_principal=principal)["targetFormat"]
-    assert calls == [("ODAY_G2", "2.0.0")]
+    assert calls == [("ODAY_G2", "2.1.0")]
     assert set(projected) == {"format_code", "format_name", "format_version", "package_total_untaxed",
                              "unallocated_package_cost", "daily_operating_hours", "machine_mix", "capital_assets",
                              "fitout_spec", "utilities_spec", "maintenance_spec", "financing_spec", "tax_spec",
@@ -257,11 +258,14 @@ def test_template_is_exact_registry_allowlist_preserving_unknowns_and_v1_history
         assert asset == {key: source[key] for key in asset}
     assert projected["fitout_spec"] == {key: original["fitout_spec"][key] for key in ("base_fitout_cost", "fitout_useful_life_months")}
     assert all(projected[key] is None for key in ("utilities_spec", "maintenance_spec", "financing_spec", "tax_spec",
-                                                 "residual_spec", "ramp_spec", "seasonality_spec"))
+                                                 "ramp_spec", "seasonality_spec"))
+    assert projected["residual_spec"] == {"equipment_salvage_ratio": None, "fitout_salvage_ratio": 0.0,
+                                          "recover_lease_deposit": None, "decommissioning_and_reinstatement_cost": None}
     assert "description" not in str(projected) and "1-Kgkrn" not in str(projected)
     assert "spec_id" not in str(projected) and "max_turns_per_day" not in str(projected)
     projected["machine_mix"]["items"][0]["quantity"] = 999
-    assert registry.get("ODAY_G2", "2.0.0").to_dict() == original
+    assert registry.get("ODAY_G2", "2.1.0").to_dict() == original
+    assert registry.get("ODAY_G2", "2.0.0").to_dict() == retained
     assert registry.get("ODAY_G2", "1.0.0").to_dict() == historical
 
 
