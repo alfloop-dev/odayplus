@@ -59,8 +59,11 @@ export type ShellDecision = {
 };
 
 export type ShellRiskRow = {
+  id?: string;
+  storeId?: string;
   label: string;
-  score: number;
+  // null when no measured risk score exists; never substitute a number.
+  score: number | null;
   signal: string;
   tone?: Tone;
 };
@@ -328,9 +331,12 @@ function normalizeDecision(value: unknown): ShellDecision | null {
 
 function normalizeRisk(value: unknown): ShellRiskRow | null {
   if (!isObject(value) || typeof value.label !== "string") return null;
+  const score = typeof value.score === "number" ? value.score : Number.NaN;
   return {
+    ...(typeof value.id === "string" ? { id: value.id } : {}),
+    ...(typeof value.storeId === "string" ? { storeId: value.storeId } : {}),
     label: value.label,
-    score: Number(value.score ?? 0),
+    score: Number.isFinite(score) ? score : null,
     signal: typeof value.signal === "string" ? value.signal : "",
     tone: typeof value.tone === "string" ? (value.tone as Tone) : "neutral",
   };
