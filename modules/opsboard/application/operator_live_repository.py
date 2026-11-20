@@ -8,6 +8,7 @@ turning unavailable sections into plausible-looking zeroes.
 
 from __future__ import annotations
 
+import math
 from copy import deepcopy
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, datetime
@@ -163,6 +164,24 @@ def _is_surfaced_forecast_alert(alert: Any) -> bool:
     if _status(_value(alert, "status")).lower() == "closed":
         return False
     return not is_green_alert_level(_status(_value(alert, "alert_level")))
+
+
+_FORECAST_LEVEL_LABELS = {"red": "紅燈", "orange": "橙燈", "yellow": "黃燈"}
+
+
+def _forecast_alert_signal(alert: Any, level: str) -> str:
+    """Readable risk-rail signal built only from the alert's own fields."""
+
+    parts = [f"ForecastOps {_FORECAST_LEVEL_LABELS.get(level, level or 'alert')}"]
+    evidence = _value(alert, "evidence_json") or {}
+    gap = evidence.get("sitescore_gap_ratio") if isinstance(evidence, dict) else None
+    if isinstance(gap, (int, float)) and not isinstance(gap, bool) and math.isfinite(gap):
+        parts.append(f"營收較 SiteScore 基準 {gap:+.0%}")
+    else:
+        reason = str(_value(alert, "alert_reason_code") or "").strip()
+        if reason:
+            parts.append(reason)
+    return "・".join(parts)
 
 
 _INTERVENTION_TERMINAL = {
@@ -916,6 +935,18 @@ class OperatorLiveRepository:
                 message="risk projection requires stores, interventions, and forecastAlerts sections to be available",
             )
 
+        # Rows follow the Today rail's ShellRiskRow contract: one store label,
+        # a readable signal and a tone. No store risk score is measured yet
+        # (Store Ops keeps riskScore unavailable), so score is None rather
+        # than a number the rail would plot as if it were real.
+        store_names = {
+            str(_value(store, "store_id")): str(_value(store, "store_name") or "").strip()
+            for store in stores
+        }
+
+        def store_label(store_id: str) -> str:
+            return store_names.get(store_id) or store_id
+
         rows: list[dict[str, Any]] = []
         for alert in alerts:
             if not _is_surfaced_forecast_alert(alert):
@@ -927,9 +958,10 @@ class OperatorLiveRepository:
                 {
                     "id": f"risk-{alert_id}",
                     "storeId": store_id,
-                    "label": str(_value(alert, "alert_reason_code", "Forecast Alert")),
-                    "severity": "danger" if level in {"critical", "red"} else "warning",
-                    "summary": f"Forecast alert for store {store_id}",
+                    "label": store_label(store_id),
+                    "score": None,
+                    "signal": _forecast_alert_signal(alert, level),
+                    "tone": "danger" if level in {"critical", "red"} else "warning",
                     "roles": _roles("ops-lead", "field-lead", "pm-audit"),
                 }
             )
@@ -944,9 +976,10 @@ class OperatorLiveRepository:
                 {
                     "id": f"risk-{intervention_id}",
                     "storeId": store_id,
-                    "label": f"{kind} intervention",
-                    "severity": "warning" if status == "PENDING_APPROVAL" else "info",
-                    "summary": str(_value(intervention, "expected_outcome", "")),
+                    "label": store_label(store_id),
+                    "score": None,
+                    "signal": f"{kind} intervention",
+                    "tone": "warning" if status == "PENDING_APPROVAL" else "info",
                     "roles": _roles(
                         "ops-lead",
                         "marketing-manager",
