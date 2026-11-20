@@ -302,6 +302,7 @@ def test_ci_workflow_orchestrator_runner_supports_the_sandbox(ci_workflow: dict[
     refuse = script.index("[ -e /etc/apparmor.d/bwrap-userns-restrict ]")
     load = script.index("sudo install -m 0644 .orchestrator/profiles/bwrap /etc/apparmor.d/bwrap")
     assert refuse < load
+    assert "::error::" in script[refuse:load]
     assert "exit 1" in script[refuse:load]
     assert "sudo apparmor_parser -r /etc/apparmor.d/bwrap" in script[load:]
 
