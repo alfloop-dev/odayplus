@@ -17,6 +17,7 @@ import re
 import subprocess
 import time
 import zipfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -50,16 +51,48 @@ class Refused(RuntimeError):
     """Safe diagnostic containing no token, environment dump or raw API error."""
 
 
-def github(path: str, *, data: dict[str, Any] | None = None, raw: bool = False) -> Any:
+# Backoff before each retry of an idempotent GET; len + 1 attempts in total.
+READ_RETRY_DELAYS = (2.0, 5.0)
+_HTTP_STATUS = re.compile(rb"\(HTTP (\d{3})\)")
+_GH_AUTH_REQUIRED = 4
+
+
+def transient_read_failure(result: subprocess.CompletedProcess[bytes]) -> bool:
+    """A failed ``gh api`` GET worth repeating: 5xx, 429, rate-limit 403, or no HTTP answer.
+
+    Any other HTTP status (401/403/404/422...) and gh's own missing-auth exit are
+    authorization or trust answers and are never retried.
+    """
+    status = _HTTP_STATUS.search(result.stderr or b"")
+    if status is None:
+        return result.returncode != _GH_AUTH_REQUIRED
+    code = int(status.group(1))
+    return code >= 500 or code == 429 or (code == 403 and b"rate limit" in result.stderr.lower())
+
+
+def github(path: str, *, data: dict[str, Any] | None = None, raw: bool = False,
+           sleep: Callable[[float], None] = time.sleep) -> Any:
     command = ["gh", "api", path]
     if data is not None:
         command += ["--method", "POST", "--input", "-"]
-    result = subprocess.run(
-        command, input=json.dumps(data).encode() if data is not None else None,
-        capture_output=True, timeout=60, check=False,
-    )
-    if result.returncode:
-        raise Refused("GitHub read/dispatch failed; inspect Actions permissions and retry.")
+    # Only a GET is idempotent; a dispatch is attempted once so it cannot duplicate.
+    delays = READ_RETRY_DELAYS if data is None else ()
+    for attempt in range(len(delays) + 1):
+        retry = attempt < len(delays)
+        try:
+            result = subprocess.run(
+                command, input=json.dumps(data).encode() if data is not None else None,
+                capture_output=True, timeout=60, check=False,
+            )
+        except subprocess.TimeoutExpired:
+            if not retry:
+                raise
+        else:
+            if not result.returncode:
+                break
+            if not retry or not transient_read_failure(result):
+                raise Refused("GitHub read/dispatch failed; inspect Actions permissions and retry.")
+        sleep(delays[attempt])
     if raw:
         return result.stdout
     return json.loads(result.stdout) if result.stdout else None
