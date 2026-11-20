@@ -1,0 +1,143 @@
+# Run 41552168108 post-failure read-only GCP evidence (recorded by Claude)
+# Only list/describe/logging read/policy troubleshooter commands were run; no mutation, no secret values read.
+
+## 1. Cloud Audit Logs for github-deployer, 2026-11-03T00:23:00Z..00:25:30Z
+$ gcloud logging read 'protoPayload.authenticationInfo.principalEmail="github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com" AND timestamp>="2026-11-03T00:23:00Z" AND timestamp<="2026-11-03T00:25:30Z"' --project=odayplus-runtime-20260825 --format=json
+exit=0 (75 entries: 21 data_access GenerateAccessToken, 54 admin activity; admin activity summarised as timestamp method resource status.code; callerIp/userAgent omitted)
+2026-11-03T00:23:30.923875815Z google.cloud.secretmanager.v1.SecretManagerService.CreateSecret projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-database-url 0
+2026-11-03T00:23:30.960716955Z google.pubsub.v1.Publisher.CreateTopic projects/odayplus-runtime-20260825/topics/stg-odp-ccb9553bb151-46d39e68-jobs-dlq 0
+2026-11-03T00:23:30.961618154Z google.cloud.secretmanager.v1.SecretManagerService.CreateSecret projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-web-session 0
+2026-11-03T00:23:30.964368638Z google.cloud.secretmanager.v1.SecretManagerService.CreateSecret projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-cursor-signing-key 0
+2026-11-03T00:23:30.964475553Z google.pubsub.v1.Publisher.CreateTopic projects/odayplus-runtime-20260825/topics/stg-odp-ccb9553bb151-46d39e68-jobs 0
+2026-11-03T00:23:30.965141191Z google.iam.admin.v1.CreateServiceAccount projects/odayplus-runtime-20260825 0
+2026-11-03T00:23:30.970447415Z google.iam.admin.v1.CreateServiceAccount projects/odayplus-runtime-20260825 0
+2026-11-03T00:23:31.144545827Z google.iam.admin.v1.CreateServiceAccount projects/odayplus-runtime-20260825 0
+2026-11-03T00:23:31.421411592Z storage.buckets.create projects/_/buckets/stg-odp-ccb9553b-46d39e68-data-odayplus-runtime-20260825 0
+2026-11-03T00:23:31.620177776Z google.cloud.secretmanager.v1.SecretManagerService.AddSecretVersion projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-cursor-signing-key/versions/1 0
+2026-11-03T00:23:32.269982068Z google.cloud.secretmanager.v1.SecretManagerService.AddSecretVersion projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-web-session/versions/1 0
+2026-11-03T00:23:32.536584720Z google.cloud.secretmanager.v1.SecretManagerService.EnableSecretVersion projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-cursor-signing-key/versions/1 0
+2026-11-03T00:23:33.311944127Z google.cloud.secretmanager.v1.SecretManagerService.EnableSecretVersion projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-web-session/versions/1 0
+2026-11-03T00:23:34.062617402Z google.pubsub.v1.Subscriber.CreateSubscription projects/odayplus-runtime-20260825/subscriptions/stg-odp-ccb9553bb151-46d39e68-jobs-dlq 0
+2026-11-03T00:23:34.092931295Z google.pubsub.v1.Subscriber.CreateSubscription projects/odayplus-runtime-20260825/topics/stg-odp-ccb9553bb151-46d39e68-jobs-dlq 0
+2026-11-03T00:23:34.194042695Z google.pubsub.v1.Subscriber.CreateSubscription projects/odayplus-runtime-20260825/subscriptions/stg-odp-ccb9553bb151-46d39e68-jobs 0
+2026-11-03T00:23:34.230093143Z google.pubsub.v1.Subscriber.CreateSubscription projects/odayplus-runtime-20260825/topics/stg-odp-ccb9553bb151-46d39e68-jobs 0
+2026-11-03T00:23:41.979440109Z google.iam.admin.v1.SetIAMPolicy projects/-/serviceAccounts/115019494987924544050 0
+2026-11-03T00:23:42.278805329Z google.iam.v1.IAMPolicy.SetIamPolicy projects/odayplus-runtime-20260825/subscriptions/stg-odp-ccb9553bb151-46d39e68-jobs 0
+2026-11-03T00:23:42.351646368Z google.cloud.secretmanager.v1.SecretManagerService.SetIamPolicy projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-database-url 0
+2026-11-03T00:23:42.359235274Z google.cloud.secretmanager.v1.SecretManagerService.SetIamPolicy projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-cursor-signing-key 0
+2026-11-03T00:23:42.360650824Z google.iam.admin.v1.SetIAMPolicy projects/-/serviceAccounts/117662131122854573858 0
+2026-11-03T00:23:42.367701226Z google.iam.v1.IAMPolicy.SetIamPolicy projects/odayplus-runtime-20260825/topics/stg-odp-ccb9553bb151-46d39e68-jobs 0
+2026-11-03T00:23:42.930291224Z storage.setIamPermissions projects/_/buckets/stg-odp-ccb9553b-46d39e68-data-odayplus-runtime-20260825 0
+2026-11-03T00:23:45.389331Z SetIamPolicy projects/odayplus-runtime-20260825 0
+2026-11-03T00:23:46.270946832Z google.iam.admin.v1.SetIAMPolicy projects/-/serviceAccounts/117016121236746184056 0
+2026-11-03T00:23:46.277049413Z google.iam.admin.v1.SetIAMPolicy projects/-/serviceAccounts/117662131122854573858 0
+2026-11-03T00:23:46.357008013Z google.cloud.secretmanager.v1.SecretManagerService.SetIamPolicy projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-web-session 0
+2026-11-03T00:24:24.725528706Z google.cloud.secretmanager.v1.SecretManagerService.DestroySecretVersion projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-web-session/versions/1 0
+2026-11-03T00:24:24.855576023Z google.cloud.secretmanager.v1.SecretManagerService.SetIamPolicy projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-web-session 0
+2026-11-03T00:24:24.901566790Z google.pubsub.v1.Subscriber.DeleteSubscription projects/odayplus-runtime-20260825/subscriptions/stg-odp-ccb9553bb151-46d39e68-jobs-dlq 0
+2026-11-03T00:24:24.901569830Z google.pubsub.v1.Subscriber.DeleteSubscription projects/odayplus-runtime-20260825/topics/stg-odp-ccb9553bb151-46d39e68-jobs-dlq 0
+2026-11-03T00:24:24.904032405Z google.iam.admin.v1.SetIAMPolicy projects/-/serviceAccounts/115019494987924544050 0
+2026-11-03T00:24:25.080639285Z google.iam.admin.v1.SetIAMPolicy projects/-/serviceAccounts/117016121236746184056 0
+2026-11-03T00:24:25.122416144Z google.iam.v1.IAMPolicy.SetIamPolicy projects/odayplus-runtime-20260825/subscriptions/stg-odp-ccb9553bb151-46d39e68-jobs 0
+2026-11-03T00:24:25.135210204Z google.iam.admin.v1.SetIAMPolicy projects/-/serviceAccounts/117662131122854573858 0
+2026-11-03T00:24:25.178338831Z google.iam.v1.IAMPolicy.SetIamPolicy projects/odayplus-runtime-20260825/topics/stg-odp-ccb9553bb151-46d39e68-jobs 0
+2026-11-03T00:24:25.451300090Z google.cloud.secretmanager.v1.SecretManagerService.SetIamPolicy projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-database-url 0
+2026-11-03T00:24:25.788831250Z storage.setIamPermissions projects/_/buckets/stg-odp-ccb9553b-46d39e68-data-odayplus-runtime-20260825 0
+2026-11-03T00:24:27.690989Z SetIamPolicy projects/odayplus-runtime-20260825 0
+2026-11-03T00:24:28.545019830Z google.cloud.secretmanager.v1.SecretManagerService.DestroySecretVersion projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-cursor-signing-key/versions/1 0
+2026-11-03T00:24:28.703833553Z google.cloud.secretmanager.v1.SecretManagerService.DeleteSecret projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-web-session 0
+2026-11-03T00:24:28.752042389Z google.cloud.secretmanager.v1.SecretManagerService.SetIamPolicy projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-cursor-signing-key 0
+2026-11-03T00:24:28.878120475Z google.iam.admin.v1.DeleteServiceAccount projects/-/serviceAccounts/117016121236746184056 0
+2026-11-03T00:24:29.048463170Z google.cloud.secretmanager.v1.SecretManagerService.DeleteSecret projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-database-url 0
+2026-11-03T00:24:29.162328420Z google.iam.admin.v1.DeleteServiceAccount projects/-/serviceAccounts/115019494987924544050 0
+2026-11-03T00:24:29.190035055Z google.iam.admin.v1.SetIAMPolicy projects/-/serviceAccounts/117662131122854573858 0
+2026-11-03T00:24:29.208935077Z google.pubsub.v1.Subscriber.DeleteSubscription projects/odayplus-runtime-20260825/subscriptions/stg-odp-ccb9553bb151-46d39e68-jobs 0
+2026-11-03T00:24:29.208937161Z google.pubsub.v1.Subscriber.DeleteSubscription projects/odayplus-runtime-20260825/topics/stg-odp-ccb9553bb151-46d39e68-jobs 0
+2026-11-03T00:24:29.623882414Z google.pubsub.v1.Publisher.DeleteTopic projects/odayplus-runtime-20260825/topics/stg-odp-ccb9553bb151-46d39e68-jobs 0
+2026-11-03T00:24:29.629338141Z google.pubsub.v1.Publisher.DeleteTopic projects/odayplus-runtime-20260825/topics/stg-odp-ccb9553bb151-46d39e68-jobs-dlq 0
+2026-11-03T00:24:31.507486483Z storage.buckets.delete projects/_/buckets/stg-odp-ccb9553b-46d39e68-data-odayplus-runtime-20260825 0
+2026-11-03T00:24:32.450694161Z google.cloud.secretmanager.v1.SecretManagerService.DeleteSecret projects/767864276141/secrets/stg-odp-ccb9553bb151-46d39e68-cursor-signing-key 0
+2026-11-03T00:24:32.869437595Z google.iam.admin.v1.DeleteServiceAccount projects/-/serviceAccounts/117662131122854573858 0
+# admin activity with non-zero status: 0. No cloudsql.googleapis.com entry by github-deployer (databases/users insert or delete) appears in this window, allowed or denied.
+
+$ gcloud logging read 'protoPayload.serviceName="cloudsql.googleapis.com" AND timestamp>="2026-11-02T23:30:00Z"' --project=odayplus-runtime-20260825 --format=json
+exit=0 (2 entries)
+2026-11-03T00:07:32.100788Z gke-oday-emgi-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com cloudsql.instances.connect projects/odayplus-runtime-20260825/instances/oday-dev-sql 0
+2026-11-03T00:07:32.109929Z gke-oday-emgi-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com cloudsql.instances.connect projects/odayplus-runtime-20260825/instances/oday-dev-sql 0
+# Neither entry is from github-deployer; Cloud SQL did not audit-log the denied users.insert.
+
+## 2. github-deployer project IAM bindings
+$ gcloud projects get-iam-policy odayplus-runtime-20260825 --flatten='bindings[].members' --filter='bindings.members:github-deployer@' --format=json
+exit=0
+roles/cloudscheduler.admin condition=none
+roles/cloudsql.admin condition={"description": "ephemeral_staging creates release databases and users on the staging foundation instance", "expression": "resource.name.startsWith('projects/odayplus-runtime-20260825/instances/oday-staging-foundation-sql')", "title": "staging-foundation-sql-only"}
+roles/cloudsql.client condition=none
+roles/iam.serviceAccountAdmin condition=none
+roles/logging.viewer condition=none
+roles/pubsub.admin condition=none
+roles/resourcemanager.projectIamAdmin condition={"description": "ephemeral_staging grants only roles/cloudsql.client to the release runtime SA", "expression": "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly(['roles/cloudsql.client'])", "title": "staging-lifecycle-cloudsql-client-only"}
+roles/run.admin condition=none
+roles/secretmanager.admin condition=none
+roles/serviceusage.serviceUsageConsumer condition=none
+roles/storage.admin condition=none
+
+## 3. Policy Troubleshooter on the staging foundation instance
+$ gcloud policy-intelligence troubleshoot-policy iam //cloudsql.googleapis.com/projects/odayplus-runtime-20260825/instances/oday-staging-foundation-sql --principal-email=github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com --permission=cloudsql.users.create --format=json
+exit=0 overallAccessState=UNKNOWN_INFO
+  roles/cloudsql.admin condition staging-foundation-sql-only conditionExplanation={"evaluationStates": [{"end": 100, "value": false}], "value": false}
+$ gcloud policy-intelligence troubleshoot-policy iam //cloudsql.googleapis.com/projects/odayplus-runtime-20260825/instances/oday-staging-foundation-sql --principal-email=github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com --permission=cloudsql.databases.create --format=json
+exit=0 overallAccessState=UNKNOWN_INFO
+  roles/cloudsql.admin condition staging-foundation-sql-only conditionExplanation={"evaluationStates": [{"end": 100, "value": false}], "value": false}
+# The condition evaluates to false for both permissions on this instance, matching the 403 notAuthorized terraform got for google_sql_user.staging.
+
+## 4. Remaining release-scoped resources
+$ gcloud iam service-accounts list --project=odayplus-runtime-20260825 --filter=email~^stg-odp --format=value(email)
+exit=0
+
+$ gcloud secrets list --project=odayplus-runtime-20260825 --filter=name~stg-odp --format=value(name)
+exit=0
+
+$ gcloud pubsub topics list --project=odayplus-runtime-20260825 --filter=name~stg-odp --format=value(name)
+WARNING: The following filter keys were not present in any resource : name
+exit=0
+
+$ gcloud pubsub subscriptions list --project=odayplus-runtime-20260825 --filter=name~stg-odp --format=value(name)
+WARNING: The following filter keys were not present in any resource : name
+exit=0
+
+$ gcloud storage buckets list --project=odayplus-runtime-20260825 --filter=name~^stg-odp --format=value(name)
+exit=0
+
+$ gcloud sql databases list --instance=oday-staging-foundation-sql --project=odayplus-runtime-20260825 --format=value(name)
+postgres
+exit=0
+
+$ gcloud sql users list --instance=oday-staging-foundation-sql --project=odayplus-runtime-20260825 --format=value(name,type)
+postgres	BUILT_IN
+exit=0
+
+$ gcloud run services list --project=odayplus-runtime-20260825 --region=asia-east1 --filter=metadata.name~stg-odp --format=value(metadata.name)
+exit=0
+
+$ gcloud run jobs list --project=odayplus-runtime-20260825 --region=asia-east1 --filter=metadata.name~stg-odp --format=value(metadata.name)
+exit=0
+
+$ gcloud scheduler jobs list --project=odayplus-runtime-20260825 --location=asia-east1 --filter=name~stg-odp --format=value(name)
+exit=0
+
+$ gcloud storage ls gs://oday-staging-recovery-odayplus-runtime-20260825/oday-plus/ephemeral-staging/odp-ccb9553bb151/
+ERROR: (gcloud.storage.ls) One or more URLs matched no objects.
+exit=1
+
+$ gcloud projects get-iam-policy odayplus-runtime-20260825 --flatten=bindings[].members --filter=bindings.members~stg-odp --format=value(bindings.role,bindings.members)
+exit=0
+
+$ gcloud pubsub topics list --project=odayplus-runtime-20260825 --format=value(name) | grep -c stg-odp
+list_exit=0
+matches=0
+
+$ gcloud pubsub subscriptions list --project=odayplus-runtime-20260825 --format=value(name) | grep -c stg-odp
+list_exit=0
+matches=0
+# No stg-odp service account, secret, topic, subscription, bucket, Cloud Run service/job, Scheduler job or project IAM member remains;
+# the foundation instance holds only the postgres database and postgres user; the recovery-bundle prefix has no objects.
