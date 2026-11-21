@@ -544,6 +544,62 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         self.assertIsNone(worktree_cleanliness.protected_body_checkout_refusal(worktree, require_sparse=True))
         self.assertEqual(worker_workspace.compute_worktree_state_identity(worktree), f"clean:{base}")
 
+    def test_pinned_tracked_file_is_excluded_and_reviewable_without_exposing_its_body(self) -> None:
+        protected = ("frozen-fixture.py",)
+        pin = self._commit_on_dev(protected[0], "synthetic frozen source")
+        head = self._commit_on_dev("work.txt", "task deliverable")
+        branch = "task/PINNED-TRACKED-001"
+        worktree = self.root / "wt-pinned-tracked"
+        ok, error = supervisor._create_worker_worktree(
+            self.repo, worktree, branch, head, protected_paths=protected, frozen_base=pin,
+        )
+        self.assertTrue(ok, error)
+        target = worktree / protected[0]
+        self.assertFalse(target.exists())
+        self.assertEqual(self._git(worktree, "ls-files", "-t", "--", protected[0]).stdout.strip(), f"S {protected[0]}")
+        status_file = self.root / "task-registry.json"
+        task = {"id": "PINNED-TRACKED-001", "protected_paths": list(protected), "frozen_evidence_base_sha": pin}
+        status_file.write_text(json.dumps({"tasks": [task]}))
+        upstream = "refs/remotes/origin/dev"
+        self._git(self.repo, "update-ref", upstream, pin)
+        argv = [
+            "--repo", str(worktree), "--task-id", task["id"], "--status-file", str(status_file),
+            "--upstream-ref", upstream,
+        ]
+        self.assertEqual(worktree_cleanliness.main(argv), 0)
+        status_file.write_text(json.dumps({"tasks": [{**task, "frozen_evidence_base_sha": head}]}))
+        self.assertEqual(worktree_cleanliness.main(argv), 1)
+        status_file.write_text(json.dumps({"tasks": [task]}))
+        self.assertEqual(
+            worker_workspace.compute_worktree_state_identity(worktree, protected_paths=protected, frozen_base=pin),
+            f"clean:{head}",
+        )
+        sandbox = worktree_cleanliness.plan_protected_execution(worktree, protected)
+        self.assertIn(target, sandbox.absent_frozen_paths)
+        self.assertTrue(any(op[0] == "shadow" and op[1] == worktree for op in sandbox.operations))
+        self.assertFalse(target.exists())
+        self.assertEqual(worktree_cleanliness.main(argv), 0)
+
+        target.mkdir()
+        self.assertEqual(worktree_cleanliness.main(argv), 1)
+        target.rmdir()
+        self._git(worktree, "update-index", "--skip-worktree", "--", protected[0])
+
+        changed = self._commit_on_dev(protected[0], "synthetic alteration")
+        refusal = worker_workspace._protected_commit_refusal(
+            worktree, changed, protected, checkout_into=worktree, frozen_base=pin,
+        )
+        self.assertIn("frozen_path_changed", refusal or "")
+        self.assertFalse(target.exists())
+
+        # Writing stage-zero metadata for another blob cannot masquerade as
+        # an unchanged sparse body, even when the working file is absent.
+        blob = self._git(self.repo, "rev-parse", f"{changed}:{protected[0]}").stdout.strip()
+        self._git(worktree, "update-index", "--cacheinfo", f"100644,{blob},{protected[0]}")
+        self._git(worktree, "update-index", "--skip-worktree", "--", protected[0])
+        self.assertEqual(worktree_cleanliness.main(argv), 1)
+        self.assertFalse(target.exists())
+
     def test_creation_still_refuses_a_task_protected_tree_before_any_exclusion(self) -> None:
         self._enter_body_domain()
         worktree = self.root / "wt-dom-tracked"
@@ -781,7 +837,7 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
             ("unsupported format", subprocess.CompletedProcess([], 129, b"", b"usage")),
             ("git unavailable", None),
         ):
-            with self.subTest(name), mock.patch.object(worker_workspace, "_git_metadata", return_value=failure):
+            with self.subTest(name), mock.patch.object(worktree_cleanliness, "_git_metadata", return_value=failure):
                 self.assertIn("unreadable_metadata: index", refuse() or "")
         worktree_cleanliness.plan_protected_execution(worktree, PROTECTED)
         self.assertIsNone(refuse())
