@@ -6195,12 +6195,14 @@ def test_deploy_script_captures_job_proof_without_describe_latest() -> None:
         "    product_ops/deployment/validate_cloud_run_live_deployment.py "
         "resolve-latest-execution \\\n"
     ) in text
-    # One resolver implementation, shared by every execution readback there is:
-    # the success proof, the failure forensics, and the sources-off egress
-    # probe. The count that matters is the number of resolver bodies, not the
-    # number of callers, so pin that directly.
+    # Success, forensics, egress and the production private checks use the
+    # same resolver. The production Job must resolve its own execution.
     assert text.count("gcloud run jobs executions list") == 1
-    assert text.count("capture_latest_execution ") == 3
+    assert text.count("capture_latest_execution ") == 4
+    assert 'execution="$(capture_latest_execution "${job}"' in text
+    assert text.index('run_private_release_smoke smoke "${SMOKE_REPORT}"') < text.index(
+        'promote_service_traffic "${API_SERVICE}"'
+    )
     assert (
         'capture_latest_execution "${job}" "${JOB_REPORT_DIR}/${kind}-execution.json" || true'
     ) in text
@@ -8663,3 +8665,84 @@ def test_smoke_cli_requires_the_runtime_env_file_argument(tmp_path: Path) -> Non
     assert not report_path.exists()
     assert "do-not-fallback-to-process-tenant" not in result.stdout + result.stderr
     assert "do-not-fallback-to-legacy-tenant" not in result.stdout + result.stderr
+
+
+def test_production_private_smoke_job_reuses_the_validator_and_binds_its_receipt(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path,
+) -> None:
+    api = "https://candidate---api-hash-uc.a.run.app"
+    web = "https://candidate---web-hash-uc.a.run.app"
+    api_audience = "https://api-1234.asia-east1.run.app"
+    web_audience = "https://web-1234.asia-east1.run.app"
+    app_audience = "https://api.oday-plus.com.tw"
+    job, execution = "odp-smoke-current", "odp-smoke-current-abcd"
+    digest, correlation = "sha256:" + "b" * 64, "corr-candidate"
+    for name, value in {
+        "ODAY_RELEASE_SHA": EXPECTED_SHA, "ODP_RELEASE_MANIFEST_DIGEST": digest,
+        "ODP_AUTH_AUDIENCES": app_audience + ",https://unused.example",
+        "ODP_OPERATOR_SMOKE_SUBJECT": "smoke-subject",
+        "ODP_OPERATOR_SMOKE_BEARER_TOKEN": "a-sensitive-runner-token",
+    }.items():
+        monkeypatch.setenv(name, value)
+    runtime_env, job_input = tmp_path / "runtime.json", tmp_path / "job.json"
+    runtime_env.write_text(json.dumps({
+        "ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-prod",
+        "ODAY_DATABASE_URL": "a-sensitive-runtime-value",
+    }))
+    assert validator.main([
+        "private-smoke-input", "--output", str(job_input), "--runtime-env-file", str(runtime_env),
+        "--api-audience", api_audience, "--web-audience", web_audience, "--",
+        "smoke", "--api-url", api, "--web-url", web,
+        "--expected-sha", EXPECTED_SHA, "--correlation-id", correlation,
+    ]) == 0
+    assert "a-sensitive-" not in job_input.read_text()
+    for name, value in json.loads(job_input.read_text()).items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("CLOUD_RUN_JOB", job)
+    monkeypatch.setenv("CLOUD_RUN_EXECUTION", execution)
+    minted = []
+    tokens = ["private-api-token", "private-web-token", "private-app-token"]
+
+    def mint(audience: str) -> str:
+        minted.append(audience)
+        return tokens[len(minted) - 1]
+
+    def transport(command, *, env, check):
+        assert command[-2:] == [api, web]
+        assert "wait_for_private_api_invoker" in command[2]
+        assert "wait_for_private_candidate_invoker" in command[2]
+        assert env["ODP_API_INVOKER_TOKEN"] == tokens[0]
+        return SimpleNamespace(returncode=0)
+
+    def smoke(**kwargs):
+        assert (kwargs["api_url"], kwargs["web_url"]) == (api, web)
+        assert kwargs["operator_tenant"] == "tenant-prod"
+        assert kwargs["operator_subject"] == "smoke-subject"
+        assert (kwargs["api_invoker_token"], kwargs["web_invoker_token"], kwargs["bearer_token"]) == tuple(tokens)
+        return [validator.CheckResult(True, "smoke:test", "passed")], {
+            "expected_sha": kwargs["expected_sha"], "correlation_id": kwargs["correlation_id"],
+            "secret_values_redacted": True,
+        }
+
+    monkeypatch.setattr(validator, "_cloud_run_job_identity_token", mint)
+    monkeypatch.setattr(validator.subprocess, "run", transport)
+    monkeypatch.setattr(validator, "smoke_checks", smoke)
+    assert validator.main(["private-smoke-job"]) == 0
+    assert minted == [api_audience, web_audience, app_audience]
+    stdout = capsys.readouterr().out
+    assert not any(token in stdout for token in tokens)
+    receipt = json.loads(stdout.splitlines()[-1])
+    expect = {
+        "job": job, "execution": execution, "release_sha": EXPECTED_SHA,
+        "manifest_digest": digest, "phase": "smoke", "correlation_id": correlation,
+    }
+    assert validator._private_smoke_report([{"jsonPayload": receipt}], **expect)["ok"] is True
+    assert validator._private_smoke_report([], **expect) is None
+    for mismatch in (
+        [{"jsonPayload": {**receipt, "execution": "another-execution"}}],
+        [{"jsonPayload": {**receipt, "manifest_digest": "sha256:" + "c" * 64}}],
+        [{"jsonPayload": {**receipt, "report": {**receipt["report"], "ok": False}}}],
+        [{"jsonPayload": receipt}, {"jsonPayload": receipt}],
+    ):
+        with pytest.raises(ValueError, match="private smoke Job"):
+            validator._private_smoke_report(mismatch, **expect)

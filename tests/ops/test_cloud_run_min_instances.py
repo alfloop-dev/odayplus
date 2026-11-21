@@ -97,7 +97,7 @@ def test_candidate_smoke_timeout_outlasts_the_cold_start() -> None:
     """Tagged candidates get no warm instance, so the smoke probe must wait out
     the measured ~24-29s API cold start instead of the 15s CLI default."""
     call = TEXT.index("validate_cloud_run_live_deployment.py smoke \\")
-    block = TEXT[call : TEXT.index("--output", call)]
+    block = TEXT[TEXT.index("candidate_probes=(") : call]
     match = re.search(r'--timeout "\$\{CANDIDATE_SMOKE_TIMEOUT_SECONDS:-(\d+)\}"', block)
     assert match is not None
     assert int(match.group(1)) >= 45

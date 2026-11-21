@@ -259,6 +259,14 @@ case "${CLOUD_RUN_VPC_MODE}" in
     CLOUD_RUN_NETWORK_ARGS+=("--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}")
     ;;
 esac
+PROD_INGRESS_ARGS=()
+if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
+  if [ "${CLOUD_RUN_VPC_MODE}" != "direct-vpc" ] || [[ "${ODP_CLOUD_RUN_VPC_EGRESS:-}" != all && "${ODP_CLOUD_RUN_VPC_EGRESS:-}" != all-traffic ]]; then
+    echo "Error: production smoke requires its Direct VPC network, subnet and all-traffic egress." >&2
+    exit 1
+  fi
+  PROD_INGRESS_ARGS=(--ingress=internal-and-cloud-load-balancing)
+fi
 echo "Cloud Run VPC binding mode: ${CLOUD_RUN_VPC_MODE:-none}"
 
 if [ -z "${ODP_SCHEDULED_INGESTION_TENANT_ID:-}" ] && [ -z "${ODP_TENANT_ID:-}" ]; then
@@ -471,6 +479,8 @@ WORKER_TRIGGER_SNAPSHOT="$(mktemp)"
 ROLLBACK_ARMED=false
 SCHEDULER_ROLLBACK_ARMED=false
 DEPLOYMENT_COMMITTED=false
+ACTIVE_PRIVATE_SMOKE_JOB=""
+PRIVATE_SMOKE_SCRATCH=""
 cleanup() {
   rm -f \
     "${API_ENV_FILE}" \
@@ -532,6 +542,12 @@ handle_deployment_exit() {
         echo "Error: one or more Cloud Scheduler trigger restores failed." >&2
       fi
     fi
+  fi
+  if [ -n "${ACTIVE_PRIVATE_SMOKE_JOB}" ]; then
+    delete_candidate_job "${ACTIVE_PRIVATE_SMOKE_JOB}" || status=1
+  fi
+  if [ -n "${PRIVATE_SMOKE_SCRATCH}" ]; then
+    rm -rf -- "${PRIVATE_SMOKE_SCRATCH}"
   fi
   cleanup
   exit "${status}"
@@ -705,6 +721,67 @@ capture_latest_execution() {
     --format=json >"${execution_file}"; then
     return 1
   fi
+  if [ "${3:-false}" = "true" ]; then
+    printf '%s\n' "${execution_name}"
+  fi
+}
+
+read_job_execution_logs() {
+  local job="$1" execution="$2"
+  gcloud logging read \
+    "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${job}\" AND resource.labels.location=\"${GCP_REGION}\" AND labels.\"run.googleapis.com/execution_name\"=\"${execution}\"" \
+    --project="${GCP_PROJECT}" --freshness=10m --limit=100 --format=json
+}
+
+run_private_release_smoke() {
+  local phase="$1" output="$2" api_audience="$3" web_audience="$4" runtime_env="$5" correlation="$6"
+  shift 6
+  local job="odp-smoke-${phase%%-*}-${REVISION_TAG}" execution attempt status
+  if [[ ! "${job}" =~ ^[a-z][a-z0-9-]{0,61}[a-z0-9]$ ]]; then
+    echo "Error: invalid production smoke Job name." >&2
+    return 1
+  fi
+  rm -f -- "${output}"
+  PRIVATE_SMOKE_SCRATCH="$(mktemp -d)"
+  run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py private-smoke-input \
+    --output="${PRIVATE_SMOKE_SCRATCH}/env.json" --api-audience="${api_audience}" \
+    --web-audience="${web_audience}" --runtime-env-file="${runtime_env}" \
+    -- "${phase}" "$@" --correlation-id "${correlation}"
+  gcloud run jobs create "${job}" --image="${API_IMAGE}" \
+    --service-account="${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}" --command=python \
+    --args=product_ops/deployment/validate_cloud_run_live_deployment.py,private-smoke-job \
+    --env-vars-file="${PRIVATE_SMOKE_SCRATCH}/env.json" --labels="oday-release-sha=${ODAY_RELEASE_SHA}" \
+    --tasks=1 --max-retries=0 --task-timeout=20m "${CLOUD_RUN_NETWORK_ARGS[@]}" \
+    --project="${GCP_PROJECT}" --region="${GCP_REGION}" --quiet
+  ACTIVE_PRIVATE_SMOKE_JOB="${job}"
+  gcloud run jobs execute "${job}" --wait --project="${GCP_PROJECT}" --region="${GCP_REGION}" --quiet
+  execution="$(capture_latest_execution "${job}" "${PRIVATE_SMOKE_SCRATCH}/execution.json" true)"
+  execution="${execution##*/}"
+  if [[ ! "${execution}" =~ ^[a-z][a-z0-9-]+$ ]]; then
+    echo "Error: invalid production smoke execution name." >&2
+    return 1
+  fi
+  verify_release_job "${job}" "${API_IMAGE}" "${ODAY_RELEASE_SHA}" "${execution}"
+  for attempt in 1 2 3 4 5 6; do
+    read_job_execution_logs "${job}" "${execution}" >"${PRIVATE_SMOKE_SCRATCH}/logs.json"
+    if run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py private-smoke-receipt \
+      --logs="${PRIVATE_SMOKE_SCRATCH}/logs.json" --job="${job}" --execution="${execution}" \
+      --release-sha="${ODAY_RELEASE_SHA}" --manifest-digest="${MANIFEST_DIGEST}" \
+      --phase="${phase}" --correlation-id="${correlation}" --output="${output}"; then
+      delete_candidate_job "${job}"
+      ACTIVE_PRIVATE_SMOKE_JOB=""
+      rm -rf -- "${PRIVATE_SMOKE_SCRATCH}"
+      PRIVATE_SMOKE_SCRATCH=""
+      return 0
+    else
+      status=$?
+    fi
+    if [ "${status}" -ne 3 ] || [ "${attempt}" -eq 6 ]; then
+      echo "Error: production smoke Job did not deliver a verified receipt." >&2
+      return 1
+    fi
+    sleep 5
+  done
 }
 
 capture_job_proof() {
@@ -826,12 +903,7 @@ PY
   # Re-read only missing receipts for this exact execution, at most six times;
   # invalid/duplicate receipts and read errors still fail immediately.
   for attempt in 1 2 3 4 5 6; do
-  if ! gcloud logging read \
-    "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${WORKER_CANDIDATE_JOB}\" AND labels.\"run.googleapis.com/execution_name\"=\"${execution_name##*/}\"" \
-    --project="${GCP_PROJECT}" \
-    --freshness=10m \
-    --limit=100 \
-    --format=json >"${logs_file}"; then
+  if ! read_job_execution_logs "${WORKER_CANDIDATE_JOB}" "${execution_name##*/}" >"${logs_file}"; then
     echo "Error: unable to read the public egress probe runtime receipt from Cloud Logging." >&2
     return 1
   fi
@@ -1019,17 +1091,25 @@ run_migration_compatibility_gate() {
     return 1
   fi
   # The old API is private too; its stable URL is the transport token audience.
-  prepare_private_api_transport "${API_SERVICE}" "${OLD_API_URL}" || return 1
-  run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py compatibility-smoke \
-    --api-url "${OLD_API_URL}" \
-    --web-url "${OLD_WEB_URL}" \
-    --correlation-id "corr-cloud-run-compat-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}" \
-    --timeout "${MIGRATION_COMPAT_TIMEOUT}" \
-    --compat-retry-attempts "${MIGRATION_COMPAT_RETRY_ATTEMPTS}" \
-    --compat-retry-backoff-seconds "${MIGRATION_COMPAT_RETRY_BACKOFF}" \
-    --compat-retry-max-backoff-seconds "${MIGRATION_COMPAT_RETRY_MAX_BACKOFF}" \
-    --compat-retry-deadline-seconds "${MIGRATION_COMPAT_RETRY_DEADLINE}" \
-    --output "${MIGRATION_COMPAT_REPORT}"
+  local correlation="corr-cloud-run-compat-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}"
+  local -a probes=(
+    --api-url "${OLD_API_URL}"
+    --web-url "${OLD_WEB_URL}"
+    --timeout "${MIGRATION_COMPAT_TIMEOUT}"
+    --compat-retry-attempts "${MIGRATION_COMPAT_RETRY_ATTEMPTS}"
+    --compat-retry-backoff-seconds "${MIGRATION_COMPAT_RETRY_BACKOFF}"
+    --compat-retry-max-backoff-seconds "${MIGRATION_COMPAT_RETRY_MAX_BACKOFF}"
+    --compat-retry-deadline-seconds "${MIGRATION_COMPAT_RETRY_DEADLINE}"
+  )
+  if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
+    grant_api_service_invokers "${API_SERVICE}"
+    run_private_release_smoke compatibility-smoke "${MIGRATION_COMPAT_REPORT}" \
+      "${OLD_API_URL}" "" "" "${correlation}" "${probes[@]}"
+  else
+    prepare_private_api_transport "${API_SERVICE}" "${OLD_API_URL}" || return 1
+    run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py compatibility-smoke \
+      "${probes[@]}" --correlation-id "${correlation}" --output "${MIGRATION_COMPAT_REPORT}"
+  fi
 }
 run_migration_compatibility_gate
 
@@ -1058,6 +1138,7 @@ gcloud run deploy "${API_SERVICE}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
   --revision-suffix="${REVISION_SUFFIX}" \
   "${CLOUD_RUN_NETWORK_ARGS[@]}" \
+  "${PROD_INGRESS_ARGS[@]}" \
   --tag="${API_REVISION_TAG}" \
   "${API_TRAFFIC_ARGS[@]}" \
   --no-allow-unauthenticated \
@@ -1074,7 +1155,11 @@ API_SERVICE_AUDIENCE="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
 # its service-scoped invokers can be bound; on an existing service the bindings
 # are already present and the grant is a no-op. The Web BFF runtime identity
 # needs it before the Web candidate serves.
-prepare_private_api_transport "${API_SERVICE}" "${API_SERVICE_AUDIENCE}" "${PROD_API_EXTRA_INVOKERS[@]}"
+if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
+  grant_api_service_invokers "${API_SERVICE}" "${PROD_API_EXTRA_INVOKERS[@]}"
+else
+  prepare_private_api_transport "${API_SERVICE}" "${API_SERVICE_AUDIENCE}" "${PROD_API_EXTRA_INVOKERS[@]}"
+fi
 
 echo "Deploying immutable scheduler candidate Cloud Run Job..."
 gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}" \
@@ -1228,6 +1313,7 @@ gcloud run deploy "${WEB_SERVICE}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
   --revision-suffix="${REVISION_SUFFIX}" \
   "${CLOUD_RUN_NETWORK_ARGS[@]}" \
+  "${PROD_INGRESS_ARGS[@]}" \
   --tag="${WEB_REVISION_TAG}" \
   "${WEB_TRAFFIC_ARGS[@]}" \
   "${WEB_ACCESS_ARGS[@]}" \
@@ -1240,6 +1326,7 @@ gcloud run services describe "${WEB_SERVICE}" \
 WEB_REVISION="$(tagged_revision "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
 WEB_URL="$(tagged_revision_url "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
 
+WEB_CANDIDATE_AUDIENCE=""
 if [ "${WEB_SERVICE_PRESENCE}" = "absent" ]; then
   echo "First-release Web candidate is private; granting the smoke identity invoker access..."
   WEB_CANDIDATE_AUDIENCE="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
@@ -1248,18 +1335,20 @@ if [ "${WEB_SERVICE_PRESENCE}" = "absent" ]; then
     exit 1
   fi
   grant_service_invoker "${WEB_SERVICE}" "serviceAccount:${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}"
-  ODP_WEB_CANDIDATE_INVOKER_TOKEN="$(gcloud auth print-identity-token \
-    --impersonate-service-account="${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}" \
-    --audiences="${WEB_CANDIDATE_AUDIENCE}")"
-  if [[ -z "${ODP_WEB_CANDIDATE_INVOKER_TOKEN}" ]]; then
-    echo "Error: failed to mint the first-release Web candidate invoker token." >&2
-    exit 1
+  if [ "${ODP_DEPLOY_ENV}" != "production" ]; then
+    ODP_WEB_CANDIDATE_INVOKER_TOKEN="$(gcloud auth print-identity-token \
+      --impersonate-service-account="${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}" \
+      --audiences="${WEB_CANDIDATE_AUDIENCE}")"
+    if [[ -z "${ODP_WEB_CANDIDATE_INVOKER_TOKEN}" ]]; then
+      echo "Error: failed to mint the first-release Web candidate invoker token." >&2
+      exit 1
+    fi
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+      echo "::add-mask::${ODP_WEB_CANDIDATE_INVOKER_TOKEN}"
+    fi
+    export ODP_WEB_CANDIDATE_INVOKER_TOKEN
+    wait_for_private_candidate_invoker "${WEB_URL}" "${ODP_WEB_CANDIDATE_INVOKER_TOKEN}"
   fi
-  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
-    echo "::add-mask::${ODP_WEB_CANDIDATE_INVOKER_TOKEN}"
-  fi
-  export ODP_WEB_CANDIDATE_INVOKER_TOKEN
-  wait_for_private_candidate_invoker "${WEB_URL}" "${ODP_WEB_CANDIDATE_INVOKER_TOKEN}"
 fi
 
 if [[ -z "${ODP_OPERATOR_SMOKE_BEARER_TOKEN:-}" ]]; then
@@ -1282,22 +1371,24 @@ if [[ -z "${ODP_OPERATOR_SMOKE_BEARER_TOKEN:-}" ]]; then
   fi
 fi
 
-# ID tokens are short-lived and the jobs and Web build above can take a while,
-# so the transport token is refreshed right before each probe stage.
-mint_api_invoker_token "${API_SERVICE_AUDIENCE}"
 echo "Running release-aware smoke checks against tagged candidate revisions..."
-# A tagged candidate revision gets no warm instance (the service-level minimum
-# only serves traffic-bearing revisions), so its first probe pays the API cold
-# start, measured at ~24-29s on dev. Cloud Run queues the request until the
-# instance serves; the per-probe timeout must outlast that, not the 15s default.
-run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py smoke \
-  --runtime-env-file "${API_ENV_FILE}" \
-  --api-url "${API_URL}" \
-  --web-url "${WEB_URL}" \
-  --expected-sha "${ODAY_RELEASE_SHA}" \
-  --correlation-id "corr-cloud-run-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}" \
-  --timeout "${CANDIDATE_SMOKE_TIMEOUT_SECONDS:-60}" \
-  --output "${SMOKE_REPORT}"
+# A tagged candidate has no warm instance, so allow for the measured cold start.
+candidate_correlation="corr-cloud-run-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}"
+candidate_probes=(
+  --api-url "${API_URL}"
+  --web-url "${WEB_URL}"
+  --expected-sha "${ODAY_RELEASE_SHA}"
+  --timeout "${CANDIDATE_SMOKE_TIMEOUT_SECONDS:-60}"
+)
+if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
+  run_private_release_smoke smoke "${SMOKE_REPORT}" "${API_SERVICE_AUDIENCE}" "${WEB_CANDIDATE_AUDIENCE}" \
+    "${API_ENV_FILE}" "${candidate_correlation}" "${candidate_probes[@]}"
+else
+  mint_api_invoker_token "${API_SERVICE_AUDIENCE}"
+  run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py smoke \
+    --runtime-env-file "${API_ENV_FILE}" "${candidate_probes[@]}" \
+    --correlation-id "${candidate_correlation}" --output "${SMOKE_REPORT}"
+fi
 
 upsert_scheduler_trigger \
   "${SCHEDULER_SCHEDULE_NAME}" \
