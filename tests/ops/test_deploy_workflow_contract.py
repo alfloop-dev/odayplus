@@ -1107,7 +1107,12 @@ def test_staging_recovery_bundle_storage_boundary_contract() -> None:
     # create-time sidecar, so each run's hold state gets its own object name.
     assert "staging_lifecycle.py persist-recovery" in str(persist_hold["run"])
     assert '--run-attempt "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in str(persist_hold["run"])
+    assert '--create-receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-create.json"' in str(persist_hold["run"])
     assert '--receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-final.json"' in str(persist_hold["run"])
+    for step in (persist_create, persist_hold):
+        assert '--candidate-sha "${ODAY_RELEASE_SHA}"' in str(step["run"])
+        assert '--manifest-digest "${MANIFEST_DIGEST}"' in str(step["run"])
+        assert '--run-attempt "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in str(step["run"])
 
     # 3. closeout job environment exports and path preparation checks
     closeout_job = parsed["jobs"]["staging_closeout"]

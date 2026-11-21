@@ -2917,27 +2917,34 @@ def persist_staging_recovery(
     state_dir: Path,
     bundle_uri: str,
     receipt_path: Path,
+    candidate_sha: str,
+    manifest_digest: str,
+    run_attempt: str,
     outputs_path: Path | None = None,
-    run_attempt: str | None = None,
+    create_receipt_path: Path | None = None,
 ) -> None:
     """Persist this release's sidecars and prove their exact stored bytes."""
     if not RELEASE_ID_PATTERN.fullmatch(release_id) or not re.fullmatch(
         rf"gs://[a-z0-9._-]+/oday-plus/ephemeral-staging/{re.escape(release_id)}/bundle", bundle_uri
     ):
         raise ValueError("Recovery bundle location is not bound to the release.")
+    if not re.fullmatch(r"[1-9][0-9]*-[1-9][0-9]*", run_attempt):
+        raise ValueError("Invalid recovery run attempt.")
+    if not CANDIDATE_SHA_PATTERN.fullmatch(candidate_sha) or not SHA256_DIGEST_PATTERN.fullmatch(manifest_digest):
+        raise ValueError("Recovery requires the exact candidate SHA and manifest digest.")
+    if (outputs_path is None) == (create_receipt_path is None):
+        raise ValueError("Supply Terraform outputs for create or the create receipt path for final persistence.")
     receipt_path.unlink(missing_ok=True)
     marker_path = _lifecycle_state_path(release_id, state_dir)
-    if run_attempt is not None:
-        if not re.fullmatch(r"[1-9][0-9]*-[1-9][0-9]*", run_attempt):
-            raise ValueError("Invalid recovery run attempt.")
+    _, tfvars, inventory = _terraform_state_paths(release_id, state_dir)
+    identity = {"release_id": release_id, "candidate_sha": candidate_sha, "manifest_digest": manifest_digest}
+    initial_lifecycle = None
+    if outputs_path is None:
         if not marker_path.is_file():
             return  # create did not get far enough to leave state
         # Keep the object naming used by the existing closeout reader.
         sidecars = {f"hold-{run_attempt}-{marker_path.name}": marker_path}
     else:
-        if outputs_path is None:
-            raise ValueError("Create-time recovery requires the staging Terraform outputs.")
-        _, tfvars, inventory = _terraform_state_paths(release_id, state_dir)
         sidecars = {
             tfvars.name: tfvars,
             inventory.name: inventory,
@@ -2946,6 +2953,44 @@ def persist_staging_recovery(
         }
     if any(not file.is_file() for file in sidecars.values()):
         raise ValueError("One or more required recovery sidecars are missing.")
+    bound_tfvars = _read_json_object(tfvars)
+    if bound_tfvars is None or any(bound_tfvars.get(key) != value for key, value in identity.items()):
+        raise ValueError("Recovery sidecars do not match the admitted release identity.")
+    marker = _read_json_object(marker_path)
+    status = marker.get("status") if marker and marker.get("release_id") == release_id else None
+    permitted_statuses = ("created",) if outputs_path is not None else ("verified", "held")
+    if status not in permitted_statuses:
+        raise ValueError("Lifecycle checkpoint does not match this recovery phase and release.")
+
+    if create_receipt_path is not None:
+        if create_receipt_path.is_file():
+            create = _read_json_object(create_receipt_path)
+            if (
+                create is None
+                or any(create.get(key) != value for key, value in identity.items())
+                or create.get("phase") != "create"
+                or create.get("run_attempt") != run_attempt
+                or create.get("status") != "created"
+                or not isinstance(create.get("objects"), list)
+            ):
+                raise ValueError("Create receipt is invalid or belongs to a different release or attempt.")
+            created_uri = f"{bundle_uri}/{marker_path.name}"
+            rows = [row for row in create["objects"] if isinstance(row, dict) and row.get("object_uri") == created_uri]
+            if len(rows) != 1:
+                raise ValueError("Create receipt must contain this release's initial lifecycle object.")
+            initial = rows[0]
+            generation = initial.get("generation")
+            digest = initial.get("content_sha256")
+            if (
+                not isinstance(generation, str)
+                or not re.fullmatch(r"[1-9][0-9]*", generation)
+                or not isinstance(digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            ):
+                raise ValueError("Create receipt lacks a valid lifecycle generation and content SHA-256.")
+            initial_lifecycle = {"object_uri": created_uri, "generation": generation, "content_sha256": digest}
+        elif status == "verified":
+            raise ValueError("Verified staging recovery requires its create receipt.")
 
     objects = []
     for name, file in sidecars.items():
@@ -2972,16 +3017,20 @@ def persist_staging_recovery(
             "generation": generation,
             "content_sha256": digest,
             "size_bytes": len(readback.stdout),
+            "verified_at": format_timestamp(datetime.now(UTC)),
         })
 
     receipt_path.parent.mkdir(parents=True, exist_ok=True)
     receipt = {
-        "release_id": release_id,
-        "phase": "final" if run_attempt else "create",
+        **identity,
+        "phase": "final" if create_receipt_path is not None else "create",
+        "status": status,
         "run_attempt": run_attempt,
         "secret_values_redacted": True,
         "objects": objects,
     }
+    if create_receipt_path is not None:
+        receipt["initial_lifecycle"] = initial_lifecycle
     receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
 
 
@@ -5830,9 +5879,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     recovery.add_argument("--state-dir", type=Path, required=True)
     recovery.add_argument("--bundle-uri", required=True)
     recovery.add_argument("--receipt", type=Path, required=True)
+    recovery.add_argument("--candidate-sha", required=True)
+    recovery.add_argument("--manifest-digest", required=True)
+    recovery.add_argument("--run-attempt", required=True)
     phase = recovery.add_mutually_exclusive_group(required=True)
     phase.add_argument("--outputs-file", type=Path)
-    phase.add_argument("--run-attempt")
+    phase.add_argument("--create-receipt", type=Path)
 
     # validate-contract
     val_p = subparsers.add_parser("validate-contract", help="Validate ephemeral staging Terraform module")
@@ -5851,8 +5903,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 state_dir=args.state_dir,
                 bundle_uri=args.bundle_uri,
                 receipt_path=args.receipt,
-                outputs_path=args.outputs_file,
+                candidate_sha=args.candidate_sha,
+                manifest_digest=args.manifest_digest,
                 run_attempt=args.run_attempt,
+                outputs_path=args.outputs_file,
+                create_receipt_path=args.create_receipt,
             )
         except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
             print(f"Staging recovery persistence failed: {exc}", file=sys.stderr)

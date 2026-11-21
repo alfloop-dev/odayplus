@@ -6967,14 +6967,18 @@ class StagingRecoveryPersistenceTests(unittest.TestCase):
 
         from product_ops.deployment import staging_lifecycle as lifecycle
 
-        release_id = "odp-123456789abc"
+        candidate = "123456789abc" + "d" * 28
+        release_id = f"odp-{candidate[:12]}"
+        identity = {"release_id": release_id, "candidate_sha": candidate, "manifest_digest": "sha256:" + "a" * 64}
         bundle = f"gs://staging-recovery/oday-plus/ephemeral-staging/{release_id}/bundle"
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             _, tfvars, inventory = lifecycle._terraform_state_paths(release_id, root)
             marker = lifecycle._lifecycle_state_path(release_id, root)
             outputs = root / "outputs.json"
-            for file in (tfvars, inventory, marker, outputs):
+            tfvars.write_text(json.dumps(identity), encoding="utf-8")
+            marker.write_text(json.dumps({"release_id": release_id, "status": "created"}), encoding="utf-8")
+            for file in (inventory, outputs):
                 file.write_text(f"private fixture for {file.name}\n", encoding="utf-8")
             published: dict[str, bytes] = {}
             calls: list[str] = []
@@ -7002,15 +7006,31 @@ class StagingRecoveryPersistenceTests(unittest.TestCase):
                 lifecycle.subprocess, "run", side_effect=cat
             ):
                 lifecycle.persist_staging_recovery(
-                    release_id=release_id, state_dir=root, bundle_uri=bundle, receipt_path=create, outputs_path=outputs
+                    **identity, state_dir=root, bundle_uri=bundle, receipt_path=create,
+                    outputs_path=outputs, run_attempt="1234-2",
                 )
-                marker.write_text('{"status":"verified"}\n', encoding="utf-8")
+                marker.write_text(json.dumps({"release_id": release_id, "status": "verified"}), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "belongs to a different release or attempt"):
+                    lifecycle.persist_staging_recovery(
+                        **identity, state_dir=root, bundle_uri=bundle, receipt_path=final,
+                        create_receipt_path=create, run_attempt="1234-1",
+                    )
                 lifecycle.persist_staging_recovery(
-                    release_id=release_id, state_dir=root, bundle_uri=bundle, receipt_path=final, run_attempt="1234-2"
+                    **identity, state_dir=root, bundle_uri=bundle, receipt_path=final,
+                    create_receipt_path=create, run_attempt="1234-2",
                 )
 
             create_rows = json.loads(create.read_text())["objects"]
-            final_rows = json.loads(final.read_text())["objects"]
+            final_receipt = json.loads(final.read_text())
+            final_rows = final_receipt["objects"]
+            self.assertEqual(final_receipt["candidate_sha"], candidate)
+            self.assertEqual(final_receipt["manifest_digest"], identity["manifest_digest"])
+            self.assertEqual(final_receipt["status"], "verified")
+            initial = next(row for row in create_rows if row["object_uri"].endswith(f"/{marker.name}"))
+            self.assertEqual(
+                final_receipt["initial_lifecycle"],
+                {key: initial[key] for key in ("object_uri", "generation", "content_sha256")},
+            )
             self.assertEqual(len(create_rows), 4)
             self.assertEqual(len(final_rows), 1)
             self.assertIn(f"/hold-1234-2-{marker.name}", final_rows[0]["object_uri"])
@@ -7020,11 +7040,20 @@ class StagingRecoveryPersistenceTests(unittest.TestCase):
                 self.assertEqual(row["content_sha256"], hashlib.sha256(published[uri]).hexdigest())
             self.assertNotIn("private fixture", create.read_text())
 
+            create.unlink()
+            with patch.object(lifecycle, "_live_gcloud", side_effect=AssertionError("must not write")):
+                with self.assertRaisesRegex(ValueError, "requires its create receipt"):
+                    lifecycle.persist_staging_recovery(
+                        **identity, state_dir=root, bundle_uri=bundle, receipt_path=final,
+                        create_receipt_path=create, run_attempt="1234-3",
+                    )
+            marker.write_text(json.dumps({"release_id": release_id, "status": "held"}), encoding="utf-8")
             with patch.object(lifecycle, "_live_gcloud", side_effect=gcloud), patch.object(
                 lifecycle.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"wrong", b"")
             ), self.assertRaisesRegex(RuntimeError, "failed SHA-256 readback"):
                 lifecycle.persist_staging_recovery(
-                    release_id=release_id, state_dir=root, bundle_uri=bundle, receipt_path=final, run_attempt="1234-3"
+                    **identity, state_dir=root, bundle_uri=bundle, receipt_path=final,
+                    create_receipt_path=create, run_attempt="1234-3",
                 )
             self.assertFalse(final.exists(), "failed reads cannot leave a stale success receipt")
 

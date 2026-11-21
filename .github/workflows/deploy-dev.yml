@@ -2277,6 +2277,8 @@ jobs:
           python3 product_ops/deployment/staging_lifecycle.py persist-recovery \
             --release-id "${STAGING_RELEASE_ID}" --state-dir "${STAGING_STATE_DIR}" \
             --bundle-uri "${STAGING_BUNDLE_URI}" --outputs-file "${STAGING_OUTPUTS_FILE}" \
+            --candidate-sha "${ODAY_RELEASE_SHA}" --manifest-digest "${MANIFEST_DIGEST}" \
+            --run-attempt "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-create.json"
 
       - name: Execute ephemeral staging rehearsal verification
@@ -2344,7 +2346,9 @@ jobs:
           fi
           python3 product_ops/deployment/staging_lifecycle.py persist-recovery \
             --release-id "${STAGING_RELEASE_ID}" --state-dir "${STAGING_STATE_DIR}" \
-            --bundle-uri "${STAGING_BUNDLE_URI}" --run-attempt "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --bundle-uri "${STAGING_BUNDLE_URI}" --candidate-sha "${ODAY_RELEASE_SHA}" \
+            --manifest-digest "${MANIFEST_DIGEST}" --run-attempt "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --create-receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-create.json" \
             --receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-final.json"
 
       - name: Upload staging lifecycle receipts
