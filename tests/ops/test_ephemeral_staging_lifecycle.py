@@ -6981,13 +6981,16 @@ class StagingRecoveryPersistenceTests(unittest.TestCase):
             for file in (inventory, outputs):
                 file.write_text(f"private fixture for {file.name}\n", encoding="utf-8")
             published: dict[str, bytes] = {}
+            writes: list[str] = []
             calls: list[str] = []
 
             def gcloud(args: list[str], **_: Any) -> str:
                 if args[:2] == ["storage", "cp"]:
-                    self.assertEqual(args[2], "--if-generation-match=0")
-                    self.assertNotIn(args[4], published)
-                    published[args[4]] = Path(args[3]).read_bytes()
+                    self.assertEqual(args[2:4], ["--no-clobber", "--if-generation-match=0"])
+                    uri = args[5]
+                    if uri not in published:
+                        published[uri] = Path(args[4]).read_bytes()
+                        writes.append(uri)
                     return ""
                 self.assertEqual(args[:3], ["storage", "objects", "describe"])
                 self.assertIn(args[3], published)
@@ -7009,6 +7012,23 @@ class StagingRecoveryPersistenceTests(unittest.TestCase):
                     **identity, state_dir=root, bundle_uri=bundle, receipt_path=create,
                     outputs_path=outputs, run_attempt="1234-2",
                 )
+                # A rerun after an interrupted readback must read the same
+                # generation of every object and never attempt an overwrite.
+                create.unlink()
+                lifecycle.persist_staging_recovery(
+                    **identity, state_dir=root, bundle_uri=bundle, receipt_path=create,
+                    outputs_path=outputs, run_attempt="1234-2",
+                )
+                self.assertEqual(len(writes), 4)
+                self.assertEqual(len(calls), 8)
+                outputs.write_text("different bytes", encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, "failed SHA-256 readback"):
+                    lifecycle.persist_staging_recovery(
+                        **identity, state_dir=root, bundle_uri=bundle, receipt_path=root / "retry.json",
+                        outputs_path=outputs, run_attempt="1234-2",
+                    )
+                self.assertFalse((root / "retry.json").exists())
+                self.assertEqual(len(writes), 4)
                 marker.write_text(json.dumps({"release_id": release_id, "status": "verified"}), encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, "belongs to a different release or attempt"):
                     lifecycle.persist_staging_recovery(
