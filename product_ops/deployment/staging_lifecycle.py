@@ -2911,6 +2911,80 @@ def _live_gcloud(
     return process.stdout.strip() if capture_output else ""
 
 
+def persist_staging_recovery(
+    *,
+    release_id: str,
+    state_dir: Path,
+    bundle_uri: str,
+    receipt_path: Path,
+    outputs_path: Path | None = None,
+    run_attempt: str | None = None,
+) -> None:
+    """Persist this release's sidecars and prove their exact stored bytes."""
+    if not RELEASE_ID_PATTERN.fullmatch(release_id) or not re.fullmatch(
+        rf"gs://[a-z0-9._-]+/oday-plus/ephemeral-staging/{re.escape(release_id)}/bundle", bundle_uri
+    ):
+        raise ValueError("Recovery bundle location is not bound to the release.")
+    receipt_path.unlink(missing_ok=True)
+    marker_path = _lifecycle_state_path(release_id, state_dir)
+    if run_attempt is not None:
+        if not re.fullmatch(r"[1-9][0-9]*-[1-9][0-9]*", run_attempt):
+            raise ValueError("Invalid recovery run attempt.")
+        if not marker_path.is_file():
+            return  # create did not get far enough to leave state
+        # Keep the object naming used by the existing closeout reader.
+        sidecars = {f"hold-{run_attempt}-{marker_path.name}": marker_path}
+    else:
+        if outputs_path is None:
+            raise ValueError("Create-time recovery requires the staging Terraform outputs.")
+        _, tfvars, inventory = _terraform_state_paths(release_id, state_dir)
+        sidecars = {
+            tfvars.name: tfvars,
+            inventory.name: inventory,
+            marker_path.name: marker_path,
+            "staging-terraform-outputs.json": outputs_path,
+        }
+    if any(not file.is_file() for file in sidecars.values()):
+        raise ValueError("One or more required recovery sidecars are missing.")
+
+    objects = []
+    for name, file in sidecars.items():
+        uri = f"{bundle_uri}/{name}"
+        digest = hashlib.sha256(file.read_bytes()).hexdigest()
+        _live_gcloud(["storage", "cp", "--if-generation-match=0", str(file), uri], timeout=120)
+        generation = _live_gcloud(
+            ["storage", "objects", "describe", uri, "--format=value(generation)"],
+            timeout=60,
+            capture_output=True,
+        )
+        if not re.fullmatch(r"[1-9][0-9]*", generation):
+            raise RuntimeError(f"Recovery sidecar {name} has no valid object generation.")
+        readback = subprocess.run(
+            ["gcloud", "storage", "cat", f"{uri}#{generation}"],
+            check=False,
+            capture_output=True,
+            timeout=120,
+        )
+        if readback.returncode != 0 or hashlib.sha256(readback.stdout).hexdigest() != digest:
+            raise RuntimeError(f"Recovery sidecar {name} failed SHA-256 readback.")
+        objects.append({
+            "object_uri": uri,
+            "generation": generation,
+            "content_sha256": digest,
+            "size_bytes": len(readback.stdout),
+        })
+
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt = {
+        "release_id": release_id,
+        "phase": "final" if run_attempt else "create",
+        "run_attempt": run_attempt,
+        "secret_values_redacted": True,
+        "objects": objects,
+    }
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+
 def _live_cloud_run_field(
     payload: Mapping[str, Any],
     paths: Sequence[Sequence[str | int]],
@@ -5751,6 +5825,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     ext_p.add_argument("--current-expires-at", required=True, help="Current expires_at ISO timestamp")
     ext_p.add_argument("--created-at", required=True, help="Initial created_at ISO timestamp")
 
+    recovery = subparsers.add_parser("persist-recovery", help="Persist and verify the protected staging recovery bundle")
+    recovery.add_argument("--release-id", required=True)
+    recovery.add_argument("--state-dir", type=Path, required=True)
+    recovery.add_argument("--bundle-uri", required=True)
+    recovery.add_argument("--receipt", type=Path, required=True)
+    phase = recovery.add_mutually_exclusive_group(required=True)
+    phase.add_argument("--outputs-file", type=Path)
+    phase.add_argument("--run-attempt")
+
     # validate-contract
     val_p = subparsers.add_parser("validate-contract", help="Validate ephemeral staging Terraform module")
     val_p.add_argument("--module-dir", default="infra/terraform/modules/ephemeral_staging", help="Module dir")
@@ -5760,6 +5843,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+
+    if args.command == "persist-recovery":
+        try:
+            persist_staging_recovery(
+                release_id=args.release_id,
+                state_dir=args.state_dir,
+                bundle_uri=args.bundle_uri,
+                receipt_path=args.receipt,
+                outputs_path=args.outputs_file,
+                run_attempt=args.run_attempt,
+            )
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+            print(f"Staging recovery persistence failed: {exc}", file=sys.stderr)
+            return 1
+        return 0
 
     if args.command == "create":
         try:

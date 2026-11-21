@@ -6959,6 +6959,76 @@ class StagingWebCustomDomainStageTests(unittest.TestCase):
         self.assertIn("before signing in", gate["details"])
 
 
+class StagingRecoveryPersistenceTests(unittest.TestCase):
+    def test_receipts_pin_each_sidecar_and_refuse_mismatched_bytes(self) -> None:
+        import hashlib
+        import subprocess
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        release_id = "odp-123456789abc"
+        bundle = f"gs://staging-recovery/oday-plus/ephemeral-staging/{release_id}/bundle"
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            _, tfvars, inventory = lifecycle._terraform_state_paths(release_id, root)
+            marker = lifecycle._lifecycle_state_path(release_id, root)
+            outputs = root / "outputs.json"
+            for file in (tfvars, inventory, marker, outputs):
+                file.write_text(f"private fixture for {file.name}\n", encoding="utf-8")
+            published: dict[str, bytes] = {}
+            calls: list[str] = []
+
+            def gcloud(args: list[str], **_: Any) -> str:
+                if args[:2] == ["storage", "cp"]:
+                    self.assertEqual(args[2], "--if-generation-match=0")
+                    self.assertNotIn(args[4], published)
+                    published[args[4]] = Path(args[3]).read_bytes()
+                    return ""
+                self.assertEqual(args[:3], ["storage", "objects", "describe"])
+                self.assertIn(args[3], published)
+                return "123"
+
+            def cat(args: list[str], **_: Any) -> Any:
+                self.assertEqual(args[:3], ["gcloud", "storage", "cat"])
+                uri = args[3]
+                self.assertTrue(uri.endswith("#123"))
+                calls.append(uri)
+                return subprocess.CompletedProcess(args, 0, published[uri.removesuffix("#123")], b"")
+
+            create = root / "create.json"
+            final = root / "final.json"
+            with patch.object(lifecycle, "_live_gcloud", side_effect=gcloud), patch.object(
+                lifecycle.subprocess, "run", side_effect=cat
+            ):
+                lifecycle.persist_staging_recovery(
+                    release_id=release_id, state_dir=root, bundle_uri=bundle, receipt_path=create, outputs_path=outputs
+                )
+                marker.write_text('{"status":"verified"}\n', encoding="utf-8")
+                lifecycle.persist_staging_recovery(
+                    release_id=release_id, state_dir=root, bundle_uri=bundle, receipt_path=final, run_attempt="1234-2"
+                )
+
+            create_rows = json.loads(create.read_text())["objects"]
+            final_rows = json.loads(final.read_text())["objects"]
+            self.assertEqual(len(create_rows), 4)
+            self.assertEqual(len(final_rows), 1)
+            self.assertIn(f"/hold-1234-2-{marker.name}", final_rows[0]["object_uri"])
+            for row in create_rows + final_rows:
+                uri = row["object_uri"]
+                self.assertIn(f"{uri}#{row['generation']}", calls)
+                self.assertEqual(row["content_sha256"], hashlib.sha256(published[uri]).hexdigest())
+            self.assertNotIn("private fixture", create.read_text())
+
+            with patch.object(lifecycle, "_live_gcloud", side_effect=gcloud), patch.object(
+                lifecycle.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"wrong", b"")
+            ), self.assertRaisesRegex(RuntimeError, "failed SHA-256 readback"):
+                lifecycle.persist_staging_recovery(
+                    release_id=release_id, state_dir=root, bundle_uri=bundle, receipt_path=final, run_attempt="1234-3"
+                )
+            self.assertFalse(final.exists(), "failed reads cannot leave a stale success receipt")
+
+
 class StagingWebNegDetachBeforeDestroyTests(unittest.TestCase):
     """Cleanup detaches the release's NEG before terraform destroy deletes it."""
 
