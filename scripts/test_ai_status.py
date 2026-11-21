@@ -2009,10 +2009,15 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             bin_dir.mkdir()
             gh_script = bin_dir / "gh"
 
+            status_root = Path(tmpdir) / "status"
+            status_root.mkdir()
+            (status_root / "ai-status.json").write_text(
+                json.dumps({"tasks": [{"id": "TEST-TASK-001"}]}), encoding="utf-8",
+            )
             env = {
                 **os.environ,
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
-                "PANTHEON_STATUS_ROOT": str(repo_root),
+                "PANTHEON_STATUS_ROOT": str(status_root),
                 "AI_NAME": "Codex",
             }
 
