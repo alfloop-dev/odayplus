@@ -822,5 +822,5 @@ def test_terraform_web_local_audiences_match_api_not_cloud_run_transport() -> No
     transport = re.search(r"^\s*ODP_API_SERVICE_AUDIENCE\s*=\s*(.+)$", web_env, re.MULTILINE)
     assert base_url is not None
     assert transport is not None
-    assert transport.group(1).strip() == base_url.group(1).strip() == "google_cloud_run_v2_service.api.uri"
+    assert transport.group(1).strip() == base_url.group(1).strip() == "one(google_cloud_run_v2_service.api[*].uri)"
     assert transport.group(1).strip() != local_expression

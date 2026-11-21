@@ -9,8 +9,10 @@
 # after they resolve to that address.
 #
 # Backends:
-#   * dev/prod: serverless NEGs for the Terraform-managed Cloud Run Web (and
-#     API) services, owned here.
+#   * dev/prod: serverless NEGs, owned here, for the Cloud Run Web (and API)
+#     services named local.web_service_name / local.api_service_name --
+#     Terraform-owned in dev, created by the Runtime Release deploy path in
+#     production (cloud_run_services_managed = false).
 #   * staging: Web services are ephemeral per release
 #     (modules/ephemeral_staging). Each release owns only its serverless NEG.
 #     product_ops/deployment/staging_lifecycle.py attaches it to the backend

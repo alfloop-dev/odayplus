@@ -8,13 +8,14 @@ memory persistence.
 
 | Resource | Production contract |
 |---|---|
-| Cloud Run API | Immutable digest, exact release SHA, IAM-only invocation, Gen2, Direct VPC egress, Cloud SQL volume, `/readiness` startup probe, `/liveness` liveness probe. |
+| Cloud Run API | Only where `cloud_run_services_managed = true` (default; dev). Production sets it false: the Runtime Release deploy path (`deploy_cloud_run_waji.sh` via `deploy-dev.yml`) creates and owns `oday-prod-api` / `oday-prod-web` and their invoker bindings, and this stack creates no Cloud Run service or service-scoped IAM there (owner decision 2026-11-20). The load balancer NEGs and the monitoring filters name the services (`local.api_service_name` / `local.web_service_name`) in both modes. Immutable digest, exact release SHA, IAM-only invocation, Gen2, Direct VPC egress, Cloud SQL volume, `/readiness` startup probe, `/liveness` liveness probe. |
 | Cloud Run Web | Immutable digest, exact release SHA, OIDC session enforcement, service-to-service identity token, private API invocation, Gen2, Direct VPC egress. |
 | Cloud SQL PostgreSQL 16 | Private IP only, `REGIONAL` HA, SSD/autoresize, PITR, 30+ backups, CMEK, encrypted connections, deletion protection. |
 | Secret Manager | Terraform-generated database URL, cursor key, and Web session secret plus references to the shared Web/API local identity signing key and environment-owned model credentials. External provider credentials and direct external data acquisition are disabled in consumer deployment. No secret payload is accepted as a variable or exposed as an output. |
 | Cloud Storage | Separate CMEK-encrypted, versioned artifact and source-snapshot buckets plus the WORM audit-evidence module. |
 | Pub/Sub | CMEK job topic, ordered subscription, bounded retry, DLQ topic/subscription, regional persistence. |
 | IAM | Separate API, worker, audit-writer, and audit-retention identities with resource-level grants. |
+| Production deployer IAM | `iam.tf` (prod only): custom role `prodDeployerSqlBackup` (`cloudsql.backupRuns.create/get/list`, `cloudsql.instances.get`) for the pre-migration backup `deploy-dev.yml` takes, bound to `github-deployer`, which also gets `roles/logging.viewer` and `roles/iam.serviceAccountTokenCreator` on `oday-prod-smoke-operator`. `import` blocks adopt the hand-made deployer, WIF pool/provider, `oday-prod-runtime`, `oday-prod-smoke-operator` and the `oday-prod-database-url` / `oday-prod-web-session-secret` secrets (read back 2026-11-20); the hand-made `oday-prod-sql` instance is never adopted. |
 | Staging deployer IAM | `iam.tf` (staging only): the hand-granted deployer project grants written back exactly as live (2026-11-20) plus the `stagingWebLbAttach` custom role; `import` blocks adopt the existing ones (Terraform >= 1.7), and the resources name the deployer by email so a targeted apply never touches `google_service_account.github_deployer`. |
 | Cloud Monitoring | `monitoring.tf`: Web `/login` uptime check, optional API `/platform/health` uptime check (Monitoring service agent OIDC), alert policies for uptime failure, API/Web 5xx ratio, API p95 latency (3.0 s ratified budget), failed Cloud Run job executions, and Cloud SQL CPU/disk/connection saturation. Notification targets come only from variables. |
 | Custom-domain load balancer | `load_balancer.tf` (`web_load_balancer_enabled`): persistent global external HTTPS Application Load Balancer, reserved static IP (`prevent_destroy`), Google-managed certificate for the `web_base_url` host and `api_public_host`, 443 forwarding rule with a `MODERN`/TLS 1.2-minimum SSL policy, and a port-80 forwarding rule whose URL map only 301-redirects to HTTPS. Dev/prod route to Terraform-owned serverless NEGs; staging owns only the backend service and `staging_lifecycle.py` attaches each release's Web NEG (`web_custom_domain` verify stage) and detaches it before destroy. The `oday-plus.com.tw` zone is at an external registrar: add an A record per `web_load_balancer_hosts` entry pointing at `web_load_balancer_ip`; the certificate stays `PROVISIONING` until they resolve. |
@@ -32,11 +33,12 @@ A production plan fails when any of the following is true:
 
 - the API or Web image is not pinned as `...@sha256:<64 hex>`;
 - `release_sha` is not an exact 40-character Git SHA;
-- API or Web Cloud Run has fewer than two minimum instances, or the API has a public invoker;
+- `cloud_sql_instance_name` is empty or the derived `oday-prod-sql` (the hand-made instance this stack must not import or manage);
+- where this stack owns Cloud Run (`cloud_run_services_managed = true`), API or Web Cloud Run has fewer than two minimum instances, or the API has a public invoker. Where the deploy path owns them, `deploy_cloud_run_waji.sh` refuses production unless `ODP_CLOUD_RUN_MIN_INSTANCES` is at least 2;
 - OIDC issuer/JWKS are not HTTPS or no audience is configured;
 - external provider mode is not fixture or any external provider credentials, endpoints, auth status, or provider IDs are projected;
-- MLflow is not a remote HTTPS registry;
-- approved AVM/forecast model metadata is incomplete or the artifact digest is invalid;
+- `release_profile` (required, `full` or `core-ops`) is `full` and MLflow is not a remote HTTPS registry, or the approved AVM/forecast model metadata is incomplete or the artifact digest is invalid;
+- `release_profile = "core-ops"` (no model served) and `ODP_FORECAST_ENGINE` / `ODP_FORECAST_MODEL` are missing from `model_runtime_config`. Model values are never filled with placeholders (ODP-CORE-OPS-RELEASE-PROFILE-001 HD-06 / F2);
 - any production input contains mock, fixture, synthetic, seed, memory, SQLite,
   local, stub, replay, sandbox, development, latest, placeholder, example, or TODO markers;
 - Cloud SQL production capacity, PITR, backup retention, private networking,
@@ -158,6 +160,11 @@ uses the real `/readiness` gate:
 5. Verify `/liveness`, `/readiness`, exact `release_sha`, OIDC rejection/acceptance,
    model lineage, Pub/Sub/DLQ, backup/PITR, and restore drill
    evidence before routing user traffic.
+
+Production with `cloud_run_services_managed = false` needs no bootstrap target:
+the deploy path runs migrations and creates the services after the full apply.
+The staging foundation remains a targeted subset (see
+`docs/evidence/runtime/ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001`).
 
 Never use `-target` for routine updates. The one bootstrap target above exists
 only to break the initial database-migration/readiness dependency.

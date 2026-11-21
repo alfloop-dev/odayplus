@@ -43,8 +43,11 @@ run_locked_python() {
 # promotion with the service update `--min` flag. A revision-level minimum
 # would also keep every tagged candidate revision warm. Dev defaults to 1 because the API cold start was
 # measured at ~24-29s (ODP-WEB-BOOTSTRAP-COLDSTART-001), longer than the Web
-# BFF's 10s upstream timeout. Other environments change only when
-# ODP_CLOUD_RUN_MIN_INSTANCES is set explicitly.
+# BFF's 10s upstream timeout. Production owns its API and Web services here
+# (not in infra/terraform), so it must keep at least two warm instances of each
+# (owner decision 2026-11-20) and fails closed when the minimum is unset.
+# Other environments change only when ODP_CLOUD_RUN_MIN_INSTANCES is set
+# explicitly.
 CLOUD_RUN_MIN_INSTANCES="${ODP_CLOUD_RUN_MIN_INSTANCES:-}"
 if [ -z "${CLOUD_RUN_MIN_INSTANCES}" ] && [ "${ODP_DEPLOY_ENV}" = "dev" ]; then
   CLOUD_RUN_MIN_INSTANCES=1
@@ -53,6 +56,14 @@ if [ -n "${CLOUD_RUN_MIN_INSTANCES}" ] && [[ ! "${CLOUD_RUN_MIN_INSTANCES}" =~ ^
   echo "Error: ODP_CLOUD_RUN_MIN_INSTANCES must be a non-negative integer, got '${CLOUD_RUN_MIN_INSTANCES}'." >&2
   exit 1
 fi
+case "${ODP_DEPLOY_ENV}" in
+  prod|production)
+    if [ -z "${CLOUD_RUN_MIN_INSTANCES}" ] || [ "$((10#${CLOUD_RUN_MIN_INSTANCES}))" -lt 2 ]; then
+      echo "Error: production requires ODP_CLOUD_RUN_MIN_INSTANCES of at least 2 warm API and Web instances, got '${CLOUD_RUN_MIN_INSTANCES}'." >&2
+      exit 1
+    fi
+    ;;
+esac
 : "${ODP_FORECAST_MODEL:?Error: ODP_FORECAST_MODEL is required for live deployments.}"
 : "${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT:?Error: ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT is required.}"
 
@@ -130,6 +141,7 @@ except ProvisioningRefused:
     sys.exit("Error: PROVISIONING_CREDENTIAL_BUNDLE_INVALID")
 '
 fi
+PROD_API_AUDIENCE_ARGS=()
 if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
   : "${ODP_PROD_DEPLOY_URL:?Error: ODP_PROD_DEPLOY_URL is required for production live E2E.}"
   : "${ODP_PROD_API_URL:?Error: ODP_PROD_API_URL is required for production live E2E.}"
@@ -139,6 +151,21 @@ if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
       exit 1
     fi
   done
+  if [[ ! "${ODP_PROD_API_URL}" =~ ^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
+    echo "Error: ODP_PROD_API_URL must be the HTTPS API origin without a path or port." >&2
+    exit 1
+  fi
+  if [[ ! "${ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET:-}" =~ ^[A-Za-z0-9_-]+:[1-9][0-9]*$ ]]; then
+    echo "Error: production requires ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET as secret-name:numeric-version." >&2
+    exit 1
+  fi
+  if [ -n "${ODP_PROD_API_INVOKER_GROUP:-}" ] && [[ ! "${ODP_PROD_API_INVOKER_GROUP}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]]; then
+    echo "Error: ODP_PROD_API_INVOKER_GROUP must name an approved Google Group email." >&2
+    exit 1
+  fi
+  # Monitoring reaches the managed HTTPS origin. The existing run.app
+  # service audience remains valid for smoke and the Web BFF.
+  PROD_API_AUDIENCE_ARGS=("--add-custom-audiences=${ODP_PROD_API_URL}")
 fi
 
 # Private-IP Cloud SQL is reached through the VPC. Keep the connectivity
@@ -284,7 +311,7 @@ run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py p
   --output "${PREFLIGHT_REPORT}"
 
 # No build, push, or Cloud Run mutation may occur above this line.
-#
+
 # ODP-CLOUD-RUN-REVISION-SUFFIX-PER-ATTEMPT-001: the API and Web revision name
 # is `<service>-<suffix>`, and Cloud Run refuses a second revision of that name
 # with a different configuration (ALREADY_EXISTS). staging/production pin the
@@ -629,6 +656,10 @@ build_publish_sign "scheduler" SCHEDULER_IMAGE "infra/docker/scheduler.Dockerfil
 API_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
 API_SECRET_BINDINGS+=",ODP_AUTH_PRINCIPAL_MAP=${ODP_AUTH_PRINCIPAL_MAP_SECRET}"
 API_SECRET_BINDINGS+=",ODP_IDENTITY_TOKEN_SIGNING_KEY=${ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET}"
+API_SERVICE_SECRET_BINDINGS="${API_SECRET_BINDINGS}"
+if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
+  API_SERVICE_SECRET_BINDINGS+=",ODP_INTAKE_CURSOR_SIGNING_KEY=${ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET}"
+fi
 WEB_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
 WEB_SECRET_BINDINGS+=",ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}"
 # The API and Web must consume the same Secret Manager version. The API
@@ -918,6 +949,20 @@ run_public_egress_probe() {
   capture_public_egress_probe_receipt "${actual_egress}"
 }
 
+PROD_API_EXTRA_INVOKERS=()
+if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
+  project_number="$(gcloud projects describe "${GCP_PROJECT}" --format='value(projectNumber)')"
+  if [[ ! "${project_number}" =~ ^[0-9]+$ ]]; then
+    echo "Error: could not identify the production project's Cloud Monitoring service agent." >&2
+    exit 1
+  fi
+  PROD_API_EXTRA_INVOKERS+=("serviceAccount:service-${project_number}@gcp-sa-monitoring-notification.iam.gserviceaccount.com")
+  if [ -n "${ODP_PROD_API_INVOKER_GROUP:-}" ]; then
+    PROD_API_EXTRA_INVOKERS+=("group:${ODP_PROD_API_INVOKER_GROUP}")
+  fi
+fi
+
+#
 echo "Recording the existing API/Web traffic before any runtime mutation..."
 capture_service_traffic "${API_SERVICE}" "${API_TRAFFIC_SNAPSHOT}"
 capture_service_traffic "${WEB_SERVICE}" "${WEB_TRAFFIC_SNAPSHOT}"
@@ -1008,7 +1053,8 @@ gcloud run deploy "${API_SERVICE}" \
   --service-account="${ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT}" \
   --add-cloudsql-instances="${GCP_CLOUD_SQL_INSTANCE}" \
   --env-vars-file="${API_ENV_FILE}" \
-  --set-secrets="${API_SECRET_BINDINGS}" \
+  --set-secrets="${API_SERVICE_SECRET_BINDINGS}" \
+  "${PROD_API_AUDIENCE_ARGS[@]}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
   --revision-suffix="${REVISION_SUFFIX}" \
   "${CLOUD_RUN_NETWORK_ARGS[@]}" \
@@ -1028,7 +1074,7 @@ API_SERVICE_AUDIENCE="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
 # its service-scoped invokers can be bound; on an existing service the bindings
 # are already present and the grant is a no-op. The Web BFF runtime identity
 # needs it before the Web candidate serves.
-prepare_private_api_transport "${API_SERVICE}" "${API_SERVICE_AUDIENCE}"
+prepare_private_api_transport "${API_SERVICE}" "${API_SERVICE_AUDIENCE}" "${PROD_API_EXTRA_INVOKERS[@]}"
 
 echo "Deploying immutable scheduler candidate Cloud Run Job..."
 gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}" \

@@ -799,6 +799,8 @@ def test_deploy_refuses_dev_admin_outside_dev_before_any_cloud_call(
         ODP_DEV_ADMIN_USERNAME="ops-admin",
         ODP_DEV_ADMIN_PASSWORD="not-a-real-password",
         ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE="cs-lead",
+        # Production's bound warm minimum, so the profile guard is what refuses.
+        ODP_CLOUD_RUN_MIN_INSTANCES="2",
     )
 
     assert result.returncode != 0

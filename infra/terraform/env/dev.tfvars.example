@@ -2,6 +2,8 @@ project_id  = "oday-dev-123456"
 environment = "dev"
 region      = "asia-east1"
 
+release_profile = "full"
+
 api_image   = "asia-east1-docker.pkg.dev/oday-dev-123456/oday/api:dev"
 web_image   = "asia-east1-docker.pkg.dev/oday-dev-123456/oday/web:dev"
 release_sha = "0000000000000000000000000000000000000000"

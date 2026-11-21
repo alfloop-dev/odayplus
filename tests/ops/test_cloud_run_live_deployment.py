@@ -366,6 +366,10 @@ def _production_origins(**overrides: str) -> dict[str, str]:
     env = {
         "ODP_PROD_DEPLOY_URL": "https://console.oday-plus.example",
         "ODP_PROD_API_URL": "https://api.oday-plus.example",
+        "ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET": "oday-prod-intake-cursor-signing-key:1",
+        # Bound with the origins in the production environment; production
+        # refuses to deploy below two warm instances.
+        "ODP_CLOUD_RUN_MIN_INSTANCES": "2",
     }
     env.update(overrides)
     return env
@@ -420,6 +424,18 @@ def test_a_production_deploy_with_https_origins_and_direct_vpc_enters_preflight(
     assert result.returncode == 97, result.stderr
     assert "PREFLIGHT_REACHED" in result.stderr
     assert "Cloud Run VPC binding mode: direct-vpc" in result.stdout
+
+
+@pytest.mark.parametrize("bad_reference", ["", "oday-prod-intake-cursor-signing-key:latest"])
+def test_production_requires_a_pinned_shared_cursor_key(tmp_path: Path, bad_reference: str) -> None:
+    result = _supported_forecast_gate(
+        tmp_path,
+        deploy_env="production",
+        extra_env={**_production_origins(ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET=bad_reference), **_direct_vpc_sources_off_env()},
+    )
+    assert result.returncode == 1
+    assert "production requires ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET" in result.stderr
+    assert "PREFLIGHT_REACHED" not in result.stderr
 
 
 def test_a_dev_deploy_does_not_require_the_production_origins(tmp_path: Path) -> None:
