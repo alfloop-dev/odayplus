@@ -27,6 +27,17 @@ permissions:
   pull-requests: read
   statuses: write
 
+# Apply the task freeze to its PR and merge-queue candidate before checkout.
+env:
+  ODP_FROZEN_REVIEW_PATH: >-
+    ${{ ((github.event_name == 'pull_request'
+    && github.event.pull_request.number == 1736
+    && github.event.pull_request.head.repo.full_name == github.repository
+    && github.event.pull_request.head.ref == 'task/ODP-SUPERVISOR-FROZEN-REVIEW-261121')
+    || (github.event_name == 'merge_group'
+    && startsWith(github.event.merge_group.head_ref, 'refs/heads/gh-readonly-queue/dev/pr-1736-')))
+    && '.orchestrator/test_supervisor.py' || '' }}
+
 jobs:
   review-gate:
     runs-on: ubuntu-latest
@@ -55,6 +66,8 @@ jobs:
             !**/test_listing_production_asset.py*
             !**/*\\*
             !**/*\\*/**
+            ${{ env.ODP_FROZEN_REVIEW_PATH && format('!/{0}', env.ODP_FROZEN_REVIEW_PATH) || '' }}
+            ${{ env.ODP_FROZEN_REVIEW_PATH && format('!/{0}/**', env.ODP_FROZEN_REVIEW_PATH) || '' }}
 
       # Git path, tree and index metadata only; no denied body is ever opened.
       # Sparse checkout only stops materialization: rename detection could still
@@ -70,6 +83,7 @@ jobs:
         env:
           GIT_CONFIG_NOSYSTEM: "1"
           GIT_CONFIG_GLOBAL: /dev/null
+          PROTECTED_FROZEN_PATH: ${{ env.ODP_FROZEN_REVIEW_PATH }}
         run: |
           python3 -I - <<'PY'
           import os
@@ -82,6 +96,8 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          frozen_path = os.environ.get("PROTECTED_FROZEN_PATH")
+          frozen = wc.normalize_protected_paths([frozen_path] if frozen_path else [])
           root = Path.cwd()
           compare = os.environ.get("PROTECTED_COMPARE_SHAS")
           endpoints = [] if compare is None else compare.split()
@@ -97,8 +113,8 @@ jobs:
               wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
               *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
           ]
-          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)
-          domains = [wc.protected_body_tree_entries(root, sha, (denied,)) for sha in endpoints]
+          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
+          domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
           failures = [
               label
               for label, failed in (
@@ -107,7 +123,7 @@ jobs:
                   )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
-                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,)))),
+                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,), frozen_paths=frozen))),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
                   ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
