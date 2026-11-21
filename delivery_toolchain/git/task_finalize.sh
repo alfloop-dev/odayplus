@@ -85,17 +85,20 @@ if [ ! -f "$cleanliness_tool" ]; then
 fi
 UPSTREAM_REF="refs/remotes/origin/$BASE_BRANCH"
 UPSTREAM_BEFORE="$(git rev-parse --verify --quiet "$UPSTREAM_REF" || true)"
+STATUS_FILE="${PANTHEON_STATUS_ROOT:-$ROOT}/ai-status.json"
+FROZEN_TRACKED=""
 check_worktree_cleanliness() {
   local cleanliness_out
   if ! cleanliness_out="$(python3 "$cleanliness_tool" --repo "$ROOT" \
-    --task-id "$TASK_ID" --status-file "${PANTHEON_STATUS_ROOT:-$ROOT}/ai-status.json" \
-    --upstream-ref "$UPSTREAM_REF" 2>&1)"; then
+    --task-id "$TASK_ID" --status-file "$STATUS_FILE" --upstream-ref "$UPSTREAM_REF" \
+    --print-frozen-tracked 2>&1)"; then
     echo "task_finalize: refusing to publish -- worktree handoff is not clean:" >&2
     printf '%s\n' "$cleanliness_out" | sed 's/^/  /' >&2
     echo "task_finalize: commit deliverables, delete scratch, or move temporary files to" >&2
     echo "  \$ORCH_SCRATCH_DIR before opening the reviewer handoff." >&2
     return 1
   fi
+  FROZEN_TRACKED="$cleanliness_out"
 }
 check_worktree_cleanliness || exit 1
 
@@ -290,7 +293,13 @@ PY_RUN="$(resolve_py)"
 #    `orchestrator` failure, and the fix is one deterministic command.
 if [ -f "$ROOT/delivery_toolchain/governance/check_code_boundaries.py" ]; then
   boundary_out=""
-  if boundary_out="$($PY_RUN "$ROOT/delivery_toolchain/governance/check_code_boundaries.py" 2>&1)"; then
+  boundary_tool="$ROOT/delivery_toolchain/governance/check_code_boundaries.py"
+  boundary_args=()
+  if [ -n "$FROZEN_TRACKED" ]; then
+    boundary_tool="$TOOLCHAIN_ROOT/delivery_toolchain/governance/check_code_boundaries.py"
+    boundary_args=(--repo "$ROOT" --task-id "$TASK_ID" --status-file "$STATUS_FILE" --upstream-ref "$UPSTREAM_REF")
+  fi
+  if boundary_out="$($PY_RUN "$boundary_tool" "${boundary_args[@]}" 2>&1)"; then
     :
   else
     boundary_rc=$?

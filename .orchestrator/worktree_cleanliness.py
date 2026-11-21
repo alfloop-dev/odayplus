@@ -1414,6 +1414,49 @@ def _environment_materialized_paths() -> list[str]:
     return decoded if isinstance(decoded, list) else []
 
 
+def task_review_freeze(
+    repo: Path, task_id: str | None, status_file: Path | None, upstream_ref: str,
+) -> tuple[tuple[str, ...], str | None]:
+    """Load the canonical task's freeze and verify its upstream anchor."""
+    if task_id is None and status_file is None:
+        return (), None
+    if not task_id or status_file is None:
+        raise ProtectedPathPolicyError("task ID and status file must be supplied together")
+    try:
+        tasks = json.loads(status_file.read_text(encoding="utf-8"))["tasks"]
+        if not isinstance(tasks, list):
+            raise TypeError("tasks must be a list")
+    except FileNotFoundError:
+        if os.environ.get("PANTHEON_STATUS_ROOT"):
+            raise ProtectedPathPolicyError("canonical task registry is missing") from None
+        return (), None
+    except (OSError, TypeError, ValueError, KeyError):
+        raise ProtectedPathPolicyError("canonical task registry is invalid") from None
+    matches = [item for item in tasks if isinstance(item, dict) and item.get("id") == task_id]
+    if len(matches) > 1:
+        raise ProtectedPathPolicyError("duplicate task records")
+    task = matches[0] if matches else None
+    protected = task_protected_paths(task)
+    frozen_base = frozen_task_base(task)
+    if frozen_base is not None:
+        refusal = frozen_task_upstream_refusal(repo, frozen_base, upstream_ref)
+        if refusal:
+            raise ProtectedPathPolicyError(refusal)
+    return protected, frozen_base
+
+
+def frozen_tracked_files(repo: Path, protected: tuple[str, ...]) -> tuple[str, ...]:
+    """Select the tracked file names after the caller has checked the frozen workspace."""
+    tracked = []
+    for path in protected:
+        entry = _tree_entry(repo, "HEAD", path)
+        if entry is False:
+            raise ProtectedPathPolicyError(f"unreadable_metadata: frozen path {path}")
+        if entry is not None and entry[0] in {"100644", "100755"}:
+            tracked.append(path)
+    return tuple(tracked)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Inspect a task worktree using the shared handoff-cleanliness policy.")
     parser.add_argument("--repo", required=True, type=Path)
@@ -1421,36 +1464,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--status-file", type=Path)
     parser.add_argument("--upstream-ref", default="")
     parser.add_argument("--materialized-path", action="append", default=[])
-    parser.add_argument("--json", action="store_true")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true")
+    output.add_argument("--print-frozen-tracked", action="store_true")
     args = parser.parse_args(argv)
-    task = None
-    if args.status_file is not None and args.task_id is not None:
-        try:
-            tasks = json.loads(args.status_file.read_text(encoding="utf-8"))["tasks"]
-            if not isinstance(tasks, list):
-                raise ProtectedPathPolicyError("task registry tasks must be a list")
-            matches = [item for item in tasks if isinstance(item, dict) and item.get("id") == args.task_id]
-            if len(matches) > 1:
-                raise ProtectedPathPolicyError("duplicate task records")
-            task = matches[0] if matches else None
-        except FileNotFoundError:
-            if os.environ.get("PANTHEON_STATUS_ROOT"):
-                print("worktree_cleanliness: canonical task registry is missing", file=os.sys.stderr)
-                return 1
-        except (OSError, TypeError, ValueError, KeyError):
-            print("worktree_cleanliness: canonical task registry is invalid", file=os.sys.stderr)
-            return 1
     try:
-        protected = task_protected_paths(task)
-        frozen_base = frozen_task_base(task)
+        protected, frozen_base = task_review_freeze(
+            args.repo, args.task_id, args.status_file, args.upstream_ref,
+        )
     except ProtectedPathPolicyError as error:
         print(f"worktree_cleanliness: {error}", file=os.sys.stderr)
         return 1
-    if frozen_base is not None:
-        refusal = frozen_task_upstream_refusal(args.repo, frozen_base, args.upstream_ref)
-        if refusal:
-            print(f"worktree_cleanliness: {refusal}", file=os.sys.stderr)
-            return 1
     inspection = inspect_worktree(
         args.repo,
         enforce_task_paths=True,
@@ -1468,6 +1492,13 @@ def main(argv: list[str] | None = None) -> int:
         }, ensure_ascii=False))
     elif not inspection.handoff_clean:
         print(f"worktree_cleanliness: {inspection.kind}: {inspection.detail}", file=os.sys.stderr)
+    if inspection.handoff_clean and args.print_frozen_tracked and frozen_base is not None:
+        try:
+            for path in frozen_tracked_files(args.repo, protected):
+                print(path)
+        except ProtectedPathPolicyError as error:
+            print(f"worktree_cleanliness: {error}", file=os.sys.stderr)
+            return 1
     return 0 if inspection.handoff_clean else 1
 
 

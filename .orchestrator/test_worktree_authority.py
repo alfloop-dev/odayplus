@@ -2,6 +2,7 @@
 """Focused regression tests for registry-owned worker worktree authority."""
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -25,6 +26,8 @@ import supervisor
 import task_archive
 import worker_workspace
 import worktree_cleanliness
+
+from delivery_toolchain.governance import check_code_boundaries
 
 
 class RegistryBaseCacheTests(unittest.TestCase):
@@ -545,9 +548,12 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         self.assertEqual(worker_workspace.compute_worktree_state_identity(worktree), f"clean:{base}")
 
     def test_pinned_tracked_file_is_excluded_and_reviewable_without_exposing_its_body(self) -> None:
-        protected = ("frozen-fixture.py",)
+        protected = ("frozen_fixture.py",)
+        manifest = Path("config/code-boundaries.yaml")
+        (self.repo / manifest.parent).mkdir()
+        self._commit_on_dev(str(manifest), "boundaries: {}\n")
         pin = self._commit_on_dev(protected[0], "synthetic frozen source")
-        head = self._commit_on_dev("work.txt", "task deliverable")
+        head = self._commit_on_dev("use_case.py", "import frozen_fixture\n")
         branch = "task/PINNED-TRACKED-001"
         worktree = self.root / "wt-pinned-tracked"
         ok, error = supervisor._create_worker_worktree(
@@ -567,6 +573,25 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
             "--upstream-ref", upstream,
         ]
         self.assertEqual(worktree_cleanliness.main(argv), 0)
+        boundary_context = argparse.Namespace(task_id=task["id"], status_file=status_file, upstream_ref=upstream)
+        sources = check_code_boundaries.verified_frozen_sources(boundary_context, worktree, worktree / manifest)
+        self.assertEqual(sources, frozenset(protected))
+        classified = [
+            check_code_boundaries.ClassifiedFile(protected[0], "verification", "test", False),
+            check_code_boundaries.ClassifiedFile("use_case.py", "product", "runtime", True),
+        ]
+        boundaries = {"boundaries": {"product": {"allowed_import_scopes": ["product"]}, "verification": {}}}
+        errors = check_code_boundaries.validate_import_boundaries(
+            worktree, classified, boundaries, frozen_sources=sources,
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("use_case.py", errors[0])
+        self.assertIn("frozen_fixture", errors[0])
+        (worktree / manifest).write_text("boundaries: {changed: {}}\n")
+        with self.assertRaisesRegex(ValueError, "unchanged upstream code boundary manifest"):
+            check_code_boundaries.verified_frozen_sources(boundary_context, worktree, worktree / manifest)
+        (worktree / manifest).write_text("boundaries: {}\n")
+
         status_file.write_text(json.dumps({"tasks": [{**task, "frozen_evidence_base_sha": head}]}))
         self.assertEqual(worktree_cleanliness.main(argv), 1)
         status_file.write_text(json.dumps({"tasks": [task]}))
