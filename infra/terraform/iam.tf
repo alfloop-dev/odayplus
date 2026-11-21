@@ -137,12 +137,15 @@ resource "google_iam_workload_identity_pool_provider" "odayplus" {
   display_name                       = "GitHub Actions Provider"
   description                        = "OIDC identity provider for GitHub Actions."
 
-  attribute_mapping = {
-    "google.subject"       = "assertion.sub"
-    "attribute.repository" = "assertion.repository"
-    "attribute.actor"      = "assertion.actor"
-    "attribute.aud"        = "assertion.aud"
-  }
+  # Keep the claim mapping on the existing production provider when adopting it.
+  attribute_mapping = merge(
+    {
+      "google.subject"       = "assertion.sub"
+      "attribute.repository" = "assertion.repository"
+      "attribute.actor"      = "assertion.actor"
+    },
+    local.is_prod ? tomap({ "attribute.ref" = "assertion.ref" }) : tomap({ "attribute.aud" = "assertion.aud" }),
+  )
 
   attribute_condition = "assertion.repository == 'alfloop-dev/odayplus'"
 

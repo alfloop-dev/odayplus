@@ -835,6 +835,8 @@ class ProductionCoreOpsPlanTests(unittest.TestCase):
         ):
             self.assertIn(address, created)
         self.assertNotIn("staging_deployer", output)
+        self.assertRegex(output, r'"attribute\.ref"\s*=\s*"assertion\.ref"')
+        self.assertNotIn('"attribute.aud"', output)
         # The new instance, never the hand-made oday-prod-sql.
         self.assertIn('name                           = "oday-prod-foundation-sql"', output)
         self.assertNotIn('"oday-prod-sql"', output)
