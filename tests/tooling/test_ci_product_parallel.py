@@ -1416,6 +1416,9 @@ def test_deny_patterns_are_the_shared_domain_policy() -> None:
     assert "wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen)" in proof
     assert 'wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen),' in proof
     assert 'wc.inspect_protected_git_metadata(root, sha, (denied, *frozen))' in proof
+    steps = load_pr_workflow("ci.yml")["jobs"]["orchestrator"]["steps"]
+    boundary = next(step["run"] for step in steps if step.get("name") == "Enforce product and development code boundaries")
+    assert "export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null" in boundary
 
 
 def _proof_step(name: str, job: str) -> tuple[list[dict[str, Any]], int]:

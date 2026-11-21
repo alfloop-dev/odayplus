@@ -318,6 +318,8 @@ jobs:
             uv run python delivery_toolchain/governance/check_code_boundaries.py
             exit $?
           fi
+          # Ignore the hosted runner's unrelated global LFS filter, as the denial proof does.
+          export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
           # Use the same immutable freeze pin and inventory checks as task_finalize.
           status_file="$(mktemp)"
           trap 'rm -f -- "$status_file"' EXIT
