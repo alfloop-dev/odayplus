@@ -853,6 +853,13 @@ class ProductionCoreOpsPlanTests(unittest.TestCase):
             "cloudsql.backupRuns.create", "cloudsql.backupRuns.get", "cloudsql.backupRuns.list", "cloudsql.instances.get",
         ):
             self.assertIn(f'"{permission}"', output)
+        self.assertRegex(
+            output,
+            rf'(?m)^\s*\+\s+audit_worm_sink_uri\s+= "gs://oday-prod-audit-worm-{self.PROJECT}/audit-evidence"$',
+        )
+        for name in ("audit_recovery_reader_service_account", "database_url_secret_ref"):
+            self.assertRegex(output, rf"(?m)^\s*\+\s+{name}\s+= \(known after apply\)$")
+        self.assertIn('account_id   = "oday-prod-audit-reader"', output)
         # No model is served: nothing model-related is required or projected.
         self.assertNotIn("ODP_AVM_", output)
 

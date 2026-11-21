@@ -43,9 +43,19 @@ output "audit_evidence_bucket" {
   description = "WORM-capable audit evidence bucket."
 }
 
+output "audit_worm_sink_uri" {
+  value       = module.audit_evidence.worm_sink_uri
+  description = "WORM evidence sink URI used by Runtime Release."
+}
+
 output "audit_writer_service_account" {
   value       = module.audit_evidence.writer_service_account
   description = "Append-only audit evidence writer service account."
+}
+
+output "audit_recovery_reader_service_account" {
+  value       = module.audit_evidence.recovery_reader_service_account
+  description = "Read-only recovery service account for WORM evidence."
 }
 
 output "audit_retention_manager_service_account" {
@@ -71,6 +81,11 @@ output "database_user" {
 output "database_url_secret_id" {
   value       = google_secret_manager_secret.database_url.secret_id
   description = "Secret Manager id containing ODAY_DATABASE_URL. No secret value or version payload is exposed."
+}
+
+output "database_url_secret_ref" {
+  value       = "${google_secret_manager_secret.database_url.secret_id}:${google_secret_manager_secret_version.database_url.version}"
+  description = "Pinned Secret Manager reference for the database URL used by Runtime Release."
 }
 
 output "intake_cursor_signing_key_secret_ref" {

@@ -163,6 +163,22 @@ uses the real `/readiness` gate:
 
 Production with `cloud_run_services_managed = false` needs no bootstrap target:
 the deploy path runs migrations and creates the services after the full apply.
+
+After the production foundation is applied, read the following values with
+`terraform output -raw <output>` from the same backend before configuring the
+`production` GitHub environment for Runtime Release.
+
+| GitHub environment variable | Foundation output |
+| --- | --- |
+| `GCP_CLOUD_SQL_INSTANCE` | `database_instance_connection_name` |
+| `ODAY_DATABASE_URL_SECRET` | `database_url_secret_ref` |
+| `ODP_AUDIT_WORM_SINK_URI` | `audit_worm_sink_uri` |
+| `ODP_AUDIT_WORM_WRITER_SERVICE_ACCOUNT` | `audit_writer_service_account` |
+| `ODP_AUDIT_WORM_RECOVERY_SERVICE_ACCOUNT` | `audit_recovery_reader_service_account` |
+
+The database URL reference contains the secret name and numeric version. The
+recovery account is the read-only identity for the audit bucket.
+
 The staging foundation remains a targeted subset (see
 `docs/evidence/runtime/ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001`).
 
