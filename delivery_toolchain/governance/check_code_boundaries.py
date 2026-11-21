@@ -9,6 +9,7 @@ import csv
 import io
 import re
 import subprocess
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from functools import cache
@@ -257,6 +258,8 @@ def validate_import_boundaries(
     root: Path,
     classified: list[ClassifiedFile],
     manifest: dict[str, Any],
+    *,
+    frozen_sources: frozenset[str] = frozenset(),
 ) -> list[str]:
     boundaries = manifest["boundaries"]
     scope_by_path = {entry.path: entry.boundary for entry in classified}
@@ -268,7 +271,9 @@ def validate_import_boundaries(
     errors: list[str] = []
     ignored_scopes = {"archived", "evidence_artifact"}
     for path, source_scope in scope_by_path.items():
-        if source_scope in ignored_scopes:
+        # A frozen source is the exact upstream blob, certified by the
+        # worktree policy. Its name still contributes to import resolution.
+        if source_scope in ignored_scopes or path in frozen_sources:
             continue
         allowed = set(boundaries[source_scope].get("allowed_import_scopes", []))
         for module in imported_modules(root / path):
@@ -328,40 +333,96 @@ def validate_repository(
     manifest: dict[str, Any],
     *,
     check_inventory: bool = True,
+    frozen_sources: frozenset[str] = frozenset(),
 ) -> tuple[list[ClassifiedFile], list[str]]:
     extensions = {str(value) for value in manifest.get("tracked_extensions", [])}
-    paths = discover_code_files(root, extensions)
+    paths = sorted(
+        set(discover_code_files(root, extensions))
+        | {path for path in frozen_sources if Path(path).suffix in extensions}
+    )
     classified, errors = classify_files(paths, manifest)
     errors.extend(validate_artifact_profiles(manifest))
     errors.extend(validate_removal_bundles(classified, manifest))
     if not errors:
-        errors.extend(validate_import_boundaries(root, classified, manifest))
+        errors.extend(validate_import_boundaries(root, classified, manifest, frozen_sources=frozen_sources))
     if check_inventory and not errors:
         inventory_path = root / str(manifest.get("inventory_path") or "")
         expected = inventory_text(classified, manifest)
         actual = inventory_path.read_text(encoding="utf-8") if inventory_path.exists() else ""
         if actual != expected:
             errors.append(
-                f"boundary inventory is stale: run {Path(__file__).relative_to(root)} --write-inventory"
+                "boundary inventory is stale: run delivery_toolchain/governance/check_code_boundaries.py --write-inventory"
             )
     return classified, errors
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+    parser.add_argument("--repo", type=Path, default=ROOT)
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--task-id")
+    parser.add_argument("--status-file", type=Path)
+    parser.add_argument("--upstream-ref", default="")
     parser.add_argument("--write-inventory", action="store_true")
     parser.add_argument("--skip-inventory-check", action="store_true")
     return parser.parse_args()
 
 
+def verified_frozen_sources(args: argparse.Namespace, repo: Path, manifest_path: Path) -> frozenset[str]:
+    if args.task_id is None and args.status_file is None:
+        return frozenset()
+    # Use the installed toolchain policy, including when preflighting a release
+    # branch that predates this version of the checker.
+    policy_root = str(ROOT / ".orchestrator")
+    if policy_root not in sys.path:
+        sys.path.insert(0, policy_root)
+    from worktree_cleanliness import (
+        frozen_tracked_files,
+        protected_task_checkout_refusal,
+        task_review_freeze,
+    )
+
+    protected, base = task_review_freeze(repo, args.task_id, args.status_file, args.upstream_ref)
+    if base is None:
+        return frozenset()
+    refusal = protected_task_checkout_refusal(
+        repo, "HEAD", protected, worktree_path=repo, check_index=True, frozen_base=base,
+    )
+    if refusal:
+        raise ValueError(refusal)
+    # The accepted upstream classification can only justify the missing
+    # source when the candidate uses the same governing manifest.
+    manifest_rel = DEFAULT_MANIFEST.relative_to(ROOT)
+    if manifest_path != repo / manifest_rel or str(manifest_rel) in protected:
+        raise ValueError("protected checkout requires the canonical code boundary manifest")
+    expected = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{base}:{manifest_rel}"],
+        cwd=repo, capture_output=True, check=False,
+    )
+    actual = subprocess.run(
+        ["git", "hash-object", "--no-filters", "--", str(manifest_path)],
+        cwd=repo, capture_output=True, check=False,
+    )
+    if expected.returncode or actual.returncode or not expected.stdout or expected.stdout != actual.stdout:
+        raise ValueError("protected checkout requires the unchanged upstream code boundary manifest")
+    return frozenset(frozen_tracked_files(repo, protected))
+
+
 def main() -> int:
     args = parse_args()
-    manifest = load_manifest(args.manifest)
+    repo = args.repo.resolve()
+    manifest_path = (args.manifest or repo / DEFAULT_MANIFEST.relative_to(ROOT)).resolve()
+    try:
+        frozen_sources = verified_frozen_sources(args, repo, manifest_path)
+        manifest = load_manifest(manifest_path)
+    except (OSError, ValueError) as error:
+        print(f"Code boundary checks failed: {error}", file=sys.stderr)
+        return 1
     classified, errors = validate_repository(
-        ROOT,
+        repo,
         manifest,
         check_inventory=not args.skip_inventory_check and not args.write_inventory,
+        frozen_sources=frozen_sources,
     )
     if errors:
         print("Code boundary checks failed:")
@@ -370,10 +431,10 @@ def main() -> int:
         return 1
 
     if args.write_inventory:
-        inventory_path = ROOT / str(manifest["inventory_path"])
+        inventory_path = repo / str(manifest["inventory_path"])
         inventory_path.parent.mkdir(parents=True, exist_ok=True)
         inventory_path.write_text(inventory_text(classified, manifest), encoding="utf-8")
-        print(f"Wrote {inventory_path.relative_to(ROOT)}")
+        print(f"Wrote {inventory_path.relative_to(repo)}")
 
     counts = Counter(entry.boundary for entry in classified)
     print(f"Code boundary checks passed for {len(classified)} files.")
