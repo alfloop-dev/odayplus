@@ -93,6 +93,22 @@ output "staging_worker_job_name" {
   description = "Release-scoped worker Cloud Run Job name."
 }
 
+output "staging_admin_bootstrap_job_name" {
+  value       = google_cloud_run_v2_job.staging_admin_bootstrap.name
+  description = "Release-scoped first-administrator bootstrap Cloud Run Job name."
+}
+
+output "staging_admin_account" {
+  value = {
+    username        = local.admin_username
+    initial_secret  = google_secret_manager_secret.staging_admin_initial.secret_id
+    initial_version = google_secret_manager_secret_version.staging_admin_initial.version
+    sign_in_secret  = google_secret_manager_secret.staging_admin_sign_in.secret_id
+    sign_in_version = google_secret_manager_secret_version.staging_admin_sign_in.version
+  }
+  description = "Release-scoped sign-in account for the live E2E gate: its username and the pinned Secret Manager versions of its credentials (names only, never values)."
+}
+
 output "staging_scheduler_job_name" {
   value       = google_cloud_run_v2_job.staging_scheduler.name
   description = "Release-scoped scheduler Cloud Run Job name."

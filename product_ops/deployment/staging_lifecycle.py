@@ -102,6 +102,8 @@ REQUIRED_STAGING_OUTPUTS: tuple[str, ...] = (
     "staging_worker_job_name",
     "staging_scheduler_job_name",
     "staging_scheduler_trigger_name",
+    "staging_admin_bootstrap_job_name",
+    "staging_admin_account",
     "staging_cloud_sql_instance",
     "staging_api_image",
     "staging_web_image",
@@ -189,6 +191,21 @@ STAGING_WEB_LOAD_BALANCER_NAME = "oday-staging-web-lb"
 # A backend change reaches every Google front end within minutes.
 STAGING_WEB_CUSTOM_DOMAIN_DEADLINE_SECONDS = 600.0
 STAGING_WEB_CUSTOM_DOMAIN_POLL_SECONDS = 15.0
+# ODP-EPHEMERAL-STAGING-ROLLOUT-001: staging has no Google user OAuth (D15),
+# so the live gate proves password sign-in on every release (the gate's
+# GateConfig.password_journey). It signs in through STAGING_WEB_PUBLIC_ORIGIN
+# as a release-scoped first platform_admin: Terraform generates its one-time
+# bootstrap secret and its sign-in password per release into two release-owned
+# secrets, the release's admin bootstrap job creates it with the product's
+# own `python -m shared.identity.bootstrap`, and the gate performs the
+# first-login rotation. The account lives only in the release database and is
+# destroyed with it; no dev input (ODP_DEV_ADMIN_*, credential bundles) is read.
+# The passwords are read from Secret Manager only inside the live gate stage and
+# never leave its memory (the stage redacts them from every detail).
+STAGING_ADMIN_USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$")
+#: An Operator Console role the pure platform_admin does not hold (the gate's
+#: wrong-role probe); the same one dev uses.
+STAGING_ADMIN_DENIED_ROLE = "cs-lead"
 STAGING_LIVE_E2E_WORKER_DEADLINE_SECONDS = 600.0
 STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS = 10.0
 
@@ -206,20 +223,28 @@ def staging_live_gate_config(
     manifest_digest: str,
     bearer_token: str,
     api_transport_token: str,
+    admin_password: str = "",
+    admin_initial_password: str = "",
 ) -> Any:
     """Build the live E2E gate config for one release from its Terraform outputs.
 
-    Every input comes from the immutable output handoff or the admitted
-    manifest. Nothing is read from the process environment, so dev-admin
-    credentials or the dev smoke principal can never reach a staging run.
+    Every input comes from the immutable output handoff, the admitted
+    manifest, or (the two admin passwords) this release's own secrets.
+    Nothing is read from the process environment, so dev-admin credentials or
+    the dev smoke principal can never reach a staging run. The Web is the
+    governed origin: its CSRF boundary trusts only ODP_WEB_BASE_URL, so the
+    password journey runs there, through the console-staging load balancer
+    (and fails closed until that domain serves this release).
     """
 
     gate = _live_e2e_gate()
     labels = outputs.get("resource_labels")
     labels = labels if isinstance(labels, Mapping) else {}
+    account = outputs.get("staging_admin_account")
+    account = account if isinstance(account, Mapping) else {}
     return gate.GateConfig(
         api_url=str(outputs.get("staging_api_uri", "")).strip().rstrip("/"),
-        web_url=str(outputs.get("staging_web_uri", "")).strip().rstrip("/"),
+        web_url=STAGING_WEB_PUBLIC_ORIGIN,
         expected_sha=str(labels.get("candidate_sha", "")).strip().lower(),
         bearer_token=bearer_token,
         api_transport_token=api_transport_token,
@@ -232,6 +257,10 @@ def staging_live_gate_config(
         poll_interval_seconds=STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS,
         release_profile=release_profile,
         expected_manifest_digest=manifest_digest.strip().lower(),
+        bootstrap_admin_username=str(account.get("username") or "").strip(),
+        bootstrap_admin_password=admin_password,
+        dev_admin_initial_password=admin_initial_password,
+        dev_admin_denied_role=STAGING_ADMIN_DENIED_ROLE,
     )
 
 
@@ -271,15 +300,15 @@ def _live_gate_correlation_id(expected_sha: str, *, purpose: str = "live-e2e") -
     return f"corr-staging-{purpose}-{expected_sha[:12]}-{int(datetime.now(UTC).timestamp())}"
 
 
-def _live_gate_clients(
-    config: Any, *, web_transport_token: str, correlation_id: str
-) -> tuple[Any, Any]:
-    """API and Web clients for the gate, each bound to one release origin.
+def _live_gate_clients(config: Any, *, correlation_id: str) -> tuple[Any, Any]:
+    """API and Web clients for the gate, each bound to one origin.
 
-    Both staging services are private, so each carries its own Cloud Run
-    transport token (X-Serverless-Authorization). The Web client carries no
-    application credential: the gate requires its protected route to redirect
-    an anonymous visitor to sign-in.
+    The API is private, so its client carries the Cloud Run transport token
+    (X-Serverless-Authorization). The Web client is the governed public origin
+    behind the load balancer, reached as a browser reaches it: no Cloud Run
+    token and no application credential (the gate requires its protected
+    route to redirect an anonymous visitor to sign-in, then signs in by
+    password).
     """
 
     gate = _live_e2e_gate()
@@ -301,7 +330,6 @@ def _live_gate_clients(
         operator_subject="",
         operator_tenant="",
         correlation_id=correlation_id,
-        transport_token=web_transport_token,
     )
     return api, web
 
@@ -742,6 +770,7 @@ def get_ephemeral_resource_names(
         "cloud_run_migration_job": f"{name_prefix}-migration",
         "cloud_run_worker_job": f"{name_prefix}-worker",
         "cloud_run_scheduler_job": f"{name_prefix}-scheduler",
+        "cloud_run_admin_bootstrap_job": f"{name_prefix}-admin-bootstrap",
         "jobs_topic": f"{name_prefix}-jobs",
         "jobs_dlq_topic": f"{name_prefix}-jobs-dlq",
         "jobs_sub": f"{name_prefix}-jobs",
@@ -750,6 +779,8 @@ def get_ephemeral_resource_names(
         "secret_cursor_key": f"{name_prefix}-cursor-signing-key",
         "secret_web_session": f"{name_prefix}-web-session",
         "secret_identity_key": f"{name_prefix}-identity-signing-key",
+        "secret_admin_initial": f"{name_prefix}-admin-initial",
+        "secret_admin_sign_in": f"{name_prefix}-admin-sign-in",
         "scheduler_job": f"{name_prefix}-worker-trigger",
     }
 
@@ -1036,6 +1067,18 @@ def plan_staging_resources(
             created_at=created_iso,
             expires_at=expires_iso,
         ),
+        *(
+            StagingResource(
+                resource_type="google_secret_manager_secret",
+                resource_name=names[key],
+                resource_id=f"projects/{config.project_id}/secrets/{names[key]}",
+                release_id=config.release_id,
+                labels=labels,
+                created_at=created_iso,
+                expires_at=expires_iso,
+            )
+            for key in ("secret_admin_initial", "secret_admin_sign_in")
+        ),
         StagingResource(
             resource_type="google_storage_bucket",
             resource_name=names["bucket_name"],
@@ -1148,6 +1191,15 @@ def plan_staging_resources(
             resource_type="google_cloud_run_v2_job",
             resource_name=names["cloud_run_scheduler_job"],
             resource_id=f"projects/{config.project_id}/locations/{config.region}/jobs/{names['cloud_run_scheduler_job']}",
+            release_id=config.release_id,
+            labels=labels,
+            created_at=created_iso,
+            expires_at=expires_iso,
+        ),
+        StagingResource(
+            resource_type="google_cloud_run_v2_job",
+            resource_name=names["cloud_run_admin_bootstrap_job"],
+            resource_id=f"projects/{config.project_id}/locations/{config.region}/jobs/{names['cloud_run_admin_bootstrap_job']}",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -1418,6 +1470,29 @@ def _terraform_state_pull(
     return dict(state)
 
 
+def _staging_admin_account_errors(account: Any, *, release_id: str) -> list[str]:
+    """The sign-in account handoff names only this release's own secrets.
+
+    Values never cross the output handoff: it carries the username and the
+    pinned Secret Manager versions, which must be the two secrets this
+    release's Terraform names, so another release's (or a shared) secret can
+    never be read in their place.
+    """
+
+    if not isinstance(account, Mapping):
+        return ["Terraform staging_admin_account output is not a readable mapping."]
+    errors: list[str] = []
+    if not STAGING_ADMIN_USERNAME_PATTERN.fullmatch(str(account.get("username") or "")):
+        errors.append("Terraform staging_admin_account username is not a valid account username.")
+    names = get_ephemeral_resource_names(release_id)
+    for kind, key in (("initial", "secret_admin_initial"), ("sign_in", "secret_admin_sign_in")):
+        if str(account.get(f"{kind}_secret") or "") != names[key]:
+            errors.append(f"Terraform staging_admin_account {kind}_secret is not this release's {names[key]}.")
+        if not re.fullmatch(r"[1-9][0-9]*", str(account.get(f"{kind}_version") or "")):
+            errors.append(f"Terraform staging_admin_account {kind}_version is not a pinned secret version.")
+    return errors
+
+
 def validate_staging_outputs(
     outputs: Mapping[str, Any] | None,
     *,
@@ -1482,6 +1557,11 @@ def validate_staging_outputs(
     ):
         if not str(outputs.get(name, "")).strip():
             errors.append(f"Terraform {name} output is empty.")
+    expected_bootstrap_job = get_ephemeral_resource_names(release_id)["cloud_run_admin_bootstrap_job"]
+    if outputs.get("staging_admin_bootstrap_job_name") != expected_bootstrap_job:
+        errors.append("Terraform staging_admin_bootstrap_job_name is not this release's bootstrap job.")
+    if "staging_admin_account" in outputs:
+        errors.extend(_staging_admin_account_errors(outputs["staging_admin_account"], release_id=release_id))
 
     for name in ("staging_api_uri", "staging_web_uri"):
         if str(outputs.get(name, "")).strip() and not str(outputs[name]).startswith("https://"):
@@ -3878,9 +3958,7 @@ def make_live_rehearsal_executor(
         checks: list[Any] = []
         report: dict[str, Any] = {}
         try:
-            api_client, _ = _live_gate_clients(
-                config, web_transport_token="", correlation_id=correlation_id
-            )
+            api_client, _ = _live_gate_clients(config, correlation_id=correlation_id)
             readiness = api_client.request("GET", "/readiness", authenticated=False)
             provider = gate._as_dict(gate._as_dict(readiness.payload.get("details")).get("provider"))
             gate._check_worker_and_audit(
@@ -3928,9 +4006,12 @@ def make_live_rehearsal_executor(
         """Run the complete canonical live E2E gate against this release.
 
         The gate judges the admitted profile itself (core-ops: missing models
-        truthfully refused; full: the complete model assertions). Any blocker
-        fails the stage. Tokens are minted fresh (the earlier stages can
-        outlast an ID token) and never leave this function.
+        truthfully refused; full: the complete model assertions) and, on
+        staging, the Web password sign-in journey. The release's admin
+        bootstrap job first creates the release-scoped administrator (a no-op
+        once it exists). Any blocker fails the stage. Tokens are minted fresh
+        (the earlier stages can outlast an ID token); tokens and passwords
+        never leave this function.
         """
 
         expected = str(context.get("release_profile") or "")
@@ -3938,6 +4019,30 @@ def make_live_rehearsal_executor(
             raise RuntimeError(f"admitted release profile {expected!r} may not run in staging")
         gate = _live_e2e_gate()
         execute_job("staging_worker_job_name", "staging_worker_image", "live gate worker", run=False)
+        bootstrap = execute_job(
+            "staging_admin_bootstrap_job_name", "staging_worker_image", "identity bootstrap"
+        )
+        # Pinned versions of this release's own secrets (validated output
+        # handoff); gcloud output is captured, never logged.
+        account = outputs["staging_admin_account"]
+        passwords = {
+            kind: _live_gcloud(
+                [
+                    "secrets",
+                    "versions",
+                    "access",
+                    str(account[f"{kind}_version"]),
+                    f"--secret={account[f'{kind}_secret']}",
+                    f"--project={project_id}",
+                ],
+                gcloud_bin=gcloud_bin,
+                timeout=60,
+                capture_output=True,
+            )
+            for kind in ("initial", "sign_in")
+        }
+        if not all(passwords.values()):
+            raise RuntimeError("release-scoped admin secret readback returned an empty value")
         smoke_audience = staging_smoke_token_audience(str(outputs["release_id"]))
         tokens = {
             name: _live_identity_token(
@@ -3946,22 +4051,22 @@ def make_live_rehearsal_executor(
             for name, audience in (
                 ("smoke", smoke_audience),
                 ("api", api_uri),
-                ("web", web_uri),
             )
         }
-        redact = gate._redactor(*tokens.values())
+        redact = gate._redactor(*tokens.values(), *passwords.values())
         config = staging_live_gate_config(
             outputs,
             release_profile=expected,
             manifest_digest=str(context.get("manifest_digest") or ""),
             bearer_token=tokens["smoke"],
             api_transport_token=tokens["api"],
+            admin_password=passwords["sign_in"],
+            admin_initial_password=passwords["initial"],
         )
+        bootstrap_proof = {"job": bootstrap["job"], "execution": bootstrap["execution"]}
         correlation_id = _live_gate_correlation_id(config.expected_sha)
         try:
-            api_client, web_client = _live_gate_clients(
-                config, web_transport_token=tokens["web"], correlation_id=correlation_id
-            )
+            api_client, web_client = _live_gate_clients(config, correlation_id=correlation_id)
             _, report = gate.evaluate_gate(
                 config,
                 http=api_client,
@@ -3981,7 +4086,12 @@ def make_live_rehearsal_executor(
             raise RuntimeError(f"live E2E gate could not run: {type(exc).__name__}") from None
         proof = staging_live_gate_proof(report)
         if proof["ok"]:
-            return {"success": True, "status": "verified", "live_e2e_gate": proof}
+            return {
+                "success": True,
+                "status": "verified",
+                "admin_bootstrap": bootstrap_proof,
+                "live_e2e_gate": proof,
+            }
         blockers = [
             f"{blocker.get('check')} [{blocker.get('dependency')}]: {str(blocker.get('detail'))[:300]}"
             for blocker in report.get("blockers") or []
@@ -3991,6 +4101,7 @@ def make_live_rehearsal_executor(
             "success": False,
             "status": "failed",
             "detail": redact("staging live E2E gate failed: " + "; ".join(blockers)),
+            "admin_bootstrap": bootstrap_proof,
             "live_e2e_gate": proof,
         }
 
@@ -4456,11 +4567,16 @@ def verify_ephemeral_staging(
             "release_profile": release_profile,
         }
 
+        web_domain_verified = False
         for stage_name in REHEARSAL_STAGE_NAMES:
             stage_success = True
             stage_detail = f"Stage {stage_name} passed verification for {release_id}"
             stage_proof: dict[str, Any] = {}
-            if stage_executor is not None:
+            if stage_executor is not None and stage_name == "live_e2e_gate" and not web_domain_verified:
+                stage_success = False
+                stage_detail = "Live E2E requires a verified custom domain for this release before signing in."
+                errors.append(f"Stage {stage_name} failed. {stage_detail}")
+            elif stage_executor is not None:
                 try:
                     stage_result = stage_executor(stage_name, stage_context)
                     if isinstance(stage_result, Mapping):
@@ -4495,6 +4611,7 @@ def verify_ephemeral_staging(
                             "release_profile",
                             "worker_idempotency",
                             "custom_domain",
+                            "admin_bootstrap",
                             "live_e2e_gate",
                         ):
                             if key in stage_result:
@@ -4517,6 +4634,9 @@ def verify_ephemeral_staging(
                     stage_success = False
                     stage_detail = f"Stage {stage_name} raised exception: {type(exc).__name__}"
                     errors.append(f"Stage {stage_name} error: {type(exc).__name__}: {exc}")
+
+            if stage_name == "web_custom_domain":
+                web_domain_verified = stage_success
 
             target_key = (
                 "staging_database_name"
@@ -5390,6 +5510,7 @@ def validate_module_contract(module_dir: Path) -> list[str]:
         'resource "google_cloud_run_v2_job" "staging_migration"',
         'resource "google_cloud_run_v2_job" "staging_worker"',
         'resource "google_cloud_run_v2_job" "staging_scheduler"',
+        'resource "google_cloud_run_v2_job" "staging_admin_bootstrap"',
         'resource "google_cloud_run_v2_service_iam_member" "staging_worker_invokes_api"',
         'resource "google_pubsub_topic" "staging_jobs"',
         'resource "google_pubsub_subscription" "staging_jobs"',
@@ -5405,9 +5526,9 @@ def validate_module_contract(module_dir: Path) -> list[str]:
     if 'ODP_EXTERNAL_PROVIDER_MODE"\n        value = "fixture"' in main_text:
         errors.append("staging API must keep external provider mode disabled, not fixture-backed.")
     all_traffic_count = main_text.count('egress = "ALL_TRAFFIC"')
-    if all_traffic_count != 5:
+    if all_traffic_count != 6:
         errors.append(
-            "all five release-scoped Cloud Run resources must use ALL_TRAFFIC through the controlled VPC; "
+            "all six release-scoped Cloud Run resources must use ALL_TRAFFIC through the controlled VPC; "
             f"found {all_traffic_count}."
         )
     if 'egress = "PRIVATE_RANGES_ONLY"' in main_text:
@@ -5452,6 +5573,8 @@ def validate_module_contract(module_dir: Path) -> list[str]:
         "random_password.staging_cursor_signing_key.result",
         "random_password.staging_web_session.result",
         "random_password.staging_identity_token_signing_key.result",
+        "random_password.staging_admin_initial.result",
+        "random_password.staging_admin_sign_in.result",
         "secret_data",
         "password",
     )
