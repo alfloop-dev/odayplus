@@ -864,6 +864,19 @@ class ProtectedRolloutPreflightTests(unittest.TestCase):
         self.assertEqual((target / rollout.BWRAP_PROFILE_ARTIFACT).read_bytes(), self.PROFILE)
         self.assertEqual(link.resolve(), previous.resolve())
 
+        outcome, _commands = self._main_until_first_mutation(args, target)
+        self.assertNotIsInstance(outcome, SystemExit, outcome)
+        self.assertFalse((target / held).exists())
+        self.assertEqual(rollout.git(target, "ls-files", "-t", "--", held), f"S {held}")
+
+        with mock.patch.object(rollout, "recorded_protected_paths", side_effect=[
+            (held,), (held,), (held, "guarded/new.py"),
+        ]):
+            outcome, _commands = self._main_until_first_mutation(args, target)
+        self.assertIsInstance(outcome, SystemExit)
+        self.assertIn("canonical protected paths changed before runtime switch", str(outcome))
+        self.assertEqual(link.resolve(), previous.resolve())
+
     def test_matching_reviewed_profile_and_safe_target_pass(self) -> None:
         rollout.protected_preflight(self.source, self.target_sha, ("guarded/zone",), self.installed)
         rollout.protected_preflight(self.source, self.target_sha, (), self.root / "absent")

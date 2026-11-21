@@ -101,8 +101,8 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
           body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
           domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
@@ -252,8 +252,8 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
           body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
           domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
@@ -507,8 +507,8 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
           body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
           domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
@@ -682,8 +682,8 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
           body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
           domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
@@ -945,8 +945,8 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
           body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
           domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
@@ -1073,8 +1073,8 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
           body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
           domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
@@ -1202,8 +1202,8 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
           body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
           domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
@@ -1338,8 +1338,8 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
           body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
           domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
@@ -1463,8 +1463,8 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
           body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
           domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
@@ -1650,8 +1650,8 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
           body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
           domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
@@ -1958,8 +1958,8 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
           body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
           domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]

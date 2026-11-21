@@ -566,6 +566,7 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         self.assertEqual(worker_workspace.compute_worktree_state_identity(worktree), f"clean:{base}")
 
     def test_pinned_tracked_file_is_excluded_and_reviewable_without_exposing_its_body(self) -> None:
+        self._enter_body_domain()
         protected = ("frozen_fixture.py",)
         manifest = Path("config/code-boundaries.yaml")
         (self.repo / manifest.parent).mkdir()
@@ -575,9 +576,15 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         branch = "task/PINNED-TRACKED-001"
         worktree = self.root / "wt-pinned-tracked"
         ok, error = supervisor._create_worker_worktree(
-            self.repo, worktree, branch, head, protected_paths=protected, frozen_base=pin,
+            self.repo, worktree, branch, pin, protected_paths=protected, frozen_base=pin,
         )
         self.assertTrue(ok, error)
+        ok, result = supervisor._refresh_reused_worker_worktree(
+            self.repo, worktree, head, branch, required_head=head, protected_paths=protected, frozen_base=pin,
+        )
+        self.assertTrue(ok, result)
+        self.assertEqual(result, f"review_head_pinned_at_{head[:12]}")
+        self.assertFalse(os.path.lexists(worktree / self.DOMAIN_COPY))
         target = worktree / protected[0]
         self.assertFalse(target.exists())
         self.assertEqual(self._git(worktree, "ls-files", "-t", "--", protected[0]).stdout.strip(), f"S {protected[0]}")
@@ -619,7 +626,8 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         )
         sandbox = worktree_cleanliness.plan_protected_execution(worktree, protected)
         self.assertIn(target, sandbox.absent_frozen_paths)
-        self.assertTrue(any(op[0] == "shadow" and op[1] == worktree for op in sandbox.operations))
+        shadow = next(op for op in sandbox.operations if op[0] == "shadow" and op[1] == worktree)
+        self.assertIn(("README.md", "rw", None), shadow[2])
         self.assertFalse(target.exists())
         self.assertEqual(worktree_cleanliness.main(argv), 0)
 

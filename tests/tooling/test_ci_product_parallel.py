@@ -1414,6 +1414,8 @@ def test_deny_patterns_are_the_shared_domain_policy() -> None:
     assert "wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)" in proof
     assert "wc.protected_body_sparse_patterns((denied,), frozen_paths=frozen)" in proof
     assert "wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen)" in proof
+    assert 'wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen),' in proof
+    assert 'wc.inspect_protected_git_metadata(root, sha, (denied, *frozen))' in proof
 
 
 def _proof_step(name: str, job: str) -> tuple[list[dict[str, Any]], int]:
