@@ -527,6 +527,24 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         self.assertTrue(ok, status)
         self.assertEqual(worker_workspace.compute_worktree_state_identity(worktree), f"clean:{self.base}")
 
+    def test_checkout_blank_lines_do_not_change_protected_sparse_rules(self) -> None:
+        self._enter_body_domain()
+        worktree = self.root / "wt-dom-checkout-blank"
+        created, error = supervisor._create_worker_worktree(self.repo, worktree, "task/DOM-BLANK-001", self.base)
+        self.assertTrue(created, error)
+        patterns = Path(self._git(
+            worktree, "rev-parse", "--path-format=absolute", "--git-path", "info/sparse-checkout",
+        ).stdout.strip())
+        original = patterns.read_text(encoding="utf-8")
+        patterns.write_text("\n" + original + "\n", encoding="utf-8")
+
+        self.assertIsNone(worktree_cleanliness.protected_body_checkout_refusal(worktree, require_sparse=True))
+        self.assertFalse(os.path.lexists(worktree / self.DOMAIN_COPY))
+
+        patterns.write_text("\n" + original + " \n", encoding="utf-8")
+        refusal = worktree_cleanliness.protected_body_checkout_refusal(worktree, require_sparse=True)
+        self.assertIn("sparse patterns differ", refusal or "")
+
     def test_creation_keeps_every_denied_name_spelling_out(self) -> None:
         self._enter_body_domain(tracked=False)
         control = "archive/vault/copiesx/keep.txt"

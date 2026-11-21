@@ -226,7 +226,9 @@ def _sparse_patterns(cwd: Path) -> list[str] | None:
     if not path.is_absolute():
         path = cwd / path
     try:
-        return path.read_text(encoding="utf-8").removesuffix("\n").split("\n")
+        # Git ignores empty lines, including the leading newline added by actions/checkout.
+        # Keep every character of nonempty patterns, including embedded spaces.
+        return [line for line in path.read_text(encoding="utf-8").split("\n") if line]
     except FileNotFoundError:
         return []
     except (OSError, UnicodeDecodeError):
