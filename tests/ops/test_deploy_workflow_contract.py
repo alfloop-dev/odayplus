@@ -1398,6 +1398,12 @@ def test_deploy_script_production_refuses_the_tag_build_path(
         "GCP_REGION": "asia-east1",
         "GCP_AR_REPO": "runtime",
     }
+    if deploy_environment in {"prod", "production"}:
+        env.update(
+            ODP_PROD_VPC_NETWORK="oday-prod-vpc",
+            ODP_PROD_VPC_SUBNETWORK="oday-prod-asia-east1",
+            ODP_CLOUD_RUN_VPC_EGRESS="all-traffic",
+        )
     for name in ("API_IMAGE", "WEB_IMAGE", "WORKER_IMAGE", "SCHEDULER_IMAGE"):
         # The environment's own registry: production refuses any other one.
         image = f"asia-east1-docker.pkg.dev/project-under-test/runtime/{name.lower()}"
@@ -1439,6 +1445,7 @@ def test_deploy_script_applies_optional_vpc_network_args_to_every_cloud_run_targ
     script = _deploy_script_text()
     network_args = '"${CLOUD_RUN_NETWORK_ARGS[@]}"'
     targets = (
+        'gcloud run jobs create "${job}"',
         'gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}"',
         'gcloud run deploy "${API_SERVICE}"',
         'gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}"',

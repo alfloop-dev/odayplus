@@ -25,6 +25,9 @@ run_locked_python() {
 }
 
 : "${ODP_DEPLOY_ENV:?Error: ODP_DEPLOY_ENV is required.}"
+if [ "${ODP_DEPLOY_ENV}" = "prod" ]; then
+  export ODP_DEPLOY_ENV=production
+fi
 : "${ODAY_RELEASE_SHA:?Error: ODAY_RELEASE_SHA is required.}"
 : "${API_SERVICE:?Error: API_SERVICE is required.}"
 : "${WEB_SERVICE:?Error: WEB_SERVICE is required.}"
