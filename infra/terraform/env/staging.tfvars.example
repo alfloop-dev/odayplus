@@ -4,6 +4,8 @@ project_id  = "oday-staging-123456"
 environment = "staging"
 region      = "asia-east1"
 
+release_profile = "REPLACE_WITH_FULL_OR_CORE_OPS"
+
 api_image   = "asia-east1-docker.pkg.dev/oday-staging-123456/oday/api@sha256:REPLACE_WITH_64_HEX"
 web_image   = "asia-east1-docker.pkg.dev/oday-staging-123456/oday/web@sha256:REPLACE_WITH_64_HEX"
 release_sha = "REPLACE_WITH_40_HEX_GIT_SHA"

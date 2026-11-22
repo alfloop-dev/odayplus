@@ -1395,10 +1395,19 @@ def test_deploy_script_production_refuses_the_tag_build_path(
         "ODP_AUTH_MODE": "local",
         "ODP_PROD_DEPLOY_URL": "https://web.example.test",
         "ODP_PROD_API_URL": "https://api.example.test",
+        "ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET": "oday-prod-intake-cursor-signing-key:1",
+        # Production refuses to deploy below two warm instances.
+        "ODP_CLOUD_RUN_MIN_INSTANCES": "2",
         "GCP_PROJECT": "project-under-test",
         "GCP_REGION": "asia-east1",
         "GCP_AR_REPO": "runtime",
     }
+    if deploy_environment in {"prod", "production"}:
+        env.update(
+            ODP_PROD_VPC_NETWORK="oday-prod-vpc",
+            ODP_PROD_VPC_SUBNETWORK="oday-prod-asia-east1",
+            ODP_CLOUD_RUN_VPC_EGRESS="all-traffic",
+        )
     for name in ("API_IMAGE", "WEB_IMAGE", "WORKER_IMAGE", "SCHEDULER_IMAGE"):
         # The environment's own registry: production refuses any other one.
         image = f"asia-east1-docker.pkg.dev/project-under-test/runtime/{name.lower()}"
@@ -1440,6 +1449,7 @@ def test_deploy_script_applies_optional_vpc_network_args_to_every_cloud_run_targ
     script = _deploy_script_text()
     network_args = '"${CLOUD_RUN_NETWORK_ARGS[@]}"'
     targets = (
+        'gcloud run jobs create "${job}"',
         'gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}"',
         'gcloud run deploy "${API_SERVICE}"',
         'gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}"',
@@ -1558,8 +1568,35 @@ def test_deploy_job_passes_the_production_live_e2e_origins_from_the_bound_enviro
     assert deploy_env["ODP_DEPLOY_ENV"] == "${{ inputs.environment }}"
     assert deploy_env["ODP_PROD_DEPLOY_URL"] == "${{ vars.ODP_PROD_DEPLOY_URL }}"
     assert deploy_env["ODP_PROD_API_URL"] == "${{ vars.ODP_PROD_API_URL }}"
+    assert deploy_env["ODP_PROD_API_INVOKER_GROUP"] == "${{ vars.ODP_PROD_API_INVOKER_GROUP }}"
+    assert deploy_env["ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET"] == "${{ vars.ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET }}"
     for name in ("ODP_DEV_DEPLOY_URL", "ODP_STAGING_DEPLOY_URL", "ODP_STAGING_API_URL"):
         assert name not in deploy_env, f"{name} must not be a fallback origin for the deploy script"
+
+
+def test_deploy_job_passes_the_warm_minimum_from_the_bound_environment() -> None:
+    """Production owns its Cloud Run services in the deploy path (owner decision
+    2026-11-20), so the warm minimum must reach the deploy script from the bound
+    environment, and the script must refuse production below two."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_job = parsed["jobs"]["deploy"]
+    assert deploy_job["environment"]["name"] == "${{ inputs.environment }}"
+    assert deploy_job["env"]["ODP_CLOUD_RUN_MIN_INSTANCES"] == "${{ vars.ODP_CLOUD_RUN_MIN_INSTANCES }}"
+    deploy_step = _named_step(deploy_job, "Deploy Cloud Run by immutable digest")
+    assert deploy_step["run"] == "./product_ops/deployment/deploy_cloud_run_waji.sh"
+    assert "ODP_CLOUD_RUN_MIN_INSTANCES" not in deploy_step.get("env", {}), "one source: the job env"
+
+    script = _deploy_script_text()
+    guard = script.index("production requires ODP_CLOUD_RUN_MIN_INSTANCES of at least 2")
+    block = script[script.rindex("case \"${ODP_DEPLOY_ENV}\" in", 0, guard) : guard]
+    assert "prod|production)" in block
+    assert '[ -z "${CLOUD_RUN_MIN_INSTANCES}" ]' in block
+    assert "-lt 2" in block
+    # The dev default of one warm instance is unchanged.
+    assert (
+        'if [ -z "${CLOUD_RUN_MIN_INSTANCES}" ] && [ "${ODP_DEPLOY_ENV}" = "dev" ]; then\n'
+        "  CLOUD_RUN_MIN_INSTANCES=1\n"
+    ) in script
 
 
 def test_sources_off_probe_persists_and_validates_the_runtime_receipt() -> None:

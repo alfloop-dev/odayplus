@@ -1,4 +1,13 @@
+# The API and Web services, and the invoker bindings scoped to them, exist only
+# where this stack owns the services (var.cloud_run_services_managed). Where the
+# Runtime Release deploy path owns them (production, owner decision
+# 2026-11-20), deploy_cloud_run_waji.sh creates services of the same names and
+# binds their invokers (grant_api_service_invokers / grant_service_invoker):
+# a service-scoped binding cannot precede its service, and two owners of one
+# service would revert each other's revisions.
 resource "google_cloud_run_v2_service" "api" {
+  count = local.cloud_run_managed ? 1 : 0
+
   name     = local.api_service_name
   location = var.region
   ingress  = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
@@ -148,24 +157,28 @@ resource "google_cloud_run_v2_service" "api" {
 }
 
 resource "google_cloud_run_v2_service_iam_member" "api_invoker" {
-  for_each = var.api_invoker_members
+  for_each = local.cloud_run_managed ? var.api_invoker_members : toset([])
 
   project  = var.project_id
-  location = google_cloud_run_v2_service.api.location
-  name     = google_cloud_run_v2_service.api.name
+  location = google_cloud_run_v2_service.api[0].location
+  name     = google_cloud_run_v2_service.api[0].name
   role     = "roles/run.invoker"
   member   = each.value
 }
 
 resource "google_cloud_run_v2_service_iam_member" "web_invokes_api" {
+  count = local.cloud_run_managed ? 1 : 0
+
   project  = var.project_id
-  location = google_cloud_run_v2_service.api.location
-  name     = google_cloud_run_v2_service.api.name
+  location = google_cloud_run_v2_service.api[0].location
+  name     = google_cloud_run_v2_service.api[0].name
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.web.email}"
 }
 
 resource "google_cloud_run_v2_service" "web" {
+  count = local.cloud_run_managed ? 1 : 0
+
   name     = local.web_service_name
   location = var.region
   ingress  = "INGRESS_TRAFFIC_ALL"
@@ -321,11 +334,27 @@ resource "google_cloud_run_v2_service" "web" {
 }
 
 resource "google_cloud_run_v2_service_iam_member" "web_invoker" {
-  for_each = var.web_invoker_members
+  for_each = local.cloud_run_managed ? var.web_invoker_members : toset([])
 
   project  = var.project_id
-  location = google_cloud_run_v2_service.web.location
-  name     = google_cloud_run_v2_service.web.name
+  location = google_cloud_run_v2_service.web[0].location
+  name     = google_cloud_run_v2_service.web[0].name
   role     = "roles/run.invoker"
   member   = each.value
+}
+
+# Adding count kept every existing (dev) object at index 0.
+moved {
+  from = google_cloud_run_v2_service.api
+  to   = google_cloud_run_v2_service.api[0]
+}
+
+moved {
+  from = google_cloud_run_v2_service_iam_member.web_invokes_api
+  to   = google_cloud_run_v2_service_iam_member.web_invokes_api[0]
+}
+
+moved {
+  from = google_cloud_run_v2_service.web
+  to   = google_cloud_run_v2_service.web[0]
 }

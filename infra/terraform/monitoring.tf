@@ -34,15 +34,19 @@ locals {
     tolist(var.monitoring_notification_channel_ids),
   )
 
+  # Without a governed Web host the check falls back to the run.app host of a
+  # Terraform-owned Web service; with neither, web_login refuses to plan.
   monitoring_web_uptime_host = (
     local.web_public_host != ""
     ? local.web_public_host
-    : trimprefix(google_cloud_run_v2_service.web.uri, "https://")
+    : try(trimprefix(google_cloud_run_v2_service.web[0].uri, "https://"), "")
   )
 
+  # By name, not by resource: the alert filters must also cover services the
+  # Runtime Release deploy path owns (var.cloud_run_services_managed = false).
   monitoring_cloud_run_services = {
-    api = google_cloud_run_v2_service.api.name
-    web = google_cloud_run_v2_service.web.name
+    api = local.api_service_name
+    web = local.web_service_name
   }
 
   monitoring_cloud_sql_database_id = "${var.project_id}:${module.runtime_foundation.cloud_sql_instance_name}"
@@ -54,10 +58,16 @@ locals {
     } : {},
   )
 
+  # The uptime checker's invoker binding is service-scoped (see api_uptime_invoker).
+  monitoring_api_uptime_invoker_bound = var.monitoring_api_uptime_host != "" && local.cloud_run_managed
+
   monitoring_runbook = "Runbook: docs/runbooks/observability-and-runbook.md; incident levels: docs/runbooks/incident-management.md."
 }
 
+# Read only for the API uptime invoker below, which needs the project number.
 data "google_project" "current" {
+  count = local.monitoring_api_uptime_invoker_bound ? 1 : 0
+
   project_id = var.project_id
 }
 
@@ -100,6 +110,13 @@ resource "google_monitoring_uptime_check_config" "web_login" {
   }
 
   user_labels = local.labels
+
+  lifecycle {
+    precondition {
+      condition     = local.monitoring_web_uptime_host != ""
+      error_message = "The Web uptime check needs web_base_url when this stack does not own the Web Cloud Run service (cloud_run_services_managed = false)."
+    }
+  }
 
   depends_on = [google_project_service.required]
 }
@@ -144,14 +161,18 @@ resource "google_monitoring_uptime_check_config" "api_health" {
   depends_on = [google_project_service.required]
 }
 
+# Service-scoped, so it exists only with a Terraform-owned API (see
+# cloud_run.tf). Where the deploy path owns the API, the Monitoring service
+# agent still needs roles/run.invoker on that service for this check to pass;
+# this stack cannot bind it before the service exists.
 resource "google_cloud_run_v2_service_iam_member" "api_uptime_invoker" {
-  count = var.monitoring_api_uptime_host != "" ? 1 : 0
+  count = local.monitoring_api_uptime_invoker_bound ? 1 : 0
 
   project  = var.project_id
-  location = google_cloud_run_v2_service.api.location
-  name     = google_cloud_run_v2_service.api.name
+  location = google_cloud_run_v2_service.api[0].location
+  name     = google_cloud_run_v2_service.api[0].name
   role     = "roles/run.invoker"
-  member   = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-monitoring-notification.iam.gserviceaccount.com"
+  member   = "serviceAccount:service-${data.google_project.current[0].number}@gcp-sa-monitoring-notification.iam.gserviceaccount.com"
 }
 
 resource "google_monitoring_alert_policy" "uptime_failure" {
@@ -244,10 +265,10 @@ resource "google_monitoring_alert_policy" "api_latency_p95" {
   user_labels           = merge(local.labels, { odp_alert_id = "api-availability-drop" })
 
   conditions {
-    display_name = "${google_cloud_run_v2_service.api.name} request_latencies p95"
+    display_name = "${local.api_service_name} request_latencies p95"
 
     condition_threshold {
-      filter          = "resource.type = \"cloud_run_revision\" AND resource.labels.service_name = \"${google_cloud_run_v2_service.api.name}\" AND metric.type = \"run.googleapis.com/request_latencies\""
+      filter          = "resource.type = \"cloud_run_revision\" AND resource.labels.service_name = \"${local.api_service_name}\" AND metric.type = \"run.googleapis.com/request_latencies\""
       comparison      = "COMPARISON_GT"
       threshold_value = local.monitoring_api_latency_p95_threshold_ms
       duration        = local.monitoring_sustained_window

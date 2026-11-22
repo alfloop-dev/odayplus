@@ -137,12 +137,15 @@ resource "google_iam_workload_identity_pool_provider" "odayplus" {
   display_name                       = "GitHub Actions Provider"
   description                        = "OIDC identity provider for GitHub Actions."
 
-  attribute_mapping = {
-    "google.subject"       = "assertion.sub"
-    "attribute.repository" = "assertion.repository"
-    "attribute.actor"      = "assertion.actor"
-    "attribute.aud"        = "assertion.aud"
-  }
+  # Keep the claim mapping on the existing production provider when adopting it.
+  attribute_mapping = merge(
+    {
+      "google.subject"       = "assertion.sub"
+      "attribute.repository" = "assertion.repository"
+      "attribute.actor"      = "assertion.actor"
+    },
+    local.is_prod ? tomap({ "attribute.ref" = "assertion.ref" }) : tomap({ "attribute.aud" = "assertion.aud" }),
+  )
 
   attribute_condition = "assertion.repository == 'alfloop-dev/odayplus'"
 
@@ -157,9 +160,12 @@ resource "google_service_account_iam_member" "github_deployer_wif" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions.name}/attribute.repository/alfloop-dev/odayplus"
 }
 
+# Per environment. Dev keeps oday-dev-smoke-operator (and title("dev") keeps its
+# display name); production resolves to the hand-made oday-prod-smoke-operator
+# that ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT names, adopted below.
 resource "google_service_account" "smoke_operator" {
-  account_id   = "oday-dev-smoke-operator"
-  display_name = "ODay Dev Smoke Operator Service Account"
+  account_id   = "${local.name_prefix}-smoke-operator"
+  display_name = "ODay ${title(var.environment)} Smoke Operator Service Account"
   description  = "Short-lived operator identity for post-deploy smoke and live E2E verification."
 
   depends_on = [google_project_service.required]
@@ -221,6 +227,93 @@ resource "google_service_account_iam_member" "github_deployer_sa_user_worker" {
   service_account_id = google_service_account.worker.name
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
+# --- Production github-deployer pre-migration Cloud SQL backup ---
+#
+# deploy-dev.yml takes an on-demand backup of GCP_CLOUD_SQL_INSTANCE and reads
+# it back SUCCESSFUL before production migrations (ODP-PROD-DEPLOY-SAFETY-001
+# README §4.1). roles/cloudsql.client carries none of these permissions and
+# roles/cloudsql.editor could also reconfigure the instance, so the deployer
+# gets exactly backups create/get/list plus instances.get (gcloud waits on the
+# operation through it). Production only.
+resource "google_project_iam_custom_role" "production_deployer_sql_backup" {
+  count = local.is_prod ? 1 : 0
+
+  project     = var.project_id
+  role_id     = "prodDeployerSqlBackup"
+  title       = "Production deployer pre-migration Cloud SQL backup"
+  description = "deploy-dev.yml creates and reads back an on-demand Cloud SQL backup before production migrations"
+  permissions = [
+    "cloudsql.backupRuns.create",
+    "cloudsql.backupRuns.get",
+    "cloudsql.backupRuns.list",
+    "cloudsql.instances.get",
+  ]
+  stage = "GA"
+}
+
+resource "google_project_iam_member" "production_deployer_sql_backup" {
+  count = local.is_prod ? 1 : 0
+
+  project = var.project_id
+  role    = google_project_iam_custom_role.production_deployer_sql_backup[0].name
+  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
+# --- Production adoption of hand-made objects declared above ---
+#
+# The production project (odayplus-prod-20260826, read back 2026-11-20) already
+# holds objects under the names this stack declares: the WIF deployer, its pool
+# and provider, the runtime and smoke identities the deploy path uses
+# (ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT / ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT),
+# and the database URL and Web session secrets (user-managed asia-east1
+# replication, as declared). As for the staging deployer write-back below,
+# import blocks adopt them so the first full apply updates them in place
+# instead of failing with 409. IAM *_member grants need no import: adding a
+# member that is already bound is a no-op. The hand-made Cloud SQL instance
+# oday-prod-sql is deliberately not adopted (checks.tf). Dev and staging plan
+# none of this (empty for_each).
+import {
+  for_each = local.is_prod ? toset(["github-deployer"]) : toset([])
+  to       = google_service_account.github_deployer
+  id       = "projects/${var.project_id}/serviceAccounts/${each.value}@${var.project_id}.iam.gserviceaccount.com"
+}
+
+import {
+  for_each = local.is_prod ? toset(["${local.name_prefix}-runtime"]) : toset([])
+  to       = google_service_account.runtime
+  id       = "projects/${var.project_id}/serviceAccounts/${each.value}@${var.project_id}.iam.gserviceaccount.com"
+}
+
+import {
+  for_each = local.is_prod ? toset(["${local.name_prefix}-smoke-operator"]) : toset([])
+  to       = google_service_account.smoke_operator
+  id       = "projects/${var.project_id}/serviceAccounts/${each.value}@${var.project_id}.iam.gserviceaccount.com"
+}
+
+import {
+  for_each = local.is_prod ? toset(["github-actions"]) : toset([])
+  to       = google_iam_workload_identity_pool.github_actions
+  id       = "projects/${var.project_id}/locations/global/workloadIdentityPools/${each.value}"
+}
+
+import {
+  for_each = local.is_prod ? toset(["github-actions/providers/odayplus"]) : toset([])
+  to       = google_iam_workload_identity_pool_provider.odayplus
+  id       = "projects/${var.project_id}/locations/global/workloadIdentityPools/${each.value}"
+}
+
+import {
+  for_each = local.is_prod ? toset(["${local.name_prefix}-database-url"]) : toset([])
+  to       = google_secret_manager_secret.database_url
+  id       = "projects/${var.project_id}/secrets/${each.value}"
+}
+
+import {
+  for_each = local.is_prod ? toset(["${local.name_prefix}-web-session-secret"]) : toset([])
+  to       = google_secret_manager_secret.web_session_secret
+  id       = "projects/${var.project_id}/secrets/${each.value}"
 }
 
 # --- Staging github-deployer grants for the ephemeral staging lifecycle ---

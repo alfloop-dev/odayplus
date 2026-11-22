@@ -24,8 +24,10 @@ EXECUTION = CANDIDATE_JOB + "-execution"
 
 def run_gate(tmp_path: Path, responses: list[object], *, read_failure: bool = False):
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    function = script[script.index("capture_public_egress_probe_receipt() {") :]
-    function = function[: function.index("\n}\n") + 3]
+    functions = []
+    for name in ("read_job_execution_logs", "capture_public_egress_probe_receipt"):
+        function = script[script.index(f"{name}() {{") :]
+        functions.append(function[: function.index("\n}\n") + 3])
     response_file = tmp_path / "responses.json"
     response_file.write_text(json.dumps(responses))
     calls = tmp_path / "calls.jsonl"
@@ -51,7 +53,7 @@ run_locked_python() {{ {python} "$@"; }}
 capture_latest_execution() {{ cp "$EXECUTION_FIXTURE" "$2"; }}
 gcloud() {{ {python} {shlex.quote(str(fake))} "$@"; }}
 sleep() {{ printf '%s\\n' "$1" >> "$READ_SLEEPS"; }}
-{function}
+{''.join(functions)}
 capture_public_egress_probe_receipt ALL_TRAFFIC
 '''
     result = subprocess.run(
@@ -63,6 +65,7 @@ capture_public_egress_probe_receipt ALL_TRAFFIC
             "ODAY_RELEASE_SHA": CANDIDATE_SHA,
             "MANIFEST_DIGEST": MANIFEST_DIGEST,
             "GCP_PROJECT": "test-project",
+            "GCP_REGION": "asia-east1",
             "EXECUTION_FIXTURE": str(execution),
             "READ_CALLS": str(calls), "READ_SLEEPS": str(sleeps),
             "READ_RESPONSES": str(response_file),
@@ -72,8 +75,11 @@ capture_public_egress_probe_receipt ALL_TRAFFIC
     read_calls = [json.loads(line) for line in calls.read_text().splitlines()]
     for call in read_calls:
         assert call[:2] == ["logging", "read"]
+        assert 'resource.type="cloud_run_job"' in call[2]
         assert f'resource.labels.job_name="{CANDIDATE_JOB}"' in call[2]
+        assert 'resource.labels.location="asia-east1"' in call[2]
         assert f'labels."run.googleapis.com/execution_name"="{EXECUTION}"' in call[2]
+        assert "--project=test-project" in call
     delays = sleeps.read_text().splitlines() if sleeps.exists() else []
     return result, report, read_calls, delays
 

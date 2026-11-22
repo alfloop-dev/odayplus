@@ -46,28 +46,40 @@ variable "labels" {
   default     = {}
 }
 
-variable "api_image" {
+variable "release_profile" {
   type        = string
-  description = "API container image. Production requires an immutable sha256 digest."
+  description = "Release profile of the admitted manifest (ODP-CORE-OPS-RELEASE-PROFILE-001), as in modules/ephemeral_staging. 'full' holds production to the approved-model contract (remote HTTPS MLflow, complete AVM/forecast approval metadata, real artifact digest and URI). 'core-ops' serves no model, so only the forecast engine/model the runtime requires stay mandatory; model values are never filled with placeholders. No default, so a missing profile fails closed."
 
   validation {
-    condition = (
-      length(trimspace(var.api_image)) > 0
-      && !can(regex("(?i)(:latest|replace_with|placeholder|changeme)", var.api_image))
-    )
+    condition     = can(regex("^(full|core-ops)$", var.release_profile))
+    error_message = "release_profile must be full or core-ops."
+  }
+}
+
+variable "cloud_run_services_managed" {
+  type        = bool
+  description = "Whether this root stack creates and owns the API and Web Cloud Run services (cloud_run.tf) and their service-scoped invoker bindings. Set false where the Runtime Release deploy path (product_ops/deployment/deploy_cloud_run_waji.sh via .github/workflows/deploy-dev.yml) owns them -- production, by owner decision 2026-11-20 -- so a normal full apply creates no Cloud Run service. The load balancer NEGs and monitoring always name the services by local.api_service_name / local.web_service_name."
+  default     = true
+}
+
+variable "api_image" {
+  type        = string
+  description = "API container image of the Terraform-owned Cloud Run API. Required when cloud_run_services_managed is true; production requires an immutable sha256 digest."
+  default     = ""
+
+  validation {
+    condition     = !can(regex("(?i)(:latest|replace_with|placeholder|changeme)", var.api_image))
     error_message = "api_image must be explicit and must not use latest or placeholder values."
   }
 }
 
 variable "web_image" {
   type        = string
-  description = "Web container image. Production requires an immutable sha256 digest."
+  description = "Web container image of the Terraform-owned Cloud Run Web. Required when cloud_run_services_managed is true; production requires an immutable sha256 digest."
+  default     = ""
 
   validation {
-    condition = (
-      length(trimspace(var.web_image)) > 0
-      && !can(regex("(?i)(:latest|replace_with|placeholder|changeme)", var.web_image))
-    )
+    condition     = !can(regex("(?i)(:latest|replace_with|placeholder|changeme)", var.web_image))
     error_message = "web_image must be explicit and must not use latest or placeholder values."
   }
 }
@@ -241,7 +253,7 @@ variable "cloud_sql_tier" {
 
 variable "cloud_sql_instance_name" {
   type        = string
-  description = "Optional explicit Cloud SQL instance name for a staging foundation migration. Empty preserves the existing environment-derived name."
+  description = "Optional explicit Cloud SQL instance name for a staging foundation migration. Empty preserves the existing environment-derived name. Production must set it: the derived name oday-prod-sql belongs to the hand-made instance this stack must neither import nor manage."
   default     = ""
 
   validation {
