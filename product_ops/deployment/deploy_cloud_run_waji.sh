@@ -546,10 +546,11 @@ handle_deployment_exit() {
       fi
     fi
   fi
-  if [ -n "${ACTIVE_PRIVATE_SMOKE_JOB}" ]; then
+  # Dev and offline callers can exit without creating private smoke resources.
+  if [ -n "${ACTIVE_PRIVATE_SMOKE_JOB:-}" ]; then
     delete_candidate_job "${ACTIVE_PRIVATE_SMOKE_JOB}" || status=1
   fi
-  if [ -n "${PRIVATE_SMOKE_SCRATCH}" ]; then
+  if [ -n "${PRIVATE_SMOKE_SCRATCH:-}" ]; then
     rm -rf -- "${PRIVATE_SMOKE_SCRATCH}"
   fi
   cleanup

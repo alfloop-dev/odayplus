@@ -8667,6 +8667,58 @@ def test_smoke_cli_requires_the_runtime_env_file_argument(tmp_path: Path) -> Non
     assert "do-not-fallback-to-legacy-tenant" not in result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("smoke_state", ["unset", "empty", "active"])
+@pytest.mark.parametrize("deploy_status", [0, 17])
+def test_deployment_exit_cleans_up_optional_private_smoke_state(
+    tmp_path: Path, smoke_state: str, deploy_status: int,
+) -> None:
+    script = (ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh").read_text()
+    start = script.index("cleanup() {")
+    end = script.index("trap handle_deployment_exit EXIT", start)
+    actual_cleanup = script[start : end + len("trap handle_deployment_exit EXIT")]
+    files = {
+        name: tmp_path / name
+        for name in (
+            "API_ENV_FILE", "WEB_ENV_FILE", "API_TRAFFIC_SNAPSHOT", "WEB_TRAFFIC_SNAPSHOT",
+            "API_CANDIDATE_DESCRIPTION", "WEB_CANDIDATE_DESCRIPTION",
+            "SCHEDULER_TRIGGER_SNAPSHOT", "WORKER_TRIGGER_SNAPSHOT",
+        )
+    }
+    for path in files.values():
+        path.touch()
+    scratch = tmp_path / "private-smoke"
+    scratch.mkdir()
+    (scratch / "env.json").write_text("private smoke input")
+    state = "unset ACTIVE_PRIVATE_SMOKE_JOB PRIVATE_SMOKE_SCRATCH"
+    if smoke_state == "empty":
+        state += '\nACTIVE_PRIVATE_SMOKE_JOB=""\nPRIVATE_SMOKE_SCRATCH=""'
+    elif smoke_state == "active":
+        state += '\nACTIVE_PRIVATE_SMOKE_JOB=private-smoke-job\nPRIVATE_SMOKE_SCRATCH="$TEST_SCRATCH"'
+    harness = r'''set -euo pipefail
+release_recovery_mode() { printf 'rollback'; }
+rollback_release_traffic() { printf 'rollback\n'; }
+delete_candidate_job() { printf 'delete:%s\n' "$1"; }
+'''
+    result = subprocess.run(
+        ["bash", "-c", harness + state + "\n" + actual_cleanup + '\nexit "$TEST_STATUS"'],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+        env={
+            "PATH": os.defpath, "ROLLBACK_ARMED": "true", "DEPLOYMENT_COMMITTED": "false",
+            "SCHEDULER_ROLLBACK_ARMED": "false", "API_SERVICE": "api", "WEB_SERVICE": "web",
+            "TEST_STATUS": str(deploy_status), "TEST_SCRATCH": str(scratch),
+            **{name: str(path) for name, path in files.items()},
+        },
+    )
+    assert result.returncode == deploy_status, result.stderr
+    assert result.stdout.splitlines() == (
+        (["rollback"] if deploy_status else [])
+        + (["delete:private-smoke-job"] if smoke_state == "active" else [])
+    )
+    assert "unbound variable" not in result.stderr
+    assert all(not path.exists() for path in files.values())
+    assert scratch.exists() is (smoke_state != "active")
+
+
 def test_production_private_smoke_job_reuses_the_validator_and_binds_its_receipt(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path,
 ) -> None:
