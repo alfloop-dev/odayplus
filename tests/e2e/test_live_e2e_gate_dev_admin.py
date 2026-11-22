@@ -919,7 +919,7 @@ def test_unpromoted_dev_versions_block_outside_dev(deployment: str) -> None:
         },
     )
 
-    _, report = base.run_gate(api, cfg=core_ops_config(deployment))
+    _, report = base.run_gate(api, cfg=core_ops_config(deployment), web_http=core_ops_web(deployment))
 
     assert blockers(report)["models:registry_refused"] == "mlflow"
 
@@ -2140,13 +2140,30 @@ def core_ops_api(deployment: str = "dev", **overrides: Any) -> dict[str, Any]:
     return api_routes(**{"anon GET /readiness": base.response(200, readiness), **overrides})
 
 
+def staging_admin_account() -> dict[str, Any]:
+    """The release-scoped bootstrap administrator staging signs in as
+    (ODP-EPHEMERAL-STAGING-ROLLOUT-001): no ODP_DEV_ADMIN_* input."""
+    return {
+        "bootstrap_admin_username": USERNAME,
+        "bootstrap_admin_password": PASSWORD,
+        "dev_admin_initial_password": INITIAL_PASSWORD,
+        "dev_admin_denied_role": DENIED_ROLE,
+    }
+
+
 def core_ops_config(deployment: str = "dev", **overrides: Any) -> Any:
+    account = staging_admin_account() if deployment == "staging" else {}
     return base.disabled_config(
-        release_profile="core-ops", expected_deployment=deployment, **overrides
+        **{"release_profile": "core-ops", "expected_deployment": deployment, **account, **overrides}
     )
 
 
-@pytest.mark.parametrize("deployment", ["dev", "staging", "production"])
+def core_ops_web(deployment: str) -> Any:
+    """Staging always runs the password journey; elsewhere core-ops does not."""
+    return AdminWeb(web_routes(), is_fresh=True) if deployment == "staging" else base.passing_web_http()
+
+
+@pytest.mark.parametrize("deployment", ["dev", "production"])
 def test_core_ops_passes_with_missing_models_refused_in_every_environment(
     deployment: str,
 ) -> None:
@@ -2166,7 +2183,8 @@ def test_core_ops_passes_with_missing_models_refused_in_every_environment(
     # The full model assertions are replaced, never silently passed ...
     assert "runtime:model_bindings" not in names
     assert not any(name.startswith("models:forecastops:") for name in names)
-    # ... and the dev-only administration journey is not a core-ops prerequisite.
+    # ... and outside staging the administration journey is not a core-ops
+    # prerequisite (staging always proves it: test_staging_proves_password_...).
     assert not any(
         name.startswith(("session:", "admin:", "config:dev_admin")) for name in names
     )
@@ -2177,6 +2195,70 @@ def test_core_ops_passes_with_missing_models_refused_in_every_environment(
         "full_product_acceptance_claimed": False,
     }
     assert report["full_acceptance"]["status"] == "NOT_ADMITTED"
+
+
+@pytest.mark.parametrize("profile", ["core-ops", "full"])
+def test_staging_proves_password_sign_in_with_its_release_scoped_admin(profile: str) -> None:
+    """Google user OAuth is off on staging (D15): every staging run proves the
+    Web password journey dev runs, first-login rotation included, as the
+    release's bootstrap administrator."""
+    readiness = missing_model_readiness(profile)
+    readiness["details"]["deploymentMode"] = "staging"
+    api = api_routes(**{"anon GET /readiness": base.response(200, readiness)})
+    web = AdminWeb(web_routes(), is_fresh=True)
+    cfg = core_ops_config("staging", release_profile=profile)
+    assert cfg.password_journey and not cfg.dev_admin
+
+    checks, report = base.run_gate(api, cfg=cfg, web_http=web)
+
+    names = {check.name for check in checks}
+    assert {
+        "config:dev_admin_account",
+        "session:invalid_credentials_refused",
+        "session:must_change_enforced",
+        "session:first_login_password_rotated",
+        "session:password_login",
+        "session:session_resolves_account",
+        "admin:bootstrap_audited",
+        "admin:bootstrap_principal_bound",
+        "session:cross_tenant_denied",
+        "admin:business_shell_denied",
+        "session:wrong_role_denied",
+        "session:logout",
+        "session:revoked_session_refused",
+        "session:html_form_password_login",
+        "session:html_form_revoked_session_refused",
+    } <= names
+    assert web.password_rotated
+    if profile == "core-ops":
+        assert report["ok"] is True, report["blockers"]
+    else:
+        # full keeps its model assertions; the session journey passed anyway.
+        assert "runtime:model_bindings" in blockers(report)
+        assert not any(name.startswith(("session:", "admin:")) for name in blockers(report))
+    for secret in (PASSWORD, INITIAL_PASSWORD):
+        assert secret not in json.dumps(report)
+
+
+@pytest.mark.parametrize("profile", ["core-ops", "full"])
+@pytest.mark.parametrize(
+    "missing", ["bootstrap_admin_username", "bootstrap_admin_password", "dev_admin_denied_role"]
+)
+def test_staging_without_its_password_account_is_refused_before_any_request(
+    profile: str, missing: str
+) -> None:
+    _, report = gate.evaluate_gate(
+        core_ops_config("staging", release_profile=profile, **{missing: ""}),
+        http=NoRequests(),
+        worker_driver=base.FakeWorkerDriver(),
+        correlation_id=base.CORRELATION_ID,
+        now=base.NOW,
+        web_http=NoRequests(),
+    )
+
+    check = "config:dev_admin_denied_role" if missing == "dev_admin_denied_role" else "config:dev_admin_account"
+    assert blockers(report)[check] == "config"
+    assert report["ok"] is False
 
 
 def test_core_ops_needs_no_dev_admin_inputs() -> None:
@@ -2275,7 +2357,7 @@ def test_a_manufactured_model_state_blocks_core_ops(mutate, check: str) -> None:
     readiness = api["anon GET /readiness"].payload
     mutate(readiness["details"]["models"])
 
-    _, report = base.run_gate(api, cfg=core_ops_config("staging"))
+    _, report = base.run_gate(api, cfg=core_ops_config("staging"), web_http=core_ops_web("staging"))
 
     assert blockers(report)[check] == "mlflow"
 

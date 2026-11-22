@@ -97,7 +97,7 @@ class RolloutSupervisorRuntimeTests(unittest.TestCase):
             launcher.write_text("old writer\n")
 
             with mock.patch.object(rollout, "git", fake_git), \
-                 mock.patch.object(rollout, "clean", lambda _repo: True), \
+                 mock.patch.object(rollout, "clean", return_value=True), \
                  mock.patch.object(rollout.worktree_cleanliness, "shares_git_common_dir", same_repository), \
                  mock.patch.object(rollout.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0)):
                 self.assertEqual(rollout.main(rollout_args(source, parent, link, status_root)), 0)
@@ -118,7 +118,7 @@ class RolloutSupervisorRuntimeTests(unittest.TestCase):
             restarts = iter((SimpleNamespace(returncode=1), SimpleNamespace(returncode=0)))
 
             with mock.patch.object(rollout, "git", fake_git), \
-                 mock.patch.object(rollout, "clean", lambda _repo: True), \
+                 mock.patch.object(rollout, "clean", return_value=True), \
                  mock.patch.object(rollout.worktree_cleanliness, "shares_git_common_dir", same_repository), \
                  mock.patch.object(rollout.subprocess, "run", lambda *args, **kwargs: next(restarts)):
                 with self.assertRaisesRegex(SystemExit, "restored previous runtime and status launcher"):
@@ -186,7 +186,7 @@ class WatchdogRolloutTests(unittest.TestCase):
         self.addCleanup(self.stop_everything)
         for patcher in (
             mock.patch.object(rollout, "git", fake_git),
-            mock.patch.object(rollout, "clean", lambda _repo: True),
+            mock.patch.object(rollout, "clean", return_value=True),
             mock.patch.object(rollout.worktree_cleanliness, "shares_git_common_dir", same_repository),
             mock.patch.object(rollout, "LOADED_RUNTIME_PROOF_POLL_SECONDS", 0.05),
             mock.patch.object(rollout, "LOADED_RUNTIME_PROOF_TIMEOUT_SECONDS", 20.0),
@@ -498,7 +498,7 @@ class WatchdogRolloutTests(unittest.TestCase):
         config = self.config_file.read_text()
         self.target.rename(self.root / "prepared")
 
-        def prepare(_source: Path, target: Path, _branch: str, _sha: str) -> None:
+        def prepare(_source: Path, target: Path, _branch: str, _sha: str, **_kwargs: object) -> None:
             (self.root / "prepared").rename(target)
 
         with self.fake_full_disks(self.target), \
@@ -699,7 +699,7 @@ class WatchdogRolloutTests(unittest.TestCase):
         old = self.spawn_supervisor(self.previous)
         self.target.rename(self.root / "prepared")
 
-        def prepare_while_cron_acts(_source: Path, target: Path, _branch: str, _sha: str) -> None:
+        def prepare_while_cron_acts(_source: Path, target: Path, _branch: str, _sha: str, **_kwargs: object) -> None:
             (self.root / "prepared").rename(target)
             self.write_attempts(120, 60, 30)
 
@@ -739,7 +739,7 @@ class WatchdogRolloutTests(unittest.TestCase):
     def test_reused_target_holding_a_protected_body_refuses_before_the_switch(self) -> None:
         old = self.spawn_supervisor(self.previous)
         config = self.config_file.read_text()
-        with mock.patch.object(rollout, "clean", lambda repo: repo != self.target):
+        with mock.patch.object(rollout, "clean", lambda repo, **_kwargs: repo != self.target):
             with self.assertRaisesRegex(SystemExit, "existing target is not the expected clean runtime"):
                 self.roll_out()
         self.assert_untouched(old, config, None)
@@ -836,6 +836,46 @@ class ProtectedRolloutPreflightTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(SystemExit, "unusable protected_paths"):
             rollout.recorded_protected_paths(status_root)
+
+    def test_runtime_excludes_the_recorded_task_file_before_materializing(self) -> None:
+        held = "guarded/held.py"
+        (self.source / held).parent.mkdir()
+        (self.source / held).write_text("synthetic fixture only\n", encoding="utf-8")
+        self._git("add", held)
+        self._git("commit", "-q", "-m", "synthetic tracked file")
+        self.target_sha = self._git("rev-parse", "HEAD")
+        target, link, previous, status_root, _ = self._existing_target_rollout()
+        (status_root / "ai-status.json").write_text(
+            json.dumps({"tasks": [{"id": "A", "protected_paths": [held]}]}), encoding="utf-8",
+        )
+
+        with mock.patch.object(rollout, "git", side_effect=AssertionError("status read before freeze check")):
+            self.assertFalse(rollout.clean(self.source, frozen_paths=(held,)))
+
+        source = self.root / "release-source"
+        rollout.add_runtime_worktree(self.source, source, "release-source", self.target_sha, frozen_paths=(held,))
+        args = rollout_args(source, target.parent, link, status_root)
+        args.extend(("--installed-bwrap-profile", str(self.installed)))
+        outcome, _commands = self._main_until_first_mutation(args, target)
+
+        self.assertNotIsInstance(outcome, SystemExit, outcome)
+        self.assertFalse((target / held).exists())
+        self.assertEqual(rollout.git(target, "ls-files", "-t", "--", held), f"S {held}")
+        self.assertEqual((target / rollout.BWRAP_PROFILE_ARTIFACT).read_bytes(), self.PROFILE)
+        self.assertEqual(link.resolve(), previous.resolve())
+
+        outcome, _commands = self._main_until_first_mutation(args, target)
+        self.assertNotIsInstance(outcome, SystemExit, outcome)
+        self.assertFalse((target / held).exists())
+        self.assertEqual(rollout.git(target, "ls-files", "-t", "--", held), f"S {held}")
+
+        with mock.patch.object(rollout, "recorded_protected_paths", side_effect=[
+            (held,), (held,), (held, "guarded/new.py"),
+        ]):
+            outcome, _commands = self._main_until_first_mutation(args, target)
+        self.assertIsInstance(outcome, SystemExit)
+        self.assertIn("canonical protected paths changed before runtime switch", str(outcome))
+        self.assertEqual(link.resolve(), previous.resolve())
 
     def test_matching_reviewed_profile_and_safe_target_pass(self) -> None:
         rollout.protected_preflight(self.source, self.target_sha, ("guarded/zone",), self.installed)
@@ -1107,12 +1147,13 @@ class ProtectedRolloutPreflightTests(unittest.TestCase):
             return fake_git(repo, *args)
 
         with mock.patch.object(rollout, "git", tracking_git), \
-             mock.patch.object(rollout, "clean", lambda _repo: True), \
+             mock.patch.object(rollout, "clean", return_value=True) as clean, \
              mock.patch.object(rollout, "protected_preflight", side_effect=SystemExit("refusing rollout: drift")) as gate:
             with self.assertRaisesRegex(SystemExit, "refusing rollout"):
                 rollout.main(rollout_args(source, parent, link, status_root))
 
         self.assertEqual(gate.call_args.args[2], ("guarded/zone",))
+        clean.assert_called_once_with(source, frozen_paths=("guarded/zone",))
         self.assertFalse(any(call[:1] == ("worktree",) for call in calls))
         self.assertFalse(target.exists())
 

@@ -1012,7 +1012,7 @@ def test_staging_uses_release_scoped_remote_backend_and_persists_recovery_sideca
     assert "${STAGING_BACKEND_PREFIX}" in create_run
     assert "${RUNNER_TEMP}" not in create_run
     persist = next(step for step in deploy_steps if step.get("name") == "Persist staging recovery bundle to protected recovery storage")
-    assert "gcloud storage cp" in str(persist["run"])
+    assert "staging_lifecycle.py persist-recovery" in str(persist["run"])
     assert "STAGING_BUNDLE_URI" in str(persist["run"])
 
     closeout = parsed["jobs"]["staging_closeout"]
@@ -1096,7 +1096,8 @@ def test_staging_recovery_bundle_storage_boundary_contract() -> None:
         step for step in deploy_steps if step.get("name") == "Persist staging recovery bundle to protected recovery storage"
     )
     assert persist_create.get("if") == "${{ success() && inputs.environment == 'staging' }}"
-    assert 'gcloud storage cp "${STAGING_OUTPUTS_FILE}" "${STAGING_BUNDLE_URI}/staging-terraform-outputs.json"' in str(persist_create["run"])
+    assert '--outputs-file "${STAGING_OUTPUTS_FILE}"' in str(persist_create["run"])
+    assert '--receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-create.json"' in str(persist_create["run"])
 
     persist_hold = next(
         step for step in deploy_steps if step.get("name") == "Persist staging hold state to protected recovery storage"
@@ -1104,11 +1105,14 @@ def test_staging_recovery_bundle_storage_boundary_contract() -> None:
     assert persist_hold.get("if") == "${{ always() && inputs.environment == 'staging' }}"
     # The recovery bucket's retention policy forbids overwriting the
     # create-time sidecar, so each run's hold state gets its own object name.
-    assert (
-        'gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/hold-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(basename "${sidecar}")"'
-        in str(persist_hold["run"])
-    )
-    assert '"${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"' not in str(persist_hold["run"])
+    assert "staging_lifecycle.py persist-recovery" in str(persist_hold["run"])
+    assert '--run-attempt "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in str(persist_hold["run"])
+    assert '--create-receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-create.json"' in str(persist_hold["run"])
+    assert '--receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-final.json"' in str(persist_hold["run"])
+    for step in (persist_create, persist_hold):
+        assert '--candidate-sha "${ODAY_RELEASE_SHA}"' in str(step["run"])
+        assert '--manifest-digest "${MANIFEST_DIGEST}"' in str(step["run"])
+        assert '--run-attempt "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in str(step["run"])
 
     # 3. closeout job environment exports and path preparation checks
     closeout_job = parsed["jobs"]["staging_closeout"]

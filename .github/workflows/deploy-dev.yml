@@ -2280,11 +2280,12 @@ jobs:
         if: ${{ success() && inputs.environment == 'staging' }}
         run: |
           set -euo pipefail
-          for sidecar in "${STAGING_STATE_DIR}"/*.tfvars.json "${STAGING_STATE_DIR}"/*.inventory.json "${STAGING_STATE_DIR}"/*.lifecycle.json; do
-            [ -f "${sidecar}" ] || continue
-            gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"
-          done
-          gcloud storage cp "${STAGING_OUTPUTS_FILE}" "${STAGING_BUNDLE_URI}/staging-terraform-outputs.json"
+          python3 product_ops/deployment/staging_lifecycle.py persist-recovery \
+            --release-id "${STAGING_RELEASE_ID}" --state-dir "${STAGING_STATE_DIR}" \
+            --bundle-uri "${STAGING_BUNDLE_URI}" --outputs-file "${STAGING_OUTPUTS_FILE}" \
+            --candidate-sha "${ODAY_RELEASE_SHA}" --manifest-digest "${MANIFEST_DIGEST}" \
+            --run-attempt "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-create.json"
 
       - name: Execute ephemeral staging rehearsal verification
         if: ${{ inputs.environment == 'staging' }}
@@ -2349,13 +2350,12 @@ jobs:
           if [ -z "${STAGING_BUNDLE_URI:-}" ] || [ -z "${STAGING_STATE_DIR:-}" ]; then
             exit 0
           fi
-          # The recovery bucket has a retention policy: the create step already
-          # wrote <release>.lifecycle.json there and it cannot be overwritten,
-          # so each run's hold state lands under its own object name.
-          for sidecar in "${STAGING_STATE_DIR}"/*.lifecycle.json; do
-            [ -f "${sidecar}" ] || continue
-            gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/hold-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(basename "${sidecar}")"
-          done
+          python3 product_ops/deployment/staging_lifecycle.py persist-recovery \
+            --release-id "${STAGING_RELEASE_ID}" --state-dir "${STAGING_STATE_DIR}" \
+            --bundle-uri "${STAGING_BUNDLE_URI}" --candidate-sha "${ODAY_RELEASE_SHA}" \
+            --manifest-digest "${MANIFEST_DIGEST}" --run-attempt "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --create-receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-create.json" \
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-final.json"
 
       - name: Upload staging lifecycle receipts
         if: ${{ always() && inputs.environment == 'staging' }}
@@ -2366,6 +2366,8 @@ jobs:
             .odp_data/release/staging-lifecycle-create.json
             .odp_data/release/staging-rehearsal-receipt.json
             .odp_data/release/staging-lifecycle-hold.json
+            .odp_data/release/staging-recovery-create.json
+            .odp_data/release/staging-recovery-final.json
           if-no-files-found: ignore
 
       - name: Download the successfully deployed manifest

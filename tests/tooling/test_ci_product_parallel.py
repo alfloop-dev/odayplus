@@ -280,7 +280,7 @@ def test_ci_workflow_product_lanes_isolated(ci_workflow: dict[str, Any]) -> None
     for lane in REQUIRED_PRODUCT_LANES:
         job = jobs[lane]
         assert job.get("runs-on") == "ubuntu-latest"
-        assert job.get("needs") == "change-scope"
+        assert job.get("needs") == ["freeze-policy", "change-scope"]
         if_cond = str(job.get("if", ""))
         assert "needs.change-scope.outputs.scope != 'development_tooling'" in if_cond
 
@@ -505,7 +505,7 @@ def test_heatzone_latency_keeps_one_required_isolated_owner(ci_workflow: dict[st
     assert count_exact_command_occurrences(jobs, command) == {"performance-gate": 1}
     assert count_exact_command_occurrences(jobs, "uv run pytest -m performance tests/performance") == {"performance-gate": 1}
     gate = jobs["performance-gate"]
-    assert gate["needs"] == "change-scope"
+    assert gate["needs"] == ["freeze-policy", "change-scope"]
     assert "needs.change-scope.outputs.scope != 'development_tooling'" in gate["if"]
     assert gate.get("continue-on-error", False) is False
     step, = [step for step in gate["steps"] if node in step.get("run", "")]
@@ -1210,8 +1210,32 @@ DENY_PATTERNS = [
     "!**/*\\\\*",
     "!**/*\\\\*/**",
 ]
-# `sparse-checkout` is what denies and `ref` is pinned per job above; every
-# other input can widen, redirect or replace the deny.
+FROZEN_REVIEW_WORKFLOWS = {
+    "ci.yml",
+    "emgi-consumer-boundary.yml",
+    "merge-queue-review-gate.yml",
+    "tooling-scope-review-gate.yml",
+}
+FROZEN_REVIEW_ENV = "ODP_FROZEN_REVIEW_PATH"
+FROZEN_REVIEW_TRIGGER = "${{ needs.freeze-policy.outputs.path }}"
+FROZEN_REVIEW_POLICY = {
+    "permissions": {"pull-requests": "read"},
+    "uses": "./.github/workflows/frozen-review-policy.yml",
+}
+FROZEN_REVIEW_SUCCESS = "${{ needs.freeze-policy.result == 'success' }}"
+FROZEN_POLICY_PREFLIGHT = (
+    'if [ "$FREEZE_POLICY_RESULT" != success ]; then\n'
+    '  echo "::error::Frozen review checkout policy could not be determined."\n'
+    '  exit 1\n'
+    'fi\n'
+)
+FROZEN_REVIEW_RULES = [
+    "${{ env.ODP_FROZEN_REVIEW_PATH && format('!/{0}', env.ODP_FROZEN_REVIEW_PATH) || '' }}",
+    "${{ env.ODP_FROZEN_REVIEW_PATH && format('!/{0}/**', env.ODP_FROZEN_REVIEW_PATH) || '' }}",
+]
+FROZEN_REVIEW_HISTORY = "${{ env.ODP_FROZEN_REVIEW_PATH && '0' || '1' }}"
+
+# Sparse checkout denies protected bodies. The ref is pinned per job above.
 ALLOWED_CHECKOUT_INPUTS = {"fetch-depth", "ref", "sparse-checkout", "sparse-checkout-cone-mode"}
 REMATERIALIZING_COMMAND = re.compile(
     r"\bgit(?:\s+-[cC]\s+\S+|\s+-\S+)*\s+(?:checkout|switch|restore|read-tree|stash|clone|archive|pull|fetch|merge|rebase"
@@ -1282,10 +1306,25 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
     """Every way a job could materialize the denied prefix, stated as a violation."""
     preflight_run, proof_run = reference_step_scripts()
     violations: list[str] = []
+    scoped = name in FROZEN_REVIEW_WORKFLOWS
+    if scoped:
+        if workflow["jobs"].get("freeze-policy") != FROZEN_REVIEW_POLICY:
+            violations.append(f"{name}: frozen review policy must resolve before checkout")
+    else:
+        steps = load_pr_workflow("assisted-intake-design-validation.yml")["jobs"]["validate-contract-package"]["steps"]
+        proof_run = next(step["run"] for step in steps if step.get("name") == DENIAL_PROOF_NAME)
     checkouts = 0
     for job_name, job in workflow["jobs"].items():
+        if scoped and job_name == "freeze-policy":
+            continue
         steps = job.get("steps", [])
         here = f"{name}:{job_name}"
+        if scoped:
+            needs = job.get("needs", [])
+            if "freeze-policy" not in ([needs] if isinstance(needs, str) else needs):
+                violations.append(f"{here}: job must depend on the frozen review policy")
+            if (job.get("env") or {}).get(FROZEN_REVIEW_ENV) != FROZEN_REVIEW_TRIGGER:
+                violations.append(f"{here}: job must use the resolved frozen path")
         positions = [i for i, step in enumerate(steps) if "actions/checkout" in str(step.get("uses", ""))]
         checkouts += len(positions)
         if len(positions) != 1:
@@ -1296,7 +1335,15 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
         violations.extend(_inherited_execution_violations(here, workflow, job))
         if checkout["uses"] != "actions/checkout@v4":
             violations.append(f"{here}: checkout version changed: {checkout['uses']}")
-        if at != 1 or steps[0].get("name") != GIT_PREFLIGHT_NAME or steps[0].get("run") != preflight_run:
+        always_ci = name == "ci.yml" and job_name in {"product", "automatic-dev-release"}
+        job_preflight = preflight_run
+        preflight_keys = {"name", "run"}
+        if always_ci:
+            job_preflight = preflight_run.replace("set -euo pipefail\n", "set -euo pipefail\n" + FROZEN_POLICY_PREFLIGHT, 1)
+            preflight_keys.add("env")
+            if steps[0].get("env") != {"FREEZE_POLICY_RESULT": "${{ needs.freeze-policy.result }}"}:
+                violations.append(f"{here}: `always()` job must check the policy result before checkout")
+        if at != 1 or steps[0].get("name") != GIT_PREFLIGHT_NAME or steps[0].get("run") != job_preflight:
             violations.append(f"{here}: exact Git preflight must be the only step before checkout")
         guarded = [steps[0], checkout]
         following = steps[at + 1] if at + 1 < len(steps) else {}
@@ -1314,13 +1361,19 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
         expected_env = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
         if (name, job_name) in COMPARED_COMMITS:
             expected_env["PROTECTED_COMPARE_SHAS"] = COMPARED_COMMITS[(name, job_name)]
+        if scoped:
+            expected_env["PROTECTED_FROZEN_PATH"] = '${{ env.ODP_FROZEN_REVIEW_PATH }}'
         if following.get("env") != expected_env:
             violations.append(f"{here}: denial proof must judge repository configuration and every compared commit")
         for step in guarded:
             for softener in ("if", "continue-on-error"):
+                if softener == "if" and (name, job_name) == ("merge-queue-review-gate.yml", "review-gate"):
+                    if step.get("if") != FROZEN_REVIEW_SUCCESS:
+                        violations.append(f"{here}: guarded step must await successful PR selection")
+                    continue
                 if softener in step:
                     violations.append(f"{here}: {step.get('name') or step.get('uses')} may not set {softener}")
-        for step, keys in ((steps[0], {"name", "run"}), (following, GUARDED_SCRIPT_KEYS)):
+        for step, keys in ((steps[0], preflight_keys), (following, GUARDED_SCRIPT_KEYS)):
             if set(step) - keys - {"if", "continue-on-error"}:
                 violations.append(f"{here}: {step.get('name')} may not set {sorted(set(step) - keys)}")
         inputs = checkout.get("with") or {}
@@ -1330,8 +1383,11 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
             violations.append(f"{here}: checkout ref changed: {inputs.get('ref')!r}")
         if inputs.get("sparse-checkout-cone-mode") is not False:
             violations.append(f"{here}: sparse checkout must stay non-cone")
-        if str(inputs.get("sparse-checkout") or "").split() != DENY_PATTERNS:
+        required_rules = DENY_PATTERNS + (FROZEN_REVIEW_RULES if scoped else [])
+        if str(inputs.get("sparse-checkout") or "").splitlines() != required_rules:
             violations.append(f"{here}: deny patterns changed")
+        if (name, job_name) == ("ci.yml", "orchestrator") and inputs.get("fetch-depth") != FROZEN_REVIEW_HISTORY:
+            violations.append(f"{here}: checkout must include the pinned freeze history when active")
         if job_name in FULL_HISTORY_JOBS[name] and inputs.get("fetch-depth") != 0:
             violations.append(f"{here}: required full history was lost")
         for step in steps:
@@ -1376,8 +1432,16 @@ def test_deny_patterns_are_the_shared_domain_policy() -> None:
     assert DENY_PATTERNS == list(wc.protected_body_sparse_patterns())
     _preflight, proof = reference_step_scripts()
     assert proof.count('denied = "tests/sources"') == 1
-    assert "wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)" in proof
-    assert "wc.protected_body_sparse_patterns((denied,))" in proof
+    assert 'os.environ.get("PROTECTED_FROZEN_PATH")' in proof
+    assert "frozen = wc.normalize_protected_paths([frozen_path] if frozen_path else [])" in proof
+    assert "wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)" in proof
+    assert "wc.protected_body_sparse_patterns((denied,), frozen_paths=frozen)" in proof
+    assert "wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen)" in proof
+    assert 'wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen),' in proof
+    assert 'wc.inspect_protected_git_metadata(root, sha, (denied, *frozen))' in proof
+    steps = load_pr_workflow("ci.yml")["jobs"]["orchestrator"]["steps"]
+    boundary = next(step["run"] for step in steps if step.get("name") == "Enforce product and development code boundaries")
+    assert "export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null" in boundary
 
 
 def _proof_step(name: str, job: str) -> tuple[list[dict[str, Any]], int]:
@@ -1388,8 +1452,7 @@ def _proof_step(name: str, job: str) -> tuple[list[dict[str, Any]], int]:
 def test_compared_commits_are_the_ones_the_downstream_consumers_read() -> None:
     """The proof must vouch for the exact values handed to the later diff, not lookalikes."""
     expression = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
-    for name in ("emgi-consumer-boundary.yml", "tooling-scope-review-gate.yml"):
-        job = next(iter(load_pr_workflow(name)["jobs"]))
+    for name, job in (("emgi-consumer-boundary.yml", "boundary"), ("tooling-scope-review-gate.yml", "classify")):
         steps, proof = _proof_step(name, job)
         consumer = next(step for step in steps if "BASE_SHA" in (step.get("env") or {}))
         assert steps.index(consumer) > proof, "the consumer must run after the proof"
@@ -1428,7 +1491,7 @@ def test_full_history_jobs_are_all_the_jobs_that_declared_it() -> None:
         declared = {
             job_name
             for job_name, job in jobs.items()
-            for step in job["steps"]
+            for step in job.get("steps", [])
             if (step.get("with") or {}).get("fetch-depth") == 0
         }
         assert declared == expected
