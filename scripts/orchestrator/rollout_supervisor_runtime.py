@@ -60,13 +60,15 @@ def git(repo: Path, *args: str) -> str:
     return run(["git", *args], cwd=repo)
 
 
-def clean(repo: Path) -> bool:
+def clean(repo: Path, *, frozen_paths: tuple[str, ...] = ()) -> bool:
     """No tracked change, judged only once no protected body can be read doing so.
 
     The shared domain proof runs first: status may hash a materialized tracked
     body to compare it, so a checkout holding one is never clean.
     """
-    refusal = worktree_cleanliness.protected_body_checkout_refusal(repo)
+    refusal = worktree_cleanliness.protected_body_checkout_refusal(
+        repo, frozen_paths=frozen_paths, require_sparse=bool(frozen_paths),
+    )
     if refusal:
         print(f"protected_body_refused={repo}: {refusal}", file=sys.stderr)
         return False
@@ -174,17 +176,21 @@ def protected_preflight(source: Path, target_sha: str, protected: tuple[str, ...
         )
 
 
-def add_runtime_worktree(source: Path, target: Path, branch: str, target_sha: str) -> None:
+def add_runtime_worktree(
+    source: Path, target: Path, branch: str, target_sha: str, *, frozen_paths: tuple[str, ...] = (),
+) -> None:
     """Register the runtime without a checkout, prove HEAD, exclude the protected
     body domain, then materialize it and prove the domain stayed out."""
     git(source, "worktree", "add", "--no-checkout", "-b", branch, str(target), target_sha)
     if git(target, "symbolic-ref", "--quiet", "HEAD") != f"refs/heads/{branch}" or git(target, "rev-parse", "HEAD") != target_sha:
         raise RuntimeError(f"runtime worktree HEAD is not {branch} at {target_sha}")
-    excluded = worktree_cleanliness.install_protected_body_sparse(target)
+    excluded = worktree_cleanliness.install_protected_body_sparse(target, frozen_paths=frozen_paths)
     if excluded:
         raise RuntimeError(f"runtime worktree protected body exclusion failed: {excluded}")
     git(target, "read-tree", "--reset", "-u", target_sha)
-    refusal = worktree_cleanliness.protected_body_checkout_refusal(target, require_sparse=True)
+    refusal = worktree_cleanliness.protected_body_checkout_refusal(
+        target, require_sparse=True, frozen_paths=frozen_paths,
+    )
     if refusal:
         raise RuntimeError(f"runtime worktree materialized protected body domain: {refusal}")
 
@@ -520,7 +526,11 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"live config does not exist: {live_config}")
     if link.exists() and not link.is_symlink():
         raise SystemExit(f"runtime link exists but is not a symlink: {link}")
-    if not clean(source):
+    protected = recorded_protected_paths(status_root)
+    frozen_paths = tuple(
+        path for path in protected if not worktree_cleanliness.in_protected_body_domain(path)
+    )
+    if not clean(source, frozen_paths=frozen_paths):
         raise SystemExit("refusing rollout from a dirty source checkout")
 
     try:
@@ -540,7 +550,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"target={target} sha={target_sha} branch={branch}")
     print(f"previous={previous if previous else 'none'}")
     print(f"status_launcher={launcher} writer={link / 'scripts' / 'ai_status.py'}")
-    protected = recorded_protected_paths(status_root)
+    if recorded_protected_paths(status_root) != protected:
+        raise SystemExit("refusing rollout: canonical protected paths changed during source preflight")
     protected_preflight(source, target_sha, protected, args.installed_bwrap_profile)
     if protected:
         print(f"protected_paths={','.join(protected)} sandbox_profile=matches")
@@ -563,15 +574,15 @@ def main(argv: list[str] | None = None) -> int:
         # Judged before anything reads the target's status or switches to it.
         if not worktree_cleanliness.shares_git_common_dir(source, target):
             raise SystemExit(f"existing target is not a worktree of the source repository: {target}")
-        if not clean(target) or git(target, "rev-parse", "HEAD") != target_sha:
+        if not clean(target, frozen_paths=frozen_paths) or git(target, "rev-parse", "HEAD") != target_sha:
             raise SystemExit(f"existing target is not the expected clean runtime: {target}")
     else:
         try:
-            add_runtime_worktree(source, target, branch, target_sha)
+            add_runtime_worktree(source, target, branch, target_sha, frozen_paths=frozen_paths)
         except RuntimeError as exc:
             raise SystemExit(f"could not prepare clean runtime worktree: {exc}") from exc
 
-    if not clean(target) or git(target, "rev-parse", "--abbrev-ref", "HEAD") != branch:
+    if not clean(target, frozen_paths=frozen_paths) or git(target, "rev-parse", "--abbrev-ref", "HEAD") != branch:
         raise SystemExit("fresh runtime did not pass clean named-branch integrity checks")
     if git(target, "rev-list", "--count", f"HEAD..{args.tracking_ref}") != "0":
         raise SystemExit("fresh runtime is behind tracking ref after preparation")
@@ -579,6 +590,9 @@ def main(argv: list[str] | None = None) -> int:
     if watchdog_context is not None:
         # Preparing the worktree takes a while, and the cron watchdog keeps acting.
         require_restart_admissible(watchdog_context, previous)
+
+    if recorded_protected_paths(status_root) != protected:
+        raise SystemExit("refusing rollout: canonical protected paths changed before runtime switch")
 
     launcher_before = snapshot_file(launcher)
     try:

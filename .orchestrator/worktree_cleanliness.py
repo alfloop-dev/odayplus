@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -69,7 +70,8 @@ def normalize_protected_paths(raw: object) -> tuple[str, ...]:
             or value.startswith("/")
             or "\\" in value
             or "\0" in value
-            or any(char in _PATTERN_CHARS for char in value)
+            or any(char in _PATTERN_CHARS or ord(char) < 32 for char in value)
+            or value != value.rstrip()
             or any(part in {"", ".", ".."} for part in parts)
             or ".git" in parts
         ):
@@ -143,7 +145,9 @@ def _domain_prefixes(prefixes: Iterable[str] | None) -> tuple[str, ...]:
     return PROTECTED_BODY_PREFIXES if prefixes is None else tuple(prefixes)
 
 
-def protected_body_sparse_patterns(prefixes: Iterable[str] | None = None) -> tuple[str, ...]:
+def protected_body_sparse_patterns(
+    prefixes: Iterable[str] | None = None, *, frozen_paths: tuple[str, ...] = (),
+) -> tuple[str, ...]:
     """The non-cone sparse patterns that keep every domain entry out of a checkout.
 
     They cover every Git name ``in_protected_body_domain`` denies: an entry
@@ -161,21 +165,27 @@ def protected_body_sparse_patterns(prefixes: Iterable[str] | None = None) -> tup
         ),
         *(f"!**/{name}*" for name in PROTECTED_BODY_NAMES),
         *_BACKSLASH_NAME_PATTERNS,
+        *(pattern for path in normalize_protected_paths(frozen_paths) for pattern in (f"!/{path}", f"!/{path}/**")),
     )
 
 
-def in_protected_body_domain(relative_path: object, prefixes: Iterable[str] | None = None) -> bool:
+def in_protected_body_domain(
+    relative_path: object, prefixes: Iterable[str] | None = None, *, frozen_paths: tuple[str, ...] = (),
+) -> bool:
     """Whether a repo-relative path names a domain entry, from its name only."""
     parts = [part for part in str(relative_path or "").replace("\\", "/").split("/") if part not in {"", "."}]
     for prefix in _domain_prefixes(prefixes):
         wanted = prefix.split("/")
         if any(parts[index : index + len(wanted)] == wanted for index in range(len(parts) - len(wanted) + 1)):
             return True
-    return any(part.startswith(name) for part in parts for name in PROTECTED_BODY_NAMES)
+    literal = "/".join(parts)
+    return any(literal == path or literal.startswith(path + "/") for path in frozen_paths) or any(
+        part.startswith(name) for part in parts for name in PROTECTED_BODY_NAMES
+    )
 
 
 def protected_body_tree_entries(
-    cwd: Path | str, commit: str, prefixes: Iterable[str] | None = None
+    cwd: Path | str, commit: str, prefixes: Iterable[str] | None = None, *, frozen_paths: tuple[str, ...] = (),
 ) -> tuple[tuple[str, str, str], ...] | None:
     """(mode, object id, path) of every domain entry ``commit`` tracks; None when unreadable.
 
@@ -196,7 +206,7 @@ def protected_body_tree_entries(
         if len(fields) != 3:
             return None
         path = os.fsdecode(name)
-        if in_protected_body_domain(path, prefixes):
+        if in_protected_body_domain(path, prefixes, frozen_paths=frozen_paths):
             entries.append((fields[0].decode("ascii", "replace"), fields[2].decode("ascii", "replace"), path))
     return tuple(sorted(entries, key=lambda entry: entry[2]))
 
@@ -216,14 +226,18 @@ def _sparse_patterns(cwd: Path) -> list[str] | None:
     if not path.is_absolute():
         path = cwd / path
     try:
-        return path.read_text(encoding="utf-8").split()
+        # Git ignores empty lines, including the leading newline added by actions/checkout.
+        # Keep every character of nonempty patterns, including embedded spaces.
+        return [line for line in path.read_text(encoding="utf-8").split("\n") if line]
     except FileNotFoundError:
         return []
     except (OSError, UnicodeDecodeError):
         return None
 
 
-def install_protected_body_sparse(worktree_path: Path | str, prefixes: Iterable[str] | None = None) -> str | None:
+def install_protected_body_sparse(
+    worktree_path: Path | str, prefixes: Iterable[str] | None = None, *, frozen_paths: tuple[str, ...] = (),
+) -> str | None:
     """Exclude the domain from a registered, not yet materialized worktree.
 
     Returns why it could not.  An index that already holds entries means files
@@ -236,7 +250,7 @@ def install_protected_body_sparse(worktree_path: Path | str, prefixes: Iterable[
         return "unreadable_metadata: index"
     if listed.stdout:
         return "already_materialized: sparse exclusion must precede the first checkout"
-    patterns = "".join(f"{pattern}\n" for pattern in protected_body_sparse_patterns(prefixes))
+    patterns = "".join(f"{pattern}\n" for pattern in protected_body_sparse_patterns(prefixes, frozen_paths=frozen_paths))
     try:
         proc = subprocess.run(
             ["git", "sparse-checkout", "set", "--no-cone", "--stdin"],
@@ -259,6 +273,7 @@ def protected_body_checkout_refusal(
     prefixes: Iterable[str] | None = None,
     require_sparse: bool = False,
     target: str | None = None,
+    frozen_paths: tuple[str, ...] = (),
 ) -> str | None:
     """Why status, hashing, copying, or checking ``target`` out could touch a domain body here.
 
@@ -291,7 +306,7 @@ def protected_body_checkout_refusal(
         if len(fields) != 4:
             return "unreadable_metadata: index"
         path = os.fsdecode(name)
-        if in_protected_body_domain(path, prefixes):
+        if in_protected_body_domain(path, prefixes, frozen_paths=frozen_paths):
             tag, mode, object_id, stage = fields
             indexed.setdefault(path, []).append((tag, mode, object_id, stage))
     tracked: dict[str, tuple[str, str]] = {}
@@ -299,13 +314,13 @@ def protected_body_checkout_refusal(
     if born is None:
         return "unreadable_metadata: HEAD"
     if born.returncode == 0:
-        listing = protected_body_tree_entries(root, born.stdout.decode("ascii", "replace").strip(), prefixes)
+        listing = protected_body_tree_entries(root, born.stdout.decode("ascii", "replace").strip(), prefixes, frozen_paths=frozen_paths)
         if listing is None:
             return "unreadable_metadata: HEAD tree"
         tracked = {path: (mode, object_id) for mode, object_id, path in listing}
     incoming: tuple[tuple[str, str, str], ...] = ()
     if target is not None:
-        incoming = protected_body_tree_entries(root, target, prefixes)
+        incoming = protected_body_tree_entries(root, target, prefixes, frozen_paths=frozen_paths)
         if incoming is None:
             return "unreadable_metadata: target tree"
     if indexed or tracked or incoming or require_sparse:
@@ -316,7 +331,7 @@ def protected_body_checkout_refusal(
         patterns = _sparse_patterns(root)
         if patterns is None:
             return "unreadable_metadata: sparse patterns"
-        if patterns != list(protected_body_sparse_patterns(prefixes)):
+        if patterns != list(protected_body_sparse_patterns(prefixes, frozen_paths=frozen_paths)):
             return "protected_body_not_excluded: sparse patterns differ from the protected body domain"
     for path in sorted(set(indexed) | set(tracked)):
         stages = indexed.get(path, [])
@@ -350,7 +365,7 @@ def protected_body_checkout_refusal(
         return "unreadable_metadata: untracked entries"
     for record in untracked.stdout.split(b"\0"):
         path = os.fsdecode(record)
-        if record and in_protected_body_domain(path, prefixes):
+        if record and in_protected_body_domain(path, prefixes, frozen_paths=frozen_paths):
             return f"protected_body_present: {path} is untracked domain content"
     return None
 
@@ -403,8 +418,8 @@ def shares_git_common_dir(repo_root: Path | str, path: Path | str) -> bool:
         return False
 
 
-def _tree_entry(cwd: Path, commit: str, relative_path: str) -> tuple[str, str] | None | bool:
-    """Exact (mode, type) of one tree entry; ``False`` when unreadable."""
+def _tree_entry(cwd: Path, commit: str, relative_path: str) -> tuple[str, str, str] | None | bool:
+    """Exact (mode, type, object ID) of a tree entry; ``False`` when unreadable."""
     proc = _git_metadata(cwd, "ls-tree", "-z", "--full-tree", commit, "--", relative_path)
     if proc is None or proc.returncode != 0:
         return False
@@ -416,7 +431,11 @@ def _tree_entry(cwd: Path, commit: str, relative_path: str) -> tuple[str, str] |
         if len(fields) != 3:
             return False
         if os.fsdecode(name) == relative_path:
-            return fields[0].decode("ascii", "replace"), fields[1].decode("ascii", "replace")
+            return (
+                fields[0].decode("ascii", "replace"),
+                fields[1].decode("ascii", "replace"),
+                fields[2].decode("ascii", "replace"),
+            )
     return None
 
 
@@ -554,6 +573,138 @@ def inspect_protected_git_metadata(
     return ProtectedMetadataInspection(True, "metadata_safe", commit_sha)
 
 
+def frozen_task_base(task: object) -> str | None:
+    """An existing immutable task base authorizes tracked, excluded frozen files."""
+    if not task_protected_paths(task) or "frozen_evidence_base_sha" not in task:
+        return None
+    base = task["frozen_evidence_base_sha"]
+    if not isinstance(base, str) or not re.fullmatch(r"[a-f0-9]{40}", base):
+        raise ProtectedPathPolicyError("frozen_evidence_base_sha must be a full lowercase Git object ID")
+    return base
+
+
+def frozen_task_upstream_refusal(cwd: Path | str, frozen_base: str, upstream_ref: str) -> str | None:
+    """A task can only pin a freeze to history already on its trusted upstream."""
+    if not upstream_ref.startswith("refs/remotes/origin/"):
+        return "frozen_base_upstream_required: remote base reference is missing"
+    root = Path(cwd)
+    upstream = _git_metadata(root, "show-ref", "--verify", "--hash", upstream_ref)
+    if upstream is None or upstream.returncode:
+        return "frozen_base_upstream_required: remote base reference is unavailable"
+    upstream_sha = upstream.stdout.decode("ascii", "replace").strip()
+    if not re.fullmatch(r"[a-f0-9]{40}", upstream_sha):
+        return "unreadable_metadata: remote base object ID"
+    ancestry = _git_metadata(root, "merge-base", "--is-ancestor", frozen_base, upstream_sha)
+    if ancestry is None or ancestry.returncode:
+        return "frozen_base_not_upstream: canonical task base must be on the remote base branch"
+    return None
+
+
+def frozen_task_commit_refusal(
+    cwd: Path | str, commit: str, protected: tuple[str, ...], frozen_base: str,
+) -> str | None:
+    """Compare tree modes and object IDs from the trusted task base, without reading blobs."""
+    root = Path(cwd)
+    for revision in (frozen_base, commit):
+        verdict = inspect_protected_git_metadata(root, revision, protected)
+        if not verdict.ok:
+            return f"{verdict.reason}: {verdict.detail}"
+    ancestry = _git_metadata(root, "merge-base", "--is-ancestor", frozen_base, commit)
+    if ancestry is None or ancestry.returncode:
+        return "frozen_base_not_ancestor: candidate is not based on the canonical task base"
+    for path in protected:
+        original = _tree_entry(root, frozen_base, path)
+        proposed = _tree_entry(root, commit, path)
+        if original is False or proposed is False:
+            return f"unreadable_metadata: frozen path {path}"
+        if original != proposed:
+            return f"frozen_path_changed: {path}"
+        if original is not None and original[0] not in {"100644", "100755"}:
+            return f"frozen_path_unsupported_mode: {path} ({original[0]})"
+    return None
+
+
+def protected_task_checkout_refusal(
+    cwd: Path,
+    commit: str,
+    protected: tuple[str, ...],
+    *,
+    worktree_path: Path | None = None,
+    check_index: bool = False,
+    checkout_into: Path | None = None,
+    frozen_base: str | None = None,
+) -> str | None:
+    """Why Git may not materialize or read ``commit`` for a protected task, if it may not.
+
+    ``metadata_safe`` only proves the entry cannot escape.  A regular tracked
+    protected entry would still be written by read-tree, merge and checkout,
+    and read by status, so it is refused here from its tree entry alone.
+
+    Given the checkout itself (``worktree_path`` and ``check_index``), this also
+    answers for what status and hashing will meet there rather than what the
+    commit names: Git opens a staged body to compare it, and an ignore file under
+    the prefix as it walks in.  An indexed entry, or anything on disk under the
+    prefix, is refused before they run, as is any error proving neither.  The one
+    entry a healthy checkout holds is the empty directory its own protected
+    launch mounts the mask on (``plan_protected_execution``).
+
+    The checkout itself is also held to the shared protected body domain, for
+    every task, before any caller's status, hash, copy, checkout or merge.
+    ``checkout_into`` names the existing checkout ``commit`` is about to be
+    checked out or merged into: that checkout is held to the same domain for
+    what it holds now and for what ``commit`` would bring, so a target that
+    introduces a domain entry needs the exclusion before Git writes a file.
+    """
+    frozen_paths = protected if frozen_base is not None else ()
+    if worktree_path is not None and check_index:
+        body_refusal = protected_body_checkout_refusal(worktree_path, frozen_paths=frozen_paths)
+        if body_refusal:
+            return f"protected_metadata_refused: {body_refusal}"
+    if checkout_into is not None:
+        body_refusal = protected_body_checkout_refusal(checkout_into, target=commit, frozen_paths=frozen_paths)
+        if body_refusal:
+            return f"protected_metadata_refused: {body_refusal}"
+    if not protected:
+        return None
+    verdict = inspect_protected_git_metadata(
+        cwd, commit, protected, worktree_path=worktree_path, check_index=check_index
+    )
+    if not verdict.ok:
+        return f"protected_metadata_refused: {verdict.reason}: {verdict.detail}"
+    if frozen_base is not None:
+        refusal = frozen_task_commit_refusal(cwd, verdict.detail, protected, frozen_base)
+        return f"protected_metadata_refused: {refusal}" if refusal else None
+    for path in protected:
+        entry = _tree_entry(cwd, verdict.detail, path)
+        if entry is False:
+            return f"protected_metadata_refused: unreadable_metadata: {path}"
+        if entry is not None:
+            return f"protected_metadata_refused: protected_entry_tracked: {path} ({entry[0]}) at {verdict.detail}"
+        if worktree_path is None or not check_index:
+            continue
+        # Modes only: a nested entry is proven present without naming it.
+        indexed = _git_metadata(
+            Path(worktree_path), "ls-files", "--cached", "-z", "--format=%(objectmode)", "--", f":(top,literal){path}"
+        )
+        if indexed is None or indexed.returncode != 0:
+            return f"protected_metadata_refused: unreadable_metadata: index {path}"
+        if indexed.stdout:
+            return f"protected_metadata_refused: protected_entry_indexed: {path}"
+        target = Path(worktree_path) / path
+        try:
+            if not stat.S_ISDIR(target.lstat().st_mode):
+                return f"protected_metadata_refused: protected_entry_present: {path}"
+            with os.scandir(target) as entries:
+                if next(entries, None) is not None:
+                    return f"protected_metadata_refused: protected_entry_present: {path}"
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return f"protected_metadata_refused: unreadable_metadata: worktree {path}"
+    return None
+
+
+
 def context_path_protection_error(
     root: Path | str,
     relative_path: str,
@@ -667,6 +818,7 @@ class ProtectedExecutionPlan:
     cwd: Path
     operations: tuple[tuple, ...]
     bwrap: str = BWRAP_BINARY
+    absent_frozen_paths: tuple[Path, ...] = ()
 
     @property
     def mount_targets(self) -> tuple[Path, ...]:
@@ -766,6 +918,7 @@ def plan_protected_execution(
             roots.append(resolved)
 
     operations: list[tuple] = []
+    absent_frozen_paths: list[Path] = []
     base = workspace.parent
     if base not in _UNSHADOWABLE and not any(_is_within(alias, base) for alias in aliases):
         operations.append(_shadow_operation(base))
@@ -781,6 +934,19 @@ def plan_protected_execution(
                 metadata = None
             except OSError as error:
                 raise ProtectedExecutionUnavailable(f"{target}: {error}") from None
+            if root == workspace:
+                listed = _git_metadata(root, "ls-files", "-z", "-t", "--", f":(top,literal){path}")
+                if listed is None or listed.returncode:
+                    raise ProtectedExecutionUnavailable(f"cannot verify the workspace index for {path}")
+                if listed.stdout:
+                    if listed.stdout != b"S " + os.fsencode(path) + b"\0" or metadata is not None:
+                        raise ProtectedExecutionUnavailable(f"tracked frozen file {path} is not safely excluded")
+                    ancestor = target.parent
+                    while ancestor != root and not ancestor.exists():
+                        ancestor = ancestor.parent
+                    operations.append(_shadow_operation(ancestor))
+                    absent_frozen_paths.append(target)
+                    continue
             if metadata is None and root == workspace:
                 # Our own checkout: an empty read-only mount point also keeps
                 # the worker from creating new protected content.
@@ -811,7 +977,10 @@ def plan_protected_execution(
     for operation in operations:
         unique.setdefault(operation[1], operation)
     ordered = sorted(unique.values(), key=lambda operation: len(operation[1].parts))
-    return ProtectedExecutionPlan(protected_paths=protected, cwd=workspace, operations=tuple(ordered), bwrap=bwrap)
+    return ProtectedExecutionPlan(
+        protected_paths=protected, cwd=workspace, operations=tuple(ordered), bwrap=bwrap,
+        absent_frozen_paths=tuple(absent_frozen_paths),
+    )
 
 
 _PROBE_SOURCE = r"""
@@ -843,12 +1012,16 @@ except OSError:
     pass
 def unescape(value):
     return value.encode().decode('unicode_escape').encode('latin-1').decode('utf-8', 'surrogateescape')
-mounts = set()
+mounts = {}
 for line in open('/proc/self/mountinfo', encoding='utf-8'):
-    mounts.add(unescape(line.split()[4]))
+    parts = line.split()
+    mounts[unescape(parts[4])] = parts[5].split(',')
 for target in spec['targets']:
-    if target not in mounts:
+    if 'ro' not in mounts.get(target, ()):
         errors.append('unmasked:' + target)
+for target in spec['absent_frozen_paths']:
+    if os.path.lexists(target):
+        errors.append('materialized_frozen_path:' + target)
 if errors:
     print(json.dumps(errors))
     sys.exit(3)
@@ -874,6 +1047,7 @@ def probe_protected_execution(plan: ProtectedExecutionPlan, *, timeout: float = 
             "canary_dir": str(canary_dir),
             "canary_file": str(canary_file),
             "targets": [str(target) for target in plan.mount_targets],
+            "absent_frozen_paths": [str(target) for target in plan.absent_frozen_paths],
             "token": PROTECTED_EXECUTION_PROBE_TOKEN,
         }
         argv = plan.wrap(
@@ -1174,29 +1348,31 @@ def inspect_worktree(
     *,
     materialized_paths: Iterable[object] | None = None,
     protected_paths: Iterable[str] = (),
+    frozen_base: str | None = None,
+    enforce_task_paths: bool = False,
 ) -> WorktreeInspection:
     path = Path(worktree_path)
     protected = normalize_protected_paths(list(protected_paths or ()))
-    if protected:
-        metadata = inspect_protected_git_metadata(path, "HEAD", protected, worktree_path=path, check_index=True)
-        if not metadata.ok:
-            return WorktreeInspection(
-                kind="protected_metadata_refused",
-                entries=(),
-                blocking_entries=(),
-                fingerprint="",
-                detail=f"{metadata.reason}: {metadata.detail}",
-            )
-    # Status may hash a materialized tracked body to compare it, so the domain
-    # is proven absent first, for every worktree.
-    body_refusal = protected_body_checkout_refusal(path)
+    # The shared guard runs before status can hash anything in the checkout.
+    if enforce_task_paths or frozen_base is not None:
+        body_refusal = protected_task_checkout_refusal(
+            path, "HEAD", protected, worktree_path=path, check_index=True, frozen_base=frozen_base,
+        )
+    else:
+        body_refusal = None
+        if protected:
+            metadata = inspect_protected_git_metadata(path, "HEAD", protected, worktree_path=path, check_index=True)
+            if not metadata.ok:
+                body_refusal = f"{metadata.reason}: {metadata.detail}"
+        if not body_refusal:
+            body_refusal = protected_body_checkout_refusal(path)
     if body_refusal:
         return WorktreeInspection(
             kind="protected_metadata_refused",
             entries=(),
             blocking_entries=(),
             fingerprint="",
-            detail=body_refusal,
+            detail=body_refusal.removeprefix("protected_metadata_refused: "),
         )
     try:
         proc = subprocess.run(
@@ -1240,14 +1416,72 @@ def _environment_materialized_paths() -> list[str]:
     return decoded if isinstance(decoded, list) else []
 
 
+def task_review_freeze(
+    repo: Path, task_id: str | None, status_file: Path | None, upstream_ref: str,
+) -> tuple[tuple[str, ...], str | None]:
+    """Load the canonical task's freeze and verify its upstream anchor."""
+    if task_id is None and status_file is None:
+        return (), None
+    if not task_id or status_file is None:
+        raise ProtectedPathPolicyError("task ID and status file must be supplied together")
+    try:
+        tasks = json.loads(status_file.read_text(encoding="utf-8"))["tasks"]
+        if not isinstance(tasks, list):
+            raise TypeError("tasks must be a list")
+    except FileNotFoundError:
+        if os.environ.get("PANTHEON_STATUS_ROOT"):
+            raise ProtectedPathPolicyError("canonical task registry is missing") from None
+        return (), None
+    except (OSError, TypeError, ValueError, KeyError):
+        raise ProtectedPathPolicyError("canonical task registry is invalid") from None
+    matches = [item for item in tasks if isinstance(item, dict) and item.get("id") == task_id]
+    if len(matches) > 1:
+        raise ProtectedPathPolicyError("duplicate task records")
+    task = matches[0] if matches else None
+    protected = task_protected_paths(task)
+    frozen_base = frozen_task_base(task)
+    if frozen_base is not None:
+        refusal = frozen_task_upstream_refusal(repo, frozen_base, upstream_ref)
+        if refusal:
+            raise ProtectedPathPolicyError(refusal)
+    return protected, frozen_base
+
+
+def frozen_tracked_files(repo: Path, protected: tuple[str, ...]) -> tuple[str, ...]:
+    """Select the tracked file names after the caller has checked the frozen workspace."""
+    tracked = []
+    for path in protected:
+        entry = _tree_entry(repo, "HEAD", path)
+        if entry is False:
+            raise ProtectedPathPolicyError(f"unreadable_metadata: frozen path {path}")
+        if entry is not None and entry[0] in {"100644", "100755"}:
+            tracked.append(path)
+    return tuple(tracked)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Inspect a task worktree using the shared handoff-cleanliness policy.")
     parser.add_argument("--repo", required=True, type=Path)
+    parser.add_argument("--task-id")
+    parser.add_argument("--status-file", type=Path)
+    parser.add_argument("--upstream-ref", default="")
     parser.add_argument("--materialized-path", action="append", default=[])
-    parser.add_argument("--json", action="store_true")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true")
+    output.add_argument("--print-frozen-tracked", action="store_true")
     args = parser.parse_args(argv)
+    try:
+        protected, frozen_base = task_review_freeze(
+            args.repo, args.task_id, args.status_file, args.upstream_ref,
+        )
+    except ProtectedPathPolicyError as error:
+        print(f"worktree_cleanliness: {error}", file=os.sys.stderr)
+        return 1
     inspection = inspect_worktree(
         args.repo,
+        enforce_task_paths=True,
+        protected_paths=protected,
+        frozen_base=frozen_base,
         materialized_paths=[*_environment_materialized_paths(), *args.materialized_path],
     )
     if args.json:
@@ -1260,6 +1494,13 @@ def main(argv: list[str] | None = None) -> int:
         }, ensure_ascii=False))
     elif not inspection.handoff_clean:
         print(f"worktree_cleanliness: {inspection.kind}: {inspection.detail}", file=os.sys.stderr)
+    if inspection.handoff_clean and args.print_frozen_tracked and frozen_base is not None:
+        try:
+            for path in frozen_tracked_files(args.repo, protected):
+                print(path)
+        except ProtectedPathPolicyError as error:
+            print(f"worktree_cleanliness: {error}", file=os.sys.stderr)
+            return 1
     return 0 if inspection.handoff_clean else 1
 
 

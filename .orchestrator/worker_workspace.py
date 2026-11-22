@@ -29,6 +29,9 @@ from worktree_cleanliness import (
     install_protected_body_sparse,
     normalize_protected_paths,
     protected_body_checkout_refusal,
+    protected_task_checkout_refusal as _protected_commit_refusal,
+    frozen_task_base,
+    frozen_task_upstream_refusal,
     shares_git_common_dir,
     task_protected_paths,
     _git_metadata,
@@ -436,79 +439,6 @@ def _existing_worktree_for_branch(
                 continue
     return None
 
-def _protected_commit_refusal(
-    cwd: Path,
-    commit: str,
-    protected: tuple[str, ...],
-    *,
-    worktree_path: Path | None = None,
-    check_index: bool = False,
-    checkout_into: Path | None = None,
-) -> str | None:
-    """Why Git may not materialize or read ``commit`` for a protected task, if it may not.
-
-    ``metadata_safe`` only proves the entry cannot escape.  A regular tracked
-    protected entry would still be written by read-tree, merge and checkout,
-    and read by status, so it is refused here from its tree entry alone.
-
-    Given the checkout itself (``worktree_path`` and ``check_index``), this also
-    answers for what status and hashing will meet there rather than what the
-    commit names: Git opens a staged body to compare it, and an ignore file under
-    the prefix as it walks in.  An indexed entry, or anything on disk under the
-    prefix, is refused before they run, as is any error proving neither.  The one
-    entry a healthy checkout holds is the empty directory its own protected
-    launch mounts the mask on (``plan_protected_execution``).
-
-    The checkout itself is also held to the shared protected body domain, for
-    every task, before any caller's status, hash, copy, checkout or merge.
-    ``checkout_into`` names the existing checkout ``commit`` is about to be
-    checked out or merged into: that checkout is held to the same domain for
-    what it holds now and for what ``commit`` would bring, so a target that
-    introduces a domain entry needs the exclusion before Git writes a file.
-    """
-    if worktree_path is not None and check_index:
-        body_refusal = protected_body_checkout_refusal(worktree_path)
-        if body_refusal:
-            return f"protected_metadata_refused: {body_refusal}"
-    if checkout_into is not None:
-        body_refusal = protected_body_checkout_refusal(checkout_into, target=commit)
-        if body_refusal:
-            return f"protected_metadata_refused: {body_refusal}"
-    if not protected:
-        return None
-    verdict = inspect_protected_git_metadata(
-        cwd, commit, protected, worktree_path=worktree_path, check_index=check_index
-    )
-    if not verdict.ok:
-        return f"protected_metadata_refused: {verdict.reason}: {verdict.detail}"
-    for path in protected:
-        entry = _tree_entry(cwd, verdict.detail, path)
-        if entry is False:
-            return f"protected_metadata_refused: unreadable_metadata: {path}"
-        if entry is not None:
-            return f"protected_metadata_refused: protected_entry_tracked: {path} ({entry[0]}) at {verdict.detail}"
-        if worktree_path is None or not check_index:
-            continue
-        # Modes only: a nested entry is proven present without naming it.
-        indexed = _git_metadata(
-            Path(worktree_path), "ls-files", "--cached", "-z", "--format=%(objectmode)", "--", f":(top,literal){path}"
-        )
-        if indexed is None or indexed.returncode != 0:
-            return f"protected_metadata_refused: unreadable_metadata: index {path}"
-        if indexed.stdout:
-            return f"protected_metadata_refused: protected_entry_indexed: {path}"
-        target = Path(worktree_path) / path
-        try:
-            if not stat.S_ISDIR(target.lstat().st_mode):
-                return f"protected_metadata_refused: protected_entry_present: {path}"
-            with os.scandir(target) as entries:
-                if next(entries, None) is not None:
-                    return f"protected_metadata_refused: protected_entry_present: {path}"
-        except FileNotFoundError:
-            continue
-        except OSError:
-            return f"protected_metadata_refused: unreadable_metadata: worktree {path}"
-    return None
 
 
 @_entrypoint
@@ -519,6 +449,7 @@ def _create_worker_worktree(
     base_sha: str,
     *,
     protected_paths: Iterable[str] = (),
+    frozen_base: str | None = None,
 ) -> tuple[bool, str | None]:
     """Create a registered task worktree from an immutable base commit.
 
@@ -561,7 +492,7 @@ def _create_worker_worktree(
     if protected:
         # The registry repository's own hooks/filters and the target tree are
         # judged before Git writes a single file for this task.
-        refusal = _protected_commit_refusal(repo_root, expected_sha, protected)
+        refusal = _protected_commit_refusal(repo_root, expected_sha, protected, frozen_base=frozen_base)
         if refusal:
             return False, f"Refusing worker worktree {path}: {refusal}"
 
@@ -592,12 +523,15 @@ def _create_worker_worktree(
     created_sha = _git_commit_oid(path, "HEAD")
     if created_sha != expected_sha:
         return _abandon(f"created HEAD {created_sha} is not the validated {expected_sha}")
-    refusal = _protected_commit_refusal(path, created_sha, protected, worktree_path=path)
+    refusal = _protected_commit_refusal(path, created_sha, protected, worktree_path=path, frozen_base=frozen_base)
     if refusal:
         return _abandon(refusal)
     # Nothing is on disk yet: the protected body domain is excluded first, so
     # neither this read-tree nor any later checkout/merge here writes a body.
-    excluded = install_protected_body_sparse(path)
+    excluded = (
+        install_protected_body_sparse(path, frozen_paths=protected)
+        if frozen_base is not None else install_protected_body_sparse(path)
+    )
     if excluded:
         return _abandon(f"protected_metadata_refused: {excluded}")
     materialize = subprocess.run(
@@ -613,7 +547,7 @@ def _create_worker_worktree(
     ref_rc, attached = _git_output(path, "symbolic-ref", "--quiet", "HEAD")
     if ref_rc != 0 or attached != f"refs/heads/{branch}" or _git_commit_oid(path, "HEAD") != created_sha:
         return False, f"Worker worktree {path} HEAD drifted from {created_sha} during materialization"
-    body_refusal = protected_body_checkout_refusal(path, require_sparse=True)
+    body_refusal = protected_body_checkout_refusal(path, require_sparse=True, frozen_paths=protected if frozen_base else ())
     if body_refusal:
         # Left in place, unread: every later lease refuses it the same way.
         return False, f"Refusing worker worktree {path} for {branch}: protected_metadata_refused: {body_refusal}"
@@ -974,6 +908,7 @@ def compute_worktree_state_identity(
     *,
     materialized_paths: Iterable[object] | None = None,
     protected_paths: Iterable[str] = (),
+    frozen_base: str | None = None,
 ) -> str:
     """Compute an auditable, secret-free identity of the worktree state."""
     try:
@@ -992,9 +927,10 @@ def compute_worktree_state_identity(
             normalize_protected_paths(list(protected_paths or ())),
             worktree_path=path,
             check_index=True,
+            frozen_base=frozen_base,
         ):
             return f"protected_metadata_refused:{head_sha}"
-        inspection = inspect_worktree(path, materialized_paths=materialized_paths, protected_paths=protected_paths)
+        inspection = inspect_worktree(path, materialized_paths=materialized_paths, protected_paths=protected_paths, frozen_base=frozen_base)
     except ProtectedPathPolicyError:
         return f"protected_policy_invalid:{head_sha}"
     if inspection.kind == "clean":
@@ -1116,6 +1052,7 @@ def observe_worker_worktree_activity(
             _worker_recorded_protected_paths(worker, task_record),
             worktree_path=worktree_path,
             check_index=True,
+            frozen_base=frozen_task_base(task_record),
         ):
             return _worker_worktree_activity_failure(worker, "protected_metadata_refused")
         status_proc = subprocess.run(
@@ -1214,6 +1151,7 @@ def is_worktree_lease_block_repaired(entry: dict[str, Any]) -> bool:
         raw_path,
         materialized_paths=entry.get("materialized_paths"),
         protected_paths=entry.get("protected_paths") or (),
+        frozen_base=entry.get("frozen_evidence_base_sha"),
     )
     return identity.startswith("clean:") or identity.startswith("orchestrator_seed_only:")
 
@@ -1230,6 +1168,7 @@ def _record_worktree_lease_block(
     materialized_paths: Any = None,
     worktree_state_identity: str | None = None,
     protected_paths: Iterable[str] = (),
+    frozen_base: str | None = None,
 ) -> int:
     """Count consecutive lease blocks and escalate once they stop being noise.
 
@@ -1254,6 +1193,8 @@ def _record_worktree_lease_block(
     entry["message"] = message
     if protected_paths:
         entry["protected_paths"] = list(protected_paths)
+    if frozen_base is not None:
+        entry["frozen_evidence_base_sha"] = frozen_base
 
     if worktree_path is not None:
         try:
@@ -1261,7 +1202,7 @@ def _record_worktree_lease_block(
             entry["worktree_path"] = str(wp)
             if worktree_state_identity is None:
                 worktree_state_identity = compute_worktree_state_identity(
-                    wp, materialized_paths=materialized_paths, protected_paths=protected_paths
+                    wp, materialized_paths=materialized_paths, protected_paths=protected_paths, frozen_base=frozen_base
                 )
             entry["worktree_state_identity"] = worktree_state_identity
         except (OSError, RuntimeError, ValueError):
@@ -1346,6 +1287,7 @@ def _refresh_reused_worker_worktree(
     materialized_paths=None,
     required_head: str | None = None,
     protected_paths: Iterable[str] = (),
+    frozen_base: str | None = None,
 ) -> tuple[bool, str]:
     """Lease a clean reused worktree against one immutable cycle base.
 
@@ -1384,6 +1326,7 @@ def _refresh_reused_worker_worktree(
             worktree_path=worktree_path if current else None,
             check_index=current,
             checkout_into=None if current else worktree_path,
+            frozen_base=frozen_base,
         )
 
     # Status, hashing and every later checkout/merge happen only after the
@@ -1706,10 +1649,11 @@ def seal_worker_handoff(
 
     try:
         protected_paths = _worker_recorded_protected_paths(worker, task)
+        frozen_base = frozen_task_base(task)
     except ProtectedPathPolicyError as error:
         return WorkerHandoffSeal(False, "protected_policy_invalid", str(error), None, None)
     refusal = _protected_commit_refusal(
-        workspace_path, "HEAD", protected_paths, worktree_path=workspace_path, check_index=True
+        workspace_path, "HEAD", protected_paths, worktree_path=workspace_path, check_index=True, frozen_base=frozen_base
     )
     if refusal:
         return WorkerHandoffSeal(False, "protected_metadata_refused", refusal, _git_commit_oid(workspace_path, "HEAD"), None)
@@ -1717,6 +1661,7 @@ def seal_worker_handoff(
         workspace_path,
         materialized_paths=_worker_materialized_context_paths(state, worker),
         protected_paths=protected_paths,
+        frozen_base=frozen_base,
     )
     if not inspection.handoff_clean:
         return WorkerHandoffSeal(
@@ -2027,14 +1972,15 @@ def sealed_owner_continuation_allowed(
         return False, "workspace_changed"
     try:
         protected_paths = _recorded_protected_paths(task, request.metadata)
+        frozen_base = frozen_task_base(task)
     except ProtectedPathPolicyError:
         return False, "protected_policy_invalid"
     if _protected_commit_refusal(
-        worktree_path, "HEAD", protected_paths, worktree_path=worktree_path, check_index=True
+        worktree_path, "HEAD", protected_paths, worktree_path=worktree_path, check_index=True, frozen_base=frozen_base
     ):
         return False, "protected_metadata_refused"
     inspection = inspect_worktree(
-        worktree_path, materialized_paths=materialized_paths, protected_paths=protected_paths
+        worktree_path, materialized_paths=materialized_paths, protected_paths=protected_paths, frozen_base=frozen_base
     )
     if record.get("reason") == "interrupted_merge":
         if protected_paths:
@@ -2809,6 +2755,7 @@ def prepare_worker_workspace(
     # snapshot may echo it but can neither supply nor relax it.
     try:
         protected_paths = task_protected_paths(canonical_record)
+        frozen_base = frozen_task_base(canonical_record)
         echoed_protection = (
             task_protected_paths(task_metadata) if isinstance(task_metadata, dict) else ()
         ) + normalize_protected_paths(request.metadata.get("protected_paths"))
@@ -2902,6 +2849,13 @@ def prepare_worker_workspace(
         )
         return False, message
 
+    if frozen_base is not None:
+        refusal = frozen_task_upstream_refusal(
+            repo_root, frozen_base, f"refs/remotes/origin/{binding.default_branch}",
+        )
+        if refusal:
+            return False, f"Cannot lease isolated worker worktree for {workspace_task_id}: {refusal}"
+
     worktree_path = worker_task_worktree_path(
         config,
         workspace_task_id,
@@ -2938,6 +2892,7 @@ def prepare_worker_workspace(
             materialized_paths=materialized_paths,
             required_head=required_review_head,
             protected_paths=protected_paths,
+            **({"frozen_base": frozen_base} if frozen_base is not None else {}),
         )
         handoff_record = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(workspace_task_id)
         sealed_interrupted_merge = isinstance(handoff_record, dict) and handoff_record.get("reason") == "interrupted_merge"
@@ -3056,6 +3011,7 @@ def prepare_worker_workspace(
                             trigger="lease_refused_dirty_worktree",
                             owning_repo_root=repo_root,
                             protected_paths=protected_paths,
+                            **({"frozen_base": frozen_base} if frozen_base is not None else {}),
                         )
                     except Exception as error:  # never let preservation break the refusal
                         # The reporting must not be able to raise either: this
@@ -3084,6 +3040,7 @@ def prepare_worker_workspace(
                 worktree_path=worktree_path,
                 materialized_paths=materialized_paths,
                 protected_paths=protected_paths,
+                **({"frozen_base": frozen_base} if frozen_base is not None else {}),
             )
             return False, message
         _clear_worktree_lease_block(state, str(request.task_id or workspace_task_id))
@@ -3171,6 +3128,7 @@ def prepare_worker_workspace(
                     worktree_path=worktree_path,
                     materialized_paths=materialized_paths,
                     protected_paths=protected_paths,
+                    **({"frozen_base": frozen_base} if frozen_base is not None else {}),
                 )
                 return False, message
             creation_sha = resolved_review_head
@@ -3182,6 +3140,7 @@ def prepare_worker_workspace(
             branch,
             creation_sha,
             **({"protected_paths": protected_paths} if protected_paths else {}),
+            **({"frozen_base": frozen_base} if frozen_base is not None else {}),
         )
         if not created:
             message = error or f"Failed to create worker worktree for {workspace_task_id}."
@@ -3212,6 +3171,7 @@ def prepare_worker_workspace(
                 materialized_paths=materialized_paths,
                 required_head=required_review_head,
                 protected_paths=protected_paths,
+                **({"frozen_base": frozen_base} if frozen_base is not None else {}),
             )
             if not refresh_ok:
                 message = (
@@ -3227,6 +3187,7 @@ def prepare_worker_workspace(
                     worktree_path=worktree_path,
                     materialized_paths=materialized_paths,
                     protected_paths=protected_paths,
+                    **({"frozen_base": frozen_base} if frozen_base is not None else {}),
                 )
                 return False, message
             if refresh_status.startswith("review_head_pinned_at_"):
@@ -3307,6 +3268,8 @@ def prepare_worker_workspace(
     }
     if protected_paths:
         leases[workspace_task_id]["protected_paths"] = list(protected_paths)
+    if frozen_base is not None:
+        leases[workspace_task_id]["frozen_evidence_base_sha"] = frozen_base
     record_workspace_launch_head(state, request)
     write_activity_log(
         config,
@@ -3887,15 +3850,18 @@ def prune_orphan_worktrees(
             # dispatch recorded.
             wt_task_id = _worktree_task_id(wt_path)
             try:
+                protection_record = _worktree_protection_record(config, wt_task_id)
+                lease = ((state.get("worker_worktrees") or {}).get("leases") or {}).get(wt_task_id)
+                frozen_base = frozen_task_base(protection_record) or frozen_task_base(lease)
                 protected_refusal = _protected_commit_refusal(
                     wt_path,
                     "HEAD",
                     _recorded_protected_paths(
-                        _worktree_protection_record(config, wt_task_id),
-                        ((state.get("worker_worktrees") or {}).get("leases") or {}).get(wt_task_id),
+                        protection_record, lease,
                     ),
                     worktree_path=wt_path,
                     check_index=True,
+                    frozen_base=frozen_base,
                 )
             except (ProtectedPathPolicyError, OSError, ValueError, AttributeError, TypeError) as error:
                 # What the task protected cannot be told, so neither can what may be read.
@@ -4112,6 +4078,7 @@ def preserve_dead_worker_worktree(
     try:
         record = task if task is not None else canonical_task_record(config, task_id)
         repo_root, _repo_source = worker_task_repo_root(config, record)
+        frozen_base = frozen_task_base(record)
         outcome = _quarantine_and_preserve_dirty_worktree(
             config,
             state,
@@ -4125,6 +4092,7 @@ def preserve_dead_worker_worktree(
             trigger=trigger,
             owning_repo_root=repo_root,
             protected_paths=_worker_recorded_protected_paths(worker, record),
+            **({"frozen_base": frozen_base} if frozen_base is not None else {}),
         )
     except Exception as error:  # pragma: no cover - settlement must not be blocked
         return _quarantine_refused("preserve_raised", str(error))
@@ -4203,6 +4171,7 @@ def _quarantine_and_preserve_dirty_worktree(
     trigger: str = "",
     owning_repo_root: Path | str | None = None,
     protected_paths: Iterable[str] = (),
+    frozen_base: str | None = None,
 ) -> QuarantineOutcome:
     """Quarantine and preserve dirty worktree state as an immutable backup without destructive reset/clean/stash or modifying the worktree.
 
@@ -4269,6 +4238,7 @@ def _quarantine_and_preserve_dirty_worktree(
         normalize_protected_paths(list(protected_paths or ())),
         worktree_path=worktree_path,
         check_index=True,
+        frozen_base=frozen_base,
     )
     if protected_refusal:
         return _quarantine_refused("protected_metadata_refused", protected_refusal)
