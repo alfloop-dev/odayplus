@@ -11,20 +11,16 @@ permissions:
   contents: read
   statuses: write
 
-# Apply the task freeze to its PR and merge-queue candidate before checkout.
-env:
-  ODP_FROZEN_REVIEW_PATH: >-
-    ${{ ((github.event_name == 'pull_request'
-    && github.event.pull_request.number == 1736
-    && github.event.pull_request.head.repo.full_name == github.repository
-    && github.event.pull_request.head.ref == 'task/ODP-SUPERVISOR-FROZEN-REVIEW-261121')
-    || (github.event_name == 'merge_group'
-    && startsWith(github.event.merge_group.head_ref, 'refs/heads/gh-readonly-queue/dev/pr-1736-')))
-    && '.orchestrator/test_supervisor.py' || '' }}
-
 jobs:
+  freeze-policy:
+    permissions:
+      pull-requests: read
+    uses: ./.github/workflows/frozen-review-policy.yml
   classify:
+    needs: freeze-policy
     runs-on: ubuntu-latest
+    env:
+      ODP_FROZEN_REVIEW_PATH: ${{ needs.freeze-policy.outputs.path }}
     steps:
       # Below this Git, actions/checkout silently falls back to a REST archive
       # that ignores the sparse deny, so the runner must refuse first.

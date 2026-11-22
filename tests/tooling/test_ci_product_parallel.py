@@ -280,7 +280,7 @@ def test_ci_workflow_product_lanes_isolated(ci_workflow: dict[str, Any]) -> None
     for lane in REQUIRED_PRODUCT_LANES:
         job = jobs[lane]
         assert job.get("runs-on") == "ubuntu-latest"
-        assert job.get("needs") == "change-scope"
+        assert job.get("needs") == ["freeze-policy", "change-scope"]
         if_cond = str(job.get("if", ""))
         assert "needs.change-scope.outputs.scope != 'development_tooling'" in if_cond
 
@@ -505,7 +505,7 @@ def test_heatzone_latency_keeps_one_required_isolated_owner(ci_workflow: dict[st
     assert count_exact_command_occurrences(jobs, command) == {"performance-gate": 1}
     assert count_exact_command_occurrences(jobs, "uv run pytest -m performance tests/performance") == {"performance-gate": 1}
     gate = jobs["performance-gate"]
-    assert gate["needs"] == "change-scope"
+    assert gate["needs"] == ["freeze-policy", "change-scope"]
     assert "needs.change-scope.outputs.scope != 'development_tooling'" in gate["if"]
     assert gate.get("continue-on-error", False) is False
     step, = [step for step in gate["steps"] if node in step.get("run", "")]
@@ -1217,12 +1217,17 @@ FROZEN_REVIEW_WORKFLOWS = {
     "tooling-scope-review-gate.yml",
 }
 FROZEN_REVIEW_ENV = "ODP_FROZEN_REVIEW_PATH"
-FROZEN_REVIEW_TRIGGER = (
-    "${{ ((github.event_name == 'pull_request' && github.event.pull_request.number == 1736"
-    " && github.event.pull_request.head.repo.full_name == github.repository"
-    " && github.event.pull_request.head.ref == 'task/ODP-SUPERVISOR-FROZEN-REVIEW-261121')"
-    " || (github.event_name == 'merge_group' && startsWith(github.event.merge_group.head_ref,"
-    " 'refs/heads/gh-readonly-queue/dev/pr-1736-'))) && '.orchestrator/test_supervisor.py' || '' }}"
+FROZEN_REVIEW_TRIGGER = "${{ needs.freeze-policy.outputs.path }}"
+FROZEN_REVIEW_POLICY = {
+    "permissions": {"pull-requests": "read"},
+    "uses": "./.github/workflows/frozen-review-policy.yml",
+}
+FROZEN_REVIEW_SUCCESS = "${{ needs.freeze-policy.result == 'success' }}"
+FROZEN_POLICY_PREFLIGHT = (
+    'if [ "$FREEZE_POLICY_RESULT" != success ]; then\n'
+    '  echo "::error::Frozen review checkout policy could not be determined."\n'
+    '  exit 1\n'
+    'fi\n'
 )
 FROZEN_REVIEW_RULES = [
     "${{ env.ODP_FROZEN_REVIEW_PATH && format('!/{0}', env.ODP_FROZEN_REVIEW_PATH) || '' }}",
@@ -1303,17 +1308,23 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
     violations: list[str] = []
     scoped = name in FROZEN_REVIEW_WORKFLOWS
     if scoped:
-        if (workflow.get("env") or {}).get(FROZEN_REVIEW_ENV) != FROZEN_REVIEW_TRIGGER:
-            violations.append(f"{name}: frozen review trigger changed")
+        if workflow["jobs"].get("freeze-policy") != FROZEN_REVIEW_POLICY:
+            violations.append(f"{name}: frozen review policy must resolve before checkout")
     else:
         steps = load_pr_workflow("assisted-intake-design-validation.yml")["jobs"]["validate-contract-package"]["steps"]
         proof_run = next(step["run"] for step in steps if step.get("name") == DENIAL_PROOF_NAME)
     checkouts = 0
     for job_name, job in workflow["jobs"].items():
+        if scoped and job_name == "freeze-policy":
+            continue
         steps = job.get("steps", [])
         here = f"{name}:{job_name}"
-        if scoped and isinstance(job.get("env"), dict) and FROZEN_REVIEW_ENV in job["env"]:
-            violations.append(f"{here}: job may not override its frozen review trigger")
+        if scoped:
+            needs = job.get("needs", [])
+            if "freeze-policy" not in ([needs] if isinstance(needs, str) else needs):
+                violations.append(f"{here}: job must depend on the frozen review policy")
+            if (job.get("env") or {}).get(FROZEN_REVIEW_ENV) != FROZEN_REVIEW_TRIGGER:
+                violations.append(f"{here}: job must use the resolved frozen path")
         positions = [i for i, step in enumerate(steps) if "actions/checkout" in str(step.get("uses", ""))]
         checkouts += len(positions)
         if len(positions) != 1:
@@ -1324,7 +1335,15 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
         violations.extend(_inherited_execution_violations(here, workflow, job))
         if checkout["uses"] != "actions/checkout@v4":
             violations.append(f"{here}: checkout version changed: {checkout['uses']}")
-        if at != 1 or steps[0].get("name") != GIT_PREFLIGHT_NAME or steps[0].get("run") != preflight_run:
+        always_ci = name == "ci.yml" and job_name in {"product", "automatic-dev-release"}
+        job_preflight = preflight_run
+        preflight_keys = {"name", "run"}
+        if always_ci:
+            job_preflight = preflight_run.replace("set -euo pipefail\n", "set -euo pipefail\n" + FROZEN_POLICY_PREFLIGHT, 1)
+            preflight_keys.add("env")
+            if steps[0].get("env") != {"FREEZE_POLICY_RESULT": "${{ needs.freeze-policy.result }}"}:
+                violations.append(f"{here}: `always()` job must check the policy result before checkout")
+        if at != 1 or steps[0].get("name") != GIT_PREFLIGHT_NAME or steps[0].get("run") != job_preflight:
             violations.append(f"{here}: exact Git preflight must be the only step before checkout")
         guarded = [steps[0], checkout]
         following = steps[at + 1] if at + 1 < len(steps) else {}
@@ -1348,9 +1367,13 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
             violations.append(f"{here}: denial proof must judge repository configuration and every compared commit")
         for step in guarded:
             for softener in ("if", "continue-on-error"):
+                if softener == "if" and (name, job_name) == ("merge-queue-review-gate.yml", "review-gate"):
+                    if step.get("if") != FROZEN_REVIEW_SUCCESS:
+                        violations.append(f"{here}: guarded step must await successful PR selection")
+                    continue
                 if softener in step:
                     violations.append(f"{here}: {step.get('name') or step.get('uses')} may not set {softener}")
-        for step, keys in ((steps[0], {"name", "run"}), (following, GUARDED_SCRIPT_KEYS)):
+        for step, keys in ((steps[0], preflight_keys), (following, GUARDED_SCRIPT_KEYS)):
             if set(step) - keys - {"if", "continue-on-error"}:
                 violations.append(f"{here}: {step.get('name')} may not set {sorted(set(step) - keys)}")
         inputs = checkout.get("with") or {}
@@ -1429,8 +1452,7 @@ def _proof_step(name: str, job: str) -> tuple[list[dict[str, Any]], int]:
 def test_compared_commits_are_the_ones_the_downstream_consumers_read() -> None:
     """The proof must vouch for the exact values handed to the later diff, not lookalikes."""
     expression = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
-    for name in ("emgi-consumer-boundary.yml", "tooling-scope-review-gate.yml"):
-        job = next(iter(load_pr_workflow(name)["jobs"]))
+    for name, job in (("emgi-consumer-boundary.yml", "boundary"), ("tooling-scope-review-gate.yml", "classify")):
         steps, proof = _proof_step(name, job)
         consumer = next(step for step in steps if "BASE_SHA" in (step.get("env") or {}))
         assert steps.index(consumer) > proof, "the consumer must run after the proof"
@@ -1469,7 +1491,7 @@ def test_full_history_jobs_are_all_the_jobs_that_declared_it() -> None:
         declared = {
             job_name
             for job_name, job in jobs.items()
-            for step in job["steps"]
+            for step in job.get("steps", [])
             if (step.get("with") or {}).get("fetch-depth") == 0
         }
         assert declared == expected
