@@ -59,7 +59,39 @@ class _NativeWorkflowState(SimpleNamespace):
     """
 
     def canonical_audit_is_committed(self, audit) -> bool:
-        return any(audit is loaded for loaded in self.committed_audits)
+        return (
+            any(audit is loaded for loaded in self.committed_audits)
+            and audit.get("tenant_id") == self.intake["tenant_id"]
+            and self.graph.audit_sink.is_committed(audit)
+        )
+
+    def canonical_decision_execution_is_committed(self, row, audit) -> bool:
+        from shared.infrastructure.persistence.identity_decisions_sql import (
+            CanonicalIdentityDecisionRepository,
+        )
+
+        proof = self.executed_decisions.get(row.get("decision_id"))
+        if proof is None or not self.canonical_audit_is_committed(audit):
+            return False
+        decision, job = proof
+        tenant = self.intake["tenant_id"]
+        intake_id = self.intake["intake_id"]
+        try:
+            CanonicalIdentityDecisionRepository(self.graph).require_approval(tenant, decision)
+            result = self.graph.execution_receipt(tenant, job, decision)
+        except Exception:
+            return False
+        return (
+            decision["status"] == "EXECUTED"
+            and decision["version"] == row.get("version")
+            and job["correlation_id"] == self.intake["correlation_id"]
+            and result.get("audit_event_id") == audit.get("audit_event_id")
+            and (
+                result.get("intake_id") == intake_id
+                if decision["decision_type"] in {"CREATE", "REVISE", "DUPLICATE"}
+                else result.get("intake_id") in (None, intake_id)
+            )
+        )
 
 
 class CanonicalIntakeRepository:
@@ -280,6 +312,178 @@ class CanonicalIntakeRepository:
             at = self.engine.query_one("SELECT clock_timestamp() AS at")["at"]
             return datetime.fromisoformat(at).astimezone(UTC)
 
+    def _load_committed_audit(self, tenant: str, audit_event_id) -> dict | None:
+        """Load one committed canonical audit through its original hash-verifying owner."""
+        if not isinstance(audit_event_id, str):
+            return None
+        try:
+            if str(UUID(audit_event_id)) != audit_event_id:
+                return None
+            loaded = self.graph.audit_sink.writer.get_event(tenant, audit_event_id)
+        except Exception:
+            return None
+        if loaded is None or loaded.get("tenant_id") != tenant or loaded.get("audit_event_id") != audit_event_id:
+            return None
+        return {**loaded, "canonical_event_sha256": loaded["event_sha256"]}
+
+    def _intake_committed_audit(self, tenant: str, intake: dict) -> dict | None:
+        """Load the committed canonical audit recording this exact Intake version and state."""
+        intake_id = intake["intake_id"]
+        version = intake["version"]
+        state = intake["processing_state"]
+        rows = self.engine.query(
+            "SELECT audit_event_id FROM audit.audit_events WHERE tenant_id=? "
+            "AND resource_type='intake' AND resource_id=? AND result='SUCCEEDED' "
+            "AND jsonb_typeof(after_value->'version')='number' AND after_value->>'version'=? "
+            "AND (after_value->>'processing_state'=? OR after_value->>'state'=?) "
+            "ORDER BY sequence_no DESC LIMIT 1",
+            (tenant, intake_id, str(version), state, state),
+        )
+        if not rows:
+            return None
+        loaded = self._load_committed_audit(tenant, rows[0]["audit_event_id"])
+        if loaded is None:
+            return None
+        after = loaded.get("after_value")
+        recorded_state = (
+            after["state"] if isinstance(after, dict) and "state" in after
+            else after.get("processing_state") if isinstance(after, dict) else None
+        )
+        if (
+            loaded.get("resource_type") != "intake"
+            or loaded.get("resource_id") != intake_id
+            or loaded.get("result") != "SUCCEEDED"
+            or loaded.get("correlation_id") != intake["correlation_id"]
+            or not isinstance(after, dict)
+            or type(after.get("version")) is not int
+            or after["version"] != version
+            or recorded_state != state
+            or ("intake_id" in after and after["intake_id"] != intake_id)
+        ):
+            return None
+        return {**loaded, "intake_id": intake_id}
+
+    def _rejected_decision_audit(self, tenant: str, intake: dict, decision: dict) -> dict | None:
+        """Load the committed review rejection audit for this exact native decision."""
+        after_graph = decision.get("after_graph")
+        if (
+            decision.get("tenant_id") != tenant
+            or decision.get("intake_id") != intake["intake_id"]
+            or decision.get("status") != "REJECTED"
+            or decision.get("proposer_service_principal") is not None
+            or not decision.get("proposer_subject_id")
+            or not decision.get("reviewer_subject_id")
+            or decision["reviewer_subject_id"] == decision["proposer_subject_id"]
+            or not decision.get("reviewed_at")
+            or not isinstance(after_graph, dict)
+        ):
+            return None
+        review = after_graph.get("review")
+        if (
+            not isinstance(review, dict)
+            or review.get("status") != "REJECTED"
+            or review.get("reviewer_subject_id") != decision["reviewer_subject_id"]
+            or not isinstance(review.get("reason"), str)
+            or type(review.get("risk_acknowledged")) is not bool
+        ):
+            return None
+        try:
+            reviewed_at = _instant(decision["reviewed_at"])
+            if reviewed_at is None or _instant(review.get("reviewed_at")) != reviewed_at:
+                return None
+        except (IntakeWorkflowUnavailable, ValueError, TypeError):
+            return None
+        loaded = self._load_committed_audit(tenant, review.get("audit_event_id"))
+        if loaded is None:
+            return None
+        before = loaded.get("before_value")
+        after = loaded.get("after_value")
+        try:
+            occurred_at = _instant(loaded.get("occurred_at"))
+            audited_reviewed_at = _instant(after.get("reviewed_at")) if isinstance(after, dict) else None
+        except (IntakeWorkflowUnavailable, ValueError, TypeError):
+            return None
+        if (
+            loaded.get("action") != "identity.decision_rejected.v1"
+            or loaded.get("result") != "SUCCEEDED"
+            or loaded.get("resource_type") != "identity_decision"
+            or loaded.get("resource_id") != decision["match_decision_id"]
+            or loaded.get("actor_subject_id") != decision["reviewer_subject_id"]
+            or loaded.get("service_principal") is not None
+            or loaded.get("correlation_id") != intake["correlation_id"]
+            or loaded.get("reason") != review["reason"]
+            or occurred_at != reviewed_at
+            or not isinstance(before, dict)
+            or not isinstance(after, dict)
+            or before.get("decision_id") != decision["match_decision_id"]
+            or before.get("match_case_id") != decision["match_case_id"]
+            or before.get("status") != "PENDING_REVIEW"
+            or type(before.get("version")) is not int
+            or before["version"] + 1 != decision["version"]
+            or before.get("plan") != after_graph.get("plan")
+            or after.get("decision_id") != decision["match_decision_id"]
+            or after.get("match_case_id") != decision["match_case_id"]
+            or after.get("status") != "REJECTED"
+            or type(after.get("version")) is not int
+            or after["version"] != decision["version"]
+            or after.get("reviewer_subject_id") != decision["reviewer_subject_id"]
+            or after.get("audit_event_id") != review["audit_event_id"]
+            or after.get("reason") != review["reason"]
+            or after.get("risk_acknowledged") is not review["risk_acknowledged"]
+            or audited_reviewed_at != reviewed_at
+            or after.get("plan") != after_graph.get("plan")
+        ):
+            return None
+        return {**loaded, "intake_id": intake["intake_id"]}
+
+    def _executed_decision_proof(self, tenant: str, intake: dict, decision: dict):
+        """Retain the original stronger graph.execution_receipt proof for EXECUTED."""
+        from shared.infrastructure.persistence.identity_decisions_sql import (
+            CanonicalIdentityDecisionRepository,
+        )
+
+        if (
+            decision.get("tenant_id") != tenant
+            or decision.get("intake_id") != intake["intake_id"]
+            or decision.get("status") != "EXECUTED"
+        ):
+            return None
+        jobs = self.engine.query(
+            "SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_type=? "
+            "AND aggregate_type='identity_decision' AND aggregate_id=? LIMIT 2",
+            (tenant, self.graph.job_type, decision["match_decision_id"]),
+        )
+        if len(jobs) != 1:
+            return None
+        job = {
+            **jobs[0],
+            "payload": _json_value(jobs[0].get("payload")),
+            "result": _json_value(jobs[0].get("result")),
+        }
+        if job.get("correlation_id") != intake["correlation_id"]:
+            return None
+        try:
+            CanonicalIdentityDecisionRepository(self.graph).require_approval(tenant, decision)
+            result = self.graph.execution_receipt(tenant, job, decision)
+        except Exception:
+            return None
+        intake_id = intake["intake_id"]
+        if (
+            result.get("intake_id") != intake_id
+            if decision["decision_type"] in {"CREATE", "REVISE", "DUPLICATE"}
+            else result.get("intake_id") not in (None, intake_id)
+        ):
+            return None
+        loaded = self._load_committed_audit(tenant, result.get("audit_event_id"))
+        if (
+            loaded is None
+            or loaded.get("resource_type") != "identity_decision"
+            or loaded.get("resource_id") != decision["match_decision_id"]
+            or loaded.get("correlation_id") != intake["correlation_id"]
+        ):
+            return None
+        return {**loaded, "intake_id": intake_id}, decision, job
+
     def workflow_command_state(self, tenant: str, intake_id: str) -> _NativeWorkflowState:
         """Lock one complete recorded native workflow into the shared command shape.
 
@@ -348,22 +552,52 @@ class CanonicalIntakeRepository:
                 "assigned_to": assignment["owner_subject_id"], "due_at": assignment_shape["due_at"],
                 "audit": [], "processing_history": []}
             committed = []
+            executed_decisions = {}
             # The original completion evaluator reads actual committed work.
-            # Only the canonical audit that recorded this current Intake
-            # version can prove its state; none is synthesized here.
-            audits = self.engine.query("SELECT audit_event_id,tenant_id,action,resource_type,resource_id,result,"
-                "after_value FROM audit.audit_events WHERE tenant_id=? AND resource_type='intake' AND resource_id=? "
-                "AND result='SUCCEEDED' AND after_value->>'version'=? ORDER BY sequence_no DESC LIMIT 1",
-                (tenant, intake_id, str(intake["version"])))
-            for audit in audits:
-                committed.append({**audit, "intake_id": audit["resource_id"],
-                                  "after_value": _json_value(audit["after_value"])})
-            if committed:
-                intake_shape["audit_event_id"] = committed[0]["audit_event_id"]
-            decisions = self.engine.query("SELECT d.match_decision_id AS decision_id,c.intake_id,d.tenant_id,"
-                "d.status,d.version,d.decision_type AS action FROM identity.match_decisions d "
+            # Only the canonical audits recorded by genuine native producers
+            # for this exact current state and version can prove completion;
+            # unsupported kinds and missing/corrupt proofs stay fail-closed.
+            intake_audit = self._intake_committed_audit(tenant, intake)
+            if intake_audit is not None:
+                committed.append(intake_audit)
+                intake_shape["audit_event_id"] = intake_audit["audit_event_id"]
+            raw_decisions = self.engine.query(
+                "SELECT d.*,c.intake_id FROM identity.match_decisions d "
                 "JOIN identity.match_cases c ON c.tenant_id=d.tenant_id AND c.match_case_id=d.match_case_id "
-                "WHERE d.tenant_id=? AND c.intake_id=?", (tenant, intake_id))
+                "WHERE d.tenant_id=? AND c.intake_id=? ORDER BY d.created_at,d.match_decision_id",
+                (tenant, intake_id),
+            )
+            decisions = {}
+            for raw in raw_decisions:
+                decision = {
+                    **raw,
+                    "before_graph": _json_value(raw.get("before_graph")),
+                    "after_graph": _json_value(raw.get("after_graph")),
+                }
+                row = {
+                    "decision_id": decision["match_decision_id"],
+                    "intake_id": decision["intake_id"],
+                    "tenant_id": decision["tenant_id"],
+                    "status": decision["status"],
+                    "version": decision["version"],
+                    "action": decision["decision_type"],
+                }
+                if decision["status"] == "REJECTED":
+                    rejected_audit = self._rejected_decision_audit(tenant, intake, decision)
+                    if rejected_audit is not None:
+                        committed.append(rejected_audit)
+                        row["audit_event_id"] = rejected_audit["audit_event_id"]
+                elif decision["status"] == "EXECUTED":
+                    executed = self._executed_decision_proof(tenant, intake, decision)
+                    if executed is not None:
+                        executed_audit, verified_decision, verified_job = executed
+                        committed.append(executed_audit)
+                        row["audit_event_id"] = executed_audit["audit_event_id"]
+                        executed_decisions[row["decision_id"]] = (verified_decision, verified_job)
+                decisions[row["decision_id"]] = row
+            # Corrections, promotions, and intake jobs have no native per-row
+            # canonical audit producer yet. Rows are still loaded so unresolved
+            # sibling work blocks completion while require_audit=true fails closed.
             corrections = self.engine.query("SELECT correction_id,intake_id,tenant_id,status,version "
                 "FROM intake.human_corrections WHERE tenant_id=? AND intake_id=?", (tenant, intake_id))
             promotions = self.engine.query("SELECT promotion_decision_id,intake_id,tenant_id,status,version "
@@ -372,15 +606,18 @@ class CanonicalIntakeRepository:
                 "FROM workflow.jobs WHERE tenant_id=? AND aggregate_type='intake' AND aggregate_id=?",
                 (tenant, intake_id))
             return _NativeWorkflowState(
+                graph=self.graph,
                 intake=intake, intakes={intake_id: intake_shape},
                 assignments={assignment["assignment_id"]: assignment_shape},
                 slas={sla["sla_instance_id"]: sla_shape},
-                decisions={row["decision_id"]: row for row in decisions},
+                decisions=decisions,
                 corrections={row["correction_id"]: row for row in corrections},
                 promotions={row["promotion_decision_id"]: row for row in promotions},
                 jobs={row["job_id"]: row for row in jobs},
                 workflow_audits={audit["audit_event_id"]: audit for audit in committed},
-                committed_audits=tuple(committed), workflow_outbox={},
+                committed_audits=tuple(committed),
+                executed_decisions=executed_decisions,
+                workflow_outbox={},
                 baseline={"assignments": deepcopy({assignment["assignment_id"]: assignment_shape}),
                           "slas": deepcopy({sla["sla_instance_id"]: sla_shape})})
 

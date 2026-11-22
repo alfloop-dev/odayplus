@@ -80,6 +80,52 @@ def _audited_state(kind: str, after: Mapping[str, Any]) -> Any:
     return after["state"] if "state" in after else after.get("processing_state")
 
 
+def _audit_matches_record(
+    store: Any,
+    kind: str,
+    row: Mapping[str, Any],
+    record_id: str,
+    state: str,
+    audit: Mapping[str, Any],
+) -> bool:
+    """Verify the committed audit binds this exact record version and state.
+
+    Ordinary producers record top-level ``version`` and ``status``/``state``/
+    ``processing_state``. Native identity execution (``identity.executed.v1``)
+    persists its immutable ``after_graph`` with nested ``execution.status`` and
+    proves the decision version through ``graph.execution_receipt`` instead of
+    synthesizing top-level fields into ``after_value``.
+    """
+    after = audit.get("after_value")
+    if not isinstance(after, Mapping):
+        return False
+    if (
+        type(after.get("version")) is int
+        and after["version"] == row["version"]
+        and _audited_state(kind, after) == state
+    ):
+        return True
+    if (
+        kind == "decision"
+        and state == "EXECUTED"
+        and audit.get("resource_type") == "identity_decision"
+        and audit.get("action") == "identity.executed.v1"
+        and "version" not in after
+        and "status" not in after
+    ):
+        execution = after.get("execution")
+        receipt_check = getattr(store, "canonical_decision_execution_is_committed", None)
+        return bool(
+            isinstance(execution, Mapping)
+            and execution.get("status") == "EXECUTED"
+            and execution.get("decision_id") == record_id
+            and execution.get("audit_event_id") == row.get("audit_event_id")
+            and callable(receipt_check)
+            and receipt_check(row, audit)
+        )
+    return False
+
+
 def verify_completion(
     store: Any, intake: Mapping[str, Any], requirements: Any
 ) -> list[dict[str, Any]]:
@@ -153,8 +199,7 @@ def verify_completion(
                     }[requirement.kind]
                     or audit.get("resource_id") != record_id
                     or audit.get("result") != "SUCCEEDED"
-                    or audit.get("after_value", {}).get("version") != row["version"]
-                    or _audited_state(requirement.kind, audit.get("after_value", {})) != state
+                    or not _audit_matches_record(store, requirement.kind, row, record_id, state, audit)
                 ):
                     raise IntakeWorkIncomplete("Required work has no current bound audit evidence")
             proofs.append(
