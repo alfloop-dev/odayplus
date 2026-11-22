@@ -83,13 +83,24 @@ if [ ! -f "$cleanliness_tool" ]; then
   echo "task_finalize: shared worktree cleanliness policy is unavailable: $cleanliness_tool" >&2
   exit 1
 fi
-if ! cleanliness_out="$(python3 "$cleanliness_tool" --repo "$ROOT" 2>&1)"; then
-  echo "task_finalize: refusing to publish -- worktree handoff is not clean:" >&2
-  printf '%s\n' "$cleanliness_out" | sed 's/^/  /' >&2
-  echo "task_finalize: commit deliverables, delete scratch, or move temporary files to" >&2
-  echo "  \$ORCH_SCRATCH_DIR before opening the reviewer handoff." >&2
-  exit 1
-fi
+UPSTREAM_REF="refs/remotes/origin/$BASE_BRANCH"
+UPSTREAM_BEFORE="$(git rev-parse --verify --quiet "$UPSTREAM_REF" || true)"
+STATUS_FILE="${PANTHEON_STATUS_ROOT:-$ROOT}/ai-status.json"
+FROZEN_TRACKED=""
+check_worktree_cleanliness() {
+  local cleanliness_out
+  if ! cleanliness_out="$(python3 "$cleanliness_tool" --repo "$ROOT" \
+    --task-id "$TASK_ID" --status-file "$STATUS_FILE" --upstream-ref "$UPSTREAM_REF" \
+    --print-frozen-tracked 2>&1)"; then
+    echo "task_finalize: refusing to publish -- worktree handoff is not clean:" >&2
+    printf '%s\n' "$cleanliness_out" | sed 's/^/  /' >&2
+    echo "task_finalize: commit deliverables, delete scratch, or move temporary files to" >&2
+    echo "  \$ORCH_SCRATCH_DIR before opening the reviewer handoff." >&2
+    return 1
+  fi
+  FROZEN_TRACKED="$cleanliness_out"
+}
+check_worktree_cleanliness || exit 1
 
 # gh resolution mirrors delivery_toolchain/github/check_pr_merge_eligibility.py:
 # .orchestrator/bin/gh is a broker shim, not the real CLI.
@@ -121,6 +132,9 @@ GH="$(resolve_gh || true)"
 
 git fetch --quiet origin "$BASE_BRANCH" 2>/dev/null || \
   echo "task_finalize: warning: could not fetch origin/$BASE_BRANCH" >&2
+if [ "$(git rev-parse --verify --quiet "$UPSTREAM_REF" || true)" != "$UPSTREAM_BEFORE" ]; then
+  check_worktree_cleanliness || exit 1
+fi
 
 BASE_REF="origin/$BASE_BRANCH"
 git show-ref --verify --quiet "refs/remotes/$BASE_REF" || BASE_REF="$BASE_BRANCH"
@@ -279,7 +293,13 @@ PY_RUN="$(resolve_py)"
 #    `orchestrator` failure, and the fix is one deterministic command.
 if [ -f "$ROOT/delivery_toolchain/governance/check_code_boundaries.py" ]; then
   boundary_out=""
-  if boundary_out="$($PY_RUN "$ROOT/delivery_toolchain/governance/check_code_boundaries.py" 2>&1)"; then
+  boundary_tool="$ROOT/delivery_toolchain/governance/check_code_boundaries.py"
+  boundary_args=()
+  if [ -n "$FROZEN_TRACKED" ]; then
+    boundary_tool="$TOOLCHAIN_ROOT/delivery_toolchain/governance/check_code_boundaries.py"
+    boundary_args=(--repo "$ROOT" --task-id "$TASK_ID" --status-file "$STATUS_FILE" --upstream-ref "$UPSTREAM_REF")
+  fi
+  if boundary_out="$($PY_RUN "$boundary_tool" "${boundary_args[@]}" 2>&1)"; then
     :
   else
     boundary_rc=$?

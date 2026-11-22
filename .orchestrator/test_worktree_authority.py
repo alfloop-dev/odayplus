@@ -2,6 +2,7 @@
 """Focused regression tests for registry-owned worker worktree authority."""
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -25,6 +26,8 @@ import supervisor
 import task_archive
 import worker_workspace
 import worktree_cleanliness
+
+from delivery_toolchain.governance import check_code_boundaries
 
 
 class RegistryBaseCacheTests(unittest.TestCase):
@@ -524,6 +527,24 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         self.assertTrue(ok, status)
         self.assertEqual(worker_workspace.compute_worktree_state_identity(worktree), f"clean:{self.base}")
 
+    def test_checkout_blank_lines_do_not_change_protected_sparse_rules(self) -> None:
+        self._enter_body_domain()
+        worktree = self.root / "wt-dom-checkout-blank"
+        created, error = supervisor._create_worker_worktree(self.repo, worktree, "task/DOM-BLANK-001", self.base)
+        self.assertTrue(created, error)
+        patterns = Path(self._git(
+            worktree, "rev-parse", "--path-format=absolute", "--git-path", "info/sparse-checkout",
+        ).stdout.strip())
+        original = patterns.read_text(encoding="utf-8")
+        patterns.write_text("\n" + original + "\n", encoding="utf-8")
+
+        self.assertIsNone(worktree_cleanliness.protected_body_checkout_refusal(worktree, require_sparse=True))
+        self.assertFalse(os.path.lexists(worktree / self.DOMAIN_COPY))
+
+        patterns.write_text("\n" + original + " \n", encoding="utf-8")
+        refusal = worktree_cleanliness.protected_body_checkout_refusal(worktree, require_sparse=True)
+        self.assertIn("sparse patterns differ", refusal or "")
+
     def test_creation_keeps_every_denied_name_spelling_out(self) -> None:
         self._enter_body_domain(tracked=False)
         control = "archive/vault/copiesx/keep.txt"
@@ -543,6 +564,92 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
         self.assertTrue((worktree / "README.md").is_file())
         self.assertIsNone(worktree_cleanliness.protected_body_checkout_refusal(worktree, require_sparse=True))
         self.assertEqual(worker_workspace.compute_worktree_state_identity(worktree), f"clean:{base}")
+
+    def test_pinned_tracked_file_is_excluded_and_reviewable_without_exposing_its_body(self) -> None:
+        self._enter_body_domain()
+        protected = ("frozen_fixture.py",)
+        manifest = Path("config/code-boundaries.yaml")
+        (self.repo / manifest.parent).mkdir()
+        self._commit_on_dev(str(manifest), "boundaries: {}\n")
+        pin = self._commit_on_dev(protected[0], "synthetic frozen source")
+        head = self._commit_on_dev("use_case.py", "import frozen_fixture\n")
+        branch = "task/PINNED-TRACKED-001"
+        worktree = self.root / "wt-pinned-tracked"
+        ok, error = supervisor._create_worker_worktree(
+            self.repo, worktree, branch, pin, protected_paths=protected, frozen_base=pin,
+        )
+        self.assertTrue(ok, error)
+        ok, result = supervisor._refresh_reused_worker_worktree(
+            self.repo, worktree, head, branch, required_head=head, protected_paths=protected, frozen_base=pin,
+        )
+        self.assertTrue(ok, result)
+        self.assertEqual(result, f"review_head_pinned_at_{head[:12]}")
+        self.assertFalse(os.path.lexists(worktree / self.DOMAIN_COPY))
+        target = worktree / protected[0]
+        self.assertFalse(target.exists())
+        self.assertEqual(self._git(worktree, "ls-files", "-t", "--", protected[0]).stdout.strip(), f"S {protected[0]}")
+        status_file = self.root / "task-registry.json"
+        task = {"id": "PINNED-TRACKED-001", "protected_paths": list(protected), "frozen_evidence_base_sha": pin}
+        status_file.write_text(json.dumps({"tasks": [task]}))
+        upstream = "refs/remotes/origin/dev"
+        self._git(self.repo, "update-ref", upstream, pin)
+        argv = [
+            "--repo", str(worktree), "--task-id", task["id"], "--status-file", str(status_file),
+            "--upstream-ref", upstream,
+        ]
+        self.assertEqual(worktree_cleanliness.main(argv), 0)
+        boundary_context = argparse.Namespace(task_id=task["id"], status_file=status_file, upstream_ref=upstream)
+        sources = check_code_boundaries.verified_frozen_sources(boundary_context, worktree, worktree / manifest)
+        self.assertEqual(sources, frozenset(protected))
+        classified = [
+            check_code_boundaries.ClassifiedFile(protected[0], "verification", "test", False),
+            check_code_boundaries.ClassifiedFile("use_case.py", "product", "runtime", True),
+        ]
+        boundaries = {"boundaries": {"product": {"allowed_import_scopes": ["product"]}, "verification": {}}}
+        errors = check_code_boundaries.validate_import_boundaries(
+            worktree, classified, boundaries, frozen_sources=sources,
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("use_case.py", errors[0])
+        self.assertIn("frozen_fixture", errors[0])
+        (worktree / manifest).write_text("boundaries: {changed: {}}\n")
+        with self.assertRaisesRegex(ValueError, "unchanged upstream code boundary manifest"):
+            check_code_boundaries.verified_frozen_sources(boundary_context, worktree, worktree / manifest)
+        (worktree / manifest).write_text("boundaries: {}\n")
+
+        status_file.write_text(json.dumps({"tasks": [{**task, "frozen_evidence_base_sha": head}]}))
+        self.assertEqual(worktree_cleanliness.main(argv), 1)
+        status_file.write_text(json.dumps({"tasks": [task]}))
+        self.assertEqual(
+            worker_workspace.compute_worktree_state_identity(worktree, protected_paths=protected, frozen_base=pin),
+            f"clean:{head}",
+        )
+        sandbox = worktree_cleanliness.plan_protected_execution(worktree, protected)
+        self.assertIn(target, sandbox.absent_frozen_paths)
+        shadow = next(op for op in sandbox.operations if op[0] == "shadow" and op[1] == worktree)
+        self.assertIn(("README.md", "rw", None), shadow[2])
+        self.assertFalse(target.exists())
+        self.assertEqual(worktree_cleanliness.main(argv), 0)
+
+        target.mkdir()
+        self.assertEqual(worktree_cleanliness.main(argv), 1)
+        target.rmdir()
+        self._git(worktree, "update-index", "--skip-worktree", "--", protected[0])
+
+        changed = self._commit_on_dev(protected[0], "synthetic alteration")
+        refusal = worker_workspace._protected_commit_refusal(
+            worktree, changed, protected, checkout_into=worktree, frozen_base=pin,
+        )
+        self.assertIn("frozen_path_changed", refusal or "")
+        self.assertFalse(target.exists())
+
+        # Writing stage-zero metadata for another blob cannot masquerade as
+        # an unchanged sparse body, even when the working file is absent.
+        blob = self._git(self.repo, "rev-parse", f"{changed}:{protected[0]}").stdout.strip()
+        self._git(worktree, "update-index", "--cacheinfo", f"100644,{blob},{protected[0]}")
+        self._git(worktree, "update-index", "--skip-worktree", "--", protected[0])
+        self.assertEqual(worktree_cleanliness.main(argv), 1)
+        self.assertFalse(target.exists())
 
     def test_creation_still_refuses_a_task_protected_tree_before_any_exclusion(self) -> None:
         self._enter_body_domain()
@@ -781,7 +888,7 @@ class ProtectedWorktreeLifecycleTests(unittest.TestCase):
             ("unsupported format", subprocess.CompletedProcess([], 129, b"", b"usage")),
             ("git unavailable", None),
         ):
-            with self.subTest(name), mock.patch.object(worker_workspace, "_git_metadata", return_value=failure):
+            with self.subTest(name), mock.patch.object(worktree_cleanliness, "_git_metadata", return_value=failure):
                 self.assertIn("unreadable_metadata: index", refuse() or "")
         worktree_cleanliness.plan_protected_execution(worktree, PROTECTED)
         self.assertIsNone(refuse())
