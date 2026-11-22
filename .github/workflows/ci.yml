@@ -13,23 +13,19 @@ on:
   merge_group:
     types: [checks_requested]
 
-# Apply the task freeze to its PR and merge-queue candidate before checkout.
-env:
-  ODP_FROZEN_REVIEW_PATH: >-
-    ${{ ((github.event_name == 'pull_request'
-    && github.event.pull_request.number == 1736
-    && github.event.pull_request.head.repo.full_name == github.repository
-    && github.event.pull_request.head.ref == 'task/ODP-SUPERVISOR-FROZEN-REVIEW-261121')
-    || (github.event_name == 'merge_group'
-    && startsWith(github.event.merge_group.head_ref, 'refs/heads/gh-readonly-queue/dev/pr-1736-')))
-    && '.orchestrator/test_supervisor.py' || '' }}
-
 jobs:
+  freeze-policy:
+    permissions:
+      pull-requests: read
+    uses: ./.github/workflows/frozen-review-policy.yml
   change-scope:
+    needs: freeze-policy
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       scope: ${{ steps.classify.outputs.scope }}
+    env:
+      ODP_FROZEN_REVIEW_PATH: ${{ needs.freeze-policy.outputs.path }}
     steps:
       # Below this Git, actions/checkout silently falls back to a REST archive
       # that ignores the sparse deny, so the runner must refuse first.
@@ -175,6 +171,7 @@ jobs:
           echo "scope=$scope" >> "$GITHUB_OUTPUT"
 
   orchestrator:
+    needs: freeze-policy
     # Pinned to Ubuntu 24.04, the release whose AppArmor policy matches the
     # host contract: the reviewed .orchestrator/profiles/bwrap is the only
     # profile attaching to /usr/bin/bwrap (the rollout preflight requires it
@@ -184,6 +181,8 @@ jobs:
     # combined. Move this pin only together with that host contract.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      ODP_FROZEN_REVIEW_PATH: ${{ needs.freeze-policy.outputs.path }}
     steps:
       # Below this Git, actions/checkout silently falls back to a REST archive
       # that ignores the sparse deny, so the runner must refuse first.
@@ -410,7 +409,7 @@ jobs:
         run: uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling infra tests/e2e/test_acceptance_coverage.py
 
   product-lint-unit:
-    needs: change-scope
+    needs: [freeze-policy, change-scope]
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     # Whole-job budget: covers checkout, uv/npm installs, Postgres service
@@ -438,6 +437,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
+      ODP_FROZEN_REVIEW_PATH: ${{ needs.freeze-policy.outputs.path }}
       INTAKE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/oday_product_test
     steps:
       # Below this Git, actions/checkout silently falls back to a REST archive
@@ -597,7 +597,7 @@ jobs:
         run: uv run pytest -m "not requires_live_env and not performance" --ignore=tests/tooling --ignore=tests/security --ignore=tests/e2e/test_acceptance_coverage.py tests modules apps shared models -n auto
 
   product-db:
-    needs: change-scope
+    needs: [freeze-policy, change-scope]
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     timeout-minutes: 70
@@ -615,6 +615,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
+      ODP_FROZEN_REVIEW_PATH: ${{ needs.freeze-policy.outputs.path }}
       INTAKE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/oday_product_test
     steps:
       # Below this Git, actions/checkout silently falls back to a REST archive
@@ -871,10 +872,12 @@ jobs:
           PY
 
   product-api-contract:
-    needs: change-scope
+    needs: [freeze-policy, change-scope]
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      ODP_FROZEN_REVIEW_PATH: ${{ needs.freeze-policy.outputs.path }}
     steps:
       # Below this Git, actions/checkout silently falls back to a REST archive
       # that ignores the sparse deny, so the runner must refuse first.
@@ -1004,10 +1007,12 @@ jobs:
           ODP_API_BASE_REF: ${{ github.base_ref && format('origin/{0}', github.base_ref) || 'origin/dev' }}
 
   product-security:
-    needs: change-scope
+    needs: [freeze-policy, change-scope]
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      ODP_FROZEN_REVIEW_PATH: ${{ needs.freeze-policy.outputs.path }}
     steps:
       # Below this Git, actions/checkout silently falls back to a REST archive
       # that ignores the sparse deny, so the runner must refuse first.
@@ -1133,10 +1138,12 @@ jobs:
         run: make security
 
   product-node:
-    needs: change-scope
+    needs: [freeze-policy, change-scope]
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      ODP_FROZEN_REVIEW_PATH: ${{ needs.freeze-policy.outputs.path }}
     steps:
       # Below this Git, actions/checkout silently falls back to a REST archive
       # that ignores the sparse deny, so the runner must refuse first.
@@ -1264,6 +1271,7 @@ jobs:
   # when change scope requires them, failing closed on any error or missing lane.
   product:
     needs:
+      - freeze-policy
       - change-scope
       - product-lint-unit
       - product-db
@@ -1273,12 +1281,20 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      ODP_FROZEN_REVIEW_PATH: ${{ needs.freeze-policy.outputs.path }}
     steps:
       # Below this Git, actions/checkout silently falls back to a REST archive
       # that ignores the sparse deny, so the runner must refuse first.
       - name: Require sparse-capable Git before checkout
+        env:
+          FREEZE_POLICY_RESULT: ${{ needs.freeze-policy.result }}
         run: |
           set -euo pipefail
+          if [ "$FREEZE_POLICY_RESULT" != success ]; then
+            echo "::error::Frozen review checkout policy could not be determined."
+            exit 1
+          fi
           reported="$(git version)"
           # The action parses one line only; extra output sends it to the archive.
           test "$reported" = "${reported%%$'\n'*}"
@@ -1394,10 +1410,12 @@ jobs:
   # the 150-request volume exactly as ratified, and runs the measurement three
   # times in separate processes so a single pass cannot be a lucky sample.
   performance-gate:
-    needs: change-scope
+    needs: [freeze-policy, change-scope]
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      ODP_FROZEN_REVIEW_PATH: ${{ needs.freeze-policy.outputs.path }}
     steps:
       # Below this Git, actions/checkout silently falls back to a REST archive
       # that ignores the sparse deny, so the runner must refuse first.
@@ -1562,7 +1580,7 @@ jobs:
           if-no-files-found: warn
 
   product-e2e-gate:
-    needs: change-scope
+    needs: [freeze-policy, change-scope]
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     # Budget covers dependency setup, all supplemental and fixed130 gates,
@@ -1582,6 +1600,8 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+    env:
+      ODP_FROZEN_REVIEW_PATH: ${{ needs.freeze-policy.outputs.path }}
     steps:
       # Below this Git, actions/checkout silently falls back to a REST archive
       # that ignores the sparse deny, so the runner must refuse first.
@@ -1883,7 +1903,7 @@ jobs:
 
   automatic-dev-release:
     name: Request automatic dev release after checks
-    needs: [orchestrator, product, performance-gate, product-e2e-gate]
+    needs: [freeze-policy, orchestrator, product, performance-gate, product-e2e-gate]
     if: >-
       ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/dev'
           && needs.orchestrator.result == 'success' && needs.product.result == 'success'
@@ -1893,12 +1913,20 @@ jobs:
     permissions:
       contents: read
       actions: write
+    env:
+      ODP_FROZEN_REVIEW_PATH: ${{ needs.freeze-policy.outputs.path }}
     steps:
       # Below this Git, actions/checkout silently falls back to a REST archive
       # that ignores the sparse deny, so the runner must refuse first.
       - name: Require sparse-capable Git before checkout
+        env:
+          FREEZE_POLICY_RESULT: ${{ needs.freeze-policy.result }}
         run: |
           set -euo pipefail
+          if [ "$FREEZE_POLICY_RESULT" != success ]; then
+            echo "::error::Frozen review checkout policy could not be determined."
+            exit 1
+          fi
           reported="$(git version)"
           # The action parses one line only; extra output sends it to the archive.
           test "$reported" = "${reported%%$'\n'*}"

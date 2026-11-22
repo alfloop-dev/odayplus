@@ -27,24 +27,22 @@ permissions:
   pull-requests: read
   statuses: write
 
-# Apply the task freeze to its PR and merge-queue candidate before checkout.
-env:
-  ODP_FROZEN_REVIEW_PATH: >-
-    ${{ ((github.event_name == 'pull_request'
-    && github.event.pull_request.number == 1736
-    && github.event.pull_request.head.repo.full_name == github.repository
-    && github.event.pull_request.head.ref == 'task/ODP-SUPERVISOR-FROZEN-REVIEW-261121')
-    || (github.event_name == 'merge_group'
-    && startsWith(github.event.merge_group.head_ref, 'refs/heads/gh-readonly-queue/dev/pr-1736-')))
-    && '.orchestrator/test_supervisor.py' || '' }}
-
 jobs:
+  freeze-policy:
+    permissions:
+      pull-requests: read
+    uses: ./.github/workflows/frozen-review-policy.yml
   review-gate:
+    needs: freeze-policy
+    if: always()
     runs-on: ubuntu-latest
+    env:
+      ODP_FROZEN_REVIEW_PATH: ${{ needs.freeze-policy.outputs.path }}
     steps:
       # Below this Git, actions/checkout silently falls back to a REST archive
       # that ignores the sparse deny, so the runner must refuse first.
       - name: Require sparse-capable Git before checkout
+        if: ${{ needs.freeze-policy.result == 'success' }}
         run: |
           set -euo pipefail
           reported="$(git version)"
@@ -55,6 +53,7 @@ jobs:
           test "$(printf '2.28\n%s\n' "$version" | sort -V | head -n1)" = 2.28
 
       - uses: actions/checkout@v4
+        if: ${{ needs.freeze-policy.result == 'success' }}
         with:
           fetch-depth: 0
           ref: ${{ github.event.merge_group.head_sha }}
@@ -80,6 +79,7 @@ jobs:
       # Host Git config is excluded because hosted runners ship a global LFS
       # filter that is unrelated to this checkout and would always be refused.
       - name: Prove protected path stayed out of checkout
+        if: ${{ needs.freeze-policy.result == 'success' }}
         env:
           GIT_CONFIG_NOSYSTEM: "1"
           GIT_CONFIG_GLOBAL: /dev/null
@@ -147,7 +147,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_SHA: ${{ github.event.merge_group.head_sha }}
-          HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          PR_NUMBER: ${{ needs.freeze-policy.outputs.pr_number }}
+          PR_HEAD: ${{ needs.freeze-policy.outputs.pr_head }}
         run: |
           set -euo pipefail
 
@@ -160,21 +161,11 @@ jobs:
             exit 1
           }
 
-          # The queue ref is documented as
-          #   refs/heads/gh-readonly-queue/<base>/pr-<number>-<base_sha>
-          # and each entry gets its own checks_requested event naming its own
-          # PR, so this identifies exactly the PR being admitted. Deriving PRs
-          # from the group's commits instead does NOT work here: base-advance
-          # merges put one commit into many branches, so
-          # `commits/<sha>/pulls` returns unrelated PRs -- measured against this
-          # repo, one head SHA resolved to four of them -- and requiring all of
-          # their gates would eject a properly approved PR.
-          pr="$(printf '%s' "$HEAD_REF" | sed -n 's#.*/pr-\([0-9][0-9]*\)-[0-9a-f]*$#\1#p')"
-          [ -n "$pr" ] || fail \
-            "Could not read a PR number from merge group ref '${HEAD_REF}'." \
-            "Unrecognised merge queue ref; refusing to stamp"
-
-          pr_head="$(gh pr view "$pr" --json headRefOid --jq '.headRefOid')"
+          pr="$PR_NUMBER"
+          pr_head="$PR_HEAD"
+          [ -n "$pr" ] && [ -n "$pr_head" ] || fail \
+            "Could not verify the PR for this merge group." \
+            "Unresolved queue PR; refusing to stamp success"
           state="$(
             gh api "repos/${GITHUB_REPOSITORY}/commits/${pr_head}/status" \
               --jq '[.statuses[] | select(.context == "task-review-gate")] | first | .state // "missing"'

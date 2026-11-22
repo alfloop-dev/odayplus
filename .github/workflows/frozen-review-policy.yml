@@ -1,0 +1,81 @@
+name: Frozen review checkout policy
+
+on:
+  workflow_call:
+    outputs:
+      path:
+        value: ${{ jobs.select.outputs.path }}
+      pr_number:
+        value: ${{ jobs.select.outputs.pr_number }}
+      pr_head:
+        value: ${{ jobs.select.outputs.pr_head }}
+
+permissions:
+  pull-requests: read
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      path: ${{ steps.scope.outputs.path }}
+      pr_number: ${{ steps.scope.outputs.pr_number }}
+      pr_head: ${{ steps.scope.outputs.pr_head }}
+    steps:
+      - name: Resolve the task branch before checkout
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -I - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+
+          frozen_branches = {
+              "task/ODP-SUPERVISOR-FROZEN-REVIEW-261121",
+              "task/ODP-CI-FROZEN-RELEASE-REVIEW-261122",
+              "task/ODP-STAGING-PASSWORD-JOURNEY-261121",
+              "task/ODP-CORE-OPS-PROD-IMPLEMENTATION-261121",
+          }
+          event_name = os.environ["GITHUB_EVENT_NAME"]
+          repository = os.environ["GITHUB_REPOSITORY"]
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+          number = ""
+          head = ""
+          frozen_path = ""
+
+          if event_name in {"pull_request", "merge_group"}:
+              if event_name == "merge_group":
+                  group = event["merge_group"]
+                  base_ref = group["base_ref"]
+                  if not base_ref.startswith("refs/heads/"):
+                      raise SystemExit("Unrecognized merge queue base ref")
+                  base = base_ref.removeprefix("refs/heads/")
+                  prefix = f"refs/heads/gh-readonly-queue/{base}/"
+                  ref = group["head_ref"]
+                  match = re.fullmatch(r"pr-([1-9][0-9]*)-[0-9a-f]{40}", ref.removeprefix(prefix))
+                  if not ref.startswith(prefix) or not match:
+                      raise SystemExit("Unrecognized merge queue head ref")
+                  number = match[1]
+                  pr = json.loads(subprocess.check_output(
+                      ["gh", "api", f"repos/{repository}/pulls/{number}"], text=True, timeout=30,
+                  ))
+                  if str(pr["number"]) != number or pr["base"]["ref"] != base:
+                      raise SystemExit("Merge queue PR identity differs from the event")
+              else:
+                  pr = event["pull_request"]
+              source = pr["head"]
+              if pr["base"]["repo"]["full_name"] != repository:
+                  raise SystemExit("PR targets a different repository")
+              head = source["sha"]
+              if not re.fullmatch(r"[0-9a-f]{40}", head):
+                  raise SystemExit("Unrecognized PR head SHA")
+              if source["repo"]["full_name"] == repository and source["ref"] in frozen_branches:
+                  frozen_path = ".orchestrator/test_supervisor.py"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"path={frozen_path}", f"pr_number={number}", f"pr_head={head}", sep="\n", file=output)
+          PY
