@@ -13,6 +13,8 @@
 #   - A serverless NEG for the Web, attached to the persistent
 #     console-staging load balancer by staging_lifecycle.py
 #   - Release-owned local identity JWT signing key for human password login
+#   - A release-scoped first administrator (bootstrap job + two generated
+#     secrets) the live E2E gate signs in as through the password form
 #   - Cloud Scheduler trigger starting paused
 #   - Label-capable resources tagged with owner/created_at/expires_at labels;
 #     unsupported child resources tracked by the release ownership manifest
@@ -98,6 +100,8 @@ locals {
   migration_job_name = "${local.name_prefix}-migration"
   worker_job_name    = "${local.name_prefix}-worker"
   scheduler_job_name = "${local.name_prefix}-scheduler"
+  # Max 37 + 16 = 53 chars (Cloud Run job names stop at 63).
+  admin_bootstrap_job_name = "${local.name_prefix}-admin-bootstrap"
 
   # ODP-CORE-OPS-STAGING-LIVE-GATE-001: the staging smoke principal for the
   # live E2E gate is this release's own runtime service account. The API
@@ -118,6 +122,16 @@ locals {
   # created and destroyed with this release; no dev/prod key cohort is read.
   local_identity_issuer   = "urn:odp:identity:local"
   local_identity_audience = "urn:odp:staging-identity:${local.release_label}"
+
+  # ODP-EPHEMERAL-STAGING-ROLLOUT-001: the release-scoped password sign-in
+  # account the live E2E gate signs in as (staging_lifecycle.py reads the
+  # username from the staging_admin_account output). It exists only in this
+  # release's database. No mail is ever sent to the address. The bootstrap
+  # secret may live at most 72 hours (shared.identity.bootstrap) and never
+  # outlives the release.
+  admin_username             = "staging-admin"
+  admin_email                = "staging-admin@console-staging.oday-plus.com.tw"
+  admin_bootstrap_expires_at = timeadd(local.created_at, "${min(var.ttl_hours, 72)}h")
 
   # Immutable creation and expiration timestamps (ensures applies do not refresh TTL).
   # created_at is deliberately a required input. Terraform cannot safely invent
@@ -178,6 +192,7 @@ resource "terraform_data" "staging_ownership" {
       migration_job        = local.migration_job_name
       worker_job           = local.worker_job_name
       scheduler_job        = local.scheduler_job_name
+      admin_bootstrap      = local.admin_bootstrap_job_name
       api_image            = var.api_image
       web_image            = var.web_image
       worker_image         = var.worker_image
@@ -647,6 +662,84 @@ resource "google_secret_manager_secret_iam_member" "staging_web_identity_signing
   secret_id = google_secret_manager_secret.staging_identity_token_signing_key.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.staging_web.email}"
+}
+
+# --- Release-scoped password sign-in account (live E2E gate) ---
+#
+# ODP-EPHEMERAL-STAGING-ROLLOUT-001: password sign-in is the only human sign-in
+# on staging (Google user OAuth is off, D15), so every release proves it with
+# an account that exists only in this release's database. The account is the
+# first platform_admin, created by the product's own deployment bootstrap
+# (python -m shared.identity.bootstrap) from a release-generated one-time
+# secret; the live gate then rotates it to the release-generated sign-in
+# password through the Web first-login flow. Both values are random per
+# release, live only in this state and these two release-owned secrets, and
+# are destroyed with the release (and with its database). Nothing comes from
+# a dev credential or from a caller variable.
+resource "random_password" "staging_admin_initial" {
+  length  = 40
+  special = false
+}
+
+resource "google_secret_manager_secret" "staging_admin_initial" {
+  project   = var.project_id
+  secret_id = "${local.name_prefix}-admin-initial"
+
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+
+  labels = local.resource_labels
+}
+
+resource "google_secret_manager_secret_version" "staging_admin_initial" {
+  secret      = google_secret_manager_secret.staging_admin_initial.id
+  secret_data = random_password.staging_admin_initial.result
+
+  depends_on = [terraform_data.staging_ownership]
+}
+
+# The bootstrap job (release runtime account) is the only workload that reads
+# the one-time secret; the verify deployer also reads it, with its existing
+# project-level Secret Manager role, to drive the first-login rotation.
+resource "google_secret_manager_secret_iam_member" "staging_runtime_admin_initial" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.staging_admin_initial.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.staging_runtime.email}"
+}
+
+# The operational sign-in password. No workload mounts it: only the verify
+# deployer reads it, in memory, to sign in through the Web.
+resource "random_password" "staging_admin_sign_in" {
+  length  = 40
+  special = false
+}
+
+resource "google_secret_manager_secret" "staging_admin_sign_in" {
+  project   = var.project_id
+  secret_id = "${local.name_prefix}-admin-sign-in"
+
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+
+  labels = local.resource_labels
+}
+
+resource "google_secret_manager_secret_version" "staging_admin_sign_in" {
+  secret      = google_secret_manager_secret.staging_admin_sign_in.id
+  secret_data = random_password.staging_admin_sign_in.result
+
+  depends_on = [terraform_data.staging_ownership]
 }
 
 # The Web identity, session and login-throttle stores are the existing durable
@@ -1452,5 +1545,110 @@ resource "google_cloud_run_v2_job" "staging_scheduler" {
     google_project_iam_member.staging_runtime_cloudsql,
     google_secret_manager_secret_iam_member.staging_runtime_db_url,
     google_secret_manager_secret_version.staging_database_url,
+  ]
+}
+
+# The product's deployment-only first-administrator bootstrap, run once by the
+# live_e2e_gate verify stage before the gate signs in. It is a no-op when an
+# active account already exists (a verify rerun), never resets a password and
+# writes the identity.account.bootstrap audit event in the same transaction.
+resource "google_cloud_run_v2_job" "staging_admin_bootstrap" {
+  project  = var.project_id
+  name     = local.admin_bootstrap_job_name
+  location = var.region
+  labels   = merge(local.resource_labels, { "oday-runtime" = "admin-bootstrap" })
+
+  template {
+    template {
+      service_account = google_service_account.staging_runtime.email
+      timeout         = "300s"
+      max_retries     = 0
+
+      vpc_access {
+        network_interfaces {
+          network    = var.network_name
+          subnetwork = var.subnetwork_name
+        }
+        # Jobs use the same controlled VPC egress policy as the services.
+        egress = "ALL_TRAFFIC"
+      }
+
+      volumes {
+        name = "cloudsql"
+        cloud_sql_instance {
+          instances = [var.cloud_sql_connection_name]
+        }
+      }
+
+      containers {
+        image   = var.worker_image
+        command = ["python"]
+        args    = ["-m", "shared.identity.bootstrap"]
+
+        volume_mounts {
+          name       = "cloudsql"
+          mount_path = "/cloudsql"
+        }
+
+        env {
+          name  = "ODAY_RELEASE_SHA"
+          value = var.candidate_sha
+        }
+        env {
+          name  = "ODP_DEPLOY_ENV"
+          value = "staging"
+        }
+        env {
+          name  = "ODP_RELEASE_PROFILE"
+          value = var.release_profile
+        }
+        env {
+          name  = "ODP_IDENTITY_BOOTSTRAP_TENANT_ID"
+          value = local.tenant_id
+        }
+        env {
+          name  = "ODP_IDENTITY_BOOTSTRAP_USERNAME"
+          value = local.admin_username
+        }
+        env {
+          name  = "ODP_IDENTITY_BOOTSTRAP_EMAIL"
+          value = local.admin_email
+        }
+        env {
+          name  = "ODP_IDENTITY_BOOTSTRAP_DISPLAY_NAME"
+          value = "Staging release administrator"
+        }
+        env {
+          name  = "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT"
+          value = local.admin_bootstrap_expires_at
+        }
+        env {
+          name = "ODP_IDENTITY_BOOTSTRAP_SECRET"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.staging_admin_initial.secret_id
+              version = google_secret_manager_secret_version.staging_admin_initial.version
+            }
+          }
+        }
+        env {
+          name = "ODAY_DATABASE_URL"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.staging_database_url.secret_id
+              version = google_secret_manager_secret_version.staging_database_url.version
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    google_project_iam_member.staging_runtime_cloudsql,
+    google_secret_manager_secret_iam_member.staging_runtime_db_url,
+    google_secret_manager_secret_iam_member.staging_runtime_admin_initial,
+    google_secret_manager_secret_version.staging_database_url,
+    google_secret_manager_secret_version.staging_admin_initial,
   ]
 }
