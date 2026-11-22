@@ -1585,6 +1585,11 @@ resource "google_cloud_run_v2_job" "staging_admin_bootstrap" {
         command = ["python"]
         args    = ["-m", "shared.identity.bootstrap"]
 
+        volume_mounts {
+          name       = "cloudsql"
+          mount_path = "/cloudsql"
+        }
+
         env {
           name  = "ODAY_RELEASE_SHA"
           value = var.candidate_sha

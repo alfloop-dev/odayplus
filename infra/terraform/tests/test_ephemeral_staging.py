@@ -825,6 +825,15 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
         job = planned("google_cloud_run_v2_job.staging_admin_bootstrap")
         self.assertRegex(job, rf'\+ name\s+= "{re.escape(names["cloud_run_admin_bootstrap_job"])}"\n')
         self.assertRegex(job, r'\+ args\s+= \[\n\s+\+ "-m",\n\s+\+ "shared\.identity\.bootstrap",\n')
+        self.assertRegex(
+            job,
+            r'\+ volumes \{\n\s+\+ name = "cloudsql"\n\n\s+\+ cloud_sql_instance \{\n'
+            rf'\s+\+ instances = \[\n\s+\+ "{re.escape(config.cloud_sql_connection_name)}",\n',
+        )
+        self.assertRegex(
+            job,
+            r'\+ volume_mounts \{\n\s+\+ mount_path = "/cloudsql"\n\s+\+ name\s+= "cloudsql"\n\s+\}',
+        )
         self.assertEqual(env_value(job, "ODP_IDENTITY_BOOTSTRAP_TENANT_ID"), derive_release_tenant_id(release_id))
         self.assertEqual(env_value(job, "ODP_IDENTITY_BOOTSTRAP_USERNAME"), "staging-admin")
         self.assertEqual(env_value(job, "ODP_DEPLOY_ENV"), "staging")

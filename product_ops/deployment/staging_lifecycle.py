@@ -203,11 +203,52 @@ STAGING_WEB_CUSTOM_DOMAIN_POLL_SECONDS = 15.0
 # The passwords are read from Secret Manager only inside the live gate stage and
 # never leave its memory (the stage redacts them from every detail).
 STAGING_ADMIN_USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$")
+#: Mirrors shared.identity.bootstrap.MAX_SECRET_LIFETIME and main.tf's
+#: min(var.ttl_hours, 72) cap on ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT.
+STAGING_ADMIN_BOOTSTRAP_MAX_TTL_HOURS = 72
 #: An Operator Console role the pure platform_admin does not hold (the gate's
 #: wrong-role probe); the same one dev uses.
 STAGING_ADMIN_DENIED_ROLE = "cs-lead"
 STAGING_LIVE_E2E_WORKER_DEADLINE_SECONDS = 600.0
 STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS = 10.0
+
+
+def _staging_admin_bootstrap_window_expired(
+    outputs: Mapping[str, Any],
+    *,
+    now: datetime,
+) -> bool:
+    """Return True only when a long-TTL release is still valid past its 72h bootstrap cap.
+
+    ``shared.identity.bootstrap`` caps one-time bootstrap secrets at 72h and
+    validates expiry before its existing-account no-op. For releases whose TTL
+    exceeds 72h (up to 168h), once that bootstrap window has closed while the
+    release itself has not expired, repeat verification verifies the bootstrap
+    job definition without re-executing the expired job and signs in directly
+    with the rotated password (never the expired initial secret). An uncreated
+    or unrotated account still fails closed in the gate's password sign-in step.
+    """
+
+    created_raw = str(outputs.get("created_at") or "").strip()
+    expires_raw = str(outputs.get("expires_at") or "").strip()
+    if not created_raw or not expires_raw:
+        return False
+    created_at = parse_timestamp(created_raw)
+    expires_at = parse_timestamp(expires_raw)
+    bootstrap_expires_at = min(
+        created_at + timedelta(hours=STAGING_ADMIN_BOOTSTRAP_MAX_TTL_HOURS),
+        expires_at,
+    )
+    return bootstrap_expires_at < expires_at and bootstrap_expires_at <= now < expires_at
+
+
+def _context_timestamp(context: Mapping[str, Any]) -> datetime:
+    raw = context.get("now")
+    if isinstance(raw, datetime):
+        return raw.astimezone(UTC) if raw.tzinfo else raw.replace(tzinfo=UTC)
+    if isinstance(raw, str) and raw.strip():
+        return parse_timestamp(raw)
+    return datetime.now(UTC)
 
 
 def staging_smoke_token_audience(release_id: str) -> str:
@@ -4147,10 +4188,27 @@ def make_live_rehearsal_executor(
         if expected not in STAGING_RELEASE_PROFILES:
             raise RuntimeError(f"admitted release profile {expected!r} may not run in staging")
         gate = _live_e2e_gate()
+        now_dt = _context_timestamp(context)
         execute_job("staging_worker_job_name", "staging_worker_image", "live gate worker", run=False)
-        bootstrap = execute_job(
-            "staging_admin_bootstrap_job_name", "staging_worker_image", "identity bootstrap"
-        )
+        bootstrap_window_expired = _staging_admin_bootstrap_window_expired(outputs, now=now_dt)
+        if bootstrap_window_expired:
+            bootstrap = execute_job(
+                "staging_admin_bootstrap_job_name",
+                "staging_worker_image",
+                "identity bootstrap",
+                run=False,
+            )
+            bootstrap_proof = {
+                "job": bootstrap["job"],
+                "execution": "skipped_bootstrap_window_expired",
+            }
+            secret_kinds: tuple[str, ...] = ("sign_in",)
+        else:
+            bootstrap = execute_job(
+                "staging_admin_bootstrap_job_name", "staging_worker_image", "identity bootstrap"
+            )
+            bootstrap_proof = {"job": bootstrap["job"], "execution": bootstrap["execution"]}
+            secret_kinds = ("initial", "sign_in")
         # Pinned versions of this release's own secrets (validated output
         # handoff); gcloud output is captured, never logged.
         account = outputs["staging_admin_account"]
@@ -4168,7 +4226,7 @@ def make_live_rehearsal_executor(
                 timeout=60,
                 capture_output=True,
             )
-            for kind in ("initial", "sign_in")
+            for kind in secret_kinds
         }
         if not all(passwords.values()):
             raise RuntimeError("release-scoped admin secret readback returned an empty value")
@@ -4190,9 +4248,8 @@ def make_live_rehearsal_executor(
             bearer_token=tokens["smoke"],
             api_transport_token=tokens["api"],
             admin_password=passwords["sign_in"],
-            admin_initial_password=passwords["initial"],
+            admin_initial_password=passwords.get("initial", ""),
         )
-        bootstrap_proof = {"job": bootstrap["job"], "execution": bootstrap["execution"]}
         correlation_id = _live_gate_correlation_id(config.expected_sha)
         try:
             api_client, web_client = _live_gate_clients(config, correlation_id=correlation_id)
@@ -4207,7 +4264,7 @@ def make_live_rehearsal_executor(
                     gcloud_bin=gcloud_bin,
                 ),
                 correlation_id=correlation_id,
-                now=format_timestamp(datetime.now(UTC)),
+                now=format_timestamp(now_dt),
                 web_http=web_client,
             )
         except Exception as exc:
@@ -4694,6 +4751,7 @@ def verify_ephemeral_staging(
             "dry_run": dry_run,
             "lifecycle_outputs": dict(lifecycle_outputs) if lifecycle_outputs else {},
             "release_profile": release_profile,
+            "now": format_timestamp(now_dt),
         }
 
         web_domain_verified = False
