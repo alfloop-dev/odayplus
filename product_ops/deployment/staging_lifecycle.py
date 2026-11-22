@@ -203,52 +203,11 @@ STAGING_WEB_CUSTOM_DOMAIN_POLL_SECONDS = 15.0
 # The passwords are read from Secret Manager only inside the live gate stage and
 # never leave its memory (the stage redacts them from every detail).
 STAGING_ADMIN_USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$")
-#: Mirrors shared.identity.bootstrap.MAX_SECRET_LIFETIME and main.tf's
-#: min(var.ttl_hours, 72) cap on ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT.
-STAGING_ADMIN_BOOTSTRAP_MAX_TTL_HOURS = 72
 #: An Operator Console role the pure platform_admin does not hold (the gate's
 #: wrong-role probe); the same one dev uses.
 STAGING_ADMIN_DENIED_ROLE = "cs-lead"
 STAGING_LIVE_E2E_WORKER_DEADLINE_SECONDS = 600.0
 STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS = 10.0
-
-
-def _staging_admin_bootstrap_window_expired(
-    outputs: Mapping[str, Any],
-    *,
-    now: datetime,
-) -> bool:
-    """Return True only when a long-TTL release is still valid past its 72h bootstrap cap.
-
-    ``shared.identity.bootstrap`` caps one-time bootstrap secrets at 72h and
-    validates expiry before its existing-account no-op. For releases whose TTL
-    exceeds 72h (up to 168h), once that bootstrap window has closed while the
-    release itself has not expired, repeat verification verifies the bootstrap
-    job definition without re-executing the expired job and signs in directly
-    with the rotated password (never the expired initial secret). An uncreated
-    or unrotated account still fails closed in the gate's password sign-in step.
-    """
-
-    created_raw = str(outputs.get("created_at") or "").strip()
-    expires_raw = str(outputs.get("expires_at") or "").strip()
-    if not created_raw or not expires_raw:
-        return False
-    created_at = parse_timestamp(created_raw)
-    expires_at = parse_timestamp(expires_raw)
-    bootstrap_expires_at = min(
-        created_at + timedelta(hours=STAGING_ADMIN_BOOTSTRAP_MAX_TTL_HOURS),
-        expires_at,
-    )
-    return bootstrap_expires_at < expires_at and bootstrap_expires_at <= now < expires_at
-
-
-def _context_timestamp(context: Mapping[str, Any]) -> datetime:
-    raw = context.get("now")
-    if isinstance(raw, datetime):
-        return raw.astimezone(UTC) if raw.tzinfo else raw.replace(tzinfo=UTC)
-    if isinstance(raw, str) and raw.strip():
-        return parse_timestamp(raw)
-    return datetime.now(UTC)
 
 
 def staging_smoke_token_audience(release_id: str) -> str:
@@ -3159,6 +3118,83 @@ def _live_cloud_run_egress(payload: Mapping[str, Any], *, field_name: str) -> st
     return next(iter(observed.values()))
 
 
+_CLOUD_RUN_JOB_ENV_PATHS: tuple[tuple[str | int, ...], ...] = (
+    ("template", "template", "containers", 0, "env"),
+    ("spec", "template", "spec", "template", "spec", "containers", 0, "env"),
+)
+
+
+def _live_cloud_run_job_env(
+    payload: Mapping[str, Any],
+    env_name: str,
+    *,
+    field_name: str,
+) -> str:
+    """Read one non-secret literal env value from a Cloud Run job description.
+
+    Checks both the v2 (``template.template.containers[0].env``) and gcloud v1
+    (``spec.template.spec.template.spec.containers[0].env``) describe shapes and
+    fails closed if the entry is missing, secret-backed, empty, or contradictory.
+    """
+
+    observed: dict[str, str] = {}
+    for path in _CLOUD_RUN_JOB_ENV_PATHS:
+        value: Any = payload
+        for component in path:
+            if isinstance(component, int):
+                if not isinstance(value, list) or component >= len(value):
+                    value = None
+                    break
+                value = value[component]
+            else:
+                if not isinstance(value, Mapping) or component not in value:
+                    value = None
+                    break
+                value = value[component]
+        if not isinstance(value, list):
+            continue
+        location = ".".join(str(part) for part in path)
+        for index, entry in enumerate(value):
+            if not isinstance(entry, Mapping) or entry.get("name") != env_name:
+                continue
+            if entry.get("valueSource") is not None or entry.get("valueFrom") is not None:
+                raise RuntimeError(
+                    f"Cloud Run {field_name} ({env_name}) at {location}[{index}] "
+                    "must be a non-secret literal env value"
+                )
+            raw = entry.get("value")
+            if not isinstance(raw, str) or not raw.strip():
+                raise RuntimeError(
+                    f"Cloud Run {field_name} ({env_name}) at {location}[{index}] is empty or invalid"
+                )
+            observed[f"{location}[{index}]"] = raw.strip()
+    if not observed:
+        raise RuntimeError(
+            f"Cloud Run {field_name} ({env_name}) readback is missing from the live resource"
+        )
+    if len(set(observed.values())) != 1:
+        raise RuntimeError(f"Cloud Run {field_name} ({env_name}) readback is contradictory")
+    return next(iter(observed.values()))
+
+
+def _parse_live_bootstrap_expiry(raw: str) -> datetime:
+    """Parse ``ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT`` strictly as a UTC timestamp."""
+
+    try:
+        parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise RuntimeError(
+            "Cloud Run identity bootstrap expiry (ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT) "
+            "is not a valid ISO-8601 timestamp"
+        ) from exc
+    if parsed.tzinfo is None:
+        raise RuntimeError(
+            "Cloud Run identity bootstrap expiry (ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT) "
+            "must carry a UTC offset"
+        )
+    return parsed.astimezone(UTC)
+
+
 def _live_cloud_run_description(
     resource_kind: str,
     resource_name: str,
@@ -3799,19 +3835,11 @@ def make_live_rehearsal_executor(
             "status": "verified",
         }
 
-    def execute_job(
+    def describe_verified_job(
         output_name: str,
         image_output_name: str,
         kind: str,
-        *,
-        run: bool = True,
-        args: Sequence[str] = (),
-    ) -> Mapping[str, Any]:
-        """Verify the live job's image and egress, then (with ``run``) execute it.
-
-        ``args`` overrides the container args for this execution only; the
-        image and ALL_TRAFFIC egress readback always precede the execution.
-        """
+    ) -> tuple[str, str, str, Mapping[str, Any]]:
         job_name = str(outputs[output_name]).strip()
         expected_image = str(outputs[image_output_name]).strip()
         payload = _live_cloud_run_description(
@@ -3838,6 +3866,28 @@ def make_live_rehearsal_executor(
             raise RuntimeError(
                 f"{kind} job live VPC egress is {actual_egress!r}; expected ALL_TRAFFIC"
             )
+        return job_name, expected_image, actual_egress, payload
+
+    def execute_job(
+        output_name: str,
+        image_output_name: str,
+        kind: str,
+        *,
+        run: bool = True,
+        args: Sequence[str] = (),
+        verified_job: tuple[str, str, str] | None = None,
+    ) -> Mapping[str, Any]:
+        """Verify the live job's image and egress, then (with ``run``) execute it.
+
+        ``args`` overrides the container args for this execution only; the
+        image and ALL_TRAFFIC egress readback always precede the execution.
+        """
+        if verified_job is None:
+            job_name, expected_image, actual_egress, _ = describe_verified_job(
+                output_name, image_output_name, kind
+            )
+        else:
+            job_name, expected_image, actual_egress = verified_job
         if not run:
             return {"success": True, "job": job_name, "image_digest": expected_image, "egress": actual_egress}
         _live_gcloud(
@@ -4179,33 +4229,43 @@ def make_live_rehearsal_executor(
         truthfully refused; full: the complete model assertions) and, on
         staging, the Web password sign-in journey. The release's admin
         bootstrap job first creates the release-scoped administrator (a no-op
-        once it exists). Any blocker fails the stage. Tokens are minted fresh
-        (the earlier stages can outlast an ID token); tokens and passwords
-        never leave this function.
+        once it exists) while its live non-secret
+        ``ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT`` window is open; once that window
+        has closed at live gate UTC, repeat verification verifies the job
+        description without re-executing the expired job and signs in directly
+        with the rotated password through the same login journey. Any blocker
+        fails the stage. Tokens are minted fresh (the earlier stages can
+        outlast an ID token); tokens and passwords never leave this function.
         """
 
         expected = str(context.get("release_profile") or "")
         if expected not in STAGING_RELEASE_PROFILES:
             raise RuntimeError(f"admitted release profile {expected!r} may not run in staging")
         gate = _live_e2e_gate()
-        now_dt = _context_timestamp(context)
         execute_job("staging_worker_job_name", "staging_worker_image", "live gate worker", run=False)
-        bootstrap_window_expired = _staging_admin_bootstrap_window_expired(outputs, now=now_dt)
-        if bootstrap_window_expired:
-            bootstrap = execute_job(
-                "staging_admin_bootstrap_job_name",
-                "staging_worker_image",
-                "identity bootstrap",
-                run=False,
+        bootstrap_job, bootstrap_image, bootstrap_egress, bootstrap_payload = describe_verified_job(
+            "staging_admin_bootstrap_job_name", "staging_worker_image", "identity bootstrap"
+        )
+        bootstrap_expires_at = _parse_live_bootstrap_expiry(
+            _live_cloud_run_job_env(
+                bootstrap_payload,
+                "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT",
+                field_name="identity bootstrap expiry",
             )
+        )
+        now_dt = datetime.now(UTC)
+        if bootstrap_expires_at <= now_dt:
             bootstrap_proof = {
-                "job": bootstrap["job"],
+                "job": bootstrap_job,
                 "execution": "skipped_bootstrap_window_expired",
             }
             secret_kinds: tuple[str, ...] = ("sign_in",)
         else:
             bootstrap = execute_job(
-                "staging_admin_bootstrap_job_name", "staging_worker_image", "identity bootstrap"
+                "staging_admin_bootstrap_job_name",
+                "staging_worker_image",
+                "identity bootstrap",
+                verified_job=(bootstrap_job, bootstrap_image, bootstrap_egress),
             )
             bootstrap_proof = {"job": bootstrap["job"], "execution": bootstrap["execution"]}
             secret_kinds = ("initial", "sign_in")
@@ -4751,7 +4811,6 @@ def verify_ephemeral_staging(
             "dry_run": dry_run,
             "lifecycle_outputs": dict(lifecycle_outputs) if lifecycle_outputs else {},
             "release_profile": release_profile,
-            "now": format_timestamp(now_dt),
         }
 
         web_domain_verified = False

@@ -4760,6 +4760,48 @@ class StagingLiveE2EGateTests(unittest.TestCase):
             **{"anon GET /readiness": self.fx.base.response(200, readiness), **overrides}
         )
 
+    def _bootstrap_job_description(
+        self,
+        outputs: Mapping[str, Any],
+        expires_at: datetime | str,
+        *,
+        dialect: str = "v2",
+        egress: str = "ALL_TRAFFIC",
+        extra_env: Sequence[Mapping[str, Any]] = (),
+    ) -> dict[str, Any]:
+        from product_ops.deployment.staging_lifecycle import format_timestamp
+
+        expiry_value = format_timestamp(expires_at) if isinstance(expires_at, datetime) else expires_at
+        env = [
+            {"name": "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT", "value": expiry_value},
+            *extra_env,
+        ]
+        image = outputs["staging_worker_image"]
+        if dialect == "v1":
+            egress_annotation = "all-traffic" if egress == "ALL_TRAFFIC" else "private-ranges-only"
+            return {
+                "spec": {
+                    "template": {
+                        "metadata": {
+                            "annotations": {"run.googleapis.com/vpc-access-egress": egress_annotation}
+                        },
+                        "spec": {
+                            "template": {
+                                "spec": {"containers": [{"image": image, "env": env}]}
+                            }
+                        },
+                    }
+                }
+            }
+        return {
+            "template": {
+                "template": {
+                    "containers": [{"image": image, "env": env}],
+                    "vpcAccess": {"egress": egress},
+                }
+            }
+        }
+
     def _run_stage(
         self,
         routes: dict[str, Any],
@@ -4769,9 +4811,12 @@ class StagingLiveE2EGateTests(unittest.TestCase):
         fresh_admin: bool = True,
         web_overrides: Mapping[str, Any] | None = None,
         outputs: Mapping[str, Any] | None = None,
-        now: datetime | str | None = None,
+        gate_now: datetime | None = None,
+        bootstrap_expires_at: datetime | str | None = None,
         job_descriptions: Mapping[str, Mapping[str, Any]] | None = None,
+        extra_context: Mapping[str, Any] | None = None,
     ) -> tuple[Mapping[str, Any], dict[str, Any]]:
+        from contextlib import ExitStack
         from unittest.mock import patch
 
         from product_ops.deployment import staging_lifecycle as lifecycle
@@ -4782,6 +4827,12 @@ class StagingLiveE2EGateTests(unittest.TestCase):
             lifecycle.staging_smoke_token_audience(self.release_id): self.SMOKE_TOKEN,
             active_outputs["staging_api_uri"]: self.API_TOKEN,
         }
+        effective_now = gate_now or datetime.now(UTC)
+        default_expiry = (
+            bootstrap_expires_at
+            if bootstrap_expires_at is not None
+            else effective_now + timedelta(hours=24)
+        )
 
         def mint(*, audience: str, operator_identity: str, gcloud_bin: str) -> str:
             seen["tokens"].append((audience, operator_identity))
@@ -4791,6 +4842,8 @@ class StagingLiveE2EGateTests(unittest.TestCase):
             seen["described"].append((kind, name))
             if job_descriptions and name in job_descriptions:
                 return dict(job_descriptions[name])
+            if name == active_outputs["staging_admin_bootstrap_job_name"]:
+                return self._bootstrap_job_description(active_outputs, default_expiry)
             return {"template": {"template": {
                 "containers": [{"image": active_outputs["staging_worker_image"]}],
                 "vpcAccess": {"egress": "ALL_TRAFFIC"},
@@ -4813,18 +4866,29 @@ class StagingLiveE2EGateTests(unittest.TestCase):
         stage_context: dict[str, Any] = {
             "release_profile": profile,
             "manifest_digest": self.manifest_digest,
+            **(extra_context or {}),
         }
-        if now is not None:
-            stage_context["now"] = now
 
-        with _staging_web_origin(self.fx, active_outputs), \
-                patch.object(lifecycle, "_live_gcloud", side_effect=_staging_gcloud(active_outputs, self.fx, seen["gcloud"])), \
-                patch.object(lifecycle, "_live_cloud_run_description", side_effect=describe), \
-                patch.object(lifecycle, "_live_identity_token", side_effect=mint), \
-                patch.object(lifecycle, "_live_gate_clients", side_effect=clients), \
-                patch.object(lifecycle, "_live_gate_worker_driver", side_effect=driver), \
-                patch.object(lifecycle, "_live_gate_correlation_id", return_value=self.fx.base.CORRELATION_ID), \
-                patch.object(lifecycle, "STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS", 0.001):
+        with ExitStack() as stack:
+            if gate_now is not None:
+                frozen = gate_now
+
+                class _FrozenDatetime(datetime):
+                    @classmethod
+                    def now(cls, tz: Any = None) -> datetime:
+                        return frozen if tz is None else frozen.astimezone(tz)
+
+                stack.enter_context(patch.object(lifecycle, "datetime", _FrozenDatetime))
+            stack.enter_context(_staging_web_origin(self.fx, active_outputs))
+            stack.enter_context(
+                patch.object(lifecycle, "_live_gcloud", side_effect=_staging_gcloud(active_outputs, self.fx, seen["gcloud"]))
+            )
+            stack.enter_context(patch.object(lifecycle, "_live_cloud_run_description", side_effect=describe))
+            stack.enter_context(patch.object(lifecycle, "_live_identity_token", side_effect=mint))
+            stack.enter_context(patch.object(lifecycle, "_live_gate_clients", side_effect=clients))
+            stack.enter_context(patch.object(lifecycle, "_live_gate_worker_driver", side_effect=driver))
+            stack.enter_context(patch.object(lifecycle, "_live_gate_correlation_id", return_value=self.fx.base.CORRELATION_ID))
+            stack.enter_context(patch.object(lifecycle, "STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS", 0.001))
             executor = lifecycle.make_live_rehearsal_executor(
                 active_outputs,
                 project_id=self.project_id,
@@ -4965,53 +5029,69 @@ class StagingLiveE2EGateTests(unittest.TestCase):
         self.assertIn("session:password_login", names)
         self.assertNotIn("session:first_login_password_rotated", names)
 
-    def _long_ttl_outputs(self, ttl_hours: int = 168) -> dict[str, Any]:
-        from product_ops.deployment.staging_lifecycle import format_timestamp
-
-        return {
-            **self.outputs,
-            "created_at": format_timestamp(self.now),
-            "expires_at": format_timestamp(self.now + timedelta(hours=ttl_hours)),
-        }
-
-    def test_long_ttl_release_repeats_sign_in_after_72h_bootstrap_window_expires(self) -> None:
+    def test_expired_bootstrap_job_expiry_repeats_sign_in_using_live_job_describe_and_utc(self) -> None:
         from product_ops.deployment import staging_lifecycle as lifecycle
         from shared.identity import bootstrap as identity_bootstrap
 
-        self.assertEqual(
-            timedelta(hours=lifecycle.STAGING_ADMIN_BOOTSTRAP_MAX_TTL_HOURS),
-            identity_bootstrap.MAX_SECRET_LIFETIME,
-        )
-        outputs = self._long_ttl_outputs(ttl_hours=168)
+        # No third Python copy of the 72h cap and no verify-wide now plumbing.
+        self.assertFalse(hasattr(lifecycle, "STAGING_ADMIN_BOOTSTRAP_MAX_TTL_HOURS"))
+        self.assertFalse(hasattr(lifecycle, "_staging_admin_bootstrap_window_expired"))
+        self.assertFalse(hasattr(lifecycle, "_context_timestamp"))
+
         bootstrap_expires_at = self.now + timedelta(hours=72)
-        # shared.identity.bootstrap itself still fails closed at >= 72h; expiry
-        # validation is unchanged.
+        # shared.identity.bootstrap itself still fails closed at >= expiry;
+        # expiry validation is unchanged.
         with self.assertRaises(identity_bootstrap.BootstrapRefused) as refused:
             identity_bootstrap.request_from_env(
                 {
                     "ODP_IDENTITY_BOOTSTRAP_SECRET": self.fx.INITIAL_PASSWORD,
                     "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT": lifecycle.format_timestamp(bootstrap_expires_at),
-                    "ODP_IDENTITY_BOOTSTRAP_TENANT_ID": outputs["staging_tenant_id"],
-                    "ODP_IDENTITY_BOOTSTRAP_USERNAME": outputs["staging_admin_account"]["username"],
+                    "ODP_IDENTITY_BOOTSTRAP_TENANT_ID": self.outputs["staging_tenant_id"],
+                    "ODP_IDENTITY_BOOTSTRAP_USERNAME": self.outputs["staging_admin_account"]["username"],
                     "ODP_IDENTITY_BOOTSTRAP_EMAIL": "staging-admin@console-staging.oday-plus.com.tw",
                 },
                 now=bootstrap_expires_at,
             )
         self.assertEqual(refused.exception.code, "BOOTSTRAP_SECRET_EXPIRED")
 
-        account = outputs["staging_admin_account"]
-        for offset in (timedelta(hours=72), timedelta(hours=100), timedelta(hours=168) - timedelta(seconds=1)):
-            with self.subTest(offset=offset):
+        account = self.outputs["staging_admin_account"]
+        bootstrap_job = self.outputs["staging_admin_bootstrap_job_name"]
+        # Both Cloud Run job describe dialects (v2 template.template and gcloud
+        # v1 spec.template.spec.template.spec) plus UTC-offset timestamps work.
+        cases = (
+            ("v2_exact_boundary", "v2", lifecycle.format_timestamp(bootstrap_expires_at), bootstrap_expires_at),
+            ("v1_after_boundary", "v1", lifecycle.format_timestamp(bootstrap_expires_at), bootstrap_expires_at + timedelta(seconds=1)),
+            ("v2_long_ttl_100h", "v2", lifecycle.format_timestamp(bootstrap_expires_at), self.now + timedelta(hours=100)),
+            ("v1_offset_exact_boundary", "v1", "2026-08-30T14:00:00+08:00", bootstrap_expires_at),
+        )
+        for label, dialect, raw_expiry, gate_now in cases:
+            with self.subTest(case=label):
+                job_desc = {
+                    bootstrap_job: self._bootstrap_job_description(
+                        self.outputs,
+                        raw_expiry,
+                        dialect=dialect,
+                        extra_env=[
+                            {
+                                "name": "ODP_IDENTITY_BOOTSTRAP_SECRET",
+                                "valueFrom" if dialect == "v1" else "valueSource": {
+                                    "secretKeyRef": {"name": account["initial_secret"], "key": "1"}
+                                },
+                            }
+                        ],
+                    )
+                }
                 result, seen = self._run_stage(
                     self._core_ops_routes(),
                     fresh_admin=False,
-                    outputs=outputs,
-                    now=self.now + offset,
+                    gate_now=gate_now,
+                    job_descriptions=job_desc,
+                    # Stale verify-start timestamp in context must be ignored.
+                    extra_context={"now": lifecycle.format_timestamp(bootstrap_expires_at - timedelta(hours=1))},
                 )
                 self.assertTrue(result["success"], result.get("detail"))
-                executed = [argv for argv in seen["gcloud"] if argv[:3] == ["run", "jobs", "execute"]]
-                self.assertEqual(executed, [])
-                self.assertIn(("job", outputs["staging_admin_bootstrap_job_name"]), seen["described"])
+                self.assertEqual([argv for argv in seen["gcloud"] if argv[:3] == ["run", "jobs", "execute"]], [])
+                self.assertEqual(seen["described"].count(("job", bootstrap_job)), 1)
                 self.assertEqual(
                     [argv[3:5] for argv in seen["gcloud"] if argv[:3] == ["secrets", "versions", "access"]],
                     [["1", f"--secret={account['sign_in_secret']}"]],
@@ -5019,33 +5099,66 @@ class StagingLiveE2EGateTests(unittest.TestCase):
                 self.assertEqual(seen["config"].dev_admin_initial_password, "")
                 self.assertEqual(
                     result["admin_bootstrap"],
-                    {
-                        "job": outputs["staging_admin_bootstrap_job_name"],
-                        "execution": "skipped_bootstrap_window_expired",
-                    },
+                    {"job": bootstrap_job, "execution": "skipped_bootstrap_window_expired"},
                 )
                 names = {check["name"] for check in result["live_e2e_gate"]["checks"]}
                 self.assertIn("session:password_login", names)
                 self.assertIn("admin:bootstrap_audited", names)
                 self.assertNotIn("session:first_login_password_rotated", names)
+                serialized = json.dumps(result)
+                self.assertNotIn("ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT", serialized)
+                self.assertNotIn(raw_expiry, serialized)
 
-    def test_long_ttl_release_after_72h_still_fails_closed_if_unrotated_or_job_tampered(self) -> None:
-        outputs = self._long_ttl_outputs(ttl_hours=168)
-        after_cap = self.now + timedelta(hours=100)
+    def test_bootstrap_runs_before_expiry_and_fails_closed_on_unrotated_or_bad_job_describe(self) -> None:
+        from product_ops.deployment import staging_lifecycle as lifecycle
 
-        # Unrotated / unbootstrapped release past 72h cannot use the expired
+        account = self.outputs["staging_admin_account"]
+        bootstrap_job = self.outputs["staging_admin_bootstrap_job_name"]
+        bootstrap_expires_at = self.now + timedelta(hours=72)
+
+        # Just before the expiry boundary (v1 gcloud describe shape & offset),
+        # bootstrap runs once, describes once, and rotates the fresh admin.
+        for label, dialect, raw_expiry in (
+            ("v2_before_boundary", "v2", lifecycle.format_timestamp(bootstrap_expires_at)),
+            ("v1_offset_before_boundary", "v1", "2026-08-30T14:00:00+08:00"),
+        ):
+            with self.subTest(case=label):
+                result, seen = self._run_stage(
+                    self._core_ops_routes(),
+                    fresh_admin=True,
+                    gate_now=bootstrap_expires_at - timedelta(seconds=1),
+                    job_descriptions={
+                        bootstrap_job: self._bootstrap_job_description(
+                            self.outputs, raw_expiry, dialect=dialect
+                        )
+                    },
+                )
+                self.assertTrue(result["success"], result.get("detail"))
+                executed = [argv for argv in seen["gcloud"] if argv[:3] == ["run", "jobs", "execute"]]
+                self.assertEqual([argv[3] for argv in executed], [bootstrap_job])
+                self.assertEqual(seen["described"].count(("job", bootstrap_job)), 1)
+                self.assertEqual(
+                    [argv[3:5] for argv in seen["gcloud"] if argv[:3] == ["secrets", "versions", "access"]],
+                    [["1", f"--secret={account['initial_secret']}"], ["1", f"--secret={account['sign_in_secret']}"]],
+                )
+                self.assertEqual(
+                    result["admin_bootstrap"],
+                    {"job": bootstrap_job, "execution": "succeeded"},
+                )
+
+        # Unrotated / unbootstrapped release past expiry cannot use the expired
         # bootstrap job or initial secret to create/rotate an account.
         result, seen = self._run_stage(
             self._core_ops_routes(),
             fresh_admin=True,
-            outputs=outputs,
-            now=after_cap,
+            gate_now=bootstrap_expires_at + timedelta(hours=1),
+            bootstrap_expires_at=bootstrap_expires_at,
         )
         self.assertFalse(result["success"])
         self.assertEqual([argv for argv in seen["gcloud"] if argv[:3] == ["run", "jobs", "execute"]], [])
         self.assertEqual(
             [argv[3:5] for argv in seen["gcloud"] if argv[:3] == ["secrets", "versions", "access"]],
-            [["1", f"--secret={outputs['staging_admin_account']['sign_in_secret']}"]],
+            [["1", f"--secret={account['sign_in_secret']}"]],
         )
         failed = {check["name"] for check in result["live_e2e_gate"]["checks"] if not check["ok"]}
         self.assertIn("session:password_login", failed)
@@ -5053,84 +5166,168 @@ class StagingLiveE2EGateTests(unittest.TestCase):
         for secret in (self.fx.PASSWORD, self.fx.INITIAL_PASSWORD):
             self.assertNotIn(secret, json.dumps(result))
 
-        # Live bootstrap job image/egress readback still runs and fails closed
-        # before any secret is read.
-        bad_job = {
-            outputs["staging_admin_bootstrap_job_name"]: {
-                "template": {"template": {
-                    "containers": [{"image": outputs["staging_worker_image"]}],
-                    "vpcAccess": {"egress": "PRIVATE_RANGES_ONLY"},
-                }}
-            }
-        }
-        with self.assertRaisesRegex(RuntimeError, "expected ALL_TRAFFIC"):
-            self._run_stage(
-                self._core_ops_routes(),
-                fresh_admin=False,
-                outputs=outputs,
-                now=after_cap,
-                job_descriptions=bad_job,
-            )
+        # Malformed, missing, secret-backed, contradictory, or tampered job
+        # descriptions all fail closed before executing bootstrap or reading any secret.
+        v1_valid = self._bootstrap_job_description(self.outputs, bootstrap_expires_at, dialect="v1")
+        v2_other = self._bootstrap_job_description(
+            self.outputs, bootstrap_expires_at + timedelta(hours=1), dialect="v2"
+        )
+        bad_cases: list[tuple[str, dict[str, Any], str]] = [
+            (
+                "missing_env",
+                {"template": {"template": {"containers": [{"image": self.outputs["staging_worker_image"]}], "vpcAccess": {"egress": "ALL_TRAFFIC"}}}},
+                "missing",
+            ),
+            (
+                "empty_env",
+                self._bootstrap_job_description(self.outputs, "   "),
+                "empty or invalid",
+            ),
+            (
+                "secret_backed_v2",
+                {"template": {"template": {
+                    "containers": [{
+                        "image": self.outputs["staging_worker_image"],
+                        "env": [{"name": "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT", "valueSource": {"secretKeyRef": {"secret": "x"}}}],
+                    }],
+                    "vpcAccess": {"egress": "ALL_TRAFFIC"},
+                }}},
+                "non-secret",
+            ),
+            (
+                "secret_backed_v1",
+                {
+                    "spec": {"template": {
+                        "metadata": {"annotations": {"run.googleapis.com/vpc-access-egress": "all-traffic"}},
+                        "spec": {"template": {"spec": {"containers": [{
+                            "image": self.outputs["staging_worker_image"],
+                            "env": [{"name": "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT", "valueFrom": {"secretKeyRef": {"name": "x", "key": "1"}}}],
+                        }]}}},
+                    }}
+                },
+                "non-secret",
+            ),
+            (
+                "malformed_timestamp",
+                self._bootstrap_job_description(self.outputs, "tomorrow"),
+                "ISO-8601",
+            ),
+            (
+                "naive_timestamp",
+                self._bootstrap_job_description(self.outputs, "2026-08-30T06:00:00"),
+                "UTC offset",
+            ),
+            (
+                "contradictory_v1_v2",
+                {**v1_valid, **v2_other},
+                "contradictory",
+            ),
+            (
+                "bad_egress_even_when_expired",
+                self._bootstrap_job_description(self.outputs, bootstrap_expires_at, egress="PRIVATE_RANGES_ONLY"),
+                "expected ALL_TRAFFIC",
+            ),
+        ]
+        for label, bad_payload, pattern in bad_cases:
+            with self.subTest(bad_job=label):
+                with self.assertRaisesRegex(RuntimeError, pattern):
+                    self._run_stage(
+                        self._core_ops_routes(),
+                        fresh_admin=False,
+                        gate_now=bootstrap_expires_at + timedelta(hours=1),
+                        job_descriptions={bootstrap_job: bad_payload},
+                    )
 
-    def test_long_ttl_release_runs_bootstrap_before_72h_and_does_not_skip_at_release_expiry(self) -> None:
+    def test_verify_does_not_pass_now_and_live_gate_uses_its_own_utc(self) -> None:
         from unittest.mock import patch
 
         from product_ops.deployment import staging_lifecycle as lifecycle
 
-        outputs = self._long_ttl_outputs(ttl_hours=168)
-        account = outputs["staging_admin_account"]
-        # Just before the 72h boundary, bootstrap still runs and first rotation succeeds.
-        result, seen = self._run_stage(
-            self._core_ops_routes(),
-            fresh_admin=True,
-            outputs=outputs,
-            now=self.now + timedelta(hours=72) - timedelta(seconds=1),
-        )
-        self.assertTrue(result["success"], result.get("detail"))
-        executed = [argv for argv in seen["gcloud"] if argv[:3] == ["run", "jobs", "execute"]]
-        self.assertEqual([argv[3] for argv in executed], [outputs["staging_admin_bootstrap_job_name"]])
-        self.assertEqual(
-            [argv[3:5] for argv in seen["gcloud"] if argv[:3] == ["secrets", "versions", "access"]],
-            [["1", f"--secret={account['initial_secret']}"], ["1", f"--secret={account['sign_in_secret']}"]],
-        )
-        self.assertEqual(
-            result["admin_bootstrap"],
-            {"job": outputs["staging_admin_bootstrap_job_name"], "execution": "succeeded"},
-        )
+        captured_contexts: dict[str, dict[str, Any]] = {}
+        bootstrap_expires_at = self.now + timedelta(hours=72)
+        verify_start = bootstrap_expires_at - timedelta(minutes=5)
+        gate_now = bootstrap_expires_at
 
-        # At or past the release's own 168h TTL, verify does not skip bootstrap;
-        # the expired bootstrap job fails closed before any secret is read.
-        trace: list[list[str]] = []
-        fake = _staging_gcloud(outputs, self.fx, trace)
+        # Run verify_ephemeral_staging starting before expiry while live_e2e_gate
+        # executes at expiry; stage_context must not carry `now`, and live gate
+        # must judge against its own UTC clock.
+        class _FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz: Any = None) -> datetime:
+                return gate_now if tz is None else gate_now.astimezone(tz)
 
-        def gcloud(argv: Sequence[str], **kwargs: Any) -> str:
-            if list(argv[:4]) == ["run", "jobs", "execute", outputs["staging_admin_bootstrap_job_name"]]:
-                raise RuntimeError("BOOTSTRAP_SECRET_EXPIRED")
-            return fake(argv, **kwargs)
+        seen_gcloud: list[list[str]] = []
+        tokens = {
+            lifecycle.staging_smoke_token_audience(self.release_id): self.SMOKE_TOKEN,
+            self.outputs["staging_api_uri"]: self.API_TOKEN,
+        }
 
-        describe = {"template": {"template": {
-            "containers": [{"image": outputs["staging_worker_image"]}],
-            "vpcAccess": {"egress": "ALL_TRAFFIC"},
-        }}}
-        with patch.object(lifecycle, "_live_gcloud", side_effect=gcloud), \
-                patch.object(lifecycle, "_live_cloud_run_description", return_value=describe), \
-                patch.object(lifecycle, "_live_identity_token", side_effect=AssertionError("no token")):
-            executor = lifecycle.make_live_rehearsal_executor(
-                outputs,
-                project_id=self.project_id,
-                region="asia-east1",
-                operator_identity=outputs["staging_runtime_service_account"],
-            )
-            with self.assertRaisesRegex(RuntimeError, "BOOTSTRAP_SECRET_EXPIRED"):
-                executor(
-                    "live_e2e_gate",
-                    {
-                        "release_profile": "core-ops",
-                        "manifest_digest": self.manifest_digest,
-                        "now": self.now + timedelta(hours=168),
-                    },
+        def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
+            if name == self.outputs["staging_admin_bootstrap_job_name"]:
+                return self._bootstrap_job_description(self.outputs, bootstrap_expires_at)
+            return {"template": {"template": {
+                "containers": [{"image": self.outputs["staging_worker_image"]}],
+                "vpcAccess": {"egress": "ALL_TRAFFIC"},
+            }}}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            EphemeralStagingVerificationAndHoldTests._seed_live_state(self, state_dir)
+            marker_path = lifecycle._lifecycle_state_path(self.release_id, state_dir)
+            seeded = json.loads(marker_path.read_text(encoding="utf-8"))
+            marker_path.write_text(json.dumps({**seeded, "outputs": self.outputs}), encoding="utf-8")
+            with _staging_web_origin(self.fx, self.outputs), \
+                    patch.object(lifecycle, "datetime", _FrozenDatetime), \
+                    patch.object(lifecycle, "_live_gcloud", side_effect=_staging_gcloud(self.outputs, self.fx, seen_gcloud)), \
+                    patch.object(lifecycle, "_live_cloud_run_description", side_effect=describe), \
+                    patch.object(lifecycle, "_live_identity_token", side_effect=lambda *, audience, **kw: tokens[audience]), \
+                    patch.object(
+                        lifecycle,
+                        "_live_gate_clients",
+                        side_effect=lambda _cfg, **_kw: (
+                            self.fx.base.FakeHttp(self._core_ops_routes()),
+                            self.fx.AdminWeb(self.fx.web_routes(), is_fresh=False),
+                        ),
+                    ), \
+                    patch.object(lifecycle, "_live_gate_worker_driver", return_value=self.fx.base.FakeWorkerDriver(ok=True)), \
+                    patch.object(lifecycle, "_live_gate_correlation_id", return_value=self.fx.base.CORRELATION_ID), \
+                    patch.object(lifecycle, "STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS", 0.001):
+                live = lifecycle.make_live_rehearsal_executor(
+                    self.outputs,
+                    project_id=self.project_id,
+                    region="asia-east1",
+                    operator_identity=self.outputs["staging_runtime_service_account"],
                 )
-        self.assertFalse(any(argv[:1] == ["secrets"] for argv in trace))
+
+                def executor(stage: str, context: Mapping[str, Any]) -> Mapping[str, Any]:
+                    captured_contexts[stage] = dict(context)
+                    return live(stage, context) if stage == "live_e2e_gate" else {"success": True}
+
+                receipt = lifecycle.verify_ephemeral_staging(
+                    release_id=self.release_id,
+                    candidate_sha=self.candidate_sha,
+                    manifest_digest=self.manifest_digest,
+                    project_id=self.project_id,
+                    state_dir=state_dir,
+                    dry_run=False,
+                    stage_executor=executor,
+                    now=verify_start,
+                    operator_identity=self.outputs["staging_runtime_service_account"],
+                    lifecycle_outputs=self.outputs,
+                    remote_state_verified=True,
+                    release_profile="core-ops",
+                )
+        self.assertTrue(receipt.success, receipt.errors)
+        self.assertNotIn("now", captured_contexts["live_e2e_gate"])
+        self.assertEqual([argv for argv in seen_gcloud if argv[:3] == ["run", "jobs", "execute"]], [])
+        gate_stage = next(row for row in receipt.resources if row["stage"] == "live_e2e_gate")
+        self.assertEqual(
+            gate_stage["proof"]["admin_bootstrap"],
+            {
+                "job": self.outputs["staging_admin_bootstrap_job_name"],
+                "execution": "skipped_bootstrap_window_expired",
+            },
+        )
 
     def test_a_wrong_sign_in_password_fails_the_stage_without_leaking_it(self) -> None:
         def login(body: Any, _headers: Any) -> Any:
@@ -5160,10 +5357,9 @@ class StagingLiveE2EGateTests(unittest.TestCase):
                 raise RuntimeError("gcloud run jobs execute failed with exit status 2")
             return fake(argv, **kwargs)
 
-        describe = {"template": {"template": {
-            "containers": [{"image": self.outputs["staging_worker_image"]}],
-            "vpcAccess": {"egress": "ALL_TRAFFIC"},
-        }}}
+        describe = self._bootstrap_job_description(
+            self.outputs, datetime.now(UTC) + timedelta(hours=24)
+        )
         with patch.object(lifecycle, "_live_gcloud", side_effect=gcloud), \
                 patch.object(lifecycle, "_live_cloud_run_description", return_value=describe), \
                 patch.object(lifecycle, "_live_identity_token", side_effect=AssertionError("no token")):
@@ -5804,7 +6000,15 @@ class StagingSmokeAudienceIntegrationTests(unittest.TestCase):
                 else "staging_web_image" if "web" in name
                 else "staging_worker_image"
             ]
-            container = {"containers": [{"image": image}], "vpcAccess": {"egress": "ALL_TRAFFIC"}}
+            container_spec: dict[str, Any] = {"image": image}
+            if name == outputs["staging_admin_bootstrap_job_name"]:
+                container_spec["env"] = [
+                    {
+                        "name": "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT",
+                        "value": lifecycle.format_timestamp(datetime.now(UTC) + timedelta(hours=24)),
+                    }
+                ]
+            container = {"containers": [container_spec], "vpcAccess": {"egress": "ALL_TRAFFIC"}}
             return {"spec": {"template": container}, "template": {"template": container}}
 
         real_clients = lifecycle._live_gate_clients
