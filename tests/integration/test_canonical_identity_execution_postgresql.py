@@ -3,7 +3,7 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
-from uuid import uuid4
+from uuid import UUID, uuid4, uuid5
 
 import pytest
 
@@ -437,7 +437,9 @@ class TestNativeGeoReservation:
         assert job["checkpoint"] == "GEOCODING" and job["aggregate_type"] == "intake"
         assert job["aggregate_id"] == parsed["intake_id"] and job["max_attempts"] == 2
         assert job["idempotency_key"] == parsed["intake_id"] + ":" + receipt["decision_id"]
-        assert payload["listing_id"] == ids["listing"] and payload["decision_id"] == receipt["decision_id"]
+        assert payload["listing_id"] == ids["listing"] and payload["origin_id"] == receipt["decision_id"]
+        assert payload["origin_kind"] == "IDENTITY_DECISION"
+        assert payload["ready_transition_id"] == str(uuid5(UUID(receipt["decision_id"]), "intake-ready-transition"))
         assert payload["identity_job_id"] == receipt["job_id"] and payload["intake_version"] == intake["version"]
         assert payload["geo_source_version"] == 3 and payload["delivery_generation"] == 1
         assert "attempt_token" not in payload and len(payload["address_sha256"]) == 64
@@ -678,7 +680,8 @@ class TestNativeGeoExecution(TestNativeGeoReservation):
         assert job["status"] == "SUCCEEDED" and job["checkpoint"] == "GEOCODED" and job["attempt"] == 1
         result = job["result"]
         assert GEO_API_KEY not in json.dumps(job["payload"]) + json.dumps(result)
-        assert result["decision_id"] == case.receipt["decision_id"] and result["listing_id"] == case.ids["listing"]
+        assert result["origin_id"] == case.receipt["decision_id"] and result["listing_id"] == case.ids["listing"]
+        assert result["origin_kind"] == "IDENTITY_DECISION"
         geocode = result["geocode"]
         assert geocode["provider_request_id"] == "synthetic-provider-request-1"
         assert geocode["provider_observed_at"] == "2026-11-20T08:00:00+00:00"

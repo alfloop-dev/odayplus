@@ -820,3 +820,75 @@ def test_original_submission_proof_cannot_adopt_coordinated_actor_or_scope_rewri
         receipt = owner.admit_event(ids["tenant"], source["outbox_event_id"])
         record_property("unexpected_unverified_admission_created", json.dumps(receipt))
     assert phase_snapshot(identity_case) == before
+
+
+@pytest.mark.parametrize("geo", ["disabled", "enabled", "admitted_audit_failure"])
+def test_exact_url_ready_reserves_native_geo_in_the_same_identity_unit(identity_case, monkeypatch, geo):
+    from modules.listing.application.intake_audit import CanonicalIntakeAuditSink
+    from modules.listing.application.native_intake_retrieval_policy import GEO_JOB_TYPE
+    from modules.listing.application.pipeline import (
+        NATIVE_GEO_REQUESTED_ACTION,
+        NativeIntakeGeoOwner,
+    )
+    from tests.integration.test_canonical_identity_execution_postgresql import _enable_native_geo
+
+    start, owner = identity_case
+    graph, ids, _, db = start[0]
+    revision = str(uuid4())
+    with db.connect() as conn:
+        # The exact-URL target listing needs a current revision carrying the
+        # address the Geo phase binds; identity itself does not change it.
+        conn.execute("INSERT INTO expansion.listing_revisions (listing_revision_id,tenant_id,listing_id,revision_no,"
+            "revision_kind,normalized_values,effective_values,material_fingerprint) "
+            "VALUES (%s,%s,%s,1,'CREATED','{}'::jsonb,%s::jsonb,%s)",
+            (revision, ids["tenant"], ids["listing"], json.dumps({"address": "台北市信義區市府路1號"}), "f" * 64))
+        conn.execute("UPDATE expansion.listings SET current_revision_id=%s WHERE listing_id=%s", (revision, ids["listing"]))
+    if geo != "disabled":
+        _enable_native_geo(monkeypatch, db, ids["tenant"])
+    submission, source_result, admission = prepare(identity_case, "exact")
+    defer_audit(graph)
+    if geo == "admitted_audit_failure":
+        original = CanonicalIntakeAuditSink.persist
+
+        def unavailable(sink, record, scope):
+            if record["action"] == NATIVE_GEO_REQUESTED_ACTION:
+                raise CanonicalAuditUnavailable("Synthetic admitted Geo reservation audit unavailable")
+            return original(sink, record, scope)
+
+        monkeypatch.setattr(CanonicalIntakeAuditSink, "persist", unavailable)
+    assert ODayWorker(persistence=start[2], heartbeat_interval_seconds=0.01).run_once() is True
+
+    def geo_rows():
+        with db.connect() as conn:
+            return (conn.execute("SELECT job_id,status,checkpoint,payload,idempotency_key FROM workflow.jobs "
+                                 "WHERE job_type=%s", (GEO_JOB_TYPE,)).fetchall(),
+                    conn.execute("SELECT job_id,max_retries FROM odp_runtime.durable_jobs WHERE job_type=%s", (GEO_JOB_TYPE,)).fetchall())
+
+    after = native_row(start, submission["intake_id"])
+    if geo == "admitted_audit_failure":
+        # An admitted reservation failure is not NO_JOB_UNADMITTED: the exact
+        # READY unit rolls back and nothing claims READY without its Geo job.
+        assert after["processing_state"] == "CHECKING_IDENTITY" and after["resolved_listing_id"] is None
+        assert geo_rows() == ([], [])
+        return
+    delivery = graph.queue.get(admission["job_id"])
+    assert delivery.status == JobStatus.SUCCEEDED, owner.validation_errors
+    result = owner.execute(delivery)
+    assert after["processing_state"] == "READY" and after["resolved_listing_id"] == ids["listing"]
+    jobs, deliveries = geo_rows()
+    if geo == "disabled":
+        assert jobs == [] and deliveries == []
+        return
+    assert len(jobs) == 1 and len(deliveries) == 1
+    job_id, status, checkpoint, payload, key = jobs[0]
+    origin = source_result["outbox_event_id"]
+    assert str(job_id) == NativeIntakeGeoOwner.job_id(origin) == str(deliveries[0][0]) and deliveries[0][1] == 2
+    assert (status, checkpoint, key) == ("QUEUED", "GEOCODING", submission["intake_id"] + ":" + origin)
+    assert payload["origin_kind"] == "NATIVE_EXACT_URL" and payload["origin_id"] == origin
+    assert payload["ready_transition_id"] == result["transition_id"]
+    assert payload["identity_job_id"] == admission["job_id"] and payload["intake_version"] == result["version"]
+    assert payload["listing_id"] == ids["listing"] and payload["listing_revision_id"] == revision
+    assert payload["source_snapshot_id"] is None and payload["parser_run_id"] is None
+    assert "attempt_token" not in payload and len(payload["address_sha256"]) == 64
+    # Replaying the historical identity success adds no Geo work.
+    assert owner.execute(delivery) == result and geo_rows() == (jobs, deliveries)

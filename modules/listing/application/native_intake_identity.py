@@ -939,6 +939,14 @@ class NativeIntakeIdentityOwner:
                  permission, "Check an existing native canonical URL identity.", payload["event_id"], version,
                  aggregate.version, delivery.job_id, source["version"], intake["correlation_id"],
                  payload["event_id"], at.isoformat()))
+            if target == "READY":
+                # The exact canonical-URL READY reserves its Geo evidence job in
+                # this same unit; only a typed pre-reservation refusal leaves it
+                # without one. Any admitted SQL/queue/audit failure rolls back.
+                self._budget(job["timeout_at"], current.lease_expires_at)
+                self._reserve_geo(tenant, intake, origin_id=payload["event_id"], transition_id=transition_id,
+                                  identity_job_id=delivery.job_id, listing_id=listing_id,
+                                  intake_version=aggregate.version)
             state_event = DomainEvent(event_type="intake.state_changed", producer="listing_intake_service",
                 tenant_id=tenant, aggregate_type="intake", aggregate_id=intake["intake_id"],
                 aggregate_version=aggregate.version, partition_key=tenant + ":" + intake["intake_id"],
@@ -977,6 +985,20 @@ class NativeIntakeIdentityOwner:
             self.queue.update_status(delivery.job_id, JobStatus.SUCCEEDED,
                 expected_version=current.version, fence_token=current.fence_token)
             return result
+
+    def _reserve_geo(self, tenant, intake, *, origin_id, transition_id, identity_job_id, listing_id, intake_version):
+        from modules.listing.application.pipeline import NativeIntakeGeoOwner
+
+        listing = self.graph._one("SELECT listing_id,property_id,version,current_revision_id FROM expansion.listings "
+            "WHERE tenant_id=? AND listing_id=? FOR SHARE", (tenant, listing_id))
+        prop = self.graph._one("SELECT version FROM identity.properties WHERE tenant_id=? AND property_id=? FOR SHARE",
+                               (tenant, listing["property_id"]))
+        NativeIntakeGeoOwner(self.graph).reserve_in_identity_unit(tenant, intake, origin_kind="NATIVE_EXACT_URL",
+            origin_id=origin_id, ready_transition_id=transition_id, identity_job_id=identity_job_id,
+            listing_id=str(listing["listing_id"]), listing_version=listing["version"],
+            listing_revision_id=None if listing["current_revision_id"] is None else str(listing["current_revision_id"]),
+            property_id=str(listing["property_id"]), property_version=prop["version"],
+            intake_version=intake_version, source_snapshot_id=None, parser_run_id=None)
 
     def settle_failure(self, delivery, error: Exception) -> dict | None:
         """Re-read an unknown commit before a still-owned protective settlement."""

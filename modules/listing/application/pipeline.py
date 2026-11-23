@@ -395,6 +395,7 @@ NATIVE_GEO_CHECKPOINT = "GEOCODING"
 NATIVE_GEO_DONE_CHECKPOINT = "GEOCODED"
 NATIVE_GEO_MEDIA_TYPE = "application/json"
 NATIVE_GEO_ACTOR_ROLE = "SVC_INTAKE"
+NATIVE_GEO_ORIGIN_KINDS = frozenset({"IDENTITY_DECISION", "NATIVE_EXACT_URL"})
 
 
 class NativeIntakeGeoOwner:
@@ -478,12 +479,12 @@ class NativeIntakeGeoOwner:
         ) is not None
 
     @staticmethod
-    def job_id(decision_id: str) -> str:
+    def job_id(origin_id: str) -> str:
         from uuid import UUID, uuid5
 
         from modules.listing.application.native_intake_retrieval_policy import GEO_JOB_TYPE
 
-        return str(uuid5(UUID(decision_id), GEO_JOB_TYPE))
+        return str(uuid5(UUID(origin_id), GEO_JOB_TYPE))
 
     def _admission(self, tenant: str, intake: Mapping[str, Any], listing_id: str,
                    listing_revision_id: str | None, job_id: str) -> tuple[Any, str, dict, str]:
@@ -523,7 +524,8 @@ class NativeIntakeGeoOwner:
             raise NativeIntakeGeoUnadmitted("NATIVE_GEO_ADDRESS_UNAVAILABLE")
         return policy, token, source, hashlib.sha256(address.encode()).hexdigest()
 
-    def reserve_in_identity_unit(self, tenant: str, intake: Mapping[str, Any], *, decision_id: str,
+    def reserve_in_identity_unit(self, tenant: str, intake: Mapping[str, Any], *, origin_kind: str,
+                                 origin_id: str, ready_transition_id: str,
                                  identity_job_id: str, listing_id: str, listing_version: int,
                                  listing_revision_id: str | None, property_id: str, property_version: int,
                                  intake_version: int, source_snapshot_id: str | None,
@@ -533,6 +535,12 @@ class NativeIntakeGeoOwner:
         Returns ``None`` without any Geo write for a non-native Intake or a
         typed pre-reservation ``NativeIntakeGeoUnadmitted`` refusal. Every
         later SQL/queue/audit failure propagates and rolls back the caller.
+
+        Two READY producers call this: the identity decision execution unit
+        (``IDENTITY_DECISION``: fresh CREATE/REVISE and exact-existing
+        DUPLICATE) and the native identity phase's exact canonical-URL match
+        (``NATIVE_EXACT_URL``). ``origin_id`` is that unit's idempotency key
+        and ``ready_transition_id`` its committed READY transition.
         """
         import hashlib
         import json
@@ -545,9 +553,11 @@ class NativeIntakeGeoOwner:
         )
         from shared.jobs.queue import JobRequest
 
+        if origin_kind not in NATIVE_GEO_ORIGIN_KINDS:
+            raise ValueError("NATIVE_GEO_ORIGIN_KIND_REJECTED")
         if not self.native_intake(tenant, intake):
             return None
-        job_id = self.job_id(decision_id)
+        job_id = self.job_id(origin_id)
         try:
             policy, token, source, address_sha256 = self._admission(
                 tenant, intake, listing_id, listing_revision_id, job_id)
@@ -555,12 +565,13 @@ class NativeIntakeGeoOwner:
             return None
         at = self._clock()
         audit_id = str(uuid4())
-        occurrence = intake["intake_id"] + ":" + decision_id
+        occurrence = intake["intake_id"] + ":" + origin_id
         receipt = {"job_id": job_id, "intake_id": intake["intake_id"], "admitted_intake_version": intake_version,
                    "job_status_at_admission": "QUEUED",
                    "timeout_at": (at + timedelta(seconds=policy.deadline_seconds)).isoformat(),
-                   "identity_decision_id": decision_id, "audit_event_id": audit_id}
-        payload = {"decision_id": decision_id, "identity_job_id": identity_job_id,
+                   "identity_origin_id": origin_id, "audit_event_id": audit_id}
+        payload = {"origin_kind": origin_kind, "origin_id": origin_id, "ready_transition_id": ready_transition_id,
+                   "identity_job_id": identity_job_id,
                    "intake_version": intake_version, "listing_id": listing_id, "listing_version": listing_version,
                    "listing_revision_id": listing_revision_id, "property_id": property_id,
                    "property_version": property_version, "source_snapshot_id": source_snapshot_id,
@@ -585,12 +596,10 @@ class NativeIntakeGeoOwner:
         self.graph.audit_sink.persist({
             "audit_event_id": audit_id, "tenant_id": tenant, "resource_type": "intake",
             "resource_id": intake["intake_id"], "action": NATIVE_GEO_REQUESTED_ACTION, "result": "SUCCEEDED",
-            "actor_subject_id": None, "service_principal": GEO_JOB_TYPE, "actor_role": "SVC_INTAKE",
-            "correlation_id": intake["correlation_id"], "causation_id": decision_id,
+            "actor_subject_id": None, "service_principal": GEO_JOB_TYPE, "actor_role": NATIVE_GEO_ACTOR_ROLE,
+            "correlation_id": intake["correlation_id"], "causation_id": origin_id,
             "occurred_at": at.isoformat(), "before_value": None,
-            "after_value": {**receipt, "native_geo_provenance": {
-                key: payload[key] for key in ("listing_id", "listing_version", "listing_revision_id",
-                    "property_id", "property_version", "address_sha256", "geo_source_version", "policy_sha256")}},
+            "after_value": {**receipt, "native_geo_provenance": self._provenance(payload)},
             "reason": "Reserve native Geo evidence for the committed identity result.",
         }, {key: intake[key] for key in ("tenant_id", "brand_id", "region_id", "assigned_area_id", "heat_zone_id")})
         return receipt
@@ -629,9 +638,9 @@ class NativeIntakeGeoOwner:
 
     @staticmethod
     def _provenance(payload: Mapping[str, Any]) -> dict:
-        return {key: payload[key] for key in ("listing_id", "listing_version", "listing_revision_id", "property_id",
-                                              "property_version", "address_sha256", "geo_source_version",
-                                              "policy_sha256")}
+        return {key: payload[key] for key in ("origin_kind", "ready_transition_id", "listing_id", "listing_version",
+                                              "listing_revision_id", "property_id", "property_version",
+                                              "address_sha256", "geo_source_version", "policy_sha256")}
 
     @staticmethod
     def _object(value: Any) -> dict:
@@ -683,11 +692,11 @@ class NativeIntakeGeoOwner:
 
         receipt = self._object(payload["admission_receipt"])
         if (set(receipt) != {"job_id", "intake_id", "admitted_intake_version", "job_status_at_admission",
-                             "timeout_at", "identity_decision_id", "audit_event_id"}
+                             "timeout_at", "identity_origin_id", "audit_event_id"}
                 or receipt["job_id"] != job["job_id"] or receipt["intake_id"] != job["aggregate_id"]
                 or receipt["admitted_intake_version"] != payload["intake_version"]
                 or receipt["job_status_at_admission"] != "QUEUED"
-                or receipt["identity_decision_id"] != payload["decision_id"]
+                or receipt["identity_origin_id"] != payload["origin_id"]
                 or self._time(receipt["timeout_at"]) != self._time(job["timeout_at"])):
             raise JobFenceRejectedError("NATIVE_GEO_ADMISSION_RECEIPT_REJECTED")
         before()
@@ -696,7 +705,7 @@ class NativeIntakeGeoOwner:
             "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
             "AND actor_role=? AND action=? AND result='SUCCEEDED' AND causation_id=? AND correlation_id=?",
             (job["tenant_id"], receipt["audit_event_id"], job["aggregate_id"], GEO_JOB_TYPE, NATIVE_GEO_ACTOR_ROLE,
-             NATIVE_GEO_REQUESTED_ACTION, payload["decision_id"], job["correlation_id"]))
+             NATIVE_GEO_REQUESTED_ACTION, payload["origin_id"], job["correlation_id"]))
         if audit is None or not audited_value_matches(
                 self._object(audit["after_value"]), {**receipt, "native_geo_provenance": self._provenance(payload)}):
             raise JobFenceRejectedError("NATIVE_GEO_ADMISSION_AUDIT_REJECTED")
@@ -755,8 +764,9 @@ class NativeIntakeGeoOwner:
                 or current.correlation_id != delivery.correlation_id
                 or current.lease_expires_at is None or current.lease_expires_at <= now
                 or job["job_type"] != GEO_JOB_TYPE or job["aggregate_type"] != "intake"
-                or job["idempotency_key"] != job["aggregate_id"] + ":" + payload.get("decision_id", "")
-                or job["job_id"] != self.job_id(payload["decision_id"])
+                or job["idempotency_key"] != job["aggregate_id"] + ":" + payload.get("origin_id", "")
+                or payload.get("origin_kind") not in NATIVE_GEO_ORIGIN_KINDS
+                or job["job_id"] != self.job_id(payload["origin_id"])
                 or job["correlation_id"] != current.correlation_id
                 or type(payload.get("delivery_generation")) is not int or payload["delivery_generation"] != generation
                 or payload.get("attempt_token_sha256")
@@ -778,8 +788,6 @@ class NativeIntakeGeoOwner:
 
     def _parent(self, tenant: str, intake: Mapping[str, Any], payload: Mapping[str, Any], before: Any) -> None:
         """The committed native identity READY unit is the only Geo parent."""
-        from uuid import UUID, uuid5
-
         from shared.jobs.queue import JobFenceRejectedError
 
         if (intake["processing_state"] != "READY" or intake["version"] != payload["intake_version"]
@@ -790,8 +798,8 @@ class NativeIntakeGeoOwner:
             "SELECT transition_id FROM intake.intake_stage_transitions WHERE tenant_id=? AND transition_id=? "
             "AND intake_id=? AND to_state='READY' AND idempotency_key=? AND job_id=? AND resulting_version=? "
             "AND source_snapshot_id IS NOT DISTINCT FROM ?::uuid",
-            (tenant, str(uuid5(UUID(payload["decision_id"]), "intake-ready-transition")), intake["intake_id"],
-             payload["decision_id"], payload["identity_job_id"], payload["intake_version"],
+            (tenant, payload["ready_transition_id"], intake["intake_id"],
+             payload["origin_id"], payload["identity_job_id"], payload["intake_version"],
              payload["source_snapshot_id"]))
         if transition is None or not self.native_intake(tenant, intake):
             raise JobFenceRejectedError("NATIVE_GEO_PARENT_PROOF_MISSING")
@@ -980,7 +988,7 @@ class NativeIntakeGeoOwner:
         event = DomainEvent(event_type="snapshot.created", producer="retrieval_service", tenant_id=intake["tenant_id"],
             aggregate_type="source_snapshot", aggregate_id=snapshot["source_snapshot_id"],
             aggregate_version=snapshot["version"], partition_key=intake["tenant_id"] + ":" + intake["intake_id"],
-            correlation_id=job["correlation_id"], causation_id=payload["decision_id"], actor_ref=GEO_JOB_TYPE,
+            correlation_id=job["correlation_id"], causation_id=payload["origin_id"], actor_ref=GEO_JOB_TYPE,
             schema_ref="#/payloads/SnapshotCreatedV1", sensitive_fields=["payload.object_uri"],
             payload=_snapshot_payload(snapshot))
         before()
@@ -1019,7 +1027,8 @@ class NativeIntakeGeoOwner:
             DurableAddressLocationRepository(self.engine).save_address(address)
             at, audit_id = self._clock(), str(uuid4())
             result = {"job_id": job["job_id"], "intake_id": intake["intake_id"], "status": "SUCCEEDED",
-                      "code": "NATIVE_GEO_EVIDENCE_COMMITTED", "decision_id": payload["decision_id"],
+                      "code": "NATIVE_GEO_EVIDENCE_COMMITTED", "origin_kind": payload["origin_kind"],
+                      "origin_id": payload["origin_id"],
                       "listing_id": payload["listing_id"], "listing_revision_id": payload["listing_revision_id"],
                       "property_id": payload["property_id"], "address_id": address.address_id,
                       "address_revision": address.revision, "geocode": self._geocode_result(geo),
@@ -1037,7 +1046,7 @@ class NativeIntakeGeoOwner:
             before()
             self._audit(intake, NATIVE_GEO_COMPLETED_ACTION, {"job_id": job["job_id"], "status": "RUNNING"},
                         {**result, "native_geo_provenance": self._provenance(payload)}, at,
-                        audit_id=audit_id, causation=payload["decision_id"])
+                        audit_id=audit_id, causation=payload["origin_id"])
             before()
             if (self._current_policy_sha256(tenant) != payload["policy_sha256"]
                     or not self.engine.query_one(
@@ -1092,7 +1101,8 @@ class NativeIntakeGeoOwner:
         payload, result = self._object(job["payload"]), self._object(job["result"])
         before()
         physical = self.queue.get(delivery.job_id)
-        fields = {"job_id", "intake_id", "status", "code", "decision_id", "listing_id", "listing_revision_id",
+        fields = {"job_id", "intake_id", "status", "code", "origin_kind", "origin_id", "listing_id",
+                  "listing_revision_id",
                   "property_id", "address_id", "address_revision", "geocode", "source_snapshot_id",
                   "snapshot_created_event_id", "audit_event_id", "correlation_id", "native_snapshot_proof",
                   "accepted_delivery_fence", "accepted_worker", "accepted_business_fence", "accepted_attempt"}
@@ -1100,12 +1110,13 @@ class NativeIntakeGeoOwner:
                 or physical.status != JobStatus.SUCCEEDED or physical.payload != delivery.payload
                 or job["status"] != "SUCCEEDED" or job["checkpoint"] != NATIVE_GEO_DONE_CHECKPOINT
                 or job["job_type"] != GEO_JOB_TYPE or job["aggregate_type"] != "intake"
-                or job["idempotency_key"] != job["aggregate_id"] + ":" + payload["decision_id"]
+                or job["idempotency_key"] != job["aggregate_id"] + ":" + payload["origin_id"]
                 or payload.get("delivery_generation") != generation
                 or payload.get("attempt_token_sha256")
                 != hashlib.sha256(delivery.payload["attempt_token"].encode()).hexdigest()
                 or result["job_id"] != delivery.job_id or result["intake_id"] != job["aggregate_id"]
-                or result["decision_id"] != payload["decision_id"] or result["status"] != "SUCCEEDED"
+                or result["origin_id"] != payload["origin_id"] or result["origin_kind"] != payload["origin_kind"]
+                or result["status"] != "SUCCEEDED"
                 or result["correlation_id"] != job["correlation_id"]
                 or physical.correlation_id != job["correlation_id"]
                 or any(result[key] != payload[key] for key in ("listing_id", "listing_revision_id", "property_id"))
@@ -1124,7 +1135,7 @@ class NativeIntakeGeoOwner:
             "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
             "AND actor_role=? AND action=? AND result='SUCCEEDED' AND correlation_id=? AND causation_id=?",
             (tenant, result["audit_event_id"], job["aggregate_id"], GEO_JOB_TYPE, NATIVE_GEO_ACTOR_ROLE,
-             NATIVE_GEO_COMPLETED_ACTION, job["correlation_id"], payload["decision_id"]))
+             NATIVE_GEO_COMPLETED_ACTION, job["correlation_id"], payload["origin_id"]))
         if audit is None or not audited_value_matches(
                 self._object(audit["after_value"]), {**result, "native_geo_provenance": self._provenance(payload)}):
             raise JobFenceRejectedError("NATIVE_GEO_TERMINAL_AUDIT_REJECTED")
@@ -1148,7 +1159,7 @@ class NativeIntakeGeoOwner:
         event = _read_event(self, tenant, result["snapshot_created_event_id"], event_type="snapshot.created",
             aggregate_type="source_snapshot", aggregate_id=result["source_snapshot_id"],
             aggregate_version=snapshot["version"], partition=tenant + ":" + job["aggregate_id"],
-            correlation=job["correlation_id"], causation=payload["decision_id"], actor=GEO_JOB_TYPE, before=before)
+            correlation=job["correlation_id"], causation=payload["origin_id"], actor=GEO_JOB_TYPE, before=before)
         if (event["producer"] != "retrieval_service" or event["schema_ref"] != "#/payloads/SnapshotCreatedV1"
                 or event["payload"] != _snapshot_payload(snapshot)):
             raise JobFenceRejectedError("NATIVE_GEO_TERMINAL_SNAPSHOT_EVENT_REJECTED")
@@ -1262,7 +1273,7 @@ class NativeIntakeGeoOwner:
             before()
             self._audit(intake, NATIVE_GEO_SETTLED_ACTION, {"job_id": job["job_id"], "status": job["status"]},
                         {"job_id": job["job_id"], "status": status, "code": code, "intake_mutated": False,
-                         "address_created": False}, at, audit_id=str(uuid4()), causation=payload["decision_id"])
+                         "address_created": False}, at, audit_id=str(uuid4()), causation=payload["origin_id"])
             before()
             self.queue.update_status(job["job_id"], JobStatus.CANCELLED if cancelled else JobStatus.FAILED,
                 delivery_state=None if cancelled else JobDeliveryState.DEAD_LETTER,
@@ -1271,7 +1282,7 @@ class NativeIntakeGeoOwner:
                 before()
                 dead_letter(self, job, payload, code, at, checkpoint=job["checkpoint"], version=job["version"] + 1,
                             attempt=job["attempt"] if accepted else physical.attempts,
-                            job_type=GEO_JOB_TYPE, causation=payload["decision_id"])
+                            job_type=GEO_JOB_TYPE, causation=payload["origin_id"])
             before()
         return None
 
@@ -1349,7 +1360,7 @@ class NativeIntakeGeoOwner:
             before()
             self._audit(intake, NATIVE_GEO_SETTLED_ACTION, {"job_id": job["job_id"], "status": "RUNNING"},
                         {"job_id": job["job_id"], "status": "RETRYING", "next_attempt_at": due.isoformat(),
-                         "code": code}, at, audit_id=str(uuid4()), causation=payload["decision_id"])
+                         "code": code}, at, audit_id=str(uuid4()), causation=payload["origin_id"])
             before()
             self.queue.update_status(job["job_id"], JobStatus.QUEUED,
                 payload={"job_id": job["job_id"], "tenant_id": tenant, "attempt_token": token},

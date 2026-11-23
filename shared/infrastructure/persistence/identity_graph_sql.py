@@ -526,8 +526,8 @@ class CanonicalIdentityGraphRepository:
         # typed pre-reservation refusal leaves identity unchanged with no job.
         from modules.listing.application.pipeline import NativeIntakeGeoOwner
 
-        NativeIntakeGeoOwner(self).reserve_in_identity_unit(tenant, intake, decision_id=key,
-            identity_job_id=job_id, listing_id=listing_id, listing_version=listing_version,
+        NativeIntakeGeoOwner(self).reserve_in_identity_unit(tenant, intake, origin_kind="IDENTITY_DECISION",
+            origin_id=key, ready_transition_id=transition_id, identity_job_id=job_id, listing_id=listing_id, listing_version=listing_version,
             listing_revision_id=revision_id, property_id=property_id, property_version=property_version,
             intake_version=aggregate.version, source_snapshot_id=plan["input_binding"]["source_snapshot_id"],
             parser_run_id=plan["input_binding"]["parser_run_id"])
