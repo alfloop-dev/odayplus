@@ -987,13 +987,22 @@ class NativeIntakeIdentityOwner:
             return result
 
     def _reserve_geo(self, tenant, intake, *, origin_id, transition_id, identity_job_id, listing_id, intake_version):
+        from modules.listing.application.native_intake_retrieval_policy import (
+            NativeIntakeGeoUnadmitted,
+            native_intake_geo_policy,
+        )
         from modules.listing.application.pipeline import NativeIntakeGeoOwner
 
+        try:
+            # Unconfigured Geo adds no read or lock to this identity root.
+            native_intake_geo_policy(tenant)
+        except NativeIntakeGeoUnadmitted:
+            return None
         listing = self.graph._one("SELECT listing_id,property_id,version,current_revision_id FROM expansion.listings "
             "WHERE tenant_id=? AND listing_id=? FOR SHARE", (tenant, listing_id))
         prop = self.graph._one("SELECT version FROM identity.properties WHERE tenant_id=? AND property_id=? FOR SHARE",
                                (tenant, listing["property_id"]))
-        NativeIntakeGeoOwner(self.graph).reserve_in_identity_unit(tenant, intake, origin_kind="NATIVE_EXACT_URL",
+        return NativeIntakeGeoOwner(self.graph).reserve_in_identity_unit(tenant, intake, origin_kind="NATIVE_EXACT_URL",
             origin_id=origin_id, ready_transition_id=transition_id, identity_job_id=identity_job_id,
             listing_id=str(listing["listing_id"]), listing_version=listing["version"],
             listing_revision_id=None if listing["current_revision_id"] is None else str(listing["current_revision_id"]),

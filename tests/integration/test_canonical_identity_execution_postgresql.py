@@ -785,3 +785,44 @@ class TestNativeGeoExecution(TestNativeGeoReservation):
         assert self.rows(case, "SELECT 1 FROM workflow.outbox_events WHERE event_type='snapshot.created' "
                                "AND payload->>'causation_id'=%s", (case.receipt["decision_id"],)) == []
         assert self.rows(case, "SELECT 1 FROM core.address_locations") == []
+
+
+class TestNativeGeoFreshIdentity(TestNativeGeoReservation):
+    """Fresh CREATE/REVISE READY through the original human-confirmed flow."""
+
+    test_exact_existing_ready_reserves_native_geo_in_the_same_identity_unit = None
+
+    @pytest.mark.parametrize(("matching_case", "parser_admission_case"), [
+        pytest.param("NEW", None, id="CREATE"), pytest.param("REVISION", None, id="REVISE"),
+    ], indirect=["matching_case", "parser_admission_case"])
+    def test_fresh_create_and_revise_ready_reserve_native_geo(self, matching_case, case_api, monkeypatch):
+        import tests.integration.test_native_matching_case_command_postgresql as matching
+        from modules.listing.application.native_intake_retrieval_policy import GEO_JOB_TYPE
+
+        case, parsed, _, _, _, _, mode = matching_case
+        ids, database = case[1], case[2]
+        _enable_native_geo(monkeypatch, database, ids["tenant"])
+        # The unchanged original HTTP confirmation + registered executor flow.
+        matching.test_service_match_case_human_confirmation_and_registered_executor_share_real_native_flow(
+            matching_case, case_api, monkeypatch, None)
+        with database.connect() as connection:
+            intake = connection.execute("SELECT processing_state,resolved_listing_id,version FROM intake.intakes "
+                                        "WHERE intake_id=%s", (parsed["intake_id"],)).fetchone()
+            jobs = connection.execute("SELECT job_id,status,checkpoint,payload FROM workflow.jobs WHERE job_type=%s "
+                                      "AND aggregate_id=%s", (GEO_JOB_TYPE, parsed["intake_id"])).fetchall()
+            assert intake[0] == "READY" and len(jobs) == 1, (intake, jobs)
+            job_id, status, checkpoint, payload = jobs[0]
+            listing = connection.execute("SELECT version,current_revision_id,property_id FROM expansion.listings "
+                                         "WHERE listing_id=%s", (str(intake[1]),)).fetchone()
+            revision = connection.execute("SELECT revision_kind,source_snapshot_id FROM expansion.listing_revisions "
+                                          "WHERE listing_revision_id=%s", (str(listing[1]),)).fetchone()
+            transition = connection.execute("SELECT to_state,job_id FROM intake.intake_stage_transitions "
+                                            "WHERE transition_id=%s", (payload["ready_transition_id"],)).fetchone()
+        assert (status, checkpoint) == ("QUEUED", "GEOCODING") and payload["origin_kind"] == "IDENTITY_DECISION"
+        assert str(job_id) == str(uuid5(UUID(payload["origin_id"]), GEO_JOB_TYPE))
+        assert payload["listing_id"] == str(intake[1]) and payload["intake_version"] == intake[2]
+        assert payload["listing_version"] == listing[0] and payload["listing_revision_id"] == str(listing[1])
+        assert payload["property_id"] == str(listing[2])
+        assert revision[0] == ("CREATED" if mode == "NEW" else "CONTENT_CHANGED")
+        assert payload["source_snapshot_id"] == str(revision[1])
+        assert transition[0] == "READY" and str(transition[1]) == payload["identity_job_id"]
