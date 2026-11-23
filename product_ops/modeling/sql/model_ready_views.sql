@@ -146,7 +146,7 @@ order_run_settlement AS (
                       -- Lossy legacy labels give a conservative *outer* scope
                       -- for a new covering reread, never historical bounds.
                       AND chunk.partition_key
-                          ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}(__[0-9]{4}-[0-9]{2}-[0-9]{2})?$'
+                          ~ '^([0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{4}-[0-9]{2}-[0-9]{2}__[0-9]{4}-[0-9]{2}-[0-9]{2})$'
                       AND to_char(completion.window_start AT TIME ZONE 'UTC', 'YYYY-MM-DD')
                           <= split_part(chunk.partition_key, '__', 1)
                       AND to_char(completion.window_end AT TIME ZONE 'UTC', 'YYYY-MM-DD')
