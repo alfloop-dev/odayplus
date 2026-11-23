@@ -367,7 +367,7 @@ def test_runner_persists_only_bounds_applied_by_the_original_source(kind: Source
 
 
 @pytest.mark.requires_live_env
-def test_postgresql_run_and_checkpoint_preserve_actual_window_identity(live_store) -> None:
+def test_postgresql_run_and_checkpoint_preserve_actual_window_identity(live_store) -> None:  # noqa: F811 -- imported pytest fixture
     store = live_store.store
     window = BackfillWindow(
         datetime(2026, 7, 23, 4, tzinfo=UTC),
@@ -401,6 +401,38 @@ def test_postgresql_run_and_checkpoint_preserve_actual_window_identity(live_stor
             "SELECT window_start, window_end FROM data_plane.ingestion_runs WHERE run_id = %s",
             (run_id,),
         ).fetchone() == (window.start, window.end)
+
+    # Original runner -> MongoSource -> PostgreSQL complete_run, including a
+    # zero-new-row EOF. Aliased labels must use the initial-read query, not A's
+    # cursor; zero-row completion does not transfer A's checkpoint to B.
+    collection = MagicMock()
+    query_cursor = collection.find.return_value.sort.return_value.limit.return_value.batch_size.return_value
+    query_cursor.__iter__.return_value = iter(())
+    runner = DataPlaneRunner(
+        _config(), source=MongoSource(_config(), database={"orders": collection}),
+        raw_loader=FakeRawLoader(), canonical_store=restarted,
+    )
+    for bounds, expected_cursor in ((window, envelope.source_id), (alias, None)):
+        summary = runner.run_partition(SourceKind.ORDERS, bounds)
+        assert summary.resumed_from == expected_cursor
+        assert summary.processed_count == 0
+        assert summary.final_cursor == expected_cursor
+        query = collection.find.call_args.args[0]
+        if expected_cursor is None:
+            assert "$and" not in query
+            predicates = query["$or"]
+        else:
+            assert str(query["$and"][1]["_id"]["$gt"]) == expected_cursor
+            predicates = query["$and"][0]["$or"]
+        for predicate in predicates:
+            assert list(predicate.values()) == [{"$gte": bounds.start, "$lt": bounds.end}]
+        with live_store.connect() as connection:
+            assert connection.execute(
+                "SELECT window_start, window_end, resumed_from, final_cursor, "
+                "partition_complete, reconciled FROM data_plane.ingestion_runs WHERE run_id = %s",
+                (summary.run_id,),
+            ).fetchone() == (bounds.start, bounds.end, expected_cursor, expected_cursor, True, True)
+    assert restarted.get_checkpoint(SourceKind.ORDERS, window.partition_key, window=window) == envelope.source_id
 
     # Exact replay remains compatible, but a reused UUID cannot adopt or erase
     # window/source/partition/cursor identity, even before any source is read.
@@ -436,7 +468,7 @@ def test_postgresql_run_and_checkpoint_preserve_actual_window_identity(live_stor
 
 
 @pytest.mark.requires_live_env
-def test_postgresql_window_install_is_additive_and_leaves_legacy_scope_unproven(live_store) -> None:
+def test_postgresql_window_install_is_additive_and_leaves_legacy_scope_unproven(live_store) -> None:  # noqa: F811 -- imported pytest fixture
     from psycopg.errors import CheckViolation
 
     store = live_store.store
