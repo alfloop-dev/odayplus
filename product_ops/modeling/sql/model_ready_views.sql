@@ -78,7 +78,8 @@ order_run_settlement AS (
     -- NULL legacy bounds cannot form a cursor edge. A fresh covering reread
     -- may account for clean legacy work (or an empty failure), but never for
     -- projected/quarantined failed work. Its EOF supplies the real clock.
-    SELECT chunk.run_id, completion.run_id AS completion_run_id
+    SELECT chunk.run_id, completion.run_id AS completion_run_id,
+           greatest(chunk.finished_at, completion.finished_at) AS finished_at
     FROM data_plane.ingestion_runs AS chunk
     INNER JOIN clean_order_runs AS completion
         ON chunk.source_database = completion.source_database
@@ -110,8 +111,7 @@ order_run_settlement AS (
               AND chunk.window_start = completion.window_start
               AND chunk.window_end = completion.window_end
               AND (
-                  (chunk.status = 'SUCCEEDED' AND chunk.partition_complete
-                   AND chunk.finished_at <= completion.finished_at)
+                  (chunk.status = 'SUCCEEDED' AND chunk.partition_complete)
                   OR EXISTS (
                       SELECT 1 FROM reread
                       WHERE reread.completion_run_id = completion.run_id
@@ -186,7 +186,7 @@ authoritative_order_partitions AS (
 ),
 settled_order_runs AS (
     -- Reuse the same recovery rule, but only with independently valid EOFs.
-    SELECT settlement.run_id, min(proof.finished_at) AS finished_at
+    SELECT settlement.run_id, min(settlement.finished_at) AS finished_at
     FROM order_run_settlement AS settlement
     INNER JOIN authoritative_order_partitions AS proof
         ON proof.run_id = settlement.completion_run_id
