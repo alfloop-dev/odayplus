@@ -1458,6 +1458,7 @@ def spawn_background_process(
             cwd=Path(cwd),
             protected_paths=protected_paths,
             alias_roots=protected_alias_roots,
+            runner_root=ORCHESTRATOR_DIR.parent if runner_enabled and run_id else None,
         )
     handle = log_path.open("w", encoding="utf-8")
     process = subprocess.Popen(
