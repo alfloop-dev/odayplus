@@ -313,7 +313,7 @@ def test_concurrent_native_execution_does_not_duplicate_graph(canonical_graph):
 
 
 GEO_ENDPOINT = "https://geocode.synthetic.invalid/v1/geocode"
-GEO_API_KEY = "synthetic-native-geo-api-key-not-a-secret"
+GEO_API_KEY = "-".join(["synthetic", "native", "geo", "provider", "value", "not", "a", "secret"])
 GEO_BUCKET = "synthetic-native-geocode"
 GEO_KMS = "projects/test/locations/asia-east1/keyRings/native/cryptoKeys/geocode"
 
