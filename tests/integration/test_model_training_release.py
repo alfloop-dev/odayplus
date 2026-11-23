@@ -503,7 +503,9 @@ def test_model_ready_sql_is_real_causal_and_activates_supported_outcomes() -> No
     assert "store_id" in lowered
     assert "forecast-training-view-v2" in lowered
     assert "authoritative_order_partitions" in lowered
-    assert "proof.partition_key = ingestion.partition_key" in lowered
+    assert "proof.run_id = ingestion.run_id" in lowered
+    assert "predecessor.window_start = successor.window_start" in lowered
+    assert "predecessor.window_end = successor.window_end" in lowered
     assert "proof.finished_at >= ingestion.finished_at" in lowered
     assert "source_txn.source_partition_finished_at" in lowered
     assert "left join data_plane.transaction_authority as authority" in lowered
@@ -514,10 +516,13 @@ def test_model_ready_sql_is_real_causal_and_activates_supported_outcomes() -> No
     assert "prior_complete_day_count_28 = 28" in lowered
     assert "'prior_source_not_complete'" in lowered
     assert "split_part(completion.partition_key, '__'" not in lowered
-    assert "chunk.finished_at <= completion.finished_at" not in lowered
-    assert "chunk.finished_at >= completion.finished_at" in lowered
+    partition_validation = lowered.split("authoritative_order_partitions as (", 1)[1].split(
+        "settled_order_runs as (", 1
+    )[0]
+    assert "chunk.finished_at <= completion.finished_at" not in partition_validation
+    assert "settlement.completion_run_id = completion.run_id" in partition_validation
     assert "and orders_scope.settled" in lowered
-    assert "proof.source_database = ingestion.source_database" in lowered
+    assert "proof.run_id = ingestion.run_id" in lowered
     assert "from external_data.real_estate_transactions as outcome" in lowered
     assert "external_data.real_estate_ingestion_runs as ingestion" in lowered
     assert "government-open-data-license-v1" in lowered

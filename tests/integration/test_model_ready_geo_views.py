@@ -1836,6 +1836,88 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
 
 
 @pytest.mark.parametrize("day", (FORECAST_TARGET_DAY, FORECAST_PRIOR_DAY))
+@pytest.mark.parametrize("paged", (False, True))
+def test_postgresql_forecast_legacy_bounds_need_a_genuine_covering_reread(
+    intake_blank_db, day: date, paged: bool,
+) -> None:
+    spec = MODEL_SPECS["forecastops"]
+    bounds = DataBounds(
+        _at(FORECAST_FIRST_DAY, 0), _at(FORECAST_TARGET_DAY + timedelta(days=1), 0), 10,
+    )
+    reason = "SOURCE_RUN_NOT_COMPLETE" if day == FORECAST_TARGET_DAY else "PRIOR_SOURCE_NOT_COMPLETE"
+    retry_start = _at(FORECAST_TARGET_DAY + timedelta(days=4), 4)
+    with intake_blank_db.connect() as connection:
+        _install_minimal_authoritative_schema(connection)
+        tenant_id, store_id, runs = _seed_forecast_history(connection)
+        client = _PsycopgInstallationClient(connection)
+        ModelReadyViewInstaller(client).install()
+        source = PostgresModelReadySource(client)
+        baseline = source.load(spec, bounds)
+        # Additive installation does not fabricate timestamps for legacy rows.
+        _set_run(connection, runs[day], "window_start = NULL, window_end = NULL")
+        assert _forecast_target(connection, tenant_id, store_id) == (False, reason)
+        with pytest.raises(ModelReadyDataError, match="not trainable"):
+            source.load(spec, bounds)
+        # A known-window suffix cannot link to this unproven old scope.
+        with connection.transaction(force_rollback=True):
+            _insert_run(
+                connection, name="legacy-unproven-suffix", source_kind="orders",
+                partition_key=day.isoformat(), started_at=retry_start,
+                finished_at=retry_start + timedelta(hours=1),
+                resumed_from=f"forecast-cursor:{day.isoformat()}",
+                final_cursor=f"forecast-cursor:{day.isoformat()}",
+            )
+            assert _forecast_target(connection, tenant_id, store_id) == (False, reason)
+            with pytest.raises(ModelReadyDataError, match="not trainable"):
+                source.load(spec, bounds)
+        # A fresh actual covering read from the beginning may account for old
+        # clean work. It may itself be bounded and then genuinely resume to EOF.
+        retry = _insert_run(
+            connection, name="legacy-covering-root", source_kind="orders",
+            partition_key=day.isoformat(), started_at=retry_start,
+            finished_at=retry_start + timedelta(hours=1),
+            partition_complete=not paged, final_cursor="legacy-new-prefix",
+            processed_count=1, valid_loaded=1,
+        )
+        other_id, other_store, _ = _insert_store(
+            connection, tenant="legacy-covering-other", store="store", opened_on=date(2024, 1, 1),
+        )
+        _insert_transaction(
+            connection, tenant_id=other_id, store_id=other_store, name="legacy-new-prefix",
+            event_time=_at(day, 12), amount=9, daily_runs={day: retry},
+        )
+        eof_at = retry_start + timedelta(hours=1)
+        if paged:
+            assert _forecast_target(connection, tenant_id, store_id) == (False, reason)
+            _insert_run(
+                connection, name="legacy-covering-eof", source_kind="orders",
+                partition_key=day.isoformat(), started_at=retry_start + timedelta(hours=2),
+                finished_at=retry_start + timedelta(hours=3),
+                resumed_from="legacy-new-prefix", final_cursor="legacy-new-prefix",
+            )
+            eof_at = retry_start + timedelta(hours=3)
+        loaded = source.load(spec, bounds)
+        assert loaded.bounds == bounds
+        assert loaded.relation == baseline.relation == spec.relation
+        assert loaded.query_sha256 == baseline.query_sha256
+        (row,) = loaded.rows
+        assert (row["tenant_id"], row["store_id"]) == (tenant_id, store_id)
+        assert row["view_version"] == spec.expected_view_version
+        assert row["daily_net_revenue"] == baseline.rows[0]["daily_net_revenue"]
+        assert row["rolling_mean_28"] == baseline.rows[0]["rolling_mean_28"]
+        assert row["source_snapshot_ids"] == baseline.rows[0]["source_snapshot_ids"]
+        assert row["feature_snapshot_time"] == eof_at
+        assert row["prediction_origin_time"] == eof_at + timedelta(microseconds=1)
+        assert row["label_maturity_time"] == (
+            eof_at if day == FORECAST_TARGET_DAY else baseline.rows[0]["label_maturity_time"]
+        )
+        assert connection.execute(
+            "SELECT window_start, window_end FROM data_plane.ingestion_runs WHERE run_id = %s",
+            (runs[day],),
+        ).fetchone() == (None, None)
+
+
+@pytest.mark.parametrize("day", (FORECAST_TARGET_DAY, FORECAST_PRIOR_DAY))
 @pytest.mark.parametrize("overlaps_day", (False, True))
 @pytest.mark.parametrize("contributes", (False, True))
 def test_postgresql_forecast_actual_windows_cannot_alias_and_overlaps_can_settle(

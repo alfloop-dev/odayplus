@@ -42,7 +42,11 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     assert "ingestion.status = 'SUCCEEDED'" in body
     assert "AND ingestion.finished_at IS NOT NULL" in body
     assert "clean.run_id = chunk.run_id" in body
-    assert "chunk.finished_at <= completion.finished_at" not in body
+    partition_validation = body.split("authoritative_order_partitions AS (", 1)[1].split(
+        "settled_order_runs AS (", 1
+    )[0]
+    # Do not hide later attempts from the all-history partition veto.
+    assert "chunk.finished_at <= completion.finished_at" not in partition_validation
     # Recovery must reach EOF from a later clean read of the failed boundary
     # (or from the beginning). Every predecessor matches cursor/day/time;
     # open/overlapping runs and advanced checkpoints cannot prove recovery.
