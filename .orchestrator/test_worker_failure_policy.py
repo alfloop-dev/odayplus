@@ -4680,8 +4680,10 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
                 'event_id': f'event-{alias}', 'target_agent': alias, 'provider': 'antigravity',
                 'task_id': task['id'], 'reason': 'owned_in_progress_dispatch', 'message': 'fixture'})
         state = {'workers': {}}
-        reason = 'agy background lifecycle interrupted: command_exit_unknown'
+        private_detail = 'provider-output-fixture-only'
+        reason = f'agy background lifecycle interrupted: command_exit_unknown {private_detail}'
         deliveries = []
+        backoff_summaries = []
 
         def deliver(request, mode):
             deliveries.append(request.agent_id)
@@ -4700,7 +4702,7 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
                               SimpleNamespace(deliver=lambda req: deliver(req, mode))),
             mock.patch.object(supervisor, 'provider_auth_identity_hash', return_value='fixture'),
             mock.patch.object(supervisor, 'save_runtime_state', side_effect=runtime_state.save_runtime_state),
-            mock.patch.object(supervisor, 'write_activity_log'),
+            mock.patch.object(supervisor, 'write_activity_log') as activity,
             mock.patch.object(supervisor, 'record_worker_runtime_measurement'),
             mock.patch.object(supervisor, 'load_status', return_value={'tasks': [task]}),
             mock.patch.object(supervisor, 'persist_task_reassignment', side_effect=persist),
@@ -4728,6 +4730,7 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
                     if generation < 2:
                         self.assertEqual(outcome, (True, True))
                         self.assertEqual(worker['status'], 'retry_backoff')
+                        backoff_summaries.append(worker['last_error'])
                         # A supervisor restart must not give the next run a fresh budget.
                         state = json.loads(json.dumps(state))
                         self.assertTrue(supervisor.retry_due_workers(
@@ -4747,6 +4750,21 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
                 self.assertEqual(len(deliveries), 3 * (aliases.index(alias) + 1) + (alias == aliases[-1]))
             self.assertFalse(supervisor.retry_due_workers(
                 self.config, state, {}, datetime.now(UTC) + timedelta(days=1)))
+            retry_events = [
+                call.args[1] for call in activity.call_args_list
+                if call.args[1].get('type') == 'worker_retry_scheduled'
+            ]
+            fallback_events = [
+                call.args[1] for call in activity.call_args_list
+                if call.args[1].get('type') == 'worker_fallback_started'
+            ]
+            self.assertEqual(len(retry_events), 6)
+            self.assertEqual(len(fallback_events), 1)
+            self.assertNotIn(private_detail, json.dumps([
+                *backoff_summaries,
+                *(event['message'] for event in retry_events + fallback_events),
+            ]))
+            self.assertEqual({event['failure_kind'] for event in retry_events}, {'interrupted'})
             report = {'agent_adapters': {alias: {'can_auto_deliver': True,
                                                 'delivery_mode': 'antigravity'} for alias in aliases}}
             fresh_inbox = {**state['workers'][fallback_id], 'retry_count': 0}
