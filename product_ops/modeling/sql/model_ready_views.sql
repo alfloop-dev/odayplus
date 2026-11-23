@@ -50,132 +50,147 @@ reread AS (
     -- exact partition and non-overlapping run intervals.
     SELECT completion.run_id AS completion_run_id, completion.run_id,
            completion.source_database, completion.partition_key,
+           completion.window_start, completion.window_end,
            completion.resumed_from, completion.started_at
     FROM clean_order_runs AS completion
     WHERE completion.partition_complete
+      AND completion.window_start < completion.window_end
       AND completion.started_at <= completion.finished_at
     UNION
     SELECT successor.completion_run_id, predecessor.run_id,
            predecessor.source_database, predecessor.partition_key,
+           predecessor.window_start, predecessor.window_end,
            predecessor.resumed_from, predecessor.started_at
     FROM clean_order_runs AS predecessor
     INNER JOIN reread AS successor
         ON predecessor.source_database = successor.source_database
        AND predecessor.partition_key = successor.partition_key
+       AND predecessor.window_start = successor.window_start
+       AND predecessor.window_end = successor.window_end
        AND predecessor.final_cursor = successor.resumed_from
        AND predecessor.finished_at <= successor.started_at
        AND predecessor.started_at < successor.started_at
     WHERE predecessor.started_at <= predecessor.finished_at
 ),
+order_run_settlement AS (
+    -- One per-run recovery relation, consumed by partition validation and by
+    -- target/prior/global settlement below. Labels are not extraction identity.
+    -- NULL legacy bounds cannot form a cursor edge. A fresh covering reread
+    -- may account for clean legacy work (or an empty failure), but never for
+    -- projected/quarantined failed work. Its EOF supplies the real clock.
+    SELECT chunk.run_id, completion.run_id AS completion_run_id
+    FROM data_plane.ingestion_runs AS chunk
+    INNER JOIN clean_order_runs AS completion
+        ON chunk.source_database = completion.source_database
+       AND chunk.source_kind = completion.source_kind
+    WHERE completion.partition_complete
+      AND completion.window_start < completion.window_end
+      AND completion.started_at <= completion.finished_at
+      AND chunk.started_at <= chunk.finished_at
+      AND (
+          EXISTS (SELECT 1 FROM clean_order_runs AS clean WHERE clean.run_id = chunk.run_id)
+          OR (
+              chunk.status = 'FAILED'
+              AND chunk.processed_count = 0
+              AND chunk.valid_loaded = 0
+              AND chunk.quarantined_count = 0
+              AND NOT EXISTS (
+                  SELECT 1 FROM data_plane.canonical_lineage AS failed_lineage
+                  WHERE failed_lineage.run_id = chunk.run_id
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM data_plane.quarantined_records AS failed_quarantine
+                  WHERE failed_quarantine.run_id = chunk.run_id
+              )
+          )
+      )
+      AND (
+          (
+              chunk.partition_key = completion.partition_key
+              AND chunk.window_start = completion.window_start
+              AND chunk.window_end = completion.window_end
+              AND (
+                  (chunk.status = 'SUCCEEDED' AND chunk.partition_complete
+                   AND chunk.finished_at <= completion.finished_at)
+                  OR EXISTS (
+                      SELECT 1 FROM reread
+                      WHERE reread.completion_run_id = completion.run_id
+                        AND (
+                            reread.run_id = chunk.run_id
+                            OR (
+                                chunk.finished_at < reread.started_at
+                                AND (
+                                    reread.resumed_from IS NULL
+                                    OR (chunk.status = 'FAILED'
+                                        AND reread.resumed_from = chunk.resumed_from)
+                                )
+                            )
+                        )
+                  )
+              )
+          )
+          OR (
+              -- Only a from-beginning read can cover another scope. A suffix
+              -- (even zero-row EOF with the same label/cursor) cannot do so.
+              EXISTS (
+                  SELECT 1 FROM reread
+                  WHERE reread.completion_run_id = completion.run_id
+                    AND reread.resumed_from IS NULL
+                    AND chunk.finished_at < reread.started_at
+              )
+              AND (
+                  (completion.window_start <= chunk.window_start
+                   AND completion.window_end >= chunk.window_end)
+                  OR (
+                      chunk.window_start IS NULL AND chunk.window_end IS NULL
+                      -- Lossy legacy labels give a conservative *outer* scope
+                      -- for a new covering reread, never historical bounds.
+                      AND chunk.partition_key
+                          ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}(__[0-9]{4}-[0-9]{2}-[0-9]{2})?$'
+                      AND to_char(completion.window_start AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+                          <= split_part(chunk.partition_key, '__', 1)
+                      AND to_char(completion.window_end AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+                          > split_part(chunk.partition_key, '__',
+                              CASE WHEN position('__' IN chunk.partition_key) > 0 THEN 2 ELSE 1 END)
+                  )
+              )
+          )
+      )
+),
 authoritative_order_partitions AS (
-    -- EOF proof for an exact orders source partition, not an event date.
-    -- A backfill key can prove only its own bounded source window complete;
-    -- it never proves a full UTC day (daily_partition_proof below), because
-    -- ingestion_runs persists no backfill window bounds. A resumed chunk that
-    -- stopped at its record bound is legitimate once a later run of the same
-    -- partition reaches EOF, but every orders run that read this partition must
-    -- itself have succeeded, reconciled and loaded every record it processed.
-    -- A FAILED or abandoned RUNNING chunk keeps its schema-default zero
-    -- counters while its checkpoint may already have advanced past a
-    -- quarantined record, so a later resumed EOF cannot clear that failure.
-    -- An attempt failing before any projection/quarantine is different. Walk
-    -- backwards from EOF through clean persisted final_cursor/resumed_from
-    -- matches on this exact source/day and non-overlapping run intervals. A
-    -- segment starting after the empty failure can recover it either by reading
-    -- from the beginning (NULL cursor), or by resuming the very same boundary
-    -- the failed attempt read. This applies before, between and after bounded
-    -- chunks, including retries after an earlier EOF. A changed checkpoint is
-    -- not recovery: it may have skipped failed work. Every other bad chunk is
-    -- still vetoed independently, and the actual recovering EOF finished_at
-    -- remains the availability/maturity boundary below.
-    -- This holds for runs finishing after the proof as well: a later
-    -- rematerialization or a backfill window reaching the day that quarantined
-    -- or failed on an order adds no canonical lineage and leaves the earlier
-    -- EOF untouched, so it must revoke that proof rather than be ignored.
-    -- A clean bounded chunk finishing no earlier than the proof revokes it too:
-    -- the orders source reads every tenant and store in one _id order, so a
-    -- chunk that stopped at its record bound after loading another store's
-    -- later-inserted order leaves this day's remaining records unread, and the
-    -- older EOF no longer proves any store of the day complete until a later
-    -- run of the partition reaches EOF again.
-    -- Backfill keys are compared as ISO date text (no cast) over the inclusive
-    -- start/end dates that _windows derives from the window bounds.
-    SELECT
-        completion.source_database,
-        completion.partition_key,
-        completion.finished_at
+    -- Validate each actual window independently. Overlapping bounded work can
+    -- settle through its OWN exact-window proof; it need not belong to a daily
+    -- cursor chain. Later partial/bad work of the same window still revokes an
+    -- old EOF, even if it projected only another tenant/store (or no lineage).
+    SELECT completion.run_id, completion.source_database, completion.partition_key,
+           completion.window_start, completion.window_end, completion.finished_at
     FROM clean_order_runs AS completion
     WHERE completion.partition_complete
+      AND completion.window_start < completion.window_end
       AND completion.started_at <= completion.finished_at
       AND NOT EXISTS (
-          SELECT 1
-          FROM data_plane.ingestion_runs AS chunk
+          SELECT 1 FROM data_plane.ingestion_runs AS chunk
           WHERE chunk.source_database = completion.source_database
             AND chunk.source_kind = completion.source_kind
             AND (
-                chunk.partition_key = completion.partition_key
-                OR (
-                    completion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-                    AND chunk.partition_key
-                        ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}__[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-                    AND completion.partition_key
-                        BETWEEN split_part(chunk.partition_key, '__', 1)
-                            AND split_part(chunk.partition_key, '__', 2)
-                )
+                (chunk.window_start = completion.window_start
+                 AND chunk.window_end = completion.window_end)
+                OR (chunk.window_start IS NULL AND chunk.partition_key = completion.partition_key)
             )
-            AND (
-                NOT EXISTS (
-                    SELECT 1 FROM clean_order_runs AS clean
-                    WHERE clean.run_id = chunk.run_id
-                )
-                OR (
-                    NOT chunk.partition_complete
-                    AND (
-                        chunk.finished_at >= completion.finished_at
-                        OR NOT EXISTS (
-                            SELECT 1 FROM reread
-                            WHERE reread.completion_run_id = completion.run_id
-                              AND (
-                                  reread.run_id = chunk.run_id
-                                  OR (
-                                      reread.resumed_from IS NULL
-                                      AND chunk.finished_at < reread.started_at
-                                  )
-                              )
-                        )
-                    )
-                )
-            )
-            AND NOT coalesce(
-                chunk.status = 'FAILED'
-                AND chunk.partition_key = completion.partition_key
-                AND chunk.started_at <= chunk.finished_at
-                AND completion.started_at <= completion.finished_at
-                AND EXISTS (
-                    SELECT 1 FROM reread
-                    WHERE reread.completion_run_id = completion.run_id
-                      AND (
-                        reread.resumed_from IS NULL
-                        OR reread.resumed_from = chunk.resumed_from
-                    )
-                      AND chunk.finished_at < reread.started_at
-                )
-                AND chunk.processed_count = 0
-                AND chunk.valid_loaded = 0
-                AND chunk.quarantined_count = 0
-                AND NOT EXISTS (
-                    SELECT 1
-                    FROM data_plane.canonical_lineage AS failed_lineage
-                    WHERE failed_lineage.run_id = chunk.run_id
-                )
-                AND NOT EXISTS (
-                    SELECT 1
-                    FROM data_plane.quarantined_records AS failed_quarantine
-                    WHERE failed_quarantine.run_id = chunk.run_id
-                ),
-                FALSE
+            AND NOT EXISTS (
+                SELECT 1 FROM order_run_settlement AS settlement
+                WHERE settlement.run_id = chunk.run_id
+                  AND settlement.completion_run_id = completion.run_id
             )
       )
+),
+settled_order_runs AS (
+    -- Reuse the same recovery rule, but only with independently valid EOFs.
+    SELECT settlement.run_id, min(proof.finished_at) AS finished_at
+    FROM order_run_settlement AS settlement
+    INNER JOIN authoritative_order_partitions AS proof
+        ON proof.run_id = settlement.completion_run_id
+    GROUP BY settlement.run_id
 ),
 orders_scope AS (
     -- Mongo orders windows on createdAt OR updatedAt in global _id order.
@@ -190,9 +205,8 @@ orders_scope AS (
         WHERE ingestion.source_database = 'fongniao_prod'
           AND ingestion.source_kind = 'orders'
           AND NOT EXISTS (
-              SELECT 1 FROM authoritative_order_partitions AS proof
-              WHERE proof.source_database = ingestion.source_database
-                AND proof.partition_key = ingestion.partition_key
+              SELECT 1 FROM settled_order_runs AS proof
+              WHERE proof.run_id = ingestion.run_id
           )
     ) AS settled
 ),
@@ -274,10 +288,9 @@ transaction_source AS (
         -- actual partition, retaining earlier clean partial chunks as lineage.
         LEFT JOIN LATERAL (
             SELECT min(proof.finished_at) AS finished_at
-            FROM authoritative_order_partitions AS proof
+            FROM settled_order_runs AS proof
             WHERE ingestion.source_kind = 'orders'
-              AND proof.source_database = ingestion.source_database
-              AND proof.partition_key = ingestion.partition_key
+              AND proof.run_id = ingestion.run_id
               AND proof.finished_at >= ingestion.finished_at
         ) AS partition_proof ON TRUE
         WHERE lineage.tenant_id = store.tenant_id
@@ -356,20 +369,39 @@ transaction_daily AS (
     HAVING count(*) FILTER (WHERE source_txn.contributes_revenue) > 0
 ),
 daily_partition_proof AS (
-    -- Full-day coverage is separate from the contributing source-partition
-    -- proofs above: only the exact UTC-day key proves the full event day.
-    -- Backfill keys may represent sub-day windows and never satisfy this join.
-    -- Do not order this EOF after another partition's loading/completion run:
-    -- the updatedAt read has its own proof and real availability above. A
-    -- zero-row event-day resume says nothing about that read, in either order.
+    -- A daily key alone is not full-day coverage: require the actual UTC-day
+    -- bounds too. Separately account for overlapping work through the same
+    -- settlement proof, carrying a bounded overlapping EOF's actual clock.
+    -- A fully accounted unrelated window only removes the global veto; it
+    -- cannot replace missing day coverage or rewrite contributing clocks.
     SELECT
         transaction_daily.tenant_id,
         transaction_daily.store_id,
         transaction_daily.date,
-        min(proof.finished_at) AS finished_at
+        greatest(min(proof.finished_at), max(overlap.finished_at)) AS finished_at
     FROM transaction_daily
     INNER JOIN authoritative_order_partitions AS proof
         ON proof.partition_key = transaction_daily.date::text
+       AND proof.window_start = transaction_daily.date::timestamp AT TIME ZONE 'UTC'
+       AND proof.window_end = (transaction_daily.date + 1)::timestamp AT TIME ZONE 'UTC'
+    LEFT JOIN LATERAL (
+        SELECT bool_and(settled.run_id IS NOT NULL) AS complete,
+               max(settled.finished_at) FILTER (
+                   WHERE NOT chunk.partition_complete OR chunk.status <> 'SUCCEEDED'
+               ) AS finished_at
+        FROM data_plane.ingestion_runs AS chunk
+        LEFT JOIN settled_order_runs AS settled ON settled.run_id = chunk.run_id
+        WHERE chunk.source_database = proof.source_database
+          AND chunk.source_kind = 'orders'
+          AND (
+              (chunk.window_start < proof.window_end AND chunk.window_end > proof.window_start)
+              OR (chunk.window_start IS NULL AND transaction_daily.date::text
+                  BETWEEN split_part(chunk.partition_key, '__', 1)
+                      AND split_part(chunk.partition_key, '__',
+                          CASE WHEN position('__' IN chunk.partition_key) > 0 THEN 2 ELSE 1 END))
+          )
+    ) AS overlap ON TRUE
+    WHERE coalesce(overlap.complete, FALSE)
     GROUP BY
         transaction_daily.tenant_id,
         transaction_daily.store_id,

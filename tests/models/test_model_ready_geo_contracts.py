@@ -46,9 +46,9 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     # Recovery must reach EOF from a later clean read of the failed boundary
     # (or from the beginning). Every predecessor matches cursor/day/time;
     # open/overlapping runs and advanced checkpoints cannot prove recovery.
-    assert "AND NOT coalesce(" in body
     assert "chunk.status = 'FAILED'" in body
-    assert "AND chunk.partition_key = completion.partition_key" in body
+    assert "AND chunk.window_start = completion.window_start" in body
+    assert "AND chunk.window_end = completion.window_end" in body
     assert "AND completion.started_at <= completion.finished_at" in body
     assert "WITH RECURSIVE clean_order_runs AS" in body
     assert body.count("reread AS (") == 1
@@ -60,35 +60,41 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     assert "predecessor.started_at < successor.started_at" in body
     assert "predecessor.started_at <= predecessor.finished_at" in body
     assert "reread.resumed_from IS NULL" in body
-    assert "OR reread.resumed_from = chunk.resumed_from" in body
+    assert "AND reread.resumed_from = chunk.resumed_from" in body
     assert "AND chunk.started_at <= chunk.finished_at" in body
-    assert "AND chunk.finished_at < reread.started_at" in body
+    assert "chunk.finished_at < reread.started_at" in body
     assert "failed_lineage.run_id = chunk.run_id" in body
     assert "failed_quarantine.run_id = chunk.run_id" in body
     # The orders source reads every store in one _id order, so a clean bounded
     # chunk of the day finishing at or after the proof leaves records of any
     # store unread and revokes the older EOF until a later run reaches EOF.
-    assert "NOT chunk.partition_complete" in body
-    assert "chunk.finished_at >= completion.finished_at" in body
+    assert "WHERE NOT chunk.partition_complete OR chunk.status <> 'SUCCEEDED'" in body
+    assert "settlement.completion_run_id = completion.run_id" in body
     assert "reread.run_id = chunk.run_id" in body
     assert "ingestion.source_database = 'fongniao_prod'" in body
     assert "chunk.source_database = completion.source_database" in body
-    assert "proof.source_database = ingestion.source_database" in body
+    assert "proof.run_id = ingestion.run_id" in body
     scope = body.split("orders_scope AS (", 1)[1].split("transaction_source AS (", 1)[0]
-    assert "FROM authoritative_order_partitions AS proof" in scope
-    assert "proof.partition_key = ingestion.partition_key" in scope
+    assert "FROM settled_order_runs AS proof" in scope
+    assert "proof.run_id = ingestion.run_id" in scope
     assert "tenant_id" not in scope.split("SELECT NOT EXISTS (", 1)[1]
     assert "AND orders_scope.settled" in body
     assert body.index("THEN 'PRIOR_SOURCE_NOT_COMPLETE'") < body.index(
         "WHEN NOT orders_scope.settled THEN 'SOURCE_RUN_NOT_COMPLETE'"
     )
-    # Backfill windows reaching the day revoke its proof, compared as ISO date
-    # text over the window's inclusive start/end dates.
-    assert (
-        "AND completion.partition_key\n"
-        "                        BETWEEN split_part(chunk.partition_key, '__', 1)\n"
-        "                            AND split_part(chunk.partition_key, '__', 2)"
-    ) in body
+    # Exact-window suffixes cannot alias by date labels. Whole-day coverage
+    # and overlapping bounded work reuse the one per-run settlement relation.
+    assert "predecessor.window_start = successor.window_start" in body
+    assert "predecessor.window_end = successor.window_end" in body
+    assert body.count("order_run_settlement AS (") == 1
+    assert "FROM order_run_settlement AS settlement" in body
+    assert "INNER JOIN authoritative_order_partitions AS proof" in body
+    assert "completion.window_start < completion.window_end" in body
+    assert "completion.window_start <= chunk.window_start" in body
+    assert "completion.window_end >= chunk.window_end" in body
+    assert "chunk.window_start IS NULL AND chunk.window_end IS NULL" in body
+    assert "bool_and(settled.run_id IS NOT NULL)" in body
+    assert "chunk.window_start < proof.window_end AND chunk.window_end > proof.window_start" in body
     assert "LEFT JOIN data_plane.transaction_authority AS authority" in body
     assert "authority.source_kind = 'orders'" in body
     assert "lineage.source_snapshot_id = authority.source_snapshot_id" in body
@@ -105,7 +111,7 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     # Every contributing orders partition (including an updatedAt partition)
     # must reach EOF independently; event-day coverage cannot replace it, and
     # each real completion clock must reach the shared daily maturity flow.
-    assert "proof.partition_key = ingestion.partition_key" in body
+    assert "proof.run_id = ingestion.run_id" in body
     assert "proof.finished_at >= ingestion.finished_at" in body
     assert "OR partition_proof.finished_at IS NOT NULL" in body
     assert "max(partition_proof.finished_at) AS source_partition_finished_at" in body
@@ -130,7 +136,8 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     # accept arbitrary sub-day windows and never substitute for that day.
     daily_proof = body.split("daily_partition_proof AS (", 1)[1].split("mature_daily AS (", 1)[0]
     assert "ON proof.partition_key = transaction_daily.date::text" in daily_proof
-    assert "split_part(" not in daily_proof
+    assert "proof.window_start = transaction_daily.date::timestamp AT TIME ZONE 'UTC'" in daily_proof
+    assert "proof.window_end = (transaction_daily.date + 1)::timestamp AT TIME ZONE 'UTC'" in daily_proof
     assert "split_part(completion.partition_key, '__'" not in body
     # A per-chunk completion flag would reject legitimately resumed partitions.
     assert "bool_and(ingestion.partition_complete" not in body

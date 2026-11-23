@@ -618,6 +618,8 @@ def test_model_ready_view_preflight_requires_opening_and_geo_columns() -> None:
         ("data_plane.ingestion_runs", "source_database"),
         ("data_plane.ingestion_runs", "started_at"),
         ("data_plane.ingestion_runs", "resumed_from"),
+        ("data_plane.ingestion_runs", "window_start"),
+        ("data_plane.ingestion_runs", "window_end"),
         ("data_plane.quarantined_records", "run_id"),
     ),
 )

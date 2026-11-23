@@ -10,6 +10,7 @@ from uuid import UUID, uuid5
 
 import pytest
 
+from apps.data_platform.contracts import BackfillWindow
 from models.shared_ml.oss_estimators import (
     load_estimator_artifact,
     train_oss_estimator,
@@ -147,6 +148,8 @@ def _install_minimal_authoritative_schema(connection) -> None:
             partition_complete BOOLEAN NOT NULL,
             resumed_from TEXT,
             final_cursor TEXT,
+            window_start TIMESTAMPTZ,
+            window_end TIMESTAMPTZ,
             started_at TIMESTAMPTZ NOT NULL,
             finished_at TIMESTAMPTZ
         );
@@ -214,15 +217,24 @@ def _insert_run(
     resumed_from: str | None = None,
     final_cursor: str | None = None,
     started_at: datetime | None = None,
+    window: BackfillWindow | None = None,
+    legacy_window: bool = False,
 ) -> UUID:
+    # The existing daily fixtures represent the scheduled full UTC-day caller.
+    # Backfills must supply their actual window, not infer it from a lossy key.
+    # legacy_window deliberately represents pre-column metadata, left NULL.
+    if source_kind == "orders" and window is None and not legacy_window and "__" not in partition_key:
+        day = date.fromisoformat(partition_key)
+        window = BackfillWindow(_at(day, 0), _at(day + timedelta(days=1), 0), partition_key)
     run_id = _id(f"run:{name}")
     connection.execute(
         """
         INSERT INTO data_plane.ingestion_runs (
             run_id, source_kind, partition_key, status,
             processed_count, valid_loaded, quarantined_count,
-            reconciled, partition_complete, resumed_from, final_cursor, started_at, finished_at
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            reconciled, partition_complete, resumed_from, final_cursor, started_at, finished_at,
+            window_start, window_end
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             run_id,
@@ -238,6 +250,8 @@ def _insert_run(
             final_cursor,
             started_at or (finished_at - timedelta(days=1) if finished_at else _at(ORIGIN, 0)),
             finished_at,
+            None if window is None else window.start,
+            None if window is None else window.end,
         ),
     )
     return run_id
@@ -1509,6 +1523,7 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
                     name=f"forecast-afternoon-backfill:{day.isoformat()}",
                     source_kind="orders",
                     partition_key=afternoon_window.partition_key,
+                    window=afternoon_window,
                     finished_at=_at(day + timedelta(days=1), 1),
                     processed_count=1,
                     valid_loaded=1,
@@ -1821,6 +1836,164 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
 
 
 @pytest.mark.parametrize("day", (FORECAST_TARGET_DAY, FORECAST_PRIOR_DAY))
+@pytest.mark.parametrize("overlaps_day", (False, True))
+@pytest.mark.parametrize("contributes", (False, True))
+def test_postgresql_forecast_actual_windows_cannot_alias_and_overlaps_can_settle(
+    intake_blank_db, day: date, overlaps_day: bool, contributes: bool,
+) -> None:
+    """Original installer -> loader, synthetic durable extraction states.
+
+    A and B have the very same CLI label but distinct actual time predicates.
+    B's lawful empty EOF cannot settle A's unread tail, even with equal cursors.
+    Genuine A continuation can; if A overlaps D, retain D's independent daily
+    coverage instead of demanding another no-resume daily reread.
+    """
+    spec = MODEL_SPECS["forecastops"]
+    bounds = DataBounds(
+        _at(FORECAST_FIRST_DAY, 0), _at(FORECAST_TARGET_DAY + timedelta(days=1), 0), 10,
+    )
+    extraction_day = day if overlaps_day else FORECAST_TARGET_DAY + timedelta(days=3)
+    (window_a,) = _windows(
+        _at(extraction_day, 4), _at(extraction_day, 8), partition_days=1, max_partitions=1,
+    )
+    (window_b,) = _windows(
+        _at(extraction_day, 10), _at(extraction_day, 12), partition_days=1, max_partitions=1,
+    )
+    assert window_a.partition_key == window_b.partition_key
+    assert window_a != window_b
+    work_day = FORECAST_TARGET_DAY + timedelta(days=4)
+    partial_start, partial_end = _at(work_day, 12), _at(work_day, 13)
+    eof_start, eof_end = _at(work_day, 15), _at(work_day, 16)
+    cursor = "000000000000000000000001"
+    known_reason = "SOURCE_RUN_NOT_COMPLETE" if day == FORECAST_TARGET_DAY else "PRIOR_SOURCE_NOT_COMPLETE"
+    reason = known_reason if contributes or overlaps_day else "SOURCE_RUN_NOT_COMPLETE"
+    with intake_blank_db.connect() as connection:
+        _install_minimal_authoritative_schema(connection)
+        tenant_id, store_id, daily_runs = _seed_forecast_history(connection)
+        other_tenant, other_store, _ = _insert_store(
+            connection, tenant="actual-window-other", store="prefix", opened_on=date(2024, 1, 1),
+        )
+        client = _PsycopgInstallationClient(connection)
+        installed = ModelReadyViewInstaller(client).install()
+        assert installed["forecast"]["view_version"] == spec.expected_view_version
+        assert installed["forecast"]["installer_sha256"] == hashlib.sha256(
+            MODEL_READY_SQL_PATH.read_bytes()
+        ).hexdigest()
+        source = PostgresModelReadySource(client)
+        baseline = source.load(spec, bounds)
+        partial = _insert_run(
+            connection, name="actual-window-prefix", source_kind="orders",
+            partition_key=window_a.partition_key, window=window_a,
+            started_at=partial_start, finished_at=partial_end,
+            processed_count=1, valid_loaded=1, final_cursor=cursor, partition_complete=False,
+        )
+        added_snapshot = str(_id("snapshot:actual-window-correction"))
+        if contributes:
+            txn_id = _id(f"transaction:forecast:{day.isoformat()}")
+            _insert_lineage(
+                connection, name="actual-window-correction", run_id=partial,
+                tenant_id=tenant_id, table="core.transactions", entity_id=txn_id,
+                projected_at=partial_start,
+            )
+            connection.execute(
+                "UPDATE data_plane.canonical_lineage SET source_id = %s WHERE source_snapshot_id = %s",
+                (f"forecast:{day.isoformat()}", added_snapshot),
+            )
+            connection.execute(
+                "UPDATE data_plane.transaction_authority SET source_snapshot_id = %s WHERE transaction_id = %s",
+                (added_snapshot, txn_id),
+            )
+            connection.execute(
+                "UPDATE core.transactions SET net_amount = net_amount + 30, "
+                "observation_time = %s, ingested_at = %s WHERE transaction_id = %s",
+                (partial_start, partial_start, txn_id),
+            )
+        else:
+            _insert_transaction(
+                connection, tenant_id=other_tenant, store_id=other_store,
+                name="actual-window-other-prefix", event_time=_at(extraction_day, 5),
+                amount=19, daily_runs={extraction_day: partial},
+            )
+
+        def assert_refused() -> None:
+            assert _forecast_target(connection, tenant_id, store_id) == (False, reason)
+            with pytest.raises(ModelReadyDataError, match="not trainable"):
+                source.load(spec, bounds)
+
+        assert_refused()
+        # Actual new writer starts B without A's checkpoint. Also refuse a
+        # synthetic same-cursor B: labels/cursors still cannot replace bounds.
+        for resumed in (None, cursor):
+            with connection.transaction(force_rollback=True):
+                _insert_run(
+                    connection, name="actual-window-alias-eof", source_kind="orders",
+                    partition_key=window_b.partition_key, window=window_b,
+                    started_at=_at(work_day, 14), finished_at=_at(work_day, 14) + timedelta(minutes=1),
+                    resumed_from=resumed, final_cursor=resumed,
+                )
+                assert_refused()
+        eof = _insert_run(
+            connection, name="actual-window-real-empty-eof", source_kind="orders",
+            partition_key=window_a.partition_key, window=window_a,
+            started_at=eof_start, finished_at=eof_end, resumed_from=cursor, final_cursor=cursor,
+        )
+        # No extra whole-day reread was added; the original full-day EOF stays.
+        assert connection.execute(
+            "SELECT count(*) FROM data_plane.ingestion_runs WHERE source_kind = 'orders' "
+            "AND partition_key = %s", (day.isoformat(),),
+        ).fetchone() == (1,)
+        loaded = source.load(spec, bounds)
+        expected_fingerprint = hashlib.sha256(
+            (f"{spec.relation}|{','.join(spec.required_columns)}|"
+             f"{bounds.start.isoformat()}|{bounds.end.isoformat()}|{bounds.max_rows}").encode()
+        ).hexdigest()
+        assert loaded.query_sha256 == baseline.query_sha256 == expected_fingerprint
+        assert loaded.bounds == bounds
+        assert loaded.relation == spec.relation
+        (row,) = loaded.rows
+        assert (row["tenant_id"], row["store_id"], row["date"]) == (tenant_id, store_id, FORECAST_TARGET_DAY)
+        assert row["view_version"] == spec.expected_view_version
+        changed_clock = contributes or overlaps_day
+        clock = eof_end if changed_clock else baseline.rows[0]["feature_snapshot_time"]
+        assert row["feature_snapshot_time"] == clock
+        assert row["prediction_origin_time"] == clock + timedelta(microseconds=1)
+        assert row["label_maturity_time"] == (
+            eof_end if changed_clock and day == FORECAST_TARGET_DAY
+            else baseline.rows[0]["label_maturity_time"]
+        )
+        assert row["daily_net_revenue"] == pytest.approx(
+            baseline.rows[0]["daily_net_revenue"] + (30 if contributes and day == FORECAST_TARGET_DAY else 0)
+        )
+        assert row["rolling_mean_28"] == pytest.approx(
+            baseline.rows[0]["rolling_mean_28"] + (30 / 28 if contributes and day == FORECAST_PRIOR_DAY else 0)
+        )
+        assert set(row["source_snapshot_ids"]) == (
+            set(baseline.rows[0]["source_snapshot_ids"]) | ({added_snapshot} if contributes else set())
+        )
+        for assignment in (
+            f"window_start = '{window_b.start.isoformat()}', window_end = '{window_b.end.isoformat()}'",
+            "window_start = NULL, window_end = NULL", "resumed_from = 'wrong-cursor'",
+            "source_database = 'another_source'", "reconciled = FALSE",
+            "partition_complete = FALSE",
+            f"started_at = '{(partial_end - timedelta(seconds=1)).isoformat()}'",
+        ):
+            with connection.transaction(force_rollback=True):
+                _set_run(connection, eof, assignment)
+                assert_refused()
+
+        # A daily-looking label with sub-day actual bounds cannot provide the
+        # independent full-day proof (even though that subwindow reaches EOF).
+        with connection.transaction(force_rollback=True):
+            connection.execute(
+                "UPDATE data_plane.ingestion_runs SET window_start = %s, window_end = %s "
+                "WHERE run_id = %s", (_at(day, 4), _at(day, 8), daily_runs[day]),
+            )
+            assert _forecast_target(connection, tenant_id, store_id) == (False, known_reason)
+            with pytest.raises(ModelReadyDataError, match="not trainable"):
+                source.load(spec, bounds)
+
+
+@pytest.mark.parametrize("day", (FORECAST_TARGET_DAY, FORECAST_PRIOR_DAY))
 @pytest.mark.parametrize("other_tenant", ("forecast", "unread-other"))
 @pytest.mark.parametrize("tail", ("zero", "unrelated", "increase", "exit"))
 def test_postgresql_forecast_unread_update_scope_requires_exact_settlement(
@@ -2047,6 +2220,7 @@ def test_postgresql_forecast_corrections_require_the_actual_source_partition_eof
     )
     update_day = FORECAST_TARGET_DAY + timedelta(days=3)
     update_key = update_day.isoformat()
+    window = BackfillWindow(_at(update_day, 0), _at(update_day + timedelta(days=1), 0), update_key)
     if update_partition == "backfill":
         (window,) = _windows(
             _at(update_day, 4), _at(update_day, 12), partition_days=1, max_partitions=1,
@@ -2123,7 +2297,7 @@ def test_postgresql_forecast_corrections_require_the_actual_source_partition_eof
 
         partial = _insert_run(
             connection, name=f"correction-partial:{day}", source_kind="orders",
-            partition_key=update_key, started_at=start, finished_at=partial_end,
+            partition_key=update_key, window=window, started_at=start, finished_at=partial_end,
             final_cursor=cursor_a, processed_count=1, valid_loaded=1, partition_complete=False,
         )
         a_snapshot = project_correction(
@@ -2154,7 +2328,7 @@ def test_postgresql_forecast_corrections_require_the_actual_source_partition_eof
 
         eof = _insert_run(
             connection, name=f"correction-actual-eof:{day}", source_kind="orders",
-            partition_key=update_key, resumed_from=cursor_a, final_cursor=cursor_b,
+            partition_key=update_key, window=window, resumed_from=cursor_a, final_cursor=cursor_b,
             started_at=eof_start, finished_at=eof_end, processed_count=1, valid_loaded=1,
         )
         b_status = "refunded" if suffix_change == "exit" else "succeeded"

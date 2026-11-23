@@ -76,6 +76,8 @@ REQUIRED_PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
         "partition_complete",
         "resumed_from",
         "final_cursor",
+        "window_start",
+        "window_end",
         "started_at",
         "finished_at",
     ),

@@ -932,6 +932,8 @@ def _create_model_view_prerequisites(database: Any) -> None:
                 partition_complete BOOLEAN NOT NULL,
                 resumed_from TEXT,
                 final_cursor TEXT,
+                window_start TIMESTAMPTZ,
+                window_end TIMESTAMPTZ,
                 started_at TIMESTAMPTZ NOT NULL,
                 finished_at TIMESTAMPTZ
             );
