@@ -3005,7 +3005,8 @@ jobs:
               if sidecar_status == "verified":
                   # JSON keeps even malformed expiry values on one output line;
                   # only the no-hold-receipt branch below needs a valid expiry.
-                  expiry = (hold.get("outputs") or {}).get("expires_at")
+                  sidecar_outputs = hold.get("outputs")
+                  expiry = sidecar_outputs.get("expires_at") if isinstance(sidecar_outputs, dict) else None
                   out.write(f"hold_expires_at_json={json.dumps(expiry)}\n")
           print(f"{release_id} was left {sidecar_status} by run {run_id} attempt {attempt}")
           PY
@@ -3075,7 +3076,7 @@ jobs:
                   )
                   response = subprocess.run(
                       ["gh", "api", "-H", "Accept: application/vnd.github.raw+json", endpoint],
-                      check=True, capture_output=True, text=True,
+                      check=True, capture_output=True, text=True, timeout=60,
                   )
                   registry = json.loads(response.stdout)
                   release = registry.get("release") if isinstance(registry, dict) else None
@@ -3084,7 +3085,7 @@ jobs:
                       raise ValueError("dispatch-ref registry lacks an exact release.candidate_sha")
                   if active_sha == release_sha:
                       raise ValueError("dispatch-ref registry still names the active staging candidate")
-              except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+              except (OSError, ValueError, subprocess.SubprocessError) as exc:
                   raise SystemExit(f"Refusing cleanup of {release_id}: expired verified admission failed: {exc}")
               print(f"{release_id} verified release expired at {expiry} and was superseded by {active_sha}")
               raise SystemExit(0)

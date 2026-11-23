@@ -2509,9 +2509,11 @@ def expired_verified(fake_cloud: dict[str, object]) -> dict[str, str]:
     return env
 
 
+@pytest.mark.parametrize("expiry", ["2000-01-01T00:00:00Z", "2000-01-01T00:00:00.123+00:00"])
 def test_retained_cleanup_admits_expired_superseded_verified_without_a_hold(
-    fake_cloud: dict[str, object], expired_verified: dict[str, str],
+    expired_verified: dict[str, str], expiry: str,
 ) -> None:
+    expired_verified["HOLD_EXPIRES_AT_JSON"] = json.dumps(expiry)
     result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, expired_verified)
     assert result.returncode == 0, result.stderr
     assert "expired at" in result.stdout and "superseded by" in result.stdout
@@ -2522,6 +2524,121 @@ def test_retained_cleanup_admits_expired_superseded_verified_without_a_hold(
     step = _named_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP)
     assert step["env"]["GH_TOKEN"] == "${{ github.token }}"
     assert step["env"]["HOLD_EXPIRES_AT_JSON"] == "${{ steps.retained-hold.outputs.hold_expires_at_json }}"
+
+
+@pytest.mark.parametrize(
+    "expiry",
+    [
+        "2999-01-01T00:00:00Z",  # not yet expired
+        None, "", 123, {},
+        "2000-01-01T00:00:00",  # naive timestamps are not UTC proof
+        "2000-01-01T00:00:00+01:00",
+        "2000-02-30T00:00:00Z",  # shape alone does not prove a valid date
+        "not-a-date", "2000-01-01T00:00:00Z\nextra-output=true",
+    ],
+)
+def test_retained_cleanup_refuses_unexpired_or_invalid_verified_expiry(
+    expired_verified: dict[str, str], expiry: object,
+) -> None:
+    expired_verified["HOLD_EXPIRES_AT_JSON"] = json.dumps(expiry)
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, expired_verified)
+    assert result.returncode != 0
+    assert "expired verified admission failed" in result.stderr
+    assert not Path(expired_verified["FAKE_GH_LOG"]).exists()
+
+
+@pytest.mark.parametrize("name", ["staging-lifecycle-create.json", "staging-rehearsal-receipt.json"])
+@pytest.mark.parametrize(
+    "defect",
+    ["missing", "malformed", "not-an-object", "unsuccessful", "numeric-success", "wrong-release", "wrong-sha"],
+)
+def test_retained_cleanup_refuses_missing_or_invalid_successful_staging_receipts(
+    expired_verified: dict[str, str], name: str, defect: str,
+) -> None:
+    path = Path(expired_verified["HOLD_RECEIPT"]).with_name(name)
+    proof = json.loads(path.read_text())
+    if defect == "missing":
+        path.unlink()
+    elif defect == "malformed":
+        path.write_text("{broken")
+    else:
+        if defect == "not-an-object":
+            proof = []
+        elif defect == "unsuccessful":
+            proof["success"] = False
+        elif defect == "numeric-success":
+            proof["success"] = 1
+        elif defect == "wrong-release":
+            proof["release_id"] = "odp-bbbbbbbbbbbb"
+        else:
+            proof["candidate_sha"] = "b" * 40
+        path.write_text(json.dumps(proof))
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, expired_verified)
+    assert result.returncode != 0
+    assert "expired verified admission failed" in result.stderr
+    assert not Path(expired_verified["FAKE_GH_LOG"]).exists()
+
+
+@pytest.mark.parametrize(
+    "registry",
+    [
+        {"release": {"candidate_sha": RETAINED_SHA}},  # active staging candidate
+        {}, {"release": {}}, {"release": []}, [], None,
+        {"release": {"candidate_sha": ""}},
+        {"release": {"candidate_sha": "not-a-sha"}},
+    ],
+)
+def test_retained_cleanup_refuses_active_or_unidentified_registry_candidate(
+    expired_verified: dict[str, str], registry: object,
+) -> None:
+    Path(expired_verified["FAKE_REGISTRY"]).write_text(json.dumps(registry))
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, expired_verified)
+    assert result.returncode != 0
+    assert "dispatch-ref registry" in result.stderr
+
+
+@pytest.mark.parametrize("defect", ["malformed", "api-error"])
+def test_retained_cleanup_refuses_unreadable_dispatch_registry(
+    expired_verified: dict[str, str], defect: str,
+) -> None:
+    if defect == "malformed":
+        Path(expired_verified["FAKE_REGISTRY"]).write_text("{broken")
+    else:
+        # Even a valid superseding response body must not override API failure.
+        expired_verified["FAKE_GH_RETURN_CODE"] = "1"
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, expired_verified)
+    assert result.returncode != 0
+    assert "expired verified admission failed" in result.stderr
+
+
+@pytest.mark.parametrize("defect", ["malformed", "invalid", "refused-hold"])
+def test_retained_cleanup_never_bypasses_a_present_hold_receipt_for_expiry(
+    expired_verified: dict[str, str], defect: str,
+) -> None:
+    path = Path(expired_verified["HOLD_RECEIPT"])
+    if defect == "malformed":
+        path.write_text("{broken")
+    elif defect == "invalid":
+        path.write_text("{}")
+    else:
+        path.write_text(json.dumps({
+            "action": "hold", "release_id": RETAINED_RELEASE_ID, "success": False,
+            "errors": [_VERIFIED_HOLD_REFUSAL], "metadata": _VERIFIED_METADATA,
+            "resources": [{"release_id": RETAINED_RELEASE_ID, "status": "retained_for_debugging"}],
+        }))
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, expired_verified)
+    assert result.returncode == (0 if defect == "refused-hold" else 1), result.stderr
+    assert not Path(expired_verified["FAKE_GH_LOG"]).exists()
+
+
+def test_retained_cleanup_never_uses_expiry_for_a_held_sidecar_without_a_hold_receipt(
+    expired_verified: dict[str, str],
+) -> None:
+    expired_verified["HOLD_SIDECAR_STATUS"] = "held"
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, expired_verified)
+    assert result.returncode != 0
+    assert "hold receipt unreadable" in result.stderr
+    assert not Path(expired_verified["FAKE_GH_LOG"]).exists()
 
 
 # --------------------------------------------------------------------------
