@@ -1315,6 +1315,25 @@ def test_negative_unadjudicated_package_cannot_borrow_a_case(
     assert len(reasons) == 1 and expected_reason in reasons[0], reasons
 
 
+def test_sharp_wasm_requires_its_own_exact_receipt(tmp_path: Path) -> None:
+    component = Component("npm", "@img/sharp-wasm32", "0.35.5", SHARP_COMPOUND_LICENSE)
+    candidate = _receipt_bound_exemption(
+        exemption_id="EX-TEST-SHARP-WASM",
+        package=component.name,
+        purl="pkg:npm/@img/sharp-wasm32@0.35.5",
+        license_or_finding=component.license,
+        policy_case_id="LGPL-SHARP-WASM",
+    )
+    _clears_every_local_check(candidate, tmp_path, component)
+
+    approved_content = {key: value for key, value in candidate.items() if key != "integrity"}
+    verifier = _fixed_verifier(approved_content=approved_content)
+    result = _evaluate_with(candidate, tmp_path, component, authoritative_verifier=verifier)
+    assert result["status"] == "PASS", result["review_required"]
+    assert result["allowed_with_obligations"] == [component]
+    assert result["allowed"] == []
+
+
 # -----------------------------------------------------------------------------
 # Receipt Fields Completeness & Negative Tests (P2 R2)
 # -----------------------------------------------------------------------------

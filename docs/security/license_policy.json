@@ -181,17 +181,32 @@
         "packages": [
           {
             "package": "@img/sharp-libvips-linux-x64",
-            "version": "1.3.2"
+            "version": "1.3.4"
           },
           {
             "package": "@img/sharp-libvips-linuxmusl-x64",
-            "version": "1.3.2"
+            "version": "1.3.4"
           }
         ],
-        "dependency_path": "@oday-plus/web -> next@15.5.21 -> sharp@0.35.3 -> @img/sharp-libvips-*",
+        "dependency_path": "@oday-plus/web -> next -> sharp@0.35.5 -> @img/sharp-libvips-*",
         "why_it_matters": "Next.js image optimisation pulls libvips into the production image. This is the classic LGPL dynamic-linking case: sharp loads libvips as a prebuilt shared library and does not modify it.",
         "decision_needed": "Allow outright / allow subject to conditions (linking method, NOTICE, source offer) / review per release / prohibit.",
         "if_prohibited": "Next.js image optimisation must be disabled or replaced; this is not a drop-in removal."
+      },
+      {
+        "id": "LGPL-SHARP-WASM",
+        "license": "Apache-2.0 AND LGPL-3.0-or-later AND MIT",
+        "scope": "prod",
+        "packages": [
+          {
+            "package": "@img/sharp-wasm32",
+            "version": "0.35.5"
+          }
+        ],
+        "dependency_path": "@oday-plus/web -> next -> sharp@0.35.5 -> @img/sharp-wasm32@0.35.5",
+        "why_it_matters": "The D01 amendment in alfloop-dev/odayplus#1421 lists this optional WebAssembly build with its own SPDX expression. It includes libvips and remains subject to the D01 conditions.",
+        "decision_needed": "Verify the authoritative exemption receipt for this package, version and release.",
+        "if_prohibited": "Exclude the optional WebAssembly build from the production distribution."
       },
       {
         "id": "LGPL-PSYCOPG2",
