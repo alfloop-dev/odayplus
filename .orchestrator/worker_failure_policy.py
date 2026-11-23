@@ -4396,20 +4396,27 @@ def maybe_trigger_retry_or_fallback(
         return True, True
     retry = worker_retry_settings(config, worker.get("provider"))
     failure = classify_worker_failure(config, worker, reason)
+    failure_label = failure["label"]
     max_attempts = int(retry.get("max_attempts", 5))
     retry_count = int(worker.get("retry_count", 0))
     request = request_for_worker(config, worker)
     if request is None:
         return False, False
     if retry_count < max_attempts:
-        schedule_worker_retry(config, worker, reason)
+        # The dashboard exposes last_error. The original diagnostic belongs to
+        # the existing restricted failure evidence, not to this status field.
+        schedule_worker_retry(config, worker, f"Worker failure ({failure_label})")
         write_activity_log(
             config,
             {
                 "type": "worker_retry_scheduled",
                 "provider": worker.get("provider"),
                 "task_id": worker.get("task_id"),
-                "message": f"Transient worker failure detected ({failure.get('label')}); retry {worker.get('retry_count')} scheduled at {worker.get('next_retry_at')}: {reason}",
+                "failure_kind": failure["kind"],
+                "message": (
+                    f"Transient worker failure detected ({failure_label}); "
+                    f"retry {worker.get('retry_count')} scheduled at {worker.get('next_retry_at')}"
+                ),
                 "worker_run_id": worker["run_id"],
                 "next_retry_at": worker.get("next_retry_at"),
             },
@@ -4461,7 +4468,7 @@ def maybe_trigger_retry_or_fallback(
                 retry_count=int(worker.get("retry_count", 0)),
                 delivery_mode_override="file_inbox",
                 activity_type="worker_fallback_started",
-                activity_message=f"Worker fell back to file inbox after transient failures: {reason}",
+                activity_message=f"Worker fell back to file inbox after transient failures ({failure_label})",
             )
             if ok:
                 worker = state["workers"][worker["run_id"]]
