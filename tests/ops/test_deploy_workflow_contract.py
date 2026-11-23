@@ -2296,6 +2296,7 @@ def test_retained_cleanup_admits_the_verified_state_a_refused_hold_left(fake_clo
         "hold_run_attempt": "1",
         "hold_owner_task_id": "odp-ephemeral-staging-rollout-001",
         "hold_sidecar_status": "verified",
+        "hold_expires_at_json": "null",
     }
 
 
@@ -2465,6 +2466,62 @@ def test_retained_cleanup_refuses_when_the_hold_receipt_is_missing(fake_cloud: d
     )
     assert result.returncode != 0
     assert "hold receipt unreadable" in result.stderr
+
+
+@pytest.fixture
+def expired_verified(fake_cloud: dict[str, object]) -> dict[str, str]:
+    """Execute the bundle gate and hand its actual expiry output to the receipt gate."""
+
+    sidecar = _verified_sidecar()
+    sidecar["outputs"] = {"expires_at": "2000-01-01T00:00:00Z"}
+    state_dir = _retained_bundle(fake_cloud, hold=sidecar)
+    result = _run_step(
+        _release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_HOLD_STEP,
+        _retained_env(fake_cloud, state_dir),
+    )
+    assert result.returncode == 0, result.stderr
+    tmp = fake_cloud["tmp"]
+    hold_path = tmp / "staging-lifecycle-hold.json"
+    proof = {"success": True, "release_id": RETAINED_RELEASE_ID, "candidate_sha": RETAINED_SHA}
+    for name in ("staging-lifecycle-create.json", "staging-rehearsal-receipt.json"):
+        (tmp / name).write_text(json.dumps(proof), encoding="utf-8")
+    registry = tmp / "dispatch-registry.json"
+    registry.write_text(json.dumps({"release": {"candidate_sha": "b" * 40}}), encoding="utf-8")
+    gh = tmp / "bin/gh"
+    gh.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, pathlib, sys\n"
+        "pathlib.Path(os.environ['FAKE_GH_LOG']).write_text(json.dumps(sys.argv[1:]))\n"
+        "print(pathlib.Path(os.environ['FAKE_REGISTRY']).read_text())\n"
+        "sys.exit(int(os.environ.get('FAKE_GH_RETURN_CODE', '0')))\n",
+        encoding="utf-8",
+    )
+    gh.chmod(0o755)
+    env = _receipt_env(fake_cloud, hold_path, sidecar_status="verified")
+    env.update(
+        HOLD_EXPIRES_AT_JSON=_outputs(fake_cloud)["hold_expires_at_json"],
+        ODAY_RELEASE_SHA=RETAINED_SHA,
+        GITHUB_REPOSITORY="example/odayplus",
+        GITHUB_REF_NAME="task/dispatch-policy",
+        FAKE_REGISTRY=str(registry),
+        FAKE_GH_LOG=str(tmp / "gh.log"),
+    )
+    return env
+
+
+def test_retained_cleanup_admits_expired_superseded_verified_without_a_hold(
+    fake_cloud: dict[str, object], expired_verified: dict[str, str],
+) -> None:
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, expired_verified)
+    assert result.returncode == 0, result.stderr
+    assert "expired at" in result.stdout and "superseded by" in result.stdout
+    assert json.loads(Path(expired_verified["FAKE_GH_LOG"]).read_text()) == [
+        "api", "-H", "Accept: application/vnd.github.raw+json",
+        "repos/example/odayplus/contents/docs/evidence/gates/RELEASE_GATE_REGISTRY.json?ref=task/dispatch-policy",
+    ]
+    step = _named_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP)
+    assert step["env"]["GH_TOKEN"] == "${{ github.token }}"
+    assert step["env"]["HOLD_EXPIRES_AT_JSON"] == "${{ steps.retained-hold.outputs.hold_expires_at_json }}"
 
 
 # --------------------------------------------------------------------------
