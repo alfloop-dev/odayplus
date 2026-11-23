@@ -41,6 +41,8 @@ jobs:
               "task/ODP-CORE-OPS-PROD-IMPLEMENTATION-261121",
               "task/ODP-FORECAST-SOURCE-COMPLETENESS-261024",
               "task/ODP-CI-FROZEN-FORECAST-REVIEW-261123",
+              "task/ODP-STAGING-RECOVERY-NOCLOBBER-261123",
+              "task/ODP-CI-FROZEN-STAGING-RECOVERY-261123",
           }
           event_name = os.environ["GITHUB_EVENT_NAME"]
           repository = os.environ["GITHUB_REPOSITORY"]
