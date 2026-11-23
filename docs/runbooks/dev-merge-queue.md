@@ -35,7 +35,7 @@ applied by `delivery_toolchain/github/apply_branch_protection.py`.
 |---|---|---|
 | `merge_method` | `MERGE` | Matches the existing closeout flow (`gh pr merge --merge`) and `dev`'s merge-commit history. Squash would rewrite the task commit and drop the `LLM-Agent` / `Task-ID` / `Reviewer` trailers the hooks enforce. |
 | `grouping_strategy` | `ALLGREEN` | Every entry's own merge commit must be green, not just the group head. At this fleet's throughput (~1.5 merges/hour) the queue is rarely deeper than two, so the extra CI is cheap and a bad entry is ejected without bisecting the group. |
-| `check_response_timeout_minutes` | `60` | CI measures ~25 minutes. 60 leaves 2x headroom, so a slow runner does not eject an otherwise good PR. |
+| `check_response_timeout_minutes` | `90` | The required `product` check waits for `product-db`, which can run up to 70 minutes. The extra 20 minutes covers runner startup and required status reporting. On 2026-11-23, [merge group #1750](https://github.com/alfloop-dev/odayplus/actions/runs/45135581836) finished successfully after the previous 60-minute limit had ejected it. |
 | `max_entries_to_build` | `5` | Cap on concurrent speculative CI runs. |
 | `max_entries_to_merge` | `5` | Cap on how many PRs land in one group. |
 | `min_entries_to_merge` | `2` | Minimum PRs to accumulate before merging group when available. Enables batching for concurrent PRs to reduce merge commit churn and base branch rebase races on `dev`. |
@@ -249,7 +249,7 @@ is `false`.
 
 | Symptom | Likely cause | First move |
 |---|---|---|
-| Every queued PR is ejected after ~60 min | a required context is not reporting on `merge_group` | check the PR's `merge_group` workflow runs; confirm the triggers in `ci.yml` and `merge-queue-review-gate.yml` |
+| A PR is ejected with `checks_timed_out` | a required context did not report before the live deadline | compare the live timeout and ejection time with the `merge_group` workflow and job timestamps. If a context never appears, check the triggers in `ci.yml` and `merge-queue-review-gate.yml` |
 | `gh pr merge` fails with a merge-queue error | a caller is still merging directly | that caller needs the `--auto` enqueue path |
 | Queue merges nothing while PRs sit "ready to merge" | nothing is enqueueing them | check the task's `merge_route` and `next`: `blocked` / `unknown` / `stalled` say why; the dispatcher stage (`dispatch_ready_tasks`) must be running - it is skipped while watchdog safe mode, discussion planning, or a dirty control plane holds dispatch |
 | PRs still report `BEHIND` | `strict` is still on for `dev` | re-apply the policy; see "`strict` must be off on `dev`" above |
