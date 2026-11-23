@@ -522,6 +522,15 @@ class CanonicalIdentityGraphRepository:
              "EXACT_IDENTITY_EXECUTED" if decision.get("proposer_service_principal") is not None else "HUMAN_CONFIRMATION_EXECUTED",
              decision["reason"], key, intake["version"], aggregate.version, job_id, plan["input_binding"]["source_snapshot_id"],
              case["match_case_id"], intake["correlation_id"], key, at))
+        # Native READY reserves its Geo evidence job in this same unit. Only a
+        # typed pre-reservation refusal leaves identity unchanged with no job.
+        from modules.listing.application.pipeline import NativeIntakeGeoOwner
+
+        NativeIntakeGeoOwner(self).reserve_in_identity_unit(tenant, intake, decision_id=key,
+            identity_job_id=job_id, listing_id=listing_id, listing_version=listing_version,
+            listing_revision_id=revision_id, property_id=property_id, property_version=property_version,
+            intake_version=aggregate.version, source_snapshot_id=plan["input_binding"]["source_snapshot_id"],
+            parser_run_id=plan["input_binding"]["parser_run_id"])
         mutation = {"property_versions": {property_id: property_version}, "created_edge_ids": edge_ids,
             "created_redirect_ids": [], "candidate_reassignments": [], "listing_id": listing_id,
             "listing_version": listing_version, "listing_revision_id": revision_id, "intake_id": intake["intake_id"],

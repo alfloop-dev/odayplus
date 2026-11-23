@@ -385,3 +385,151 @@ def _duplicate_group(
             duplicate_key=key.source_key,
         )
     return None
+
+
+NATIVE_GEO_REQUESTED_ACTION = "intake.geocode_requested.v1"
+NATIVE_GEO_CHECKPOINT = "GEOCODING"
+
+
+class NativeIntakeGeoOwner:
+    """The single native Intake Geo evidence owner in the original Listing pipeline.
+
+    Reservation runs only inside the existing identity execution unit that
+    moves a native Intake to READY (fresh CREATE/REVISE and exact-existing
+    DUPLICATE). Execution later reuses ``GeoPipeline`` with one LIVE lookup.
+    """
+
+    def __init__(self, graph: Any) -> None:
+        self.graph, self.engine, self.queue = graph, graph.engine, graph.queue
+
+    def _clock(self) -> datetime:
+        value = self.engine.query_one("SELECT clock_timestamp() AS now")["now"]
+        value = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+        if value.utcoffset() is None:
+            raise ValueError("NATIVE_GEO_TIME_UNAVAILABLE")
+        return value
+
+    def native_intake(self, tenant: str, intake: Mapping[str, Any]) -> bool:
+        """True only for an Intake the native start producer committed."""
+        return self.engine.query_one(
+            "SELECT job_id FROM workflow.jobs WHERE tenant_id=? AND job_type='native-intake-start' "
+            "AND aggregate_type='intake' AND aggregate_id=? AND idempotency_key=? AND status='SUCCEEDED'",
+            (tenant, intake["intake_id"], intake["intake_id"]),
+        ) is not None
+
+    @staticmethod
+    def job_id(decision_id: str) -> str:
+        from uuid import UUID, uuid5
+
+        from modules.listing.application.native_intake_retrieval_policy import GEO_JOB_TYPE
+
+        return str(uuid5(UUID(decision_id), GEO_JOB_TYPE))
+
+    def _admission(self, tenant: str, intake: Mapping[str, Any], listing_id: str,
+                   listing_revision_id: str | None, job_id: str) -> tuple[Any, str, dict, str]:
+        """Prove every pre-reservation input; refusals are NO_JOB_UNADMITTED."""
+        import hashlib
+        import json
+
+        from modules.external_data.application.assisted_intake import normalize_address
+        from modules.listing.application.native_intake_identity import NativeIntakeIdentityOwner
+        from modules.listing.application.native_intake_retrieval_policy import (
+            NativeIntakeGeoAuthenticator,
+            NativeIntakeGeoUnadmitted,
+            native_intake_geo_policy,
+        )
+
+        policy = native_intake_geo_policy(tenant)
+        token = NativeIntakeGeoAuthenticator.sign(job_id, tenant, 1)
+        if listing_revision_id is None:
+            raise NativeIntakeGeoUnadmitted("NATIVE_GEO_LISTING_REVISION_UNAVAILABLE")
+        source = self.engine.query_one("SELECT * FROM intake.source_registry WHERE source_id=? FOR SHARE",
+                                       (policy.source.source_id,))
+        # The Geo provider grant is its own registered source; the listing
+        # source's retrieval approval is never reused for it.
+        if (source is None or source["version"] != policy.source.source_policy_version
+                or not NativeIntakeIdentityOwner._source_reusable(source, self._clock())):
+            raise NativeIntakeGeoUnadmitted("NATIVE_GEO_SOURCE_NOT_ADMITTED")
+        revision = self.engine.query_one(
+            "SELECT effective_values FROM expansion.listing_revisions WHERE tenant_id=? AND listing_id=? "
+            "AND listing_revision_id=?", (tenant, listing_id, listing_revision_id))
+        if revision is None:
+            raise LookupError("NATIVE_GEO_LISTING_REVISION_MISSING")
+        values = revision["effective_values"]
+        values = json.loads(values) if isinstance(values, str) else values
+        address = normalize_address(values.get("address") if isinstance(values, dict) else None)
+        if not address:
+            raise NativeIntakeGeoUnadmitted("NATIVE_GEO_ADDRESS_UNAVAILABLE")
+        return policy, token, source, hashlib.sha256(address.encode()).hexdigest()
+
+    def reserve_in_identity_unit(self, tenant: str, intake: Mapping[str, Any], *, decision_id: str,
+                                 identity_job_id: str, listing_id: str, listing_version: int,
+                                 listing_revision_id: str | None, property_id: str, property_version: int,
+                                 intake_version: int, source_snapshot_id: str | None,
+                                 parser_run_id: str | None) -> dict | None:
+        """Reserve one purpose-bound Geo job in the caller's open identity unit.
+
+        Returns ``None`` without any Geo write for a non-native Intake or a
+        typed pre-reservation ``NativeIntakeGeoUnadmitted`` refusal. Every
+        later SQL/queue/audit failure propagates and rolls back the caller.
+        """
+        import hashlib
+        import json
+        from datetime import timedelta
+        from uuid import uuid4
+
+        from modules.listing.application.native_intake_retrieval_policy import (
+            GEO_JOB_TYPE,
+            NativeIntakeGeoUnadmitted,
+        )
+        from shared.jobs.queue import JobRequest
+
+        if not self.native_intake(tenant, intake):
+            return None
+        job_id = self.job_id(decision_id)
+        try:
+            policy, token, source, address_sha256 = self._admission(
+                tenant, intake, listing_id, listing_revision_id, job_id)
+        except NativeIntakeGeoUnadmitted:
+            return None
+        at = self._clock()
+        audit_id = str(uuid4())
+        occurrence = intake["intake_id"] + ":" + decision_id
+        receipt = {"job_id": job_id, "intake_id": intake["intake_id"], "admitted_intake_version": intake_version,
+                   "job_status_at_admission": "QUEUED",
+                   "timeout_at": (at + timedelta(seconds=policy.deadline_seconds)).isoformat(),
+                   "identity_decision_id": decision_id, "audit_event_id": audit_id}
+        payload = {"decision_id": decision_id, "identity_job_id": identity_job_id,
+                   "intake_version": intake_version, "listing_id": listing_id, "listing_version": listing_version,
+                   "listing_revision_id": listing_revision_id, "property_id": property_id,
+                   "property_version": property_version, "source_snapshot_id": source_snapshot_id,
+                   "parser_run_id": parser_run_id, "address_sha256": address_sha256,
+                   "geo_source_version": source["version"], "policy": policy.snapshot(),
+                   "policy_sha256": policy.sha256, "delivery_generation": 1,
+                   "attempt_token_sha256": hashlib.sha256(token.encode()).hexdigest(),
+                   "admission_receipt": receipt, "attempt_intents": []}
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        self.engine.execute("INSERT INTO workflow.jobs (job_id,tenant_id,job_type,aggregate_type,aggregate_id,"
+            "status,checkpoint,attempt,max_attempts,fence_token,timeout_at,payload,correlation_id,idempotency_key) "
+            "VALUES (?,?,?,'intake',?,'QUEUED',?,0,?,1,?,?::jsonb,?,?)",
+            (job_id, tenant, GEO_JOB_TYPE, intake["intake_id"], NATIVE_GEO_CHECKPOINT, policy.max_attempts,
+             receipt["timeout_at"], encoded, intake["correlation_id"], occurrence))
+        physical, created = self.queue.enqueue(JobRequest(GEO_JOB_TYPE,
+            {"job_id": job_id, "tenant_id": tenant, "attempt_token": token},
+            idempotency_key=GEO_JOB_TYPE + ":" + tenant + ":" + occurrence, job_id=job_id),
+            correlation_id=intake["correlation_id"])
+        if not created or physical.job_id != job_id:
+            raise ValueError("NATIVE_GEO_DELIVERY_RESERVATION_CONFLICT")
+        self.engine.execute("UPDATE durable_jobs SET max_retries=? WHERE job_id=?", (policy.max_attempts, job_id))
+        self.graph.audit_sink.persist({
+            "audit_event_id": audit_id, "tenant_id": tenant, "resource_type": "intake",
+            "resource_id": intake["intake_id"], "action": NATIVE_GEO_REQUESTED_ACTION, "result": "SUCCEEDED",
+            "actor_subject_id": None, "service_principal": GEO_JOB_TYPE, "actor_role": "SVC_INTAKE",
+            "correlation_id": intake["correlation_id"], "causation_id": decision_id,
+            "occurred_at": at.isoformat(), "before_value": None,
+            "after_value": {**receipt, "native_geo_provenance": {
+                key: payload[key] for key in ("listing_id", "listing_version", "listing_revision_id",
+                    "property_id", "property_version", "address_sha256", "geo_source_version", "policy_sha256")}},
+            "reason": "Reserve native Geo evidence for the committed identity result.",
+        }, {key: intake[key] for key in ("tenant_id", "brand_id", "region_id", "assigned_area_id", "heat_zone_id")})
+        return receipt
