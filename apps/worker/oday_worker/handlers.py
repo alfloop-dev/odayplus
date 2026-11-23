@@ -897,6 +897,15 @@ def handle_native_intake_parser(job: JobRecord, persistence: PersistenceBundle) 
     run_native_intake_parser_delivery(job, persistence.canonical_intake_parser())
 
 
+def handle_native_intake_geocode(job: JobRecord, persistence: PersistenceBundle) -> None:
+    from modules.listing.application.pipeline import (
+        native_intake_geo_owner,
+        run_native_intake_geocode_delivery,
+    )
+
+    run_native_intake_geocode_delivery(job, native_intake_geo_owner(persistence))
+
+
 def handle_native_intake_source_policy(job: JobRecord, persistence: PersistenceBundle) -> None:
     from modules.listing.application.native_intake_source_policy import (
         run_native_intake_source_policy_delivery,
@@ -917,6 +926,7 @@ def build_default_registry() -> JobRegistry:
     from apps.worker.consumers.retained_evidence import handle_retained_evidence_delivery
     from apps.worker.consumers.store_ops_audit import handle_store_ops_audit_delivery
     from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+    from modules.listing.application.native_intake_retrieval_policy import GEO_JOB_TYPE
     from modules.netplan.workers.outcome_worker import handle_netplan_outcome_due
     from modules.opsboard.application.store_ops_audit_delivery import (
         JOB_TYPE as STORE_OPS_AUDIT_JOB_TYPE,
@@ -957,6 +967,7 @@ def build_default_registry() -> JobRegistry:
     registry.register("native-intake-retrieval", handle_native_intake_retrieval)
     registry.register("native-intake-assisted-entry", handle_native_intake_assisted_entry)
     registry.register("native-intake-parser", handle_native_intake_parser)
+    registry.register(GEO_JOB_TYPE, handle_native_intake_geocode)
     registry.register(NETPLAN_OUTCOME_DUE_JOB_TYPE, handle_netplan_outcome_due)
     return registry
 
