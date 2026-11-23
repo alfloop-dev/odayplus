@@ -2996,13 +2996,10 @@ def persist_staging_recovery(
     for name, file in sidecars.items():
         uri = f"{bundle_uri}/{name}"
         digest = hashlib.sha256(file.read_bytes()).hexdigest()
-        # A prior attempt may have completed the PUT before readback failed.
-        # Skip the existing destination without writing it, then require the
-        # same positive generation and exact byte proof as for a fresh upload.
-        _live_gcloud(
-            ["storage", "cp", "--no-clobber", "--if-generation-match=0", str(file), uri],
-            timeout=120,
-        )
+        # For Cloud Storage, --no-clobber skips an existing destination or
+        # uploads with a zero generation precondition. Verify the stored bytes
+        # by generation in either case.
+        _live_gcloud(["storage", "cp", "--no-clobber", str(file), uri], timeout=120)
         generation = _live_gcloud(
             ["storage", "objects", "describe", uri, "--format=value(generation)"],
             timeout=60,
