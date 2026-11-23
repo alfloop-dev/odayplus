@@ -838,12 +838,12 @@ def _snapshot_errors(snapshot: Any, *, label: str) -> list[str]:
         valid_generation = (
             isinstance(generation, int)
             and not isinstance(generation, bool)
-            and generation >= 0
+            and generation > 0
         ) or (
-            isinstance(generation, str) and bool(re.fullmatch(r"[0-9]+", generation))
+            isinstance(generation, str) and bool(re.fullmatch(r"0*[1-9][0-9]*", generation))
         )
         if not valid_generation:
-            errors.append(f"{label}.object_generation must be a non-negative integer")
+            errors.append(f"{label}.object_generation must be a positive integer")
     if "content_sha256" in snapshot and not is_sha256_digest(
         snapshot["content_sha256"]
     ):

@@ -434,14 +434,34 @@ def test_data_snapshot_missing_object_generation_fails_closed() -> None:
     )
 
 
-@pytest.mark.parametrize("generation", [-1, True, 1.5, "generation-1"])
-def test_data_snapshot_invalid_object_generation_fails_closed(generation) -> None:
-    snap = valid_data_snapshot()
-    snap["object_generation"] = generation
-    manifest = built_manifest(data_snapshot=snap)
+@pytest.mark.parametrize("generation", [-1, 0, True, 1.5, "generation-1", "0", "00"])
+@pytest.mark.parametrize("rollback_key", [None, "data_snapshot", "snapshot_pointer", "snapshot"])
+def test_data_snapshot_invalid_object_generation_fails_closed(generation, rollback_key) -> None:
+    manifest = built_manifest()
+    label = "manifest.data_snapshot"
+    if rollback_key is None:
+        snapshot = manifest["data_snapshot"]
+    else:
+        rollback = manifest["rollback_release"]
+        snapshot = rollback.pop("data_snapshot")
+        rollback[rollback_key] = snapshot
+        label = "manifest.rollback_release.data_snapshot"
+    snapshot["object_generation"] = generation
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
 
-    errors = validate_manifest(manifest)
-    assert any("object_generation must be a non-negative integer" in err for err in errors)
+    assert validate_release_admission(manifest) == [
+        f"{label}.object_generation must be a positive integer"
+    ]
+
+
+@pytest.mark.parametrize("generation", [1, "1", "00123"])
+def test_release_admission_accepts_positive_snapshot_generations(generation) -> None:
+    manifest = built_manifest()
+    manifest["data_snapshot"]["object_generation"] = generation
+    manifest["rollback_release"]["data_snapshot"]["object_generation"] = generation
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+
+    assert validate_release_admission(manifest) == []
 
 
 def test_data_snapshot_contract_digest_mismatch_fails_closed() -> None:
