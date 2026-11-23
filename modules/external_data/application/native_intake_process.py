@@ -6,6 +6,7 @@ owner's composite-lease controller; it never substitutes for an SQL intent.
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 import os
@@ -28,6 +29,10 @@ MAX_STDERR = 65_536
 MAX_SECONDS = 10
 CLEANUP_SECONDS = 1
 _CHILD = Path(__file__).with_name("native_intake_io_child.py").resolve()
+GEOCODE_OPERATION = "geocode_post"
+GEOCODE_MAX_REQUEST = 65_536
+GEOCODE_MAX_RESPONSE = 512_000
+_GEOCODE_HEADERS = frozenset({"Accept", "Content-Type", "X-Correlation-Id"})
 
 
 class NativeIORejected(RuntimeError):
@@ -141,8 +146,11 @@ class NativeIntakeProcessRunner:
         if not isinstance(request, dict) or "timeout_seconds" in request:
             raise NativeIORejected("NATIVE_IO_PROTOCOL_REJECTED")
         operation = request.get("operation")
-        gcs = isinstance(operation, str) and operation.startswith("gcs_")
-        if (credential is None) == gcs:
+        # Only fixed GCS operations and the closed Geo POST carry a private
+        # credential; the source-page hop never does.
+        credentialed = isinstance(operation, str) and (
+            operation.startswith("gcs_") or operation == GEOCODE_OPERATION)
+        if (credential is None) == credentialed:
             raise NativeIORejected("NATIVE_IO_CREDENTIAL_CHANNEL_REJECTED")
         token = None
         if credential is not None:
@@ -241,7 +249,7 @@ class NativeIntakeProcessRunner:
                         raise NativeIORejected("NATIVE_IO_PROTOCOL_REJECTED")
                     return reply["result"]
                 if (set(reply) != {"ok", "code", "status"} or not isinstance(reply["code"], str)
-                        or not reply["code"].startswith(("NATIVE_IO_", "NATIVE_HTTP_", "NATIVE_GCS_"))
+                        or not reply["code"].startswith(("NATIVE_IO_", "NATIVE_HTTP_", "NATIVE_GCS_", "NATIVE_GEOCODE_"))
                         or not reply["code"].replace("_", "").isalnum()
                         or len(reply["code"]) > 96
                         or (reply["status"] is not None and (type(reply["status"]) is not int or not 100 <= reply["status"] <= 599))):
@@ -259,3 +267,93 @@ class NativeIntakeProcessRunner:
         finally:
             _cleanup_owned_io(process, read_fd, write_fd, body_error=body_error,
                               _invocation=_invocation)
+
+
+class NativeGeocodeExchange:
+    """Non-secret journal of the one physical Geo exchange of an attempt."""
+
+    __slots__ = ("endpoint_url", "correlation_id", "request_body", "status", "media_type",
+                 "response_body", "fetched_at")
+
+    def __init__(self, endpoint_url: str, correlation_id: str, request_body: bytes) -> None:
+        self.endpoint_url, self.correlation_id = endpoint_url, correlation_id
+        self.request_body = request_body
+        self.status: int | None = None
+        self.media_type: str | None = None
+        self.response_body: bytes | None = None
+        self.fetched_at = None
+
+    def __repr__(self) -> str:
+        return (f"NativeGeocodeExchange(status={self.status!r}, media_type={self.media_type!r}, "
+                f"response=<{0 if self.response_body is None else len(self.response_body)} bytes>)")
+
+
+class NativeGeocodeProcessTransport:
+    """Controlled physical transport for the original ``HttpGeocodeClient``.
+
+    The client keeps request serialization, decoding and provider error
+    mapping. This adapter only moves the bytes through the fixed child: the
+    API key travels on the private credential pipe (never JSON, argv, env,
+    hash or journal), one attempt allows exactly one exchange, the guard and
+    hard wall deadline apply, and an unreaped child propagates unchanged.
+    """
+
+    def __init__(self, *, deadline: float, guard: Callable[[], None], runner=None, clock=None) -> None:
+        self.deadline, self.guard = deadline, guard
+        self.runner = runner or NativeIntakeProcessRunner()
+        self.clock = clock
+        self.exchange: NativeGeocodeExchange | None = None
+
+    def post_json(self, endpoint_url, *, headers, body, credential, timeout_seconds):
+        from modules.external_data.providers.live import GeocodeHttpResponse
+
+        if self.exchange is not None:
+            # retry_budget is zero for a native attempt; a second call is a bug.
+            raise NativeIORejected("NATIVE_GEOCODE_SECOND_EXCHANGE_REJECTED")
+        value = getattr(credential, "value", None)
+        if (not isinstance(endpoint_url, str) or not isinstance(body, bytes)
+                or not 1 <= len(body) <= GEOCODE_MAX_REQUEST
+                or not isinstance(headers, dict) or set(headers) != _GEOCODE_HEADERS
+                or headers["Accept"] != "application/json" or headers["Content-Type"] != "application/json"
+                or not isinstance(headers["X-Correlation-Id"], str)
+                or any(isinstance(v, str) and value and value in v for v in headers.values())):
+            raise NativeIORejected("NATIVE_IO_PROTOCOL_REJECTED")
+        if not isinstance(value, str) or not value:
+            raise NativeIORejected("NATIVE_GEOCODE_CREDENTIAL_UNAVAILABLE")
+        if (type(timeout_seconds) not in {int, float} or not math.isfinite(timeout_seconds)
+                or timeout_seconds <= 0):
+            raise NativeIORejected("NATIVE_IO_DEADLINE_REJECTED")
+        self.exchange = exchange = NativeGeocodeExchange(endpoint_url, headers["X-Correlation-Id"], body)
+        deadline = min(self.deadline, time.monotonic() + timeout_seconds)
+        try:
+            result = self.runner.run({"operation": GEOCODE_OPERATION, "url": endpoint_url,
+                "correlation_id": headers["X-Correlation-Id"],
+                "body_base64": base64.b64encode(body).decode("ascii")},
+                deadline=deadline, guard=self.guard, credential=value)
+        except NativeIOUnreaped:
+            raise
+        except NativeIORejected as error:
+            if error.code in {"NATIVE_IO_DEADLINE_EXPIRED", "NATIVE_IO_CONNECTION_FAILED"}:
+                # The child was reaped; the original client maps this to its
+                # provider timeout error without reading the exception text.
+                raise TimeoutError(error.code) from None
+            raise
+        if (not isinstance(result, dict) or set(result) != {"status", "media_type", "body_base64"}
+                or type(result["status"]) is not int or not 100 <= result["status"] <= 599
+                or not isinstance(result["body_base64"], str)):
+            raise NativeIORejected("NATIVE_IO_PROTOCOL_REJECTED")
+        try:
+            data = base64.b64decode(result["body_base64"], validate=True)
+        except (ValueError, TypeError):
+            raise NativeIORejected("NATIVE_IO_PROTOCOL_REJECTED") from None
+        if len(data) > GEOCODE_MAX_RESPONSE:
+            raise NativeIORejected("NATIVE_IO_LENGTH_REJECTED")
+        if result["status"] == 200:
+            if result["media_type"] != "application/json" or not data:
+                raise NativeIORejected("NATIVE_IO_PROTOCOL_REJECTED")
+        elif result["media_type"] is not None or data:
+            raise NativeIORejected("NATIVE_IO_PROTOCOL_REJECTED")
+        exchange.status, exchange.media_type, exchange.response_body = (
+            result["status"], result["media_type"], data)
+        exchange.fetched_at = self.clock() if self.clock is not None else None
+        return GeocodeHttpResponse(result["status"], data)

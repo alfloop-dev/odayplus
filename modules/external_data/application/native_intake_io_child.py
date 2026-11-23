@@ -3,7 +3,9 @@
 This module deliberately imports no product code and launches no descendants.
 The parent owns the wall deadline, leases, permission and process-group cleanup.
 No source-page credential is supported. Only fixed GCS operations may read the
-dedicated storage token from the explicitly inherited private pipe.
+dedicated storage token, and only the closed Geo POST may read the geocode API
+key, from the explicitly inherited private pipe. Neither is ever presented as
+the other's header.
 """
 
 import base64
@@ -160,9 +162,9 @@ def http_hop(request, deadline):
         connection.close()
 
 
-def _storage_token(descriptor):
+def _private_credential(descriptor, code):
     if type(descriptor) is not int or descriptor < 3:
-        raise ChildRejected("NATIVE_GCS_CREDENTIAL_UNAVAILABLE")
+        raise ChildRejected(code)
     try:
         chunks, size = [], 0
         while True:
@@ -172,13 +174,17 @@ def _storage_token(descriptor):
             chunks.append(block)
             size += len(block)
             if size > 8192:
-                raise ChildRejected("NATIVE_GCS_CREDENTIAL_UNAVAILABLE")
+                raise ChildRejected(code)
         token = b"".join(chunks).decode("ascii")
         if not token or any(ord(c) < 33 or ord(c) > 126 for c in token):
-            raise ChildRejected("NATIVE_GCS_CREDENTIAL_UNAVAILABLE")
+            raise ChildRejected(code)
         return token
     finally:
         os.close(descriptor)
+
+
+def _storage_token(descriptor):
+    return _private_credential(descriptor, "NATIVE_GCS_CREDENTIAL_UNAVAILABLE")
 
 
 def _generation(value):
@@ -315,6 +321,63 @@ def assisted_gcs_operation(request, deadline, descriptor):
     finally:
         connection.close()
 
+GEOCODE_JSON_MEDIA = frozenset({"application/json"})
+_CORRELATION = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
+
+
+def geocode_post(request, deadline, descriptor):
+    """One closed Geo JSON POST; the parent client owns body/status semantics.
+
+    HTTPS on the default port only, fixed non-secret headers, the API key read
+    from the private pipe into ``X-API-Key`` only, and never a redirect hop.
+    A non-200 status is returned without reading its body.
+    """
+    if set(request) != {"operation", "timeout_seconds", "url", "correlation_id", "body_base64"}:
+        raise ChildRejected("NATIVE_IO_PROTOCOL_REJECTED")
+    url = request["url"]
+    if (not isinstance(url, str) or not 1 <= len(url) <= 4096 or not url.isascii()
+            or any(ord(c) < 33 or ord(c) == 127 for c in url) or "\\" in url):
+        raise ChildRejected("NATIVE_HTTP_URL_REJECTED")
+    parsed = urlsplit(url)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
+            or parsed.password is not None or parsed.fragment or "%" in parsed.hostname
+            or (parsed.port or 443) != 443):
+        raise ChildRejected("NATIVE_HTTP_URL_REJECTED")
+    correlation = request["correlation_id"]
+    if not isinstance(correlation, str) or not _CORRELATION.fullmatch(correlation):
+        raise ChildRejected("NATIVE_IO_PROTOCOL_REJECTED")
+    if not isinstance(request["body_base64"], str):
+        raise ChildRejected("NATIVE_IO_PROTOCOL_REJECTED")
+    body = base64.b64decode(request["body_base64"], validate=True)
+    if not 1 <= len(body) <= MAX_JSON:
+        raise ChildRejected("NATIVE_IO_LENGTH_REJECTED")
+    key = _private_credential(descriptor, "NATIVE_GEOCODE_CREDENTIAL_UNAVAILABLE")
+    host = parsed.hostname
+    target = (parsed.path or "/") + ("?" + parsed.query if parsed.query else "")
+    connection = _connection(host, 443, True, deadline)
+    try:
+        host_header = "[" + host + "]" if ":" in host else host
+        connection.request("POST", target, body=body, headers={"Host": host_header,
+            "Accept": "application/json", "Content-Type": "application/json",
+            "Accept-Encoding": "identity", "X-Correlation-Id": correlation,
+            "X-API-Key": key, "User-Agent": "ODay-Native-Intake/1", "Connection": "close"})
+        connection.sock.settimeout(_remaining(deadline))
+        response = connection.getresponse()
+        status = response.status
+        if status != 200:
+            return {"status": status, "media_type": None, "body_base64": ""}
+        media_type = response.getheader("Content-Type", "").split(";", 1)[0].strip().lower()
+        if media_type not in GEOCODE_JSON_MEDIA:
+            raise ChildRejected("NATIVE_HTTP_MEDIA_TYPE_REJECTED")
+        raw = _content(response, connection, deadline, MAX_CONTENT)
+        if not raw:
+            raise ChildRejected("NATIVE_IO_LENGTH_REJECTED")
+        return {"status": status, "media_type": media_type,
+            "body_base64": base64.b64encode(raw).decode("ascii")}
+    finally:
+        connection.close()
+
+
 def main():
     try:
         descriptor = None
@@ -334,6 +397,8 @@ def main():
         deadline = time.monotonic() + timeout
         if request.get("operation") == "http_hop" and descriptor is None:
             result = http_hop(request, deadline)
+        elif request.get("operation") == "geocode_post" and descriptor is not None:
+            result = geocode_post(request, deadline, descriptor)
         elif isinstance(request.get("operation"), str) and request["operation"] in _ASSISTED_GCS_OPERATIONS:
             result = assisted_gcs_operation(request, deadline, descriptor)
         elif isinstance(request.get("operation"), str) and request["operation"].startswith("gcs_"):

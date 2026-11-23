@@ -756,12 +756,80 @@ class GeocodeFixtureReplayClient:
         return self._responses.get(normalized_address.normalized_address, {})
 
 
-class HttpGeocodeClient:
-    """Minimal HTTP geocoder client for injected live-provider configuration."""
+@dataclass(frozen=True, repr=False)
+class GeocodeHttpResponse:
+    """One physical geocode HTTP exchange outcome, before any decoding."""
 
-    def __init__(self, endpoint_url: str, *, timeout_seconds: float = 10.0) -> None:
+    status: int
+    body: bytes
+
+    def __repr__(self) -> str:
+        return f"GeocodeHttpResponse(status={self.status!r}, body=<{len(self.body)} bytes>)"
+
+
+class GeocodeHttpTransport(Protocol):
+    """Physical transport for :class:`HttpGeocodeClient`.
+
+    ``headers`` never contains the credential. A transport attaches the
+    ``X-API-Key`` value from ``credential`` through its own channel and must not
+    follow a redirect while carrying it. Timeouts and connection failures raise
+    ``TimeoutError`` or ``urllib.error.URLError``; any HTTP status is returned.
+    """
+
+    def post_json(
+        self,
+        endpoint_url: str,
+        *,
+        headers: Mapping[str, str],
+        body: bytes,
+        credential: GeocodeProviderCredentialValue | None,
+        timeout_seconds: float,
+    ) -> GeocodeHttpResponse: ...
+
+
+class UrllibGeocodeHttpTransport:
+    """Original in-process urllib transport used by non-native callers."""
+
+    def post_json(
+        self,
+        endpoint_url: str,
+        *,
+        headers: Mapping[str, str],
+        body: bytes,
+        credential: GeocodeProviderCredentialValue | None,
+        timeout_seconds: float,
+    ) -> GeocodeHttpResponse:
+        request_headers = dict(headers)
+        if credential is not None:
+            request_headers["X-API-Key"] = credential.value
+        request = urllib.request.Request(
+            endpoint_url, data=body, headers=request_headers, method="POST"
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                return GeocodeHttpResponse(int(response.status), response.read())
+        except urllib.error.HTTPError as exc:
+            return GeocodeHttpResponse(int(exc.code), b"")
+
+
+class HttpGeocodeClient:
+    """Minimal HTTP geocoder client for injected live-provider configuration.
+
+    The client owns the one request serialization, response decoding and
+    provider error mapping. ``transport`` only selects how the bytes move; the
+    default keeps the original in-process behavior for existing callers.
+    """
+
+    def __init__(
+        self,
+        endpoint_url: str,
+        *,
+        timeout_seconds: float = 10.0,
+        transport: GeocodeHttpTransport | None = None,
+    ) -> None:
         self.endpoint_url = endpoint_url.strip()
         self.timeout_seconds = timeout_seconds
+        self.transport: GeocodeHttpTransport = transport or UrllibGeocodeHttpTransport()
 
     def geocode(
         self,
@@ -785,37 +853,15 @@ class HttpGeocodeClient:
             "Content-Type": "application/json",
             "X-Correlation-Id": correlation_id,
         }
-        if credential is not None:
-            headers["X-API-Key"] = credential.value
         body = json.dumps({"address": normalized_address.normalized_address}).encode("utf-8")
-        request = urllib.request.Request(
-            self.endpoint_url, data=body, headers=headers, method="POST"
-        )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                payload = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            if exc.code in {401, 403}:
-                raise GeocodeProviderAuthError(
-                    "live geocode provider authorization failed",
-                    provider_id=provider.provider_id,
-                    correlation_id=correlation_id,
-                    code="unauthorized",
-                ) from exc
-            if exc.code == 429:
-                raise GeocodeProviderRateLimitError(
-                    "live geocode provider rate limit reached",
-                    provider_id=provider.provider_id,
-                    correlation_id=correlation_id,
-                    code="rate_limited",
-                ) from exc
-            raise GeocodeProviderError(
-                f"live geocode provider returned HTTP {exc.code}",
-                provider_id=provider.provider_id,
-                correlation_id=correlation_id,
-                code="http_error",
-                status_code=exc.code,
-            ) from exc
+            response = self.transport.post_json(
+                self.endpoint_url,
+                headers=headers,
+                body=body,
+                credential=credential,
+                timeout_seconds=self.timeout_seconds,
+            )
         except (TimeoutError, urllib.error.URLError) as exc:
             raise GeocodeProviderTimeoutError(
                 "live geocode provider request timed out or could not connect",
@@ -823,7 +869,29 @@ class HttpGeocodeClient:
                 correlation_id=correlation_id,
                 code="timeout",
             ) from exc
-        return json.loads(payload)
+        if response.status in {401, 403}:
+            raise GeocodeProviderAuthError(
+                "live geocode provider authorization failed",
+                provider_id=provider.provider_id,
+                correlation_id=correlation_id,
+                code="unauthorized",
+            )
+        if response.status == 429:
+            raise GeocodeProviderRateLimitError(
+                "live geocode provider rate limit reached",
+                provider_id=provider.provider_id,
+                correlation_id=correlation_id,
+                code="rate_limited",
+            )
+        if not 200 <= response.status < 300:
+            raise GeocodeProviderError(
+                f"live geocode provider returned HTTP {response.status}",
+                provider_id=provider.provider_id,
+                correlation_id=correlation_id,
+                code="http_error",
+                status_code=response.status,
+            )
+        return json.loads(response.body.decode("utf-8"))
 
 
 class PrimaryGeocodeProvider:
@@ -2227,6 +2295,8 @@ __all__ = [
     "ExternalDatasetProviderTransportError",
     "GeocodeClient",
     "GeocodeFixtureReplayClient",
+    "GeocodeHttpResponse",
+    "GeocodeHttpTransport",
     "GeocodeProviderAuthError",
     "GeocodeProviderError",
     "GeocodeProviderRateLimitError",
@@ -2250,6 +2320,7 @@ __all__ = [
     "ProviderSnapshotPayload",
     "RawExternalDatasetSnapshot",
     "SnapshotHttpClient",
+    "UrllibGeocodeHttpTransport",
     "assert_listing_provider_selected",
     "normalize_listing_feed_payload",
     "record_idempotency_key",

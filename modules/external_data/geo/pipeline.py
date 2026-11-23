@@ -163,10 +163,32 @@ class GeoPipeline:
         if candidate is None:
             candidate = GeocodeCandidate(0.0, 0.0, "manual", 0.0, "unresolved")
             flags.append("missing_geocode")
-        flags.extend(candidate.quality_flags)
+        return self.result_from_candidate(
+            normalized,
+            candidate,
+            flags=flags,
+            manual_override=bool(record.get("manual_override_flag", False)),
+        )
 
+    def result_from_candidate(
+        self,
+        normalized: NormalizedAddress,
+        candidate: GeocodeCandidate,
+        *,
+        flags: Sequence[str] = (),
+        manual_override: bool = False,
+    ) -> GeocodeResult:
+        """Convert one already-obtained candidate into Address/H3/quality flags.
+
+        This performs no lookup and no IO. It is the single conversion shared by
+        ``geocode_record`` and the native Intake Geo phase, which passes the
+        exact candidate returned by its one LIVE provider call. Provider
+        quality, request and observed-time fields are carried through as-is;
+        an absent provider time stays ``None``.
+        """
+        result_flags = [*flags, *candidate.quality_flags]
         if not coordinates_in_market(candidate.latitude, candidate.longitude):
-            flags.append("coordinates_out_of_market")
+            result_flags.append("coordinates_out_of_market")
             h3_map: dict[int, str] = {}
         else:
             h3_map = {
@@ -176,9 +198,9 @@ class GeoPipeline:
 
         admin_match = self._admin_matches(normalized, candidate)
         if not admin_match:
-            flags.append("admin_mismatch")
+            result_flags.append("admin_mismatch")
         if candidate.confidence < 0.7:
-            flags.append("low_geocode_confidence")
+            result_flags.append("low_geocode_confidence")
 
         address = AddressLocation(
             raw_address=normalized.raw_address,
@@ -193,13 +215,13 @@ class GeoPipeline:
             h3_res_8=h3_map.get(8, ""),
             h3_res_9=h3_map.get(9, ""),
             h3_res_10=h3_map.get(10, ""),
-            manual_override_flag=bool(record.get("manual_override_flag", False)),
+            manual_override_flag=manual_override,
         )
         return GeocodeResult(
             address=address,
             geocode_provider=candidate.provider,
             admin_match_flag=admin_match,
-            quality_flags=tuple(flags),
+            quality_flags=tuple(result_flags),
             h3_resolution_map=h3_map,
             provider_request_id=candidate.provider_request_id,
             provider_observed_at=candidate.provider_observed_at,
