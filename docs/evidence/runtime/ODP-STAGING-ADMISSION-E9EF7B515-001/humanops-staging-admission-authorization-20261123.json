@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "record_kind": "humanops-runtime-release-staging-admission-authorization",
+  "status": "approved",
+  "is_approval": true,
+  "task_id": "ODP-STAGING-ADMISSION-E9EF7B515-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-STAGING-ADMISSION-20261123T",
+  "candidate_sha": "e9ef7b5159b143c11af8b6260b645df31aecf981",
+  "manifest_digest": "sha256:b7ab5fbb0d9cbe08d063ea8044f89ac1b165dd329313e8d8938c3ae514f2161e",
+  "manifest_run_id": "45084842707",
+  "target_environment": "staging",
+  "release_profile": "core-ops",
+  "approved_at": "2026-11-22T23:39:16Z",
+  "authorization_basis": {
+    "user_reply": "都做一做",
+    "user_reply_at": "2026-11-22T23:39:16Z",
+    "prior_replies": [
+      {
+        "reply": "同意",
+        "at": "2026-11-22T14:52:00Z"
+      }
+    ],
+    "context": "Chain S admitted 49ef699a6c086f117463be5b73d0efc66d8ebb31 (PR #1730) and ran staging deploy 44655139807, which passed all 10 ephemeral staging verify stages and remote staging proof, then expired its 24h TTL at 2026-11-21T01:41:51Z while later commits landed on dev: PR #1736 (0dd5a3b43d44, supervisor frozen-path review boundary), PR #1739 (91a2a87d2b41, shared CI frozen-review-policy workflow), PR #1737 (2d3fa970c159, staging admin bootstrap /cloudsql socket mount, live staging password rotation & repeat login journey, and single-source 72h bootstrap TTL readback), and PR #1741 (e9ef7b5159b1, core-ops production audit WORM sink/SA outputs, structured egress receipt visibility, and deploy_cloud_run_waji.sh set -u hardening). At 2026-11-22T14:52Z owner 蔡尚志 approved landing the pending branches ('同意'), and at 2026-11-22T23:39:16Z after reviewing the three-track execution plan explicitly instructed Antigravity to execute all staging rehearsal & cleanup steps ('都做一做') while holding production terraform apply until separate confirmation of the irreversible 7-year Audit WORM retention lock. Checked facts for candidate e9ef7b5159b143c11af8b6260b645df31aecf981: exact push CI 45080084852 and merge_group CI 45074825592 both ran and passed all 7 product lanes (product-lint-unit, product-node, product-api-contract, product-db, product-e2e-gate, product-security, performance-gate) plus orchestrator and change-scope; automatic dev deploy 45085553758 (phase=auto) succeeded on its first run with live E2E 83/83 checks and 0 blockers, preflight, migration compatibility, Cloud Run smoke, worker/migration/scheduler job validations (including immutable image bindings), and public-egress probe all passing (dev now serves odp-e9ef7b5159b1); core-ops staging build 45084842707 succeeded with manifest sha256:b7ab5fbb0d9cbe08d063ea8044f89ac1b165dd329313e8d8938c3ae514f2161e, 16 external sources disabled with 0 credentials, production npm audit 0 findings, and all 5 stg-odp-e9ef7b5159b1-bbd9e6c0-* targets absent.",
+    "interpretation": "Owner 蔡尚志 replied in the Antigravity conversation at 2026-11-22T14:52Z ('同意') and 2026-11-22T23:39:16Z ('都做一做'). Transcribed by Antigravity; not an external identity-system signature."
+  },
+  "authorized_scope": {
+    "max_release_requests": 1,
+    "max_short_lived_supervisor_leases": 1,
+    "runtime_release_deploy_phases": 1,
+    "allowed_environment": "staging",
+    "external_sources_enabled": false,
+    "production_changes": false,
+    "github_staging_environment_approval_still_required": true,
+    "supervisor_lease_still_required": true
+  },
+  "recorded_by": "Antigravity (interactive owner-response transcription; no external identity signature claimed)",
+  "evidence": {
+    "exact_ci": "docs/evidence/runtime/ODP-STAGING-ADMISSION-E9EF7B515-001/candidate-ci-e9ef7b515.json",
+    "staging_build_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/45084842707",
+    "dev_deploy_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/45085553758",
+    "exact_candidate_ci_workflow_urls": [
+      "https://github.com/alfloop-dev/odayplus/actions/runs/45080084852",
+      "https://github.com/alfloop-dev/odayplus/actions/runs/45074825592"
+    ],
+    "included_pull_requests": [
+      "https://github.com/alfloop-dev/odayplus/pull/1736",
+      "https://github.com/alfloop-dev/odayplus/pull/1739",
+      "https://github.com/alfloop-dev/odayplus/pull/1737",
+      "https://github.com/alfloop-dev/odayplus/pull/1741"
+    ],
+    "previous_staging_deploy_url": "https://github.com/alfloop-dev/odayplus/actions/runs/44655139807"
+  },
+  "decisions": {
+    "HD-08t": {
+      "decision": "approve",
+      "subject": "gate-2 Data Gate passed-with-deviation for this candidate's staging admission only, review_by 2026-11-30",
+      "accepted_deviations": [
+        "source contract and sample data reviewed: not applicable — the core-ops profile keeps every external source disabled (sources-off attestation in the build manifest: 16 sources audited, all disabled, zero credentials present).",
+        "point-in-time correctness checked for model-ready data: not applicable — core-ops serves no model (release_profile.model_readiness=not_claimed).",
+        "freshness and lineage evidence captured: check_live_production_data.py has never run against this candidate; deferred to the staging verify run and the production gates, not claimed as passed."
+      ]
+    },
+    "HD-09t": {
+      "decision": "approve",
+      "subject": "release.stage=dev-verified, admission_target=staging, decision=go for this exact candidate and the manifest produced by its staging build",
+      "dev_deploy_result": "CI-requested automatic dev deploy 45085553758 succeeded on its first run: live E2E 83/83, no blockers, job immutable image bindings passed, and public-egress probe denied as expected."
+    }
+  }
+}
