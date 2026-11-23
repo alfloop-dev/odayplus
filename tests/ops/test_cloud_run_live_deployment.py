@@ -366,6 +366,10 @@ def _production_origins(**overrides: str) -> dict[str, str]:
     env = {
         "ODP_PROD_DEPLOY_URL": "https://console.oday-plus.example",
         "ODP_PROD_API_URL": "https://api.oday-plus.example",
+        "ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET": "oday-prod-intake-cursor-signing-key:1",
+        # Bound with the origins in the production environment; production
+        # refuses to deploy below two warm instances.
+        "ODP_CLOUD_RUN_MIN_INSTANCES": "2",
     }
     env.update(overrides)
     return env
@@ -420,6 +424,18 @@ def test_a_production_deploy_with_https_origins_and_direct_vpc_enters_preflight(
     assert result.returncode == 97, result.stderr
     assert "PREFLIGHT_REACHED" in result.stderr
     assert "Cloud Run VPC binding mode: direct-vpc" in result.stdout
+
+
+@pytest.mark.parametrize("bad_reference", ["", "oday-prod-intake-cursor-signing-key:latest"])
+def test_production_requires_a_pinned_shared_cursor_key(tmp_path: Path, bad_reference: str) -> None:
+    result = _supported_forecast_gate(
+        tmp_path,
+        deploy_env="production",
+        extra_env={**_production_origins(ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET=bad_reference), **_direct_vpc_sources_off_env()},
+    )
+    assert result.returncode == 1
+    assert "production requires ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET" in result.stderr
+    assert "PREFLIGHT_REACHED" not in result.stderr
 
 
 def test_a_dev_deploy_does_not_require_the_production_origins(tmp_path: Path) -> None:
@@ -3798,6 +3814,7 @@ def test_docker_python_runtime_images_install_from_frozen_uv_lock() -> None:
         "worker": ROOT / "infra/docker/worker.Dockerfile",
         "scheduler": ROOT / "infra/docker/scheduler.Dockerfile",
     }
+    lightgbm_locked = '\nname = "lightgbm"\n' in (ROOT / "uv.lock").read_text(encoding="utf-8")
 
     # Verify canonical three live Python Dockerfiles exist
     for role, path in live_dockerfiles.items():
@@ -3847,6 +3864,13 @@ def test_docker_python_runtime_images_install_from_frozen_uv_lock() -> None:
         assert '"psycopg[binary,pool]>=' not in content, (
             f"{role}.Dockerfile must not hand-pin psycopg; uv.lock is authority"
         )
+
+        # LightGBM wheels need the OpenMP runtime the slim base lacks; dev deploy
+        # 44028045679 crashed loading a promoted model without it.
+        if lightgbm_locked:
+            assert "apt-get install -y --no-install-recommends libgomp1" in content, (
+                f"{role}.Dockerfile must install libgomp1 because uv.lock locks lightgbm"
+            )
 
     # No parallel requirements files maintained in infra/docker
     docker_dir = ROOT / "infra/docker"
@@ -6171,12 +6195,14 @@ def test_deploy_script_captures_job_proof_without_describe_latest() -> None:
         "    product_ops/deployment/validate_cloud_run_live_deployment.py "
         "resolve-latest-execution \\\n"
     ) in text
-    # One resolver implementation, shared by every execution readback there is:
-    # the success proof, the failure forensics, and the sources-off egress
-    # probe. The count that matters is the number of resolver bodies, not the
-    # number of callers, so pin that directly.
+    # Success, forensics, egress and the production private checks use the
+    # same resolver. The production Job must resolve its own execution.
     assert text.count("gcloud run jobs executions list") == 1
-    assert text.count("capture_latest_execution ") == 3
+    assert text.count("capture_latest_execution ") == 4
+    assert 'execution="$(capture_latest_execution "${job}"' in text
+    assert text.index('run_private_release_smoke smoke "${SMOKE_REPORT}"') < text.index(
+        'promote_service_traffic "${API_SERVICE}"'
+    )
     assert (
         'capture_latest_execution "${job}" "${JOB_REPORT_DIR}/${kind}-execution.json" || true'
     ) in text
@@ -8639,3 +8665,136 @@ def test_smoke_cli_requires_the_runtime_env_file_argument(tmp_path: Path) -> Non
     assert not report_path.exists()
     assert "do-not-fallback-to-process-tenant" not in result.stdout + result.stderr
     assert "do-not-fallback-to-legacy-tenant" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("smoke_state", ["unset", "empty", "active"])
+@pytest.mark.parametrize("deploy_status", [0, 17])
+def test_deployment_exit_cleans_up_optional_private_smoke_state(
+    tmp_path: Path, smoke_state: str, deploy_status: int,
+) -> None:
+    script = (ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh").read_text()
+    start = script.index("cleanup() {")
+    end = script.index("trap handle_deployment_exit EXIT", start)
+    actual_cleanup = script[start : end + len("trap handle_deployment_exit EXIT")]
+    files = {
+        name: tmp_path / name
+        for name in (
+            "API_ENV_FILE", "WEB_ENV_FILE", "API_TRAFFIC_SNAPSHOT", "WEB_TRAFFIC_SNAPSHOT",
+            "API_CANDIDATE_DESCRIPTION", "WEB_CANDIDATE_DESCRIPTION",
+            "SCHEDULER_TRIGGER_SNAPSHOT", "WORKER_TRIGGER_SNAPSHOT",
+        )
+    }
+    for path in files.values():
+        path.touch()
+    scratch = tmp_path / "private-smoke"
+    scratch.mkdir()
+    (scratch / "env.json").write_text("private smoke input")
+    state = "unset ACTIVE_PRIVATE_SMOKE_JOB PRIVATE_SMOKE_SCRATCH"
+    if smoke_state == "empty":
+        state += '\nACTIVE_PRIVATE_SMOKE_JOB=""\nPRIVATE_SMOKE_SCRATCH=""'
+    elif smoke_state == "active":
+        state += '\nACTIVE_PRIVATE_SMOKE_JOB=private-smoke-job\nPRIVATE_SMOKE_SCRATCH="$TEST_SCRATCH"'
+    harness = r'''set -euo pipefail
+release_recovery_mode() { printf 'rollback'; }
+rollback_release_traffic() { printf 'rollback\n'; }
+delete_candidate_job() { printf 'delete:%s\n' "$1"; }
+'''
+    result = subprocess.run(
+        ["bash", "-c", harness + state + "\n" + actual_cleanup + '\nexit "$TEST_STATUS"'],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+        env={
+            "PATH": os.defpath, "ROLLBACK_ARMED": "true", "DEPLOYMENT_COMMITTED": "false",
+            "SCHEDULER_ROLLBACK_ARMED": "false", "API_SERVICE": "api", "WEB_SERVICE": "web",
+            "TEST_STATUS": str(deploy_status), "TEST_SCRATCH": str(scratch),
+            **{name: str(path) for name, path in files.items()},
+        },
+    )
+    assert result.returncode == deploy_status, result.stderr
+    assert result.stdout.splitlines() == (
+        (["rollback"] if deploy_status else [])
+        + (["delete:private-smoke-job"] if smoke_state == "active" else [])
+    )
+    assert "unbound variable" not in result.stderr
+    assert all(not path.exists() for path in files.values())
+    assert scratch.exists() is (smoke_state != "active")
+
+
+def test_production_private_smoke_job_reuses_the_validator_and_binds_its_receipt(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path,
+) -> None:
+    api = "https://candidate---api-hash-uc.a.run.app"
+    web = "https://candidate---web-hash-uc.a.run.app"
+    api_audience = "https://api-1234.asia-east1.run.app"
+    web_audience = "https://web-1234.asia-east1.run.app"
+    app_audience = "https://api.oday-plus.com.tw"
+    job, execution = "odp-smoke-current", "odp-smoke-current-abcd"
+    digest, correlation = "sha256:" + "b" * 64, "corr-candidate"
+    for name, value in {
+        "ODAY_RELEASE_SHA": EXPECTED_SHA, "ODP_RELEASE_MANIFEST_DIGEST": digest,
+        "ODP_AUTH_AUDIENCES": app_audience + ",https://unused.example",
+        "ODP_OPERATOR_SMOKE_SUBJECT": "smoke-subject",
+        "ODP_OPERATOR_SMOKE_BEARER_TOKEN": "a-sensitive-runner-token",
+    }.items():
+        monkeypatch.setenv(name, value)
+    runtime_env, job_input = tmp_path / "runtime.json", tmp_path / "job.json"
+    runtime_env.write_text(json.dumps({
+        "ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-prod",
+        "ODAY_DATABASE_URL": "a-sensitive-runtime-value",
+    }))
+    assert validator.main([
+        "private-smoke-input", "--output", str(job_input), "--runtime-env-file", str(runtime_env),
+        "--api-audience", api_audience, "--web-audience", web_audience, "--",
+        "smoke", "--api-url", api, "--web-url", web,
+        "--expected-sha", EXPECTED_SHA, "--correlation-id", correlation,
+    ]) == 0
+    assert "a-sensitive-" not in job_input.read_text()
+    for name, value in json.loads(job_input.read_text()).items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("CLOUD_RUN_JOB", job)
+    monkeypatch.setenv("CLOUD_RUN_EXECUTION", execution)
+    minted = []
+    tokens = ["private-api-token", "private-web-token", "private-app-token"]
+
+    def mint(audience: str) -> str:
+        minted.append(audience)
+        return tokens[len(minted) - 1]
+
+    def transport(command, *, env, check):
+        assert command[-2:] == [api, web]
+        assert "wait_for_private_api_invoker" in command[2]
+        assert "wait_for_private_candidate_invoker" in command[2]
+        assert env["ODP_API_INVOKER_TOKEN"] == tokens[0]
+        return SimpleNamespace(returncode=0)
+
+    def smoke(**kwargs):
+        assert (kwargs["api_url"], kwargs["web_url"]) == (api, web)
+        assert kwargs["operator_tenant"] == "tenant-prod"
+        assert kwargs["operator_subject"] == "smoke-subject"
+        assert (kwargs["api_invoker_token"], kwargs["web_invoker_token"], kwargs["bearer_token"]) == tuple(tokens)
+        return [validator.CheckResult(True, "smoke:test", "passed")], {
+            "expected_sha": kwargs["expected_sha"], "correlation_id": kwargs["correlation_id"],
+            "secret_values_redacted": True,
+        }
+
+    monkeypatch.setattr(validator, "_cloud_run_job_identity_token", mint)
+    monkeypatch.setattr(validator.subprocess, "run", transport)
+    monkeypatch.setattr(validator, "smoke_checks", smoke)
+    assert validator.main(["private-smoke-job"]) == 0
+    assert minted == [api_audience, web_audience, app_audience]
+    stdout = capsys.readouterr().out
+    assert not any(token in stdout for token in tokens)
+    receipt = json.loads(stdout.splitlines()[-1])
+    expect = {
+        "job": job, "execution": execution, "release_sha": EXPECTED_SHA,
+        "manifest_digest": digest, "phase": "smoke", "correlation_id": correlation,
+    }
+    assert validator._private_smoke_report([{"jsonPayload": receipt}], **expect)["ok"] is True
+    assert validator._private_smoke_report([], **expect) is None
+    for mismatch in (
+        [{"jsonPayload": {**receipt, "execution": "another-execution"}}],
+        [{"jsonPayload": {**receipt, "manifest_digest": "sha256:" + "c" * 64}}],
+        [{"jsonPayload": {**receipt, "report": {**receipt["report"], "ok": False}}}],
+        [{"jsonPayload": receipt}, {"jsonPayload": receipt}],
+    ):
+        with pytest.raises(ValueError, match="private smoke Job"):
+            validator._private_smoke_report(mismatch, **expect)

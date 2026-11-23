@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
@@ -76,25 +77,63 @@ def start_staging_server(
     return server, f"http://{host}:{port}"
 
 
-def install_fake_gcloud(tmp_path: Path, *, token: str, exit_code: int = 0) -> Path:
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_gcloud = fake_bin / "gcloud"
-    fake_gcloud.write_text(
-        "#!/bin/sh\n"
-        'printf "%s\\n" "$*" >>"$GCLOUD_LOG"\n'
-        f'printf "%s\\n" "{token}"\n'
-        f"exit {exit_code}\n",
-        encoding="utf-8",
+OPERATOR_IDENTITY = "stg-odp-fd70b4f4-rt@odp-staging.iam.gserviceaccount.com"
+
+
+def load_checker():
+    spec = importlib.util.spec_from_file_location("check_remote_staging_proof_under_test", CHECKER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # dataclasses resolves the module's string annotations through sys.modules.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def run_checker(tmp_path, monkeypatch, capsys, url: str, mint) -> tuple[int, dict, str, list[dict]]:
+    """Run the checker in-process with the lifecycle's token minting replaced by ``mint``."""
+
+    checker = load_checker()
+    calls: list[dict] = []
+
+    def minting(**kwargs):
+        calls.append(kwargs)
+        return mint()
+
+    monkeypatch.setattr(checker.staging_lifecycle, "_live_identity_token", minting)
+    monkeypatch.setenv("ODP_STAGING_DEPLOY_URL", url)
+    monkeypatch.setenv("ODP_STAGING_API_URL", url)
+    monkeypatch.setenv("ODP_STAGING_SECRET_OWNER", "Platform/Ops")
+    monkeypatch.setenv("ODP_STAGING_OPERATOR_IDENTITY", OPERATOR_IDENTITY)
+    output = tmp_path / "report.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(CHECKER),
+            "--expected-sha",
+            EXPECTED_SHA,
+            "--correlation-id",
+            "corr-test-remote-staging",
+            "--output",
+            str(output),
+        ],
     )
-    fake_gcloud.chmod(0o755)
-    return fake_bin
+    code = checker.main()
+    captured = capsys.readouterr()
+    report = json.loads(output.read_text(encoding="utf-8"))
+    return code, report, captured.out + captured.err, calls
 
 
 def test_remote_staging_checker_fails_closed_when_configuration_is_missing(
     tmp_path, monkeypatch
 ) -> None:
-    for name in ("ODP_STAGING_DEPLOY_URL", "ODP_STAGING_API_URL", "ODP_STAGING_SECRET_OWNER"):
+    for name in (
+        "ODP_STAGING_DEPLOY_URL",
+        "ODP_STAGING_API_URL",
+        "ODP_STAGING_SECRET_OWNER",
+        "ODP_STAGING_OPERATOR_IDENTITY",
+    ):
         monkeypatch.delenv(name, raising=False)
 
     output = tmp_path / "report.json"
@@ -120,190 +159,111 @@ def test_remote_staging_checker_fails_closed_when_configuration_is_missing(
     assert report["staging"]["secret_values_redacted"] is True
 
 
-def test_remote_staging_checker_verifies_health_and_release_sha(tmp_path, monkeypatch) -> None:
+def test_remote_staging_checker_verifies_health_and_release_sha(
+    tmp_path, monkeypatch, capsys
+) -> None:
     server, url = start_staging_server(expected_token="valid-staging-id-token")
     try:
-        monkeypatch.setenv("ODP_STAGING_DEPLOY_URL", url)
-        monkeypatch.setenv("ODP_STAGING_API_URL", url)
-        monkeypatch.setenv("ODP_STAGING_SECRET_OWNER", "Platform/Ops")
-        monkeypatch.delenv("ODP_STAGING_BEARER_TOKEN", raising=False)
-        monkeypatch.delenv("ODP_IDENTITY_TOKEN", raising=False)
-        monkeypatch.delenv("ODP_STAGING_API_AUDIENCE", raising=False)
-        gcloud_log = tmp_path / "gcloud.log"
-        fake_bin = install_fake_gcloud(tmp_path, token="valid-staging-id-token")
-        monkeypatch.setenv("GCLOUD_LOG", str(gcloud_log))
-        monkeypatch.setenv("PATH", str(fake_bin))
-        output = tmp_path / "report.json"
-
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(CHECKER),
-                "--expected-sha",
-                EXPECTED_SHA,
-                "--correlation-id",
-                "corr-test-remote-staging",
-                "--output",
-                str(output),
-            ],
-            cwd=ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
+        code, report, printed, calls = run_checker(
+            tmp_path, monkeypatch, capsys, url, lambda: "valid-staging-id-token"
         )
 
-        assert result.returncode == 0
-        report = json.loads(output.read_text(encoding="utf-8"))
+        assert code == 0
         assert report["ok"] is True
         assert report["health"]["correlation_id"] == "corr-test-remote-staging"
         assert report["version"]["release_sha"] == EXPECTED_SHA
         assert all(check["ok"] for check in report["checks"])
         checks_by_name = {check["name"]: check for check in report["checks"]}
         assert checks_by_name["auth:identity_token"]["ok"] is True
-        assert gcloud_log.read_text(encoding="utf-8").splitlines() == [
-            f"auth print-identity-token --audiences={url}"
-        ]
+        # One token, minted for the release-scoped identity with the API as audience.
+        assert calls == [{"audience": url, "operator_identity": OPERATOR_IDENTITY}]
+        assert report["staging"]["operator_identity"] == OPERATOR_IDENTITY
         assert StagingHandler.authorization_headers == [
             "Bearer valid-staging-id-token",
             "Bearer valid-staging-id-token",
         ]
         assert "Authorization" not in json.dumps(report)
         assert "valid-staging-id-token" not in json.dumps(report)
-        assert "valid-staging-id-token" not in result.stdout
-        assert "valid-staging-id-token" not in result.stderr
+        assert "valid-staging-id-token" not in printed
     finally:
         server.shutdown()
 
 
-@pytest.mark.parametrize(
-    ("token", "exit_code"),
-    [("sensitive-token-from-failed-command", 1), ("", 0)],
-)
+def test_remote_staging_checker_mints_through_the_lifecycle_identity_token() -> None:
+    """The checker has no minting path of its own; WIF cannot print an identity token."""
+
+    source = CHECKER.read_text(encoding="utf-8")
+    assert "print-identity-token\"" not in source
+    assert "subprocess" not in source
+    assert "staging_lifecycle._live_identity_token(" in source
+
+
 def test_remote_staging_checker_fails_closed_when_identity_token_cannot_be_minted(
-    tmp_path, monkeypatch, token, exit_code
+    tmp_path, monkeypatch, capsys
 ) -> None:
     server, url = start_staging_server()
     try:
-        monkeypatch.setenv("ODP_STAGING_DEPLOY_URL", url)
-        monkeypatch.setenv("ODP_STAGING_API_URL", url)
-        monkeypatch.setenv("ODP_STAGING_SECRET_OWNER", "Platform/Ops")
-        monkeypatch.delenv("ODP_STAGING_BEARER_TOKEN", raising=False)
-        monkeypatch.delenv("ODP_IDENTITY_TOKEN", raising=False)
-        monkeypatch.delenv("ODP_STAGING_API_AUDIENCE", raising=False)
-        gcloud_log = tmp_path / "gcloud.log"
-        fake_bin = install_fake_gcloud(tmp_path, token=token, exit_code=exit_code)
-        monkeypatch.setenv("GCLOUD_LOG", str(gcloud_log))
-        monkeypatch.setenv("PATH", str(fake_bin))
-        output = tmp_path / "report.json"
 
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(CHECKER),
-                "--expected-sha",
-                EXPECTED_SHA,
-                "--output",
-                str(output),
-            ],
-            cwd=ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        def refuse() -> str:
+            raise RuntimeError("generateIdToken failed with sensitive-detail-from-failed-call")
 
-        assert result.returncode == 1
-        report = json.loads(output.read_text(encoding="utf-8"))
+        code, report, printed, calls = run_checker(tmp_path, monkeypatch, capsys, url, refuse)
+
+        assert code == 1
         assert report["ok"] is False
         checks_by_name = {check["name"]: check for check in report["checks"]}
         assert checks_by_name["auth:identity_token"]["ok"] is False
         assert "failed to mint identity token" in checks_by_name["auth:identity_token"]["detail"]
         assert report["staging"]["secret_values_redacted"] is True
-        assert gcloud_log.read_text(encoding="utf-8").splitlines() == [
-            f"auth print-identity-token --audiences={url}"
-        ]
-        if token:
-            assert token not in json.dumps(report)
-            assert token not in result.stdout
-            assert token not in result.stderr
+        assert len(calls) == 1
+        assert StagingHandler.authorization_headers == []
+        assert "sensitive-detail-from-failed-call" not in json.dumps(report)
+        assert "sensitive-detail-from-failed-call" not in printed
     finally:
         server.shutdown()
 
 
-def test_remote_staging_checker_fails_closed_when_gcloud_cannot_be_invoked(
-    tmp_path, monkeypatch
+def test_remote_staging_checker_fails_closed_without_operator_identity(
+    tmp_path, monkeypatch, capsys
 ) -> None:
     server, url = start_staging_server()
     try:
+        checker = load_checker()
+        monkeypatch.setattr(
+            checker.staging_lifecycle,
+            "_live_identity_token",
+            lambda **_: pytest.fail("no token may be minted without an operator identity"),
+        )
         monkeypatch.setenv("ODP_STAGING_DEPLOY_URL", url)
         monkeypatch.setenv("ODP_STAGING_API_URL", url)
         monkeypatch.setenv("ODP_STAGING_SECRET_OWNER", "Platform/Ops")
-        monkeypatch.delenv("ODP_STAGING_BEARER_TOKEN", raising=False)
-        monkeypatch.delenv("ODP_IDENTITY_TOKEN", raising=False)
-        monkeypatch.delenv("ODP_STAGING_API_AUDIENCE", raising=False)
-        monkeypatch.setenv("PATH", str(tmp_path / "missing-bin"))
+        monkeypatch.delenv("ODP_STAGING_OPERATOR_IDENTITY", raising=False)
         output = tmp_path / "report.json"
-
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(CHECKER),
-                "--expected-sha",
-                EXPECTED_SHA,
-                "--output",
-                str(output),
-            ],
-            cwd=ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
+        monkeypatch.setattr(
+            sys, "argv", [str(CHECKER), "--expected-sha", EXPECTED_SHA, "--output", str(output)]
         )
 
-        assert result.returncode == 1
-        report = json.loads(output.read_text(encoding="utf-8"))
-        assert report["ok"] is False
-        checks_by_name = {check["name"]: check for check in report["checks"]}
-        assert checks_by_name["auth:identity_token"]["ok"] is False
-        assert "failed to mint identity token" in checks_by_name["auth:identity_token"]["detail"]
-        assert report["staging"]["secret_values_redacted"] is True
+        assert checker.main() == 1
+        assert "env:ODP_STAGING_OPERATOR_IDENTITY" in capsys.readouterr().out
+        assert StagingHandler.authorization_headers == []
     finally:
         server.shutdown()
 
 
 def test_remote_staging_checker_fails_closed_on_unauthorized_response(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, capsys
 ) -> None:
     server, url = start_staging_server(expected_token="server-expected-token")
     try:
-        monkeypatch.setenv("ODP_STAGING_DEPLOY_URL", url)
-        monkeypatch.setenv("ODP_STAGING_API_URL", url)
-        monkeypatch.setenv("ODP_STAGING_SECRET_OWNER", "Platform/Ops")
-        monkeypatch.delenv("ODP_STAGING_BEARER_TOKEN", raising=False)
-        monkeypatch.delenv("ODP_IDENTITY_TOKEN", raising=False)
-        monkeypatch.delenv("ODP_STAGING_API_AUDIENCE", raising=False)
-        fake_bin = install_fake_gcloud(tmp_path, token="wrong-or-expired-token")
-        monkeypatch.setenv("PATH", str(fake_bin))
-        output = tmp_path / "report.json"
-
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(CHECKER),
-                "--expected-sha",
-                EXPECTED_SHA,
-                "--output",
-                str(output),
-            ],
-            cwd=ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
+        code, report, printed, _ = run_checker(
+            tmp_path, monkeypatch, capsys, url, lambda: "wrong-or-expired-token"
         )
 
-        assert result.returncode == 1
-        report = json.loads(output.read_text(encoding="utf-8"))
+        assert code == 1
         assert report["ok"] is False
         assert "HTTP Error 401" in json.dumps(report)
         assert "wrong-or-expired-token" not in json.dumps(report)
+        assert "wrong-or-expired-token" not in printed
     finally:
         server.shutdown()
 
@@ -320,6 +280,7 @@ def test_deploy_staging_workflow_fails_closed_through_remote_checker() -> None:
     assert "ODP_STAGING_DEPLOY_URL" in workflow
     assert "ODP_STAGING_API_URL" in workflow
     assert "ODP_STAGING_SECRET_OWNER" in workflow
+    assert "ODP_STAGING_OPERATOR_IDENTITY" in workflow
     assert "delivery_toolchain/e2e/check_remote_staging_proof.py" in workflow
     assert '--expected-sha "$ODAY_RELEASE_SHA"' in workflow
     assert "Validate supervisor release admission" in workflow

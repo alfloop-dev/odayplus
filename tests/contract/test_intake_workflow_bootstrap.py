@@ -27,19 +27,28 @@ def _client(policy):
 
 
 def _submit(client, *, key=None):
-    return client.post("/api/v1/intakes/url", json={"original_url": "https://example.invalid/synthetic", "scope": {"tenant_id": TENANT}},
-                       headers={**HEADERS, "Idempotency-Key": key or f"synthetic-submit-{uuid4()}"})
+    # Workflow bootstrap still serves the supported manual/batch command. URL
+    # fresh creation belongs to the native SQL owner, not this V1 surface.
+    return client.post(
+        "/api/v1/intake-batches",
+        json={
+            "batch_id": "00000000-0000-0000-0000-000000000201",
+            "method": "MANUAL", "scope": {"tenant_id": TENANT},
+            "rows": [{"address_raw": "Synthetic manual workflow address"}],
+        },
+        headers={**HEADERS, "Idempotency-Key": key or f"synthetic-submit-{uuid4()}"},
+    )
 
 
 def _assert_empty(store):
     assert all(not getattr(store, x) for x in ("intakes", "jobs", "assignments", "slas", "replays", "workflow_audits", "workflow_outbox"))
 
 
-def test_new_intake_has_one_unassigned_task_sla_and_bound_evidence():
+def test_new_manual_intake_has_one_unassigned_task_sla_and_bound_evidence():
     client, store = _client(SyntheticIntakeWorkflowPolicy())
     response = _submit(client)
     assert response.status_code == 202, response.text
-    intake_id = response.json()["intake_id"]
+    intake_id = response.json()["rows"][0]["intake_id"]
     detail = client.get(f"/api/v1/intakes/{intake_id}", headers=HEADERS)
     assert detail.status_code == 200, detail.text
     assert detail.json()["assignment_status"] == "UNASSIGNED"
@@ -56,7 +65,9 @@ def test_new_intake_has_one_unassigned_task_sla_and_bound_evidence():
     assert len(store.workflow_outbox) == 2
     assert {a["audit_event_id"] for a in detail.json()["audit"]} == set(store.workflow_audits)
     assert all(a["actor_subject_id"] == ACTOR and a["intake_id"] == intake_id for a in store.workflow_audits.values())
-    assert detail.json()["policy_state"] == "POLICY_UNKNOWN"
+    assert detail.json()["policy_state"] == "ASSISTED_ENTRY_ONLY"
+    assert detail.json()["intake_method"] == "MANUAL"
+    assert not store.jobs
 
 
 @pytest.mark.parametrize("mode", ["missing", "provider_error", "foreign_tenant", "wrong_start", "scope_mutation"])
@@ -113,7 +124,7 @@ def test_submission_replay_does_not_reinitialize_owner_clock_or_evidence():
     first = _submit(client, key=key)
     before = (set(store.intakes), set(store.assignments), set(store.slas), set(store.workflow_audits), set(store.workflow_outbox))
     second = _submit(client, key=key)
-    assert first.status_code == 202 and second.status_code == 200
+    assert first.status_code == second.status_code == 202
     assert first.json() == second.json()
     assert before == (set(store.intakes), set(store.assignments), set(store.slas), set(store.workflow_audits), set(store.workflow_outbox))
 
@@ -121,7 +132,7 @@ def test_submission_replay_does_not_reinitialize_owner_clock_or_evidence():
 def test_assignment_uses_initial_id_and_policy_schedule_not_unchecked_body_deadline():
     client, store = _client(SyntheticIntakeWorkflowPolicy())
     submitted = _submit(client).json()
-    intake_id = submitted["intake_id"]
+    intake_id = submitted["rows"][0]["intake_id"]
     initial = client.get(f"/api/v1/intakes/{intake_id}", headers=HEADERS).json()
     response = client.put(f"/api/v1/intakes/{intake_id}/assignment",
                           json={"owner_subject_id": ACTOR, "owner_role": "expansion_user", "due_at": "2099-01-01T00:00:00Z", "reason": "Synthetic policy controlled assignment"},
@@ -184,7 +195,7 @@ def test_policy_denied_target_does_not_change_initial_owner_or_sla():
         def resolve_assignment(self, *args, **kwargs):
             raise PermissionError("synthetic target not in authorized scope")
     client, store = _client(DeniedTarget())
-    intake_id = _submit(client).json()["intake_id"]
+    intake_id = _submit(client).json()["rows"][0]["intake_id"]
     initial = client.get(f"/api/v1/intakes/{intake_id}", headers=HEADERS).json()
     response = client.put(f"/api/v1/intakes/{intake_id}/assignment",
                           json={"owner_subject_id": str(uuid4()), "owner_role": "expansion_user", "due_at": "2099-01-01T00:00:00Z", "reason": "Synthetic denied owner test"},
@@ -205,7 +216,8 @@ def test_concurrent_memory_replays_return_one_intake_and_one_workflow():
     key = f"synthetic-concurrent-{uuid4()}"
     with ThreadPoolExecutor(max_workers=2) as pool:
         responses = list(pool.map(lambda _: _submit(client, key=key), range(2)))
-    assert sorted(r.status_code for r in responses) == [200, 202]
+    assert [r.status_code for r in responses] == [202, 202]
     assert responses[0].json() == responses[1].json()
-    assert len(store.intakes) == len(store.assignments) == len(store.slas) == len(store.jobs) == 1
+    assert len(store.intakes) == len(store.assignments) == len(store.slas) == len(store.replays) == 1
+    assert not store.jobs
     assert len(store.workflow_audits) == 3 and len(store.workflow_outbox) == 2

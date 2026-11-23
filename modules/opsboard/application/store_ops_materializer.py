@@ -35,6 +35,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 
+from modules.forecastops.domain.forecasting import is_green_alert_level
 from modules.opsboard.application.store_ops import (
     _LIGHT_DIMENSIONS,
     _STORE_OPS_WRITE_ATTEMPTS,
@@ -221,7 +222,7 @@ def project_store_ops_state(
             level = str(_value(alert, "alert_level", "")).lower()
             if level not in _ALERT_LEVEL_TO_LIGHT:
                 continue
-            if level == "green":
+            if is_green_alert_level(level):
                 continue
             issue, item = _alert_issue(alert, projected)
             if issue["id"] not in known_issue_ids:

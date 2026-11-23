@@ -88,6 +88,16 @@ def test_missing_forecast_issue_does_not_substitute_an_unrelated_task_target():
     assert row["sourceDetailAvailable"] is False
 
 
+def test_green_in_band_forecast_alert_is_not_a_task():
+    raw = sources()
+    raw["forecast_alerts"].append({"alert_id": "alert-green", "status": "open", "store_id": "store-a",
+                                   "alert_level": "green", "opened_at": STAMP,
+                                   "alert_reason_code": "within_expected_band"})
+    task_ids = {row["taskId"] for row in build_task_center_records(raw)["records"]}
+    assert "forecastops.alert:alert-closed" in task_ids
+    assert "forecastops.alert:alert-green" not in task_ids
+
+
 def test_actual_store_candidate_parent_and_resource_grants_are_all_required():
     projection = build_task_center_records(sources())
     before = deepcopy(projection)

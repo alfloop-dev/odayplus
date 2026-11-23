@@ -118,6 +118,37 @@ describe("Package 10 R7 Today workspace", () => {
     expect(within(card).queryByText("0")).not.toBeInTheDocument();
   });
 
+  it("lists risk rows without a measured score but never plots them at a guessed position", () => {
+    const envelope = buildEnvelope();
+    const normalized = normalizeShellEnvelope(
+      {
+        ...envelope,
+        today: {
+          ...envelope.today,
+          riskRows: [
+            { id: "risk-alert-1", storeId: "store-a", label: "Store A", score: null,
+              signal: "ForecastOps 紅燈・營收較 SiteScore 基準 -42%", tone: "danger" },
+            { id: "risk-int-1", storeId: "store-a", label: "Store A",
+              signal: "PRICE_CHANGE intervention", tone: "warning" },
+          ],
+        },
+      },
+      { allowFixtureFallback: false },
+    );
+    expect(normalized.today.riskRows.map((row) => row.score)).toEqual([null, null]);
+
+    render(<TodayWorkspace envelope={normalized} onApprovalDecision={vi.fn()} onTargetSelect={vi.fn()} />);
+
+    const rail = screen.getByRole("heading", { name: "門市風險快照" }).closest("section")!;
+    expect(within(rail).getByText("1 門市")).toBeInTheDocument();
+    expect(within(rail).queryByLabelText("門市風險分布")).not.toBeInTheDocument();
+    expect(within(rail).queryAllByRole("img", { name: /風險分數/ })).toHaveLength(0);
+    const list = within(rail).getByTestId("operator-risk-snapshot");
+    expect(within(list).getAllByText("Store A")).toHaveLength(2);
+    expect(within(list).getByText("ForecastOps 紅燈・營收較 SiteScore 基準 -42%")).toBeInTheDocument();
+    expect(within(list).getByText("價格調整干預")).toBeInTheDocument();
+  });
+
   it("renders the canonical six-card, queue, and ordered decision rail structure", () => {
     render(
       <TodayWorkspace

@@ -50,6 +50,7 @@ JOB_ENVIRONMENT_BINDINGS = {
     "admission": (DEPLOY_ENVIRONMENT, "admission"),
     "deploy": (DEPLOY_ENVIRONMENT, "deploy"),
     "staging_closeout": ("staging", "staging"),
+    "staging_retained_cleanup": ("staging", "staging"),
 }
 
 # The one job that must stay unbound: binding it would put a deploy approval in
@@ -565,7 +566,7 @@ def test_the_excluded_dumps_are_the_files_the_deploy_script_actually_writes(
 # is what stops E from carrying anything but evidence.
 ADMISSION_EVENT_SHA_EXPRESSION = "${{ github.sha }}"
 CANDIDATE_SHA_EXPRESSION = "${{ inputs.release_sha }}"
-POLICY_SHA_EXPRESSION = "${{ inputs.phase == 'auto' && github.sha || inputs.release_sha }}"
+POLICY_SHA_EXPRESSION = "${{ (inputs.phase == 'auto' || inputs.phase == 'cleanup') && github.sha || inputs.release_sha }}"
 
 
 def test_all_checkout_steps_bind_to_an_exact_commit_expression() -> None:
@@ -1011,7 +1012,7 @@ def test_staging_uses_release_scoped_remote_backend_and_persists_recovery_sideca
     assert "${STAGING_BACKEND_PREFIX}" in create_run
     assert "${RUNNER_TEMP}" not in create_run
     persist = next(step for step in deploy_steps if step.get("name") == "Persist staging recovery bundle to protected recovery storage")
-    assert "gcloud storage cp" in str(persist["run"])
+    assert "staging_lifecycle.py persist-recovery" in str(persist["run"])
     assert "STAGING_BUNDLE_URI" in str(persist["run"])
 
     closeout = parsed["jobs"]["staging_closeout"]
@@ -1047,7 +1048,7 @@ def test_every_staging_lifecycle_job_installs_the_ci_pinned_terraform_first() ->
         for job_id, job in jobs.items()
         if any("staging_lifecycle.py" in str(step.get("run", "")) for step in _job_steps(job))
     }
-    assert set(lifecycle_jobs) == {"deploy", "staging_closeout"}
+    assert set(lifecycle_jobs) == {"deploy", "staging_closeout", "staging_retained_cleanup"}
 
     for job_id, job in lifecycle_jobs.items():
         steps = _job_steps(job)
@@ -1095,7 +1096,8 @@ def test_staging_recovery_bundle_storage_boundary_contract() -> None:
         step for step in deploy_steps if step.get("name") == "Persist staging recovery bundle to protected recovery storage"
     )
     assert persist_create.get("if") == "${{ success() && inputs.environment == 'staging' }}"
-    assert 'gcloud storage cp "${STAGING_OUTPUTS_FILE}" "${STAGING_BUNDLE_URI}/staging-terraform-outputs.json"' in str(persist_create["run"])
+    assert '--outputs-file "${STAGING_OUTPUTS_FILE}"' in str(persist_create["run"])
+    assert '--receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-create.json"' in str(persist_create["run"])
 
     persist_hold = next(
         step for step in deploy_steps if step.get("name") == "Persist staging hold state to protected recovery storage"
@@ -1103,11 +1105,14 @@ def test_staging_recovery_bundle_storage_boundary_contract() -> None:
     assert persist_hold.get("if") == "${{ always() && inputs.environment == 'staging' }}"
     # The recovery bucket's retention policy forbids overwriting the
     # create-time sidecar, so each run's hold state gets its own object name.
-    assert (
-        'gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/hold-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(basename "${sidecar}")"'
-        in str(persist_hold["run"])
-    )
-    assert '"${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"' not in str(persist_hold["run"])
+    assert "staging_lifecycle.py persist-recovery" in str(persist_hold["run"])
+    assert '--run-attempt "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in str(persist_hold["run"])
+    assert '--create-receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-create.json"' in str(persist_hold["run"])
+    assert '--receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-final.json"' in str(persist_hold["run"])
+    for step in (persist_create, persist_hold):
+        assert '--candidate-sha "${ODAY_RELEASE_SHA}"' in str(step["run"])
+        assert '--manifest-digest "${MANIFEST_DIGEST}"' in str(step["run"])
+        assert '--run-attempt "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in str(step["run"])
 
     # 3. closeout job environment exports and path preparation checks
     closeout_job = parsed["jobs"]["staging_closeout"]
@@ -1390,10 +1395,19 @@ def test_deploy_script_production_refuses_the_tag_build_path(
         "ODP_AUTH_MODE": "local",
         "ODP_PROD_DEPLOY_URL": "https://web.example.test",
         "ODP_PROD_API_URL": "https://api.example.test",
+        "ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET": "oday-prod-intake-cursor-signing-key:1",
+        # Production refuses to deploy below two warm instances.
+        "ODP_CLOUD_RUN_MIN_INSTANCES": "2",
         "GCP_PROJECT": "project-under-test",
         "GCP_REGION": "asia-east1",
         "GCP_AR_REPO": "runtime",
     }
+    if deploy_environment in {"prod", "production"}:
+        env.update(
+            ODP_PROD_VPC_NETWORK="oday-prod-vpc",
+            ODP_PROD_VPC_SUBNETWORK="oday-prod-asia-east1",
+            ODP_CLOUD_RUN_VPC_EGRESS="all-traffic",
+        )
     for name in ("API_IMAGE", "WEB_IMAGE", "WORKER_IMAGE", "SCHEDULER_IMAGE"):
         # The environment's own registry: production refuses any other one.
         image = f"asia-east1-docker.pkg.dev/project-under-test/runtime/{name.lower()}"
@@ -1435,6 +1449,7 @@ def test_deploy_script_applies_optional_vpc_network_args_to_every_cloud_run_targ
     script = _deploy_script_text()
     network_args = '"${CLOUD_RUN_NETWORK_ARGS[@]}"'
     targets = (
+        'gcloud run jobs create "${job}"',
         'gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}"',
         'gcloud run deploy "${API_SERVICE}"',
         'gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}"',
@@ -1553,8 +1568,35 @@ def test_deploy_job_passes_the_production_live_e2e_origins_from_the_bound_enviro
     assert deploy_env["ODP_DEPLOY_ENV"] == "${{ inputs.environment }}"
     assert deploy_env["ODP_PROD_DEPLOY_URL"] == "${{ vars.ODP_PROD_DEPLOY_URL }}"
     assert deploy_env["ODP_PROD_API_URL"] == "${{ vars.ODP_PROD_API_URL }}"
+    assert deploy_env["ODP_PROD_API_INVOKER_GROUP"] == "${{ vars.ODP_PROD_API_INVOKER_GROUP }}"
+    assert deploy_env["ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET"] == "${{ vars.ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET }}"
     for name in ("ODP_DEV_DEPLOY_URL", "ODP_STAGING_DEPLOY_URL", "ODP_STAGING_API_URL"):
         assert name not in deploy_env, f"{name} must not be a fallback origin for the deploy script"
+
+
+def test_deploy_job_passes_the_warm_minimum_from_the_bound_environment() -> None:
+    """Production owns its Cloud Run services in the deploy path (owner decision
+    2026-11-20), so the warm minimum must reach the deploy script from the bound
+    environment, and the script must refuse production below two."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_job = parsed["jobs"]["deploy"]
+    assert deploy_job["environment"]["name"] == "${{ inputs.environment }}"
+    assert deploy_job["env"]["ODP_CLOUD_RUN_MIN_INSTANCES"] == "${{ vars.ODP_CLOUD_RUN_MIN_INSTANCES }}"
+    deploy_step = _named_step(deploy_job, "Deploy Cloud Run by immutable digest")
+    assert deploy_step["run"] == "./product_ops/deployment/deploy_cloud_run_waji.sh"
+    assert "ODP_CLOUD_RUN_MIN_INSTANCES" not in deploy_step.get("env", {}), "one source: the job env"
+
+    script = _deploy_script_text()
+    guard = script.index("production requires ODP_CLOUD_RUN_MIN_INSTANCES of at least 2")
+    block = script[script.rindex("case \"${ODP_DEPLOY_ENV}\" in", 0, guard) : guard]
+    assert "prod|production)" in block
+    assert '[ -z "${CLOUD_RUN_MIN_INSTANCES}" ]' in block
+    assert "-lt 2" in block
+    # The dev default of one warm instance is unchanged.
+    assert (
+        'if [ -z "${CLOUD_RUN_MIN_INSTANCES}" ] && [ "${ODP_DEPLOY_ENV}" = "dev" ]; then\n'
+        "  CLOUD_RUN_MIN_INSTANCES=1\n"
+    ) in script
 
 
 def test_sources_off_probe_persists_and_validates_the_runtime_receipt() -> None:
@@ -1987,6 +2029,445 @@ def test_staging_closeout_present_but_invalid_watch_receipt_fails(fake_cloud: di
 
 
 # --------------------------------------------------------------------------
+# ODP-STAGING-RETAINED-CLEANUP-261117: operator cleanup of a held staging release
+#
+# A failed staging verification holds the release-scoped staging for forensics,
+# and the only other cleanup caller runs after a production deploy. The
+# `cleanup` phase destroys one held release through the same lifecycle command,
+# under the staging environment's reviewers, and only when the protected
+# recovery bundle and the hold receipt prove it was retained after a failed
+# verification.
+# --------------------------------------------------------------------------
+
+RETAINED_CLEANUP_JOB = "staging_retained_cleanup"
+RETAINED_HOLD_STEP = "Require a held failed staging release in the recovery bundle"
+RETAINED_RECEIPT_STEP = "Require the hold receipt to record a failed verification"
+RETAINED_CLEANUP_STEP = "Cleanup held staging release after failed verification"
+RETAINED_SHA = "60cf786952c78e498372fa1ffb58d2c40860708c"
+RETAINED_RELEASE_ID = "odp-" + RETAINED_SHA[:12]
+RETAINED_STEM = RETAINED_RELEASE_ID + "-d1182418"
+
+
+class _Inputs:
+    def __init__(self, **values: str) -> None:
+        self.__dict__.update(values)
+
+    def __getattr__(self, name: str) -> str:  # undeclared/empty dispatch inputs
+        return ""
+
+
+class _Need:
+    def __init__(self, result: str) -> None:
+        self.result = result
+        self.outputs = _Inputs(proceed="true")
+
+
+def _jobs_that_run(phase: str, environment: str) -> list[str]:
+    """Evaluate every job `if:` the way Actions would for one dispatch.
+
+    `release_phase` is assumed to admit the inputs, so this isolates what the
+    job conditions alone allow; a refusal there only removes more jobs.
+    """
+
+    inputs = _Inputs(phase=phase, environment=environment)
+    results: dict[str, str] = {}
+    for job_id, job in _release_jobs().items():
+        needs = _needs(job)
+        condition = str(job.get("if", "success()")).strip()
+        if condition.startswith("${{"):
+            condition = condition[3:-2]
+        if "always()" not in condition and any(results[need] != "success" for need in needs):
+            results[job_id] = "skipped"
+            continue
+        expression = (
+            condition.replace("&&", " and ").replace("||", " or ")
+            .replace("always()", "True").replace("success()", "True")
+        )
+        namespace = {
+            "inputs": inputs,
+            "needs": _Inputs(**{need: _Need(results[need]) for need in needs}),
+        }
+        results[job_id] = "success" if eval(expression, {}, namespace) else "skipped"  # noqa: S307
+    return [job_id for job_id, result in results.items() if result == "success"]
+
+
+def test_the_cleanup_phase_runs_only_the_retained_cleanup_job_and_only_for_staging() -> None:
+    assert _jobs_that_run("cleanup", "staging") == ["release_phase", RETAINED_CLEANUP_JOB]
+    assert _jobs_that_run("cleanup", "dev") == ["release_phase"]
+    assert _jobs_that_run("cleanup", "production") == ["release_phase"]
+    # And no other phase reaches it.
+    assert RETAINED_CLEANUP_JOB not in _jobs_that_run("build", "staging")
+    assert RETAINED_CLEANUP_JOB not in _jobs_that_run("deploy", "staging")
+    assert RETAINED_CLEANUP_JOB not in _jobs_that_run("deploy", "production")
+    assert RETAINED_CLEANUP_JOB not in _jobs_that_run("auto", "dev")
+    # The evaluator itself still sees the existing lanes.
+    assert _jobs_that_run("deploy", "production") == [
+        "release_phase", "admission", "deploy", "staging_closeout",
+    ]
+
+
+def test_cleanup_shares_the_staging_deploy_concurrency_lane() -> None:
+    workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+    assert workflow["concurrency"]["group"] == (
+        "runtime-release-${{ inputs.environment }}-${{ inputs.phase == 'build' && 'build' || 'deploy' }}"
+    )
+    assert workflow["concurrency"]["cancel-in-progress"] is False
+
+
+def test_the_phase_gate_sees_every_input_cleanup_must_keep_at_its_default() -> None:
+    from delivery_toolchain.release.check_release_phase import CLEANUP_INPUT_DEFAULTS
+
+    workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+    inputs = workflow.get("on", workflow.get(True))["workflow_dispatch"]["inputs"]
+    # Everything a cleanup dispatch may not set is either a dedicated gate
+    # argument or one of the defaults it checks; a new input must join one.
+    dedicated = {
+        "phase", "environment", "release_sha", "task_id", "release_lease",
+        "manifest_run_id", "manifest_digest", "release_profile",
+        "api_image", "web_image", "worker_image", "scheduler_image",
+    }
+    assert set(inputs) == dedicated | set(CLEANUP_INPUT_DEFAULTS)
+    for name, default in CLEANUP_INPUT_DEFAULTS.items():
+        assert str(inputs[name]["default"]).lower() == default
+
+    step = _named_step(_release_jobs()["release_phase"], "Validate phase and artifact handoff preconditions")
+    for name in CLEANUP_INPUT_DEFAULTS:
+        variable = f"{name.upper()}_INPUT"
+        assert step["env"][variable] == "${{ inputs." + name + " }}"
+        assert f'--dispatch-input "{name}=${{{variable}}}"' in step["run"]
+
+
+def test_retained_cleanup_binds_staging_authority_and_reuses_the_closeout_cleanup() -> None:
+    jobs = _release_jobs()
+    job = jobs[RETAINED_CLEANUP_JOB]
+    closeout = jobs["staging_closeout"]
+
+    assert job["environment"] == {"name": "staging"}
+    assert job["needs"] == ["release_phase"]
+    assert job["env"]["ODAY_RELEASE_SHA"] == CANDIDATE_SHA_EXPRESSION
+    checkout = next(step for step in _job_steps(job) if str(step.get("uses", "")).startswith("actions/checkout@"))
+    assert checkout["with"]["ref"] == CANDIDATE_SHA_EXPRESSION, (
+        "the destroy must plan with the module version that created the state"
+    )
+    auth = next(step for step in _job_steps(job) if str(step.get("uses", "")).startswith("google-github-actions/auth@"))
+    closeout_auth = next(
+        step for step in _job_steps(closeout) if str(step.get("uses", "")).startswith("google-github-actions/auth@")
+    )
+    assert auth["with"] == closeout_auth["with"]
+    assert auth["with"]["workload_identity_provider"] == "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}"
+
+    # Same release-scoped paths and bucket separation as the closeout.
+    prepare = str(_named_step(job, "Prepare release-scoped staging retained cleanup paths")["run"])
+    for line in (
+        'staging_release_id="odp-${ODAY_RELEASE_SHA:0:12}"',
+        'staging_backend_prefix="oday-plus/ephemeral-staging/${staging_release_id}"',
+        'staging_bundle_uri="gs://${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}/${staging_backend_prefix}/bundle"',
+        '"${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}" = "${ODP_STAGING_TERRAFORM_STATE_BUCKET}"',
+    ):
+        assert line in prepare
+
+    # The destroy is the closeout's existing command, byte for byte.
+    cleanup = _named_step(job, RETAINED_CLEANUP_STEP)
+    assert cleanup["run"] == _named_step(closeout, CLOSEOUT_CLEANUP_STEP)["run"]
+    assert "staging_lifecycle.py cleanup" in cleanup["run"]
+    assert "--dry-run" not in cleanup["run"] and "--allow-empty" not in cleanup["run"]
+    lifecycle_steps = [step for step in _job_steps(job) if "staging_lifecycle.py" in str(step.get("run", ""))]
+    assert lifecycle_steps == [cleanup]
+    assert "gcloud" not in cleanup["run"], "deletion goes through the lifecycle, never gcloud"
+
+    order = [
+        _step_index(job, "Read staging recovery bundle with staging identity"),
+        _step_index(job, RETAINED_HOLD_STEP),
+        _step_index(job, "Download the hold receipt of the run that retained the release"),
+        _step_index(job, RETAINED_RECEIPT_STEP),
+        _step_index(job, RETAINED_CLEANUP_STEP),
+    ]
+    assert order == sorted(order)
+    for name in (RETAINED_HOLD_STEP, RETAINED_RECEIPT_STEP, RETAINED_CLEANUP_STEP):
+        step = _named_step(job, name)
+        assert "if" not in step and "continue-on-error" not in step
+
+    download = _named_step(job, "Download the hold receipt of the run that retained the release")
+    assert download["with"]["name"] == "runtime-release-staging-lifecycle-receipts"
+    assert download["with"]["run-id"] == "${{ steps.retained-hold.outputs.hold_run_id }}"
+    assert _named_step(job, RETAINED_HOLD_STEP)["id"] == "retained-hold"
+    # The receipt it reads is the one the staging deploy's hold step writes.
+    deploy_upload = _named_step(jobs["deploy"], "Upload staging lifecycle receipts")
+    assert deploy_upload["with"]["name"] == download["with"]["name"]
+    assert ".odp_data/release/staging-lifecycle-hold.json" in deploy_upload["with"]["path"]
+    receipt_step = _named_step(job, RETAINED_RECEIPT_STEP)
+    assert receipt_step["env"]["HOLD_RECEIPT"] == (
+        download["with"]["path"] + "/staging-lifecycle-hold.json"
+    )
+
+    upload = _named_step(job, "Upload staging retained cleanup receipts")
+    assert upload["if"] == "always()"
+    assert ".odp_data/release/staging-lifecycle-cleanup.json" in upload["with"]["path"]
+
+
+def _retained_bundle(fake: dict[str, object], *, hold: dict | None = None, **tfvars_overrides: str) -> Path:
+    state_dir = fake["tmp"] / "state"  # type: ignore[operator]
+    state_dir.mkdir()
+    tfvars = {
+        "release_id": RETAINED_RELEASE_ID,
+        "candidate_sha": RETAINED_SHA,
+        "created_at": "2026-11-15T09:32:33Z",
+        "owner_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+    }
+    tfvars.update(tfvars_overrides)
+    files = {
+        f"{RETAINED_STEM}.tfvars.json": tfvars,
+        f"{RETAINED_STEM}.inventory.json": [{"raw_release_id": RETAINED_RELEASE_ID}],
+        f"{RETAINED_STEM}.lifecycle.json": {
+            "release_id": RETAINED_RELEASE_ID,
+            "status": "created",
+            "identity": {"release_id": RETAINED_RELEASE_ID, "candidate_sha": RETAINED_SHA},
+        },
+        "staging-terraform-outputs.json": {"release_id": RETAINED_RELEASE_ID, "staging_project_id": "odp-staging"},
+    }
+    if hold is not None:
+        files[f"hold-43699516874-1-{RETAINED_STEM}.lifecycle.json"] = hold
+    for name, value in files.items():
+        (state_dir / name).write_text(json.dumps(value), encoding="utf-8")
+    return state_dir
+
+
+def _held(**overrides: object) -> dict:
+    hold = {
+        "release_id": RETAINED_RELEASE_ID,
+        "status": "held",
+        "identity": {
+            "release_id": RETAINED_RELEASE_ID,
+            "owner_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+            "created_at": "2026-11-15T09:32:33Z",
+        },
+    }
+    hold.update(overrides)
+    return hold
+
+
+def _retained_env(fake: dict[str, object], state_dir: Path) -> dict[str, str]:
+    env = dict(fake["env"])  # type: ignore[arg-type]
+    env.update(
+        STAGING_STATE_DIR=str(state_dir),
+        STAGING_RELEASE_ID=RETAINED_RELEASE_ID,
+        ODAY_RELEASE_SHA=RETAINED_SHA,
+    )
+    return env
+
+
+def test_retained_cleanup_admits_a_bundle_held_by_a_failed_run(fake_cloud: dict[str, object]) -> None:
+    state_dir = _retained_bundle(fake_cloud, hold=_held())
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_HOLD_STEP, _retained_env(fake_cloud, state_dir))
+
+    assert result.returncode == 0, result.stderr
+    assert _outputs(fake_cloud) == {
+        "hold_run_id": "43699516874",
+        "hold_run_attempt": "1",
+        "hold_owner_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+        "hold_sidecar_status": "held",
+    }
+
+
+def _verified_sidecar(**identity: str) -> dict:
+    """The verify-time state the always() persist copies when hold was refused."""
+
+    return {
+        "release_id": RETAINED_RELEASE_ID,
+        "status": "verified",
+        "identity": {
+            "release_id": RETAINED_RELEASE_ID,
+            "candidate_sha": RETAINED_SHA,
+            "owner_task_id": "odp-ephemeral-staging-rollout-001",
+            **identity,
+        },
+    }
+
+
+def test_retained_cleanup_admits_the_verified_state_a_refused_hold_left(fake_cloud: dict[str, object]) -> None:
+    """Staging deploy 44261935709: failed after verify, hold refused 'verified'."""
+
+    state_dir = _retained_bundle(fake_cloud, hold=_verified_sidecar())
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_HOLD_STEP, _retained_env(fake_cloud, state_dir))
+
+    assert result.returncode == 0, result.stderr
+    assert _outputs(fake_cloud) == {
+        "hold_run_id": "43699516874",
+        "hold_run_attempt": "1",
+        "hold_owner_task_id": "odp-ephemeral-staging-rollout-001",
+        "hold_sidecar_status": "verified",
+    }
+
+
+@pytest.mark.parametrize(
+    ("hold", "tfvars", "reason"),
+    [
+        (None, {}, "no hold sidecar"),
+        # The always() hold persist copies whatever state the run left.
+        (_verified_sidecar(candidate_sha="b" * 40), {}, "does not bind the release to release_sha"),
+        (_held(status="created"), {}, "not 'held'"),
+        (_held(status="verification_failed"), {}, "not 'held'"),
+        (_held(release_id="odp-000000000000"), {}, "names a different release"),
+        (_held(identity={"release_id": RETAINED_RELEASE_ID, "created_at": "2026-11-16T00:00:00Z"}), {}, "creation time"),
+        (_held(), {"candidate_sha": "b" * 40}, "candidate_sha does not match"),
+        (_held(), {"release_id": "odp-bbbbbbbbbbbb"}, "tfvars release_id"),
+    ],
+)
+def test_retained_cleanup_refuses_without_a_held_bundle_for_this_release(
+    fake_cloud: dict[str, object], hold: dict | None, tfvars: dict, reason: str
+) -> None:
+    state_dir = _retained_bundle(fake_cloud, hold=hold, **tfvars)
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_HOLD_STEP, _retained_env(fake_cloud, state_dir))
+
+    assert result.returncode != 0
+    assert "Refusing cleanup" in result.stderr and reason in result.stderr
+    assert "hold_run_id" not in _outputs(fake_cloud)
+
+
+def test_retained_cleanup_refuses_a_hold_sidecar_of_another_release_stem(fake_cloud: dict[str, object]) -> None:
+    state_dir = _retained_bundle(fake_cloud, hold=_held())
+    (state_dir / "hold-43699516875-1-odp-bbbbbbbbbbbb-00000000.lifecycle.json").write_text(
+        json.dumps(_held()), encoding="utf-8"
+    )
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_HOLD_STEP, _retained_env(fake_cloud, state_dir))
+    assert result.returncode != 0
+    assert "unexpected hold sidecar" in result.stderr
+
+
+def _hold_receipt(fake: dict[str, object], **overrides: object) -> Path:
+    receipt = {
+        "action": "hold",
+        "release_id": RETAINED_RELEASE_ID,
+        "success": True,
+        "resources": [{"release_id": RETAINED_RELEASE_ID, "status": "retained_for_debugging"}],
+        "metadata": {"state_status": "verification_failed", "owner_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001"},
+    }
+    receipt.update(overrides)
+    path = fake["tmp"] / "staging-lifecycle-hold.json"  # type: ignore[operator]
+    path.write_text(json.dumps(receipt), encoding="utf-8")
+    return path
+
+
+def _receipt_env(
+    fake: dict[str, object],
+    receipt: Path,
+    *,
+    sidecar_status: str = "held",
+    owner: str = "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+) -> dict[str, str]:
+    env = dict(fake["env"])  # type: ignore[arg-type]
+    env.update(
+        STAGING_RELEASE_ID=RETAINED_RELEASE_ID,
+        HOLD_RECEIPT=str(receipt),
+        HOLD_OWNER_TASK_ID=owner,
+        HOLD_SIDECAR_STATUS=sidecar_status,
+    )
+    return env
+
+
+_VERIFIED_HOLD_REFUSAL = (
+    f"release '{RETAINED_RELEASE_ID}' has lifecycle status 'verified'; "
+    "expected one of ['created', 'held', 'verification_failed']"
+)
+_VERIFIED_METADATA = {"state_status": "verified", "owner_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001"}
+
+
+def test_retained_cleanup_admits_a_hold_of_a_release_that_failed_after_verification(
+    fake_cloud: dict[str, object],
+) -> None:
+    result = _run_step(
+        _release_jobs()[RETAINED_CLEANUP_JOB],
+        RETAINED_RECEIPT_STEP,
+        _receipt_env(fake_cloud, _hold_receipt(fake_cloud, metadata=_VERIFIED_METADATA)),
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def _refused_hold_env(fake: dict[str, object], **overrides: object) -> dict[str, str]:
+    receipt = {"success": False, "errors": [_VERIFIED_HOLD_REFUSAL], "metadata": _VERIFIED_METADATA}
+    receipt.update(overrides)
+    return _receipt_env(
+        fake,
+        _hold_receipt(fake, **receipt),
+        sidecar_status="verified",
+        owner="odp-ephemeral-staging-rollout-001",
+    )
+
+
+def test_retained_cleanup_admits_the_refused_hold_of_a_verified_release(fake_cloud: dict[str, object]) -> None:
+    """The receipt staging deploy 44261935709 left: hold refused only for the verified status."""
+
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, _refused_hold_env(fake_cloud))
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("overrides", "reason"),
+    [
+        # A hold that succeeded would have left a `held` sidecar, not `verified`.
+        ({"success": True, "errors": []}, "refused only because the release was verified"),
+        ({"errors": [_VERIFIED_HOLD_REFUSAL, "Invalid project_id format: 'x'"]}, "refused only because"),
+        ({"errors": ["hold requires a non-empty verified release ownership inventory"]}, "refused only because"),
+        (
+            {"metadata": {"state_status": "verification_failed", "owner_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001"}},
+            "refused only because",
+        ),
+        ({"metadata": {"state_status": "verified", "owner_task_id": "OTHER-TASK"}}, "owner task"),
+        ({"release_id": "odp-bbbbbbbbbbbb"}, "different release"),
+        ({"resources": []}, "only this release"),
+    ],
+)
+def test_retained_cleanup_refuses_a_verified_sidecar_without_that_refused_hold(
+    fake_cloud: dict[str, object], overrides: dict, reason: str
+) -> None:
+    result = _run_step(
+        _release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, _refused_hold_env(fake_cloud, **overrides)
+    )
+    assert result.returncode != 0
+    assert "Refusing cleanup" in result.stderr and reason in result.stderr
+
+
+def test_retained_cleanup_admits_a_hold_receipt_of_a_failed_verification(fake_cloud: dict[str, object]) -> None:
+    result = _run_step(
+        _release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, _receipt_env(fake_cloud, _hold_receipt(fake_cloud))
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("overrides", "reason"),
+    [
+        ({"metadata": {"state_status": "created", "owner_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001"}}, "not 'verification_failed'"),
+        ({"metadata": {"state_status": "held", "owner_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001"}}, "not 'verification_failed'"),
+        ({"success": False}, "successful hold"),
+        ({"release_id": "odp-bbbbbbbbbbbb"}, "different release"),
+        ({"metadata": {"state_status": "verification_failed", "owner_task_id": "OTHER-TASK"}}, "owner task"),
+        ({"resources": []}, "only this release"),
+    ],
+)
+def test_retained_cleanup_refuses_a_hold_receipt_without_a_failed_verification(
+    fake_cloud: dict[str, object], overrides: dict, reason: str
+) -> None:
+    result = _run_step(
+        _release_jobs()[RETAINED_CLEANUP_JOB],
+        RETAINED_RECEIPT_STEP,
+        _receipt_env(fake_cloud, _hold_receipt(fake_cloud, **overrides)),
+    )
+    assert result.returncode != 0
+    assert "Refusing cleanup" in result.stderr and reason in result.stderr
+
+
+def test_retained_cleanup_refuses_when_the_hold_receipt_is_missing(fake_cloud: dict[str, object]) -> None:
+    result = _run_step(
+        _release_jobs()[RETAINED_CLEANUP_JOB],
+        RETAINED_RECEIPT_STEP,
+        _receipt_env(fake_cloud, fake_cloud["tmp"] / "absent.json"),  # type: ignore[operator]
+    )
+    assert result.returncode != 0
+    assert "hold receipt unreadable" in result.stderr
+
+
+# --------------------------------------------------------------------------
 # ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001: build-once and admission ordering
 #
 # `admission` used to be `build`'s parent. Because the lease is bound to a
@@ -2029,7 +2510,7 @@ def test_every_job_is_gated_on_the_fail_closed_phase_check() -> None:
 
     assert "release_phase" in jobs
     assert _needs(jobs["release_phase"]) == [], "the phase check must run first"
-    for job_id in ("build", "admission", "deploy"):
+    for job_id in ("build", "admission", "deploy", "staging_retained_cleanup"):
         assert "release_phase" in _needs(jobs[job_id]), f"{job_id} bypasses the phase check"
 
     check = _named_step(jobs["release_phase"], "Validate phase and artifact handoff preconditions")
@@ -2062,7 +2543,7 @@ def test_the_lease_input_is_optional_so_the_build_phase_can_run_without_one() ->
 
     phase = inputs["phase"]
     assert phase["type"] == "choice"
-    assert set(phase["options"]) == {"build", "deploy", "auto"}
+    assert set(phase["options"]) == {"build", "deploy", "auto", "cleanup"}
 
 
 def test_workflow_dispatch_declares_masked_snapshot_and_rollback_inputs() -> None:
@@ -2632,6 +3113,7 @@ def test_first_release_and_dev_policy_keep_one_deploy_and_manual_lease_check() -
         "deploy",
         "release_phase",
         "staging_closeout",
+        "staging_retained_cleanup",
     ]
     assert len(list(WORKFLOW_DIR.glob("*deploy*.yml"))) == 1
 
@@ -2727,3 +3209,38 @@ def test_deploy_job_already_binds_the_private_api_transport_identities() -> None
         "${{ vars.ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}"
     )
     assert "ODP_API_INVOKER_TOKEN" not in RELEASE_WORKFLOW.read_text(encoding="utf-8")
+
+
+def _docker_build_commands(text: str) -> list[str]:
+    """Every `docker build` invocation, joined across its continuation lines."""
+
+    commands = []
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if re.search(r"\bdocker build\b", line) and not line.lstrip().startswith("#"):
+            command = [line]
+            while command[-1].rstrip().endswith("\\") and index + len(command) < len(lines):
+                command.append(lines[index + len(command)])
+            commands.append(" ".join(part.strip().rstrip("\\") for part in command))
+    return commands
+
+
+def test_release_images_are_built_as_single_platform_manifests() -> None:
+    """Cloud Run records the platform manifest digest on revisions and executions.
+
+    On the ubuntu-26.04 runner image docker build pushes an OCI index with a
+    provenance attestation by default, so the built digest no longer equals the
+    digest of the running image and the immutable binding checks fail (dev deploy
+    44448038532). Every release image build must opt out explicitly.
+    """
+
+    sources = {
+        RELEASE_WORKFLOW.name: RELEASE_WORKFLOW.read_text(encoding="utf-8"),
+        DEPLOY_SCRIPT.name: _deploy_script_text(),
+    }
+    for name, text in sources.items():
+        commands = _docker_build_commands(text)
+        assert commands, f"{name} no longer builds images; update this contract"
+        for command in commands:
+            assert "--platform linux/amd64" in command, (name, command)
+            assert "--provenance=false" in command, (name, command)

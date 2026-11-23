@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -281,7 +282,7 @@ def test_workflow_keeps_one_deployment_implementation_and_manual_gate():
     policy_checkout = next(
         step for step in jobs["release_phase"]["steps"] if str(step.get("uses", "")).startswith("actions/checkout@")
     )["with"]["ref"]
-    assert "inputs.phase == 'auto' && github.sha" in policy_checkout
+    assert "(inputs.phase == 'auto' || inputs.phase == 'cleanup') && github.sha" in policy_checkout
     manual = jobs["admission"]
     assert "inputs.phase == 'deploy'" in manual["if"]
     assert manual["environment"]["name"] == "${{ inputs.environment }}"
@@ -303,7 +304,7 @@ def test_workflow_keeps_one_deployment_implementation_and_manual_gate():
     trigger = ci_jobs["automatic-dev-release"]
     assert "github.event_name == 'push'" in trigger["if"]
     assert "refs/heads/dev" in trigger["if"]
-    assert set(trigger["needs"]) == {"orchestrator", "product", "performance-gate", "product-e2e-gate"}
+    assert set(trigger["needs"]) == {"freeze-policy", "orchestrator", "product", "performance-gate", "product-e2e-gate"}
     assert trigger["permissions"]["actions"] == "write"
 
 
@@ -1213,3 +1214,82 @@ def test_live_step_name_matches_workflow():
     assert auto.LIVE_STEP in names
     assert names.index(auto.LIVE_STEP) < names.index(
         "Retain the live-verified dev predecessor for the next update")
+
+
+def gh_results(monkeypatch, *outcomes):
+    """Replay ``gh api`` outcomes: (returncode, stderr) or an exception instance."""
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        outcome = outcomes[len(calls) - 1]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        code, stderr = outcome
+        return subprocess.CompletedProcess(command, code, b"" if code else b'{"ok": true}', stderr)
+
+    monkeypatch.setattr(auto.subprocess, "run", run)
+    return calls
+
+
+GITHUB_REFUSAL = "GitHub read/dispatch failed; inspect Actions permissions and retry."
+
+
+@pytest.mark.parametrize("failure", [
+    (1, b"gh: Server Error (HTTP 502)"), (1, b"gh: Too Many Requests (HTTP 429)"),
+    (1, b"gh: You have exceeded a secondary rate limit. (HTTP 403)"),
+    (1, b'Get "https://api.github.com/x": dial tcp: i/o timeout'),
+    subprocess.TimeoutExpired(["gh"], 60),
+])
+def test_transient_github_read_succeeds_on_bounded_retry(monkeypatch, failure):
+    calls = gh_results(monkeypatch, failure, (1, b"gh: Service Unavailable (HTTP 503)"), (0, b""))
+    slept = []
+    assert auto.github("repos/o/r/actions/runs/1", sleep=slept.append) == {"ok": True}
+    assert len(calls) == 3 and slept == list(auto.READ_RETRY_DELAYS)
+    assert all("--method" not in command for command in calls)
+
+
+@pytest.mark.parametrize("stderr", [b"gh: Not Found (HTTP 404)", b"gh: Forbidden (HTTP 403)",
+                                    b"gh: Bad credentials (HTTP 401)",
+                                    b"gh: Validation Failed (HTTP 422)"])
+def test_non_transient_github_read_refuses_without_retry(monkeypatch, stderr):
+    calls = gh_results(monkeypatch, (1, stderr))
+    slept = []
+    with pytest.raises(auto.Refused) as refused:
+        auto.github("repos/o/r/branches/dev", sleep=slept.append)
+    assert str(refused.value) == GITHUB_REFUSAL and len(calls) == 1 and slept == []
+
+
+def test_missing_gh_authentication_is_not_retried(monkeypatch):
+    calls = gh_results(monkeypatch, (4, b"gh: To use GitHub CLI in a workflow, set GH_TOKEN"))
+    with pytest.raises(auto.Refused, match="GitHub read/dispatch failed"):
+        auto.github("repos/o/r/branches/dev", sleep=lambda _: None)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("failure", [(1, b"gh: Server Error (HTTP 502)"), (1, b"connection reset"),
+                                     subprocess.TimeoutExpired(["gh"], 60)])
+def test_dispatch_write_is_never_retried(monkeypatch, failure):
+    calls = gh_results(monkeypatch, failure, (0, b""))
+    slept = []
+    with pytest.raises((auto.Refused, subprocess.TimeoutExpired)):
+        auto.github("repos/o/r/actions/workflows/deploy-dev.yml/dispatches",
+                    data={"ref": "dev"}, sleep=slept.append)
+    assert len(calls) == 1 and slept == []
+    assert calls[0][-4:] == ["--method", "POST", "--input", "-"]
+
+
+def test_exhausted_transient_read_keeps_the_same_refusal(monkeypatch):
+    calls = gh_results(monkeypatch, *[(1, b"gh: Server Error (HTTP 500)")] * 3)
+    slept = []
+    with pytest.raises(auto.Refused) as refused:
+        auto.github("repos/o/r/actions/artifacts/1/zip", raw=True, sleep=slept.append)
+    assert str(refused.value) == GITHUB_REFUSAL
+    assert len(calls) == len(auto.READ_RETRY_DELAYS) + 1 and slept == list(auto.READ_RETRY_DELAYS)
+
+
+def test_exhausted_read_timeouts_still_surface_as_timeout(monkeypatch):
+    calls = gh_results(monkeypatch, *[subprocess.TimeoutExpired(["gh"], 60)] * 3)
+    with pytest.raises(subprocess.TimeoutExpired):
+        auto.github("repos/o/r/deployments", sleep=lambda _: None)
+    assert len(calls) == 3

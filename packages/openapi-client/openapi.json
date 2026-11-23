@@ -1260,6 +1260,21 @@
         "title": "AreaPlanningDraftListResponse",
         "type": "object"
       },
+      "AreaPlanningDraftMaterializeInput": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedVersion": {
+            "minimum": 1.0,
+            "title": "Expectedversion",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expectedVersion"
+        ],
+        "title": "AreaPlanningDraftMaterializeInput",
+        "type": "object"
+      },
       "AreaPlanningDraftResponse": {
         "properties": {
           "budget": {
@@ -10848,6 +10863,41 @@
         "title": "NativeIntakeScope",
         "type": "object"
       },
+      "NativeReceiptCommitted_AssignmentReceipt_": {
+        "additionalProperties": false,
+        "properties": {
+          "observation": {
+            "const": "RECEIPT_COMMITTED",
+            "title": "Observation",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "original_http_status": {
+            "enum": [
+              200,
+              201,
+              202
+            ],
+            "title": "Original Http Status",
+            "type": "integer"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/AssignmentReceipt"
+          }
+        },
+        "required": [
+          "observation",
+          "observed_at",
+          "original_http_status",
+          "receipt"
+        ],
+        "title": "NativeReceiptCommitted[AssignmentReceipt]",
+        "type": "object"
+      },
       "NativeReceiptCommitted_CanonicalIdentityReceipt_": {
         "additionalProperties": false,
         "properties": {
@@ -10986,6 +11036,41 @@
           "receipt"
         ],
         "title": "NativeReceiptCommitted[MatchCaseReceipt]",
+        "type": "object"
+      },
+      "NativeReceiptCommitted_SlaReceipt_": {
+        "additionalProperties": false,
+        "properties": {
+          "observation": {
+            "const": "RECEIPT_COMMITTED",
+            "title": "Observation",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "original_http_status": {
+            "enum": [
+              200,
+              201,
+              202
+            ],
+            "title": "Original Http Status",
+            "type": "integer"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/SlaReceipt"
+          }
+        },
+        "required": [
+          "observation",
+          "observed_at",
+          "original_http_status",
+          "receipt"
+        ],
+        "title": "NativeReceiptCommitted[SlaReceipt]",
         "type": "object"
       },
       "NativeReceiptNotObserved": {
@@ -19484,6 +19569,130 @@
         ]
       }
     },
+    "/api/v1/assignments/{assignment_id}/actions/claim/receipt": {
+      "get": {
+        "description": "Observe the stored native claimAssignment receipt for this key; never resends the command.",
+        "operationId": "getClaimAssignmentReceipt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assignment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptCommitted_AssignmentReceipt_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptNotObserved"
+                    }
+                  ],
+                  "title": "Response Getclaimassignmentreceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Observe",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
     "/api/v1/assignments/{assignment_id}/actions/complete": {
       "post": {
         "operationId": "completeAssignment",
@@ -19607,6 +19816,130 @@
         ]
       }
     },
+    "/api/v1/assignments/{assignment_id}/actions/complete/receipt": {
+      "get": {
+        "description": "Observe the stored native completeAssignment receipt for this key; never resends the command.",
+        "operationId": "getCompleteAssignmentReceipt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assignment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptCommitted_AssignmentReceipt_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptNotObserved"
+                    }
+                  ],
+                  "title": "Response Getcompleteassignmentreceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Observe",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
     "/api/v1/assignments/{assignment_id}/actions/transfer": {
       "post": {
         "operationId": "transferAssignment",
@@ -19725,6 +20058,130 @@
           }
         },
         "summary": "Transfer Assignment",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/assignments/{assignment_id}/actions/transfer/receipt": {
+      "get": {
+        "description": "Observe the stored native transferAssignment receipt for this key; never resends the command.",
+        "operationId": "getTransferAssignmentReceipt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assignment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptCommitted_AssignmentReceipt_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptNotObserved"
+                    }
+                  ],
+                  "title": "Response Gettransferassignmentreceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Observe",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -30860,6 +31317,130 @@
           }
         },
         "summary": "Assign",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/intakes/{intake_id}/assignment/receipt": {
+      "get": {
+        "description": "Observe the stored native assignIntake receipt for this key; never resends the command.",
+        "operationId": "getAssignIntakeReceipt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptCommitted_AssignmentReceipt_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptNotObserved"
+                    }
+                  ],
+                  "title": "Response Getassignintakereceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Get Assign Intake Receipt",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -42405,6 +42986,131 @@
           }
         },
         "summary": "Update Draft",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/area-planning-drafts/{identity}/materialize": {
+      "post": {
+        "operationId": "materializeOperatorAreaPlanningDraft",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identity",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identity",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AreaPlanningDraftMaterializeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AreaPlanningDraftCommandResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Materialize Draft",
         "tags": [
           "operator"
         ]
@@ -64167,6 +64873,130 @@
         ]
       }
     },
+    "/api/v1/sla-instances/{sla_instance_id}/actions/pause/receipt": {
+      "get": {
+        "description": "Observe the stored native pauseSla receipt for this key; never resends the command.",
+        "operationId": "getPauseSlaReceipt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sla_instance_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Sla Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptCommitted_SlaReceipt_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptNotObserved"
+                    }
+                  ],
+                  "title": "Response Getpauseslareceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Observe",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
     "/api/v1/sla-instances/{sla_instance_id}/actions/resume": {
       "post": {
         "operationId": "resumeSla",
@@ -64285,6 +65115,130 @@
           }
         },
         "summary": "Resume Sla",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/sla-instances/{sla_instance_id}/actions/resume/receipt": {
+      "get": {
+        "description": "Observe the stored native resumeSla receipt for this key; never resends the command.",
+        "operationId": "getResumeSlaReceipt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sla_instance_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Sla Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected account of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Expected tenant of the captured view. A mismatch refuses before storage; this never selects or authorizes a principal.",
+            "in": "header",
+            "name": "If-Tenant-Match",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptCommitted_SlaReceipt_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NativeReceiptNotObserved"
+                    }
+                  ],
+                  "title": "Response Getresumeslareceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Observe",
         "tags": [
           "assisted-listing-intake"
         ]

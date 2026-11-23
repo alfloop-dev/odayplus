@@ -501,6 +501,8 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
   test("real HeatZone map stays nonblank and synchronized to selected zone and lens", async ({
     page,
   }) => {
+    // The map boots again for the marker click, then two full page loads follow.
+    test.setTimeout(180_000);
     test.info().annotations.push({
       type: "scope",
       description: "MapLibre rendering of the explicit HZ-01 operator fixture; synthetic scoring rows belong to a separate dataset.",
@@ -599,8 +601,192 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
     await expect(page.getByTestId("listing-zone-filter-chip")).toContainText(
       "HZ-02",
     );
+
+    // The original fixture candidate has no recorded point, so the served map
+    // draws no marker for it and nothing may present one as recorded. The
+    // marker click below therefore uses a separately declared synthetic
+    // browser point; this check fails once a recorded point exists so the
+    // journey can use that point instead.
+    test.info().annotations.push({
+      type: "unverified",
+      description: "Candidate marker from a recorded (native/geocoded) point: fixture CS-1001 has no recorded coordinates; the browser marker click uses an explicit synthetic point.",
+    });
+    const fixtureApi = await apiContext();
+    const converted = await fixtureApi.post(
+      "/api/v1/operator/network-listings/listings/L-2024/convert",
+      {
+        headers: {
+          "X-Correlation-Id": randomUUID(),
+          "Idempotency-Key": `fixture-map-marker-${randomUUID()}`,
+        },
+        data: {
+          actorRoleId: "expansion-manager",
+          reason: "Prepare the local synthetic Candidate map marker fixture.",
+          riskAcknowledged: true,
+          riskSummary: "Explicit local fixture setup for map marker read navigation.",
+        },
+      },
+    );
+    expect(converted.status(), await converted.text()).toBe(200);
+    const snapshot = await fixtureApi.get("/api/v1/operator/network-listings");
+    expect(snapshot.status()).toBe(200);
+    const markerCandidates = (await snapshot.json()).candidates.filter(
+      (candidate: { id: string }) => candidate.id === "CS-1001",
+    );
+    await fixtureApi.dispose();
+    expect(markerCandidates).toHaveLength(1);
+    // Absent and null both mean no recorded point; the map adapter draws none.
+    expect(
+      [markerCandidates[0].latitude ?? null, markerCandidates[0].longitude ?? null],
+      "CS-1001 now has a recorded point: extend this case through its map marker click and reload.",
+    ).toEqual([null, null]);
+
+    // Synthetic browser point: marker click -> native Candidates tab -> reload.
+    test.info().annotations.push({
+      type: "scope",
+      description: "Explicit synthetic browser point added to fixture CS-1001 for the marker click, carrying its parent listing L-2024's recorded geocode confidence; not a persisted, geocoded or approved Geo location. Native PostgreSQL candidate identity is evidenced separately.",
+    });
+    // Only a successful scoped read is changed, and only by adding the declared
+    // point to the candidate that read returned without one, with the geocode
+    // confidence its parent listing records in that same read. Failed reads,
+    // other candidates, score, review and authorization fields pass through.
+    const servedMarkerRecords: Record<string, unknown>[] = [];
+    const servedParentListings: Record<string, unknown>[] = [];
+    await page.route(
+      (url) => url.pathname === "/api/v1/operator/network-listings",
+      async (route) => {
+        const response = await route.fetch();
+        if (!response.ok()) {
+          await route.fulfill({ response });
+          return;
+        }
+        const body = await response.json();
+        const candidates: Record<string, unknown>[] = Array.isArray(body.candidates) ? body.candidates : [];
+        const target = candidates.find((candidate) => candidate.id === SYNTHETIC_MARKER.candidateId);
+        const listings: Record<string, unknown>[] = Array.isArray(body.listings) ? body.listings : [];
+        const parent = target && listings.find((listing) => listing.id === target.listingId);
+        if (target) servedMarkerRecords.push({ ...target });
+        if (parent) servedParentListings.push({ ...parent });
+        const parentConfidence = parent?.geocodeConfidence;
+        if (
+          !target || (target.latitude ?? null) !== null || (target.longitude ?? null) !== null
+          || typeof parentConfidence !== "number" || !(parentConfidence > 0)
+        ) {
+          await route.fulfill({ response });
+          return;
+        }
+        await route.fulfill({
+          response,
+          json: {
+            ...body,
+            candidates: candidates.map((candidate) => candidate === target
+              ? {
+                ...candidate,
+                latitude: SYNTHETIC_MARKER.latitude,
+                longitude: SYNTHETIC_MARKER.longitude,
+                geocodeConfidence: candidate.geocodeConfidence ?? parentConfidence,
+              }
+              : candidate),
+          },
+        });
+      },
+    );
+    const conversionPosts: string[] = [];
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        /\/network-listings\/listings\/[^/]+\/convert$/.test(new URL(request.url()).pathname)
+      ) {
+        conversionPosts.push(request.url());
+      }
+    });
+    await page.goto("/operator?ws=network");
+    await expect(page.getByTestId("heat-zone-map")).toHaveAttribute(
+      "data-selected-zone",
+      "HZ-01",
+      { timeout: 15_000 },
+    );
+    await expect(page.getByTestId("network-workflow-context-notice")).toHaveCount(
+      0, { timeout: 15_000 },
+    );
+    await expect.poll(() => servedMarkerRecords.length, { timeout: 15_000 }).toBeGreaterThan(0);
+    // The served record has no point of its own; its identity and parent
+    // listing pass through, and the parent's recorded confidence is reused.
+    expect(servedMarkerRecords[0]).toMatchObject({ id: "CS-1001", listingId: "L-2024" });
+    expect(
+      [servedMarkerRecords[0].latitude ?? null, servedMarkerRecords[0].longitude ?? null],
+    ).toEqual([null, null]);
+    expect(servedParentListings[0]).toMatchObject({ id: "L-2024", candidateId: "CS-1001" });
+    expect(servedParentListings[0].geocodeConfidence).toEqual(expect.any(Number));
+    expect(servedParentListings[0].geocodeConfidence as number).toBeGreaterThan(0);
+    await expect(page.getByTestId("map-unlocated-candidates")).toHaveCount(0);
+    await expect
+      .poll(() => page.evaluate(() => typeof window.__odpHeatZoneMapProject === "function"), {
+        timeout: 30_000,
+      })
+      .toBe(true);
+    await expect
+      .poll(async () => canvasHasVisiblePixels(page, ".maplibregl-canvas"), {
+        timeout: 30_000,
+      })
+      .toBe(true);
+
+    const mapCanvas = page.getByTestId("heat-zone-map-canvas");
+    const box = await mapCanvas.boundingBox();
+    const markerPoint = await page.evaluate(
+      (coordinates) => window.__odpHeatZoneMapProject!(coordinates),
+      [SYNTHETIC_MARKER.longitude, SYNTHETIC_MARKER.latitude] as [number, number],
+    );
+    expect(box).not.toBeNull();
+    expect(markerPoint.x).toBeGreaterThan(0);
+    expect(markerPoint.y).toBeGreaterThan(0);
+    expect(markerPoint.x).toBeLessThan(box!.width);
+    expect(markerPoint.y).toBeLessThan(box!.height);
+
+    await mapCanvas.click({ position: markerPoint });
+    await expect(page).toHaveURL(
+      (url) => url.searchParams.get("tab") === "candidates",
+      { timeout: 15_000 },
+    );
+    const expectNativeCandidateUrl = (href: string) => {
+      const url = new URL(href);
+      expect(url.pathname).toBe("/operator");
+      expect(url.searchParams.get("ws")).toBe("network");
+      expect(url.searchParams.get("tab")).toBe("candidates");
+      expect(url.searchParams.getAll("candidate")).toEqual(["CS-1001"]);
+      for (const stale of ["selected", "drawer", "dialog", "intakeKind", "section", "review"]) {
+        expect(url.searchParams.has(stale), stale).toBe(false);
+      }
+    };
+    expectNativeCandidateUrl(page.url());
+    await expect(page.getByTestId("network-panel-candidates")).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByTestId("candidate-row-CS-1001")).toHaveAttribute(
+      "data-active", "true", { timeout: 15_000 },
+    );
+    await page.reload();
+    expectNativeCandidateUrl(page.url());
+    await expect(page.getByTestId("candidate-row-CS-1001")).toHaveAttribute(
+      "data-active", "true", { timeout: 15_000 },
+    );
+    await expect(page.getByTestId("network-candidate-table")).toContainText(
+      "CS-1001",
+    );
+    // Selection is read-only: the click and reload never convert again.
+    expect(conversionPosts).toEqual([]);
   });
 });
+
+/**
+ * Declared synthetic browser point for the fixture marker click. It is set
+ * here, not derived from any HeatZone, and is never persisted or approved.
+ */
+const SYNTHETIC_MARKER = {
+  candidateId: "CS-1001",
+  longitude: 121.5652,
+  latitude: 25.0341,
+} as const;
 
 /** The operator's own words — never a UI default. Asserted verbatim in audit. */
 const OPERATOR_REASON =

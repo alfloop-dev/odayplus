@@ -18,10 +18,13 @@ import math
 import os
 import re
 import socket
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Iterator, Mapping
 from dataclasses import asdict, dataclass, replace
@@ -4643,9 +4646,174 @@ def _finalize(
     return 1
 
 
-def main() -> int:
+PRIVATE_SMOKE_RECEIPT_KIND = "private_release_smoke"
+
+
+def _cloud_run_job_identity_token(audience: str) -> str:
+    query = urllib.parse.urlencode({"audience": audience, "format": "full"})
+    request = urllib.request.Request(
+        f"http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?{query}",
+        headers={"Metadata-Flavor": "Google"},
+    )
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+    with opener.open(request, timeout=10) as response:  # noqa: S310 - fixed metadata endpoint
+        token = response.read(16384).decode("ascii").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]+[.][A-Za-z0-9_-]+[.][A-Za-z0-9_-]+", token):
+        raise ValueError("metadata identity response was not a JWT")
+    return token
+
+
+def _write_private_smoke_input(args: argparse.Namespace) -> int:
+    try:
+        smoke_args = args.probe_args
+        if smoke_args and smoke_args[0] == "--":
+            smoke_args = smoke_args[1:]
+        if not smoke_args or smoke_args[0] not in {"smoke", "compatibility-smoke"}:
+            raise ValueError("invalid smoke phase")
+        payload = {
+            "api_audience": args.api_audience, "web_audience": args.web_audience,
+            "args": smoke_args,
+        }
+        environment = {name: os.environ[name] for name in ("ODAY_RELEASE_SHA", "ODP_RELEASE_MANIFEST_DIGEST")}
+        if smoke_args[0] == "smoke":
+            payload["tenant"] = _read_json_object(Path(args.runtime_env_file))["ODP_SCHEDULED_INGESTION_TENANT_ID"]
+            payload["app_audience"] = os.environ["ODP_AUTH_AUDIENCES"].split(",", 1)[0].strip()
+            if not payload["app_audience"]:
+                raise ValueError("production smoke requires an application token audience")
+            environment.update({
+                name: os.environ.get(name, "") for name in ("ODP_OPERATOR_SMOKE_ROLE", "ODP_OPERATOR_SMOKE_SUBJECT")
+            })
+        environment["ODP_PRIVATE_SMOKE_INPUT"] = json.dumps(payload)
+        _write_report(args.output, environment)
+    except (KeyError, OSError, TypeError, ValueError):
+        print("Private smoke Job input could not be built.", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _run_private_release_smoke_job() -> int:
+    """Run the existing privacy and smoke checks with the Job's own credentials."""
+    web_token_env = "ODP_WEB_CANDIDATE_INVOKER_TOKEN"
+    operator_token_env = "ODP_OPERATOR_SMOKE_BEARER_TOKEN"
+    env = os.environ.copy()
+    prior_tokens = {key: env.get(key) for key in (API_INVOKER_TOKEN_ENV, web_token_env, operator_token_env)}
+    try:
+        payload = json.loads(env["ODP_PRIVATE_SMOKE_INPUT"])
+        args = payload["args"]
+        phase = args[0]
+        if phase not in {"smoke", "compatibility-smoke"}:
+            raise ValueError("unsupported private smoke phase")
+        options = dict(zip(args[1::2], args[2::2], strict=True))
+        api_url, web_url = options["--api-url"], options["--web-url"]
+        api_audience, web_audience = payload["api_audience"], payload["web_audience"]
+        # Tokens must only travel to Cloud Run. The URLs and stable audiences
+        # come from the deployer's service and tag readbacks.
+        if not all(
+            re.fullmatch(r"https://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?[.])+run[.]app", origin)
+            for origin in (api_url, web_url, api_audience, web_audience or web_url)
+        ):
+            raise ValueError("invalid private smoke Cloud Run origin")
+        job, execution = env["CLOUD_RUN_JOB"], env["CLOUD_RUN_EXECUTION"]
+        release_sha, digest = env["ODAY_RELEASE_SHA"], env["ODP_RELEASE_MANIFEST_DIGEST"]
+        if not job or not execution or not SHA_PATTERN.fullmatch(release_sha) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            raise ValueError("missing private smoke execution binding")
+        env[API_INVOKER_TOKEN_ENV] = _cloud_run_job_identity_token(api_audience)
+        env[web_token_env] = _cloud_run_job_identity_token(web_audience) if web_audience else ""
+        env[operator_token_env] = _cloud_run_job_identity_token(payload["app_audience"]) if phase == "smoke" else ""
+        # Reuse the current transport guards. They check anonymous admission
+        # separately from the authenticated request and wait for IAM propagation.
+        transport = subprocess.run(
+            [
+                "bash", "-c",
+                'source "$1" && wait_for_private_api_invoker "$2" "$ODP_API_INVOKER_TOKEN"'
+                ' && { [ -z "$ODP_WEB_CANDIDATE_INVOKER_TOKEN" ] ||'
+                ' wait_for_private_candidate_invoker "$3" "$ODP_WEB_CANDIDATE_INVOKER_TOKEN"; }',
+                "release-smoke", str(ROOT / "product_ops/deployment/cloud_run_release_traffic.sh"),
+                api_url, web_url,
+            ],
+            env=env,
+            check=False,
+        )
+        if transport.returncode:
+            return 1
+        with tempfile.TemporaryDirectory() as scratch:
+            directory = Path(scratch)
+            output = directory / "report.json"
+            invocation = [*args, "--output", str(output)]
+            if phase == "smoke":
+                runtime_env = directory / "runtime-tenant.json"
+                runtime_env.write_text(json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": payload["tenant"]}))
+                invocation.extend(("--runtime-env-file", str(runtime_env)))
+            for name in prior_tokens:
+                os.environ[name] = env[name]
+            if main(invocation):
+                return 1
+            receipt = {
+                "receipt_kind": PRIVATE_SMOKE_RECEIPT_KIND, "schema_version": 1,
+                "job": job, "execution": execution, "release_sha": release_sha,
+                "manifest_digest": digest, "phase": phase, "report": _read_json_object(output),
+            }
+            message = json.dumps(receipt, separators=(",", ":"))
+            if len(message.encode()) > 200_000:
+                raise ValueError("private smoke receipt exceeds logging size limit")
+            print(message, flush=True)
+        return 0
+    except (KeyError, OSError, TypeError, ValueError, IndexError):
+        print("Private smoke Job failed to establish its input, identity or receipt.", file=sys.stderr)
+        return 1
+    finally:
+        for key, value in prior_tokens.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def _private_smoke_report(
+    entries: list[dict[str, Any]], *, job: str, execution: str, release_sha: str,
+    manifest_digest: str, phase: str, correlation_id: str,
+) -> dict[str, Any] | None:
+    receipts = [
+        payload for entry in entries
+        if isinstance(payload := entry.get("jsonPayload"), dict)
+        and payload.get("receipt_kind") == PRIVATE_SMOKE_RECEIPT_KIND
+    ]
+    if not receipts:
+        return None
+    expected = {
+        "schema_version": 1, "job": job, "execution": execution, "release_sha": release_sha,
+        "manifest_digest": manifest_digest, "phase": phase,
+    }
+    if len(receipts) != 1 or any(receipts[0].get(key) != value for key, value in expected.items()):
+        raise ValueError("ambiguous or mismatched private smoke Job receipt")
+    report = receipts[0].get("report")
+    if (
+        not isinstance(report, dict) or report.get("ok") is not True
+        or report.get("secret_values_redacted") is not True
+        or report.get("correlation_id") != correlation_id
+        or phase == "smoke" and report.get("expected_sha") != release_sha
+    ):
+        raise ValueError("private smoke Job did not supply the expected passing report")
+    return report
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    private_input = subparsers.add_parser("private-smoke-input")
+    private_input.add_argument("--api-audience", required=True)
+    private_input.add_argument("--web-audience", default="")
+    private_input.add_argument("--runtime-env-file", default="")
+    private_input.add_argument("--output", type=Path, required=True)
+    private_input.add_argument("probe_args", nargs=argparse.REMAINDER)
+    subparsers.add_parser("private-smoke-job")
+
+    receipt = subparsers.add_parser("private-smoke-receipt")
+    for field in ("job", "execution", "release-sha", "manifest-digest", "phase", "correlation-id"):
+        receipt.add_argument(f"--{field}", required=True)
+    receipt.add_argument("--logs", type=Path, required=True)
+    receipt.add_argument("--output", type=Path, required=True)
 
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("--environment", required=True)
@@ -4729,7 +4897,25 @@ def main() -> int:
     resolve_execution.add_argument("--executions", required=True, type=Path)
     resolve_execution.add_argument("--job")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.command == "private-smoke-input":
+        return _write_private_smoke_input(args)
+    if args.command == "private-smoke-job":
+        return _run_private_release_smoke_job()
+    if args.command == "private-smoke-receipt":
+        try:
+            report = _private_smoke_report(
+                json.loads(args.logs.read_text(encoding="utf-8")), job=args.job,
+                execution=args.execution, release_sha=args.release_sha,
+                manifest_digest=args.manifest_digest, phase=args.phase, correlation_id=args.correlation_id,
+            )
+            if report is None:
+                return 3  # Retry only when Cloud Logging has not received the receipt.
+            _write_report(args.output, report)
+        except (OSError, TypeError, ValueError, AttributeError):
+            print("Private smoke Job receipt failed validation.", file=sys.stderr)
+            return 1
+        return 0
     if args.command == "resolve-latest-execution":
         try:
             payload = json.loads(args.executions.read_text(encoding="utf-8"))

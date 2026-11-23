@@ -18,6 +18,11 @@ output "staging_web_service_name" {
   description = "Release-scoped staging Web Cloud Run service name."
 }
 
+output "staging_web_network_endpoint_group" {
+  value       = google_compute_region_network_endpoint_group.staging_web.name
+  description = "Release-scoped serverless NEG staging_lifecycle.py attaches to the persistent console-staging load balancer."
+}
+
 output "staging_database_name" {
   value       = google_sql_database.staging.name
   description = "Release-scoped staging database name."
@@ -86,6 +91,22 @@ output "staging_migration_job_name" {
 output "staging_worker_job_name" {
   value       = google_cloud_run_v2_job.staging_worker.name
   description = "Release-scoped worker Cloud Run Job name."
+}
+
+output "staging_admin_bootstrap_job_name" {
+  value       = google_cloud_run_v2_job.staging_admin_bootstrap.name
+  description = "Release-scoped first-administrator bootstrap Cloud Run Job name."
+}
+
+output "staging_admin_account" {
+  value = {
+    username        = local.admin_username
+    initial_secret  = google_secret_manager_secret.staging_admin_initial.secret_id
+    initial_version = google_secret_manager_secret_version.staging_admin_initial.version
+    sign_in_secret  = google_secret_manager_secret.staging_admin_sign_in.secret_id
+    sign_in_version = google_secret_manager_secret_version.staging_admin_sign_in.version
+  }
+  description = "Release-scoped sign-in account for the live E2E gate: its username and the pinned Secret Manager versions of its credentials (names only, never values)."
 }
 
 output "staging_scheduler_job_name" {

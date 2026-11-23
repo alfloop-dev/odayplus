@@ -46,28 +46,40 @@ variable "labels" {
   default     = {}
 }
 
-variable "api_image" {
+variable "release_profile" {
   type        = string
-  description = "API container image. Production requires an immutable sha256 digest."
+  description = "Release profile of the admitted manifest (ODP-CORE-OPS-RELEASE-PROFILE-001), as in modules/ephemeral_staging. 'full' holds production to the approved-model contract (remote HTTPS MLflow, complete AVM/forecast approval metadata, real artifact digest and URI). 'core-ops' serves no model, so only the forecast engine/model the runtime requires stay mandatory; model values are never filled with placeholders. No default, so a missing profile fails closed."
 
   validation {
-    condition = (
-      length(trimspace(var.api_image)) > 0
-      && !can(regex("(?i)(:latest|replace_with|placeholder|changeme)", var.api_image))
-    )
+    condition     = can(regex("^(full|core-ops)$", var.release_profile))
+    error_message = "release_profile must be full or core-ops."
+  }
+}
+
+variable "cloud_run_services_managed" {
+  type        = bool
+  description = "Whether this root stack creates and owns the API and Web Cloud Run services (cloud_run.tf) and their service-scoped invoker bindings. Set false where the Runtime Release deploy path (product_ops/deployment/deploy_cloud_run_waji.sh via .github/workflows/deploy-dev.yml) owns them -- production, by owner decision 2026-11-20 -- so a normal full apply creates no Cloud Run service. The load balancer NEGs and monitoring always name the services by local.api_service_name / local.web_service_name."
+  default     = true
+}
+
+variable "api_image" {
+  type        = string
+  description = "API container image of the Terraform-owned Cloud Run API. Required when cloud_run_services_managed is true; production requires an immutable sha256 digest."
+  default     = ""
+
+  validation {
+    condition     = !can(regex("(?i)(:latest|replace_with|placeholder|changeme)", var.api_image))
     error_message = "api_image must be explicit and must not use latest or placeholder values."
   }
 }
 
 variable "web_image" {
   type        = string
-  description = "Web container image. Production requires an immutable sha256 digest."
+  description = "Web container image of the Terraform-owned Cloud Run Web. Required when cloud_run_services_managed is true; production requires an immutable sha256 digest."
+  default     = ""
 
   validation {
-    condition = (
-      length(trimspace(var.web_image)) > 0
-      && !can(regex("(?i)(:latest|replace_with|placeholder|changeme)", var.web_image))
-    )
+    condition     = !can(regex("(?i)(:latest|replace_with|placeholder|changeme)", var.web_image))
     error_message = "web_image must be explicit and must not use latest or placeholder values."
   }
 }
@@ -86,6 +98,23 @@ variable "web_base_url" {
   type        = string
   description = "Public HTTPS origin used for OIDC redirects and secure web-session cookies."
   default     = ""
+}
+
+variable "web_load_balancer_enabled" {
+  type        = bool
+  description = "Serve web_base_url (and api_public_host, when set) through the environment's persistent global external HTTPS Application Load Balancer: reserved static IP, Google-managed certificate and serverless NEG backends (load_balancer.tf). DNS A records for the hosts are added at the external registrar and must point at the web_load_balancer_ip output. Production requires it."
+  default     = false
+}
+
+variable "api_public_host" {
+  type        = string
+  description = "Bare host name the load balancer routes to the IAM-only API (for example the host of ODP_PROD_API_URL). The API ingress is internal-and-load-balancer only, so this is the only external path the production live E2E gate and the API uptime check can use. Empty routes no API host. Staging must leave it empty: its API is release-scoped."
+  default     = ""
+
+  validation {
+    condition     = var.api_public_host == "" || can(regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", var.api_public_host))
+    error_message = "api_public_host must be empty or a bare lowercase DNS host name without scheme, port, or path."
+  }
 }
 
 variable "web_oidc_client_id" {
@@ -224,7 +253,7 @@ variable "cloud_sql_tier" {
 
 variable "cloud_sql_instance_name" {
   type        = string
-  description = "Optional explicit Cloud SQL instance name for a staging foundation migration. Empty preserves the existing environment-derived name."
+  description = "Optional explicit Cloud SQL instance name for a staging foundation migration. Empty preserves the existing environment-derived name. Production must set it: the derived name oday-prod-sql belongs to the hand-made instance this stack must neither import nor manage."
   default     = ""
 
   validation {

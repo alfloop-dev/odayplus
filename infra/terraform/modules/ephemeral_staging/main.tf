@@ -10,6 +10,11 @@
 #   - Dedicated service accounts with minimal IAM
 #   - Release-scoped Pub/Sub messaging (jobs + DLQ) with CMEK encryption
 #   - Release-scoped Cloud Run services (API + Web)
+#   - A serverless NEG for the Web, attached to the persistent
+#     console-staging load balancer by staging_lifecycle.py
+#   - Release-owned local identity JWT signing key for human password login
+#   - A release-scoped first administrator (bootstrap job + two generated
+#     secrets) the live E2E gate signs in as through the password form
 #   - Cloud Scheduler trigger starting paused
 #   - Label-capable resources tagged with owner/created_at/expires_at labels;
 #     unsupported child resources tracked by the release ownership manifest
@@ -56,13 +61,15 @@ locals {
   owner_label    = length(local.owner_clean) <= 63 ? local.owner_clean : "${substr(local.owner_clean, 0, 54)}-${substr(sha256(var.owner_task_id), 0, 8)}"
 
   # Release-scoped tenant isolation.
-  # The derived tenant is bounded to 63 characters ("tenant-" + 47 slug + "-" +
-  # 8 hash) so it satisfies the tenant_id validation on a rerun and can be used
-  # as a label value verbatim. staging_lifecycle.derive_release_tenant_id
-  # computes the identical value, which is what the generated tfvars pass back
-  # in; a null or empty var.tenant_id must resolve to the same tenant.
-  tenant_slug    = length(local.release_clean) > 0 ? local.release_clean : "rel"
-  tenant_derived = "tenant-${length(local.tenant_slug) <= 47 ? local.tenant_slug : trim(substr(local.tenant_slug, 0, 47), "-")}-${local.release_hash}"
+  # The runtime stores tenant_id in PostgreSQL UUID columns, so the derived
+  # tenant is the RFC 4122 UUIDv5 of "oday-plus:ephemeral-staging:tenant:" +
+  # the raw release_id in the URL namespace (6ba7b811-9dad-11d1-80b4-00c04fd430c8).
+  # staging_lifecycle.derive_release_tenant_id computes the identical value,
+  # which is what the generated tfvars pass back in; a null or empty
+  # var.tenant_id must resolve to the same tenant. An explicit tenant_id
+  # (including the earlier "tenant-<slug>-<hash>" form recorded in existing
+  # release tfvars) still wins, so cleanup and hold of those releases plan as before.
+  tenant_derived = uuidv5("url", "oday-plus:ephemeral-staging:tenant:${var.release_id}")
   tenant_id      = try(length(var.tenant_id) > 0, false) ? var.tenant_id : local.tenant_derived
   tenant_clean   = trim(replace(lower(local.tenant_id), "/[^a-z0-9_-]/", "-"), "-")
   tenant_label   = length(local.tenant_clean) <= 63 ? local.tenant_clean : "${substr(local.tenant_clean, 0, 54)}-${substr(sha256(local.tenant_id), 0, 8)}"
@@ -93,6 +100,8 @@ locals {
   migration_job_name = "${local.name_prefix}-migration"
   worker_job_name    = "${local.name_prefix}-worker"
   scheduler_job_name = "${local.name_prefix}-scheduler"
+  # Max 37 + 16 = 53 chars (Cloud Run job names stop at 63).
+  admin_bootstrap_job_name = "${local.name_prefix}-admin-bootstrap"
 
   # ODP-CORE-OPS-STAGING-LIVE-GATE-001: the staging smoke principal for the
   # live E2E gate is this release's own runtime service account. The API
@@ -103,6 +112,26 @@ locals {
   # (STAGING_SMOKE_TOKEN_AUDIENCE_PREFIX, STAGING_SMOKE_ROLES).
   smoke_token_audience = "urn:odp:staging-smoke:${local.release_label}"
   smoke_roles          = ["operations_manager", "model_owner", "data_owner"]
+
+  # ODP-STAGING-PASSWORD-RUNTIME-WIRING-261114: human password login uses the
+  # existing Web password -> durable identity/session/throttle -> local JWT ->
+  # API AuthenticationBoundary chain, with the same local issuer the root stack
+  # uses. The audience is bound to this release and is distinct from the smoke
+  # audience, so a local user token is never a service token and vice versa.
+  # The HMAC key is a release-owned secret (staging_identity_token_signing_key)
+  # created and destroyed with this release; no dev/prod key cohort is read.
+  local_identity_issuer   = "urn:odp:identity:local"
+  local_identity_audience = "urn:odp:staging-identity:${local.release_label}"
+
+  # ODP-EPHEMERAL-STAGING-ROLLOUT-001: the release-scoped password sign-in
+  # account the live E2E gate signs in as (staging_lifecycle.py reads the
+  # username from the staging_admin_account output). It exists only in this
+  # release's database. No mail is ever sent to the address. The bootstrap
+  # secret may live at most 72 hours (shared.identity.bootstrap) and never
+  # outlives the release.
+  admin_username             = "staging-admin"
+  admin_email                = "staging-admin@console-staging.oday-plus.com.tw"
+  admin_bootstrap_expires_at = timeadd(local.created_at, "${min(var.ttl_hours, 72)}h")
 
   # Immutable creation and expiration timestamps (ensures applies do not refresh TTL).
   # created_at is deliberately a required input. Terraform cannot safely invent
@@ -159,9 +188,11 @@ resource "terraform_data" "staging_ownership" {
       name_prefix          = local.name_prefix
       api_service          = "${local.name_prefix}-api"
       web_service          = "${local.name_prefix}-web"
+      web_neg              = "${local.name_prefix}-web-neg"
       migration_job        = local.migration_job_name
       worker_job           = local.worker_job_name
       scheduler_job        = local.scheduler_job_name
+      admin_bootstrap      = local.admin_bootstrap_job_name
       api_image            = var.api_image
       web_image            = var.web_image
       worker_image         = var.worker_image
@@ -413,6 +444,37 @@ resource "google_cloud_run_v2_service_iam_member" "staging_runtime_invokes_web" 
   member   = "serviceAccount:${google_service_account.staging_runtime.email}"
 }
 
+# --- Custom domain (console-staging.oday-plus.com.tw) ---
+#
+# The staging foundation owns the persistent global external HTTPS load
+# balancer, static IP and managed certificate (infra/terraform/load_balancer.tf).
+# A load balancer forwards browser requests without a Cloud Run identity
+# token, so the Web -- and only the Web -- is publicly invocable, as the
+# production Web is (its web_invoker_members is public). Its application
+# routes stay behind the password sign-in session; the API stays IAM-only.
+resource "google_cloud_run_v2_service_iam_member" "staging_web_public" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.staging_web.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+# The release owns only its serverless NEG. staging_lifecycle.py attaches it to
+# the foundation backend service in the web_custom_domain verify stage and
+# detaches it before this state is destroyed (a NEG still in use cannot be
+# deleted). NEGs carry no labels; the ownership manifest records it.
+resource "google_compute_region_network_endpoint_group" "staging_web" {
+  project               = var.project_id
+  name                  = "${local.name_prefix}-web-neg"
+  region                = var.region
+  network_endpoint_type = "SERVERLESS"
+
+  cloud_run {
+    service = google_cloud_run_v2_service.staging_web.name
+  }
+}
+
 # --- Pub/Sub Messaging ---
 
 resource "google_pubsub_topic" "staging_jobs" {
@@ -551,6 +613,147 @@ resource "google_secret_manager_secret_version" "staging_web_session" {
 resource "google_secret_manager_secret_iam_member" "staging_web_session" {
   project   = var.project_id
   secret_id = google_secret_manager_secret.staging_web_session.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.staging_web.email}"
+}
+
+# Release-owned local identity JWT signing key (ODP_IDENTITY_TOKEN_SIGNING_KEY).
+# The Web signs the application JWT with it after a durable password session
+# is created and the API verifies it; nothing else mounts it. It is separate
+# from the Web session seal and from the intake cursor key.
+resource "random_password" "staging_identity_token_signing_key" {
+  length  = 64
+  special = false
+}
+
+resource "google_secret_manager_secret" "staging_identity_token_signing_key" {
+  project   = var.project_id
+  secret_id = "${local.name_prefix}-identity-signing-key"
+
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+
+  labels = local.resource_labels
+}
+
+resource "google_secret_manager_secret_version" "staging_identity_token_signing_key" {
+  secret      = google_secret_manager_secret.staging_identity_token_signing_key.id
+  secret_data = random_password.staging_identity_token_signing_key.result
+
+  depends_on = [terraform_data.staging_ownership]
+}
+
+# Verifier side: the API runs as the release runtime account.
+resource "google_secret_manager_secret_iam_member" "staging_runtime_identity_signing_key" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.staging_identity_token_signing_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.staging_runtime.email}"
+}
+
+# Signer side: the Web BFF mints the local JWT after password login.
+resource "google_secret_manager_secret_iam_member" "staging_web_identity_signing_key" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.staging_identity_token_signing_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.staging_web.email}"
+}
+
+# --- Release-scoped password sign-in account (live E2E gate) ---
+#
+# ODP-EPHEMERAL-STAGING-ROLLOUT-001: password sign-in is the only human sign-in
+# on staging (Google user OAuth is off, D15), so every release proves it with
+# an account that exists only in this release's database. The account is the
+# first platform_admin, created by the product's own deployment bootstrap
+# (python -m shared.identity.bootstrap) from a release-generated one-time
+# secret; the live gate then rotates it to the release-generated sign-in
+# password through the Web first-login flow. Both values are random per
+# release, live only in this state and these two release-owned secrets, and
+# are destroyed with the release (and with its database). Nothing comes from
+# a dev credential or from a caller variable.
+resource "random_password" "staging_admin_initial" {
+  length  = 40
+  special = false
+}
+
+resource "google_secret_manager_secret" "staging_admin_initial" {
+  project   = var.project_id
+  secret_id = "${local.name_prefix}-admin-initial"
+
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+
+  labels = local.resource_labels
+}
+
+resource "google_secret_manager_secret_version" "staging_admin_initial" {
+  secret      = google_secret_manager_secret.staging_admin_initial.id
+  secret_data = random_password.staging_admin_initial.result
+
+  depends_on = [terraform_data.staging_ownership]
+}
+
+# The bootstrap job (release runtime account) is the only workload that reads
+# the one-time secret; the verify deployer also reads it, with its existing
+# project-level Secret Manager role, to drive the first-login rotation.
+resource "google_secret_manager_secret_iam_member" "staging_runtime_admin_initial" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.staging_admin_initial.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.staging_runtime.email}"
+}
+
+# The operational sign-in password. No workload mounts it: only the verify
+# deployer reads it, in memory, to sign in through the Web.
+resource "random_password" "staging_admin_sign_in" {
+  length  = 40
+  special = false
+}
+
+resource "google_secret_manager_secret" "staging_admin_sign_in" {
+  project   = var.project_id
+  secret_id = "${local.name_prefix}-admin-sign-in"
+
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+
+  labels = local.resource_labels
+}
+
+resource "google_secret_manager_secret_version" "staging_admin_sign_in" {
+  secret      = google_secret_manager_secret.staging_admin_sign_in.id
+  secret_data = random_password.staging_admin_sign_in.result
+
+  depends_on = [terraform_data.staging_ownership]
+}
+
+# The Web identity, session and login-throttle stores are the existing durable
+# Postgres stores; they read this release's database URL (same database as the
+# API, as in the root stack) through the Cloud SQL connector.
+resource "google_project_iam_member" "staging_web_cloudsql" {
+  project = var.project_id
+  role    = "roles/cloudsql.client"
+  member  = "serviceAccount:${google_service_account.staging_web.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "staging_web_db_url" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.staging_database_url.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.staging_web.email}"
 }
@@ -732,6 +935,29 @@ resource "google_cloud_run_v2_service" "staging_api" {
           }
         }
       }
+      # Human password login (local JWT) verifier inputs; password-first mode,
+      # Google user OAuth stays off (D15).
+      env {
+        name  = "ODP_AUTH_MODE"
+        value = "local"
+      }
+      env {
+        name  = "ODP_AUTH_LOCAL_ISSUER"
+        value = local.local_identity_issuer
+      }
+      env {
+        name  = "ODP_AUTH_LOCAL_AUDIENCES"
+        value = local.local_identity_audience
+      }
+      env {
+        name = "ODP_IDENTITY_TOKEN_SIGNING_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.staging_identity_token_signing_key.secret_id
+            version = google_secret_manager_secret_version.staging_identity_token_signing_key.version
+          }
+        }
+      }
 
       startup_probe {
         initial_delay_seconds = 5
@@ -765,8 +991,10 @@ resource "google_cloud_run_v2_service" "staging_api" {
     google_project_iam_member.staging_runtime_cloudsql,
     google_secret_manager_secret_iam_member.staging_runtime_db_url,
     google_secret_manager_secret_iam_member.staging_runtime_cursor_key,
+    google_secret_manager_secret_iam_member.staging_runtime_identity_signing_key,
     google_secret_manager_secret_version.staging_database_url,
     google_secret_manager_secret_version.staging_cursor_signing_key,
+    google_secret_manager_secret_version.staging_identity_token_signing_key,
     google_storage_bucket_iam_member.staging_runtime_data,
   ]
 }
@@ -798,6 +1026,13 @@ resource "google_cloud_run_v2_service" "staging_web" {
       egress = "ALL_TRAFFIC"
     }
 
+    volumes {
+      name = "cloudsql"
+      cloud_sql_instance {
+        instances = [var.cloud_sql_connection_name]
+      }
+    }
+
     containers {
       image = var.web_image
 
@@ -813,6 +1048,11 @@ resource "google_cloud_run_v2_service" "staging_web" {
         }
         cpu_idle          = true
         startup_cpu_boost = true
+      }
+
+      volume_mounts {
+        name       = "cloudsql"
+        mount_path = "/cloudsql"
       }
 
       env {
@@ -860,6 +1100,52 @@ resource "google_cloud_run_v2_service" "staging_web" {
           }
         }
       }
+      # Human password login: the existing durable identity/session/throttle
+      # stores (database URL) and the local JWT signer (issuer, audience, key)
+      # that the API above verifies. Password-first; Google user OAuth is off
+      # (D15) and production mode never trusts legacy identity headers.
+      env {
+        name  = "ODP_AUTH_MODE"
+        value = "local"
+      }
+      env {
+        name  = "ODP_AUTH_LOCAL_ISSUER"
+        value = local.local_identity_issuer
+      }
+      env {
+        name  = "ODP_AUTH_LOCAL_AUDIENCES"
+        value = local.local_identity_audience
+      }
+      # The governed public origin users sign in at (var.web_base_url, written
+      # by staging_lifecycle.py). The login redirect and the host-only session
+      # cookie stay on that host; the app's own Host/CSRF/cookie rules are
+      # unchanged and trust no forwarded host.
+      env {
+        name  = "ODP_WEB_BASE_URL"
+        value = var.web_base_url
+      }
+      env {
+        name  = "ODP_WEB_ALLOW_LEGACY_TRUSTED_HEADERS"
+        value = "false"
+      }
+      env {
+        name = "ODAY_DATABASE_URL"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.staging_database_url.secret_id
+            version = google_secret_manager_secret_version.staging_database_url.version
+          }
+        }
+      }
+      env {
+        name = "ODP_IDENTITY_TOKEN_SIGNING_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.staging_identity_token_signing_key.secret_id
+            version = google_secret_manager_secret_version.staging_identity_token_signing_key.version
+          }
+        }
+      }
 
       startup_probe {
         initial_delay_seconds = 2
@@ -872,16 +1158,10 @@ resource "google_cloud_run_v2_service" "staging_web" {
         }
       }
 
-      liveness_probe {
-        initial_delay_seconds = 30
-        timeout_seconds       = 3
-        period_seconds        = 30
-        failure_threshold     = 3
-
-        tcp_socket {
-          port = 3000
-        }
-      }
+      # No liveness probe: Cloud Run rejects a TCP socket liveness probe
+      # (CreateService INVALID_ARGUMENT, staging deploy 43566488597) and the
+      # Web serves no health path for an HTTP one. This matches the live dev
+      # oday-web service, which runs with the TCP startup probe only.
     }
   }
 
@@ -889,9 +1169,23 @@ resource "google_cloud_run_v2_service" "staging_web" {
 
   depends_on = [
     google_cloud_run_v2_service_iam_member.staging_web_invokes_api,
+    google_project_iam_member.staging_web_cloudsql,
     google_secret_manager_secret_iam_member.staging_web_session,
+    google_secret_manager_secret_iam_member.staging_web_db_url,
+    google_secret_manager_secret_iam_member.staging_web_identity_signing_key,
     google_secret_manager_secret_version.staging_web_session,
+    google_secret_manager_secret_version.staging_database_url,
+    google_secret_manager_secret_version.staging_identity_token_signing_key,
   ]
+
+  lifecycle {
+    # Terraform does not evaluate this for a destroy, so a release recorded
+    # before web_base_url existed can still be cleaned up.
+    precondition {
+      condition     = var.web_base_url != null
+      error_message = "web_base_url is required: the staging Web password sign-in flow needs its governed public origin (ODP_WEB_BASE_URL)."
+    }
+  }
 }
 
 # --- Cloud Scheduler Trigger (Starts Paused) ---
@@ -1251,5 +1545,110 @@ resource "google_cloud_run_v2_job" "staging_scheduler" {
     google_project_iam_member.staging_runtime_cloudsql,
     google_secret_manager_secret_iam_member.staging_runtime_db_url,
     google_secret_manager_secret_version.staging_database_url,
+  ]
+}
+
+# The product's deployment-only first-administrator bootstrap, run once by the
+# live_e2e_gate verify stage before the gate signs in. It is a no-op when an
+# active account already exists (a verify rerun), never resets a password and
+# writes the identity.account.bootstrap audit event in the same transaction.
+resource "google_cloud_run_v2_job" "staging_admin_bootstrap" {
+  project  = var.project_id
+  name     = local.admin_bootstrap_job_name
+  location = var.region
+  labels   = merge(local.resource_labels, { "oday-runtime" = "admin-bootstrap" })
+
+  template {
+    template {
+      service_account = google_service_account.staging_runtime.email
+      timeout         = "300s"
+      max_retries     = 0
+
+      vpc_access {
+        network_interfaces {
+          network    = var.network_name
+          subnetwork = var.subnetwork_name
+        }
+        # Jobs use the same controlled VPC egress policy as the services.
+        egress = "ALL_TRAFFIC"
+      }
+
+      volumes {
+        name = "cloudsql"
+        cloud_sql_instance {
+          instances = [var.cloud_sql_connection_name]
+        }
+      }
+
+      containers {
+        image   = var.worker_image
+        command = ["python"]
+        args    = ["-m", "shared.identity.bootstrap"]
+
+        volume_mounts {
+          name       = "cloudsql"
+          mount_path = "/cloudsql"
+        }
+
+        env {
+          name  = "ODAY_RELEASE_SHA"
+          value = var.candidate_sha
+        }
+        env {
+          name  = "ODP_DEPLOY_ENV"
+          value = "staging"
+        }
+        env {
+          name  = "ODP_RELEASE_PROFILE"
+          value = var.release_profile
+        }
+        env {
+          name  = "ODP_IDENTITY_BOOTSTRAP_TENANT_ID"
+          value = local.tenant_id
+        }
+        env {
+          name  = "ODP_IDENTITY_BOOTSTRAP_USERNAME"
+          value = local.admin_username
+        }
+        env {
+          name  = "ODP_IDENTITY_BOOTSTRAP_EMAIL"
+          value = local.admin_email
+        }
+        env {
+          name  = "ODP_IDENTITY_BOOTSTRAP_DISPLAY_NAME"
+          value = "Staging release administrator"
+        }
+        env {
+          name  = "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT"
+          value = local.admin_bootstrap_expires_at
+        }
+        env {
+          name = "ODP_IDENTITY_BOOTSTRAP_SECRET"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.staging_admin_initial.secret_id
+              version = google_secret_manager_secret_version.staging_admin_initial.version
+            }
+          }
+        }
+        env {
+          name = "ODAY_DATABASE_URL"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.staging_database_url.secret_id
+              version = google_secret_manager_secret_version.staging_database_url.version
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    google_project_iam_member.staging_runtime_cloudsql,
+    google_secret_manager_secret_iam_member.staging_runtime_db_url,
+    google_secret_manager_secret_iam_member.staging_runtime_admin_initial,
+    google_secret_manager_secret_version.staging_database_url,
+    google_secret_manager_secret_version.staging_admin_initial,
   ]
 }

@@ -1,6 +1,6 @@
 output "api_uri" {
-  value       = google_cloud_run_v2_service.api.uri
-  description = "Cloud Run API URI. The service remains IAM-protected and uses internal/load-balancer ingress."
+  value       = one(google_cloud_run_v2_service.api[*].uri)
+  description = "Cloud Run API URI. The service remains IAM-protected and uses internal/load-balancer ingress. Null when cloud_run_services_managed is false."
 }
 
 output "api_service_account" {
@@ -9,8 +9,8 @@ output "api_service_account" {
 }
 
 output "web_uri" {
-  value       = google_cloud_run_v2_service.web.uri
-  description = "Cloud Run Web URI. Application routes are protected by the Web OIDC session."
+  value       = one(google_cloud_run_v2_service.web[*].uri)
+  description = "Cloud Run Web URI. Application routes are protected by the Web OIDC session. Null when cloud_run_services_managed is false."
 }
 
 output "web_service_account" {
@@ -43,9 +43,19 @@ output "audit_evidence_bucket" {
   description = "WORM-capable audit evidence bucket."
 }
 
+output "audit_worm_sink_uri" {
+  value       = module.audit_evidence.worm_sink_uri
+  description = "WORM evidence sink URI used by Runtime Release."
+}
+
 output "audit_writer_service_account" {
   value       = module.audit_evidence.writer_service_account
   description = "Append-only audit evidence writer service account."
+}
+
+output "audit_recovery_reader_service_account" {
+  value       = module.audit_evidence.recovery_reader_service_account
+  description = "Read-only recovery service account for WORM evidence."
 }
 
 output "audit_retention_manager_service_account" {
@@ -71,6 +81,16 @@ output "database_user" {
 output "database_url_secret_id" {
   value       = google_secret_manager_secret.database_url.secret_id
   description = "Secret Manager id containing ODAY_DATABASE_URL. No secret value or version payload is exposed."
+}
+
+output "database_url_secret_ref" {
+  value       = "${google_secret_manager_secret.database_url.secret_id}:${google_secret_manager_secret_version.database_url.version}"
+  description = "Pinned Secret Manager reference for the database URL used by Runtime Release."
+}
+
+output "intake_cursor_signing_key_secret_ref" {
+  description = "Pinned Secret Manager reference for the release-owned API's shared cursor signing key."
+  value       = "${google_secret_manager_secret.cursor_signing_key.secret_id}:${google_secret_manager_secret_version.cursor_signing_key.version}"
 }
 
 output "jobs_topic" {
@@ -101,4 +121,19 @@ output "runtime_network" {
 output "runtime_kms_key" {
   value       = module.runtime_foundation.kms_crypto_key_id
   description = "CMEK resource id. No key material is exposed."
+}
+
+output "web_load_balancer_ip" {
+  value       = one(google_compute_global_address.web_lb[*].address)
+  description = "Reserved static IP of the custom-domain load balancer. The registrar A record of every web_load_balancer_hosts entry must point here. Null when web_load_balancer_enabled is false."
+}
+
+output "web_load_balancer_hosts" {
+  value       = local.web_lb_enabled ? local.web_lb_domains : []
+  description = "Host names on the Google-managed certificate: the DNS A records the owner adds at the registrar."
+}
+
+output "web_load_balancer_backend_service" {
+  value       = one(google_compute_backend_service.web_lb_release[*].name)
+  description = "Staging only: the backend service staging_lifecycle.py attaches each verified release's serverless NEG to."
 }

@@ -214,7 +214,7 @@ def _segment(start_marker: str, end_marker: str, text: str | None = None) -> str
 
 API_SEGMENT_MARKERS = (
     'echo "Deploying immutable API candidate',
-    'prepare_private_api_transport "${API_SERVICE}" "${API_SERVICE_AUDIENCE}"',
+    'prepare_private_api_transport "${API_SERVICE}" "${API_SERVICE_AUDIENCE}" "${PROD_API_EXTRA_INVOKERS[@]}"\nfi',
 )
 # Web candidate deploy -> smoke -> promotion -> public invoker wait -> live E2E gate.
 WEB_SEGMENT_MARKERS = (
@@ -228,6 +228,10 @@ HARNESS = r"""
 set -euo pipefail
 source "$1"
 CLOUD_RUN_NETWORK_ARGS=(--vpc-egress=all-traffic)
+PROD_API_AUDIENCE_ARGS=()
+PROD_API_EXTRA_INVOKERS=()
+PROD_INGRESS_ARGS=()
+API_SERVICE_SECRET_BINDINGS="${API_SECRET_BINDINGS}"
 API_CANDIDATE_DESCRIPTION="$(mktemp)"
 WEB_CANDIDATE_DESCRIPTION="$(mktemp)"
 # The smoke and live E2E gate are stubbed: they record what the Web service's
@@ -1114,6 +1118,10 @@ REDEPLOY_HARNESS = r"""
 set -euo pipefail
 source "$1"
 CLOUD_RUN_NETWORK_ARGS=(--vpc-egress=all-traffic)
+PROD_API_AUDIENCE_ARGS=()
+PROD_API_EXTRA_INVOKERS=()
+PROD_INGRESS_ARGS=()
+API_SERVICE_SECRET_BINDINGS="${API_SECRET_BINDINGS}"
 SCHEDULER_TRIGGER_SNAPSHOT="$(mktemp)"
 WORKER_TRIGGER_SNAPSHOT="$(mktemp)"
 MIGRATION_CANDIDATE_JOB=oday-migrate-candidate

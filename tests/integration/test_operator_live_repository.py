@@ -25,6 +25,7 @@ from modules.forecastops.domain.forecasting import Alert, AlertLevel
 from modules.listing.domain.models import ListingDedupKey
 from modules.opsboard.application.operator_live_repository import (
     OperatorLiveRepository,
+    OperatorSectionAvailability,
     OperatorTenantScopeRequiredError,
 )
 from modules.opsboard.application.operator_state import OperatorStateService
@@ -161,6 +162,115 @@ def test_live_repository_projects_persisted_rows_and_real_kpis() -> None:
     assert envelope["meta"]["recordCounts"]["successfulTransactionNet"] == 180.50
     assert envelope["meta"]["recordCounts"]["transactions"] == 1
     assert envelope["meta"]["source"] == "operator-shell-production"
+
+
+def test_green_in_band_alerts_never_reach_active_operator_views() -> None:
+    """GREEN is the persisted in-band outcome of every scoring run, not an alert."""
+    bundle = replace(_memory_bundle(), mode="postgresql")
+    bundle.store_repository.save_store(
+        Store(
+            store_id="store-live-1",
+            tenant_id="tenant-live-1",
+            brand_id="brand-live-1",
+            store_name="Live Store",
+            store_status="open",
+        )
+    )
+    bundle.forecastops_repository.save_alert(_alert())
+    bundle.forecastops_repository.save_alert(
+        replace(
+            _alert("alert-green-1"),
+            alert_level=AlertLevel.GREEN,
+            alert_reason_code="within_expected_band",
+        )
+    )
+    repository = OperatorLiveRepository(bundle)
+    service = OperatorStateService(
+        require_live_data=True,
+        persistence_mode="postgresql",
+        provider_mode="live",
+        live_repository=repository,
+    )
+
+    envelope = service.get_today(role_id="ops-lead", tenant_id="tenant-live-1")
+
+    assert [item["id"] for item in envelope["workQueue"]] == ["alert-live-1"]
+    assert [item["id"] for item in envelope["notifications"]] == [
+        "notification-alert-live-1"
+    ]
+    assert [item["id"] for item in envelope["today"]["riskRows"]] == [
+        "risk-alert-live-1"
+    ]
+    task_ids = [
+        record["taskId"]
+        for record in repository.load_state(tenant_id="tenant-live-1")[
+            "taskCenterRecords"
+        ]["records"]
+    ]
+    assert "forecastops.alert:alert-live-1" in task_ids
+    assert "forecastops.alert:alert-green-1" not in task_ids
+
+
+def test_risk_rows_follow_the_today_rail_contract_without_a_fabricated_score() -> None:
+    bundle = replace(_memory_bundle(), mode="postgresql")
+    bundle.store_repository.save_store(
+        Store(
+            store_id="store-live-1",
+            tenant_id="tenant-live-1",
+            brand_id="brand-live-1",
+            store_name="Live Store",
+            store_status="open",
+        )
+    )
+    bundle.forecastops_repository.save_alert(
+        replace(
+            _alert(),
+            alert_reason_code="sitescore_gap",
+            evidence_json={"sitescore_gap_ratio": -0.42},
+        )
+    )
+    service = OperatorStateService(
+        require_live_data=True,
+        persistence_mode="postgresql",
+        provider_mode="live",
+        live_repository=OperatorLiveRepository(bundle),
+    )
+
+    rows = service.get_today(role_id="ops-lead", tenant_id="tenant-live-1")["today"]["riskRows"]
+
+    assert rows == [
+        {
+            "id": "risk-alert-live-1",
+            "storeId": "store-live-1",
+            "label": "Live Store",
+            "score": None,
+            "signal": "ForecastOps 紅燈・營收較 SiteScore 基準 -42%",
+            "tone": "danger",
+        }
+    ]
+
+
+def test_risk_rows_label_interventions_by_store_and_fall_back_to_reason_and_id() -> None:
+    projector = OperatorLiveRepository(SimpleNamespace(mode="memory"))
+    available = OperatorSectionAvailability("available", "test", 1)
+    rows, availability = projector._project_risk_rows(
+        [{"store_id": "store-a", "store_name": "Store A"}],
+        [{"intervention_id": "int-1", "store_id": "store-a", "kind": "PRICING",
+          "status": "PENDING_APPROVAL"}],
+        [{"alert_id": "alert-y", "store_id": "store-unknown", "status": "open",
+          "alert_level": "yellow", "alert_reason_code": "data_quality_stale",
+          "evidence_json": {}}],
+        {"stores": available, "interventions": available, "forecastAlerts": available},
+    )
+    assert availability.state == "available"
+    by_id = {row["id"]: row for row in rows}
+    assert by_id["risk-alert-y"]["label"] == "store-unknown"
+    assert by_id["risk-alert-y"]["signal"] == "ForecastOps 黃燈・data_quality_stale"
+    assert by_id["risk-alert-y"]["tone"] == "warning"
+    assert by_id["risk-int-1"]["label"] == "Store A"
+    assert by_id["risk-int-1"]["signal"] == "PRICING intervention"
+    assert by_id["risk-int-1"]["tone"] == "warning"
+    assert all(row["score"] is None for row in rows)
 
 
 def test_live_repository_reads_rows_after_process_restart(tmp_path: Any) -> None:

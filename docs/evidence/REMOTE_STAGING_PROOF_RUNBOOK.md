@@ -37,6 +37,7 @@ Do not commit secret values.
 | `ODP_STAGING_API_URL` | variable | Platform/Ops | Base API URL used by smoke checks. |
 | `ODP_STAGING_HOST` | variable | Platform/Ops | Remote host or orchestrator target for deployment. |
 | `ODP_STAGING_SECRET_OWNER` | variable | Platform/Ops | Human/team accountable for secret rotation and access review. |
+| `ODP_STAGING_OPERATOR_IDENTITY` | variable | Platform/Ops | Release-scoped staging service account the checker mints its API identity token for (IAM Credentials `generateIdToken`, the same path as the rehearsal verification). The caller needs `roles/iam.serviceAccountOpenIdTokenCreator` on it. Runtime Release sets it from the release Terraform output `staging_runtime_service_account`. |
 | `ODP_STAGING_DEPLOY_USER` | secret | Platform/Ops | Remote deploy user, if SSH/host deployment is used. |
 | `ODP_STAGING_SSH_PRIVATE_KEY` | secret | Platform/Ops | Remote deployment key, if SSH/host deployment is used. |
 | `ODP_STAGING_DATABASE_URL` | secret | Platform/Ops | Staging database connection string. |
@@ -69,6 +70,7 @@ gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
 export ODP_STAGING_DEPLOY_URL="https://<staging-web-host>"
 export ODP_STAGING_API_URL="https://<staging-api-host>"
 export ODP_STAGING_SECRET_OWNER="<team-or-person>"
+export ODP_STAGING_OPERATOR_IDENTITY="<release-scoped-staging-service-account>"
 ```
 
 3. Run remote staging config and smoke proof.
@@ -84,6 +86,7 @@ Expected output:
 - `env:ODP_STAGING_DEPLOY_URL` is configured.
 - `env:ODP_STAGING_API_URL` is configured.
 - `env:ODP_STAGING_SECRET_OWNER` is configured.
+- `env:ODP_STAGING_OPERATOR_IDENTITY` is configured.
 - `/platform/health` returns `status=ok`.
 - `/platform/version.release_sha` equals PR #82 `headRefOid`.
 

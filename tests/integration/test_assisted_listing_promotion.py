@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json as jsonlib
+from copy import deepcopy
 from uuid import uuid4
 
 import pytest
@@ -7,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.app.routes.listings import V1ListingRepositoryAdapter
 from apps.api.oday_api.main import create_app
+from modules.external_data.application.assisted_intake import RETRIEVAL_CORPUS, parse_snapshot
 from modules.listing.application.promotion import PromotionService
 from modules.listing.domain.intake_states import (
     Actor,
@@ -15,6 +19,7 @@ from modules.listing.domain.intake_states import (
 )
 from modules.listing.domain.models import ListingDedupKey
 from modules.listing.tests.test_promotion_candidate_gate import _ExplicitTestDispatcher
+from modules.opsboard.application.network_listings import IntakeIdempotencyRecord
 from shared.auth import Role
 from shared.domain import AddressLocation, Listing
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
@@ -203,14 +208,52 @@ def _synthetic_measured_listing_app():
     return app, listing, address
 
 
+def _replay_retained_promotion_intake(app, client, *, json, headers):
+    """Arrange the explicit pre-cutover URL history required by both sagas.
+
+    READY here is a retained Operator document, never native pipeline success.
+    The actual revise/promotion/review endpoints below remain under test.
+    """
+    url, actor = json["url"], headers["x-subject-id"]
+    assert url == "https://www.synthetic.example/detail-77120345.html"
+    snapshot = RETRIEVAL_CORPUS[url]
+    intake = {
+        "id": f"IN-RETAINED-PROMOTION-{uuid4()}", "tenantId": "tenant-a",
+        "owner": actor, "submitter": actor, "submittedBy": actor,
+        "originalUrl": url, "canonicalUrl": url, "heatZoneId": "HZ-01",
+        "stage": "READY", "version": 1, "intakeMethod": "URL",
+        "sourceId": "SRC-SYNTHETIC", "policy": "APPROVED_RETRIEVAL",
+        "snapshotId": snapshot.snapshot_id, "parsedFields": parse_snapshot(snapshot),
+        "matchResult": {"outcome": "NEW", "targetListingId": None,
+                        "confidence": 0.95, "contradictingSignals": []},
+        "auditEvents": [],
+    }
+    repo = app.state.operator_intake_repository
+    repo.save_intake(intake)
+    digest = hashlib.sha256(jsonlib.dumps(
+        {"url": url, "heat_zone_id": "HZ-01", "async_intake": False},
+        sort_keys=True, separators=(",", ":"), allow_nan=False,
+    ).encode()).hexdigest()
+    repo.save_idempotency_record(IntakeIdempotencyRecord(
+        action="submit_intake", key=hashlib.sha256(actor.encode()).hexdigest() + ":" + headers["Idempotency-Key"],
+        response=deepcopy(intake), actor_subject_id=actor, request_sha256=digest,
+    ))
+    before = deepcopy((repo.list_intakes(), repo.list_idempotency_records()))
+    replay = client.post("/api/v1/operator/network-listings/intake/submit", json=json, headers=headers)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["id"] == intake["id"]
+    assert (repo.list_intakes(), repo.list_idempotency_records()) == before
+    return replay
+
+
 def test_poc_promotion_retains_review_until_canonical_delivery_is_available() -> None:
     app, measured_listing, measured_address = _synthetic_measured_listing_app()
     client = TestClient(app)
 
-    # 1. Submit a listing to create a READY intake
+    # 1. Retained legacy READY history remains eligible for real decisions.
     url = "https://www.synthetic.example/detail-77120345.html"
-    submit_resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    submit_resp = _replay_retained_promotion_intake(
+        app, client,
         json={"url": url, "heatZoneId": "HZ-01"},
         headers={
             **STAFF_HEADERS,  # proposer is staff
@@ -326,10 +369,10 @@ def test_promotion_saga_segregation_of_duties() -> None:
     app, measured_listing, _ = _synthetic_measured_listing_app()
     client = TestClient(app)
 
-    # Submit intake with manager role
+    # Retained manager-submitted history must preserve self-review denial.
     url = "https://www.synthetic.example/detail-77120345.html"
-    submit_resp = client.post(
-        "/api/v1/operator/network-listings/intake/submit",
+    submit_resp = _replay_retained_promotion_intake(
+        app, client,
         json={"url": url, "heatZoneId": "HZ-01"},
         headers={
             **MANAGER_HEADERS,  # proposer is manager

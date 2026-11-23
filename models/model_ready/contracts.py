@@ -107,6 +107,9 @@ class ModelSpec:
     production_release_enabled: bool = True
     production_block_reason: str | None = None
     derived_feature_columns: tuple[str, ...] = ()
+    #: Feature columns whose combined value keeps rows in one backtest fold.
+    #: Required when rows of one entity overlap (forecast horizon windows).
+    backtest_group_columns: tuple[str, ...] = ()
 
     @property
     def required_columns(self) -> tuple[str, ...]:
@@ -178,6 +181,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         feature_columns=FORECASTOPS_MODEL_FEATURES,
         derived_feature_columns=("horizon_weeks",),
         scope_columns=("tenant_id", "store_id"),
+        backtest_group_columns=("tenant_id", "store_id"),
         minimum_rows=90,
         holdout_fraction=0.20,
         minimum_segment_rows=7,

@@ -13,6 +13,7 @@ from enum import Enum
 from hashlib import sha256
 from typing import Any
 
+from modules.forecastops.domain.forecasting import is_green_alert_level
 from modules.intervention.domain.lifecycle import TERMINAL_STATUSES
 from modules.opsboard.application.network_read_scope import (
     candidate_scope_evidence,
@@ -175,6 +176,9 @@ def build_task_center_records(sources: dict[str, Any]) -> dict[str, Any]:
         identity = _text(_value(row, "alert_id"))
         status = _text(_value(row, "status"))
         if identity is None or status is None:
+            continue
+        # GREEN records an in-band forecast, not work for anyone to do.
+        if is_green_alert_level(_value(row, "alert_level")):
             continue
         task = _base("forecastops.alert", identity, title=_text(_value(row, "alert_reason_code")) or "Forecast alert",
                      status=status, workspace="store", roles=["ops-lead", "field-lead", "pm-audit"],

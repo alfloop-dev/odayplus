@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -19,8 +19,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from product_ops.deployment.staging_lifecycle import _ROLLBACK_PROBE_TAG as ROLLBACK_PROBE_TAG
 from product_ops.deployment.staging_lifecycle import (
-    MAX_TENANT_ID_LENGTH,
     TENANT_ID_PATTERN,
     UNVERIFIABLE_STATE_PREFIX,
     ReleaseIdentityConflict,
@@ -50,6 +50,30 @@ from product_ops.deployment.staging_lifecycle import (
 )
 
 MODULE_DIR = ROOT / "infra/terraform/modules/ephemeral_staging"
+
+# RFC 4122 URL namespace and the release tenant name prefix, written out so the
+# oracle below does not reuse the implementation's constants.
+RFC4122_URL_NAMESPACE = "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
+RELEASE_TENANT_NAME_PREFIX = "oday-plus:ephemeral-staging:tenant:"
+UUID_LOWER_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+
+
+def expected_release_tenant(release_id: str) -> str:
+    """RFC 4122 section 4.3 UUIDv5, computed by hand (SHA-1, version 5, variant 10)."""
+
+    import hashlib
+
+    digest = bytearray(
+        hashlib.sha1(  # noqa: S324 - RFC 4122 name-based UUID, not a security hash
+            bytes.fromhex(RFC4122_URL_NAMESPACE.replace("-", ""))
+            + (RELEASE_TENANT_NAME_PREFIX + release_id).encode("utf-8")
+        ).digest()[:16]
+    )
+    digest[6] = (digest[6] & 0x0F) | 0x50
+    digest[8] = (digest[8] & 0x3F) | 0x80
+    raw = digest.hex()
+    return f"{raw[:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:]}"
+
 
 
 class EphemeralStagingLifecycleTests(unittest.TestCase):
@@ -166,7 +190,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertEqual(labels["managed_by"], "terraform")
         self.assertEqual(labels["ephemeral"], "true")
         self.assertEqual(labels["release_id"], f"odp-20260824-001-{rel_hash}")
-        self.assertEqual(labels["tenant"], f"tenant-odp-20260824-001-{rel_hash}")
+        self.assertEqual(labels["tenant"], "cba32f7e-2135-5b95-83b7-7daec13fc2b8")
         self.assertEqual(labels["candidate_sha"], "a" * 40)
         self.assertEqual(labels["manifest_digest_prefix"], "b" * 16)
         self.assertEqual(labels["owner_task"], "odp-ephemeral-staging-iac-001")
@@ -174,7 +198,6 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertEqual(labels["expires_at"], "2026-08-25-12-00-00")
 
     def test_tenant_isolation_explicit_and_default(self) -> None:
-        rel_hash = compute_release_hash("odp-20260824-001")
         # Default tenant derived from release_id
         labels_default = generate_staging_labels(
             release_id="odp-20260824-001",
@@ -182,7 +205,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             manifest_digest="sha256:" + "b" * 64,
             owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
         )
-        self.assertEqual(labels_default["tenant"], f"tenant-odp-20260824-001-{rel_hash}")
+        self.assertEqual(labels_default["tenant"], "cba32f7e-2135-5b95-83b7-7daec13fc2b8")
 
         # Explicit tenant passed
         labels_explicit = generate_staging_labels(
@@ -248,7 +271,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertIn("google_pubsub_topic", types)
         self.assertIn("google_pubsub_subscription", types)
         self.assertIn("google_cloud_run_v2_service", types)
-        self.assertEqual(types.count("google_cloud_run_v2_job"), 3)
+        self.assertEqual(types.count("google_cloud_run_v2_job"), 4)
         self.assertTrue(any("migration" in n for n in names))
         self.assertTrue(any("worker" in n for n in names))
         self.assertTrue(any("scheduler" in n for n in names))
@@ -1679,19 +1702,71 @@ variable "after_comment" {
 
         self.assertEqual(first, second)
         self.assertNotEqual(first, other)
-        self.assertEqual(first, f"tenant-{self.release_id}-{compute_release_hash(self.release_id)}")
+        # The value the runtime's PostgreSQL UUID tenant columns accept.
+        self.assertEqual(first, "cba32f7e-2135-5b95-83b7-7daec13fc2b8")
+        self.assertEqual(str(uuid.UUID(first)), first)
 
-    def test_derived_tenant_stays_within_module_length_limit(self) -> None:
-        long_release = "odp-" + "x" * 120
-        derived = derive_release_tenant_id(long_release)
+    def test_derived_tenant_is_lowercase_rfc4122_uuidv5_for_every_release_shape(self) -> None:
+        for release_id in (
+            self.release_id,
+            "REL_1.0",
+            "Odp.Release_2026-11-16",
+            "a.b",
+            "odp-" + "x" * 124,  # the 128-character maximum
+            "ODP_" + "Y" * 124,
+        ):
+            with self.subTest(release_id=release_id):
+                derived = derive_release_tenant_id(release_id)
+                self.assertEqual(derived, expected_release_tenant(release_id))
+                self.assertEqual(len(derived), 36)
+                self.assertRegex(derived, UUID_LOWER_PATTERN)
+                self.assertEqual(uuid.UUID(derived).version, 5)
+                self.assertIsNotNone(TENANT_ID_PATTERN.fullmatch(derived))
+                # Labels carry the tenant verbatim, no second hashing round.
+                labels = generate_staging_labels(
+                    release_id=release_id,
+                    candidate_sha="a" * 40,
+                    manifest_digest="sha256:" + "b" * 64,
+                    owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+                )
+                self.assertEqual(labels["tenant"], derived)
+        # The raw release id is hashed: case and punctuation stay distinct.
+        self.assertNotEqual(derive_release_tenant_id("REL_1.0"), derive_release_tenant_id("rel-1-0"))
+        self.assertNotEqual(
+            derive_release_tenant_id("odp-" + "x" * 124), derive_release_tenant_id("odp-" + "x" * 123 + "y")
+        )
 
-        self.assertLessEqual(len(derived), MAX_TENANT_ID_LENGTH)
-        self.assertIsNotNone(TENANT_ID_PATTERN.fullmatch(derived))
-        # Uniqueness survives truncation because the hash covers the raw release id.
-        self.assertNotEqual(derived, derive_release_tenant_id(long_release + "y"))
+    def test_blank_release_derives_no_tenant(self) -> None:
+        for release_id in ("", " ", "\t\n"):
+            with self.subTest(release_id=release_id):
+                self.assertEqual(derive_release_tenant_id(release_id), "")
 
+    def test_derived_tenant_satisfies_module_validation_for_long_release(self) -> None:
+        long_release = "odp-" + "x" * 124
         long_config = dataclasses_replace(self.config, release_id=long_release)
-        self.assertEqual(validate_tfvars_against_module(generate_tfvars(long_config), MODULE_DIR), [])
+        tfvars = generate_tfvars(long_config)
+        self.assertEqual(tfvars["tenant_id"], expected_release_tenant(long_release))
+        self.assertEqual(validate_tfvars_against_module(tfvars, MODULE_DIR), [])
+
+    def test_legacy_tenant_tfvars_still_validate_and_stay_immutable(self) -> None:
+        """Releases created before UUIDv5 recorded tenant-<slug>-<hash> explicitly."""
+        import tempfile
+
+        legacy_tenant = f"tenant-{self.release_id}-{compute_release_hash(self.release_id)}"
+        legacy = dataclasses_replace(self.config, tenant_id=legacy_tenant)
+        tfvars = generate_tfvars(legacy)
+        self.assertEqual(tfvars["tenant_id"], legacy_tenant)
+        # cleanup/hold destroy and plan with the recorded tfvars: still accepted.
+        self.assertEqual(validate_tfvars_against_module(tfvars, MODULE_DIR), [])
+        self.assertIsNotNone(TENANT_ID_PATTERN.fullmatch(legacy_tenant))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_root = Path(tmpdir)
+            (state_root / f"{self.release_id}.tfvars.json").write_text(json.dumps(tfvars), encoding="utf-8")
+            # The recorded legacy tenant passed back explicitly is the same release.
+            self.assertEqual(validate_immutable_release_identity(legacy, state_root), [])
+            # Silently re-deriving a different (UUID) tenant is a tenant change.
+            errors = validate_immutable_release_identity(self.config, state_root)
+            self.assertTrue(any("immutable tenant_id" in err for err in errors), errors)
 
     def test_tenant_resolution_is_shared_by_every_layer(self) -> None:
         derived = derive_release_tenant_id(self.release_id)
@@ -2178,6 +2253,7 @@ class ReleaseScopedAutoCleanupTests(unittest.TestCase):
     def test_fully_expired_release_is_still_cleaned_as_one_unit(self) -> None:
         """The grouping gate must not block a release that really is finished."""
         import tempfile
+        import unittest.mock as mock
 
         from product_ops.deployment.staging_lifecycle import _terraform_state_paths
 
@@ -2200,22 +2276,33 @@ class ReleaseScopedAutoCleanupTests(unittest.TestCase):
             state_root = Path(tmpdir)
             state_p, vars_p, inv_p = _terraform_state_paths(self.release_id, state_root)
             state_p.write_text('{"live": "terraform state"}', encoding="utf-8")
-            vars_p.write_text(json.dumps({"release_id": self.release_id}), encoding="utf-8")
+            vars_p.write_text(
+                json.dumps(
+                    {"release_id": self.release_id, "project_id": "oday-staging-proj", "region": "asia-east1"}
+                ),
+                encoding="utf-8",
+            )
             inv_p.write_text("[]", encoding="utf-8")
 
-            result = scan_orphans(
-                project_id="oday-staging-proj",
-                resource_inventory=inventory,
-                now=self.now,
-                auto_cleanup=True,
-                deletion_executor=make_terraform_deletion_executor(
-                    self.release_id,
-                    module_dir=MODULE_DIR,
-                    state_dir=state_root,
-                    terraform_bin="/bin/true",
-                    initialize=False,
-                ),
-            )
+            # No staging load balancer backend service is listed, so there is
+            # no release Web NEG to detach before the destroy.
+            with mock.patch(
+                "product_ops.deployment.staging_lifecycle._live_gcloud", return_value="[]"
+            ) as cloud:
+                result = scan_orphans(
+                    project_id="oday-staging-proj",
+                    resource_inventory=inventory,
+                    now=self.now,
+                    auto_cleanup=True,
+                    deletion_executor=make_terraform_deletion_executor(
+                        self.release_id,
+                        module_dir=MODULE_DIR,
+                        state_dir=state_root,
+                        terraform_bin="/bin/true",
+                        initialize=False,
+                    ),
+                )
+            self.assertEqual(cloud.call_args.args[0][:3], ["compute", "backend-services", "list"])
 
             self.assertEqual(result.cleaned_count, 2)
             self.assertEqual(result.failed_cleanups, 0)
@@ -2955,7 +3042,9 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             "staging_web_uri": "https://staging-web.example.test",
             "staging_api_service_name": names["cloud_run_api"],
             "staging_web_service_name": names["cloud_run_web"],
+            "staging_web_network_endpoint_group": names["web_neg"],
             "staging_database_name": names["database_name"],
+            "staging_database_user": names["database_user"],
             "staging_data_bucket": names["bucket_name"],
             "staging_tenant_id": names["tenant_id"],
             "staging_runtime_service_account": f"{names['sa_runtime']}@{self.project_id}.iam.gserviceaccount.com",
@@ -2965,6 +3054,14 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             "staging_worker_job_name": names["cloud_run_worker_job"],
             "staging_scheduler_job_name": names["cloud_run_scheduler_job"],
             "staging_scheduler_trigger_name": names["scheduler_job"],
+            "staging_admin_bootstrap_job_name": names["cloud_run_admin_bootstrap_job"],
+            "staging_admin_account": {
+                "username": "staging-admin",
+                "initial_secret": names["secret_admin_initial"],
+                "initial_version": "1",
+                "sign_in_secret": names["secret_admin_sign_in"],
+                "sign_in_version": "1",
+            },
             "staging_cloud_sql_instance": "oday-staging-pg",
             "staging_api_image": "asia-east1-docker.pkg.dev/proj/repo/api@sha256:" + "c" * 64,
             "staging_web_image": "asia-east1-docker.pkg.dev/proj/repo/web@sha256:" + "d" * 64,
@@ -3034,18 +3131,128 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         # Restoring into the same release database: the dump drops before it creates.
         self.assertIn("--clean", sql_calls[0])
         self.assertIn("--if-exists", sql_calls[0])
+        # ...so the restore runs as the release user that owns those objects
+        # (staging deploy 43699516874: "permission denied for schema workflow").
+        self.assertIn(f"--user={outputs['staging_database_user']}", sql_calls[1])
+
+    def test_sql_rehearsal_refuses_without_the_release_database_user(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
+
+        for value in (None, " "):
+            outputs = self._valid_outputs()
+            if value is None:
+                del outputs["staging_database_user"]
+            else:
+                outputs["staging_database_user"] = value
+            with patch(
+                "product_ops.deployment.staging_lifecycle._live_gcloud",
+                side_effect=lambda argv, **kwargs: argv[3] if argv[0] == "iam" else "",
+            ) as cloud:
+                with self.assertRaisesRegex(ValueError, "staging_database_user"):
+                    make_live_rehearsal_executor(
+                        outputs,
+                        project_id=self.project_id,
+                        region="asia-east1",
+                        operator_identity=outputs["staging_runtime_service_account"],
+                        cloud_sql_instance=f"{self.project_id}:asia-east1:oday-staging-pg",
+                    )
+            self.assertFalse([call for call in cloud.call_args_list if call.args[0][0] == "sql"])
+
+    def test_rollback_probe_tag_meets_cloud_run_minimum_length(self) -> None:
+        # Cloud Run refuses a traffic tag shorter than 3 characters
+        # (staging deploy 43742101252: "must be at least 3 characters long").
+        self.assertGreaterEqual(len(ROLLBACK_PROBE_TAG), 3)
+        self.assertRegex(ROLLBACK_PROBE_TAG, r"^[a-z][a-z0-9-]*$")
+
+    def test_rollback_probe_tag_and_revision_fit_cloud_run_limits_for_every_release_name(self) -> None:
+        from product_ops.deployment.staging_lifecycle import get_ephemeral_resource_names
+
+        # Cloud Run caps tag plus service name at 46 characters and a revision
+        # name at 63; release names are fixed-width, so check a real-shaped
+        # release id and the long ones.
+        suffix = f"rb-{'0' * 8}-{'a' * 8}"
+        self.assertEqual(len(suffix), 20)
+        for release_id in ("odp-60cf786952c7", "odp-" + "f" * 12, "odp-" + "f" * 40, "odp-" + "f" * 124):
+            names = get_ephemeral_resource_names(release_id, self.project_id)
+            for key in ("cloud_run_api", "cloud_run_web"):
+                self.assertLessEqual(len(names[key]) + len(ROLLBACK_PROBE_TAG), 46, names[key])
+                self.assertLessEqual(len(names[key]) + 1 + len(suffix), 63, names[key])
+
+    def test_rollback_refuses_before_mutation_when_tag_would_not_fit(self) -> None:
+        too_long = "s" * (47 - len(ROLLBACK_PROBE_TAG))
+        for service_key in ("staging_api_service_name", "staging_web_service_name"):
+            with self.subTest(service_key=service_key):
+                self._assert_rollback_refused_before_mutation(
+                    {**self._valid_outputs(), service_key: too_long}, "too long for the rollback probe tag"
+                )
+
+    def test_rollback_refuses_before_mutation_when_revision_would_not_fit(self) -> None:
+        # 43 characters still carries the 3-character tag (46 <= 46), but
+        # 43 + 1 + 20 = 64 exceeds the 63-character revision name cap.
+        too_long = "s" * 43
+        self.assertLessEqual(len(too_long) + len(ROLLBACK_PROBE_TAG), 46)
+        for service_key in ("staging_api_service_name", "staging_web_service_name"):
+            with self.subTest(service_key=service_key):
+                self._assert_rollback_refused_before_mutation(
+                    {**self._valid_outputs(), service_key: too_long}, "too long for the rollback probe revision"
+                )
+
+    def _assert_rollback_refused_before_mutation(self, outputs: dict[str, Any], message: str) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
+
+        with patch(
+            "product_ops.deployment.staging_lifecycle._live_gcloud",
+            side_effect=lambda argv, **kwargs: argv[3] if argv[0] == "iam" else "token",
+        ) as cloud, patch(
+            "product_ops.deployment.staging_lifecycle._live_cloud_run_description",
+            return_value={"status": {"traffic": [{"revisionName": "s-a", "percent": 100}]}},
+        ) as describe, patch(
+            "product_ops.deployment.staging_lifecycle._live_cloud_run_v2_request"
+        ) as v2:
+            executor = make_live_rehearsal_executor(
+                outputs,
+                project_id=self.project_id,
+                region="asia-east1",
+                operator_identity=outputs["staging_runtime_service_account"],
+            )
+            with self.assertRaisesRegex(RuntimeError, message):
+                executor("rollback_rehearsal", {})
+        # Neither service was read for mutation nor touched in any way.
+        v2.assert_not_called()
+        describe.assert_not_called()
+        self.assertFalse([call for call in cloud.call_args_list if call.args[0][:1] == ["run"]])
+
+    DEPLOYER_TOKEN = "ya29.deployer-secret-access-token"
 
     @contextmanager
     def _rollback_rehearsal_runtime(
-        self, *, failure: str = "", failed_service: str = "api", restore_failure: str = ""
+        self,
+        *,
+        failure: str = "",
+        failed_service: str = "api",
+        restore_failure: str = "",
+        live_image: str = "",
     ) -> Any:
-        """Exercise the real executor; only the Cloud Run and HTTP boundaries are doubles."""
+        """Exercise the real executor; only the Cloud Run v2/v1-readback and HTTP boundaries are doubles.
+
+        ``traffic`` is the live allocation in the shape ``gcloud run services
+        describe`` reports it (``status.traffic``); v2 PATCH bodies are applied
+        to it the way Cloud Run would, so every readback reflects what the
+        executor actually sent.
+        """
         from unittest.mock import patch
 
         from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
 
         outputs = self._valid_outputs()
         failed_name = outputs[f"staging_{failed_service}_service_name"]
+        images = {
+            outputs[f"staging_{kind}_service_name"]: outputs[f"staging_{kind}_image"] for kind in ("api", "web")
+        }
         baseline = {
             outputs[f"staging_{kind}_service_name"]: [
                 {"revisionName": f"{outputs[f'staging_{kind}_service_name']}-a", "percent": 70},
@@ -3055,6 +3262,9 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         }
         traffic = {name: [dict(route) for route in routes] for name, routes in baseline.items()}
         trace: list[tuple[str, str]] = []
+        requests: list[dict[str, Any]] = []
+        operations: dict[str, dict[str, Any]] = {}
+        base = f"https://run.googleapis.com/v2/projects/{self.project_id}/locations/asia-east1/services/"
 
         def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
             trace.append(("read", name))
@@ -3069,62 +3279,103 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         def cloud(argv: list[str], **_kwargs: Any) -> str:
             if argv[0] == "iam":
                 return argv[3]
-            name = argv[3]
-            if argv[:3] == ["run", "services", "update"]:
+            if argv == ["auth", "print-access-token"]:
+                return self.DEPLOYER_TOKEN
+            raise AssertionError(f"rollback rehearsal must not call gcloud {argv[:3]}")
+
+        def as_v1_status(routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            status = []
+            for route in routes:
+                self.assertEqual(route["type"], "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION")
+                entry: dict[str, Any] = {"revisionName": route["revision"]}
+                if route.get("percent"):
+                    entry["percent"] = route["percent"]
+                if route.get("tag"):
+                    entry["tag"] = route["tag"]
+                status.append(entry)
+            return status
+
+        def operation(name: str, kind: str) -> dict[str, Any]:
+            op_name = f"projects/{self.project_id}/locations/asia-east1/operations/op-{len(operations)}"
+            operations[op_name] = {"service": name, "kind": kind, "polls": 0}
+            return {"name": op_name, "done": False}
+
+        def v2(method: str, url: str, access_token: str, *, body: Any = None, **_kwargs: Any) -> dict[str, Any]:
+            self.assertEqual(access_token, self.DEPLOYER_TOKEN)
+            requests.append({"method": method, "url": url, "body": body})
+            if "/operations/" in url:
+                op_name = url.removeprefix("https://run.googleapis.com/v2/")
+                op = operations[op_name]
+                op["polls"] += 1
+                if op["service"] == failed_name and failure == f"lro-error-{op['kind']}":
+                    return {"name": op_name, "done": True, "error": {"code": 9, "message": "revision failed"}}
+                if op["service"] == failed_name and failure == f"lro-pending-{op['kind']}":
+                    return {"name": op_name, "done": False}
+                return {"name": op_name, "done": True, "response": {}}
+            path, _, query_text = url.removeprefix(base).partition("?")
+            name = path
+            self.assertIn(name, images)
+            if method == "GET":
+                self.assertEqual(query_text, "")
+                trace.append(("get", name))
+                return {
+                    "name": f"projects/{self.project_id}/locations/asia-east1/services/{name}",
+                    "template": {
+                        "serviceAccount": "runtime@example.iam.gserviceaccount.com",
+                        "containers": [{"image": live_image or images[name], "volumeMounts": [
+                            {"name": "cloudsql", "mountPath": "/cloudsql"}
+                        ]}],
+                        "volumes": [{"name": "cloudsql", "cloudSqlInstance": {"instances": ["p:r:i"]}}],
+                    },
+                    "traffic": [{"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 100}],
+                }
+            self.assertEqual(method, "PATCH")
+            query = dict(item.split("=", 1) for item in query_text.split("&"))
+            if query.get("forceNewRevision") == "true":
+                self.assertEqual(query, {"forceNewRevision": "true", "updateMask": "template%2Ctraffic"})
                 trace.append(("create", name))
                 if name == failed_name and failure == "create":
                     raise RuntimeError("probe creation failed")
-                traffic[name].append({"revisionName": f"{name}-probe", "tag": "rollback-probe"})
-            if argv[:3] == ["run", "services", "update-traffic"]:
-                shares = dict(item.split("=") for item in argv[4].removeprefix("--to-revisions=").split(","))
-                switching = f"{name}-probe" in shares
-                trace.append(("switch" if switching else "restore", name))
-                if name == failed_name:
-                    if switching and failure == "switch-before":
-                        raise subprocess.TimeoutExpired(["gcloud", *argv], 900)
-                    if not switching and restore_failure == "command":
-                        raise RuntimeError("restore command failed")
-                    if not switching and restore_failure == "mismatch":
-                        return ""  # A successful CLI exit is not proof of restored traffic.
-                    # A successful switch exit is not proof of the probe allocation either.
-                    probe = {"revisionName": f"{name}-probe", "tag": "rollback-probe"}
-                    a, b = (f"{name}-a", f"{name}-b")
-                    switched_readback = {
-                        "switch-unchanged": None,
-                        "switch-partial": [{"revisionName": a, "percent": 50}, {**probe, "percent": 50}],
-                        "switch-wrong-revision": [{"revisionName": a, "percent": 100}, probe],
-                        "switch-malformed": [{**probe, "percent": "all"}],
-                        "switch-missing": [],
-                        # Legitimate: the former targets stay listed at 0% and the
-                        # tag remains a separate tag-only route on the probe.
-                        "switch-zero-percent-routes": [
-                            {"revisionName": a, "percent": 0},
-                            {"revisionName": b, "percent": 0},
-                            {"revisionName": f"{name}-probe", "percent": 100},
-                            probe,
-                        ],
-                    }
-                    if switching and failure in switched_readback:
-                        if switched_readback[failure] is not None:
-                            traffic[name] = switched_readback[failure]
-                        return ""
-                traffic[name] = [
-                    {**route, "percent": int(shares[route["revisionName"]])}
-                    if route["revisionName"] in shares
-                    else {key: value for key, value in route.items() if key != "percent"}
-                    for route in traffic[name]
-                    # An untagged revision left out of the allocation drops off.
-                    if route["revisionName"] in shares or route.get("tag")
-                ]
-                listed = {route["revisionName"] for route in traffic[name]}
-                traffic[name] += [
-                    {"revisionName": revision, "percent": int(share)}
-                    for revision, share in shares.items()
-                    if revision not in listed
-                ]
-                if name == failed_name and switching and failure == "switch-after":
-                    raise subprocess.TimeoutExpired(["gcloud", *argv], 900)
-            return ""
+                traffic[name] = as_v1_status(body["traffic"])
+                return operation(name, "create")
+            self.assertEqual(query, {"updateMask": "traffic"})
+            self.assertEqual(set(body), {"traffic"})
+            switching = any(route.get("percent") == 100 and route.get("tag") for route in body["traffic"])
+            trace.append(("switch" if switching else "restore", name))
+            if name == failed_name:
+                if switching and failure == "switch-before":
+                    raise RuntimeError("Cloud Run Admin API v2 PATCH failed: TimeoutError")
+                if not switching and restore_failure == "command":
+                    raise RuntimeError("restore command failed")
+                if not switching and restore_failure == "mismatch":
+                    # A finished operation is not proof of restored traffic.
+                    return operation(name, "restore")
+                probe_name = next(route["revision"] for route in body["traffic"] if route.get("tag"))
+                probe = {"revisionName": probe_name, "tag": ROLLBACK_PROBE_TAG}
+                a, b = (f"{name}-a", f"{name}-b")
+                switched_readback = {
+                    "switch-unchanged": None,
+                    "switch-partial": [{"revisionName": a, "percent": 50}, {**probe, "percent": 50}],
+                    "switch-wrong-revision": [{"revisionName": a, "percent": 100}, probe],
+                    "switch-malformed": [{**probe, "percent": "all"}],
+                    "switch-missing": [],
+                    # Legitimate: the former targets stay listed at 0% and the
+                    # tag remains a separate tag-only route on the probe.
+                    "switch-zero-percent-routes": [
+                        {"revisionName": a, "percent": 0},
+                        {"revisionName": b, "percent": 0},
+                        {"revisionName": probe_name, "percent": 100},
+                        probe,
+                    ],
+                }
+                if switching and failure in switched_readback:
+                    if switched_readback[failure] is not None:
+                        traffic[name] = switched_readback[failure]
+                    return operation(name, "switch")
+            traffic[name] = as_v1_status(body["traffic"])
+            if name == failed_name and switching and failure == "switch-after":
+                raise RuntimeError("Cloud Run Admin API v2 PATCH failed: TimeoutError")
+            return operation(name, "switch" if switching else "restore")
 
         def health(kind: str) -> None:
             trace.append(("health", outputs[f"staging_{kind}_service_name"]))
@@ -3144,6 +3395,12 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         ), patch(
             "product_ops.deployment.staging_lifecycle._live_cloud_run_description", side_effect=describe
         ), patch(
+            "product_ops.deployment.staging_lifecycle._live_cloud_run_v2_request", side_effect=v2
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._CLOUD_RUN_V2_OPERATION_POLL_SECONDS", 0.01
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._CLOUD_RUN_V2_OPERATION_TIMEOUT_SECONDS", 0.05
+        ), patch(
             "product_ops.deployment.staging_lifecycle._live_identity_token", return_value="token"
         ), patch(
             "product_ops.deployment.staging_lifecycle._live_json_get", side_effect=api_health
@@ -3156,16 +3413,123 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 region="asia-east1",
                 operator_identity=outputs["staging_runtime_service_account"],
             )
-            yield executor, traffic, baseline, trace
+            yield executor, traffic, baseline, trace, requests, operations
+
+    def _probe_revision(self, service_name: str) -> str:
+        return f"{service_name}-rb-{compute_release_hash(self.release_id)}-{self.candidate_sha[:8]}"
+
+    def test_rollback_uses_native_cloud_run_v2_patches_with_pinned_traffic(self) -> None:
+        with self._rollback_rehearsal_runtime() as (executor, traffic, baseline, trace, requests, operations):
+            result = executor("rollback_rehearsal", {})
+        self.assertTrue(result["success"])
+        outputs = self._valid_outputs()
+        for kind, image_key in (("api", "staging_api_image"), ("web", "staging_web_image")):
+            name = outputs[f"staging_{kind}_service_name"]
+            probe = self._probe_revision(name)
+            self.assertEqual(len(probe.removeprefix(f"{name}-")), 20)
+            self.assertLessEqual(len(probe), 63)
+            service_requests = [r for r in requests if f"/services/{name}" in r["url"]]
+            self.assertEqual(
+                [(r["method"], r["url"].partition("?")[2]) for r in service_requests],
+                [
+                    ("GET", ""),
+                    ("PATCH", "forceNewRevision=true&updateMask=template%2Ctraffic"),
+                    ("PATCH", "updateMask=traffic"),
+                    ("PATCH", "updateMask=traffic"),
+                ],
+            )
+            _get, create, switch, restore = service_requests
+            # The probe is the live template (image, Cloud SQL volume) as a new
+            # named revision; no route may follow LATEST.
+            self.assertEqual(create["body"]["template"]["revision"], probe)
+            self.assertEqual(create["body"]["template"]["containers"][0]["image"], outputs[image_key])
+            self.assertEqual(create["body"]["template"]["volumes"][0]["name"], "cloudsql")
+            pinned = [
+                {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION", "revision": f"{name}-a", "percent": 70},
+                {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION", "revision": f"{name}-b", "percent": 30},
+            ]
+            probe_route = {
+                "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION", "revision": probe, "tag": ROLLBACK_PROBE_TAG,
+            }
+            self.assertEqual(create["body"]["traffic"], [*pinned, {**probe_route, "percent": 0}])
+            self.assertEqual(switch["body"], {"traffic": [{**probe_route, "percent": 100}]})
+            self.assertEqual(restore["body"], {"traffic": [*pinned, {**probe_route, "percent": 0}]})
+            # Every PATCH waited for its operation to finish.
+            self.assertEqual(
+                sorted(op["kind"] for op in operations.values() if op["service"] == name),
+                ["create", "restore", "switch"],
+            )
+            self.assertTrue(all(op["polls"] >= 1 for op in operations.values()))
+            # Restored: the approved allocation serves and the probe stays a 0% tag route.
+            self.assertCountEqual([r for r in traffic[name] if r.get("percent")], baseline[name])
+            self.assertIn({"revisionName": probe, "tag": ROLLBACK_PROBE_TAG}, traffic[name])
+            restore_index = trace.index(("restore", name))
+            self.assertEqual(trace[restore_index + 1], ("read", name))
+            proof = next(p for p in result["rollback_targets"] if p["service"] == name)
+            self.assertEqual(proof["rehearsal_revision"], probe)
+            self.assertEqual(proof["rollback_target"], sorted([f"{name}-a", f"{name}-b"]))
+
+    def test_rollback_refuses_before_mutation_when_live_image_differs(self) -> None:
+        with self._rollback_rehearsal_runtime(live_image="example.test/other@sha256:" + "0" * 64) as (
+            executor, traffic, baseline, trace, requests, _operations,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "image readback does not match"):
+                executor("rollback_rehearsal", {})
+        self.assertEqual([r["method"] for r in requests], ["GET"])
+        self.assertEqual(traffic, baseline)
+
+    def test_rollback_fails_closed_on_operation_error_or_timeout(self) -> None:
+        for service in ("api", "web"):
+            name = self._valid_outputs()[f"staging_{service}_service_name"]
+            for failure, message in (
+                ("lro-error-create", "operation failed with status code 9"),
+                ("lro-pending-create", "operation did not finish"),
+            ):
+                with self.subTest(service=service, failure=failure):
+                    with self._rollback_rehearsal_runtime(failure=failure, failed_service=service) as (
+                        executor, _traffic, _baseline, trace, _requests, _operations,
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, message) as ctx:
+                            executor("rollback_rehearsal", {})
+                    self.assertNotIn(self.DEPLOYER_TOKEN, str(ctx.exception))
+                    # No switch was attempted, so nothing is restored.
+                    self.assertNotIn(("switch", name), trace)
+                    self.assertNotIn(("restore", name), trace)
+            for failure, message in (
+                ("lro-error-switch", "operation failed with status code 9"),
+                ("lro-pending-switch", "operation did not finish"),
+            ):
+                with self.subTest(service=service, failure=failure):
+                    with self._rollback_rehearsal_runtime(failure=failure, failed_service=service) as (
+                        executor, traffic, baseline, trace, _requests, _operations,
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, message) as ctx:
+                            executor("rollback_rehearsal", {})
+                    self.assertNotIn(self.DEPLOYER_TOKEN, str(ctx.exception))
+                    self.assertNotIn(("health", name), trace)
+                    self.assertEqual(trace[-2:], [("restore", name), ("read", name)])
+                    self.assertCountEqual([r for r in traffic[name] if r.get("percent")], baseline[name])
+
+    def test_rollback_restore_operation_failure_fails_closed(self) -> None:
+        for service in ("api", "web"):
+            for failure in ("lro-error-restore", "lro-pending-restore"):
+                with self.subTest(service=service, failure=failure):
+                    with self._rollback_rehearsal_runtime(failure=failure, failed_service=service) as (
+                        executor, _traffic, _baseline, trace, _requests, _operations,
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "rollback target restore failed") as ctx:
+                            executor("rollback_rehearsal", {})
+                    self.assertNotIn(self.DEPLOYER_TOKEN, str(ctx.exception))
+                    self.assertIn(("restore", self._valid_outputs()[f"staging_{service}_service_name"]), trace)
 
     def test_rollback_restore_ignores_the_tag_only_probe_route(self) -> None:
-        """gcloud keeps the probe as a tag-only route (no percent) after restore."""
-        with self._rollback_rehearsal_runtime() as (executor, traffic, baseline, trace):
+        """The probe stays a tag-only route (no percent) after restore."""
+        with self._rollback_rehearsal_runtime() as (executor, traffic, baseline, trace, _requests, _ops):
             result = executor("rollback_rehearsal", {})
         self.assertTrue(result["success"])
         self.assertEqual(len(result["rollback_targets"]), 2)
         for name, routes in traffic.items():
-            self.assertIn({"revisionName": f"{name}-probe", "tag": "rollback-probe"}, routes)
+            self.assertIn({"revisionName": self._probe_revision(name), "tag": ROLLBACK_PROBE_TAG}, routes)
             self.assertCountEqual([r for r in routes if r.get("percent")], baseline[name])
             restore_index = trace.index(("restore", name))
             self.assertEqual(trace[restore_index + 1], ("read", name))
@@ -3176,7 +3540,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 with self.subTest(service=service, failure=failure):
                     with self._rollback_rehearsal_runtime(
                         failure=failure, failed_service=service
-                    ) as (executor, traffic, baseline, trace):
+                    ) as (executor, traffic, baseline, trace, _requests, _ops):
                         result = executor("rollback_rehearsal", {})
                     self.assertTrue(result["success"])
                     for name in traffic:
@@ -3199,7 +3563,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 with self.subTest(service=service, failure=failure):
                     with self._rollback_rehearsal_runtime(
                         failure=failure, failed_service=service
-                    ) as (executor, traffic, baseline, trace):
+                    ) as (executor, traffic, baseline, trace, _requests, _ops):
                         with self.assertRaisesRegex(RuntimeError, "rollback rehearsal switch readback"):
                             executor("rollback_rehearsal", {})
                     name = self._valid_outputs()[f"staging_{service}_service_name"]
@@ -3214,8 +3578,8 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 with self.subTest(service=service, failure=failure):
                     with self._rollback_rehearsal_runtime(
                         failure=failure, failed_service=service
-                    ) as (executor, traffic, baseline, trace):
-                        with self.assertRaises(subprocess.TimeoutExpired):
+                    ) as (executor, traffic, baseline, trace, _requests, _ops):
+                        with self.assertRaisesRegex(RuntimeError, "TimeoutError"):
                             executor("rollback_rehearsal", {})
                     name = self._valid_outputs()[f"staging_{service}_service_name"]
                     self.assertIn(("restore", name), trace)
@@ -3229,7 +3593,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             with self.subTest(service=service):
                 with self._rollback_rehearsal_runtime(
                     failure="health", failed_service=service
-                ) as (executor, traffic, baseline, trace):
+                ) as (executor, traffic, baseline, trace, _requests, _ops):
                     with self.assertRaisesRegex(RuntimeError, "probe health failed"):
                         executor("rollback_rehearsal", {})
                 name = self._valid_outputs()[f"staging_{service}_service_name"]
@@ -3243,7 +3607,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                     with self.subTest(service=service, failure=failure, restore=restore_failure):
                         with self._rollback_rehearsal_runtime(
                             failure=failure, failed_service=service, restore_failure=restore_failure
-                        ) as (executor, _traffic, _baseline, trace):
+                        ) as (executor, _traffic, _baseline, trace, _requests, _ops):
                             with self.assertRaisesRegex(RuntimeError, "rollback target (restore failed|readback)"):
                                 executor("rollback_rehearsal", {})
                         name = self._valid_outputs()[f"staging_{service}_service_name"]
@@ -3254,7 +3618,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             with self.subTest(service=service):
                 with self._rollback_rehearsal_runtime(
                     failure="create", failed_service=service
-                ) as (executor, traffic, baseline, trace):
+                ) as (executor, traffic, baseline, trace, _requests, _ops):
                     with self.assertRaisesRegex(RuntimeError, "probe creation failed"):
                         executor("rollback_rehearsal", {})
                 name = self._valid_outputs()[f"staging_{service}_service_name"]
@@ -3264,9 +3628,10 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
 
     def test_uncertain_rollback_fails_verification_and_preserves_holdable_state(self) -> None:
         for failure, service, error in (
-            ("switch-after", "api", "TimeoutExpired"),
+            ("switch-after", "api", "TimeoutError"),
             ("switch-unchanged", "api", "switch readback does not serve the probe revision"),
             ("switch-unchanged", "web", "switch readback does not serve the probe revision"),
+            ("lro-error-switch", "web", "operation failed with status code 9"),
         ):
             with self.subTest(failure=failure, service=service):
                 self._assert_rollback_failure_holds_verification(failure, service, error)
@@ -3277,7 +3642,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         outputs = self._valid_outputs()
         with tempfile.TemporaryDirectory() as tmpdir, self._rollback_rehearsal_runtime(
             failure=failure, failed_service=service
-        ) as (executor, traffic, baseline, _trace):
+        ) as (executor, traffic, baseline, _trace, _requests, _ops):
             state_dir = Path(tmpdir)
             self._seed_live_state(state_dir)
             marker_path = lifecycle._lifecycle_state_path(self.release_id, state_dir)
@@ -3302,13 +3667,163 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             self.assertFalse(receipt.success)
             self.assertTrue(receipt.remediation_required)
             self.assertEqual(json.loads(marker_path.read_text())["status"], "verification_failed")
-            self.assertFalse(json.loads(receipt_path.read_text())["success"])
+            receipt_text = receipt_path.read_text()
+            self.assertFalse(json.loads(receipt_text)["success"])
+            self.assertNotIn(self.DEPLOYER_TOKEN, receipt_text)
             stage = next(r for r in receipt.resources if r["stage"] == "rollback_rehearsal")
             self.assertEqual(stage["status"], "failed")
             self.assertNotIn("proof", stage)
             self.assertTrue(any("rollback_rehearsal" in item and error in item for item in receipt.errors))
             for name, routes in traffic.items():
                 self.assertCountEqual([r for r in routes if r.get("percent")], baseline[name])
+
+    @contextmanager
+    def _job_stage_runtime(
+        self, *, trigger_state: str = "PAUSED", worker_image: str = "", worker_egress: str = "ALL_TRAFFIC",
+        fail_execute: str = "",
+    ) -> Any:
+        """The real executor; only gcloud and the Cloud Run job description are doubles."""
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
+
+        outputs = self._valid_outputs()
+        images = {
+            outputs["staging_scheduler_job_name"]: outputs["staging_scheduler_image"],
+            outputs["staging_worker_job_name"]: worker_image or outputs["staging_worker_image"],
+        }
+        trace: list[tuple[str, ...]] = []
+
+        def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
+            self.assertEqual(kind, "job")
+            trace.append(("describe", name))
+            egress = worker_egress if name == outputs["staging_worker_job_name"] else "ALL_TRAFFIC"
+            return {"template": {"template": {"containers": [{"image": images[name]}], "vpcAccess": {"egress": egress}}}}
+
+        def cloud(argv: list[str], **_kwargs: Any) -> str:
+            if argv[0] == "iam":
+                return argv[3]
+            if argv[:3] == ["scheduler", "jobs", "describe"]:
+                trace.append(("trigger", argv[3]))
+                return trigger_state
+            if argv[:3] == ["run", "jobs", "execute"]:
+                trace.append(("execute", *argv[3:]))
+                if argv[3] == fail_execute:
+                    raise RuntimeError("gcloud run jobs execute failed with exit status 1")
+                return ""
+            raise AssertionError(f"unexpected gcloud call {argv[:3]}")
+
+        with patch(
+            "product_ops.deployment.staging_lifecycle._live_gcloud", side_effect=cloud
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_cloud_run_description", side_effect=describe
+        ):
+            executor = make_live_rehearsal_executor(
+                outputs,
+                project_id=self.project_id,
+                region="asia-east1",
+                operator_identity=outputs["staging_runtime_service_account"],
+            )
+            yield executor, outputs, trace
+
+    def test_scheduler_oneshot_drains_scheduled_work_with_the_release_worker(self) -> None:
+        with self._job_stage_runtime() as (executor, outputs, trace):
+            result = executor("scheduler_oneshot", {})
+        scheduler_job = outputs["staging_scheduler_job_name"]
+        worker_job = outputs["staging_worker_job_name"]
+        region_project = ("--region=asia-east1", f"--project={self.project_id}")
+        self.assertEqual(
+            trace,
+            [
+                ("trigger", outputs["staging_scheduler_trigger_name"]),
+                ("describe", scheduler_job),
+                ("execute", scheduler_job, *region_project, "--wait", "--quiet"),
+                # The worker image and egress are read back before it runs.
+                ("describe", worker_job),
+                (
+                    "execute",
+                    worker_job,
+                    *region_project,
+                    "--args=product_ops/deployment/cloud_run_job_entrypoint.py,worker,--max-jobs,4",
+                    "--wait",
+                    "--quiet",
+                ),
+            ],
+        )
+        self.assertTrue(result["success"])
+        self.assertEqual(result["job"], scheduler_job)
+        self.assertEqual(result["execution"], "succeeded")
+        self.assertEqual(
+            result["worker_drain"],
+            {
+                "job": worker_job,
+                "image_digest": outputs["staging_worker_image"],
+                "egress": "ALL_TRAFFIC",
+                "execution": "succeeded",
+                "args": ["product_ops/deployment/cloud_run_job_entrypoint.py", "worker", "--max-jobs", "4"],
+            },
+        )
+
+    def test_scheduler_oneshot_runs_nothing_unless_the_trigger_is_paused(self) -> None:
+        with self._job_stage_runtime(trigger_state="ENABLED") as (executor, outputs, trace):
+            with self.assertRaisesRegex(RuntimeError, "not paused"):
+                executor("scheduler_oneshot", {})
+        self.assertEqual(trace, [("trigger", outputs["staging_scheduler_trigger_name"])])
+
+    def test_scheduler_drain_refuses_an_unverified_worker_before_executing_it(self) -> None:
+        for kwargs, message in (
+            ({"worker_image": "example.test/other@sha256:" + "0" * 64}, "scheduler drain worker job image readback"),
+            ({"worker_egress": "PRIVATE_RANGES_ONLY"}, "scheduler drain worker job live VPC egress"),
+        ):
+            with self.subTest(**kwargs):
+                with self._job_stage_runtime(**kwargs) as (executor, outputs, trace):
+                    with self.assertRaisesRegex(RuntimeError, message):
+                        executor("scheduler_oneshot", {})
+                executed = [entry[1] for entry in trace if entry[0] == "execute"]
+                self.assertEqual(executed, [outputs["staging_scheduler_job_name"]])
+
+    def test_scheduler_drain_failure_fails_the_stage(self) -> None:
+        outputs = self._valid_outputs()
+        with self._job_stage_runtime(fail_execute=outputs["staging_worker_job_name"]) as (executor, _o, trace):
+            with self.assertRaisesRegex(RuntimeError, "exit status 1"):
+                executor("scheduler_oneshot", {})
+        self.assertEqual(trace[-1][:2], ("execute", outputs["staging_worker_job_name"]))
+
+    def test_public_egress_probe_runs_the_canary_args_on_the_verified_worker(self) -> None:
+        with self._job_stage_runtime() as (executor, outputs, trace):
+            result = executor("public_egress_denied_probe", {})
+        worker_job = outputs["staging_worker_job_name"]
+        self.assertEqual(
+            trace,
+            [
+                ("describe", worker_job),
+                (
+                    "execute",
+                    worker_job,
+                    "--region=asia-east1",
+                    f"--project={self.project_id}",
+                    "--args=product_ops/deployment/cloud_run_job_entrypoint.py,public-egress-probe",
+                    "--wait",
+                    "--quiet",
+                ),
+            ],
+        )
+        self.assertEqual(
+            result,
+            {
+                "success": True,
+                "job": worker_job,
+                "image_digest": outputs["staging_worker_image"],
+                "egress": "ALL_TRAFFIC",
+                "execution": "succeeded",
+                "probe": "public_egress_denied",
+                "status": "denied",
+            },
+        )
+        with self._job_stage_runtime(worker_egress="PRIVATE_RANGES_ONLY") as (executor, _outputs, trace):
+            with self.assertRaisesRegex(RuntimeError, "public egress probe job live VPC egress"):
+                executor("public_egress_denied_probe", {})
+        self.assertFalse([entry for entry in trace if entry[0] == "execute"])
 
     def test_provider_readback_uses_the_live_gate_consumer_only_rule(self) -> None:
         from unittest.mock import patch
@@ -4028,6 +4543,33 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         self.assertEqual(receipt.resources[0]["expires_at"], "2026-08-28T06:00:00Z")
         self.assertTrue(receipt.metadata.get("secret_values_redacted"))
 
+    def test_hold_retains_a_release_whose_run_failed_after_verification(self) -> None:
+        """Staging deploy 44261935709 failed in a step after verify; hold refused 'verified'."""
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        for status, holdable in (("verified", True), ("verification_failed", True), ("cleaned", False)):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmpdir:
+                state_dir = Path(tmpdir)
+                self._seed_live_state(state_dir)
+                marker_path = lifecycle._lifecycle_state_path(self.release_id, state_dir)
+                seeded = json.loads(marker_path.read_text(encoding="utf-8"))
+                marker_path.write_text(json.dumps({**seeded, "status": status}), encoding="utf-8")
+                receipt = lifecycle.hold_ephemeral_staging(
+                    release_id=self.release_id,
+                    project_id=self.project_id,
+                    owner_task_id="ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+                    reason="Automated hold after a staging failure",
+                    ttl_hours=24,
+                    state_dir=state_dir,
+                    now=self.now,
+                )
+                self.assertEqual(receipt.success, holdable)
+                self.assertEqual(receipt.metadata["state_status"], status)
+                marker_status = json.loads(marker_path.read_text(encoding="utf-8"))["status"]
+                self.assertEqual(marker_status, "held" if holdable else status)
+                if not holdable:
+                    self.assertTrue(any("lifecycle status 'cleaned'" in item for item in receipt.errors))
+
     def test_hold_ephemeral_staging_missing_reason(self) -> None:
         from product_ops.deployment.staging_lifecycle import hold_ephemeral_staging
 
@@ -4157,6 +4699,40 @@ def _load_gate_fixtures() -> Any:
     return module
 
 
+def _staging_gcloud(outputs: Mapping[str, Any], fx: Any, trace: list[list[str]] | None = None) -> Any:
+    """A ``_live_gcloud`` double: identity readback, the release's two admin
+    secrets (the gate fixtures' initial secret and sign-in password), and an
+    empty success for every job execution."""
+
+    account = outputs["staging_admin_account"]
+    values = {account["initial_secret"]: fx.INITIAL_PASSWORD, account["sign_in_secret"]: fx.PASSWORD}
+
+    def run(argv: Sequence[str], **_kwargs: Any) -> str:
+        if trace is not None:
+            trace.append(list(argv))
+        if argv[0] == "iam":
+            return argv[3]
+        if list(argv[:3]) == ["secrets", "versions", "access"]:
+            return values[argv[4].removeprefix("--secret=")]
+        return ""
+
+    return run
+
+
+@contextmanager
+def _staging_web_origin(fx: Any, outputs: Mapping[str, Any]) -> Any:
+    """Serve the gate's Web doubles at the governed staging origin, signed in
+    to as the release's own admin account (ODP-EPHEMERAL-STAGING-ROLLOUT-001)."""
+
+    from unittest.mock import patch
+
+    from product_ops.deployment.staging_lifecycle import STAGING_WEB_PUBLIC_ORIGIN
+
+    with patch.object(fx.base, "WEB_URL", STAGING_WEB_PUBLIC_ORIGIN), \
+            patch.object(fx, "USERNAME", outputs["staging_admin_account"]["username"]):
+        yield
+
+
 class StagingLiveE2EGateTests(unittest.TestCase):
     """ODP-CORE-OPS-STAGING-LIVE-GATE-001: staging verify runs the complete gate."""
 
@@ -4184,71 +4760,149 @@ class StagingLiveE2EGateTests(unittest.TestCase):
             **{"anon GET /readiness": self.fx.base.response(200, readiness), **overrides}
         )
 
+    def _bootstrap_job_description(
+        self,
+        outputs: Mapping[str, Any],
+        expires_at: datetime | str,
+        *,
+        dialect: str = "v2",
+        egress: str = "ALL_TRAFFIC",
+        extra_env: Sequence[Mapping[str, Any]] = (),
+    ) -> dict[str, Any]:
+        from product_ops.deployment.staging_lifecycle import format_timestamp
+
+        expiry_value = format_timestamp(expires_at) if isinstance(expires_at, datetime) else expires_at
+        env = [
+            {"name": "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT", "value": expiry_value},
+            *extra_env,
+        ]
+        image = outputs["staging_worker_image"]
+        if dialect == "v1":
+            egress_annotation = "all-traffic" if egress == "ALL_TRAFFIC" else "private-ranges-only"
+            return {
+                "spec": {
+                    "template": {
+                        "metadata": {
+                            "annotations": {"run.googleapis.com/vpc-access-egress": egress_annotation}
+                        },
+                        "spec": {
+                            "template": {
+                                "spec": {"containers": [{"image": image, "env": env}]}
+                            }
+                        },
+                    }
+                }
+            }
+        return {
+            "template": {
+                "template": {
+                    "containers": [{"image": image, "env": env}],
+                    "vpcAccess": {"egress": egress},
+                }
+            }
+        }
+
     def _run_stage(
         self,
         routes: dict[str, Any],
         profile: str = "core-ops",
         *,
         worker_ok: bool = True,
-        web_http: Any = None,
+        fresh_admin: bool = True,
+        web_overrides: Mapping[str, Any] | None = None,
+        outputs: Mapping[str, Any] | None = None,
+        gate_now: datetime | None = None,
+        bootstrap_expires_at: datetime | str | None = None,
+        job_descriptions: Mapping[str, Mapping[str, Any]] | None = None,
+        extra_context: Mapping[str, Any] | None = None,
     ) -> tuple[Mapping[str, Any], dict[str, Any]]:
+        from contextlib import ExitStack
         from unittest.mock import patch
 
         from product_ops.deployment import staging_lifecycle as lifecycle
 
-        seen: dict[str, Any] = {"tokens": [], "clients": []}
+        active_outputs = dict(self.outputs if outputs is None else outputs)
+        seen: dict[str, Any] = {"tokens": [], "clients": [], "gcloud": [], "described": []}
         tokens = {
             lifecycle.staging_smoke_token_audience(self.release_id): self.SMOKE_TOKEN,
-            self.outputs["staging_api_uri"]: self.API_TOKEN,
-            self.outputs["staging_web_uri"]: self.WEB_TOKEN,
+            active_outputs["staging_api_uri"]: self.API_TOKEN,
         }
+        effective_now = gate_now or datetime.now(UTC)
+        default_expiry = (
+            bootstrap_expires_at
+            if bootstrap_expires_at is not None
+            else effective_now + timedelta(hours=24)
+        )
 
         def mint(*, audience: str, operator_identity: str, gcloud_bin: str) -> str:
             seen["tokens"].append((audience, operator_identity))
             return tokens[audience]
 
         def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
+            seen["described"].append((kind, name))
+            if job_descriptions and name in job_descriptions:
+                return dict(job_descriptions[name])
+            if name == active_outputs["staging_admin_bootstrap_job_name"]:
+                return self._bootstrap_job_description(active_outputs, default_expiry)
             return {"template": {"template": {
-                "containers": [{"image": self.outputs["staging_worker_image"]}],
+                "containers": [{"image": active_outputs["staging_worker_image"]}],
                 "vpcAccess": {"egress": "ALL_TRAFFIC"},
             }}}
 
-        def clients(config: Any, *, web_transport_token: str, correlation_id: str) -> Any:
+        def clients(config: Any, *, correlation_id: str) -> Any:
             seen["config"] = config
-            seen["clients"].append((web_transport_token, correlation_id))
-            return (
-                self.fx.base.FakeHttp(routes),
-                web_http if web_http is not None else self.fx.base.passing_web_http(),
+            seen["clients"].append(correlation_id)
+            # The Web as the governed origin serves it: the release admin's
+            # password journey (fresh: first-login rotation still pending).
+            seen["web"] = self.fx.AdminWeb(
+                self.fx.web_routes(**(web_overrides or {})), is_fresh=fresh_admin
             )
+            return self.fx.base.FakeHttp(routes), seen["web"]
 
         def driver(config: Any, *, job: str, region: str, project_id: str, gcloud_bin: str) -> Any:
             seen["driver"] = (job, region, project_id)
             return self.fx.base.FakeWorkerDriver(ok=worker_ok)
 
-        with patch.object(lifecycle, "_live_gcloud", side_effect=lambda argv, **kw: argv[3] if argv[0] == "iam" else ""), \
-                patch.object(lifecycle, "_live_cloud_run_description", side_effect=describe), \
-                patch.object(lifecycle, "_live_identity_token", side_effect=mint), \
-                patch.object(lifecycle, "_live_gate_clients", side_effect=clients), \
-                patch.object(lifecycle, "_live_gate_worker_driver", side_effect=driver), \
-                patch.object(lifecycle, "_live_gate_correlation_id", return_value=self.fx.base.CORRELATION_ID), \
-                patch.object(lifecycle, "STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS", 0.001):
+        stage_context: dict[str, Any] = {
+            "release_profile": profile,
+            "manifest_digest": self.manifest_digest,
+            **(extra_context or {}),
+        }
+
+        with ExitStack() as stack:
+            if gate_now is not None:
+                frozen = gate_now
+
+                class _FrozenDatetime(datetime):
+                    @classmethod
+                    def now(cls, tz: Any = None) -> datetime:
+                        return frozen if tz is None else frozen.astimezone(tz)
+
+                stack.enter_context(patch.object(lifecycle, "datetime", _FrozenDatetime))
+            stack.enter_context(_staging_web_origin(self.fx, active_outputs))
+            stack.enter_context(
+                patch.object(lifecycle, "_live_gcloud", side_effect=_staging_gcloud(active_outputs, self.fx, seen["gcloud"]))
+            )
+            stack.enter_context(patch.object(lifecycle, "_live_cloud_run_description", side_effect=describe))
+            stack.enter_context(patch.object(lifecycle, "_live_identity_token", side_effect=mint))
+            stack.enter_context(patch.object(lifecycle, "_live_gate_clients", side_effect=clients))
+            stack.enter_context(patch.object(lifecycle, "_live_gate_worker_driver", side_effect=driver))
+            stack.enter_context(patch.object(lifecycle, "_live_gate_correlation_id", return_value=self.fx.base.CORRELATION_ID))
+            stack.enter_context(patch.object(lifecycle, "STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS", 0.001))
             executor = lifecycle.make_live_rehearsal_executor(
-                self.outputs,
+                active_outputs,
                 project_id=self.project_id,
                 region="asia-east1",
-                operator_identity=self.outputs["staging_runtime_service_account"],
+                operator_identity=active_outputs["staging_runtime_service_account"],
             )
-            result = executor(
-                "live_e2e_gate",
-                {"release_profile": profile, "manifest_digest": self.manifest_digest},
-            )
+            result = executor("live_e2e_gate", stage_context)
         return result, seen
 
     def test_the_gate_is_the_last_rehearsal_stage(self) -> None:
         from product_ops.deployment.staging_lifecycle import REHEARSAL_STAGE_NAMES
 
         self.assertEqual(REHEARSAL_STAGE_NAMES[-1], "live_e2e_gate")
-        self.assertEqual(len(set(REHEARSAL_STAGE_NAMES)), 10)
+        self.assertEqual(len(set(REHEARSAL_STAGE_NAMES)), 11)
 
     def test_core_ops_staging_passes_the_complete_gate_with_missing_models_refused(self) -> None:
         from product_ops.deployment.staging_lifecycle import (
@@ -4283,7 +4937,36 @@ class StagingLiveE2EGateTests(unittest.TestCase):
             "audit:receipt_integrity",
         } <= names, names)
         self.assertNotIn("runtime:model_bindings", names)
-        self.assertFalse(any(name.startswith(("session:", "admin:", "config:dev_admin")) for name in names))
+        # ODP-EPHEMERAL-STAGING-ROLLOUT-001: password sign-in is verified on
+        # staging with the same journey dev runs, first-login rotation included.
+        self.assertTrue({
+            "config:dev_admin_account",
+            "session:anonymous_session_denied",
+            "session:anonymous_api_denied",
+            "session:invalid_credentials_refused",
+            "session:must_change_enforced",
+            "session:first_login_password_rotated",
+            "session:password_login",
+            "session:session_resolves_account",
+            "admin:identity_user_list",
+            "admin:bootstrap_audited",
+            "admin:bootstrap_principal_bound",
+            "session:cross_tenant_denied",
+            "admin:foreign_tenant_unmodified_readback",
+            "admin:business_shell_denied",
+            "session:wrong_role_denied",
+            "admin:admin_page_served",
+            "session:logout",
+            "session:revoked_session_refused",
+            "admin:logout_revokes_admin_api",
+            "session:html_form_invalid_redirect",
+            "session:html_form_password_login",
+            "session:html_form_session_resolves_account",
+            "admin:html_form_admin_page_served",
+            "session:html_form_logout",
+            "session:html_form_revoked_session_refused",
+        } <= names, names)
+        self.assertTrue(seen["web"].password_rotated)
         self.assertEqual(
             proof["release_profile"],
             {"name": "core-ops", "model_readiness_claimed": False, "full_product_acceptance_claimed": False},
@@ -4291,17 +4974,41 @@ class StagingLiveE2EGateTests(unittest.TestCase):
         # Inputs come from the release's own Terraform outputs and identity.
         config = seen["config"]
         runtime_sa = self.outputs["staging_runtime_service_account"]
+        # No Cloud Run token is minted for the Web: it is reached through the
+        # load balancer at the governed origin, as a browser reaches it.
         self.assertEqual(
             sorted(seen["tokens"]),
             sorted([
                 (staging_smoke_token_audience(self.release_id), runtime_sa),
                 (self.outputs["staging_api_uri"], runtime_sa),
-                (self.outputs["staging_web_uri"], runtime_sa),
             ]),
         )
         self.assertEqual(config.bearer_token, self.SMOKE_TOKEN)
         self.assertEqual(config.api_transport_token, self.API_TOKEN)
-        self.assertEqual(seen["clients"][0][0], self.WEB_TOKEN)
+        self.assertEqual(config.web_url, "https://console-staging.oday-plus.com.tw")
+        account = self.outputs["staging_admin_account"]
+        self.assertEqual(
+            (config.bootstrap_admin_username, config.bootstrap_admin_password, config.dev_admin_initial_password),
+            (account["username"], self.fx.PASSWORD, self.fx.INITIAL_PASSWORD),
+        )
+        self.assertEqual((config.dev_admin_username, config.dev_admin_password), ("", ""))
+        self.assertEqual(config.dev_admin_denied_role, "cs-lead")
+        # The release's bootstrap job runs first, then exactly its two pinned
+        # secret versions are read; nothing else.
+        executed = [argv for argv in seen["gcloud"] if argv[:3] == ["run", "jobs", "execute"]]
+        self.assertEqual([argv[3] for argv in executed], [self.outputs["staging_admin_bootstrap_job_name"]])
+        self.assertEqual(
+            [argv[3:5] for argv in seen["gcloud"] if argv[:3] == ["secrets", "versions", "access"]],
+            [["1", f"--secret={account['initial_secret']}"], ["1", f"--secret={account['sign_in_secret']}"]],
+        )
+        self.assertLess(
+            seen["gcloud"].index(executed[0]),
+            next(i for i, argv in enumerate(seen["gcloud"]) if argv[:2] == ["secrets", "versions"]),
+        )
+        self.assertEqual(
+            result["admin_bootstrap"],
+            {"job": self.outputs["staging_admin_bootstrap_job_name"], "execution": "succeeded"},
+        )
         self.assertEqual(config.expected_deployment, "staging")
         self.assertEqual(config.expected_sha, self.candidate_sha)
         self.assertEqual(config.operator_role, ",".join(STAGING_SMOKE_ROLES))
@@ -4311,6 +5018,413 @@ class StagingLiveE2EGateTests(unittest.TestCase):
         self.assertEqual(
             seen["driver"], (self.outputs["staging_worker_job_name"], "asia-east1", self.project_id)
         )
+
+    def test_an_already_rotated_admin_signs_in_directly_on_a_verify_rerun(self) -> None:
+        # The bootstrap job is a no-op once the account exists; the gate then
+        # signs in with the release's sign-in password without rotating again.
+        result, _ = self._run_stage(self._core_ops_routes(), fresh_admin=False)
+
+        self.assertTrue(result["success"], result.get("detail"))
+        names = {check["name"] for check in result["live_e2e_gate"]["checks"]}
+        self.assertIn("session:password_login", names)
+        self.assertNotIn("session:first_login_password_rotated", names)
+
+    def test_expired_bootstrap_job_expiry_repeats_sign_in_using_live_job_describe_and_utc(self) -> None:
+        from product_ops.deployment import staging_lifecycle as lifecycle
+        from shared.identity import bootstrap as identity_bootstrap
+
+        # No third Python copy of the 72h cap and no verify-wide now plumbing.
+        self.assertFalse(hasattr(lifecycle, "STAGING_ADMIN_BOOTSTRAP_MAX_TTL_HOURS"))
+        self.assertFalse(hasattr(lifecycle, "_staging_admin_bootstrap_window_expired"))
+        self.assertFalse(hasattr(lifecycle, "_context_timestamp"))
+
+        bootstrap_expires_at = self.now + timedelta(hours=72)
+        # shared.identity.bootstrap itself still fails closed at >= expiry;
+        # expiry validation is unchanged.
+        with self.assertRaises(identity_bootstrap.BootstrapRefused) as refused:
+            identity_bootstrap.request_from_env(
+                {
+                    "ODP_IDENTITY_BOOTSTRAP_SECRET": self.fx.INITIAL_PASSWORD,
+                    "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT": lifecycle.format_timestamp(bootstrap_expires_at),
+                    "ODP_IDENTITY_BOOTSTRAP_TENANT_ID": self.outputs["staging_tenant_id"],
+                    "ODP_IDENTITY_BOOTSTRAP_USERNAME": self.outputs["staging_admin_account"]["username"],
+                    "ODP_IDENTITY_BOOTSTRAP_EMAIL": "staging-admin@console-staging.oday-plus.com.tw",
+                },
+                now=bootstrap_expires_at,
+            )
+        self.assertEqual(refused.exception.code, "BOOTSTRAP_SECRET_EXPIRED")
+
+        account = self.outputs["staging_admin_account"]
+        bootstrap_job = self.outputs["staging_admin_bootstrap_job_name"]
+        # Both Cloud Run job describe dialects (v2 template.template and gcloud
+        # v1 spec.template.spec.template.spec) plus UTC-offset timestamps work.
+        cases = (
+            ("v2_exact_boundary", "v2", lifecycle.format_timestamp(bootstrap_expires_at), bootstrap_expires_at),
+            ("v1_after_boundary", "v1", lifecycle.format_timestamp(bootstrap_expires_at), bootstrap_expires_at + timedelta(seconds=1)),
+            ("v2_long_ttl_100h", "v2", lifecycle.format_timestamp(bootstrap_expires_at), self.now + timedelta(hours=100)),
+            ("v1_offset_exact_boundary", "v1", "2026-08-30T14:00:00+08:00", bootstrap_expires_at),
+        )
+        for label, dialect, raw_expiry, gate_now in cases:
+            with self.subTest(case=label):
+                job_desc = {
+                    bootstrap_job: self._bootstrap_job_description(
+                        self.outputs,
+                        raw_expiry,
+                        dialect=dialect,
+                        extra_env=[
+                            {
+                                "name": "ODP_IDENTITY_BOOTSTRAP_SECRET",
+                                "valueFrom" if dialect == "v1" else "valueSource": {
+                                    "secretKeyRef": {"name": account["initial_secret"], "key": "1"}
+                                },
+                            }
+                        ],
+                    )
+                }
+                result, seen = self._run_stage(
+                    self._core_ops_routes(),
+                    fresh_admin=False,
+                    gate_now=gate_now,
+                    job_descriptions=job_desc,
+                    # Stale verify-start timestamp in context must be ignored.
+                    extra_context={"now": lifecycle.format_timestamp(bootstrap_expires_at - timedelta(hours=1))},
+                )
+                self.assertTrue(result["success"], result.get("detail"))
+                self.assertEqual([argv for argv in seen["gcloud"] if argv[:3] == ["run", "jobs", "execute"]], [])
+                self.assertEqual(seen["described"].count(("job", bootstrap_job)), 1)
+                self.assertEqual(
+                    [argv[3:5] for argv in seen["gcloud"] if argv[:3] == ["secrets", "versions", "access"]],
+                    [["1", f"--secret={account['sign_in_secret']}"]],
+                )
+                self.assertEqual(seen["config"].dev_admin_initial_password, "")
+                self.assertEqual(
+                    result["admin_bootstrap"],
+                    {"job": bootstrap_job, "execution": "skipped_bootstrap_window_expired"},
+                )
+                names = {check["name"] for check in result["live_e2e_gate"]["checks"]}
+                self.assertIn("session:password_login", names)
+                self.assertIn("admin:bootstrap_audited", names)
+                self.assertNotIn("session:first_login_password_rotated", names)
+                serialized = json.dumps(result)
+                self.assertNotIn("ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT", serialized)
+                self.assertNotIn(raw_expiry, serialized)
+
+    def test_bootstrap_runs_before_expiry_and_fails_closed_on_unrotated_or_bad_job_describe(self) -> None:
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        account = self.outputs["staging_admin_account"]
+        bootstrap_job = self.outputs["staging_admin_bootstrap_job_name"]
+        bootstrap_expires_at = self.now + timedelta(hours=72)
+
+        # Just before the expiry boundary (v1 gcloud describe shape & offset),
+        # bootstrap runs once, describes once, and rotates the fresh admin.
+        for label, dialect, raw_expiry in (
+            ("v2_before_boundary", "v2", lifecycle.format_timestamp(bootstrap_expires_at)),
+            ("v1_offset_before_boundary", "v1", "2026-08-30T14:00:00+08:00"),
+        ):
+            with self.subTest(case=label):
+                result, seen = self._run_stage(
+                    self._core_ops_routes(),
+                    fresh_admin=True,
+                    gate_now=bootstrap_expires_at - timedelta(seconds=1),
+                    job_descriptions={
+                        bootstrap_job: self._bootstrap_job_description(
+                            self.outputs, raw_expiry, dialect=dialect
+                        )
+                    },
+                )
+                self.assertTrue(result["success"], result.get("detail"))
+                executed = [argv for argv in seen["gcloud"] if argv[:3] == ["run", "jobs", "execute"]]
+                self.assertEqual([argv[3] for argv in executed], [bootstrap_job])
+                self.assertEqual(seen["described"].count(("job", bootstrap_job)), 1)
+                self.assertEqual(
+                    [argv[3:5] for argv in seen["gcloud"] if argv[:3] == ["secrets", "versions", "access"]],
+                    [["1", f"--secret={account['initial_secret']}"], ["1", f"--secret={account['sign_in_secret']}"]],
+                )
+                self.assertEqual(
+                    result["admin_bootstrap"],
+                    {"job": bootstrap_job, "execution": "succeeded"},
+                )
+
+        # Unrotated / unbootstrapped release past expiry cannot use the expired
+        # bootstrap job or initial secret to create/rotate an account.
+        result, seen = self._run_stage(
+            self._core_ops_routes(),
+            fresh_admin=True,
+            gate_now=bootstrap_expires_at + timedelta(hours=1),
+            bootstrap_expires_at=bootstrap_expires_at,
+        )
+        self.assertFalse(result["success"])
+        self.assertEqual([argv for argv in seen["gcloud"] if argv[:3] == ["run", "jobs", "execute"]], [])
+        self.assertEqual(
+            [argv[3:5] for argv in seen["gcloud"] if argv[:3] == ["secrets", "versions", "access"]],
+            [["1", f"--secret={account['sign_in_secret']}"]],
+        )
+        failed = {check["name"] for check in result["live_e2e_gate"]["checks"] if not check["ok"]}
+        self.assertIn("session:password_login", failed)
+        self.assertNotIn("session:first_login_password_rotated", failed)
+        for secret in (self.fx.PASSWORD, self.fx.INITIAL_PASSWORD):
+            self.assertNotIn(secret, json.dumps(result))
+
+        # Malformed, missing, secret-backed, contradictory, or tampered job
+        # descriptions all fail closed before executing bootstrap or reading any secret.
+        v1_valid = self._bootstrap_job_description(self.outputs, bootstrap_expires_at, dialect="v1")
+        v2_other = self._bootstrap_job_description(
+            self.outputs, bootstrap_expires_at + timedelta(hours=1), dialect="v2"
+        )
+        bad_cases: list[tuple[str, dict[str, Any], str]] = [
+            (
+                "missing_env",
+                {"template": {"template": {"containers": [{"image": self.outputs["staging_worker_image"]}], "vpcAccess": {"egress": "ALL_TRAFFIC"}}}},
+                "missing",
+            ),
+            (
+                "empty_env",
+                self._bootstrap_job_description(self.outputs, "   "),
+                "empty or invalid",
+            ),
+            (
+                "secret_backed_v2",
+                {"template": {"template": {
+                    "containers": [{
+                        "image": self.outputs["staging_worker_image"],
+                        "env": [{"name": "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT", "valueSource": {"secretKeyRef": {"secret": "x"}}}],
+                    }],
+                    "vpcAccess": {"egress": "ALL_TRAFFIC"},
+                }}},
+                "non-secret",
+            ),
+            (
+                "secret_backed_v1",
+                {
+                    "spec": {"template": {
+                        "metadata": {"annotations": {"run.googleapis.com/vpc-access-egress": "all-traffic"}},
+                        "spec": {"template": {"spec": {"containers": [{
+                            "image": self.outputs["staging_worker_image"],
+                            "env": [{"name": "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT", "valueFrom": {"secretKeyRef": {"name": "x", "key": "1"}}}],
+                        }]}}},
+                    }}
+                },
+                "non-secret",
+            ),
+            (
+                "malformed_timestamp",
+                self._bootstrap_job_description(self.outputs, "tomorrow"),
+                "ISO-8601",
+            ),
+            (
+                "naive_timestamp",
+                self._bootstrap_job_description(self.outputs, "2026-08-30T06:00:00"),
+                "UTC offset",
+            ),
+            (
+                "contradictory_v1_v2",
+                {**v1_valid, **v2_other},
+                "contradictory",
+            ),
+            (
+                "bad_egress_even_when_expired",
+                self._bootstrap_job_description(self.outputs, bootstrap_expires_at, egress="PRIVATE_RANGES_ONLY"),
+                "expected ALL_TRAFFIC",
+            ),
+        ]
+        for label, bad_payload, pattern in bad_cases:
+            with self.subTest(bad_job=label):
+                with self.assertRaisesRegex(RuntimeError, pattern):
+                    self._run_stage(
+                        self._core_ops_routes(),
+                        fresh_admin=False,
+                        gate_now=bootstrap_expires_at + timedelta(hours=1),
+                        job_descriptions={bootstrap_job: bad_payload},
+                    )
+
+    def test_verify_does_not_pass_now_and_live_gate_uses_its_own_utc(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        captured_contexts: dict[str, dict[str, Any]] = {}
+        bootstrap_expires_at = self.now + timedelta(hours=72)
+        verify_start = bootstrap_expires_at - timedelta(minutes=5)
+        gate_now = bootstrap_expires_at
+
+        # Run verify_ephemeral_staging starting before expiry while live_e2e_gate
+        # executes at expiry; stage_context must not carry `now`, and live gate
+        # must judge against its own UTC clock.
+        class _FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz: Any = None) -> datetime:
+                return gate_now if tz is None else gate_now.astimezone(tz)
+
+        seen_gcloud: list[list[str]] = []
+        tokens = {
+            lifecycle.staging_smoke_token_audience(self.release_id): self.SMOKE_TOKEN,
+            self.outputs["staging_api_uri"]: self.API_TOKEN,
+        }
+
+        def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
+            if name == self.outputs["staging_admin_bootstrap_job_name"]:
+                return self._bootstrap_job_description(self.outputs, bootstrap_expires_at)
+            return {"template": {"template": {
+                "containers": [{"image": self.outputs["staging_worker_image"]}],
+                "vpcAccess": {"egress": "ALL_TRAFFIC"},
+            }}}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            EphemeralStagingVerificationAndHoldTests._seed_live_state(self, state_dir)
+            marker_path = lifecycle._lifecycle_state_path(self.release_id, state_dir)
+            seeded = json.loads(marker_path.read_text(encoding="utf-8"))
+            marker_path.write_text(json.dumps({**seeded, "outputs": self.outputs}), encoding="utf-8")
+            with _staging_web_origin(self.fx, self.outputs), \
+                    patch.object(lifecycle, "datetime", _FrozenDatetime), \
+                    patch.object(lifecycle, "_live_gcloud", side_effect=_staging_gcloud(self.outputs, self.fx, seen_gcloud)), \
+                    patch.object(lifecycle, "_live_cloud_run_description", side_effect=describe), \
+                    patch.object(lifecycle, "_live_identity_token", side_effect=lambda *, audience, **kw: tokens[audience]), \
+                    patch.object(
+                        lifecycle,
+                        "_live_gate_clients",
+                        side_effect=lambda _cfg, **_kw: (
+                            self.fx.base.FakeHttp(self._core_ops_routes()),
+                            self.fx.AdminWeb(self.fx.web_routes(), is_fresh=False),
+                        ),
+                    ), \
+                    patch.object(lifecycle, "_live_gate_worker_driver", return_value=self.fx.base.FakeWorkerDriver(ok=True)), \
+                    patch.object(lifecycle, "_live_gate_correlation_id", return_value=self.fx.base.CORRELATION_ID), \
+                    patch.object(lifecycle, "STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS", 0.001):
+                live = lifecycle.make_live_rehearsal_executor(
+                    self.outputs,
+                    project_id=self.project_id,
+                    region="asia-east1",
+                    operator_identity=self.outputs["staging_runtime_service_account"],
+                )
+
+                def executor(stage: str, context: Mapping[str, Any]) -> Mapping[str, Any]:
+                    captured_contexts[stage] = dict(context)
+                    return live(stage, context) if stage == "live_e2e_gate" else {"success": True}
+
+                receipt = lifecycle.verify_ephemeral_staging(
+                    release_id=self.release_id,
+                    candidate_sha=self.candidate_sha,
+                    manifest_digest=self.manifest_digest,
+                    project_id=self.project_id,
+                    state_dir=state_dir,
+                    dry_run=False,
+                    stage_executor=executor,
+                    now=verify_start,
+                    operator_identity=self.outputs["staging_runtime_service_account"],
+                    lifecycle_outputs=self.outputs,
+                    remote_state_verified=True,
+                    release_profile="core-ops",
+                )
+        self.assertTrue(receipt.success, receipt.errors)
+        self.assertNotIn("now", captured_contexts["live_e2e_gate"])
+        self.assertEqual([argv for argv in seen_gcloud if argv[:3] == ["run", "jobs", "execute"]], [])
+        gate_stage = next(row for row in receipt.resources if row["stage"] == "live_e2e_gate")
+        self.assertEqual(
+            gate_stage["proof"]["admin_bootstrap"],
+            {
+                "job": self.outputs["staging_admin_bootstrap_job_name"],
+                "execution": "skipped_bootstrap_window_expired",
+            },
+        )
+
+    def test_a_wrong_sign_in_password_fails_the_stage_without_leaking_it(self) -> None:
+        def login(body: Any, _headers: Any) -> Any:
+            return self.fx.base.response(
+                401, {"error": {"code": "AUTH_INVALID_CREDENTIALS", "echo": body.get("password")}}
+            )
+
+        result, _ = self._run_stage(self._core_ops_routes(), web_overrides={"anon POST /login": login})
+
+        self.assertFalse(result["success"])
+        failed = {check["name"] for check in result["live_e2e_gate"]["checks"] if not check["ok"]}
+        self.assertIn("session:password_login", failed)
+        self.assertIn("session", result["live_e2e_gate"]["blocking_dependencies"])
+        for secret in (self.fx.PASSWORD, self.fx.INITIAL_PASSWORD):
+            self.assertNotIn(secret, json.dumps(result))
+
+    def test_a_failed_bootstrap_job_stops_the_stage_before_any_secret_is_read(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        trace: list[list[str]] = []
+        fake = _staging_gcloud(self.outputs, self.fx, trace)
+
+        def gcloud(argv: Sequence[str], **kwargs: Any) -> str:
+            if list(argv[:4]) == ["run", "jobs", "execute", self.outputs["staging_admin_bootstrap_job_name"]]:
+                raise RuntimeError("gcloud run jobs execute failed with exit status 2")
+            return fake(argv, **kwargs)
+
+        describe = self._bootstrap_job_description(
+            self.outputs, datetime.now(UTC) + timedelta(hours=24)
+        )
+        with patch.object(lifecycle, "_live_gcloud", side_effect=gcloud), \
+                patch.object(lifecycle, "_live_cloud_run_description", return_value=describe), \
+                patch.object(lifecycle, "_live_identity_token", side_effect=AssertionError("no token")):
+            executor = lifecycle.make_live_rehearsal_executor(
+                self.outputs,
+                project_id=self.project_id,
+                region="asia-east1",
+                operator_identity=self.outputs["staging_runtime_service_account"],
+            )
+            with self.assertRaisesRegex(RuntimeError, "exit status 2"):
+                executor("live_e2e_gate", {"release_profile": "core-ops", "manifest_digest": self.manifest_digest})
+        self.assertFalse(any(argv[:1] == ["secrets"] for argv in trace))
+
+    def test_the_admin_account_handoff_names_only_this_releases_secrets(self) -> None:
+        from product_ops.deployment.staging_lifecycle import (
+            get_ephemeral_resource_names,
+            validate_staging_outputs,
+        )
+
+        def errors(**account: Any) -> list[str]:
+            outputs = {
+                **self.outputs,
+                "staging_admin_account": {**self.outputs["staging_admin_account"], **account},
+            }
+            return validate_staging_outputs(
+                outputs,
+                release_id=self.release_id,
+                candidate_sha=self.candidate_sha,
+                manifest_digest=self.manifest_digest,
+                project_id=self.project_id,
+            )
+
+        self.assertEqual(errors(), [])
+        other = get_ephemeral_resource_names("odp-20260824-002")
+        for account, problem in (
+            ({"initial_secret": other["secret_admin_initial"]}, "initial_secret"),
+            ({"sign_in_secret": "oday-shared-admin-password"}, "sign_in_secret"),
+            ({"sign_in_version": "latest"}, "sign_in_version"),
+            ({"initial_version": ""}, "initial_version"),
+            ({"username": "a b"}, "username"),
+        ):
+            with self.subTest(problem=problem):
+                self.assertTrue(any(problem in error for error in errors(**account)), errors(**account))
+        foreign_job = {**self.outputs, "staging_admin_bootstrap_job_name": other["cloud_run_admin_bootstrap_job"]}
+        self.assertTrue(any(
+            "staging_admin_bootstrap_job_name" in error
+            for error in validate_staging_outputs(
+                foreign_job,
+                release_id=self.release_id,
+                candidate_sha=self.candidate_sha,
+                manifest_digest=self.manifest_digest,
+                project_id=self.project_id,
+            )
+        ))
+        missing = {k: v for k, v in self.outputs.items() if k != "staging_admin_account"}
+        self.assertTrue(any(
+            "staging_admin_account" in error
+            for error in validate_staging_outputs(
+                missing,
+                release_id=self.release_id,
+                candidate_sha=self.candidate_sha,
+                manifest_digest=self.manifest_digest,
+                project_id=self.project_id,
+            )
+        ))
 
     def test_full_profile_is_held_to_the_full_model_assertions(self) -> None:
         result, _ = self._run_stage(self._core_ops_routes("full"), "full")
@@ -4329,7 +5443,7 @@ class StagingLiveE2EGateTests(unittest.TestCase):
             })),
             "auth:web_operator_requires_login": dict(
                 routes=self._core_ops_routes(),
-                web_http=base.FakeHttp({"anon GET /operator": base.response(403)}),
+                web_overrides={"anon GET /operator": base.response(403)},
             ),
             "worker:drain_trigger": dict(routes=self._core_ops_routes(), worker_ok=False),
             "models:registry_refused": dict(routes=self._core_ops_routes(**{
@@ -4399,12 +5513,13 @@ class StagingLiveE2EGateTests(unittest.TestCase):
         self.assertEqual(write.call_args.kwargs["status"], "verification_failed")
         self.assertEqual(marker["status"], "verification_failed")
 
-    def test_tokens_never_reach_the_receipt_or_its_errors(self) -> None:
+    def test_tokens_and_admin_passwords_never_reach_the_receipt_or_its_errors(self) -> None:
         base = self.fx.base
         echo = {
             "detail": f"Bearer {self.SMOKE_TOKEN}",
             "transport": self.API_TOKEN,
-            "web": self.WEB_TOKEN,
+            "password": self.fx.PASSWORD,
+            "initial": self.fx.INITIAL_PASSWORD,
         }
         stage_result, _ = self._run_stage(self._core_ops_routes(**{
             "GET /api/v1/operator/bootstrap": base.response(500, echo),
@@ -4424,7 +5539,7 @@ class StagingLiveE2EGateTests(unittest.TestCase):
         )
         published = json.dumps(receipt.to_dict())
         self.assertIn("auth:operator_bootstrap", published)
-        for secret in (self.SMOKE_TOKEN, self.API_TOKEN, self.WEB_TOKEN):
+        for secret in (self.SMOKE_TOKEN, self.API_TOKEN, self.fx.PASSWORD, self.fx.INITIAL_PASSWORD):
             self.assertNotIn(secret, published)
             self.assertNotIn(secret, json.dumps(stage_result))
 
@@ -4504,7 +5619,7 @@ class StagingLiveE2EGateTests(unittest.TestCase):
         self.assertIn(f"--project={self.project_id}", argv)
         self.assertIn("--wait", argv)
 
-    def test_both_clients_are_bound_to_the_release_origins_with_transport_tokens(self) -> None:
+    def test_the_api_client_is_private_and_the_web_client_is_the_governed_origin(self) -> None:
         from product_ops.deployment import staging_lifecycle as lifecycle
 
         config = lifecycle.staging_live_gate_config(
@@ -4514,13 +5629,14 @@ class StagingLiveE2EGateTests(unittest.TestCase):
             bearer_token=self.SMOKE_TOKEN,
             api_transport_token=self.API_TOKEN,
         )
-        api, web = lifecycle._live_gate_clients(
-            config, web_transport_token=self.WEB_TOKEN, correlation_id="corr-1"
-        )
+        api, web = lifecycle._live_gate_clients(config, correlation_id="corr-1")
         self.assertEqual(api._base_url, self.outputs["staging_api_uri"])
         self.assertEqual((api._bearer_token, api._transport_token), (self.SMOKE_TOKEN, self.API_TOKEN))
-        self.assertEqual(web._base_url, self.outputs["staging_web_uri"])
-        self.assertEqual((web._bearer_token, web._transport_token), ("", self.WEB_TOKEN))
+        # The browser origin behind the load balancer: no Cloud Run token and
+        # no application credential (the password form is the only sign-in).
+        self.assertEqual(web._base_url, lifecycle.STAGING_WEB_PUBLIC_ORIGIN)
+        self.assertNotEqual(web._base_url, self.outputs["staging_web_uri"])
+        self.assertEqual((web._bearer_token, web._transport_token), ("", ""))
 
     # --- the smoke principal is release-scoped Terraform, nothing else ---
 
@@ -4575,20 +5691,89 @@ class StagingLiveE2EGateTests(unittest.TestCase):
             "ODP_DEV_ADMIN",
             "ODP_OPERATOR_SMOKE",
             "ODP_AUTH_PRINCIPAL_MAP_SECRET",
-            "ODP_IDENTITY_BOOTSTRAP",
-            "ODP_IDENTITY_TOKEN_SIGNING_KEY",
             "ODP_AUTH_HS256_KEYS",
         ):
             self.assertNotIn(forbidden, main_text)
             self.assertNotIn(forbidden, variables_text)
+        # ODP-EPHEMERAL-STAGING-ROLLOUT-001: the deployment bootstrap inputs
+        # exist only on the release's own admin bootstrap job, never as a
+        # caller variable, and its secret is the release-generated one.
+        self.assertNotIn("ODP_IDENTITY_BOOTSTRAP", variables_text)
+        bootstrap_start = main_text.index('resource "google_cloud_run_v2_job" "staging_admin_bootstrap"')
+        self.assertNotIn("ODP_IDENTITY_BOOTSTRAP", main_text[:bootstrap_start])
+        self.assertNotIn("\nresource ", main_text[bootstrap_start + 1:])
+        self.assertEqual(
+            re.findall(
+                r'name = "ODP_IDENTITY_BOOTSTRAP_SECRET"\n\s*value_source \{\n\s*secret_key_ref \{\n'
+                r'\s*secret\s*= (\S+)\n\s*version = (\S+)\n',
+                main_text,
+            ),
+            [(
+                "google_secret_manager_secret.staging_admin_initial.secret_id",
+                "google_secret_manager_secret_version.staging_admin_initial.version",
+            )],
+        )
         self.assertNotRegex(variables_text, r'variable\s+"[^"]*(smoke|principal)[^"]*"')
-        # The release-scoped secrets are unchanged. The only IAM additions are the
-        # release-scoped verify grants from ODP-STAGING-REHEARSAL-NETWORK-IDENTITY-001.
+        # ODP-STAGING-PASSWORD-RUNTIME-WIRING-261114: the local identity signing
+        # key now exists for human password login, but never as a caller input
+        # (no dev/prod key cohort can be passed in) and never for the smoke
+        # principal: every mount is the release-owned secret's pinned version.
+        self.assertNotIn("ODP_IDENTITY_TOKEN_SIGNING_KEY", variables_text)
+        self.assertNotRegex(variables_text, r'variable\s+"[^"]*(signing|identity|session|secret)[^"]*"')
+        key_mounts = re.findall(
+            r'name = "ODP_IDENTITY_TOKEN_SIGNING_KEY"\n\s*value_source \{\n\s*secret_key_ref \{\n'
+            r'\s*secret\s*= (\S+)\n\s*version = (\S+)\n',
+            main_text,
+        )
+        self.assertEqual(main_text.count('"ODP_IDENTITY_TOKEN_SIGNING_KEY"'), len(key_mounts))
+        self.assertEqual(
+            key_mounts,
+            [
+                (
+                    "google_secret_manager_secret.staging_identity_token_signing_key.secret_id",
+                    "google_secret_manager_secret_version.staging_identity_token_signing_key.version",
+                )
+            ]
+            * 2,
+        )
+        principal_map = re.search(r'"ODP_AUTH_PRINCIPAL_MAP"\n\s*value\s*=\s*jsonencode\(\{(.*?)\}\)\n', main_text, re.S)
+        self.assertIsNotNone(principal_map)
+        self.assertNotIn("identity", principal_map.group(1))
+        # The original three release secrets are unchanged and keep their
+        # purpose; the only addition is the release-owned local identity key.
         self.assertEqual(
             re.findall(r'resource "google_secret_manager_secret" "(\w+)"', main_text),
-            ["staging_database_url", "staging_cursor_signing_key", "staging_web_session"],
+            [
+                "staging_database_url",
+                "staging_cursor_signing_key",
+                "staging_web_session",
+                "staging_identity_token_signing_key",
+                # The release-scoped admin's one-time bootstrap secret and its
+                # sign-in password (live gate password journey).
+                "staging_admin_initial",
+                "staging_admin_sign_in",
+            ],
         )
-        self.assertEqual(len(re.findall(r'resource "random_password"', main_text)), 3)
+        self.assertEqual(len(re.findall(r'resource "random_password"', main_text)), 6)
+        # Signer, cursor and session keys are three distinct secrets: none is
+        # reused for another purpose.
+        for env_name, secret in (
+            ("ODP_INTAKE_CURSOR_SIGNING_KEY", "staging_cursor_signing_key"),
+            ("ODP_WEB_SESSION_SECRET", "staging_web_session"),
+            ("ODP_IDENTITY_TOKEN_SIGNING_KEY", "staging_identity_token_signing_key"),
+        ):
+            refs = set(
+                re.findall(
+                    rf'name = "{env_name}"\n\s*value_source \{{\n\s*secret_key_ref \{{\n'
+                    r"\s*secret\s*= google_secret_manager_secret\.(\w+)\.secret_id",
+                    main_text,
+                )
+            )
+            self.assertEqual(refs, {secret}, env_name)
+        # The verify grants from ODP-STAGING-REHEARSAL-NETWORK-IDENTITY-001 are
+        # unchanged; the password-login grants are the last four, each scoped
+        # to one release-owned secret or the Cloud SQL client role the runtime
+        # account already holds.
         self.assertEqual(
             re.findall(r'resource "google_[a-z0-9_]*iam_member" "(\w+)"', main_text),
             [
@@ -4605,10 +5790,52 @@ class StagingLiveE2EGateTests(unittest.TestCase):
                 "staging_worker_invokes_api",
                 "staging_runtime_invokes_api",
                 "staging_runtime_invokes_web",
+                # Web only: the console-staging load balancer forwards browsers
+                # without a Cloud Run token (the API stays IAM-only).
+                "staging_web_public",
                 "staging_runtime_publisher",
                 "staging_worker_subscriber",
                 "staging_runtime_cursor_key",
                 "staging_web_session",
+                "staging_runtime_identity_signing_key",
+                "staging_web_identity_signing_key",
+                # The bootstrap job (runtime account) reads only the one-time
+                # secret; nothing is granted on the sign-in password.
+                "staging_runtime_admin_initial",
+                "staging_web_cloudsql",
+                "staging_web_db_url",
+            ],
+        )
+        self.assertNotRegex(main_text, r'iam_member" "\w+" \{[^}]*staging_admin_sign_in')
+        # Wrong-scope negatives: no project-wide secret access, the worker and
+        # deployer never read the signing key, and the smoke principal gains no
+        # secret grant.
+        self.assertNotRegex(
+            main_text,
+            r'resource "google_project_iam_member"[^}]*roles/secretmanager',
+        )
+        identity_members = re.findall(
+            r'secret_id = google_secret_manager_secret\.staging_identity_token_signing_key\.secret_id\n'
+            r'\s*role\s*= "([^"]+)"\n\s*member\s*= "([^"]+)"',
+            main_text,
+        )
+        self.assertEqual(
+            identity_members,
+            [
+                ("roles/secretmanager.secretAccessor", "serviceAccount:${google_service_account.staging_runtime.email}"),
+                ("roles/secretmanager.secretAccessor", "serviceAccount:${google_service_account.staging_web.email}"),
+            ],
+        )
+        project_members = re.findall(
+            r'resource "google_project_iam_member" "(\w+)" \{\n\s*project = var\.project_id\n'
+            r'\s*role\s*= "([^"]+)"\n\s*member\s*= "([^"]+)"',
+            main_text,
+        )
+        self.assertEqual(
+            project_members,
+            [
+                ("staging_runtime_cloudsql", "roles/cloudsql.client", "serviceAccount:${google_service_account.staging_runtime.email}"),
+                ("staging_web_cloudsql", "roles/cloudsql.client", "serviceAccount:${google_service_account.staging_web.email}"),
             ],
         )
 
@@ -4773,24 +6000,34 @@ class StagingSmokeAudienceIntegrationTests(unittest.TestCase):
                 else "staging_web_image" if "web" in name
                 else "staging_worker_image"
             ]
-            container = {"containers": [{"image": image}], "vpcAccess": {"egress": "ALL_TRAFFIC"}}
+            container_spec: dict[str, Any] = {"image": image}
+            if name == outputs["staging_admin_bootstrap_job_name"]:
+                container_spec["env"] = [
+                    {
+                        "name": "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT",
+                        "value": lifecycle.format_timestamp(datetime.now(UTC) + timedelta(hours=24)),
+                    }
+                ]
+            container = {"containers": [container_spec], "vpcAccess": {"egress": "ALL_TRAFFIC"}}
             return {"spec": {"template": container}, "template": {"template": container}}
 
         real_clients = lifecycle._live_gate_clients
 
         def clients(config: Any, **kwargs: Any) -> Any:
             # The API client is the gate's real urllib client; only the Web
-            # origin (a browser redirect check) keeps the gate's own double.
+            # origin (the browser redirect check and the password journey)
+            # keeps the gate's own double.
             api, _web = real_clients(config, **kwargs)
-            return api, self.fx.base.passing_web_http()
+            return api, self.fx.AdminWeb(self.fx.web_routes(), is_fresh=True)
 
         class _Opener:
             def open(self, request: Any, timeout: float = 0.0) -> Any:
                 return edge.open(request, timeout)
 
         stack = ExitStack()
+        stack.enter_context(_staging_web_origin(self.fx, outputs))
         for target, kwargs in (
-            ("_live_gcloud", {"side_effect": lambda argv, **kw: argv[3] if argv[0] == "iam" else ""}),
+            ("_live_gcloud", {"side_effect": _staging_gcloud(outputs, self.fx)}),
             ("_live_cloud_run_description", {"side_effect": describe}),
             ("_live_identity_token", {"side_effect": lambda *, audience, **kw: edge.token(audience)}),
             ("_live_gate_clients", {"side_effect": clients}),
@@ -5003,9 +6240,8 @@ class StagingWorkerIdempotencyStageTests(unittest.TestCase):
             seen["tokens"].append(audience)
             return tokens[audience]
 
-        def clients(config: Any, *, web_transport_token: str, correlation_id: str) -> Any:
+        def clients(config: Any, *, correlation_id: str) -> Any:
             seen["config"] = config
-            seen["web_transport_token"] = web_transport_token
             return RecordingHttp(routes), None
 
         def correlation(expected_sha: str, **kwargs: Any) -> str:
@@ -5071,7 +6307,6 @@ class StagingWorkerIdempotencyStageTests(unittest.TestCase):
             sorted(set(seen["tokens"])),
             sorted([staging_smoke_token_audience(self.release_id), self.outputs["staging_api_uri"]]),
         )
-        self.assertEqual(seen["web_transport_token"], "")
         self.assertEqual(seen["correlation"], [{"purpose": "worker-idempotency"}])
 
     def test_a_replay_that_creates_a_new_job_fails_the_stage(self) -> None:
@@ -5147,6 +6382,1149 @@ def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:
     d = obj.to_dict()
     d.update(changes)
     return StagingConfig(**d)
+
+
+
+class StagingPasswordLoginRuntimeWiringTests(unittest.TestCase):
+    """ODP-STAGING-PASSWORD-RUNTIME-WIRING-261114.
+
+    The ephemeral release wires the existing Web password -> durable
+    identity/session/throttle -> local JWT -> API AuthenticationBoundary chain
+    from release-owned resources only. Every key, account and token below is a
+    SYNTHETIC fixture: these tests prove the configuration reaches the same
+    verifier and is refused when wrong. They are not a live sign-in, a real
+    account, or any UAT case.
+    """
+
+    SYNTHETIC_IDENTITY_KEY = "SYNTHETICidentitysigningkeyFORTESTSONLY0000000000000000000000000"
+    SYNTHETIC_DATABASE_URL = "postgresql://synthetic:synthetic@/synthetic?host=/cloudsql/synthetic"
+    #: Expected local JWT contract, written out here rather than imported: the
+    #: only runtime owner is the module's main.tf locals, which these pin.
+    LOCAL_ISSUER = "urn:odp:identity:local"
+    LOCAL_AUDIENCE_PREFIX = "urn:odp:staging-identity:"
+
+    def setUp(self) -> None:
+        self.release_id = "odp-20260824-001"
+        self.main_text = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+
+    def _local_audience(self, release_id: str | None = None) -> str:
+        return self.LOCAL_AUDIENCE_PREFIX + release_label_value(release_id or self.release_id)
+
+    def _config(self, release_id: str | None = None) -> StagingConfig:
+        return StagingConfig(
+            release_id=release_id or self.release_id,
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            project_id="oday-staging-proj",
+            owner_task_id="ODP-STAGING-PASSWORD-RUNTIME-WIRING-261114",
+            kms_key_id="projects/oday-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+            deployer_service_account_email="deployer@oday-staging-proj.iam.gserviceaccount.com",
+            created_at="2026-08-27T06:00:00Z",
+        )
+
+    def _service_block(self, name: str) -> str:
+        start = self.main_text.index(f'resource "google_cloud_run_v2_service" "{name}"')
+        end = self.main_text.index("\nresource ", start + 1)
+        return self.main_text[start:end]
+
+    def _rendered_env(self, service: str, release_id: str | None = None) -> dict[str, str]:
+        """Render the static env of one service for a release, with synthetic secrets.
+
+        Module variables come from the tfvars the lifecycle caller writes.
+        """
+
+        from product_ops.deployment.staging_lifecycle import (
+            generate_tfvars,
+            staging_smoke_token_audience,
+        )
+
+        release = release_id or self.release_id
+        tfvars = generate_tfvars(self._config(release))
+        locals_ = {
+            "local.local_identity_issuer": self.LOCAL_ISSUER,
+            "local.local_identity_audience": self._local_audience(release),
+            "local.smoke_token_audience": staging_smoke_token_audience(release),
+            "var.web_base_url": tfvars["web_base_url"],
+        }
+        secrets = {
+            "staging_identity_token_signing_key": self.SYNTHETIC_IDENTITY_KEY,
+            "staging_database_url": self.SYNTHETIC_DATABASE_URL,
+            "staging_cursor_signing_key": "SYNTHETIC-cursor-key",
+            "staging_web_session": "SYNTHETIC-web-session-secret",
+        }
+        env: dict[str, str] = {}
+        block = self._service_block(service)
+        for name, literal, expression in re.findall(
+            r'env \{\n\s*name\s*=\s*"([A-Z0-9_]+)"\n\s*value\s*=\s*(?:"([^"]*)"|(\S+))\n', block
+        ):
+            if literal or expression == "":
+                env[name] = literal
+            elif expression in locals_:
+                env[name] = locals_[expression]
+        for name, secret in re.findall(
+            r'env \{\n\s*name = "([A-Z0-9_]+)"\n\s*value_source \{\n\s*secret_key_ref \{\n'
+            r"\s*secret\s*= google_secret_manager_secret\.(\w+)\.secret_id",
+            block,
+        ):
+            env[name] = secrets[secret]
+        return env
+
+    def _boundary(self, env: Mapping[str, str], identity_store: Any = None, session_service: Any = None):
+        from modules.opsboard.auth import AuthenticationBoundary
+        from modules.opsboard.auth.config import config_from_env
+
+        config = config_from_env(env, identity_store=identity_store, session_service=session_service)
+        return config, AuthenticationBoundary(config)
+
+    def _local_token(
+        self,
+        *,
+        key: str | None = None,
+        kid: str = "local-default",
+        audience: str | None = None,
+        issuer: str = "urn:odp:identity:local",
+        sub: str | None = None,
+        sid: str | None = None,
+        tenant_id: str | None = None,
+    ) -> str:
+        """The claim shape apps/web/src/lib/auth/localJwt.ts mintLocalJwt signs."""
+
+        import time
+        from uuid import uuid4
+
+        from modules.opsboard.auth.jwt import SigningKey, encode_compact_jwt
+
+        now = int(time.time())
+        claims = {
+            "iss": issuer,
+            "aud": audience or self._local_audience(),
+            "sub": sub or str(uuid4()),
+            "sid": sid or str(uuid4()),
+            "tenant_id": tenant_id or str(uuid4()),
+            "iat": now,
+            "exp": now + 120,
+        }
+        signing = SigningKey(
+            kid=kid, algorithm="HS256", secret=(key or self.SYNTHETIC_IDENTITY_KEY).encode("utf-8")
+        )
+        return encode_compact_jwt(claims, signing)
+
+    def test_terraform_local_identity_contract_is_release_bound_and_distinct(self) -> None:
+        from product_ops.deployment import staging_lifecycle
+        from product_ops.deployment.staging_lifecycle import (
+            STAGING_SMOKE_TOKEN_AUDIENCE_PREFIX,
+            staging_smoke_token_audience,
+        )
+
+        issuer = re.search(r'local_identity_issuer\s*=\s*"([^"]+)"', self.main_text)
+        audience = re.search(r'local_identity_audience\s*=\s*"([^"]+)"', self.main_text)
+        self.assertIsNotNone(issuer)
+        self.assertIsNotNone(audience)
+        self.assertEqual(issuer.group(1), self.LOCAL_ISSUER)
+        # Same local issuer as the root stack and the Web signer.
+        self.assertRegex(
+            (ROOT / "infra/terraform/main.tf").read_text(encoding="utf-8"),
+            rf'ODP_AUTH_LOCAL_ISSUER\s*=\s*"{re.escape(self.LOCAL_ISSUER)}"',
+        )
+        self.assertEqual(audience.group(1), self.LOCAL_AUDIENCE_PREFIX + "${local.release_label}")
+        self.assertNotEqual(self.LOCAL_AUDIENCE_PREFIX, STAGING_SMOKE_TOKEN_AUDIENCE_PREFIX)
+        self.assertNotEqual(self._local_audience(), staging_smoke_token_audience(self.release_id))
+        # main.tf is the only owner: the lifecycle module carries no parallel
+        # local identity rule that production code never calls.
+        for name in dir(staging_lifecycle):
+            self.assertNotIn("LOCAL_IDENTITY", name.upper(), name)
+        # Alphanumeric key: config_from_env reads a key without ':' as the
+        # single kid "local-default" that the Web signer stamps.
+        key_block = re.search(
+            r'resource "random_password" "staging_identity_token_signing_key" \{\n(.*?)\n\}', self.main_text, re.S
+        )
+        self.assertIsNotNone(key_block)
+        self.assertIn("special = false", key_block.group(1))
+        self.assertIn("length  = 64", key_block.group(1))
+
+    def test_web_and_api_render_the_same_local_jwt_contract(self) -> None:
+        api = self._rendered_env("staging_api")
+        web = self._rendered_env("staging_web")
+        for name in ("ODP_AUTH_MODE", "ODP_AUTH_LOCAL_ISSUER", "ODP_AUTH_LOCAL_AUDIENCES",
+                     "ODP_IDENTITY_TOKEN_SIGNING_KEY", "ODAY_DATABASE_URL"):
+            self.assertIn(name, api, name)
+            self.assertEqual(api[name], web.get(name), name)
+        self.assertEqual(api["ODP_AUTH_MODE"], "local")
+        self.assertEqual(web["ODP_PRODUCT_MODE"], "production")
+        self.assertEqual(web["ODP_WEB_ALLOW_LEGACY_TRUSTED_HEADERS"], "false")
+        # Session seal, signer and cursor key stay distinct.
+        self.assertNotEqual(web["ODP_WEB_SESSION_SECRET"], web["ODP_IDENTITY_TOKEN_SIGNING_KEY"])
+        self.assertNotIn("ODP_WEB_SESSION_SECRET", api)
+        self.assertNotIn("ODP_INTAKE_CURSOR_SIGNING_KEY", web)
+        self.assertNotIn("ODP_AUTH_PRINCIPAL_MAP", web)
+        for name in web:
+            self.assertFalse(name.startswith(("ODP_WEB_OIDC", "ODP_AUTH_OIDC")), name)
+        for name in api:
+            self.assertFalse(name.startswith("ODP_AUTH_OIDC"), name)
+
+    def test_release_api_env_reaches_the_same_auth_boundary_and_refuses_wrong_tokens(self) -> None:
+        from modules.opsboard.auth import AuthFailureReason, Credentials
+        from product_ops.deployment.staging_lifecycle import staging_smoke_token_audience
+
+        config, boundary = self._boundary(self._rendered_env("staging_api"))
+        self.assertTrue(config.is_configured)
+        self.assertEqual(config.local_issuer, "urn:odp:identity:local")
+        self.assertEqual(set(config.local_signing_keys), {"local-default"})
+        self.assertEqual(config.local_audiences, frozenset({self._local_audience()}))
+        # The smoke service path is unchanged: Google issuer, smoke audience only.
+        self.assertEqual(config.service_issuer, "https://accounts.google.com")
+        self.assertEqual(config.service_audiences, frozenset({staging_smoke_token_audience(self.release_id)}))
+        self.assertFalse(config.oidc_enabled)
+
+        def reason(token: str) -> Any:
+            outcome = boundary.authenticate(Credentials(bearer_token=token))
+            self.assertFalse(outcome.authenticated)
+            return outcome.reason
+
+        # A correctly signed release token passes signature/issuer/audience and
+        # still needs the authoritative durable session: no store, no trust.
+        self.assertEqual(reason(self._local_token()), AuthFailureReason.BOUNDARY_NOT_CONFIGURED)
+        self.assertEqual(reason(self._local_token(key="SYNTHETICotherreleasekey" * 3)), AuthFailureReason.BAD_SIGNATURE)
+        self.assertEqual(reason(self._local_token(kid="dev-cohort")), AuthFailureReason.UNKNOWN_KEY)
+        self.assertEqual(
+            reason(self._local_token(audience=staging_smoke_token_audience(self.release_id))),
+            AuthFailureReason.AUDIENCE_MISMATCH,
+        )
+        self.assertEqual(
+            reason(self._local_token(audience=self._local_audience("odp-20260824-002"))),
+            AuthFailureReason.AUDIENCE_MISMATCH,
+        )
+        self.assertEqual(reason(self._local_token(issuer="urn:odp:identity:dev")), AuthFailureReason.ISSUER_MISMATCH)
+
+    def test_another_release_key_or_missing_key_is_refused(self) -> None:
+        from modules.opsboard.auth import AuthFailureReason, Credentials
+
+        env = self._rendered_env("staging_api")
+        # A token signed for a different release (its own key and audience).
+        _, boundary = self._boundary(env)
+        other = self._local_token(key="SYNTHETICanotherreleasekey" * 3)
+        self.assertEqual(
+            boundary.authenticate(Credentials(bearer_token=other)).reason, AuthFailureReason.BAD_SIGNATURE
+        )
+        # Missing signing key: local tokens never verify.
+        missing = dict(env)
+        missing.pop("ODP_IDENTITY_TOKEN_SIGNING_KEY")
+        config, boundary = self._boundary(missing)
+        self.assertEqual(config.local_signing_keys, {})
+        self.assertFalse(boundary.authenticate(Credentials(bearer_token=self._local_token())).authenticated)
+        # Missing local audience: no audience is accepted for local tokens.
+        no_audience = dict(env)
+        no_audience.pop("ODP_AUTH_LOCAL_AUDIENCES")
+        _, boundary = self._boundary(no_audience)
+        self.assertEqual(
+            boundary.authenticate(Credentials(bearer_token=self._local_token())).reason,
+            AuthFailureReason.AUDIENCE_MISMATCH,
+        )
+
+    def test_durable_account_row_not_token_claims_decides_tenant_and_roles(self) -> None:
+        """SYNTHETIC in-memory stores: exercises the boundary decision only."""
+
+        from uuid import uuid4
+
+        from modules.opsboard.auth import AuthFailureReason, Credentials
+        from shared.auth import Role
+        from shared.identity import (
+            Account,
+            InMemoryIdentityStore,
+            InMemorySessionRepository,
+            SessionConfig,
+            SessionService,
+        )
+
+        identity_store = InMemoryIdentityStore()
+        session_service = SessionService(repository=InMemorySessionRepository(), config=SessionConfig())
+        _, boundary = self._boundary(
+            self._rendered_env("staging_api"), identity_store=identity_store, session_service=session_service
+        )
+        account_id, tenant_id = uuid4(), uuid4()
+        identity_store.save_account(
+            Account(
+                account_id=account_id,
+                tenant_id=tenant_id,
+                username="synthetic_staging_user",
+                email="synthetic-staging-user@example.invalid",
+                status="active",
+            )
+        )
+        session = session_service.create_session(account_id=account_id, provider="local_password")
+
+        # Wrong tenant claim: the account row wins and the token is refused.
+        wrong_tenant = self._local_token(sub=str(account_id), sid=str(session.session_id), tenant_id=str(uuid4()))
+        self.assertEqual(
+            boundary.authenticate(Credentials(bearer_token=wrong_tenant)).reason, AuthFailureReason.TENANT_MISMATCH
+        )
+        # A session of another account is refused.
+        other_session = session_service.create_session(account_id=uuid4(), provider="local_password")
+        stolen = self._local_token(sub=str(account_id), sid=str(other_session.session_id), tenant_id=str(tenant_id))
+        self.assertFalse(boundary.authenticate(Credentials(bearer_token=stolen)).authenticated)
+
+        # Matching token: roles come from the durable store only (none granted).
+        token = self._local_token(sub=str(account_id), sid=str(session.session_id), tenant_id=str(tenant_id))
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+        self.assertTrue(outcome.authenticated)
+        self.assertEqual(outcome.principal.attributes["provider"], "local_password")
+        self.assertEqual(set(outcome.principal.roles), set())
+        identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+        self.assertEqual(set(outcome.principal.roles), {Role.OPERATIONS_MANAGER})
+
+    def test_identity_signing_key_secret_is_release_inventory_with_cleanup_labels(self) -> None:
+        cfg = self._config()
+        names = get_ephemeral_resource_names(self.release_id, cfg.project_id)
+        self.assertEqual(names["secret_identity_key"], f"{names['name_prefix']}-identity-signing-key")
+        planned = plan_staging_resources(cfg, now=datetime(2026, 8, 27, 7, 0, 0, tzinfo=UTC))
+        secrets = [r for r in planned if r.resource_type == "google_secret_manager_secret"]
+        self.assertEqual(
+            [r.resource_name for r in secrets],
+            [names["secret_db_url"], names["secret_cursor_key"], names["secret_web_session"],
+             names["secret_identity_key"], names["secret_admin_initial"], names["secret_admin_sign_in"]],
+        )
+        key = secrets[3]
+        self.assertEqual(key.resource_id, f"projects/{cfg.project_id}/secrets/{names['secret_identity_key']}")
+        self.assertTrue(is_staging_ephemeral_resource(key.labels, self.release_id))
+        self.assertEqual(key.expires_at, secrets[0].expires_at)
+        # Terraform labels the secret with the same release labels used for cleanup.
+        secret_block = re.search(
+            r'resource "google_secret_manager_secret" "staging_identity_token_signing_key" \{\n(.*?)\n\}',
+            self.main_text,
+            re.S,
+        )
+        self.assertIsNotNone(secret_block)
+        self.assertIn("labels = local.resource_labels", secret_block.group(1))
+        # Never a module output.
+        outputs_text = (MODULE_DIR / "outputs.tf").read_text(encoding="utf-8")
+        self.assertNotIn("identity", outputs_text)
+        self.assertNotIn("signing", outputs_text)
+
+    def test_web_is_configured_with_the_governed_console_origin(self) -> None:
+        """caller config -> tfvars -> module variable -> Web ODP_WEB_BASE_URL.
+
+        The required staging console host must be the Web's configured origin:
+        the Web derives no alias for a custom domain, so a run.app origin would
+        send the post-login redirect off the host that received the host-only
+        session cookie. The app's Host/CSRF/cookie rules are not changed here.
+        """
+
+        from urllib.parse import urlsplit
+
+        from product_ops.deployment.staging_lifecycle import (
+            STAGING_WEB_PUBLIC_ORIGIN,
+            generate_tfvars,
+        )
+
+        self.assertEqual(STAGING_WEB_PUBLIC_ORIGIN, "https://console-staging.oday-plus.com.tw")
+        for release in (self.release_id, "odp-20260824-002"):
+            tfvars = generate_tfvars(self._config(release))
+            self.assertEqual(tfvars["web_base_url"], STAGING_WEB_PUBLIC_ORIGIN)
+            self.assertEqual(self._rendered_env("staging_web", release)["ODP_WEB_BASE_URL"], STAGING_WEB_PUBLIC_ORIGIN)
+            self.assertNotIn("project_number", tfvars)
+        parsed = urlsplit(STAGING_WEB_PUBLIC_ORIGIN)
+        self.assertEqual((parsed.scheme, parsed.path, parsed.query, parsed.port), ("https", "", "", None))
+        self.assertFalse(parsed.hostname.endswith(".run.app"))
+        # The API never receives the Web origin, and the Web reads it only
+        # from the module variable (no locally derived Cloud Run URL).
+        self.assertNotIn("ODP_WEB_BASE_URL", self._rendered_env("staging_api"))
+        self.assertRegex(
+            self._service_block("staging_web"), r'name\s*=\s*"ODP_WEB_BASE_URL"\n\s*value\s*=\s*var\.web_base_url\n'
+        )
+        self.assertNotIn("run.app", re.sub(r"#.*", "", self.main_text))
+        self.assertNotIn("project_number", self.main_text)
+
+    def test_workflow_passes_no_origin_override_and_no_shared_identity_secret_to_staging(self) -> None:
+        import yaml
+
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["deploy"]["steps"]
+        create = next(s for s in steps if "staging_lifecycle.py create" in str(s.get("run", "")))
+        run = str(create["run"])
+        # The governed origin is fixed by the lifecycle; the run cannot swap in
+        # the job's environment ODP_WEB_BASE_URL, a run.app URL or a number.
+        for override in ("--project-number", "--web-base-url", "projectNumber", "ODP_WEB_BASE_URL"):
+            self.assertNotIn(override, run)
+        # The release creates its own key; the shared dev/prod key and session
+        # secret references never reach the staging lifecycle.
+        staging_runs = "\n".join(
+            str(s.get("run", "")) for s in steps if "staging_lifecycle.py" in str(s.get("run", ""))
+        )
+        for forbidden in (
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY",
+            "ODP_WEB_SESSION_SECRET",
+            "ODP_DEV_ADMIN",
+            "ODP_OPERATOR_SMOKE",
+            "ODP_IDENTITY_BOOTSTRAP",
+        ):
+            self.assertNotIn(forbidden, staging_runs)
+            self.assertNotIn(forbidden, str(create.get("env", "")))
+
+
+class StagingIdentityTokenMintingTests(unittest.TestCase):
+    """The deployer mints release ID tokens via IAM generateIdToken, not gcloud impersonation."""
+
+    SA = "stg-odp-60cf78695-d1182418-rt@odayplus-runtime-20260825.iam.gserviceaccount.com"
+
+    def _mint(self, *, access_token: str = "deployer-access", response: Any = None, error: Exception | None = None):
+        import io
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        captured: dict[str, Any] = {}
+
+        class _Response(io.BytesIO):
+            def __enter__(self) -> _Response:
+                return self
+
+            def __exit__(self, *_exc: Any) -> None:
+                self.close()
+
+        def urlopen(request: Any, timeout: float) -> Any:
+            captured["request"] = request
+            captured["timeout"] = timeout
+            if error is not None:
+                raise error
+            return _Response(json.dumps(response).encode("utf-8"))
+
+        with patch.object(lifecycle, "_live_gcloud", return_value=access_token) as cloud, patch.object(
+            lifecycle.urllib.request, "urlopen", side_effect=urlopen
+        ):
+            try:
+                token = lifecycle._live_identity_token(audience="https://api.example.test", operator_identity=self.SA)
+            except RuntimeError as exc:
+                token = exc
+        return token, cloud, captured
+
+    def test_mints_with_the_deployer_token_and_never_impersonates(self) -> None:
+        token, cloud, captured = self._mint(response={"token": "id-token-value"})
+        self.assertEqual(token, "id-token-value")
+        # Only the deployer's own access token is read; no gcloud impersonation,
+        # which would call generateAccessToken and need serviceAccountTokenCreator.
+        self.assertEqual([call.args[0] for call in cloud.call_args_list], [["auth", "print-access-token"]])
+        request = captured["request"]
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(
+            request.full_url,
+            f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{self.SA}:generateIdToken",
+        )
+        self.assertEqual(request.get_header("Authorization"), "Bearer deployer-access")
+        self.assertEqual(
+            json.loads(request.data.decode("utf-8")),
+            {"audience": "https://api.example.test", "includeEmail": True},
+        )
+
+    def test_http_refusal_fails_closed_without_leaking_tokens(self) -> None:
+        import urllib.error
+
+        token, _cloud, _captured = self._mint(
+            error=urllib.error.HTTPError("https://iamcredentials.example", 403, "Forbidden", {}, None)
+        )
+        self.assertIsInstance(token, RuntimeError)
+        self.assertIn("HTTP 403", str(token))
+        self.assertNotIn("deployer-access", str(token))
+        self.assertIsNone(token.__cause__)
+
+    def test_empty_access_token_or_empty_id_token_fails_closed(self) -> None:
+        token, _cloud, captured = self._mint(access_token="")
+        self.assertIsInstance(token, RuntimeError)
+        self.assertNotIn("request", captured)
+        for response in ({}, {"token": "  "}, ["not", "an", "object"]):
+            token, _cloud, _captured = self._mint(response=response)
+            self.assertIsInstance(token, RuntimeError, response)
+            self.assertIn("empty output", str(token))
+
+
+
+class StagingCloudRunV2AdminApiTests(unittest.TestCase):
+    """The native Cloud Run Admin API v2 boundary used by the rollback rehearsal."""
+
+    TOKEN = "ya29.deployer-secret-access-token"
+    SERVICE = "stg-odp-20260824-001-1a2b3c4d-api"
+    BASE = "https://run.googleapis.com/v2/projects/oday-staging-proj/locations/asia-east1/services"
+
+    def _call(self, *, method: str = "GET", body: Any = None, response: Any = None, error: Exception | None = None):
+        import io
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        captured: dict[str, Any] = {}
+
+        class _Response(io.BytesIO):
+            def __enter__(self) -> _Response:
+                return self
+
+            def __exit__(self, *_exc: Any) -> None:
+                self.close()
+
+        def urlopen(request: Any, timeout: float) -> Any:
+            captured["request"] = request
+            if error is not None:
+                raise error
+            return _Response(json.dumps(response).encode("utf-8"))
+
+        with patch.object(lifecycle.urllib.request, "urlopen", side_effect=urlopen):
+            try:
+                result = lifecycle._live_cloud_run_v2_request(
+                    method, f"{self.BASE}/{self.SERVICE}?updateMask=traffic", self.TOKEN, body=body
+                )
+            except RuntimeError as exc:
+                result = exc
+        return result, captured
+
+    def _assert_no_token(self, exc: BaseException) -> None:
+        import traceback
+
+        self.assertNotIn(self.TOKEN, str(exc))
+        self.assertIsNone(exc.__cause__)
+        self.assertTrue(exc.__suppress_context__)
+        self.assertNotIn(self.TOKEN, "".join(traceback.format_exception(exc)))
+
+    def test_patch_sends_the_deployer_token_and_json_body(self) -> None:
+        result, captured = self._call(method="PATCH", body={"traffic": []}, response={"name": "op"})
+        self.assertEqual(result, {"name": "op"})
+        request = captured["request"]
+        self.assertEqual(request.get_method(), "PATCH")
+        self.assertEqual(request.full_url, f"{self.BASE}/{self.SERVICE}?updateMask=traffic")
+        self.assertEqual(request.get_header("Authorization"), f"Bearer {self.TOKEN}")
+        self.assertEqual(request.get_header("Content-type"), "application/json")
+        self.assertEqual(json.loads(request.data.decode("utf-8")), {"traffic": []})
+
+    def test_failures_fail_closed_without_leaking_the_token(self) -> None:
+        import io
+        import urllib.error
+
+        echoed = io.BytesIO(json.dumps({"error": {"message": f"bad token {self.TOKEN}"}}).encode())
+        for error, expected in (
+            (urllib.error.HTTPError(f"{self.BASE}/{self.SERVICE}", 400, "Bad Request", {}, echoed), "HTTP 400"),
+            (urllib.error.URLError(f"unreachable with {self.TOKEN}"), "URLError"),
+            (TimeoutError(self.TOKEN), "TimeoutError"),
+        ):
+            with self.subTest(expected=expected):
+                result, _captured = self._call(method="PATCH", body={}, error=error)
+                self.assertIsInstance(result, RuntimeError)
+                self.assertIn(expected, str(result))
+                self.assertIn(f"/services/{self.SERVICE}", str(result))
+                self._assert_no_token(result)
+        for response in (["not", "an", "object"], "text"):
+            result, _captured = self._call(response=response)
+            self.assertIsInstance(result, RuntimeError)
+            self.assertIn("non-object", str(result))
+
+    def test_patch_waits_for_the_operation_and_validates_it(self) -> None:
+        import traceback
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        op_name = "projects/oday-staging-proj/locations/asia-east1/operations/abc"
+        cases = {
+            "done-after-poll": ([{"name": op_name, "done": False}, {"name": op_name, "done": True}], None),
+            "malformed-name": ([{"name": "https://evil.example/x", "done": False}], "did not return an operation"),
+            "readback-mismatch": (
+                [{"name": op_name, "done": False}, {"name": op_name + "x", "done": True}],
+                "operation readback does not match",
+            ),
+            "error": (
+                [{"name": op_name, "done": False}, {"name": op_name, "done": True, "error": {"code": 3, "message": "x"}}],
+                "status code 3",
+            ),
+        }
+        for case, (responses, failure) in cases.items():
+            with self.subTest(case=case):
+                calls: list[tuple[str, str, str]] = []
+                queue = list(responses)
+
+                def request(
+                    method: str, url: str, token: str, *, calls: list = calls, queue: list = queue, **_kwargs: Any
+                ) -> Any:
+                    calls.append((method, url, token))
+                    return queue.pop(0)
+
+                with patch.object(lifecycle, "_live_cloud_run_v2_request", side_effect=request), patch.object(
+                    lifecycle, "_live_gcloud", return_value=self.TOKEN
+                ) as cloud, patch.object(lifecycle, "_CLOUD_RUN_V2_OPERATION_POLL_SECONDS", 0):
+                    services = lifecycle._LiveCloudRunV2Services(
+                        project_id="oday-staging-proj", region="asia-east1", gcloud_bin="gcloud"
+                    )
+                    if failure is None:
+                        services.patch(self.SERVICE, {"traffic": []}, update_mask="template,traffic",
+                                       force_new_revision=True)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, failure) as ctx:
+                            services.patch(self.SERVICE, {"traffic": []}, update_mask="traffic")
+                        self.assertNotIn(self.TOKEN, "".join(traceback.format_exception(ctx.exception)))
+                self.assertTrue(all(token == self.TOKEN for _m, _u, token in calls))
+                self.assertTrue(all(call.args[0] == ["auth", "print-access-token"] for call in cloud.call_args_list))
+                if failure is None:
+                    self.assertEqual(
+                        calls[0][:2],
+                        ("PATCH", f"{self.BASE}/{self.SERVICE}?forceNewRevision=true&updateMask=template%2Ctraffic"),
+                    )
+                    self.assertEqual(calls[1][:2], ("GET", f"https://run.googleapis.com/v2/{op_name}"))
+                if case == "malformed-name":
+                    self.assertEqual(len(calls), 1)
+
+    def test_operation_that_never_finishes_times_out(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        op = {"name": "projects/p/locations/r/operations/slow", "done": False}
+        with patch.object(lifecycle, "_live_cloud_run_v2_request", return_value=op), patch.object(
+            lifecycle, "_live_gcloud", return_value=self.TOKEN
+        ), patch.object(lifecycle, "_CLOUD_RUN_V2_OPERATION_TIMEOUT_SECONDS", 0):
+            services = lifecycle._LiveCloudRunV2Services(project_id="p", region="r", gcloud_bin="gcloud")
+            with self.assertRaisesRegex(RuntimeError, "did not finish") as ctx:
+                services.patch(self.SERVICE, {}, update_mask="traffic")
+        self.assertNotIn(self.TOKEN, str(ctx.exception))
+
+    def test_empty_deployer_token_refuses_before_any_request(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        with patch.object(lifecycle, "_live_cloud_run_v2_request") as request, patch.object(
+            lifecycle, "_live_gcloud", return_value=""
+        ):
+            services = lifecycle._LiveCloudRunV2Services(project_id="p", region="r", gcloud_bin="gcloud")
+            with self.assertRaisesRegex(RuntimeError, "access token for Cloud Run Admin API v2 is empty"):
+                services.get(self.SERVICE)
+        request.assert_not_called()
+
+
+class _FakeStagingLoadBalancer:
+    """In-memory gcloud for the persistent console-staging load balancer.
+
+    Answers only the compute commands the lifecycle issues and records every
+    call, so tests can assert the order of backend mutations.
+    """
+
+    PROJECT = "oday-staging-proj"
+    REGION = "asia-east1"
+    ADDRESS = "34.120.0.10"
+
+    def __init__(
+        self,
+        *,
+        groups: Sequence[str] = (),
+        exists: bool = True,
+        neg_services: Mapping[str, str] | None = None,
+        cert_status: str = "ACTIVE",
+        domain_status: str = "ACTIVE",
+        ssl_policy: str = "oday-staging-web-lb",
+        min_tls_version: str = "TLS_1_2",
+    ) -> None:
+        self.ssl_policy = ssl_policy
+        self.min_tls_version = min_tls_version
+        self.groups = list(groups)
+        self.exists = exists
+        self.neg_services = dict(neg_services or {})
+        self.cert_status = cert_status
+        self.domain_status = domain_status
+        self.calls: list[list[str]] = []
+
+    @classmethod
+    def neg_url(cls, name: str, region: str = "") -> str:
+        return (
+            "https://www.googleapis.com/compute/v1/projects/"
+            f"{cls.PROJECT}/regions/{region or cls.REGION}/networkEndpointGroups/{name}"
+        )
+
+    def __call__(self, args: Sequence[str], **_kwargs: Any) -> str:
+        from product_ops.deployment.staging_lifecycle import STAGING_WEB_LOAD_BALANCER_NAME as name
+
+        argv = list(args)
+        self.calls.append(argv)
+        option = {a.split("=", 1)[0]: a.split("=", 1)[1] for a in argv if a.startswith("--") and "=" in a}
+        base = "https://www.googleapis.com/compute/v1/projects/" + self.PROJECT
+        if argv[:3] == ["compute", "backend-services", "list"]:
+            assert option["--filter"] == f"name={name}"
+            if not self.exists:
+                return "[]"
+            return json.dumps([{"name": name, "backends": [{"group": g} for g in self.groups]}])
+        if argv[:3] == ["compute", "backend-services", "remove-backend"]:
+            assert argv[3] == name and "--global" in argv
+            self.groups.remove(
+                self.neg_url(option["--network-endpoint-group"], option["--network-endpoint-group-region"])
+            )
+            return ""
+        if argv[:3] == ["compute", "backend-services", "add-backend"]:
+            assert argv[3] == name and "--global" in argv
+            region = option["--network-endpoint-group-region"]
+            if any(f"/regions/{region}/" in group for group in self.groups):
+                raise RuntimeError("a backend service holds one serverless NEG per region")
+            self.groups.append(self.neg_url(option["--network-endpoint-group"], region))
+            return ""
+        if argv[:3] == ["compute", "network-endpoint-groups", "describe"]:
+            return json.dumps({"name": argv[3], "cloudRun": {"service": self.neg_services.get(argv[3], "")}})
+        if argv[:3] == ["compute", "forwarding-rules", "describe"]:
+            return json.dumps(
+                {
+                    "IPAddress": self.ADDRESS,
+                    "portRange": "443-443",
+                    "target": f"{base}/global/targetHttpsProxies/{name}",
+                }
+            )
+        if argv[:3] == ["compute", "target-https-proxies", "describe"]:
+            return json.dumps(
+                {
+                    "sslCertificates": [f"{base}/global/sslCertificates/{name}-abcd1234"],
+                    **({"sslPolicy": f"{base}/global/sslPolicies/{self.ssl_policy}"} if self.ssl_policy else {}),
+                }
+            )
+        if argv[:3] == ["compute", "ssl-policies", "describe"]:
+            assert argv[3] == name and "--global" in argv
+            return json.dumps({"name": name, "profile": "MODERN", "minTlsVersion": self.min_tls_version})
+        if argv[:3] == ["compute", "ssl-certificates", "describe"]:
+            return json.dumps(
+                {
+                    "type": "MANAGED",
+                    "managed": {
+                        "domains": ["console-staging.oday-plus.com.tw"],
+                        "status": self.cert_status,
+                        "domainStatus": {"console-staging.oday-plus.com.tw": self.domain_status},
+                    },
+                }
+            )
+        if argv[0] == "iam":
+            return argv[3]
+        raise AssertionError(f"unexpected gcloud call {argv}")
+
+    def mutations(self) -> list[tuple[str, str]]:
+        return [
+            (call[2], next(a.split("=", 1)[1] for a in call if a.startswith("--network-endpoint-group=")))
+            for call in self.calls
+            if call[:2] == ["compute", "backend-services"] and call[2] in {"add-backend", "remove-backend"}
+        ]
+
+
+class StagingWebLoadBalancerBackendTests(unittest.TestCase):
+    """One step moves console-staging.oday-plus.com.tw between releases."""
+
+    def _set(self, cloud: _FakeStagingLoadBalancer, neg: str, *, attached: bool) -> list[str]:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        with patch.object(lifecycle, "_live_gcloud", side_effect=cloud):
+            return lifecycle.set_staging_web_load_balancer_backend(
+                project_id=cloud.PROJECT,
+                region=cloud.REGION,
+                network_endpoint_group=neg,
+                attached=attached,
+            )
+
+    def test_attach_replaces_the_previous_release_before_adding_this_one(self) -> None:
+        cloud = _FakeStagingLoadBalancer(groups=[_FakeStagingLoadBalancer.neg_url("stg-old-web-neg")])
+        final = self._set(cloud, "stg-new-web-neg", attached=True)
+        self.assertEqual(
+            cloud.mutations(), [("remove-backend", "stg-old-web-neg"), ("add-backend", "stg-new-web-neg")]
+        )
+        self.assertEqual(final, [_FakeStagingLoadBalancer.neg_url("stg-new-web-neg")])
+
+    def test_attach_is_idempotent(self) -> None:
+        cloud = _FakeStagingLoadBalancer(groups=[_FakeStagingLoadBalancer.neg_url("stg-new-web-neg")])
+        self._set(cloud, "stg-new-web-neg", attached=True)
+        self.assertEqual(cloud.mutations(), [])
+
+    def test_attach_fails_closed_without_the_persistent_load_balancer(self) -> None:
+        cloud = _FakeStagingLoadBalancer(exists=False)
+        with self.assertRaisesRegex(RuntimeError, "oday-staging-web-lb does not exist.*load_balancer.tf"):
+            self._set(cloud, "stg-new-web-neg", attached=True)
+        self.assertEqual(cloud.mutations(), [])
+
+    def test_detach_removes_only_this_release_and_never_a_newer_one(self) -> None:
+        newer = _FakeStagingLoadBalancer.neg_url("stg-new-web-neg")
+        cloud = _FakeStagingLoadBalancer(groups=[newer])
+        self.assertEqual(self._set(cloud, "stg-old-web-neg", attached=False), [newer])
+        self.assertEqual(cloud.mutations(), [])
+
+        cloud = _FakeStagingLoadBalancer(groups=[_FakeStagingLoadBalancer.neg_url("stg-old-web-neg")])
+        self.assertEqual(self._set(cloud, "stg-old-web-neg", attached=False), [])
+        self.assertEqual(cloud.mutations(), [("remove-backend", "stg-old-web-neg")])
+
+    def test_detach_without_a_load_balancer_is_a_no_op(self) -> None:
+        cloud = _FakeStagingLoadBalancer(exists=False)
+        self.assertEqual(self._set(cloud, "stg-old-web-neg", attached=False), [])
+        self.assertEqual(cloud.mutations(), [])
+
+    def test_a_backend_that_is_not_a_release_neg_in_this_project_is_refused(self) -> None:
+        foreign = "https://www.googleapis.com/compute/v1/projects/other-proj/regions/asia-east1/networkEndpointGroups/x"
+        cloud = _FakeStagingLoadBalancer(groups=[foreign])
+        with self.assertRaisesRegex(RuntimeError, "refusing to change it"):
+            self._set(cloud, "stg-new-web-neg", attached=True)
+        self.assertEqual(cloud.mutations(), [])
+
+
+class StagingWebCustomDomainStageTests(unittest.TestCase):
+    """The web_custom_domain verify stage: attach, then DNS, certificate, HTTPS."""
+
+    def setUp(self) -> None:
+        self.release_id = "odp-20260824-001"
+        self.candidate_sha = "a" * 40
+        self.manifest_digest = "sha256:" + "b" * 64
+        self.project_id = _FakeStagingLoadBalancer.PROJECT
+        self.now = datetime(2026, 8, 27, 6, 0, 0, tzinfo=UTC)
+        self.outputs = EphemeralStagingVerificationAndHoldTests._valid_outputs(self)
+
+    def _run(
+        self,
+        cloud: _FakeStagingLoadBalancer,
+        *,
+        resolved: Sequence[str],
+        https: Sequence[tuple[bool, str]] = ((True, ""),),
+    ) -> tuple[Mapping[str, Any], list[tuple[str, str]]]:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        readbacks: list[tuple[str, str]] = []
+        answers = list(https)
+
+        def web(origin: str, *, transport_token: str, correlation_id: str) -> tuple[bool, str]:
+            readbacks.append((origin, transport_token))
+            return answers.pop(0) if len(answers) > 1 else answers[0]
+
+        with patch.object(lifecycle, "_live_gcloud", side_effect=cloud), \
+                patch.object(lifecycle, "_live_resolved_addresses", return_value=list(resolved)), \
+                patch.object(lifecycle, "_live_web_operator_requires_login", side_effect=web), \
+                patch.object(lifecycle, "STAGING_WEB_CUSTOM_DOMAIN_POLL_SECONDS", 0.0), \
+                patch.object(lifecycle, "STAGING_WEB_CUSTOM_DOMAIN_DEADLINE_SECONDS", 0.0):
+            executor = lifecycle.make_live_rehearsal_executor(
+                self.outputs,
+                project_id=self.project_id,
+                region=cloud.REGION,
+                operator_identity=self.outputs["staging_runtime_service_account"],
+            )
+            return executor("web_custom_domain", {}), readbacks
+
+    def _cloud(self, **kwargs: Any) -> _FakeStagingLoadBalancer:
+        return _FakeStagingLoadBalancer(
+            neg_services={
+                self.outputs["staging_web_network_endpoint_group"]: self.outputs["staging_web_service_name"]
+            },
+            **kwargs,
+        )
+
+    def test_dns_readback_returns_every_address_or_nothing(self) -> None:
+        import socket
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        answers = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("34.120.0.10", 443)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("34.120.0.10", 443)),
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:db8::1", 443, 0, 0)),
+        ]
+        with patch.object(lifecycle.socket, "getaddrinfo", return_value=answers):
+            self.assertEqual(lifecycle._live_resolved_addresses("h"), ["2001:db8::1", "34.120.0.10"])
+        with patch.object(lifecycle.socket, "getaddrinfo", side_effect=socket.gaierror("NXDOMAIN")):
+            self.assertEqual(lifecycle._live_resolved_addresses("h"), [])
+
+    def test_stage_sits_after_the_web_smoke_and_before_the_gate(self) -> None:
+        from product_ops.deployment.staging_lifecycle import REHEARSAL_STAGE_NAMES
+
+        index = REHEARSAL_STAGE_NAMES.index("web_custom_domain")
+        self.assertEqual(REHEARSAL_STAGE_NAMES[index - 1], "api_web_authenticated_smoke")
+        self.assertLess(index, REHEARSAL_STAGE_NAMES.index("live_e2e_gate"))
+
+    def test_serving_domain_attaches_this_release_and_proves_https_anonymously(self) -> None:
+        from product_ops.deployment.staging_lifecycle import STAGING_WEB_PUBLIC_ORIGIN
+
+        cloud = self._cloud(groups=[_FakeStagingLoadBalancer.neg_url("stg-previous-web-neg")])
+        result, readbacks = self._run(cloud, resolved=[cloud.ADDRESS])
+
+        self.assertTrue(result["success"], result)
+        self.assertEqual(result["endpoint"], f"{STAGING_WEB_PUBLIC_ORIGIN}/operator")
+        neg = self.outputs["staging_web_network_endpoint_group"]
+        self.assertEqual(cloud.mutations(), [("remove-backend", "stg-previous-web-neg"), ("add-backend", neg)])
+        self.assertEqual(cloud.groups, [_FakeStagingLoadBalancer.neg_url(neg)])
+        # Through the load balancer as a browser: no Cloud Run transport token.
+        self.assertEqual(readbacks, [(STAGING_WEB_PUBLIC_ORIGIN, "")])
+        proof = result["custom_domain"]
+        self.assertEqual(proof["host"], "console-staging.oday-plus.com.tw")
+        self.assertEqual(proof["address"], cloud.ADDRESS)
+        self.assertEqual(proof["dns"], [cloud.ADDRESS])
+        self.assertEqual((proof["certificate_status"], proof["domain_status"]), ("ACTIVE", "ACTIVE"))
+        self.assertEqual((proof["ssl_policy"], proof["min_tls_version"]), ("oday-staging-web-lb", "TLS_1_2"))
+        self.assertEqual(proof["network_endpoint_group"], neg)
+
+    def test_proxy_without_the_tls12_ssl_policy_fails(self) -> None:
+        for overrides, message in (
+            ({"ssl_policy": ""}, "does not carry the oday-staging-web-lb SSL policy"),
+            ({"ssl_policy": "other-policy"}, "does not carry the oday-staging-web-lb SSL policy"),
+            ({"min_tls_version": "TLS_1_0"}, "allows TLS_1_0 minimum TLS; expected TLS_1_2"),
+        ):
+            with self.subTest(**overrides):
+                cloud = self._cloud(**overrides)
+                with self.assertRaisesRegex(RuntimeError, message):
+                    self._run(cloud, resolved=[cloud.ADDRESS])
+
+    def test_unpointed_dns_fails_naming_the_registrar_a_record(self) -> None:
+        cloud = self._cloud(cert_status="PROVISIONING", domain_status="FAILED_NOT_VISIBLE")
+        result, readbacks = self._run(cloud, resolved=[])
+
+        self.assertFalse(result["success"])
+        self.assertIn(f"A record console-staging.oday-plus.com.tw -> {cloud.ADDRESS}", result["detail"])
+        self.assertIn("PROVISIONING", result["detail"])
+        self.assertEqual(readbacks, [], "HTTPS must not be probed before DNS and the certificate are ready")
+        # The release is still attached: the domain follows it once DNS points.
+        self.assertEqual(len(cloud.groups), 1)
+
+    def test_dns_pointing_elsewhere_or_extra_records_fail(self) -> None:
+        for resolved in (["203.0.113.7"], [_FakeStagingLoadBalancer.ADDRESS, "2001:db8::1"]):
+            with self.subTest(resolved=resolved):
+                result, _ = self._run(self._cloud(), resolved=resolved)
+                self.assertFalse(result["success"])
+                self.assertIn("the registrar must publish only an A record", result["detail"])
+
+    def test_https_failure_after_the_deadline_fails(self) -> None:
+        cloud = self._cloud()
+        result, readbacks = self._run(cloud, resolved=[cloud.ADDRESS], https=[(False, "status=502")])
+        self.assertFalse(result["success"])
+        self.assertIn(
+            "HTTPS readback of https://console-staging.oday-plus.com.tw/operator failed: status=502",
+            result["detail"],
+        )
+        self.assertEqual(len(readbacks), 1)
+
+    def test_a_neg_routing_to_another_service_is_never_attached(self) -> None:
+        cloud = _FakeStagingLoadBalancer(
+            neg_services={self.outputs["staging_web_network_endpoint_group"]: "other-web"}
+        )
+        with self.assertRaisesRegex(RuntimeError, "does not route to this release's Web service"):
+            self._run(cloud, resolved=[cloud.ADDRESS])
+        self.assertEqual(cloud.mutations(), [])
+
+    def test_receipt_carries_the_secret_free_domain_proof(self) -> None:
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        proof = {"host": "console-staging.oday-plus.com.tw", "address": "34.120.0.10"}
+        stages_called: list[str] = []
+
+        def executor(stage: str, _context: Mapping[str, Any]) -> Mapping[str, Any]:
+            stages_called.append(stage)
+            if stage == "web_custom_domain":
+                return {"success": False, "status": "failed", "detail": "DNS not pointed", "custom_domain": proof}
+            return {"success": True}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            EphemeralStagingVerificationAndHoldTests._seed_live_state(self, state_dir)
+            marker_path = lifecycle._lifecycle_state_path(self.release_id, state_dir)
+            seeded = json.loads(marker_path.read_text(encoding="utf-8"))
+            marker_path.write_text(json.dumps({**seeded, "outputs": self.outputs}), encoding="utf-8")
+            receipt = lifecycle.verify_ephemeral_staging(
+                release_id=self.release_id,
+                candidate_sha=self.candidate_sha,
+                manifest_digest=self.manifest_digest,
+                project_id=self.project_id,
+                state_dir=state_dir,
+                operator_identity=self.outputs["staging_runtime_service_account"],
+                lifecycle_outputs=self.outputs,
+                stage_executor=executor,
+                now=self.now,
+                release_profile="core-ops",
+            )
+        self.assertFalse(receipt.success)
+        stage = next(row for row in receipt.resources if row["stage"] == "web_custom_domain")
+        self.assertEqual(stage["proof"]["custom_domain"], proof)
+        self.assertTrue(any("web_custom_domain failed. DNS not pointed" in error for error in receipt.errors))
+        self.assertNotIn("live_e2e_gate", stages_called)
+        gate = next(row for row in receipt.resources if row["stage"] == "live_e2e_gate")
+        self.assertFalse(gate["success"])
+        self.assertIn("before signing in", gate["details"])
+
+
+class StagingRecoveryPersistenceTests(unittest.TestCase):
+    def test_receipts_pin_each_sidecar_and_refuse_mismatched_bytes(self) -> None:
+        import hashlib
+        import subprocess
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        candidate = "123456789abc" + "d" * 28
+        release_id = f"odp-{candidate[:12]}"
+        identity = {"release_id": release_id, "candidate_sha": candidate, "manifest_digest": "sha256:" + "a" * 64}
+        bundle = f"gs://staging-recovery/oday-plus/ephemeral-staging/{release_id}/bundle"
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            _, tfvars, inventory = lifecycle._terraform_state_paths(release_id, root)
+            marker = lifecycle._lifecycle_state_path(release_id, root)
+            outputs = root / "outputs.json"
+            tfvars.write_text(json.dumps(identity), encoding="utf-8")
+            marker.write_text(json.dumps({"release_id": release_id, "status": "created"}), encoding="utf-8")
+            for file in (inventory, outputs):
+                file.write_text(f"private fixture for {file.name}\n", encoding="utf-8")
+            published: dict[str, bytes] = {}
+            writes: list[str] = []
+            calls: list[str] = []
+
+            def gcloud(args: list[str], **_: Any) -> str:
+                if args[:2] == ["storage", "cp"]:
+                    self.assertEqual(args[2:4], ["--no-clobber", "--if-generation-match=0"])
+                    uri = args[5]
+                    if uri not in published:
+                        published[uri] = Path(args[4]).read_bytes()
+                        writes.append(uri)
+                    return ""
+                self.assertEqual(args[:3], ["storage", "objects", "describe"])
+                self.assertIn(args[3], published)
+                return "123"
+
+            def cat(args: list[str], **_: Any) -> Any:
+                self.assertEqual(args[:3], ["gcloud", "storage", "cat"])
+                uri = args[3]
+                self.assertTrue(uri.endswith("#123"))
+                calls.append(uri)
+                return subprocess.CompletedProcess(args, 0, published[uri.removesuffix("#123")], b"")
+
+            create = root / "create.json"
+            final = root / "final.json"
+            with patch.object(lifecycle, "_live_gcloud", side_effect=gcloud), patch.object(
+                lifecycle.subprocess, "run", side_effect=cat
+            ):
+                lifecycle.persist_staging_recovery(
+                    **identity, state_dir=root, bundle_uri=bundle, receipt_path=create,
+                    outputs_path=outputs, run_attempt="1234-2",
+                )
+                # A rerun after an interrupted readback must read the same
+                # generation of every object and never attempt an overwrite.
+                create.unlink()
+                lifecycle.persist_staging_recovery(
+                    **identity, state_dir=root, bundle_uri=bundle, receipt_path=create,
+                    outputs_path=outputs, run_attempt="1234-2",
+                )
+                self.assertEqual(len(writes), 4)
+                self.assertEqual(len(calls), 8)
+                outputs.write_text("different bytes", encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, "failed SHA-256 readback"):
+                    lifecycle.persist_staging_recovery(
+                        **identity, state_dir=root, bundle_uri=bundle, receipt_path=root / "retry.json",
+                        outputs_path=outputs, run_attempt="1234-2",
+                    )
+                self.assertFalse((root / "retry.json").exists())
+                self.assertEqual(len(writes), 4)
+                marker.write_text(json.dumps({"release_id": release_id, "status": "verified"}), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "belongs to a different release or attempt"):
+                    lifecycle.persist_staging_recovery(
+                        **identity, state_dir=root, bundle_uri=bundle, receipt_path=final,
+                        create_receipt_path=create, run_attempt="1234-1",
+                    )
+                lifecycle.persist_staging_recovery(
+                    **identity, state_dir=root, bundle_uri=bundle, receipt_path=final,
+                    create_receipt_path=create, run_attempt="1234-2",
+                )
+
+            create_rows = json.loads(create.read_text())["objects"]
+            final_receipt = json.loads(final.read_text())
+            final_rows = final_receipt["objects"]
+            self.assertEqual(final_receipt["candidate_sha"], candidate)
+            self.assertEqual(final_receipt["manifest_digest"], identity["manifest_digest"])
+            self.assertEqual(final_receipt["status"], "verified")
+            initial = next(row for row in create_rows if row["object_uri"].endswith(f"/{marker.name}"))
+            self.assertEqual(
+                final_receipt["initial_lifecycle"],
+                {key: initial[key] for key in ("object_uri", "generation", "content_sha256")},
+            )
+            self.assertEqual(len(create_rows), 4)
+            self.assertEqual(len(final_rows), 1)
+            self.assertIn(f"/hold-1234-2-{marker.name}", final_rows[0]["object_uri"])
+            for row in create_rows + final_rows:
+                uri = row["object_uri"]
+                self.assertIn(f"{uri}#{row['generation']}", calls)
+                self.assertEqual(row["content_sha256"], hashlib.sha256(published[uri]).hexdigest())
+            self.assertNotIn("private fixture", create.read_text())
+
+            create.unlink()
+            with patch.object(lifecycle, "_live_gcloud", side_effect=AssertionError("must not write")):
+                with self.assertRaisesRegex(ValueError, "requires its create receipt"):
+                    lifecycle.persist_staging_recovery(
+                        **identity, state_dir=root, bundle_uri=bundle, receipt_path=final,
+                        create_receipt_path=create, run_attempt="1234-3",
+                    )
+            marker.write_text(json.dumps({"release_id": release_id, "status": "held"}), encoding="utf-8")
+            with patch.object(lifecycle, "_live_gcloud", side_effect=gcloud), patch.object(
+                lifecycle.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"wrong", b"")
+            ), self.assertRaisesRegex(RuntimeError, "failed SHA-256 readback"):
+                lifecycle.persist_staging_recovery(
+                    **identity, state_dir=root, bundle_uri=bundle, receipt_path=final,
+                    create_receipt_path=create, run_attempt="1234-3",
+                )
+            self.assertFalse(final.exists(), "failed reads cannot leave a stale success receipt")
+
+
+class StagingWebNegDetachBeforeDestroyTests(unittest.TestCase):
+    """Cleanup detaches the release's NEG before terraform destroy deletes it."""
+
+    release_id = "odp-detach-001"
+
+    def _executor(self, state_root: Path, tfvars: Mapping[str, Any]) -> Any:
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths
+
+        state_p, vars_p, inv_p = _terraform_state_paths(self.release_id, state_root)
+        state_p.write_text('{"live": "terraform state"}', encoding="utf-8")
+        vars_p.write_text(json.dumps(dict(tfvars)), encoding="utf-8")
+        inv_p.write_text("[]", encoding="utf-8")
+        return make_terraform_deletion_executor(
+            self.release_id, module_dir=MODULE_DIR, state_dir=state_root, terraform_bin="/bin/true", initialize=False
+        )
+
+    def test_detach_runs_before_destroy(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        neg = get_ephemeral_resource_names(self.release_id, _FakeStagingLoadBalancer.PROJECT)["web_neg"]
+        cloud = _FakeStagingLoadBalancer(groups=[_FakeStagingLoadBalancer.neg_url(neg)])
+        order: list[str] = []
+        real_run = lifecycle._run_terraform
+
+        def terraform(**kwargs: Any) -> Any:
+            order.append(f"terraform {kwargs['arguments'][0]}")
+            return real_run(**kwargs)
+
+        def gcloud(args: Sequence[str], **kwargs: Any) -> str:
+            order.append(" ".join(args[:3]))
+            return cloud(args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            execute = self._executor(
+                Path(tmpdir),
+                {"release_id": self.release_id, "project_id": cloud.PROJECT, "region": cloud.REGION},
+            )
+            with patch.object(lifecycle, "_live_gcloud", side_effect=gcloud), \
+                    patch.object(lifecycle, "_run_terraform", side_effect=terraform):
+                self.assertTrue(execute({}))
+        self.assertEqual(cloud.groups, [])
+        self.assertEqual(
+            order,
+            [
+                "compute backend-services list",
+                "compute backend-services remove-backend",
+                "compute backend-services list",
+                "terraform destroy",
+            ],
+        )
+
+    def test_tfvars_without_project_or_region_refuse_destroy(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            execute = self._executor(Path(tmpdir), {"release_id": self.release_id})
+            with patch.object(lifecycle, "_live_gcloud") as cloud, patch.object(lifecycle, "_run_terraform") as tf:
+                with self.assertRaisesRegex(RuntimeError, "cannot be detached"):
+                    execute({})
+        cloud.assert_not_called()
+        tf.assert_not_called()
 
 
 if __name__ == "__main__":

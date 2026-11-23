@@ -164,3 +164,19 @@ describe("scenario builder affected entity disclosure", () => {
     expect(within(affected).queryByText("store-other-owned")).not.toBeInTheDocument();
   });
 });
+
+describe("shared read-only action options view", () => {
+  it("shows unsourced native placeholders as unverified instead of known values or a formal source", async () => {
+    const value = builder({ optionsByEntity: { "store-owned": builder().optionsByEntity["store-owned"],
+      "candidate-owned": [{ entity_id: "candidate-owned", action: "OPEN", expected_gross_margin: 0, budget_cost: 0,
+        risk_score: 0.3, capacity_delta: 1, source_snapshot_ids: [], notes: [] }] } });
+    render(<NetPlanScenarioBuilder storeId="store-owned" api={api(value)} onDirtyChange={vi.fn()} />);
+    const options = await screen.findByRole("region", { name: "情境動作選項" });
+    expect(within(options).getByText("目前情境的動作選項（唯讀）")).toBeVisible();
+    expect(screen.queryByText(/正式來源/)).toBeNull();
+    expect(options).toHaveTextContent("KEEP · 期望毛利 100 · 成本 0 · 風險 0.1 · 產能 0");
+    expect(options).toHaveTextContent("OPEN · 期望毛利／成本／風險／產能：未提供來源，數值尚未核實（不代表 0 或預設值）");
+    expect(options).not.toHaveTextContent("風險 0.3");
+    expect(options).not.toHaveTextContent("產能 1");
+  });
+});

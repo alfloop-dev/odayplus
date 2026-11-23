@@ -9,6 +9,13 @@ import * as maplibregl from "maplibre-gl";
 import type { CandidateSite, HeatZone, Listing } from "./mapTypes.ts";
 import { isOperatorProductionMode } from "../operatorDataMode.ts";
 import { SCHEMATIC_BASEMAP } from "./schematicBasemap.ts";
+import { intakeNavigationHash } from "./intake/intakeNavigation.ts";
+import {
+  CANDIDATE_SELECTION_PARAM,
+  NETWORK_TAB_IDS,
+  buildNetworkTabHref,
+  candidateWorkflowNavigationParams,
+} from "./networkUrlState.ts";
 import styles from "./heatZoneMap.module.css";
 
 const MAPLIBRE_WORKER_URL =
@@ -948,7 +955,18 @@ function pickHref(layerId: string, object: unknown, layers: LayerState): string 
   if (layerId === "odp-candidate-sites") {
     const candidate = object as CandidateSite;
     if (!candidate.id) return "";
-    return `/w/expansion/candidates?selected=${encodeURIComponent(candidate.id)}&drawer=candidate`;
+    // The marker carries the persisted candidate ID; select it in the native
+    // Candidates tab the same way the workspace tab caller does. The URL only
+    // expresses selection; the workspace read path still authorizes it.
+    const candidatesTab = NETWORK_TAB_IDS.indexOf("candidates");
+    const params = candidateWorkflowNavigationParams(
+      candidatesTab,
+      new URLSearchParams(window.location.search),
+      null,
+      { [CANDIDATE_SELECTION_PARAM]: candidate.id },
+    );
+    params.set("ws", "network");
+    return buildNetworkTabHref("/operator", candidatesTab, params, intakeNavigationHash(window.location.hash));
   }
   return "";
 }

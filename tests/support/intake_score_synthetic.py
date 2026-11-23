@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from typing import Literal
 from uuid import uuid4
 
 import psycopg
@@ -23,6 +24,9 @@ from modules.sitescore.domain.scoring import SITESCORE_FEATURE_VERSION
 from shared.auth import Role
 from shared.domain.models import AddressLocation, Listing
 from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
+from shared.infrastructure.persistence.operator_intake_workflow import (
+    OperatorIntakeWorkflowRepository,
+)
 from tests.intake_registry_fixture import (
     APPROVER,
     MANAGER,
@@ -34,6 +38,7 @@ from tests.intake_registry_fixture import (
 )
 
 SCOPE = "ISOLATED_SYNTHETIC_PG_BROWSER_NOT_PRODUCTION_ADMISSION"
+RetainedBrowserHistory = Literal["assisted-entry-only", "possible-match", "retrieval-timeout", "revision", "auth-required", "policy-unknown"]
 
 
 def _insert_policy(connection, row, tenant, approver, now):
@@ -76,7 +81,9 @@ def prepare_database(database_url):
 
 
 def run_native_identity_browser(database, ids, parsed, match_case, private_dir, monkeypatch, *, worm_sink_uri,
-        manager_region_id=None, independent_reviewer=None, append_receipt_probe=True, url_manual_capture=None):
+        manager_region_id=None, independent_reviewer=None, append_receipt_probe=True, url_manual_capture=None,
+        url_manual_parser_registry=None, url_manual_parser_release=None,
+        matching_boundary=None, matching_credentials=None, matching_policy=None, product_browser_phase=False):
     """Bridge existing native SQL fixtures to the existing browser composition.
 
     The parser/matcher and human accounts are actual owned preconditions. Login,
@@ -107,32 +114,108 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
     from shared.jobs.queue import JobStatus
 
     root = Path(__file__).resolve().parents[2]
+    if product_browser_phase:
+        # The full packet borrows this same owned lifecycle, not another native
+        # provider. Its POC/retained-PG origins remain supplied by the runner.
+        assert url_manual_capture is not None and match_case is not None
+        assert os.environ.get("ODP_OPERATOR_PRODUCT_GATE") == "1"
+        assert os.environ.get("INTAKE_TEST_DATABASE_URL")
     assert re.fullmatch(r"oday_native_parser_p_[0-9a-f]{16}", database.dbname), database.dbname
     private_dir.mkdir(mode=0o700)
     password, signing, session_secret, metadata_secret = (secrets.token_urlsafe(40) for _ in range(4))
-    append_property = str(uuid4()) if independent_reviewer else None
+    append_property = str(uuid4()) if match_case is None else None
+    policy_sources = {policy: {"source_id": "browser-policy-" + uuid4().hex,
+        "original_url": "https://policy-" + uuid4().hex + ".example.invalid/Listing"}
+        for policy in (("APPROVED_RETRIEVAL", "ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED", "SOURCE_BLOCKED", "POLICY_UNKNOWN")
+            if product_browser_phase else ("SOURCE_BLOCKED", "POLICY_UNKNOWN"))}
+    if product_browser_phase:
+        from modules.listing.application.native_intake_retrieval import NativeIntakeRetrievalOwner
+        from modules.listing.application.native_intake_retrieval_policy import (
+            POLICY_ENV as RETRIEVAL_POLICY,
+        )
+        from modules.listing.application.native_intake_retrieval_policy import (
+            SIGNING_KEY_ENV as RETRIEVAL_KEY,
+        )
+        from modules.listing.application.native_intake_retrieval_policy import (
+            STORAGE_ENV as RETRIEVAL_STORAGE,
+        )
+        from tests.integration.test_native_intake_retrieval_postgresql import (
+            BUCKET,
+            KMS,
+            RAW,
+            SyntheticIO,
+        )
+
+        # Reuse the original guarded synthetic HTTP/storage seam. These local
+        # policy/storage inputs are not a production source-use approval.
+        monkeypatch.setenv(RETRIEVAL_POLICY, json.dumps({"policy_id": "synthetic-browser-policy-retrieval", "version": 1,
+            "tenant_ids": [ids["tenant"]], "max_attempts": 2, "deadline_seconds": 120, "backoff_seconds": [0.05]}))
+        monkeypatch.setenv(RETRIEVAL_STORAGE, json.dumps({"version": 1, "global_max_concurrency": 2, "storage_bindings": [
+            {"tenant_id": ids["tenant"], "bucket": BUCKET, "kms_key_name": KMS,
+             "residency_mode": "TW_ONLY", "retention_class": "STANDARD"}]}))
+        monkeypatch.setenv(RETRIEVAL_KEY, "synthetic-browser-retrieval-separate-key-" * 2)
+        monkeypatch.setenv("ODP_RESIDENCY_APPROVED_BUCKETS_TW_ONLY",
+            os.environ["ODP_RESIDENCY_APPROVED_BUCKETS_TW_ONLY"] + "," + BUCKET)
     credentials = {"username": "synthetic-manager-" + ids["reviewer"], "password": password,
         "actor_id": ids["reviewer"], "tenant_id": ids["tenant"], "intake_id": parsed["intake_id"],
         "match_case_id": match_case["match_case_id"] if match_case else None, "manager_region_id": manager_region_id,
         "outside_intake_id": ids["intake"], "context_property_ids": [ids["target"], ids["split_target"]],
         "append_property_id": append_property, "append_receipt_probe": append_receipt_probe,
         "url_manual": None,
+        "policy_sources": policy_sources,
+        "find_areas_zone_ids": [str(uuid4()), str(uuid4())] if product_browser_phase else [],
+        # Explicit test URLs, not admitted sources or a fixture retrieval path.
+        "fresh_urls": {kind: "https://browser-fresh.example.invalid/" + ids["tenant"] + "/" + kind
+            for kind in ("presentation", "durability", "duplicate", "replay", "keyboard", "landmarks")},
         "independent_reviewer": {"actor_id": independent_reviewer, "username": "synthetic-manager-" + independent_reviewer,
             "password": password} if independent_reviewer else None}
+    if product_browser_phase:
+        credentials["fresh_urls"]["find_areas"] = "https://browser-fresh.example.invalid/" + ids["tenant"] + "/find-areas"
     hash_script = "const a=require('argon2');a.hash(process.env.OWNED_BROWSER_PASSWORD,{type:a.argon2id,memoryCost:65536,timeCost:3,parallelism:1}).then(h=>process.stdout.write(h))"
     phc = subprocess.check_output(["node", "-e", hash_script], cwd=root,
         env={**os.environ, "OWNED_BROWSER_PASSWORD": password}, text=True)
     now = datetime.now(UTC)
     with database.connect() as connection:
+        from modules.listing.application.native_intake_url_identity import NATIVE_URL_RULE_VERSION
+
+        # The upstream parser fixture's defer_audit() postpones its own audit
+        # jobs by a day to isolate internal execution. That test-only deferral
+        # must not survive into this long-lived runtime composition: restore
+        # normal eligibility for only this tenant's queued deferred audits.
+        # The existing worker must actually deliver them to the original sink;
+        # no audit row, job, age or five-minute admission guard is discarded.
+        deferred_fixture_audits = [str(row[0]) for row in connection.execute(
+            "UPDATE odp_runtime.durable_jobs SET available_at=clock_timestamp() "
+            "WHERE job_type='canonical-audit-delivery' AND status=%s "
+            "AND payload_json->>'tenant_id'=%s AND available_at>clock_timestamp() RETURNING job_id",
+            (JobStatus.QUEUED.value, ids["tenant"])).fetchall()]
+        assert deferred_fixture_audits
+
+        # Explicit isolated registry premises, never real source admission.
+        # Native5 retains its two negative rows; only full130 exercises the
+        # additional three policies through the same SQL/worker composition.
+        for policy, source in policy_sources.items():
+            connection.execute("INSERT INTO intake.source_registry (source_id,display_name,allowed_hosts,"
+                "canonicalization_rule_version,retrieval_mode,policy_owner_subject_id,production_enabled,kill_switch) "
+                "VALUES (%s,%s,%s,%s,%s,%s,true,false)",
+                (source["source_id"], SCOPE, [urlsplit(source["original_url"]).hostname],
+                 NATIVE_URL_RULE_VERSION, policy, ids["actor"]))
+            if policy in {"APPROVED_RETRIEVAL", "ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED"}:
+                connection.execute("UPDATE intake.source_registry SET legal_approval_ref='synthetic-browser-legal',"
+                    "license_approval_ref='synthetic-browser-license',review_expires_at=clock_timestamp()+interval '1 hour',"
+                    "requests_per_minute=5,concurrent_requests=1 WHERE source_id=%s", (source["source_id"],))
+                # AUTH deliberately has no separate account/manual approval.
         if url_manual_capture is not None:
             original_url, source_id = connection.execute("SELECT original_url,source_id FROM intake.intakes "
                 "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], parsed["intake_id"])).fetchone()
             assert source_id.startswith("native-parser-") and source_id.endswith(".manual")
             credentials["url_manual"] = {"original_url": original_url.rsplit("/", 1)[0] + "/BrowserFreshListing-" + uuid4().hex,
                 "fields": {"address": "Explicit synthetic browser manual address 29", "rent": 43210, "areaPing": 42.5}}
-        actual_region = connection.execute("SELECT region_id FROM intake.intakes WHERE tenant_id=%s AND intake_id=%s",
-            (ids["tenant"], parsed["intake_id"])).fetchone()[0]
-        assert (str(actual_region) if actual_region is not None else None) == manager_region_id
+        scope_keys = ("brand_id", "region_id", "assigned_area_id", "heat_zone_id")
+        actual_scope = connection.execute("SELECT brand_id,region_id,assigned_area_id,heat_zone_id FROM intake.intakes "
+            "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], parsed["intake_id"])).fetchone()
+        credentials["fresh_scope"] = {key: str(value) if value is not None else None for key, value in zip(scope_keys, actual_scope, strict=True)}
+        assert credentials["fresh_scope"]["region_id"] == manager_region_id
         if manager_region_id:
             assert connection.execute("SELECT region_id FROM intake.intakes WHERE tenant_id=%s AND intake_id=%s",
                 (ids["tenant"], ids["intake"])).fetchone()[0] is None
@@ -195,6 +278,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             pass
 
     credentials["api_url"] = api_url
+    credentials["web_url"] = web_url
     scenario = private_dir / "native-scenario.json"
     scenario.write_text(json.dumps(credentials))
     scenario.chmod(0o600)
@@ -219,17 +303,33 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
     metadata_server = None
     metadata_thread = None
     url_admissions = []
+    url_parser_admissions = []
+    url_matches = []
+    policy_admissions = {policy: [] for policy in ("SOURCE_BLOCKED", "POLICY_UNKNOWN")}
+    fetch_policy_admissions = {policy: [] for policy in policy_sources} if product_browser_phase else {}
+    fetch_io = None
 
     if url_manual_capture is not None:
+        from modules.listing.application.native_intake_parser import NativeIntakeParserOwner
         from shared.infrastructure.persistence.factory import PersistenceBundle
 
+        assert independent_reviewer and independent_reviewer != ids["reviewer"]
+        assert url_manual_parser_registry is not None and url_manual_parser_release is not None
+        assert matching_boundary is not None and matching_credentials is not None and matching_policy
         original_manual_factory = PersistenceBundle.canonical_intake_assisted_entry
+
+        def parser_factory(bundle, **kwargs):
+            # Trusted local composition supplies the original explicit archive
+            # registry and storage transport. All positive owner checks remain.
+            return NativeIntakeParserOwner(bundle.canonical_identity_graph(),
+                artifact_registry=url_manual_parser_registry, storage_factory=url_manual_capture.factory, **kwargs)
 
         def manual_factory(bundle, **kwargs):
             kwargs.setdefault("snapshot_transport_factory", url_manual_capture.factory)
             return original_manual_factory(bundle, **kwargs)
 
         monkeypatch.setattr(PersistenceBundle, "canonical_intake_assisted_entry", manual_factory)
+        monkeypatch.setattr(PersistenceBundle, "canonical_intake_parser", parser_factory)
 
     def launch(command, environment, label, cwd=root):
         stream = (private_dir / (label + ".log")).open("w")
@@ -260,51 +360,117 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         admissions = [worker_bundle.canonical_intake_start, worker_bundle.canonical_intake_identity,
             worker_bundle.canonical_intake_source_policy, worker_bundle.canonical_intake_assisted_entry]
 
-        def admit_browser_event():
-            if credentials["url_manual"] is None or len(url_admissions) == len(admissions):
+        def admit_browser_event(connection, original_url, receipts, phases, *, retrieval=False):
+            if len(receipts) == phases:
                 return
-            with database.connect() as connection:
+            if not receipts:
                 row = connection.execute("SELECT intake_id FROM intake.intakes WHERE tenant_id=%s AND original_url=%s",
-                    (ids["tenant"], credentials["url_manual"]["original_url"])).fetchall()
+                    (ids["tenant"], original_url)).fetchall()
                 if not row:
                     return
                 assert len(row) == 1
                 intake_id = str(row[0][0])
-                if not url_admissions:
-                    events = connection.execute("SELECT event_id FROM workflow.outbox_events WHERE tenant_id=%s "
-                        "AND aggregate_type='intake' AND aggregate_id=%s AND event_type='intake.submitted'",
-                        (ids["tenant"], intake_id)).fetchall()
+                events = connection.execute("SELECT event_id FROM workflow.outbox_events WHERE tenant_id=%s "
+                    "AND aggregate_type='intake' AND aggregate_id=%s AND event_type='intake.submitted'",
+                    (ids["tenant"], intake_id)).fetchall()
+            else:
+                previous = receipts[-1]
+                intake_id = str(previous["intake_id"])
+                job = connection.execute("SELECT d.status,w.result FROM odp_runtime.durable_jobs d JOIN workflow.jobs w "
+                    "ON w.job_id::text=d.job_id WHERE w.tenant_id=%s AND w.job_id=%s",
+                    (ids["tenant"], previous["job_id"])).fetchone()
+                if not job or job[0] != JobStatus.SUCCEEDED.value or job[1] is None:
+                    return
+                result = job[1]
+                assert result["intake_id"] == intake_id
+                if len(receipts) < 3 or retrieval:
+                    if len(receipts) == 3:
+                        assert phases == 4 and result["processing_state"] == "RETRIEVING"
+                    events = [(result["outbox_event_id"],)]
                 else:
-                    previous = url_admissions[-1]
-                    if worker_bundle.job_queue.get(previous["job_id"]).status != JobStatus.SUCCEEDED:
+                    assert phases == 4 and result["processing_state"] == "AWAITING_ASSISTED_ENTRY"
+                    events = connection.execute("SELECT event_id FROM workflow.outbox_events WHERE tenant_id=%s "
+                        "AND aggregate_type='intake_assisted_entry' AND event_type='intake.assisted_entry_requested' "
+                        "AND payload->'payload'->>'intake_id'=%s", (ids["tenant"], intake_id)).fetchall()
+                    if not events:
                         return
-                    result = connection.execute("SELECT result FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s",
-                        (ids["tenant"], previous["job_id"])).fetchone()[0]
-                    assert result["intake_id"] == intake_id
-                    if len(url_admissions) < 3:
-                        events = [(result["outbox_event_id"],)]
-                    else:
-                        assert result["processing_state"] == "AWAITING_ASSISTED_ENTRY"
-                        events = connection.execute("SELECT event_id FROM workflow.outbox_events WHERE tenant_id=%s "
-                            "AND aggregate_type='intake_assisted_entry' AND event_type='intake.assisted_entry_requested' "
-                            "AND payload->'payload'->>'intake_id'=%s", (ids["tenant"], intake_id)).fetchall()
-                        if not events:
-                            return
-                assert len(events) == 1
-            receipt = admissions[len(url_admissions)]().admit_event(ids["tenant"], str(events[0][0]))
+            assert len(events) == 1
+            factory = worker_bundle.canonical_intake_retrieval if retrieval and len(receipts) == 3 else admissions[len(receipts)]
+            receipt = factory().admit_event(ids["tenant"], str(events[0][0]))
             assert receipt["intake_id"] == intake_id
-            url_admissions.append(receipt)
+            if retrieval and len(receipts) == 3:
+                assert fetch_io is not None
+                fetch_io.job_id = receipt["job_id"]
+            receipts.append(receipt)
 
-        while not stop.is_set():
-            try:
-                admit_browser_event()
-                if not worker.run_once():
-                    stop.wait(0.1)
-            except Exception as error:
-                worker_errors.append(type(error).__name__ + ": " + str(error))
+        def match_browser_manual(connection):
+            if len(url_admissions) != 4 or url_matches:
                 return
+            job = connection.execute("SELECT status FROM odp_runtime.durable_jobs WHERE job_id=%s",
+                (str(url_admissions[-1]["job_id"]),)).fetchone()
+            if not job or job[0] != JobStatus.SUCCEEDED.value:
+                return
+            rows = connection.execute("SELECT i.intake_id,s.source_snapshot_id,i.version,i.processing_state "
+                "FROM intake.intakes i JOIN intake.source_snapshots s "
+                "ON s.tenant_id=i.tenant_id AND s.intake_id=i.intake_id "
+                "WHERE i.tenant_id=%s AND i.original_url=%s AND s.capture_method='MANUAL_ENTRY'",
+                (ids["tenant"], credentials["url_manual"]["original_url"])).fetchall()
+            assert len(rows) == 1
+            intake_id, snapshot_id, version, state = rows[0]
+            assert str(intake_id) != parsed["intake_id"]
+            if not url_parser_admissions:
+                assert state == "PARSING" and snapshot_id is not None
+                url_parser_admissions.append(worker_bundle.canonical_intake_parser().admit(
+                    ids["tenant"], str(intake_id), str(snapshot_id), url_manual_parser_release,
+                    expected_version=version))
+                return
+            parser_job = connection.execute("SELECT status FROM odp_runtime.durable_jobs WHERE job_id=%s",
+                (str(url_parser_admissions[0]["job_id"]),)).fetchone()
+            if not parser_job or parser_job[0] != JobStatus.SUCCEEDED.value:
+                return
+            assert state == "MATCHING"
+            proposal = worker_bundle.canonical_match_cases().match_parser_result(
+                ids["tenant"], str(intake_id), expected_intake_version=version,
+                policy_version_id=matching_policy, boundary=matching_boundary, credentials=matching_credentials)
+            assert proposal["intake_id"] == str(intake_id) and proposal["outcome"] == "NEW"
+            url_matches.append(proposal)
+
+        with database.connect() as connection:
+            connection.autocommit = True
+            while not stop.is_set():
+                try:
+                    if credentials["url_manual"] is not None:
+                        admit_browser_event(connection, credentials["url_manual"]["original_url"], url_admissions, 4)
+                        match_browser_manual(connection)
+                    for policy, receipts in policy_admissions.items():
+                        admit_browser_event(connection, policy_sources[policy]["original_url"], receipts, 3)
+                    for policy, receipts in fetch_policy_admissions.items():
+                        retrieval = policy == "APPROVED_RETRIEVAL"
+                        admit_browser_event(connection, policy_sources[policy]["original_url"] + "/FetchPolicy", receipts,
+                            4 if retrieval else 3, retrieval=retrieval)
+                    if not worker.run_once():
+                        stop.wait(0.1)
+                except Exception as error:
+                    worker_errors.append(type(error).__name__ + ": " + str(error))
+                    return
 
     try:
+        worker_bundle = build_persistence(mode="postgresql")
+        if product_browser_phase:
+            fetch_io = SyntheticIO(worker_bundle.canonical_identity_graph(), database)
+            monkeypatch.setattr(type(worker_bundle), "canonical_intake_retrieval",
+                lambda bundle: NativeIntakeRetrievalOwner(bundle.canonical_identity_graph(),
+                    http_transport=fetch_io, snapshot_transport_factory=fetch_io.factory))
+            from modules.heatzone.workers import HeatZoneBatchScoreResult
+            from tests.unit.test_operator_canonical_heat_zones import zone_result
+
+            # Original recorded-score fixture seam, not a model execution or
+            # source admission. These explicit synthetic rows supply the real
+            # scoped FindAreas read/navigation; they grant no Intake scope.
+            worker_bundle.heatzone_store_for_tenant(ids["tenant"]).put(HeatZoneBatchScoreResult(
+                job_id=str(uuid4()), status="succeeded", tenant_id=ids["tenant"], completed_at=now,
+                scores=tuple(zone_result(zone, rank=rank) for rank, zone in
+                    enumerate(credentials["find_areas_zone_ids"], 1))))
         metadata_server = ThreadingHTTPServer(("127.0.0.1", 0), OwnedMetadata)
         metadata_thread = threading.Thread(target=metadata_server.serve_forever, daemon=True)
         metadata_thread.start()
@@ -331,16 +497,24 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         web = launch(["npm", "run", "start", "--workspace=@oday-plus/web", "--", "-p", str(web_port),
             "--hostname", "127.0.0.1"], web_env, "web")
         ready(web_url + "/login", web)
-        worker_bundle = build_persistence(mode="postgresql")
         worker_thread = threading.Thread(target=work, daemon=True)
         worker_thread.start()
-        browser_env = {**web_env, "OPSBOARD_PORT": str(web_port), "ODP_API_PORT": str(api_port),
-            "ODP_PLAYWRIGHT_API_HEALTH_URL": api_url + "/_synthetic/health", "ODP_PLAYWRIGHT_REUSE_EXISTING": "1",
-            "ODP_NATIVE_BROWSER_SCENARIO_FILE": str(scenario)}
-        browser = launch(["node", "node_modules/@playwright/test/cli.js", "test",
-            "tests/e2e/operator-assisted-listing-intake.spec.ts", "--grep", "canonical native:",
-            "--workers=1", "--retries=0", "--trace=off", "--output", str(private_dir / "browser-results")], browser_env, "browser")
-        browser.wait(timeout=240)
+        if product_browser_phase:
+            browser_env = {**os.environ, "ODP_NATIVE_BROWSER_SCENARIO_FILE": str(scenario)}
+            browser_command = ["bash", "delivery_toolchain/e2e/run_product_e2e.sh", "--native-playwright-phase"]
+        else:
+            browser_env = {**web_env, "OPSBOARD_PORT": str(web_port), "ODP_API_PORT": str(api_port),
+                "ODP_PLAYWRIGHT_API_HEALTH_URL": api_url + "/_synthetic/health", "ODP_PLAYWRIGHT_REUSE_EXISTING": "1",
+                "ODP_NATIVE_BROWSER_SCENARIO_FILE": str(scenario)}
+            browser_command = ["node", "node_modules/@playwright/test/cli.js", "test",
+                "tests/e2e/operator-assisted-listing-intake.spec.ts", "tests/e2e/operator-network-assisted-intake.spec.ts",
+                "tests/e2e/operator-assisted-listing-intake-a11y.spec.ts",
+                "--grep", "canonical native:",
+                "--workers=1", "--retries=0", "--trace=off", "--output", str(private_dir / "browser-results")]
+        browser = launch(browser_command, browser_env, "browser")
+        # Native5 keeps its original per-profile deadline. The full packet is
+        # governed by the original product job's 45-minute boundary instead.
+        browser.wait(timeout=None if product_browser_phase else 240)
         browser_log = (private_dir / "browser.log").read_text()
         for value in (password, signing, session_secret, metadata_secret, metadata_token, database.url()):
             browser_log = browser_log.replace(value, "[REDACTED]")
@@ -348,16 +522,17 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         assert browser.returncode == 0, browser_log[-12000:]
         assert metadata_counts["accepted"] > 0 and metadata_counts["rejected"] == 2
         reload = json.loads((private_dir / "native-receipt-reload.json").read_text())
-        assert (reload["actor_id"], reload["tenant_id"]) == (ids["reviewer"], ids["tenant"])
+        confirmation_actor = independent_reviewer if url_manual_capture is not None else ids["reviewer"]
+        assert (reload["actor_id"], reload["tenant_id"]) == (confirmation_actor, ids["tenant"])
         assert reload["postCount"] == 1 and reload["whole_page_reload"] and reload["recovered_by_exact_GET"]
         assert reload["post_keys_seen"] == [reload["key"]]
         assert reload["storage_accessor_denial_gated"] and reload["storage_reference_preserved"]
         assert reload["storage_denial_uncaught_errors"] == 0 and reload["storage_recovery_POSTs"] == 0
-        original = worker_bundle.assisted_intake_store.read_command_replay(ids["tenant"], ids["reviewer"],
+        original = worker_bundle.assisted_intake_store.read_command_replay(ids["tenant"], confirmation_actor,
             "proposeCanonicalIdentity", reload["key"], reload["match_case_id"])
         assert original is not None and original[1] == reload["receipt"] and original[2] == 201
         recovered = reload["other_command_recoveries"]
-        expected_variants = {"case-create", "case-append", "identity-review"} if independent_reviewer else set()
+        expected_variants = {"case-create", "case-append", "identity-review"} if append_property else set()
         assert {entry["variant"] for entry in recovered} == expected_variants
         assert len(recovered) == len(expected_variants)
         submissions = reload["submission_command_recoveries"]
@@ -411,13 +586,199 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             saved = worker_bundle.assisted_intake_store.read_command_replay(
                 ids["tenant"], actor, operation, entry["key"], resource)
             assert saved is not None and saved[1] == entry["receipt"] and saved[2] == (200 if is_review else 201)
+        fresh_commands = [json.loads(path.read_text()) for path in sorted(private_dir.glob("native-url-command-*.json"))]
+        # Original five URL submissions and two a11y positives; full130 also
+        # exercises its original FindAreas caller in this same SQL lifetime.
+        # Native5 does not select the shell spec; focus/Escape adds no command.
+        expected_submissions = 8 if product_browser_phase else 7
+        assert len(fresh_commands) == expected_submissions
+        assert len({entry["key"] for entry in fresh_commands}) == expected_submissions
+        assert len({entry["receipt"]["intake_id"] for entry in fresh_commands}) == expected_submissions
         with database.connect() as connection:
+            for audit_job_id in deferred_fixture_audits:
+                audit_job = worker_bundle.job_queue.get(audit_job_id)
+                assert audit_job.status == JobStatus.SUCCEEDED
+                assert connection.execute("SELECT worm_object_uri FROM audit.audit_events "
+                    "WHERE tenant_id=%s AND audit_event_id=%s",
+                    (ids["tenant"], audit_job.payload["audit_event_id"])).fetchone()[0]
+            # Independently verify the actual browser-to-SQL graph. No worker
+            # admission was requested for these submission-only URLs; SUBMITTED
+            # is not successful policy/retrieval, a match outcome or READY.
+            for url in credentials["fresh_urls"].values():
+                rows = connection.execute("SELECT intake_id FROM intake.intakes WHERE tenant_id=%s AND original_url=%s",
+                    (ids["tenant"], url)).fetchall()
+                expected = [entry for entry in fresh_commands if entry["body"]["original_url"] == url]
+                assert len(expected) == (2 if url == credentials["fresh_urls"]["duplicate"] else 1)
+                assert {str(row[0]) for row in rows} == {entry["receipt"]["intake_id"] for entry in expected}
+            for entry in fresh_commands:
+                receipt, body, key = entry["receipt"], entry["body"], entry["key"]
+                fresh_id = receipt["intake_id"]
+                saved = worker_bundle.assisted_intake_store.read_command_replay(
+                    ids["tenant"], ids["reviewer"], "submitCanonicalIntake", key)
+                assert saved is not None and saved[1] == receipt and saved[2] == 201
+                row = connection.execute("SELECT submitter_subject_id,processing_state,version,original_url,source_id,"
+                    "source_policy_state,resolved_listing_id,canonical_url FROM intake.intakes WHERE tenant_id=%s AND intake_id=%s",
+                    (ids["tenant"], fresh_id)).fetchone()
+                assert tuple(map(str, row[:3])) == (ids["reviewer"], "SUBMITTED", "1")
+                assert row[3] == body["original_url"] and all(value is None for value in row[4:])
+                scope = connection.execute("SELECT brand_id,region_id,assigned_area_id,heat_zone_id FROM intake.intakes "
+                    "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], fresh_id)).fetchone()
+                assert {key: str(value) if value is not None else None for key, value in zip(scope_keys, scope, strict=True)} == credentials["fresh_scope"]
+                transitions = connection.execute("SELECT transition_id,from_state,to_state,actor_subject_id,"
+                    "resulting_version FROM intake.intake_stage_transitions WHERE tenant_id=%s AND intake_id=%s",
+                    (ids["tenant"], fresh_id)).fetchall()
+                assert len(transitions) == 1
+                assert tuple(map(str, transitions[0])) == (receipt["transition_id"], "None", "SUBMITTED", ids["reviewer"], "1")
+                assignment, = connection.execute("SELECT assignment_id,status,version FROM workflow.assignments "
+                    "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], fresh_id)).fetchall()
+                sla, = connection.execute("SELECT assignment_id,version FROM workflow.sla_instances "
+                    "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], fresh_id)).fetchall()
+                if body["original_url"] != credentials["fresh_urls"]["replay"]:
+                    assert assignment[1:] == ("UNASSIGNED", 1) and sla == (assignment[0], 1)
+                else:
+                    # The browser paused and resumed this SLA through the
+                    # original V1 controls; the native Intake row is untouched.
+                    assert sla == (assignment[0], 3) and assignment[1] == "UNASSIGNED" and assignment[2] in {1, 2}
+                    assert [str(r[0]) for r in connection.execute("SELECT permission FROM workflow.sla_transitions "
+                        "WHERE tenant_id=%s AND sla_instance_id=(SELECT sla_instance_id FROM workflow.sla_instances "
+                        "WHERE tenant_id=%s AND intake_id=%s) ORDER BY sequence_no",
+                        (ids["tenant"], ids["tenant"], fresh_id)).fetchall()] == ["sla.create", "sla.pause", "sla.resume"]
+                    pause, = connection.execute("SELECT created_by,approved_by,expected_resume_at,resumed_at,version "
+                        "FROM workflow.sla_pause_intervals WHERE tenant_id=%s AND sla_instance_id=(SELECT sla_instance_id "
+                        "FROM workflow.sla_instances WHERE tenant_id=%s AND intake_id=%s)",
+                        (ids["tenant"], ids["tenant"], fresh_id)).fetchall()
+                    assert str(pause[0]) == ids["reviewer"] and pause[1] != pause[0]
+                    assert pause[2] is not None and pause[3] is not None and pause[2] != pause[3] and pause[4] == 2
+                for table in ("workflow.assignment_transitions", "workflow.sla_transitions"):
+                    assert connection.execute(f"SELECT count(*) FROM {table} WHERE tenant_id=%s AND correlation_id=%s",
+                        (ids["tenant"], receipt["correlation_id"])).fetchone()[0] == 1
+                audits = connection.execute("SELECT action,audit_event_id FROM audit.audit_events WHERE tenant_id=%s "
+                    "AND correlation_id=%s AND action IN ('assignment.create','intake.create','sla.create')",
+                    (ids["tenant"], receipt["correlation_id"])).fetchall()
+                assert sorted(row[0] for row in audits) == ["assignment.create", "intake.create", "sla.create"]
+                assert [str(row[1]) for row in audits if row[0] == "intake.create"] == [receipt["audit_event_id"]]
+                events = connection.execute("SELECT event_type,event_id FROM workflow.outbox_events WHERE tenant_id=%s "
+                    "AND correlation_id=%s", (ids["tenant"], receipt["correlation_id"])).fetchall()
+                assert sorted(row[0] for row in events) == ["intake.submitted", "sla.state_changed"]
+                assert [str(row[1]) for row in events if row[0] == "intake.submitted"] == [receipt["outbox_event_id"]]
+                for table in ("workflow.jobs", "identity.match_cases", "intake.source_snapshots", "intake.parser_runs"):
+                    column = "aggregate_id" if table == "workflow.jobs" else "intake_id"
+                    assert connection.execute(f"SELECT count(*) FROM {table} WHERE tenant_id=%s AND {column}=%s",
+                        (ids["tenant"], fresh_id)).fetchone()[0] == 0
+                assert connection.execute("SELECT count(*) FROM odp_runtime.durable_documents WHERE doc_id=%s AND "
+                    "collection IN ('operator.assisted_intakes','assisted_intake.intakes')", (fresh_id,)).fetchone()[0] == 0
+            # One existing policy proof for both specs. The five-policy case
+            # uses distinct URLs/keys, never borrows the negative probe's receipt.
+            policy_commands = [(policy, source["original_url"], policy_admissions[policy], "native-policy-")
+                for policy, source in policy_sources.items() if policy in policy_admissions]
+            if product_browser_phase:
+                assert fetch_io.urls == [policy_sources["APPROVED_RETRIEVAL"]["original_url"] + "/FetchPolicy"]
+                assert fetch_io.calls == ["gcs_bucket", "http_hop", "gcs_upload", "gcs_head", "gcs_download"]
+                assert len(fetch_io.objects) == 1 and not fetch_io.deletes
+                policy_commands.extend((policy, policy_sources[policy]["original_url"] + "/FetchPolicy", admissions,
+                    "native-fetch-policy-") for policy, admissions in fetch_policy_admissions.items())
+            for policy, original_url, admissions, prefix in policy_commands:
+                source = policy_sources[policy]
+                entry = json.loads((private_dir / (prefix + policy + ".json")).read_text())
+                receipt, key, body = entry["receipt"], entry["key"], entry["body"]
+                policy_id = receipt["intake_id"]
+                assert body == {"intake_method": "URL", "original_url": original_url,
+                    "scope": credentials["fresh_scope"], "reason": body["reason"]}
+                assert len(body["reason"].strip()) >= 3
+                saved = worker_bundle.assisted_intake_store.read_command_replay(
+                    ids["tenant"], ids["reviewer"], "submitCanonicalIntake", key)
+                assert saved is not None and saved[1] == receipt and saved[2] == 201
+                assert receipt["processing_state"] == "SUBMITTED" and receipt["version"] == 1
+                retrieved = policy == "APPROVED_RETRIEVAL"
+                state = ("PARSING" if retrieved else "AWAITING_ASSISTED_ENTRY" if policy == "ASSISTED_ENTRY_ONLY"
+                    else "AWAITING_SOURCE_AUTHORIZATION" if policy == "AUTH_REQUIRED" else "QUARANTINED")
+                rows = connection.execute("SELECT intake_id,submitter_subject_id,processing_state,version,source_id,"
+                    "source_policy_state,resolved_listing_id FROM intake.intakes WHERE tenant_id=%s AND original_url=%s",
+                    (ids["tenant"], original_url)).fetchall()
+                assert len(rows) == 1 and tuple(map(str, rows[0])) == (
+                    policy_id, ids["reviewer"], state, "5" if retrieved else "4", source["source_id"], policy, "None")
+                transitions = connection.execute("SELECT to_state,job_id,transition_id,source_snapshot_id FROM intake.intake_stage_transitions "
+                    "WHERE tenant_id=%s AND intake_id=%s ORDER BY sequence_no", (ids["tenant"], policy_id)).fetchall()
+                assert [row[0] for row in transitions] == ["SUBMITTED", "CHECKING_IDENTITY", "CHECKING_SOURCE_POLICY",
+                    *(["RETRIEVING", "PARSING"] if retrieved else [state])]
+                assert len(admissions) == (4 if retrieved else 3)
+                assert [str(row[1]) for row in transitions[1:]] == [row["job_id"] for row in admissions]
+                jobs = connection.execute("SELECT job_id,job_type,status,result FROM workflow.jobs "
+                    "WHERE tenant_id=%s AND aggregate_id=%s ORDER BY created_at,job_id", (ids["tenant"], policy_id)).fetchall()
+                assert [row[1] for row in jobs] == ["native-intake-start", "native-intake-identity", "native-intake-source-policy",
+                    *(["native-intake-retrieval"] if retrieved else [])]
+                for index, (job_id, _kind, status, result) in enumerate(jobs, 1):
+                    assert status == "SUCCEEDED" and result["intake_id"] == policy_id
+                    assert worker_bundle.job_queue.get(str(job_id)).status == JobStatus.SUCCEEDED
+                    assert str(transitions[index][2]) == result["transition_id"]
+                    assert connection.execute("SELECT count(*) FROM audit.audit_events WHERE tenant_id=%s AND audit_event_id=%s",
+                        (ids["tenant"], result["audit_event_id"])).fetchone()[0] == 1
+                    assert connection.execute("SELECT count(*) FROM workflow.outbox_events WHERE tenant_id=%s AND event_id=%s",
+                        (ids["tenant"], result["outbox_event_id"])).fetchone()[0] == 1
+                assert jobs[2][3]["policy_decision"]["effective_policy"] == policy
+                assert jobs[2][3]["policy_decision"]["accepted_worker"] == "owned-native-browser-worker"
+                snapshots = connection.execute("SELECT source_snapshot_id,source_id,capture_method,content_sha256,"
+                    "byte_length,object_generation,captured_at,observed_at,raw_object_uri FROM intake.source_snapshots "
+                    "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], policy_id)).fetchall()
+                assert len(snapshots) == int(retrieved)
+                if retrieved:
+                    journal = connection.execute("SELECT payload->'attempt_intents' FROM workflow.jobs "
+                        "WHERE tenant_id=%s AND job_id=%s", (ids["tenant"], jobs[3][0])).fetchone()[0]
+                    assert [intent["operation"] for intent in journal] == fetch_io.calls
+                    assert all(intent["state"] == "FINISHED" and intent["attempt"] == 1
+                        and intent["worker"] == "owned-native-browser-worker" for intent in journal)
+                    snapshot = snapshots[0]
+                    assert str(snapshot[0]) == jobs[3][3]["source_snapshot_id"] == str(transitions[4][3])
+                    assert snapshot[1:6] == (source["source_id"], "SERVER_RETRIEVAL", sha256(RAW).hexdigest(), len(RAW), 7)
+                    assert snapshot[6] is not None and snapshot[7] == snapshot[6]
+                    object_key = snapshot[8].removeprefix("gs://" + BUCKET + "/")
+                    assert fetch_io.objects[object_key] == (RAW, "text/html")
+                    assert entry["observed"]["processing_evidence"]["items"][0]["metadata"]["source_snapshot_id"] == str(snapshot[0])
+                    assert connection.execute("SELECT count(*) FROM workflow.outbox_events WHERE tenant_id=%s AND event_id=%s "
+                        "AND event_type='snapshot.created'", (ids["tenant"], jobs[3][3]["snapshot_created_event_id"])).fetchone()[0] == 1
+                else:
+                    assert entry["observed"]["processing_evidence"]["items"] == []
+                for table in ("intake.parser_runs", "identity.match_cases", "workflow.assignments", "workflow.sla_instances"):
+                    count = connection.execute(f"SELECT count(*) FROM {table} WHERE tenant_id=%s AND intake_id=%s",
+                        (ids["tenant"], policy_id)).fetchone()[0]
+                    assert count == (1 if table in {"workflow.assignments", "workflow.sla_instances"} else 0)
+                assert connection.execute("SELECT count(*) FROM odp_runtime.durable_documents WHERE doc_id=%s AND "
+                    "collection IN ('operator.assisted_intakes','assisted_intake.intakes')", (policy_id,)).fetchone()[0] == 0
+            confirmed_intake = submitted["intake_id"] if submissions else parsed["intake_id"]
             if submissions:
                 new_intake = submitted["intake_id"]
+                assert new_intake != parsed["intake_id"]
+                assert len(url_parser_admissions) == len(url_matches) == 1
+                parser_admission, proposal = url_parser_admissions[0], url_matches[0]
+                assert parser_admission["intake_id"] == proposal["intake_id"] == new_intake
+                assert proposal["match_case_id"] == reload["match_case_id"]
+                assert parser_admission["parser_release_id"] == url_manual_parser_release
+                assert worker_bundle.job_queue.get(parser_admission["job_id"]).status == JobStatus.SUCCEEDED
                 assert connection.execute("SELECT count(*) FROM intake.intakes WHERE tenant_id=%s AND original_url=%s",
                     (ids["tenant"], credentials["url_manual"]["original_url"])).fetchone()[0] == 1
                 assert connection.execute("SELECT processing_state FROM intake.intakes WHERE tenant_id=%s AND intake_id=%s",
-                    (ids["tenant"], new_intake)).fetchone()[0] == "PARSING"
+                    (ids["tenant"], new_intake)).fetchone()[0] == "READY"
+                transitions = connection.execute("SELECT to_state FROM intake.intake_stage_transitions "
+                    "WHERE tenant_id=%s AND intake_id=%s ORDER BY sequence_no", (ids["tenant"], new_intake)).fetchall()
+                assert [row[0] for row in transitions] == ["SUBMITTED", "CHECKING_IDENTITY", "CHECKING_SOURCE_POLICY",
+                    "AWAITING_ASSISTED_ENTRY", "PARSING", "MATCHING", "READY"]
+                run, = connection.execute("SELECT parser_run_id,source_snapshot_id,parser_release_id,status,normalized_payload "
+                    "FROM intake.parser_runs WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], new_intake)).fetchall()
+                assert tuple(map(str, run[:4])) == (parser_admission["parser_run_id"],
+                    parser_admission["source_snapshot_id"], url_manual_parser_release, "SUCCEEDED")
+                parser_result = connection.execute("SELECT status,result FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s",
+                    (ids["tenant"], parser_admission["job_id"])).fetchone()
+                assert parser_result[0] == "SUCCEEDED" and parser_result[1]["intake_id"] == new_intake
+                assert run[4] == credentials["url_manual"]["fields"]
+                for table, column, key in (("audit.audit_events", "audit_event_id", "audit_event_id"),
+                        ("workflow.outbox_events", "event_id", "outbox_event_id")):
+                    assert connection.execute(f"SELECT count(*) FROM {table} WHERE tenant_id=%s AND {column}=%s",
+                        (ids["tenant"], parser_result[1][key])).fetchone()[0] == 1
+                assert connection.execute("SELECT processing_state FROM intake.intakes WHERE tenant_id=%s AND intake_id=%s",
+                    (ids["tenant"], parsed["intake_id"])).fetchone()[0] == "MATCHING"
+                assert connection.execute("SELECT count(*) FROM identity.match_decisions d JOIN identity.match_cases c "
+                    "ON c.match_case_id=d.match_case_id WHERE c.tenant_id=%s AND c.intake_id=%s",
+                    (ids["tenant"], parsed["intake_id"])).fetchone()[0] == 0
                 jobs = connection.execute("SELECT job_id,status FROM workflow.jobs WHERE tenant_id=%s "
                     "AND aggregate_id IN (%s,%s) AND job_type IN "
                     "('native-intake-start','native-intake-identity','native-intake-source-policy','native-intake-assisted-entry')",
@@ -438,11 +799,15 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                 snapshots = connection.execute("SELECT source_snapshot_id,capture_method FROM intake.source_snapshots "
                     "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], new_intake)).fetchall()
                 assert len(snapshots) == 1 and snapshots[0][1] == "MANUAL_ENTRY"
-                proposals = connection.execute("SELECT correction_id,field_path,corrected_value,status,source_snapshot_id,proposed_by "
-                    "FROM intake.human_corrections WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], new_intake)).fetchall()
+                assert snapshots[0][0] == run[1]
+                proposals = connection.execute("SELECT correction_id,field_path,corrected_value,status,source_snapshot_id,proposed_by,"
+                    "reviewed_by,parser_run_id,listing_id FROM intake.human_corrections "
+                    "WHERE tenant_id=%s AND intake_id=%s", (ids["tenant"], new_intake)).fetchall()
                 assert sorted(str(row[0]) for row in proposals) == sorted(manual["receipt"]["correction_ids"])
                 assert {row[1]: row[2] for row in proposals} == credentials["url_manual"]["fields"]
-                assert all(row[3] == "PROPOSED" and row[4] == snapshots[0][0] and str(row[5]) == ids["reviewer"] for row in proposals)
+                assert all(row[3] == "APPLIED" and row[4] == snapshots[0][0] and str(row[5]) == ids["reviewer"]
+                    and str(row[6]) == confirmation_actor and str(row[7]) == parser_admission["parser_run_id"]
+                    for row in proposals)
             for entry in recovered:
                 assert connection.execute("SELECT count(*) FROM audit.audit_events "
                     "WHERE tenant_id=%s AND audit_event_id=%s",
@@ -466,16 +831,24 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                         assert connection.execute("SELECT count(*) FROM identity.match_candidates "
                             "WHERE tenant_id=%s AND match_case_id=%s AND match_candidate_id=%s",
                             (ids["tenant"], entry["receipt"]["match_case_id"], candidate_id)).fetchone()[0] == 1
-            assert connection.execute("SELECT count(*) FROM identity.match_decisions "
-                "WHERE tenant_id=%s AND match_decision_id=%s AND proposer_subject_id=%s",
-                (ids["tenant"], reload["receipt"]["decision_id"], ids["reviewer"])).fetchone()[0] == 1
+            assert connection.execute("SELECT count(*) FROM identity.match_decisions d JOIN identity.match_cases c "
+                "ON c.match_case_id=d.match_case_id WHERE d.tenant_id=%s AND d.match_decision_id=%s "
+                "AND d.proposer_subject_id=%s AND c.intake_id=%s AND d.status='EXECUTED'",
+                (ids["tenant"], reload["receipt"]["decision_id"], confirmation_actor, confirmed_intake)).fetchone()[0] == 1
             assert connection.execute("SELECT count(*) FROM workflow.jobs WHERE tenant_id=%s AND job_id=%s",
                 (ids["tenant"], reload["receipt"]["job_id"])).fetchone()[0] == 1
             sessions = connection.execute("SELECT count(*) FROM identity.sessions WHERE account_id=%s AND revoked_at IS NULL",
                 (ids["reviewer"],)).fetchone()[0]
             result = connection.execute("SELECT processing_state,resolved_listing_id FROM intake.intakes WHERE intake_id=%s",
-                (parsed["intake_id"],)).fetchone()
+                (confirmed_intake,)).fetchone()
             assert sessions > 0 and result[0] == "READY" and result[1]
+            if submissions:
+                assert all(row[8] == result[1] for row in proposals)
+                effective = connection.execute("SELECT r.effective_values FROM expansion.listings l "
+                    "JOIN expansion.listing_revisions r ON r.tenant_id=l.tenant_id "
+                    "AND r.listing_revision_id=l.current_revision_id WHERE l.tenant_id=%s AND l.listing_id=%s",
+                    (ids["tenant"], str(result[1]))).fetchone()[0]
+                assert effective == run[4] == credentials["url_manual"]["fields"]
             regions = connection.execute("SELECT region_ids FROM identity.account_scopes WHERE account_id=%s",
                 (ids["reviewer"],)).fetchone()[0]
             assert regions == ([manager_region_id] if manager_region_id else [])
@@ -488,6 +861,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
                 reviewer_sessions = connection.execute("SELECT count(*) FROM identity.sessions WHERE account_id=%s AND revoked_at IS NULL",
                     (independent_reviewer,)).fetchone()[0]
                 assert reviewer_sessions > 0
+            if append_property:
                 graph_decision = connection.execute("SELECT d.proposer_subject_id,d.reviewer_subject_id,d.status "
                     "FROM identity.match_decisions d JOIN identity.match_cases c ON c.match_case_id=d.match_case_id "
                     "WHERE c.tenant_id=%s AND c.intake_id=%s AND d.decision_type='MERGE'",
@@ -512,6 +886,12 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
             "independent_reviewer_id": independent_reviewer, "real_reviewer_sessions": reviewer_sessions,
             "manual_context_appended": bool(append_property),
             "new_url_manual_admissions": url_admissions,
+            "new_url_parser_admissions": url_parser_admissions,
+            "new_url_matches": url_matches,
+            "confirmed_intake_id": confirmed_intake,
+            "fresh_policy_admissions": policy_admissions,
+            "fresh_url_submissions": [{"intake_id": entry["receipt"]["intake_id"], "processing_state": "SUBMITTED",
+                "key": entry["key"]} for entry in fresh_commands],
             "private_artifacts": str(private_dir)}
     except BaseException:
         for label in ("api", "web", "browser"):
@@ -548,10 +928,130 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         assert metadata_thread is None or not metadata_thread.is_alive(), "Owned metadata transport did not stop"
 
 
-def ready_scenario(database_url, bundle, client):
-    scenario_id, listing_id, snapshot_id = str(uuid4()), str(uuid4()), str(uuid4())
-    captured = datetime.now(UTC) - timedelta(minutes=10)
+def ready_scenario(database_url, bundle, client, *,
+        retained_history: RetainedBrowserHistory | None = None):
+    # The no-body control retains its original ready scenario. Explicit history
+    # variants stop before the original UI correction/decision/recovery commands.
+    # These fixtures attest neither fresh source policy nor successful retrieval.
+    if retained_history not in (None, "assisted-entry-only", "possible-match", "retrieval-timeout", "revision", "auth-required", "policy-unknown"):
+        raise ValueError("Unknown retained browser history")
+    scenario_id = str(uuid4())
     source_id = "synthetic-browser-" + scenario_id
+    # Explicit retained Operator history, not a fresh HTTP command or native
+    # submission. The existing bridge initializes its workflow in the same SQL
+    # transaction; correction and resolution below remain actual API commands.
+    repository = OperatorIntakeWorkflowRepository(
+        bundle.assisted_intake_store, bundle.operator_intake_repository_for_tenant(TENANT),
+        TENANT, bundle.assisted_intake_workflow_policy,
+    )
+    iid, correlation_id = str(uuid4()), str(uuid4())
+    submitted_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    url = "https://rent.591.com.tw/browser-" + scenario_id
+    history = {}
+    if retained_history in {"possible-match", "revision", "retrieval-timeout"}:
+        from modules.external_data.application.assisted_intake import SOURCE_REGISTRY
+
+        # Preserve these original synthetic records' recorded retrieval policy
+        # for the legacy stepper. This is historical presentation only: no
+        # current source registry, grant, captured evidence or job is created.
+        policy = next(source for source in SOURCE_REGISTRY if source.domain == "synthetic.example")
+        url = "https://" + policy.canonical_host + "/retained-" + scenario_id
+        history.update(policy=policy.policy, policyLabel="已核准擷取", policyReason=policy.policy_reason)
+    listing_id = None
+    target_seed = None
+    if retained_history in {"possible-match", "revision"}:
+        from modules.external_data.application.assisted_intake import (
+            RETRIEVAL_CORPUS,
+            MatchResult,
+            MatchSignal,
+            parse_snapshot,
+        )
+
+        # Reuse the existing explicit synthetic archive's field layout, without
+        # calling retrieve(), storing a raw capture or producing a parser run.
+        # The comparison target is an actual tenant Listing, not a UI stub.
+        revision = retained_history == "revision"
+        parsed = parse_snapshot(RETRIEVAL_CORPUS["https://www.synthetic.example/detail-88520242.html"
+            if revision else "https://www.synthetic.example/detail-99310418.html"])
+        listing_id = str(uuid4())
+        listing = Listing(listing_id=listing_id,
+            source_listing_id=parsed["providerListingId"]["normalizedValue"] if revision else "retained-target-" + scenario_id,
+            source_id=source_id, address_id=str(uuid4()), listing_status="watching",
+            rent_amount=58000 if revision else 53000, area_ping=18 if revision else 22, floor="1F")
+        address = AddressLocation(address_id=listing.address_id,
+            raw_address=parsed["address"]["sourceValue"] if revision else "新北市板橋區府中路 52 號 1F",
+            normalized_address=parsed["address"]["normalizedValue"] if revision else "新北市板橋區府中路 52 號 1F")
+        target_seed = (listing, address, ListingDedupKey(
+            source_id=source_id, source_listing_id=listing.source_listing_id,
+            normalized_address=address.normalized_address, rent_amount=listing.rent_amount, area_ping=listing.area_ping))
+        history.update({
+            "stage": "READY" if revision else "NEEDS_REVIEW",
+            "parsedFields": parsed,
+            "matchResult": MatchResult("REVISION" if revision else "POSSIBLE_MATCH", 0.95 if revision else 0.55, listing_id, (
+                MatchSignal("normalizedAddress", "正規化地址", True, "Explicit retained synthetic comparison"),
+                MatchSignal("rent", "租金", False, "Retained commercial revision compared with actual target") if revision else
+                MatchSignal("floor", "樓層", False, "Retained 2F submission compared with actual 1F target"),
+            ), "Explicit retained synthetic match history; no retrieval or parser run is attested.").to_dict(),
+        })
+    elif retained_history == "auth-required":
+        from modules.external_data.application.assisted_intake import SOURCE_REGISTRY
+
+        policy = next(source for source in SOURCE_REGISTRY if source.policy == "AUTH_REQUIRED")
+        url = "https://" + policy.canonical_host + "/detail/" + scenario_id
+        listing_id = str(uuid4())
+        # A real comparison Listing for the subsequent human correction. No
+        # provider identity or retrieved evidence is assigned to this Intake.
+        listing = Listing(listing_id=listing_id, source_listing_id="retained-target-" + scenario_id,
+            source_id=source_id, address_id=str(uuid4()), listing_status="watching",
+            rent_amount=55000, area_ping=18, floor="1F")
+        address = AddressLocation(address_id=listing.address_id,
+            raw_address="台北市信義區松仁路 96 號 1F", normalized_address="台北市信義區松仁路 96 號 1F")
+        target_seed = (listing, address, ListingDedupKey(source_id=source_id,
+            source_listing_id=listing.source_listing_id, normalized_address=address.normalized_address,
+            rent_amount=listing.rent_amount, area_ping=listing.area_ping))
+        history = {"policy": policy.policy, "policyLabel": "需授權帳號", "policyReason": policy.policy_reason}
+    elif retained_history == "policy-unknown":
+        from modules.external_data.application.assisted_intake import MatchResult
+
+        url = "https://unknown-house.example.tw/retained-" + scenario_id
+        reason = "Explicit retained governance finding: no approved source-use policy; no retrieval is attested."
+        history = {"stage": "QUARANTINED", "policy": "POLICY_UNKNOWN", "policyLabel": "政策未知",
+            "policyReason": reason, "matchResult": MatchResult("QUARANTINED", 0.0, None, (), reason).to_dict()}
+    elif retained_history == "retrieval-timeout":
+        from modules.external_data.application.assisted_intake import RETRIEVAL_CORPUS
+
+        failure = RETRIEVAL_CORPUS["https://www.synthetic.example/detail-50000001.html"].failure
+        assert failure is not None
+        history.update(stage="FAILED", failure=failure.to_dict())
+    with repository.transaction():
+        if target_seed:
+            bundle.listing_repository_for_tenant(TENANT).save_listing(*target_seed)
+        repository.save_intake({
+            "id": iid, "tenantId": TENANT, "intakeMethod": "URL",
+            "originalUrl": url, "canonicalUrl": url, "heatZoneId": None,
+            "submitter": MANAGER, "submittedBy": MANAGER, "owner": MANAGER,
+            "submittedAt": submitted_at, "updatedAt": submitted_at, "lastObservedAt": None,
+            "stage": "AWAITING_ASSISTED_ENTRY", "version": 1,
+            "sourceId": source_id, "policy": "ASSISTED_ENTRY_ONLY",
+            "policyLabel": "僅人工補錄", "policyReason": SCOPE,
+            "correlationId": correlation_id, "parsedFields": {}, "matchResult": None,
+            "rawSnapshot": None, "snapshotId": None, "capturedAt": None,
+            "parserVersion": None, "auditEvents": [], **history,
+        })
+    base = "/api/v1/operator/network-listings/intake"
+    retained = client.get(f"{base}/{iid}", headers=headers())
+    assert retained.status_code == 200, retained.text
+    initial = retained.json()
+    assert initial["stage"] == history.get("stage", "AWAITING_ASSISTED_ENTRY")
+    assert initial["assignmentId"] and initial["slaInstanceId"]
+    case = {"scope": SCOPE, "scenario_id": scenario_id, "intake_id": iid,
+            "listing_id": listing_id, "original_url": url,
+            "tenant_id": TENANT, "proposer_id": MANAGER, "reviewer_id": APPROVER}
+    if retained_history is not None:
+        return case
+
+    listing_id, snapshot_id = str(uuid4()), str(uuid4())
+    captured = datetime.now(UTC) - timedelta(minutes=10)
     listing = Listing(listing_id=listing_id, source_listing_id=scenario_id, source_id=source_id,
                       address_id=str(uuid4()), listing_status="watching", rent_amount=54000,
                       area_ping=22, floor="1F", frontage_m=5, confidence=0.9, snapshot_id=snapshot_id)
@@ -566,10 +1066,6 @@ def ready_scenario(database_url, bundle, client):
     bundle.listing_repository_for_tenant(TENANT).save_listing(listing, address, ListingDedupKey(
         source_id=source_id, source_listing_id=scenario_id, normalized_address=address.normalized_address,
         rent_amount=listing.rent_amount, area_ping=listing.area_ping))
-    base = "/api/v1/operator/network-listings/intake"
-    submitted = client.post(base + "/submit", json={"url": "https://rent.591.com.tw/browser-" + scenario_id}, headers=headers())
-    assert submitted.status_code == 200, submitted.text
-    iid = submitted.json()["id"]
     corrected = client.post(f"{base}/{iid}/correct", json={"fields": {"floor": "1F"}, "reason": SCOPE,
                             "riskSummary": "Explicit synthetic measured input", "riskAcknowledged": True}, headers=headers())
     assert corrected.status_code == 200, corrected.text
@@ -577,7 +1073,12 @@ def ready_scenario(database_url, bundle, client):
                           "reason": SCOPE, "riskSummary": "Synthetic local integration", "riskAcknowledged": True},
                           headers={**headers(APPROVER), "If-Match": f'W/"{corrected.json()["version"]}"'})
     assert decided.status_code == 200, decided.text
-    assert decided.json()["stage"] == "READY"
+    resolved = decided.json()
+    assert resolved["stage"] == "READY" and resolved["version"] == 3
+    assert resolved["matchResult"]["targetListingId"] == listing_id
+    assert resolved["submittedBy"] == MANAGER
+    assert resolved["assignmentId"] == initial["assignmentId"]
+    assert resolved["slaInstanceId"] == initial["slaInstanceId"]
     store = bundle.assisted_intake_store
     store.refresh(TENANT)
     with psycopg.connect(database_url) as conn:
@@ -599,8 +1100,7 @@ def ready_scenario(database_url, bundle, client):
                        "source_snapshot_version": 1, "intake_method": "MANUAL", "parser_release_id": None, "parser_run_id": None})
         intake["version"] += 1
         store.flush()
-    return {"scope": SCOPE, "scenario_id": scenario_id, "intake_id": iid, "listing_id": listing_id,
-            "tenant_id": TENANT, "proposer_id": MANAGER, "reviewer_id": APPROVER}
+    return {**case, "listing_id": listing_id}
 
 
 class BrowserModelRuntime:

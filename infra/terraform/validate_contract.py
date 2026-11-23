@@ -20,6 +20,7 @@ REQUIRED_FILES = {
     "database.tf",
     "iam.tf",
     "kms.tf",
+    "load_balancer.tf",
     "main.tf",
     "messaging.tf",
     "monitoring.tf",
@@ -81,7 +82,10 @@ REQUIRED_TOKENS = {
         "var.identity_token_signing_key_ref",
         "var.web_invoker_members",
         "var.web_min_instances",
-        "required_model_config_env_names",
+        "release_model_config_env_names",
+        "local.is_prod && local.full_release_profile",
+        "local.is_prod && local.cloud_run_managed",
+        "var.cloud_sql_instance_name",
         "forbidden_production_value_pattern",
     },
     "database.tf": {
@@ -98,6 +102,8 @@ REQUIRED_TOKENS = {
         'resource "google_monitoring_alert_policy" "api_latency_p95"',
         'resource "google_monitoring_alert_policy" "cloud_run_job_failed"',
         'resource "google_monitoring_alert_policy" "cloud_sql_saturation"',
+        "api = local.api_service_name",
+        "web = local.web_service_name",
         'path           = "/login"',
         'path           = "/platform/health"',
         'type = "OIDC_TOKEN"',
@@ -149,8 +155,15 @@ REQUIRED_TOKENS = {
         'resource "google_iam_workload_identity_pool_provider" "odayplus"',
         "roles/iam.workloadIdentityUser",
         "roles/iam.serviceAccountTokenCreator",
+        'account_id   = "${local.name_prefix}-smoke-operator"',
+        "roles/logging.viewer",
+        'resource "google_project_iam_custom_role" "production_deployer_sql_backup"',
+        '"cloudsql.backupRuns.create"',
+        'resource "google_project_iam_custom_role" "staging_deployer"',
+        "stagingWebLbAttach",
     },
     "cloud_run.tf": {
+        "count = local.cloud_run_managed ? 1 : 0",
         "image = var.api_image",
         "image = var.web_image",
         'resource "google_cloud_run_v2_service" "web"',
@@ -165,6 +178,24 @@ REQUIRED_TOKENS = {
         "secret_key_ref",
         'egress = "ALL_TRAFFIC"',
         "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER",
+    },
+    "load_balancer.tf": {
+        'resource "google_compute_global_address" "web_lb"',
+        'resource "google_compute_managed_ssl_certificate" "web_lb"',
+        'resource "google_compute_backend_service" "web_lb_release"',
+        'resource "google_compute_url_map" "web_lb"',
+        'resource "google_compute_target_https_proxy" "web_lb"',
+        'resource "google_compute_global_forwarding_rule" "web_lb"',
+        'resource "google_compute_ssl_policy" "web_lb"',
+        'min_tls_version = "TLS_1_2"',
+        'resource "google_compute_global_forwarding_rule" "web_lb_http_redirect"',
+        "https_redirect         = true",
+        'load_balancing_scheme = "EXTERNAL_MANAGED"',
+        'network_endpoint_type = "SERVERLESS"',
+        'port_range            = "443"',
+        "ignore_changes = [backend]",
+        "prevent_destroy = true",
+        'web_lb_name    = "${local.name_prefix}-web-lb"',
     },
     "modules/runtime_foundation/network.tf": {
         'resource "google_compute_network" "runtime"',
@@ -285,6 +316,15 @@ def validate(root: Path = ROOT) -> list[str]:
         errors.append("variables.tf: live_data_enabled description must not reference legacy live provider mode")
     if "RFC1918" not in variables and "10\\." not in variables:
         errors.append("variables.tf: network_cidr must restrict subnet to RFC1918 private address space")
+
+    profile = re.search(r'variable\s+"release_profile"\s*\{(?P<body>.*?)\n\}', variables, re.DOTALL)
+    if not profile:
+        errors.append("variables.tf: missing variable 'release_profile'")
+    else:
+        if re.search(r"^\s*default\s*=", profile.group("body"), re.MULTILINE):
+            errors.append("variables.tf: release_profile must have no default (a missing profile fails closed)")
+        if "^(full|core-ops)$" not in profile.group("body"):
+            errors.append("variables.tf: release_profile must accept only full or core-ops")
 
     mod_variables = texts.get("modules/runtime_foundation/variables.tf", "")
     if mod_variables and "RFC1918" not in mod_variables and "10\\." not in mod_variables:

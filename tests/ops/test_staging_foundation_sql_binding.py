@@ -62,3 +62,29 @@ def test_cli_rejects_mismatch_before_writing(tmp_path: Path, instance: str, expl
     assert lifecycle.main(args) == 1
     assert not (tmp_path / "generated.tfvars.json").exists()
     assert not (tmp_path / "state").exists()
+
+
+# ODP-STAGING-PASSWORD-RUNTIME-WIRING-261114: the CLI writes the governed
+# staging console origin into the tfvars the module plans the Web
+# ODP_WEB_BASE_URL from. There is no per-run origin input to override it.
+def test_cli_writes_the_governed_web_origin_into_tfvars(tmp_path: Path) -> None:
+    assert lifecycle.main(create_args(tmp_path, INSTANCE)) == 0
+    tfvars = json.loads((tmp_path / "generated.tfvars.json").read_text())
+    assert tfvars["web_base_url"] == lifecycle.STAGING_WEB_PUBLIC_ORIGIN
+    assert tfvars["web_base_url"] == "https://console-staging.oday-plus.com.tw"
+    assert "project_number" not in tfvars
+    assert lifecycle.validate_tfvars_against_module(tfvars, lifecycle.DEFAULT_EPHEMERAL_MODULE_DIR) == []
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [("--web-base-url", "https://untrusted.invalid"), ("--project-number", "123456789012")],
+)
+def test_cli_offers_no_web_origin_override(tmp_path: Path, flag: str, value: str, monkeypatch) -> None:
+    def forbidden(*args, **kwargs):
+        raise AssertionError("An origin override must not invoke Terraform")
+    monkeypatch.setattr(lifecycle, "_run_terraform", forbidden)
+    with pytest.raises(SystemExit) as exc:
+        lifecycle.main(create_args(tmp_path, INSTANCE) + [flag, value])
+    assert exc.value.code == 2
+    assert not (tmp_path / "generated.tfvars.json").exists()

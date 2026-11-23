@@ -259,7 +259,15 @@ def train_oss_estimator(
     feature_rows: Sequence[Mapping[str, Any]],
     labels: Sequence[float],
     feature_names: Sequence[str],
+    backtest_groups: Sequence[str] | None = None,
 ) -> EstimatorTrainingResult:
+    """Fit the estimator and calibrate its interval on out-of-fold residuals.
+
+    ``backtest_groups`` keeps every row of one group in the same fold. Rows
+    that share a group are near-duplicates (for example overlapping forecast
+    horizon windows of one store); splitting them across folds leaks labels
+    into the backtest and calibrates the conformal interval far too narrow.
+    """
     spec = resolve_estimator_spec(algorithm)
     if len(feature_rows) != len(labels):
         raise OSSEstimatorError("feature and label row counts differ")
@@ -269,7 +277,7 @@ def train_oss_estimator(
     if not np.all(np.isfinite(label_array)):
         raise OSSEstimatorError("labels must be finite numeric values")
 
-    fold_ids = _fold_assignments(len(labels))
+    fold_ids = _fold_assignments(len(labels), groups=backtest_groups)
     predictions = np.empty(len(labels), dtype=float)
     lower = np.empty(len(labels), dtype=float)
     upper = np.empty(len(labels), dtype=float)
@@ -469,13 +477,36 @@ def _predict_model(model: Any, matrix: np.ndarray) -> np.ndarray:
     return np.asarray(model.predict(matrix), dtype=float).reshape(-1)
 
 
-def _fold_assignments(row_count: int) -> list[int]:
+def _fold_assignments(
+    row_count: int,
+    *,
+    groups: Sequence[str] | None = None,
+) -> list[int]:
+    if groups is not None:
+        return _group_fold_assignments(row_count, groups)
     fold_count = min(5, row_count)
     permutation = np.random.default_rng(DEFAULT_RANDOM_SEED).permutation(row_count)
     assignments = [0] * row_count
     for position, row_index in enumerate(permutation):
         assignments[int(row_index)] = position % fold_count
     return assignments
+
+
+def _group_fold_assignments(row_count: int, groups: Sequence[str]) -> list[int]:
+    if len(groups) != row_count:
+        raise OSSEstimatorError("backtest group and label row counts differ")
+    keys = [str(group).strip() for group in groups]
+    if not all(keys):
+        raise OSSEstimatorError("backtest groups must be non-empty")
+    unique = sorted(set(keys))
+    if len(unique) < 2:
+        raise OSSEstimatorError("grouped backtest requires at least two distinct groups")
+    fold_count = min(5, len(unique))
+    permutation = np.random.default_rng(DEFAULT_RANDOM_SEED).permutation(len(unique))
+    fold_of = {
+        unique[int(index)]: position % fold_count for position, index in enumerate(permutation)
+    }
+    return [fold_of[key] for key in keys]
 
 
 def _finite_sample_quantile(residuals: np.ndarray, *, coverage: float) -> float:

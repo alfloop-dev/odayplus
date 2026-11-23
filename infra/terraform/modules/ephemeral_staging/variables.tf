@@ -14,6 +14,17 @@ variable "region" {
   default     = "asia-east1"
 }
 
+variable "web_base_url" {
+  type        = string
+  description = "Governed public HTTPS origin of the staging Web (ODP_WEB_BASE_URL), written by staging_lifecycle.py. The Web password sign-in flow redirects to it and sets its host-only session cookie there, so creating or updating the Web service refuses a null value. Null is accepted only so a release created before this input existed can still be destroyed from its recorded tfvars."
+  default     = null
+
+  validation {
+    condition     = var.web_base_url == null || can(regex("^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", var.web_base_url))
+    error_message = "web_base_url must be a bare https origin (scheme and lowercase host only, no port, path, query or trailing slash)."
+  }
+}
+
 variable "release_id" {
   type        = string
   description = "Unique release identifier scoping all ephemeral staging resources."

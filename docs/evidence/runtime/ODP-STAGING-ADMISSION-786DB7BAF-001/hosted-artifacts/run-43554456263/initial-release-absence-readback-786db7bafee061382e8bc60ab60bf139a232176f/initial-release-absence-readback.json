@@ -1,0 +1,44 @@
+{
+  "kind": "runtime-release-target-absence-readback",
+  "probe_command": "gcloud run services list --format=value(metadata.name); gcloud run jobs list --format=value(metadata.name)",
+  "project": "odayplus-runtime-20260825",
+  "region": "asia-east1",
+  "target_environment": "staging",
+  "targets": [
+    {
+      "component": "api",
+      "exists": false,
+      "resource_kind": "cloud-run-service",
+      "resource_name": "stg-odp-786db7bafee0-5774aed7-api",
+      "serving_traffic": false
+    },
+    {
+      "component": "migration",
+      "exists": false,
+      "resource_kind": "cloud-run-job",
+      "resource_name": "stg-odp-786db7bafee0-5774aed7-migration",
+      "serving_traffic": false
+    },
+    {
+      "component": "scheduler",
+      "exists": false,
+      "resource_kind": "cloud-run-job",
+      "resource_name": "stg-odp-786db7bafee0-5774aed7-scheduler",
+      "serving_traffic": false
+    },
+    {
+      "component": "web",
+      "exists": false,
+      "resource_kind": "cloud-run-service",
+      "resource_name": "stg-odp-786db7bafee0-5774aed7-web",
+      "serving_traffic": false
+    },
+    {
+      "component": "worker",
+      "exists": false,
+      "resource_kind": "cloud-run-job",
+      "resource_name": "stg-odp-786db7bafee0-5774aed7-worker",
+      "serving_traffic": false
+    }
+  ]
+}

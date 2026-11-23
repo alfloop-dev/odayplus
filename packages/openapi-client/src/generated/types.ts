@@ -228,6 +228,11 @@ export type AreaPlanningDraftListResponse = {
   items: AreaPlanningDraftResponse[];
 };
 
+/** AreaPlanningDraftMaterializeInput */
+export type AreaPlanningDraftMaterializeInput = {
+  expectedVersion: number;
+};
+
 /** AreaPlanningDraftResponse */
 export type AreaPlanningDraftResponse = {
   budget: number | null;
@@ -2038,6 +2043,14 @@ export type NativeIntakeScope = {
   region_id?: string | null;
 };
 
+/** NativeReceiptCommitted[AssignmentReceipt] */
+export type NativeReceiptCommitted_AssignmentReceipt_ = {
+  observation: "RECEIPT_COMMITTED";
+  observed_at: string;
+  original_http_status: 200 | 201 | 202;
+  receipt: AssignmentReceipt;
+};
+
 /** NativeReceiptCommitted[CanonicalIdentityReceipt] */
 export type NativeReceiptCommitted_CanonicalIdentityReceipt_ = {
   observation: "RECEIPT_COMMITTED";
@@ -2068,6 +2081,14 @@ export type NativeReceiptCommitted_MatchCaseReceipt_ = {
   observed_at: string;
   original_http_status: 200 | 201 | 202;
   receipt: MatchCaseReceipt;
+};
+
+/** NativeReceiptCommitted[SlaReceipt] */
+export type NativeReceiptCommitted_SlaReceipt_ = {
+  observation: "RECEIPT_COMMITTED";
+  observed_at: string;
+  original_http_status: 200 | 201 | 202;
+  receipt: SlaReceipt;
 };
 
 /** NativeReceiptNotObserved */
@@ -3256,8 +3277,11 @@ export const API_PATHS = {
   "/api/v1/admin/feature-flags/{key}/enable": ["POST"],
   "/api/v1/admin/feature-flags/{key}/scope": ["POST"],
   "/api/v1/assignments/{assignment_id}/actions/claim": ["POST"],
+  "/api/v1/assignments/{assignment_id}/actions/claim/receipt": ["GET"],
   "/api/v1/assignments/{assignment_id}/actions/complete": ["POST"],
+  "/api/v1/assignments/{assignment_id}/actions/complete/receipt": ["GET"],
   "/api/v1/assignments/{assignment_id}/actions/transfer": ["POST"],
+  "/api/v1/assignments/{assignment_id}/actions/transfer/receipt": ["GET"],
   "/api/v1/assignments/{assignment_id}/transfer-targets": ["GET"],
   "/api/v1/audit/events": ["GET"],
   "/api/v1/audit/evidence/export": ["POST"],
@@ -3356,6 +3380,7 @@ export const API_PATHS = {
   "/api/v1/intakes/{intake_id}/actions/quarantine": ["POST"],
   "/api/v1/intakes/{intake_id}/actions/reopen": ["POST"],
   "/api/v1/intakes/{intake_id}/assignment": ["PUT"],
+  "/api/v1/intakes/{intake_id}/assignment/receipt": ["GET"],
   "/api/v1/intakes/{intake_id}/corrections": ["POST"],
   "/api/v1/intakes/{intake_id}/match-case": ["GET", "POST"],
   "/api/v1/intakes/{intake_id}/match-case/property-options": ["GET"],
@@ -3441,6 +3466,7 @@ export const API_PATHS = {
   "/api/v1/operator/approvals/{approval_id}/decision": ["POST"],
   "/api/v1/operator/area-planning-drafts": ["GET", "POST"],
   "/api/v1/operator/area-planning-drafts/{identity}": ["GET", "PUT"],
+  "/api/v1/operator/area-planning-drafts/{identity}/materialize": ["POST"],
   "/api/v1/operator/avm/cases": ["GET", "POST"],
   "/api/v1/operator/avm/cases/{case_id}": ["GET"],
   "/api/v1/operator/avm/cases/{case_id}/dataroom": ["POST"],
@@ -3592,7 +3618,9 @@ export const API_PATHS = {
   "/api/v1/sitescore/runs/{sitescore_run_id}": ["GET"],
   "/api/v1/sitescore/score-jobs": ["POST"],
   "/api/v1/sla-instances/{sla_instance_id}/actions/pause": ["POST"],
+  "/api/v1/sla-instances/{sla_instance_id}/actions/pause/receipt": ["GET"],
   "/api/v1/sla-instances/{sla_instance_id}/actions/resume": ["POST"],
+  "/api/v1/sla-instances/{sla_instance_id}/actions/resume/receipt": ["GET"],
 } as const;
 
 export type ApiPath = keyof typeof API_PATHS;

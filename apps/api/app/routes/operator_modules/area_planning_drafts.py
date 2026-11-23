@@ -1,4 +1,4 @@
-"""Preliminary area planning intent before native NetPlan admission."""
+"""Preliminary area planning intent and its explicit native NetPlan DRAFT link."""
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Literal
@@ -28,6 +28,11 @@ class AreaPlanningDraftInput(BaseModel):
     budget: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     candidateIds: list[str] = Field(default_factory=list)
     expectedVersion: int | None = Field(default=None, ge=1)
+
+
+class AreaPlanningDraftMaterializeInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expectedVersion: int = Field(ge=1)
 
 
 class AreaPlanningDraftResponse(BaseModel):
@@ -62,12 +67,17 @@ class AreaPlanningDraftCommandResponse(BaseModel):
 def create_area_planning_draft_sub_router(
     *, require_view: Callable[..., Any], require_create: Callable[..., Any],
     require_update: Callable[..., Any], owner_for_request: Callable[[Request], AreaPlanningDraftOwner],
+    require_native_create: Callable[..., Any],
+    materialize_for_request: Callable[[Request, str, dict[str, Any], str], Any],
 ) -> APIRouter:
     router = APIRouter(prefix="/area-planning-drafts")
 
     def call(request: Request, operation: Callable[[AreaPlanningDraftOwner], Any]):
+        return guarded(lambda: operation(owner_for_request(request)))
+
+    def guarded(operation: Callable[[], Any]):
         try:
-            return operation(owner_for_request(request))
+            return operation()
         except AreaPlanningDraftInvalid as exc:
             raise HTTPException(422, str(exc)) from None
         except (AreaPlanningDraftConflict, IdempotencyConflictError):
@@ -119,6 +129,22 @@ def create_area_planning_draft_sub_router(
             raise HTTPException(428, "AREA_PLANNING_EXPECTED_VERSION_REQUIRED")
         return call(request, lambda owner: owner.command(
             operation="update", payload=body.model_dump(), key=key, identity=str(identity),
+        ))
+
+    @router.post(
+        "/{identity}/materialize", response_model=AreaPlanningDraftCommandResponse,
+        # The area UPDATE grant alone never admits native creation; both the
+        # proposal owner and the original native NetPlan CREATE guard apply.
+        dependencies=[Depends(require_update), Depends(require_native_create)],
+        operation_id="materializeOperatorAreaPlanningDraft",
+    )
+    def materialize_draft(
+        identity: UUID, body: AreaPlanningDraftMaterializeInput, request: Request,
+        key: str = Header(alias="Idempotency-Key", min_length=16, max_length=128,
+                          pattern=r"^[A-Za-z0-9._:-]+$"),
+    ):
+        return guarded(lambda: materialize_for_request(
+            request, str(identity), body.model_dump(), key,
         ))
 
     return router

@@ -107,6 +107,7 @@ class TrainingPipelineRunner:
         run_id: str | None = None,
         git_sha: str | None = None,
         decision_policy: DecisionPolicy | None = None,
+        backtest_group_fields: Sequence[str] = (),
     ) -> TrainingPipelineResult:
         snapshot = self.service.repository.get_dataset_snapshot(
             feature_artifact.dataset_snapshot_id
@@ -123,12 +124,21 @@ class TrainingPipelineRunner:
             {name: row.features.get(name) for name in feature_artifact.feature_names}
             for row in rows
         ]
+        backtest_groups = (
+            [
+                "|".join(str(row.features.get(name, "")) for name in backtest_group_fields)
+                for row in rows
+            ]
+            if backtest_group_fields
+            else None
+        )
         try:
             training = train_oss_estimator(
                 algorithm=algorithm,
                 feature_rows=feature_rows,
                 labels=labels,
                 feature_names=feature_artifact.feature_names,
+                backtest_groups=backtest_groups,
             )
         except OSSEstimatorError as exc:
             raise TrainingPipelineError(str(exc)) from exc

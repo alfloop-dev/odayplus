@@ -4,6 +4,8 @@ project_id  = "oday-staging-123456"
 environment = "staging"
 region      = "asia-east1"
 
+release_profile = "REPLACE_WITH_FULL_OR_CORE_OPS"
+
 api_image   = "asia-east1-docker.pkg.dev/oday-staging-123456/oday/api@sha256:REPLACE_WITH_64_HEX"
 web_image   = "asia-east1-docker.pkg.dev/oday-staging-123456/oday/web@sha256:REPLACE_WITH_64_HEX"
 release_sha = "REPLACE_WITH_40_HEX_GIT_SHA"
@@ -14,7 +16,11 @@ oidc_issuer    = "https://REPLACE_WITH_IDP_ISSUER"
 oidc_audiences = ["REPLACE_WITH_API_AUDIENCE"]
 oidc_jwks_uri  = "https://REPLACE_WITH_IDP_JWKS"
 
-web_base_url       = "https://REPLACE_WITH_STAGING_WEB_ORIGIN"
+web_base_url       = "https://console-staging.oday-plus.com.tw"
+
+# Persistent console-staging load balancer; each ephemeral release's Web NEG is
+# attached by staging_lifecycle.py. api_public_host stays empty in staging.
+web_load_balancer_enabled = true
 web_oidc_client_id = "REPLACE_WITH_WEB_OIDC_CLIENT_ID"
 web_oidc_client_secret_ref = {
   secret_id = "REPLACE_WITH_WEB_OIDC_CLIENT_SECRET_ID"

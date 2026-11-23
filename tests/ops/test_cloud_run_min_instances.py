@@ -4,6 +4,10 @@ ODP-DEV-CLOUD-RUN-MIN-INSTANCES-001: the dev API cold start was measured at
 ~24-29s, longer than the Web BFF's 10s upstream timeout, so dev keeps one warm
 API and Web instance. The minimum must be service level: a revision-level
 ``--min-instances`` would keep every tagged candidate revision warm too.
+
+Production services are owned by this entrypoint, not infra/terraform (owner
+decision 2026-11-20), so the production minimum of two warm instances is
+enforced here and an unset minimum fails closed.
 """
 
 from __future__ import annotations
@@ -23,7 +27,8 @@ DEFAULTING_START = 'CLOUD_RUN_MIN_INSTANCES="${ODP_CLOUD_RUN_MIN_INSTANCES:-}"'
 
 def _resolve(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     start = TEXT.index(DEFAULTING_START)
-    snippet = TEXT[start : TEXT.index("\nfi\n", TEXT.index("must be a non-negative integer", start)) + 4]
+    end = TEXT.index("\nesac\n", TEXT.index("at least 2 warm API and Web instances", start)) + 6
+    snippet = TEXT[start:end]
     return subprocess.run(
         ["bash", "-euo", "pipefail", "-c", snippet + 'printf "%s" "${CLOUD_RUN_MIN_INSTANCES}"'],
         capture_output=True,
@@ -38,8 +43,10 @@ def _resolve(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     [
         ({"ODP_DEPLOY_ENV": "dev"}, "1"),
         ({"ODP_DEPLOY_ENV": "staging"}, ""),
-        ({"ODP_DEPLOY_ENV": "production"}, ""),
         ({"ODP_DEPLOY_ENV": "staging", "ODP_CLOUD_RUN_MIN_INSTANCES": "2"}, "2"),
+        ({"ODP_DEPLOY_ENV": "production", "ODP_CLOUD_RUN_MIN_INSTANCES": "2"}, "2"),
+        ({"ODP_DEPLOY_ENV": "production", "ODP_CLOUD_RUN_MIN_INSTANCES": "3"}, "3"),
+        ({"ODP_DEPLOY_ENV": "prod", "ODP_CLOUD_RUN_MIN_INSTANCES": "02"}, "02"),
         ({"ODP_DEPLOY_ENV": "dev", "ODP_CLOUD_RUN_MIN_INSTANCES": "0"}, "0"),
     ],
 )
@@ -47,6 +54,21 @@ def test_minimum_defaults_to_one_only_on_dev(env: dict[str, str], expected: str)
     result = _resolve(env)
     assert result.returncode == 0, result.stderr
     assert result.stdout == expected
+
+
+@pytest.mark.parametrize("deploy_env", ["production", "prod"])
+@pytest.mark.parametrize("value", [None, "", "0", "1", "01"])
+def test_production_requires_two_warm_instances(deploy_env: str, value: str | None) -> None:
+    env = {"ODP_DEPLOY_ENV": deploy_env}
+    if value is not None:
+        env["ODP_CLOUD_RUN_MIN_INSTANCES"] = value
+    result = _resolve(env)
+    assert result.returncode == 1
+    assert "production requires ODP_CLOUD_RUN_MIN_INSTANCES of at least 2" in result.stderr
+    # Refused with the other required inputs, ahead of the first gcloud call.
+    first_gcloud_call = re.search(r"^\s*gcloud ", TEXT, re.MULTILINE)
+    assert first_gcloud_call is not None
+    assert TEXT.index("at least 2 warm API and Web instances") < first_gcloud_call.start()
 
 
 @pytest.mark.parametrize("value", ["-1", "1.5", "one", "1 2"])
@@ -75,7 +97,7 @@ def test_candidate_smoke_timeout_outlasts_the_cold_start() -> None:
     """Tagged candidates get no warm instance, so the smoke probe must wait out
     the measured ~24-29s API cold start instead of the 15s CLI default."""
     call = TEXT.index("validate_cloud_run_live_deployment.py smoke \\")
-    block = TEXT[call : TEXT.index("--output", call)]
+    block = TEXT[TEXT.index("candidate_probes=(") : call]
     match = re.search(r'--timeout "\$\{CANDIDATE_SMOKE_TIMEOUT_SECONDS:-(\d+)\}"', block)
     assert match is not None
     assert int(match.group(1)) >= 45

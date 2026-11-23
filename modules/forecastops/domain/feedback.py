@@ -22,6 +22,7 @@ from modules.forecastops.domain.forecasting import (
     _policy_thresholds,
     _sitescore_gap_ratio,
     _utc_datetime,
+    is_green_alert_level,
 )
 from shared.governance import DecisionPolicyRepository, resolve_policy
 
@@ -369,9 +370,7 @@ def calculate_alert_precision_metrics(
 
     for item in alerts:
         raw_level = item.alert_level if isinstance(item, Alert) else item.get("alert_level")
-        if (
-            isinstance(raw_level, AlertLevel) and raw_level is AlertLevel.GREEN
-        ) or str(raw_level or "").strip().lower() == AlertLevel.GREEN.value:
+        if is_green_alert_level(raw_level):
             # GREEN is a normal forecast outcome, not an alert eligible for
             # precision evaluation.  Counting it as UNRESOLVED would pollute
             # both the alert inventory and the maturity denominator.
@@ -515,7 +514,7 @@ def backfill_alert_precision(
 
     for item in alerts:
         alert = item if isinstance(item, Alert) else Alert.from_mapping(item)
-        if alert.alert_level is AlertLevel.GREEN or alert.alert_level == "green":
+        if is_green_alert_level(alert.alert_level):
             updated_alerts.append(alert)
             continue
 

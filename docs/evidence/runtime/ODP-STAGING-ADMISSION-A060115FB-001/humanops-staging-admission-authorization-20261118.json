@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "record_kind": "humanops-runtime-release-staging-admission-authorization",
+  "status": "approved",
+  "is_approval": true,
+  "task_id": "ODP-STAGING-ADMISSION-A060115FB-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-STAGING-ADMISSION-20261118R",
+  "candidate_sha": "a060115fb3a348fdcad7e5f40a66a7e5ea4a35fc",
+  "manifest_digest": "sha256:a502624bec980819cad01ad40932e5029c8192251da5505b56f87b1efa52ab1a",
+  "manifest_run_id": "44234731301",
+  "target_environment": "staging",
+  "release_profile": "core-ops",
+  "approved_at": "2026-11-17T06:19:10Z",
+  "authorization_basis": {
+    "user_reply": "修 image，接著跑鏈 R (Recommended)",
+    "user_reply_at": "2026-11-17T06:19:10Z",
+    "follow_up_reply": "#1721 你審，#1722 等額度 (Recommended)",
+    "follow_up_reply_at": "2026-11-18T00:12:18Z",
+    "context": "The signed manual dev deploy 44028045679 of be095f9f4 (registry PR #1720, lease HUMANOPS-DEV-LEASE-20261117B) failed before smoke: the new API revision exited at startup because python:3.12-slim lacks libgomp.so.1, which the promoted LightGBM model needs; dev traffic stayed on 60cf78695. At 2026-11-17T06:19:10Z the owner chose: open one task that installs libgomp1 in the API and worker images with a test that fails when uv.lock locks lightgbm and an image does not install libgomp1, reviewed by Antigravity; after the merge the automatic dev deploy should run, which also verifies that automatic dev deploys are no longer refused; then run chain R under the chain P rules: candidate = the dev tip at that time, its own CI must actually run all 7 product lanes green, the dev deploy may fail only models:registry_refused and models:no_surrogate_markers, A-F otherwise unchanged, follow-the-tip extended to 2026-11-19 with at most 3 switches, and stop and ask if the automatic dev deploy is still refused. PR #1721 (libgomp1 in the api, worker and scheduler images) was approved by Antigravity at 2026-11-18T00:06:13Z and merged as 5f116e4b2. PR #1722 (staging-only cleanup release phase, which the owner separately chose on 2026-11-17) was approved by Antigravity2 and merged as a060115fb, the dev tip. At 2026-11-18T00:12:18Z, while both PRs were still waiting for review, the owner chose an option that also extended the follow-the-tip deadline to 2026-11-22; the owner review of #1721 offered in that option was not used because Antigravity had already approved it. The chain: (A) dispatch the core-ops staging build; (B) HD-08r with the three deviations below; (C) HD-09r with approval HUMANOPS-STAGING-ADMISSION-20261118R and the scope limits below; (D) approve the registry PR as Human/Ops once it touches only docs/evidence/, the registry checker says GO, admission errors are empty and every CI job is green; (E) HD-10r: after the registry merges, sync the main checkout registry and manifest from origin/dev and register lease HUMANOPS-STAGING-LEASE-20261118R (new nonce, 6 hours, non_dispatchable); (F) HD-12r: approve the GitHub staging environment with ajoe734 only for the run that lease triggers. Before every step dev tip must still be the candidate (plus the evidence-only registry merge for E and F) with empty ancestry. B and C took effect only if the build succeeded, its manifest named the candidate with profile core-ops and 16 disabled sources with no credentials, npm audit reported 0 findings and all 5 staging targets read back absent. Checked facts: dev tip is a060115fb (#1722 merge, containing #1721); its exact push CI 44215881371 (11/11 jobs) and merge group CI 44207501940 (10/11, the dispatch-only automatic dev release job skipped) ran all 7 product lanes, all success; the automatic dev deploy 44221981411 of a060115fb was not refused and succeeded with live E2E 83 of 83 checks passing and no blockers, so no dev deploy deviation is needed; ancestry was empty; build 44234731301 met every B/C condition and produced manifest sha256:a502624bec980819cad01ad40932e5029c8192251da5505b56f87b1efa52ab1a, the digest bound here. This is the first candidate under chain R; no tip switch has been used.",
+    "interpretation": "Owner 蔡尚志 replied in the Claude Code conversation at 2026-11-17T06:19:10Z and 2026-11-18T00:12:18Z. Transcribed by Claude; not an external identity-system signature."
+  },
+  "authorized_scope": {
+    "max_release_requests": 1,
+    "max_short_lived_supervisor_leases": 1,
+    "runtime_release_deploy_phases": 1,
+    "allowed_environment": "staging",
+    "external_sources_enabled": false,
+    "production_changes": false,
+    "github_staging_environment_approval_still_required": true,
+    "supervisor_lease_still_required": true
+  },
+  "recorded_by": "Claude (interactive owner-response transcription; no external identity signature claimed)",
+  "evidence": {
+    "exact_ci": "docs/evidence/runtime/ODP-STAGING-ADMISSION-A060115FB-001/candidate-ci-a060115fb.json",
+    "staging_build_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/44234731301",
+    "dev_deploy_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/44221981411",
+    "exact_candidate_ci_workflow_urls": [
+      "https://github.com/alfloop-dev/odayplus/actions/runs/44215881371",
+      "https://github.com/alfloop-dev/odayplus/actions/runs/44207501940"
+    ],
+    "image_fix_pull_request": "https://github.com/alfloop-dev/odayplus/pull/1721",
+    "staging_cleanup_phase_pull_request": "https://github.com/alfloop-dev/odayplus/pull/1722",
+    "failed_manual_dev_deploy_url": "https://github.com/alfloop-dev/odayplus/actions/runs/44028045679"
+  },
+  "decisions": {
+    "HD-08r": {
+      "decision": "approve",
+      "subject": "gate-2 Data Gate passed-with-deviation for this candidate's staging admission only, review_by 2026-11-27",
+      "accepted_deviations": [
+        "source contract and sample data reviewed: not applicable — the core-ops profile keeps every external source disabled (sources-off attestation in the build manifest: 16 sources audited, all disabled, zero credentials present).",
+        "point-in-time correctness checked for model-ready data: not applicable — core-ops serves no model (release_profile.model_readiness=not_claimed).",
+        "freshness and lineage evidence captured: check_live_production_data.py has never run against this candidate; deferred to the staging verify run and the production gates, not claimed as passed."
+      ]
+    },
+    "HD-09r": {
+      "decision": "approve",
+      "subject": "release.stage=dev-verified, admission_target=staging, decision=go for this exact candidate and the manifest produced by its staging build",
+      "dev_deploy_result": "automatic dev deploy 44221981411 succeeded: live E2E 83/83, no blockers; the allowance for the two model checks was not needed."
+    }
+  }
+}

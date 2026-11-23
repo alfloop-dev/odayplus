@@ -10,6 +10,15 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app
 
+# LightGBM wheels (locked in uv.lock) link against the GNU OpenMP runtime, which
+# python:3.12-slim does not ship. Without it, loading a promoted LightGBM model
+# fails with "libgomp.so.1: cannot open shared object file" (dev deploy
+# 44028045679: the API exited during create_app).
+# The private release Job also runs the shared Bash/curl transport guards.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 bash curl \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d /uv /bin/uv
 
 # Runtime deps are resolved and locked strictly from uv.lock frozen resolution

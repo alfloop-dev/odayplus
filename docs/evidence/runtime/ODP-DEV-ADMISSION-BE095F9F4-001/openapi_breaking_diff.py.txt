@@ -1,0 +1,70 @@
+import json,sys
+a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2]))
+M={'get','put','post','delete','patch','head','options'}
+def ops(d): return {(p,m):o for p,it in d.get('paths',{}).items() for m,o in it.items() if m in M}
+oa,ob=ops(a),ops(b)
+removed=sorted(set(oa)-set(ob)); added=sorted(set(ob)-set(oa))
+print('ops a',len(oa),'b',len(ob),'removed',len(removed),'added',len(added))
+for r in removed: print('REMOVED OP',r)
+for r in added: print('ADDED OP',r)
+def resolve(d,s,seen=()):
+    if isinstance(s,dict) and '$ref' in s:
+        ref=s['$ref']
+        if ref in seen: return {}
+        node=d
+        for part in ref.lstrip('#/').split('/'): node=node.get(part,{})
+        return resolve(d,node,seen+(ref,))
+    return s
+def flat(d,s,path='',out=None,depth=0):
+    out={} if out is None else out
+    s=resolve(d,s)
+    if not isinstance(s,dict) or depth>6: return out
+    for comb in ('allOf','anyOf','oneOf'):
+        for x in s.get(comb,[]): flat(d,x,path,out,depth+1)
+    t=s.get('type')
+    out[path or '$']={'type':t,'enum':tuple(s['enum']) if 'enum' in s else None,'required':tuple(sorted(s.get('required',[])))}
+    for k,v in (s.get('properties') or {}).items(): flat(d,v,f'{path}.{k}',out,depth+1)
+    if 'items' in s: flat(d,s['items'],f'{path}[]',out,depth+1)
+    return out
+issues=[]
+for key in sorted(set(oa)&set(ob)):
+    o1,o2=oa[key],ob[key]
+    # request body
+    def body(d,o):
+        c=(resolve(d,o.get('requestBody',{})) or {}).get('content',{})
+        s=next(iter(c.values()),{}).get('schema') if c else None
+        return flat(d,s) if s else {}
+    r1,r2=body(a,o1),body(b,o2)
+    for p,v in r2.items():
+        old=r1.get(p)
+        newreq=set(v['required'])-set(old['required'] if old else ())
+        if old and newreq: issues.append((key,'REQ new required',p,sorted(newreq)))
+        if old and old['enum'] and v['enum'] and set(v['enum'])<set(old['enum']): issues.append((key,'REQ enum narrowed',p))
+        if old and old['type'] and v['type'] and old['type']!=v['type']: issues.append((key,'REQ type changed',p,old['type'],v['type']))
+    if not r1 and r2 and o2.get('requestBody',{}).get('required'): issues.append((key,'REQ body newly required'))
+    # params
+    def params(d,o): return {(resolve(d,x).get('name'),resolve(d,x).get('in')):resolve(d,x) for x in o.get('parameters',[])}
+    p1,p2=params(a,o1),params(b,o2)
+    for k,v in p2.items():
+        if v.get('required') and not (p1.get(k) or {}).get('required'): issues.append((key,'PARAM newly required',k))
+    for k in set(p1)-set(p2): issues.append((key,'PARAM removed',k))
+    # responses
+    def resp(d,o):
+        out={}
+        for code,r in (o.get('responses') or {}).items():
+            r=resolve(d,r); c=r.get('content',{})
+            s=next(iter(c.values()),{}).get('schema') if c else None
+            out[code]=flat(d,s) if s else {}
+        return out
+    s1,s2=resp(a,o1),resp(b,o2)
+    for code in s1:
+        if code.startswith('2') and code not in s2: issues.append((key,'RESP success code removed',code))
+        if code in s2:
+            for p in set(s1[code])-set(s2[code]):
+                if s1[code][p]: issues.append((key,'RESP field removed',code,p))
+            for p,v in s2[code].items():
+                old=s1[code].get(p)
+                if old and old['type'] and v['type'] and old['type']!=v['type']: issues.append((key,'RESP type changed',code,p,old['type'],v['type']))
+                if old and old['enum'] and v['enum'] and not set(v['enum'])<=set(old['enum']): issues.append((key,'RESP enum widened',code,p,sorted(set(v['enum'])-set(old['enum']))[:5]))
+print('ISSUES',len(issues))
+for i in issues: print(i)

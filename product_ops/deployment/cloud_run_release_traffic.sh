@@ -148,10 +148,15 @@ wait_for_private_candidate_invoker() {
 # The audience is always the API's stable service URL: Cloud Run accepts that
 # audience on revision tag URLs too, and it is never the Web service's URL.
 grant_api_service_invokers() {
-  local service="$1"
+  local service="$1" member
+  shift
   grant_service_invoker "${service}" "serviceAccount:${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}" \
     || return 1
-  grant_service_invoker "${service}" "serviceAccount:${ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT}"
+  grant_service_invoker "${service}" "serviceAccount:${ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT}" \
+    || return 1
+  for member in "$@"; do
+    grant_service_invoker "${service}" "${member}" || return 1
+  done
 }
 
 # Mints (or refreshes) ODP_API_INVOKER_TOKEN for the API's stable service URL
@@ -216,7 +221,8 @@ wait_for_private_api_invoker() {
 prepare_private_api_transport() {
   local service="$1"
   local audience="$2"
-  grant_api_service_invokers "${service}" || return 1
+  shift 2
+  grant_api_service_invokers "${service}" "$@" || return 1
   mint_api_invoker_token "${audience}" || return 1
   wait_for_private_api_invoker "${audience}" "${ODP_API_INVOKER_TOKEN}"
 }

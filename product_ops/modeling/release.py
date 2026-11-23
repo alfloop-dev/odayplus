@@ -150,6 +150,7 @@ class RegressionTrainer(Protocol):
         feature_rows: Sequence[Mapping[str, Any]],
         labels: Sequence[float],
         feature_names: Sequence[str],
+        backtest_groups: Sequence[str] | None = None,
     ) -> EstimatorTrainingResult: ...
 
 
@@ -554,6 +555,7 @@ class BoundedModelTrainingRelease:
             ),
             segment_field=spec.segment_column,
             algorithm=spec.algorithm,
+            backtest_group_fields=spec.backtest_group_columns,
             actor=self.actor,
             run_id=run_id,
             git_sha=self.git_sha,
@@ -953,6 +955,7 @@ def _validate_regression_temporally(
         feature_rows=feature_rows,
         labels=labels,
         feature_names=spec.feature_columns,
+        backtest_groups=_backtest_groups(spec, training_rows),
     )
     holdout_features = [row.mapping["features"] for row in holdout_rows]
     holdout_labels = np.asarray(
@@ -1095,6 +1098,18 @@ def _liquidity_training_record(row: PreparedRow, spec: ModelSpec):
             for name in spec.feature_columns
         }
     )
+
+
+def _backtest_groups(
+    spec: ModelSpec,
+    rows: Sequence[PreparedRow],
+) -> list[str] | None:
+    if not spec.backtest_group_columns:
+        return None
+    return [
+        "|".join(str(row.mapping["features"].get(name, "")) for name in spec.backtest_group_columns)
+        for row in rows
+    ]
 
 
 def _temporal_split(

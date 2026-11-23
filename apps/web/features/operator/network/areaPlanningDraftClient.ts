@@ -1,9 +1,15 @@
 import { payloadContainsSeedData } from "../operatorDataMode";
 import type { AreaPlanningDraftResponse, AreaPlanningDraftCommandResponse } from "@oday-plus/openapi-client";
+import { NETPLAN_ACTIONS, type CanonicalBuilder, type NetPlanAction } from "./netplanBuilderClient";
 
 export type AreaPlanningFields = Pick<AreaPlanningDraftResponse, "name" | "quarter" | "budget" | "candidateIds">;
 export type AreaPlanningDraft = AreaPlanningDraftResponse;
 export type AreaPlanningCommand = AreaPlanningDraftCommandResponse;
+/** The original native NetPlan scenario detail, read through the same authenticated BFF. */
+export type AreaNativeScenario = { scenario_id: string; tenant_id: string; scenario_name: string;
+  planning_horizon: string; status: string; created_at: string;
+  constraints: { max_budget: number } & Record<string, unknown>;
+  options_by_entity: CanonicalBuilder["optionsByEntity"]; solve: unknown; approvals: unknown[] };
 export type AreaPlanningResult<T> = { ok: true; value: T } | { ok: false; superseded: true }
   | { ok: false; message: string; denied?: boolean; rejected?: boolean };
 const object = (x: unknown): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x);
@@ -26,6 +32,18 @@ export function isAreaPlanningDraft(x: unknown, zone: string): x is AreaPlanning
     : x.status === "MATERIALIZED" && x.quarter !== null && x.budget !== null && x.candidateIds.length > 0
       && x.nativeScenarioId === "netplan-scenario-area-draft-" + x.draftId && uuid(x.materializedBy);
 }
+const finite = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
+const strings = (x: unknown): x is string[] => Array.isArray(x) && x.every(item => typeof item === "string");
+export function isAreaNativeScenario(x: unknown, draft: AreaPlanningDraft): x is AreaNativeScenario {
+  return object(x) && draft.status === "MATERIALIZED" && x.scenario_id === draft.nativeScenarioId
+    && x.tenant_id === draft.tenantId && text(x.scenario_name) && text(x.planning_horizon) && text(x.status)
+    && stamp(x.created_at) && object(x.constraints) && finite(x.constraints.max_budget)
+    && Array.isArray(x.approvals) && object(x.options_by_entity)
+    && Object.entries(x.options_by_entity).every(([entity, options]) => Array.isArray(options) && options.length > 0
+      && options.every(o => object(o) && o.entity_id === entity && NETPLAN_ACTIONS.includes(o.action as NetPlanAction)
+        && ["expected_gross_margin", "budget_cost", "risk_score", "capacity_delta"].every(k => finite(o[k]))
+        && strings(o.source_snapshot_ids) && strings(o.notes)));
+}
 export const sameAreaPlanningFields = (a: AreaPlanningFields, b: AreaPlanningFields) =>
   a.name === b.name && a.quarter === b.quarter && a.budget === b.budget
     && a.candidateIds.length === b.candidateIds.length && a.candidateIds.every((id, index) => b.candidateIds[index] === id);
@@ -46,13 +64,13 @@ export function admitsCurrentAreaPlanningDraft(known: AreaPlanningDraft, fresh: 
 export function createAreaPlanningDraftApi(zone: string, headers: Record<string, string>, guard: () => Promise<boolean>) {
   const base = "/api/v1/operator/area-planning-drafts";
   async function request<T>(path: string, validate: (value: unknown) => value is T,
-    command?: { method: string; body: unknown; key: string }): Promise<AreaPlanningResult<T>> {
+    command?: { method: string; body: unknown; key: string }, url = base + path, label = "區域草稿"): Promise<AreaPlanningResult<T>> {
     const current = async () => { try { return await guard(); } catch { return false; } };
     const superseded = (): AreaPlanningResult<T> => ({ ok: false, superseded: true });
     const cid = crypto.randomUUID();
     try {
       if (!await current()) return superseded();
-      const response = await fetch(base + path, { method: command?.method ?? "GET", cache: "no-store",
+      const response = await fetch(url, { method: command?.method ?? "GET", cache: "no-store",
         headers: { ...headers, "Content-Type": "application/json", "X-Correlation-Id": cid,
           ...(command ? { "Idempotency-Key": command.key } : {}) },
         ...(command ? { body: JSON.stringify(command.body) } : {}) });
@@ -62,8 +80,9 @@ export function createAreaPlanningDraftApi(zone: string, headers: Record<string,
       if (!response.ok) return { ok: false, denied: [401, 403, 404].includes(response.status),
         // Incomplete durable receipts are also 409: their effect is unknown.
         rejected: [400, 422, 428].includes(response.status)
-          || response.status === 409 && object(value) && value.detail === "AREA_PLANNING_COMMAND_CONFLICT",
-        message: `區域草稿 ${response.status}；${response.status === 409 ? "版本已變更，請重新讀取後再確認。" : "請保留輸入後重新讀取或重試。"}追蹤：${cid}` };
+          || response.status === 409 && object(value)
+            && ["AREA_PLANNING_COMMAND_CONFLICT", "NATIVE_SCENARIO_ID_ALREADY_EXISTS"].includes(String(value.detail)),
+        message: `${label} ${response.status}；${response.status === 409 ? "版本已變更，請重新讀取後再確認。" : "請保留輸入後重新讀取或重試。"}追蹤：${cid}` };
       if (payloadContainsSeedData(value) || !validate(value)) throw new Error("invalid-area-planning-response");
       return { ok: true, value };
     } catch {
@@ -90,5 +109,17 @@ export function createAreaPlanningDraftApi(zone: string, headers: Record<string,
         && Array.isArray(x.auditEventIds) && x.auditEventIds.length > 0 && x.auditEventIds.every(uuid)
         && text(x.receiptId) && typeof x.replayed === "boolean",
       { method: operation === "create" ? "POST" : "PUT", body: { ...input, heatZoneId: zone }, key }),
+    // Explicit creation of the original native DRAFT; never solves or submits.
+    materialize: (id: string, expectedVersion: number, key: string, previous: AreaPlanningDraft) =>
+      request("/" + encodeURIComponent(id) + "/materialize", (x): x is AreaPlanningCommand => object(x)
+        && isAreaPlanningDraft(x.draft, zone) && x.draft.status === "MATERIALIZED" && x.draft.draftId === id
+        && sameAreaPlanningIdentity(previous, x.draft) && sameAreaPlanningFields(previous, x.draft)
+        && Date.parse(x.draft.updatedAt) >= Date.parse(previous.updatedAt)
+        && x.draft.version === expectedVersion + 1
+        && Array.isArray(x.auditEventIds) && x.auditEventIds.length > 0 && x.auditEventIds.every(uuid)
+        && text(x.receiptId) && typeof x.replayed === "boolean",
+      { method: "POST", body: { expectedVersion }, key }),
+    scenario: (draft: AreaPlanningDraft) => request("", (x): x is AreaNativeScenario => isAreaNativeScenario(x, draft),
+      undefined, "/api/v1/netplan/scenarios/" + encodeURIComponent(draft.nativeScenarioId ?? ""), "NetPlan 情境"),
   };
 }

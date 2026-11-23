@@ -646,11 +646,14 @@ function buildFallbackExpansionSteps(selectedHeatZoneId: string, hasCandidate: b
  */
 export function isNetworkIntakeDetailRoute(
   pathname: string | null | undefined,
-  searchParams: Pick<URLSearchParams, "get">,
+  searchParams: URLSearchParams,
 ): boolean {
-  if (intakePathSelection(pathname) !== undefined || searchParams.get("intakeKind") !== null) return true;
-  if (!searchParams.get("selected")) return false;
-  const dialog = searchParams.get("dialog");
+  if (intakePathSelection(pathname) !== undefined) return true;
+  const { intakeKind, selectedId, dialog } = parseUrlState(searchParams);
+  // Collection/add dialogs stay over the mounted Radar. Only a selected
+  // native detail owns the page; replacing Radar here destroys its invoker.
+  if (intakeKind) return Boolean(selectedId);
+  if (!selectedId) return false;
   return (
     dialog === "detail" ||
     dialog === "fix" ||
