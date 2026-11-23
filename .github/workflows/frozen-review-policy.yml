@@ -36,6 +36,8 @@ jobs:
 
           frozen_branches = {
               "task/ODP-SUPERVISOR-FROZEN-REVIEW-261121",
+              "task/ODP-WORKER-SANDBOX-MOUNT-SCALE-261123",
+              "task/ODP-CANONICAL-INTAKE-STORAGE-RETRY-TEST-261123",
               "task/ODP-CI-FROZEN-RELEASE-REVIEW-261122",
               "task/ODP-STAGING-PASSWORD-JOURNEY-261121",
               "task/ODP-CORE-OPS-PROD-IMPLEMENTATION-261121",

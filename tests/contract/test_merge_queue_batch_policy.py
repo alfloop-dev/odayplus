@@ -433,6 +433,9 @@ def test_scenario_3_unrecognised_queue_ref_is_refused(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "source_repo, source_branch, expected",
     [
+        ("alfloop-dev/odayplus", "task/ODP-WORKER-SANDBOX-MOUNT-SCALE-261123", ".orchestrator/test_supervisor.py"),
+        ("alfloop-dev/odayplus", "task/ODP-CANONICAL-INTAKE-STORAGE-RETRY-TEST-261123", ".orchestrator/test_supervisor.py"),
+        ("fork/odayplus", "task/ODP-CANONICAL-INTAKE-STORAGE-RETRY-TEST-261123", ""),
         ("alfloop-dev/odayplus", "task/ODP-STAGING-PASSWORD-JOURNEY-261121", ".orchestrator/test_supervisor.py"),
         ("alfloop-dev/odayplus", "task/ODP-CORE-OPS-PROD-IMPLEMENTATION-261121", ".orchestrator/test_supervisor.py"),
         ("alfloop-dev/odayplus", "task/ODP-FORECAST-SOURCE-COMPLETENESS-261024", ".orchestrator/test_supervisor.py"),

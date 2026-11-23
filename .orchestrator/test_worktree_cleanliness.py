@@ -810,12 +810,34 @@ class ProtectedExecutionEnforcementTests(unittest.TestCase):
         self.assertRegex(result.stdout, r"CapEff:\s+0+\n")
         self.assertEqual(git(self.task, "log", "-1", "--format=%s"), "safe")
 
+    def test_nested_foreign_checkout_uses_one_mask_and_shared_git_still_works(self) -> None:
+        other = self.repo / "foreign-worktree"
+        git(self.repo, "worktree", "add", "--quiet", "-b", "task/GUARD-FOREIGN", str(other))
+        (other / "guarded").mkdir()
+        for index in range(32):
+            (other / "guarded" / f"existing-{index}.txt").write_text("unused\n", encoding="utf-8")
+
+        plan = wc.plan_protected_execution(self.task, GUARD, alias_roots=[self.repo])
+        foreign_operations = [op for op in plan.operations if op[1] == other or other in op[1].parents]
+        self.assertEqual(foreign_operations, [("hide", other)])
+        result = self._run(
+            f"set -e; test ! -e '{other}/tracked.txt'; cat tracked.txt; git rev-parse --git-common-dir"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("base", result.stdout)
+        self.assertIn(str(self.repo / ".git"), result.stdout)
+
     def test_missing_alias_paths_and_later_host_additions_stay_denied(self) -> None:
         """Nothing is created in another checkout, yet nothing added later shows through."""
         import shutil
 
         shutil.rmtree(self.repo / "guarded" / "zone")
         late_root = self.root / "late-worktree"
+        runner_root = self.root / "runner-checkout"
+        git(self.repo, "worktree", "add", "--quiet", "-b", "task/GUARD-RUNNER", str(runner_root))
+        (runner_root / "guarded" / "zone").mkdir(parents=True)
+        (runner_root / "guarded" / "zone" / "canary.txt").write_text("synthetic runner canary\n", encoding="utf-8")
+        (runner_root / "runner-entry.txt").write_text("runner stays visible\n", encoding="utf-8")
         argv = wc.protected_execution_argv(
             [
                 "sh",
@@ -824,10 +846,12 @@ class ProtectedExecutionEnforcementTests(unittest.TestCase):
                 f"cat '{self.repo}/guarded/zone/late.txt'; echo rc1=$?; "
                 f"cat '{late_root}/guarded/zone/canary.txt'; echo rc2=$?; "
                 f"mkdir '{self.repo}/guarded/zone'; echo rc3=$?; "
-                "cat tracked.txt",
+                f"cat '{runner_root}/guarded/zone/canary.txt'; echo rc4=$?; "
+                f"cat '{runner_root}/runner-entry.txt'; cat tracked.txt",
             ],
             cwd=self.task,
             protected_paths=GUARD,
+            runner_root=runner_root,
         )
         self.assertFalse((self.repo / "guarded" / "zone").exists())
         process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -842,8 +866,9 @@ class ProtectedExecutionEnforcementTests(unittest.TestCase):
             (self.task / "trigger").touch()
         output, _ = process.communicate(timeout=60)
         self.assertNotIn("synthetic", output)
-        for marker in ("rc1=0", "rc2=0", "rc3=0"):
+        for marker in ("rc1=0", "rc2=0", "rc3=0", "rc4=0"):
             self.assertNotIn(marker, output)
+        self.assertIn("runner stays visible", output)
         self.assertIn("base", output)
 
     def test_process_filesystem_aliases_are_denied(self) -> None:
@@ -857,15 +882,29 @@ class ProtectedExecutionEnforcementTests(unittest.TestCase):
         result = self._run("cd guarded/zone && cat /proc/self/cwd/canary.txt")
         self.assertNotEqual(result.returncode, 0)
 
-    def test_a_shared_alias_root_without_any_ancestor_refuses_but_a_foreign_one_is_hidden(self) -> None:
+    def test_missing_ancestor_keeps_shared_git_and_refuses_explicit_alias(self) -> None:
         import shutil
 
         shutil.rmtree(self.repo / "guarded")
         with self.assertRaises(wc.ProtectedExecutionUnavailable):
             wc.protected_execution_argv(["true"], cwd=self.task, protected_paths=GUARD, alias_roots=[self.repo])
-        plan = wc.plan_protected_execution(self.task, GUARD)
-        self.assertIn(("hide", self.repo.resolve()), plan.operations)
         self.assertFalse((self.repo / "guarded").exists())
+
+        other = self.root / "foreign-worktree"
+        git(self.repo, "worktree", "add", "--quiet", "-b", "task/GUARD-FOREIGN", str(other))
+        plan = wc.plan_protected_execution(self.task, GUARD)
+        self.assertIn(("hide", other), plan.operations)
+        self.assertFalse((other / "guarded").exists())
+        self.assertIn("shadow", [op[0] for op in plan.operations if op[1] == self.repo])
+        wc.probe_protected_execution(plan)
+
+        (self.repo / "guarded").mkdir()
+        result = subprocess.run(
+            plan.wrap(["sh", "-c", f"test ! -e '{self.repo}/guarded' && git rev-parse --git-common-dir"]),
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), str(self.repo / ".git"))
 
     def test_missing_or_fake_sandbox_refuses_before_launch(self) -> None:
         fake = self.root / "fake-bwrap"
