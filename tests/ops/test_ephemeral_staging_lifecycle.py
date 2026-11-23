@@ -7368,10 +7368,12 @@ class StagingRecoveryPersistenceTests(unittest.TestCase):
 
             def gcloud(args: list[str], **_: Any) -> str:
                 if args[:2] == ["storage", "cp"]:
-                    self.assertEqual(args[2:4], ["--no-clobber", "--if-generation-match=0"])
-                    uri = args[5]
+                    self.assertEqual(args[:3], ["storage", "cp", "--no-clobber"])
+                    self.assertEqual(len(args), 5)
+                    self.assertFalse(any(flag.startswith("--if-generation-match") for flag in args))
+                    uri = args[4]
                     if uri not in published:
-                        published[uri] = Path(args[4]).read_bytes()
+                        published[uri] = Path(args[3]).read_bytes()
                         writes.append(uri)
                     return ""
                 self.assertEqual(args[:3], ["storage", "objects", "describe"])
@@ -7458,6 +7460,34 @@ class StagingRecoveryPersistenceTests(unittest.TestCase):
                     create_receipt_path=create, run_attempt="1234-3",
                 )
             self.assertFalse(final.exists(), "failed reads cannot leave a stale success receipt")
+
+    def test_gcloud_storage_cp_accepts_persist_recovery_flags(self) -> None:
+        import shutil
+        import subprocess
+
+        gcloud_bin = shutil.which("gcloud")
+        if not gcloud_bin:
+            self.skipTest("gcloud CLI not installed")
+        with tempfile.TemporaryDirectory() as folder:
+            missing = Path(folder) / "absent-sidecar.json"
+            dest = "gs://staging-recovery/oday-plus/ephemeral-staging/odp-123456789abc/bundle/absent-sidecar.json"
+            valid = subprocess.run(
+                [gcloud_bin, "storage", "cp", "--no-clobber", str(missing), dest],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertNotIn("Cannot specify both generation precondition and no-clobber", valid.stderr)
+            rejected = subprocess.run(
+                [gcloud_bin, "storage", "cp", "--no-clobber", "--if-generation-match=0", str(missing), dest],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("Cannot specify both generation precondition and no-clobber", rejected.stderr)
 
 
 class StagingWebNegDetachBeforeDestroyTests(unittest.TestCase):

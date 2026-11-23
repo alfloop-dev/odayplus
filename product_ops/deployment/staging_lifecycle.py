@@ -2997,10 +2997,12 @@ def persist_staging_recovery(
         uri = f"{bundle_uri}/{name}"
         digest = hashlib.sha256(file.read_bytes()).hexdigest()
         # A prior attempt may have completed the PUT before readback failed.
-        # Skip the existing destination without writing it, then require the
-        # same positive generation and exact byte proof as for a fresh upload.
+        # gcloud storage cp --no-clobber already sets ifGenerationMatch=0 on the
+        # upload request and skips an existing destination with exit status 0,
+        # whereas combining --no-clobber with --if-generation-match is rejected
+        # by gcloud storage cp argument validation.
         _live_gcloud(
-            ["storage", "cp", "--no-clobber", "--if-generation-match=0", str(file), uri],
+            ["storage", "cp", "--no-clobber", str(file), uri],
             timeout=120,
         )
         generation = _live_gcloud(
