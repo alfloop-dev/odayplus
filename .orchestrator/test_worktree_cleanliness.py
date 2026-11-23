@@ -882,22 +882,29 @@ class ProtectedExecutionEnforcementTests(unittest.TestCase):
         result = self._run("cd guarded/zone && cat /proc/self/cwd/canary.txt")
         self.assertNotEqual(result.returncode, 0)
 
-    def test_missing_ancestor_refuses_required_roots_and_hides_foreign_root(self) -> None:
+    def test_missing_ancestor_keeps_shared_git_and_refuses_explicit_alias(self) -> None:
         import shutil
 
         shutil.rmtree(self.repo / "guarded")
-        for aliases in ([], [self.repo]):
-            with self.subTest(aliases=aliases), self.assertRaises(wc.ProtectedExecutionUnavailable):
-                wc.protected_execution_argv(["true"], cwd=self.task, protected_paths=GUARD, alias_roots=aliases)
+        with self.assertRaises(wc.ProtectedExecutionUnavailable):
+            wc.protected_execution_argv(["true"], cwd=self.task, protected_paths=GUARD, alias_roots=[self.repo])
         self.assertFalse((self.repo / "guarded").exists())
 
-        (self.repo / "guarded").mkdir()
         other = self.root / "foreign-worktree"
         git(self.repo, "worktree", "add", "--quiet", "-b", "task/GUARD-FOREIGN", str(other))
         plan = wc.plan_protected_execution(self.task, GUARD)
         self.assertIn(("hide", other), plan.operations)
-        self.assertNotIn(("hide", self.repo), plan.operations)
         self.assertFalse((other / "guarded").exists())
+        self.assertIn("shadow", [op[0] for op in plan.operations if op[1] == self.repo])
+        wc.probe_protected_execution(plan)
+
+        (self.repo / "guarded").mkdir()
+        result = subprocess.run(
+            plan.wrap(["sh", "-c", f"test ! -e '{self.repo}/guarded' && git rev-parse --git-common-dir"]),
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), str(self.repo / ".git"))
 
     def test_missing_or_fake_sandbox_refuses_before_launch(self) -> None:
         fake = self.root / "fake-bwrap"

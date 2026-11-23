@@ -892,11 +892,10 @@ def plan_protected_execution(
 
     The workspace, named aliases, the runner checkout and roots containing
     the workspace's Git common directory keep the per-path masks.
-    Other registered checkouts are hidden as a whole. Missing protected
-    entries in a required root and later
-    sibling checkouts are covered by the same frozen ancestors. Only mount
-    points in the task's workspace are created on the host. A symlinked
-    protected ancestor anywhere refuses.
+    Other registered checkouts are hidden as a whole. The checkout that only
+    hosts shared Git metadata can be frozen at its root when a protected
+    ancestor is absent. Only mount points in the task's workspace are created
+    on the host. A symlinked protected ancestor anywhere refuses.
     """
     protected = normalize_protected_paths(list(protected_paths or ()))
     if not protected:
@@ -920,7 +919,7 @@ def plan_protected_execution(
     common_dir = _git_metadata_path(workspace, "rev-parse", "--git-common-dir")
     if common_dir is None:
         raise ProtectedExecutionUnavailable("workspace Git common directory cannot be resolved")
-    required = (workspace, common_dir, *aliases)
+    required = (workspace, *aliases)
     if runner_root is not None:
         try:
             runner = runner_root.resolve(strict=True)
@@ -933,7 +932,7 @@ def plan_protected_execution(
         required += (runner,)
     # Keep ancestors of required paths. An unrelated checkout nested below
     # a required root does not need to be visible to this worker.
-    foreign = {root for root in roots if not any(_is_within(path, root) for path in required)}
+    foreign = {root for root in roots if not any(_is_within(path, root) for path in (*required, common_dir))}
 
     operations: list[tuple] = []
     absent_frozen_paths: list[Path] = []
@@ -988,7 +987,7 @@ def plan_protected_execution(
             ancestor = target.parent
             while ancestor != root and not ancestor.exists():
                 ancestor = ancestor.parent
-            if ancestor == root:
+            if ancestor == root and (root in _UNSHADOWABLE or any(_is_within(path, root) for path in required)):
                 raise ProtectedExecutionUnavailable(
                     f"{root} lacks every ancestor of protected {path}; it cannot be denied without "
                     "modifying that shared checkout"
