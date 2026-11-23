@@ -15,7 +15,7 @@ from apps.data_platform.contracts import (
 )
 from apps.data_platform.dlt_runtime import DltRawLoader, RawLoader
 from apps.data_platform.serialization import aggregate_checksum
-from apps.data_platform.source import MongoSource
+from apps.data_platform.source import SNAPSHOT_SOURCE_KINDS, MongoSource
 from apps.data_platform.store import CanonicalStore, PsycopgCanonicalStore
 
 
@@ -70,8 +70,15 @@ class DataPlaneRunner:
             raise ValueError("Requested limit exceeds ODP_DATA_MAX_RECORDS_PER_RUN")
         run_id = run_id or str(uuid4())
         started_at = datetime.now(UTC)
+        # Snapshot kinds ignore the time predicate in MongoSource. Only persist
+        # bounds actually applied by that reader, never a scheduling day label.
+        extraction_window = None if source_kind in SNAPSHOT_SOURCE_KINDS else window
         resumed_from = (
-            self._store.get_checkpoint(source_kind, window.partition_key) if resume else None
+            self._store.get_checkpoint(
+                source_kind, window.partition_key, window=extraction_window
+            )
+            if resume
+            else None
         )
         self._store.begin_run(
             run_id,
@@ -79,6 +86,7 @@ class DataPlaneRunner:
             window.partition_key,
             resumed_from,
             started_at,
+            window=extraction_window,
         )
         processed = 0
         source_snapshot_checksums: list[str] = []

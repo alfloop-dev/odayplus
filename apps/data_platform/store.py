@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 from apps.data_platform.config import DataPlaneConfig
 from apps.data_platform.contracts import (
+    BackfillWindow,
     ProjectionBatchResult,
     QuarantineReason,
     ReconciliationResult,
@@ -69,6 +70,8 @@ class CanonicalStore(Protocol):
         partition_key: str,
         resumed_from: str | None,
         started_at: datetime,
+        *,
+        window: BackfillWindow | None = None,
     ) -> None: ...
 
     def apply_batch(
@@ -90,7 +93,13 @@ class CanonicalStore(Protocol):
         source_id: str,
     ) -> TombstoneState | None: ...
 
-    def get_checkpoint(self, source_kind: SourceKind, partition_key: str) -> str | None: ...
+    def get_checkpoint(
+        self,
+        source_kind: SourceKind,
+        partition_key: str,
+        *,
+        window: BackfillWindow | None = None,
+    ) -> str | None: ...
 
     def record_checkpoint(
         self,
@@ -287,23 +296,40 @@ class PsycopgCanonicalStore:
         partition_key: str,
         resumed_from: str | None,
         started_at: datetime,
+        *,
+        window: BackfillWindow | None = None,
     ) -> None:
+        if window is not None and window.partition_key != partition_key:
+            raise ValueError("Extraction window does not match the run partition key")
         with self._connect() as connection:
-            connection.execute(
+            row = connection.execute(
                 f"""
-                INSERT INTO {self._schema}.ingestion_runs (
+                INSERT INTO {self._schema}.ingestion_runs AS existing (
                     run_id, source_database, source_kind, partition_key, status,
-                    resumed_from, started_at
-                ) VALUES (%s, 'fongniao_prod', %s, %s, 'RUNNING', %s, %s)
+                    resumed_from, started_at, window_start, window_end
+                ) VALUES (%s, 'fongniao_prod', %s, %s, 'RUNNING', %s, %s, %s, %s)
                 ON CONFLICT (run_id) DO UPDATE SET
                     status = 'RUNNING',
                     reconciled = FALSE,
                     partition_complete = FALSE,
                     error_type = NULL,
                     error_message = NULL
+                WHERE existing.source_database = EXCLUDED.source_database
+                  AND existing.source_kind = EXCLUDED.source_kind
+                  AND existing.partition_key = EXCLUDED.partition_key
+                  AND existing.window_start IS NOT DISTINCT FROM EXCLUDED.window_start
+                  AND existing.window_end IS NOT DISTINCT FROM EXCLUDED.window_end
+                  AND existing.resumed_from IS NOT DISTINCT FROM EXCLUDED.resumed_from
+                RETURNING run_id
                 """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
-                (run_id, source_kind.value, partition_key, resumed_from, started_at),
-            )
+                (
+                    run_id, source_kind.value, partition_key, resumed_from, started_at,
+                    None if window is None else window.start,
+                    None if window is None else window.end,
+                ),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Run ID already belongs to a different extraction identity")
 
     def apply_batch(
         self,
@@ -1736,15 +1762,34 @@ class PsycopgCanonicalStore:
             ),
         )
 
-    def get_checkpoint(self, source_kind: SourceKind, partition_key: str) -> str | None:
+    def get_checkpoint(
+        self,
+        source_kind: SourceKind,
+        partition_key: str,
+        *,
+        window: BackfillWindow | None = None,
+    ) -> str | None:
+        if window is not None and window.partition_key != partition_key:
+            raise ValueError("Extraction window does not match the checkpoint partition key")
         with self._connect() as connection:
             row = connection.execute(
                 f"""
-                SELECT source_cursor
-                FROM {self._schema}.checkpoints
-                WHERE source_kind = %s AND partition_key = %s
+                SELECT checkpoint.source_cursor
+                FROM {self._schema}.checkpoints AS checkpoint
+                INNER JOIN {self._schema}.ingestion_runs AS ingestion
+                    ON ingestion.run_id = checkpoint.run_id
+                   AND ingestion.source_kind = checkpoint.source_kind
+                   AND ingestion.partition_key = checkpoint.partition_key
+                WHERE checkpoint.source_kind = %s AND checkpoint.partition_key = %s
+                  AND ingestion.source_database = 'fongniao_prod'
+                  AND ingestion.window_start IS NOT DISTINCT FROM %s::timestamptz
+                  AND ingestion.window_end IS NOT DISTINCT FROM %s::timestamptz
                 """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
-                (source_kind.value, partition_key),
+                (
+                    source_kind.value, partition_key,
+                    None if window is None else window.start,
+                    None if window is None else window.end,
+                ),
             ).fetchone()
         return None if row is None else str(row[0])
 

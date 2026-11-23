@@ -4,6 +4,8 @@ import inspect
 from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -20,7 +22,11 @@ from apps.data_platform.dlt_runtime import RawLoadResult
 from apps.data_platform.mapping import SourceContractError, project_merchant
 from apps.data_platform.pipeline import DataPlaneRunner
 from apps.data_platform.serialization import aggregate_checksum
-from apps.data_platform.source import envelope_for_document
+from apps.data_platform.source import SNAPSHOT_SOURCE_KINDS, MongoSource, envelope_for_document
+from apps.data_platform.tests.test_brand_classification_sync import (  # noqa: F401 -- reuse owned PG fixtures
+    _pg_admin_params,
+    live_store,
+)
 
 
 def _config() -> DataPlaneConfig:
@@ -92,6 +98,8 @@ class FakeCanonicalStore:
         self.canonical_snapshots: set[str] = set()
         self.failed: list[tuple[str, tuple[str, ...]]] = []
         self.completed: list[tuple[str, dict[str, Any]]] = []
+        self.run_windows: dict[str, BackfillWindow | None] = {}
+        self.checkpoint_windows: list[BackfillWindow | None] = []
 
     def install(self) -> None:
         return None
@@ -103,8 +111,11 @@ class FakeCanonicalStore:
         partition_key: str,
         resumed_from: str | None,
         started_at: datetime,
+        *,
+        window: BackfillWindow | None = None,
     ) -> None:
         del source_kind, partition_key, resumed_from, started_at
+        self.run_windows[run_id] = window
         self.run_valid[run_id] = set()
         self.run_quarantine[run_id] = {}
 
@@ -134,7 +145,14 @@ class FakeCanonicalStore:
             self.canonical_snapshots.add(envelope.source_snapshot_id)
         return ProjectionBatchResult(tuple(valid), reasons)
 
-    def get_checkpoint(self, source_kind: SourceKind, partition_key: str) -> str | None:
+    def get_checkpoint(
+        self,
+        source_kind: SourceKind,
+        partition_key: str,
+        *,
+        window: BackfillWindow | None = None,
+    ) -> str | None:
+        self.checkpoint_windows.append(window)
         return self.checkpoints.get((source_kind, partition_key))
 
     def record_checkpoint(
@@ -312,6 +330,150 @@ def test_retry_resumes_after_last_durable_checkpoint() -> None:
     assert summary.resumed_from == "0099"
     assert summary.processed_count == 1
     assert len(store.canonical_snapshots) == 101
+
+
+@pytest.mark.parametrize("kind", list(SourceKind))
+def test_runner_persists_only_bounds_applied_by_the_original_source(kind: SourceKind) -> None:
+    # Exercise the real MongoSource query builder through the runner, not a
+    # copied source-kind classifier or a fake which discards window arguments.
+    collection = MagicMock()
+    cursor = collection.find.return_value.sort.return_value.limit.return_value.batch_size.return_value
+    cursor.__iter__.return_value = iter(())
+    config = _config()
+    source = MongoSource(config, database={kind.value: collection})
+    store = FakeCanonicalStore()
+    window = BackfillWindow(
+        datetime(2026, 7, 23, 4, tzinfo=UTC),
+        datetime(2026, 7, 23, 8, tzinfo=UTC),
+        "2026-07-23__2026-07-23",
+    )
+    runner = DataPlaneRunner(
+        config, source=source, raw_loader=FakeRawLoader(), canonical_store=store
+    )
+    summary = runner.run_partition(kind, window)
+    query = collection.find.call_args.args[0]
+    if kind in SNAPSHOT_SOURCE_KINDS:
+        assert query == {}
+        assert store.run_windows[summary.run_id] is None
+        assert store.checkpoint_windows == [None]
+    else:
+        assert query["$or"]
+        for predicate in query["$or"]:
+            assert list(predicate.values()) == [{"$gte": window.start, "$lt": window.end}]
+        assert store.run_windows[summary.run_id] is window
+        assert store.checkpoint_windows == [window]
+    assert summary.processed_count == 0
+    assert store.completed[0][1]["partition_complete"] is True
+
+
+@pytest.mark.requires_live_env
+def test_postgresql_run_and_checkpoint_preserve_actual_window_identity(live_store) -> None:
+    store = live_store.store
+    window = BackfillWindow(
+        datetime(2026, 7, 23, 4, tzinfo=UTC),
+        datetime(2026, 7, 23, 8, tzinfo=UTC),
+        "2026-07-23__2026-07-23",
+    )
+    alias = BackfillWindow(
+        datetime(2026, 7, 23, 10, tzinfo=UTC),
+        datetime(2026, 7, 23, 12, tzinfo=UTC),
+        window.partition_key,
+    )
+    run_id = str(uuid4())
+    store.begin_run(run_id, SourceKind.ORDERS, window.partition_key, None, window.end, window=window)
+    envelope = envelope_for_document(
+        SourceKind.ORDERS,
+        {"_id": "000000000000000000000001", "createdAt": window.start.isoformat()},
+        run_id=run_id,
+        observed_at=window.end,
+    )
+    store.record_checkpoint(SourceKind.ORDERS, window.partition_key, envelope, 1)
+
+    # Reopen a store as a worker restart would. The existing checkpoint FK,
+    # not a label-only lookup or a second cursor registry, owns provenance.
+    restarted = live_store.build()
+    assert restarted.get_checkpoint(SourceKind.ORDERS, window.partition_key, window=window) == envelope.source_id
+    assert restarted.get_checkpoint(SourceKind.ORDERS, alias.partition_key, window=alias) is None
+    assert restarted.get_checkpoint(SourceKind.ORDERS, window.partition_key) is None
+    assert restarted.get_checkpoint(SourceKind.TRADE, window.partition_key, window=window) is None
+    with live_store.connect() as connection:
+        assert connection.execute(
+            "SELECT window_start, window_end FROM data_plane.ingestion_runs WHERE run_id = %s",
+            (run_id,),
+        ).fetchone() == (window.start, window.end)
+
+    # Exact replay remains compatible, but a reused UUID cannot adopt or erase
+    # window/source/partition/cursor identity, even before any source is read.
+    restarted.begin_run(run_id, SourceKind.ORDERS, window.partition_key, None, window.end, window=window)
+    for kind, key, bounds, cursor in (
+        (SourceKind.ORDERS, window.partition_key, alias, None),
+        (SourceKind.ORDERS, window.partition_key, None, None),
+        (SourceKind.TRANSACTION, window.partition_key, window, None),
+        (SourceKind.ORDERS, "another-label", None, None),
+        (SourceKind.ORDERS, window.partition_key, window, "advanced-cursor"),
+    ):
+        with pytest.raises(ValueError, match="different extraction identity"):
+            restarted.begin_run(run_id, kind, key, cursor, window.end, window=bounds)
+
+    # Existing metadata callers keep their original signature and NULL bounds;
+    # new extraction calls must not silently reclassify their unproven history.
+    metadata_id = str(uuid4())
+    restarted.begin_run(metadata_id, SourceKind.PLACE, window.partition_key, None, window.end)
+    with pytest.raises(ValueError, match="different extraction identity"):
+        restarted.begin_run(metadata_id, SourceKind.PLACE, window.partition_key, None, window.end, window=window)
+    with live_store.connect() as connection:
+        assert connection.execute(
+            "SELECT window_start, window_end FROM data_plane.ingestion_runs WHERE run_id = %s",
+            (metadata_id,),
+        ).fetchone() == (None, None)
+        # A checkpoint accidentally linked to another source kind/label is not
+        # evidence for the requested extraction, despite a matching cursor.
+        connection.execute(
+            "UPDATE data_plane.checkpoints SET run_id = %s WHERE source_kind = 'orders'",
+            (metadata_id,),
+        )
+    assert restarted.get_checkpoint(SourceKind.ORDERS, window.partition_key, window=window) is None
+
+
+@pytest.mark.requires_live_env
+def test_postgresql_window_install_is_additive_and_leaves_legacy_scope_unproven(live_store) -> None:
+    from psycopg.errors import CheckViolation
+
+    store = live_store.store
+    legacy_id = str(uuid4())
+    with live_store.connect() as connection:
+        connection.execute(
+            "ALTER TABLE data_plane.ingestion_runs "
+            "DROP CONSTRAINT ingestion_runs_window_bounds_check, "
+            "DROP COLUMN window_start, DROP COLUMN window_end"
+        )
+        connection.execute(
+            "INSERT INTO data_plane.ingestion_runs "
+            "(run_id, source_database, source_kind, partition_key, status, started_at) "
+            "VALUES (%s, 'fongniao_prod', 'orders', '2026-07-23', 'FAILED', %s)",
+            (legacy_id, _window().start),
+        )
+    store.install()
+    store.install()
+    with live_store.connect() as connection:
+        assert connection.execute(
+            "SELECT window_start, window_end FROM data_plane.ingestion_runs WHERE run_id = %s",
+            (legacy_id,),
+        ).fetchone() == (None, None)
+        for start, end in (
+            (_window().start, None), (None, _window().end),
+            (_window().start, _window().start), (_window().end, _window().start),
+        ):
+            with pytest.raises(CheckViolation), connection.transaction():
+                connection.execute(
+                    "UPDATE data_plane.ingestion_runs SET window_start = %s, window_end = %s "
+                    "WHERE run_id = %s", (start, end, legacy_id),
+                )
+    legacy_envelope = envelope_for_document(
+        SourceKind.ORDERS, {"_id": "legacy-cursor"}, run_id=legacy_id, observed_at=_window().end
+    )
+    store.record_checkpoint(SourceKind.ORDERS, _window().partition_key, legacy_envelope, 1)
+    assert store.get_checkpoint(SourceKind.ORDERS, _window().partition_key, window=_window()) is None
 
 
 def test_production_constructor_has_no_fixture_or_synthetic_fallback() -> None:
