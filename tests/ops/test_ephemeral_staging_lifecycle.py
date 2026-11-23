@@ -7368,10 +7368,10 @@ class StagingRecoveryPersistenceTests(unittest.TestCase):
 
             def gcloud(args: list[str], **_: Any) -> str:
                 if args[:2] == ["storage", "cp"]:
-                    self.assertEqual(args[2:4], ["--no-clobber", "--if-generation-match=0"])
-                    uri = args[5]
+                    self.assertEqual(args[2], "--no-clobber")
+                    source, uri = args[3:]
                     if uri not in published:
-                        published[uri] = Path(args[4]).read_bytes()
+                        published[uri] = Path(source).read_bytes()
                         writes.append(uri)
                     return ""
                 self.assertEqual(args[:3], ["storage", "objects", "describe"])
