@@ -437,6 +437,9 @@ def test_scenario_3_unrecognised_queue_ref_is_refused(tmp_path: Path) -> None:
         ("alfloop-dev/odayplus", "task/ODP-CORE-OPS-PROD-IMPLEMENTATION-261121", ".orchestrator/test_supervisor.py"),
         ("alfloop-dev/odayplus", "task/ODP-FORECAST-SOURCE-COMPLETENESS-261024", ".orchestrator/test_supervisor.py"),
         ("alfloop-dev/odayplus", "task/ODP-CI-FROZEN-FORECAST-REVIEW-261123", ".orchestrator/test_supervisor.py"),
+        ("alfloop-dev/odayplus", "task/ODP-STAGING-RETAINED-CLEANUP-EXPIRED-261123", ".orchestrator/test_supervisor.py"),
+        ("alfloop-dev/odayplus", "task/ODP-STAGING-RECOVERY-NOCLOBBER-261123", ".orchestrator/test_supervisor.py"),
+        ("alfloop-dev/odayplus", "task/ODP-OSS-POLICY-D01-AMENDMENT-261123", ".orchestrator/test_supervisor.py"),
         ("fork/odayplus", "task/ODP-STAGING-PASSWORD-JOURNEY-261121", ""),
     ],
 )
