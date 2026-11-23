@@ -2715,9 +2715,10 @@ jobs:
   #
   # It checks out release_sha so the destroy plans with the module and
   # lifecycle code that created the state. Nothing is deleted unless the
-  # protected recovery bundle binds the release to release_sha and records a
-  # successful failure hold, and the hold receipt of the run that wrote it
-  # records that the held state was `verification_failed`.
+  # protected recovery bundle binds the release to release_sha, and that run's
+  # receipt proves a failed staging hold (including the legacy refused hold).
+  # A verified release with no hold receipt instead requires TTL expiry,
+  # successful create/rehearsal receipts and dispatch-ref registry supersession.
   staging_retained_cleanup:
     name: Destroy a failed held or expired superseded verified staging release
     needs: [release_phase]
