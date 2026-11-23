@@ -312,6 +312,12 @@ def test_concurrent_native_execution_does_not_duplicate_graph(canonical_graph):
         other_engine.close()
 
 
+GEO_ENDPOINT = "https://geocode.synthetic.invalid/v1/geocode"
+GEO_API_KEY = "synthetic-native-geo-api-key-not-a-secret"
+GEO_BUCKET = "synthetic-native-geocode"
+GEO_KMS = "projects/test/locations/asia-east1/keyRings/native/cryptoKeys/geocode"
+
+
 def _enable_native_geo(monkeypatch, database, tenant, *, source_version=3):
     from modules.listing.application.native_intake_retrieval_policy import (
         GEO_BINDING_ENV,
@@ -323,8 +329,9 @@ def _enable_native_geo(monkeypatch, database, tenant, *, source_version=3):
     with database.connect() as connection:
         connection.execute("INSERT INTO intake.source_registry (source_id,display_name,canonicalization_rule_version,"
             "retrieval_mode,legal_approval_ref,license_approval_ref,policy_owner_subject_id,review_expires_at,"
-            "kill_switch,production_enabled,version) VALUES (%s,'Synthetic Geo provider','geo-v1','APPROVED_RETRIEVAL',"
-            "'synthetic-geo-legal','synthetic-geo-license',%s,now()+interval '1 day',false,true,3)",
+            "kill_switch,production_enabled,requests_per_minute,concurrent_requests,version) "
+            "VALUES (%s,'Synthetic Geo provider','geo-v1','APPROVED_RETRIEVAL',"
+            "'synthetic-geo-legal','synthetic-geo-license',%s,now()+interval '1 day',false,true,10,2,3)",
             (source_id, str(uuid4())))
         connection.commit()
     monkeypatch.setenv(GEO_POLICY_ENV, json.dumps({"policy_id": "synthetic-native-geo", "version": 1,
@@ -332,10 +339,15 @@ def _enable_native_geo(monkeypatch, database, tenant, *, source_version=3):
     monkeypatch.setenv(GEO_BINDING_ENV, json.dumps({"version": 1, "global_max_concurrency": 2,
         "source": {"source_id": source_id, "source_policy_version": source_version,
                    "provider_id": "geocode.primary_api", "source_contract_id": "geocode_result_snapshot"},
-        "storage_bindings": [{"tenant_id": tenant, "bucket": "synthetic-native-geocode",
-            "kms_key_name": "projects/test/locations/asia-east1/keyRings/native/cryptoKeys/geocode",
+        "storage_bindings": [{"tenant_id": tenant, "bucket": GEO_BUCKET, "kms_key_name": GEO_KMS,
             "residency_mode": "TW_ONLY", "retention_class": "STANDARD"}]}))
     monkeypatch.setenv(GEO_SIGNING_KEY_ENV, "Explicit synthetic native Geo dispatch signing material only")
+    # Only an explicit LIVE provider with an HTTPS endpoint is admitted.
+    monkeypatch.setenv("ODP_EXTERNAL_PROVIDER_MODE", "live")
+    monkeypatch.setenv("ODP_GEOCODE_PROVIDER_URL", GEO_ENDPOINT)
+    monkeypatch.setenv("ODP_GEOCODE_PROVIDER_API_KEY", GEO_API_KEY)
+    monkeypatch.delenv("ODP_GEOCODE_PROVIDER_AUTH_STATUS", raising=False)
+    monkeypatch.setenv("ODP_RESIDENCY_APPROVED_BUCKETS_TW_ONLY", GEO_BUCKET)
     return source_id
 
 
@@ -351,7 +363,8 @@ class TestNativeGeoReservation:
         return _matching_intake_db._get_wrapped_function()(intake_blank_db)
 
     @EXACT_SERVICE
-    @pytest.mark.parametrize("geo", ["disabled", "stale_source_version", "enabled", "admitted_audit_failure"])
+    @pytest.mark.parametrize("geo", ["disabled", "fixture_mode", "stale_source_version", "enabled",
+                                     "admitted_audit_failure"])
     def test_exact_existing_ready_reserves_native_geo_in_the_same_identity_unit(self, exact_service_case, monkeypatch, geo):
         from apps.api.oday_api.security.dependencies import default_boundary
         from modules.listing.application.identity_execution import IdentityExecutionService
@@ -369,6 +382,9 @@ class TestNativeGeoReservation:
         if geo != "disabled":
             _enable_native_geo(monkeypatch, database, ids["tenant"],
                                source_version=2 if geo == "stale_source_version" else 3)
+        if geo == "fixture_mode":
+            # Fixture/disabled/unknown provider modes never forge READY geodata.
+            monkeypatch.setenv("ODP_EXTERNAL_PROVIDER_MODE", "fixture")
         receipt = owner.confirm_exact_case(ids["tenant"], proposal["match_case_id"], expected_case_version=proposal["version"],
             policy_version_id=policy_id, replay_store=store)
         canonical = owner.graph, ids, None, database
@@ -407,7 +423,7 @@ class TestNativeGeoReservation:
                                       (ids["tenant"], parsed["intake_id"]))
         assert intake["processing_state"] == "READY" and intake["resolved_listing_id"] == ids["listing"]
         jobs, deliveries = geo_rows()
-        if geo in {"disabled", "stale_source_version"}:
+        if geo in {"disabled", "fixture_mode", "stale_source_version"}:
             # NO_JOB_UNADMITTED: truthful identity READY, no Geo work or evidence.
             assert jobs == [] and deliveries == []
             with owner.graph.transaction(ids["tenant"]):
@@ -436,3 +452,333 @@ class TestNativeGeoReservation:
         replay = owner.confirm_exact_case(ids["tenant"], proposal["match_case_id"], expected_case_version=proposal["version"],
             policy_version_id=policy_id, replay_store=store)
         assert replay == receipt and _snapshot(canonical) == after and geo_rows() == (jobs, deliveries)
+
+
+GEO_RESPONSE = {"request_id": "synthetic-provider-request-1", "observed_at": "2026-11-20T08:00:00+00:00",
+                "result": {"latitude": 25.0339, "longitude": 121.5645, "precision": "rooftop", "confidence": 0.93,
+                           "city": "台北市", "district": "信義區"}}
+ADDRESS_DDL = """
+CREATE EXTENSION IF NOT EXISTS postgis;
+CREATE SCHEMA IF NOT EXISTS core;
+CREATE TABLE IF NOT EXISTS core.tenants (tenant_id UUID PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS core.address_locations (address_id UUID PRIMARY KEY);
+-- Grow a relation-only boot stub to the canonical 000001 + 000021 columns.
+ALTER TABLE core.address_locations
+    ADD COLUMN IF NOT EXISTS raw_address TEXT NOT NULL, ADD COLUMN IF NOT EXISTS normalized_address TEXT,
+    ADD COLUMN IF NOT EXISTS city VARCHAR(100), ADD COLUMN IF NOT EXISTS district VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS village VARCHAR(100), ADD COLUMN IF NOT EXISTS road VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS latitude NUMERIC(10, 7), ADD COLUMN IF NOT EXISTS longitude NUMERIC(10, 7),
+    ADD COLUMN IF NOT EXISTS geom GEOMETRY(Point, 4326),
+    ADD COLUMN IF NOT EXISTS geocode_precision VARCHAR(50) DEFAULT 'manual',
+    ADD COLUMN IF NOT EXISTS geocode_confidence NUMERIC(3, 2), ADD COLUMN IF NOT EXISTS h3_res_8 VARCHAR(15),
+    ADD COLUMN IF NOT EXISTS h3_res_9 VARCHAR(15), ADD COLUMN IF NOT EXISTS h3_res_10 VARCHAR(15),
+    ADD COLUMN IF NOT EXISTS manual_override_flag BOOLEAN DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES core.tenants(tenant_id),
+    ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+"""
+
+
+class SyntheticGeoIO:
+    """Owned synthetic child runner and GEOCODE storage at the IO boundary only.
+
+    The real HttpGeocodeClient, NativeGeocodeProcessTransport, shared intent
+    journal, quota and dual leases run unchanged around these doubles.
+    """
+
+    def __init__(self, graph, database):
+        self.graph, self.database = graph, database
+        self.calls, self.objects, self.requests, self.credentials, self.deletes = [], {}, [], [], []
+        self.job_id, self.response, self.failure = None, GEO_RESPONSE, None
+
+    def admitted(self, operation):
+        assert getattr(self.graph.engine._local, "connection", None) is None, "SQL root spans Geo IO"
+        with self.database.connect() as connection:
+            status, payload = connection.execute("SELECT status,payload FROM workflow.jobs WHERE job_id=%s",
+                                                 (self.job_id,)).fetchone()
+        assert status == "RUNNING" and payload["attempt_intents"][-1]["state"] == "ADMITTED"
+        assert payload["attempt_intents"][-1]["operation"] == operation
+        self.calls.append(operation)
+
+    def run(self, request, *, deadline, guard, credential=None):
+        import base64
+
+        from modules.external_data.application.native_intake_process import NativeIORejected
+
+        guard()
+        self.admitted("geocode_post")
+        assert request["operation"] == "geocode_post" and request["url"] == GEO_ENDPOINT
+        assert GEO_API_KEY not in json.dumps(request)
+        self.requests.append(json.loads(base64.b64decode(request["body_base64"])))
+        self.credentials.append(credential)
+        if self.failure is not None:
+            raise NativeIORejected(self.failure)
+        body = json.dumps(self.response).encode()
+        return {"status": 200, "media_type": "application/json", "body_base64": base64.b64encode(body).decode()}
+
+    def factory(self, *, guard):
+        from modules.external_data.application.native_assisted_snapshot_transport import (
+            GEOCODE_JSON_PURPOSE,
+            NativeAssistedSnapshotObjectMetadata,
+        )
+        from modules.external_data.application.native_snapshot_transport import NativeBucketMetadata
+
+        fixture = self
+
+        class Storage:
+            def bucket_info(self, binding, *, deadline):
+                guard()
+                fixture.admitted("gcs_geocode_bucket")
+                return NativeBucketMetadata.from_provider({"kind": "storage#bucket", "name": binding.bucket,
+                    "location": "ASIA-EAST1", "locationType": "region"}, binding)
+
+            def metadata(self, binding, key, generation=None):
+                data = fixture.objects[key]
+                return NativeAssistedSnapshotObjectMetadata.from_provider({"kind": "storage#object",
+                    "bucket": binding.bucket, "name": key, "generation": "11", "size": str(len(data)),
+                    "contentType": "application/json", "kmsKeyName": GEO_KMS + "/cryptoKeyVersions/2"},
+                    binding, key, expected_generation=generation, purpose=GEOCODE_JSON_PURPOSE)
+
+            def upload_with_kms_if_absent(self, binding, key, data, media_type, *, deadline):
+                guard()
+                fixture.admitted("gcs_geocode_upload")
+                assert "/native-intake-geocode/" in key and media_type == "application/json"
+                assert key not in fixture.objects
+                fixture.objects[key] = data
+                return self.metadata(binding, key)
+
+            def head_version(self, binding, key, generation, *, deadline):
+                guard()
+                fixture.admitted("gcs_geocode_head")
+                return self.metadata(binding, key, generation)
+
+            def download_version_bounded(self, binding, key, generation, *, deadline):
+                guard()
+                fixture.admitted("gcs_geocode_download")
+                return fixture.objects[key]
+
+            def delete_exact_generation(self, binding, key, generation, *, deadline):
+                guard()
+                fixture.admitted("gcs_geocode_delete")
+                fixture.deletes.append((key, generation))
+                del fixture.objects[key]
+
+        return Storage()
+
+
+class SimpleGeoCase:
+    def __init__(self, graph, ids, database, runtime, owner, io, receipt, parsed, source_id):
+        self.graph, self.ids, self.database, self.runtime = graph, ids, database, runtime
+        self.owner, self.io, self.receipt, self.parsed, self.source_id = owner, io, receipt, parsed, source_id
+
+
+class TestNativeGeoExecution(TestNativeGeoReservation):
+    """The reserved Geo job runs through the normal default ODayWorker."""
+
+    test_exact_existing_ready_reserves_native_geo_in_the_same_identity_unit = None
+
+    @pytest.fixture
+    def geo_case(self, exact_service_case, monkeypatch):
+        from pathlib import Path
+
+        from modules.listing.application import pipeline
+        from tests.integration.test_canonical_identity_admission_postgresql import _claim
+
+        case, parsed, owner, proposal, policy_id, store = exact_service_case
+        ids, database = case[1], case[2]
+        root = Path(__file__).resolve().parents[2]
+        with database.connect() as connection:
+            connection.execute(ADDRESS_DDL)
+            connection.execute((root / "infra/db/migrations/000035_native_intake_retrieval_quota.sql").read_text())
+            columns = {row[0] for row in connection.execute("SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema='core' AND table_name='tenants'").fetchall()}
+            if "tenant_name" in columns:
+                connection.execute("INSERT INTO core.tenants (tenant_id,tenant_name,status,created_at,updated_at) "
+                    "VALUES (%s,'Synthetic Geo tenant','active',now(),now()) ON CONFLICT DO NOTHING", (ids["tenant"],))
+            else:
+                connection.execute("INSERT INTO core.tenants (tenant_id) VALUES (%s) ON CONFLICT DO NOTHING",
+                                   (ids["tenant"],))
+        source_id = _enable_native_geo(monkeypatch, database, ids["tenant"])
+        receipt = owner.confirm_exact_case(ids["tenant"], proposal["match_case_id"],
+            expected_case_version=proposal["version"], policy_version_id=policy_id, replay_store=store)
+        canonical = owner.graph, ids, None, database
+        delivery, registry, runtime = _claim(canonical, receipt["job_id"])
+        registry.handle(delivery, runtime)
+        io = SyntheticGeoIO(owner.graph, database)
+        io.job_id = pipeline.NativeIntakeGeoOwner.job_id(receipt["decision_id"])
+        geo_owner = pipeline.NativeIntakeGeoOwner(owner.graph, geocode_runner=io,
+                                                   snapshot_transport_factory=io.factory)
+        monkeypatch.setattr(pipeline, "native_intake_geo_owner", lambda persistence: geo_owner)
+        from apps.worker.oday_worker import main as worker_main
+
+        original_start = worker_main._LeaseHeartbeat.start
+
+        def heartbeat_start(heartbeat):
+            if heartbeat._job_id == io.job_id:
+                pytest.fail("native Geo must own both leases")
+            return original_start(heartbeat)
+
+        monkeypatch.setattr(worker_main._LeaseHeartbeat, "start", heartbeat_start)
+        return SimpleGeoCase(owner.graph, ids, database, runtime, geo_owner, io, receipt, parsed, source_id)
+
+    @staticmethod
+    def run_default_worker(case):
+        from apps.worker.oday_worker.main import ODayWorker
+        from shared.jobs.queue import JobStatus
+
+        worker = ODayWorker(persistence=case.runtime, heartbeat_interval_seconds=0.01)
+        # The normal loop also drains the preexisting canonical audit deliveries.
+        for _ in range(30):
+            physical = case.graph.queue.get(case.io.job_id)
+            if physical.status != JobStatus.QUEUED or physical.attempts:
+                break
+            assert worker.run_once() is True
+        return case.graph.queue.get(case.io.job_id)
+
+    @staticmethod
+    def rows(case, sql, params=()):
+        with case.database.connect() as connection:
+            cursor = connection.execute(sql, params)
+            names = [column.name for column in cursor.description]
+            return [dict(zip(names, row, strict=True)) for row in cursor.fetchall()]
+
+    def job(self, case):
+        return self.rows(case, "SELECT * FROM workflow.jobs WHERE job_id=%s", (case.io.job_id,))[0]
+
+    @EXACT_SERVICE
+    def test_default_worker_commits_one_live_geo_evidence_unit_and_replays_cold(self, geo_case):
+        from modules.listing.application.intake_audit import CanonicalIntakeAuditSink
+        from modules.listing.application.pipeline import (
+            NATIVE_GEO_COMPLETED_ACTION,
+            NativeIntakeGeoOwner,
+        )
+        from shared.audit.canonical_delivery import CanonicalAuditDelivery
+        from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
+        from shared.domain.events import validate_event
+        from shared.infrastructure.persistence.identity_graph_sql import (
+            CanonicalIdentityGraphRepository,
+        )
+        from shared.infrastructure.persistence.job_queue import DurableJobQueue
+        from shared.infrastructure.persistence.postgresql import PostgresEngine
+        from shared.jobs.queue import JobStatus
+
+        case = geo_case
+        intake_sql = "SELECT processing_state,version,resolved_listing_id FROM intake.intakes WHERE intake_id=%s"
+        intake_before = self.rows(case, intake_sql, (case.parsed["intake_id"],))
+        physical = self.run_default_worker(case)
+        assert physical.status == JobStatus.SUCCEEDED, json.dumps(self.job(case)["last_error"], default=str)
+        assert case.io.calls == ["gcs_geocode_bucket", "geocode_post", "gcs_geocode_upload", "gcs_geocode_head",
+                                 "gcs_geocode_download"]
+        # One request from the original client; the key travels only on the
+        # private credential channel, never in the child request or journal.
+        assert len(case.io.requests) == 1 and set(case.io.requests[0]) == {"address"}
+        assert case.io.credentials == [GEO_API_KEY]
+        job = self.job(case)
+        assert job["status"] == "SUCCEEDED" and job["checkpoint"] == "GEOCODED" and job["attempt"] == 1
+        result = job["result"]
+        assert GEO_API_KEY not in json.dumps(job["payload"]) + json.dumps(result)
+        assert result["decision_id"] == case.receipt["decision_id"] and result["listing_id"] == case.ids["listing"]
+        geocode = result["geocode"]
+        assert geocode["provider_request_id"] == "synthetic-provider-request-1"
+        assert geocode["provider_observed_at"] == "2026-11-20T08:00:00+00:00"
+        assert geocode["precision"] == "rooftop" and geocode["confidence"] == 0.93 and geocode["h3_res_9"]
+        address = self.rows(case, "SELECT * FROM core.address_locations WHERE address_id=%s", (result["address_id"],))
+        assert len(address) == 1 and str(address[0]["tenant_id"]) == case.ids["tenant"]
+        assert address[0]["revision"] == 1 and float(address[0]["latitude"]) == 25.0339
+        assert address[0]["h3_res_9"] == geocode["h3_res_9"]
+        snapshot = self.rows(case, "SELECT * FROM intake.source_snapshots WHERE source_snapshot_id=%s",
+                             (result["source_snapshot_id"],))[0]
+        assert snapshot["source_id"] == case.source_id and snapshot["capture_method"] == "SERVER_RETRIEVAL"
+        assert snapshot["media_type"] == "application/json" and snapshot["original_url"] is None
+        assert "/native-intake-geocode/" in snapshot["raw_object_uri"]
+        assert [json.loads(value) for value in case.io.objects.values()] == [GEO_RESPONSE]
+        event = self.rows(case, "SELECT payload FROM workflow.outbox_events WHERE event_id=%s",
+                          (result["snapshot_created_event_id"],))[0]["payload"]
+        assert not validate_event(event) and event["payload"]["source_id"] == case.source_id
+        audits = self.rows(case, "SELECT audit_event_id FROM audit.audit_events WHERE action=%s",
+                           (NATIVE_GEO_COMPLETED_ACTION,))
+        assert [str(row["audit_event_id"]) for row in audits] == [result["audit_event_id"]]
+        # Geo evidence never changes identity or promotes anything.
+        assert self.rows(case, intake_sql, (case.parsed["intake_id"],)) == intake_before
+        # Replay through the same owner adds no IO; a cold engine re-proves it.
+        calls = list(case.io.calls)
+        delivery = case.graph.queue.get(case.io.job_id)
+        assert case.owner.execute(delivery) == result and case.io.calls == calls
+        engine = PostgresEngine(case.database.url(), bootstrap=False, validate_schema=False)
+        try:
+            queue = DurableJobQueue(engine)
+            writer = CanonicalPostgresAuditLog(engine)
+            cold = CanonicalIdentityGraphRepository(engine, queue, CanonicalIntakeAuditSink(writer,
+                case.graph.audit_sink.retention, CanonicalAuditDelivery(writer, queue, case.graph.audit_sink.delivery.sink)))
+            assert NativeIntakeGeoOwner(cold).execute(queue.get(case.io.job_id)) == result
+        finally:
+            engine.close()
+        assert case.io.calls == calls
+
+    @EXACT_SERVICE
+    def test_missing_provider_result_fails_without_address_or_snapshot(self, geo_case):
+        from shared.jobs.queue import JobStatus
+
+        case = geo_case
+        case.io.response = {}
+        physical = self.run_default_worker(case)
+        assert physical.status == JobStatus.FAILED, json.dumps(self.job(case)["last_error"], default=str)
+        job = self.job(case)
+        assert job["status"] == "FAILED" and job["result"] is None
+        assert job["last_error"]["code"] == "NATIVE_GEO_RESULT_MISSING"
+        assert case.io.calls == ["gcs_geocode_bucket", "geocode_post"]
+        assert self.rows(case, "SELECT 1 FROM core.address_locations") == []
+        assert self.rows(case, "SELECT 1 FROM intake.source_snapshots WHERE source_id=%s", (case.source_id,)) == []
+        dead = self.rows(case, "SELECT payload FROM workflow.outbox_events WHERE event_type='job.dead_lettered' "
+                               "AND aggregate_id=%s", (case.io.job_id,))
+        assert len(dead) == 1 and dead[0]["payload"]["payload"]["job_type"] == "native-intake-geocode"
+
+    @EXACT_SERVICE
+    def test_changed_listing_version_closes_job_without_io_or_evidence(self, geo_case):
+        from shared.jobs.queue import JobStatus
+
+        case = geo_case
+        with case.database.connect() as connection:
+            connection.execute("UPDATE expansion.listings SET version=version+1 WHERE listing_id=%s",
+                               (case.ids["listing"],))
+        physical = self.run_default_worker(case)
+        assert physical.status == JobStatus.FAILED and case.io.calls == []
+        job = self.job(case)
+        assert job["last_error"]["code"] == "NATIVE_GEO_ACCEPTANCE_REJECTED" and job["result"] is None
+        assert self.rows(case, "SELECT 1 FROM core.address_locations") == []
+
+    @EXACT_SERVICE
+    def test_provider_timeout_schedules_bounded_retry_with_new_generation(self, geo_case):
+        from shared.jobs.queue import JobDeliveryState, JobStatus
+
+        case = geo_case
+        case.io.failure = "NATIVE_IO_DEADLINE_EXPIRED"
+        physical = self.run_default_worker(case)
+        assert physical.status == JobStatus.QUEUED, json.dumps(self.job(case)["last_error"], default=str)
+        assert physical.delivery_state == JobDeliveryState.RETRYING
+        job = self.job(case)
+        assert job["status"] == "RETRYING" and job["payload"]["delivery_generation"] == 2 and job["attempt"] == 1
+        assert physical.payload["attempt_token"].startswith("2.")
+        assert self.rows(case, "SELECT 1 FROM core.address_locations") == []
+        assert [i["state"] for i in job["payload"]["attempt_intents"]] == ["FINISHED", "ERROR"]
+
+    @EXACT_SERVICE
+    def test_address_write_failure_rolls_back_snapshot_event_and_result(self, geo_case, monkeypatch):
+        from shared.infrastructure.persistence.repositories import DurableAddressLocationRepository
+        from shared.jobs.queue import JobStatus
+
+        case = geo_case
+
+        def unavailable(self, address):
+            raise RuntimeError("synthetic Address persistence unavailable")
+
+        monkeypatch.setattr(DurableAddressLocationRepository, "save_address", unavailable)
+        physical = self.run_default_worker(case)
+        assert physical.status == JobStatus.FAILED, json.dumps(self.job(case)["last_error"], default=str)
+        job = self.job(case)
+        assert job["result"] is None and job["status"] == "FAILED"
+        assert self.rows(case, "SELECT 1 FROM intake.source_snapshots WHERE source_id=%s", (case.source_id,)) == []
+        assert self.rows(case, "SELECT 1 FROM workflow.outbox_events WHERE event_type='snapshot.created' "
+                               "AND payload->>'causation_id'=%s", (case.receipt["decision_id"],)) == []
+        assert self.rows(case, "SELECT 1 FROM core.address_locations") == []

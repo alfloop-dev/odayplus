@@ -809,17 +809,9 @@ class NativeIntakeGeoOwner:
                 or prop["current_redirect_property_id"] is not None):
             raise JobFenceRejectedError("NATIVE_GEO_CURRENT_PROPERTY_CHANGED")
         before()
-        revision = self.engine.query_one(
-            "SELECT source_snapshot_id,parser_run_id FROM expansion.listing_revisions WHERE tenant_id=? "
-            "AND listing_id=? AND listing_revision_id=? FOR SHARE",
-            (tenant, payload["listing_id"], payload["listing_revision_id"]))
-        if (revision is None
-                or (None if revision["source_snapshot_id"] is None else str(revision["source_snapshot_id"]))
-                != payload["source_snapshot_id"]
-                or (None if revision["parser_run_id"] is None else str(revision["parser_run_id"]))
-                != payload["parser_run_id"]):
-            raise JobFenceRejectedError("NATIVE_GEO_CURRENT_REVISION_CHANGED")
-        before()
+        # Revisions are immutable; the listing version and current revision
+        # above pin it. An exact-existing READY keeps the original revision, so
+        # this Intake's own snapshot/parser binding is the READY transition's.
         import hashlib
 
         address = self._revision_address(tenant, payload["listing_id"], payload["listing_revision_id"])
@@ -1232,7 +1224,7 @@ class NativeIntakeGeoOwner:
             leases.pause()
 
     def _job_only(self, delivery: Any, tenant: str, generation: int, *, cancelled: bool, code: str,
-                  accepted: bool) -> None:
+                  accepted: bool, cause: BaseException | None = None) -> None:
         """Close the Geo job without any Address/snapshot/result."""
         from uuid import uuid4
 
@@ -1241,8 +1233,11 @@ class NativeIntakeGeoOwner:
             canonical_json,
         )
         from modules.listing.application.native_intake_retrieval_results import dead_letter
+        from modules.listing.application.native_intake_retrieval_runtime import _safe_failure
         from shared.jobs.queue import JobDeliveryState, JobFenceRejectedError, JobStatus
 
+        # Typed cause codes only; never driver, provider or address text.
+        evidence = {} if cause is None else _safe_failure(cause)
         with self.graph.transaction(tenant):
             physical, job, payload, before = self._locked(delivery, tenant, generation, settlement=True)
             statuses = {"RUNNING"} if accepted else {"QUEUED", "RETRYING"}
@@ -1260,7 +1255,8 @@ class NativeIntakeGeoOwner:
                     "heartbeat_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp() "
                     "WHERE tenant_id=? AND job_id=? AND version=? AND fence_token=? AND result IS NULL "
                     "AND (?::boolean OR cancellation_requested_at IS NULL)",
-                    (status, canonical_json({**self._object(job.get("last_error") or {}), "code": code}), tenant,
+                    (status, canonical_json({**self._object(job.get("last_error") or {}), **evidence, "code": code}),
+                     tenant,
                      job["job_id"], job["version"], job["fence_token"], cancelled)).rowcount != 1:
                 raise JobFenceRejectedError("NATIVE_GEO_JOB_ONLY_CAS_REJECTED")
             before()
@@ -1289,7 +1285,7 @@ class NativeIntakeGeoOwner:
             cancelled = job["cancellation_requested_at"] is not None
         return self._job_only(delivery, tenant, generation, cancelled=cancelled,
                               code="NATIVE_GEO_CANCELLED" if cancelled else "NATIVE_GEO_ACCEPTANCE_REJECTED",
-                              accepted=False)
+                              accepted=False, cause=error)
 
     @staticmethod
     def _due(job: Mapping[str, Any], payload: Mapping[str, Any], now: datetime) -> datetime | None:
