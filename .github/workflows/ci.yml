@@ -811,7 +811,7 @@ jobs:
           # Official real-estate outcomes are included here, once per case.
           uv run pytest -m "requires_live_env" \
             tests/contract tests/ops tests/integration -x --tb=short -vv \
-            -n2 --dist=loadfile --max-worker-restart=0
+            -n3 --dist=loadfile --max-worker-restart=0
 
       - name: Test model admission and delete propagation against PostgreSQL
         run: |

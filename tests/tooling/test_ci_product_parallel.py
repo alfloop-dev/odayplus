@@ -339,7 +339,7 @@ def test_ci_workflow_command_exact_single_ownership(ci_workflow: dict[str, Any])
     expected_command_lanes = {
         "uv run ruff check tests modules apps shared models solver pipelines infra": "product-lint-unit",
         PRODUCT_UNIT_COMMAND: "product-lint-unit",
-        'uv run pytest -m "requires_live_env" tests/contract tests/ops tests/integration -x --tb=short -vv -n2 --dist=loadfile --max-worker-restart=0': "product-db",
+        'uv run pytest -m "requires_live_env" tests/contract tests/ops tests/integration -x --tb=short -vv -n3 --dist=loadfile --max-worker-restart=0': "product-db",
         "make api-contract": "product-api-contract",
         "make security": "product-security",
         "make node-check": "product-node",
@@ -649,11 +649,11 @@ def test_parse_executable_commands_handles_chaining_and_comments() -> None:
 
 
 def test_command_exact_matching_rejects_narrowed_selector() -> None:
-    expected = 'uv run pytest -m "requires_live_env" tests/contract tests/ops tests/integration -x --tb=short -vv -n2 --dist=loadfile --max-worker-restart=0'
+    expected = 'uv run pytest -m "requires_live_env" tests/contract tests/ops tests/integration -x --tb=short -vv -n3 --dist=loadfile --max-worker-restart=0'
     # Mutated with an additional ignore flag
     mutated_script = (
         'uv run pytest -m "requires_live_env" \\\n'
-        '  tests/contract tests/ops tests/integration -x --tb=short -vv -n2 --dist=loadfile --max-worker-restart=0 --ignore=tests/contract'
+        '  tests/contract tests/ops tests/integration -x --tb=short -vv -n3 --dist=loadfile --max-worker-restart=0 --ignore=tests/contract'
     )
     mock_jobs = {
         "product-db": {"steps": [{"run": mutated_script}]},
