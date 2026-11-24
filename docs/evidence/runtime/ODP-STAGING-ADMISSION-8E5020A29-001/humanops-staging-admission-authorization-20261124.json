@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "record_kind": "humanops-runtime-release-staging-admission-authorization",
+  "status": "approved",
+  "is_approval": true,
+  "task_id": "ODP-STAGING-ADMISSION-8E5020A29-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-STAGING-ADMISSION-20261124U",
+  "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+  "manifest_digest": "sha256:4ccc2c6e30497250baeab7e88cc9873bb2b057e859a9f86aae5f09c8bcdb25e9",
+  "manifest_run_id": "45396936799",
+  "target_environment": "staging",
+  "release_profile": "core-ops",
+  "approved_at": "2026-11-24T12:43:33Z",
+  "authorization_basis": {
+    "user_reply": "繼續處理",
+    "user_reply_at": "2026-11-24T12:43:33Z",
+    "prior_replies": [
+      {
+        "reply": "同意",
+        "at": "2026-11-22T14:52:00Z"
+      },
+      {
+        "reply": "都做一做",
+        "at": "2026-11-22T23:39:16Z"
+      },
+      {
+        "reply": "繼續做完阿",
+        "at": "2026-11-23T09:12:41Z"
+      },
+      {
+        "reply": "你把它處理好阿",
+        "at": "2026-11-23T13:03:11Z"
+      }
+    ],
+    "context": "Chain T staging deploy 45104336909 on e9ef7b5159b143c11af8b6260b645df31aecf981 proved ephemeral staging create (including /cloudsql volume mount on staging_admin_bootstrap) and caught the mutually exclusive gcloud storage cp --no-clobber --if-generation-match=0 CLI error in persist_staging_recovery. Subsequent merges into dev through 8e5020a29bad92300cce2fe7262e496fb31370b5 landed: PR #1745 (634409ba6a0f, fixing persist_staging_recovery to use --no-clobber with exact generation SHA-256 readback), PR #1751 (8fd97d53f744, OSS policy D01 amendment), PR #1748 (d3fbac2bc830, worker sandbox mount scale), PR #1750 (e4c82d61b, release snapshot generation), PR #1742 (78ed4f915f61, expired superseded verified staging cleanup, proven live in cleanup run 45396929900 which destroyed odp-49ef699a6c08), PR #1755 (79e210559022, notification drawer focus test stability), PR #1758 (42ddf2064, operator empty-store transaction scope), PR #1759 (ddb641827577, CI product-db worker capacity), PR #1752 (7f1555bbd199, native Geo evidence binding), and PR #1761 (8e5020a29bad, supervisor quota classifier gaps — touching only 5 .orchestrator/* files). Exact push CI 45354646865 and merge_group CI 45353137987 succeeded on 8e5020a29bad92300cce2fe7262e496fb31370b5 (orchestrator, change-scope, freeze-policy, product aggregate; product lanes skipped by scope because 7f1555bbd199..8e5020a29bad touched only .orchestrator/*), while all 7 product lanes ran and succeeded at 7f1555bbd1999fd68df4718ab665737faa18cfc9 (push CI 45353195393, merge_group CI 45347387596) with identical product tree. Automatic dev deploy 45356221614 (phase=auto) on 8e5020a29bad succeeded with live E2E 83/83 checks and 0 blockers, preflight, migration compatibility, Cloud Run smoke, worker/migration/scheduler job validations, and public-egress probe all passing (dev serves odp-8e5020a29bad). Core-ops staging build 45396936799 succeeded with manifest sha256:4ccc2c6e30497250baeab7e88cc9873bb2b057e859a9f86aae5f09c8bcdb25e9, 16 external sources disabled with 0 credentials, production npm audit 0 findings, and all 5 stg-odp-8e5020a29bad-* targets absent.",
+    "interpretation": "Owner 蔡尚志 instructed Antigravity across 2026-11-22..2026-11-24 ('同意', '都做一做', '繼續做完阿', '你把它處理好阿', '繼續處理') to complete ephemeral staging cleanup and full rehearsal while holding production terraform apply pending explicit confirmation. Transcribed by Antigravity; not an external identity-system signature."
+  },
+  "authorized_scope": {
+    "max_release_requests": 1,
+    "max_short_lived_supervisor_leases": 1,
+    "runtime_release_deploy_phases": 1,
+    "allowed_environment": "staging",
+    "external_sources_enabled": false,
+    "production_changes": false,
+    "github_staging_environment_approval_still_required": true,
+    "supervisor_lease_still_required": true
+  },
+  "recorded_by": "Antigravity (interactive owner-response transcription; no external identity signature claimed)",
+  "evidence": {
+    "exact_ci": "docs/evidence/runtime/ODP-STAGING-ADMISSION-8E5020A29-001/candidate-ci-8e5020a29.json",
+    "staging_build_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/45396936799",
+    "dev_deploy_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/45356221614",
+    "superseded_staging_cleanup_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/45396929900",
+    "exact_candidate_ci_workflow_urls": [
+      "https://github.com/alfloop-dev/odayplus/actions/runs/45354646865",
+      "https://github.com/alfloop-dev/odayplus/actions/runs/45353137987",
+      "https://github.com/alfloop-dev/odayplus/actions/runs/45353195393",
+      "https://github.com/alfloop-dev/odayplus/actions/runs/45347387596"
+    ],
+    "included_pull_requests": [
+      "https://github.com/alfloop-dev/odayplus/pull/1745",
+      "https://github.com/alfloop-dev/odayplus/pull/1742",
+      "https://github.com/alfloop-dev/odayplus/pull/1750",
+      "https://github.com/alfloop-dev/odayplus/pull/1755",
+      "https://github.com/alfloop-dev/odayplus/pull/1758",
+      "https://github.com/alfloop-dev/odayplus/pull/1759",
+      "https://github.com/alfloop-dev/odayplus/pull/1752",
+      "https://github.com/alfloop-dev/odayplus/pull/1761"
+    ],
+    "previous_staging_deploy_url": "https://github.com/alfloop-dev/odayplus/actions/runs/45104336909"
+  },
+  "decisions": {
+    "HD-08u": {
+      "decision": "approve",
+      "subject": "gate-2 Data Gate passed-with-deviation for this candidate's staging admission only, review_by 2026-11-30",
+      "accepted_deviations": [
+        "source contract and sample data reviewed: not applicable — the core-ops profile keeps every external source disabled (sources-off attestation in the build manifest: 16 sources audited, all disabled, zero credentials present).",
+        "point-in-time correctness checked for model-ready data: not applicable — core-ops serves no model (release_profile.model_readiness=not_claimed).",
+        "freshness and lineage evidence captured: check_live_production_data.py has never run against this candidate; deferred to the staging verify run and the production gates, not claimed as passed."
+      ]
+    },
+    "HD-09u": {
+      "decision": "approve",
+      "subject": "release.stage=dev-verified, admission_target=staging, decision=go for this exact candidate and the manifest produced by its staging build",
+      "dev_deploy_result": "CI-requested automatic dev deploy 45356221614 succeeded on 8e5020a29bad: live E2E 83/83, no blockers, job immutable image bindings passed, and public-egress probe denied as expected."
+    }
+  }
+}
