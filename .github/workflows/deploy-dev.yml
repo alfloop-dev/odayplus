@@ -54,7 +54,7 @@ on:
   workflow_dispatch:
     inputs:
       phase:
-        description: "Build artifacts, deploy an approved handoff, automatically update dev from successful CI, or (staging only) destroy the ephemeral staging release a failed verification left held for release_sha"
+        description: "Build artifacts, deploy an approved handoff, automatically update dev from successful CI, or (staging only) destroy a failed held or expired superseded verified ephemeral release for release_sha"
         required: true
         type: choice
         options: [build, deploy, auto, cleanup]
@@ -2715,11 +2715,12 @@ jobs:
   #
   # It checks out release_sha so the destroy plans with the module and
   # lifecycle code that created the state. Nothing is deleted unless the
-  # protected recovery bundle binds the release to release_sha and records a
-  # successful failure hold, and the hold receipt of the run that wrote it
-  # records that the held state was `verification_failed`.
+  # protected recovery bundle binds the release to release_sha, and that run's
+  # receipt proves a failed staging hold (including the legacy refused hold).
+  # A verified release with no hold receipt instead requires TTL expiry,
+  # successful create/rehearsal receipts and dispatch-ref registry supersession.
   staging_retained_cleanup:
-    name: Destroy a held ephemeral staging release after failed verification
+    name: Destroy a failed held or expired superseded verified staging release
     needs: [release_phase]
     if: ${{ inputs.phase == 'cleanup' && inputs.environment == 'staging' }}
     runs-on: ubuntu-latest
@@ -2918,7 +2919,7 @@ jobs:
           test -s "${tfvars_file}"
 
       # The bundle is written only by the staging deploy job: the create-time
-      # tfvars/inventory/lifecycle sidecars, then -- on failure only -- one
+      # tfvars/inventory/lifecycle sidecars, then -- on final persistence -- one
       # `hold-<run>-<attempt>-<stem>.lifecycle.json` per attempt. A hold
       # sidecar holds whatever lifecycle state that attempt left behind, so
       # `status == "held"` is what proves `staging_lifecycle.py hold` succeeded.
@@ -2928,7 +2929,9 @@ jobs:
       # a verified release, a run that failed after verification (staging deploy
       # 44261935709) had its hold refused and left the verify-time state. A
       # successful run leaves the same sidecar, so this shape proves nothing by
-      # itself: the receipt step requires that run's refused hold receipt.
+      # itself: the receipt step requires that run's refused hold receipt, or,
+      # only when no hold receipt exists, expiry plus successful create/verify
+      # receipts and a superseding candidate in the dispatch ref's registry.
       - name: Require a held failed staging release in the recovery bundle
         id: retained-hold
         run: |
@@ -3000,6 +3003,12 @@ jobs:
               out.write(f"hold_run_id={run_id}\nhold_run_attempt={attempt}\n")
               out.write(f"hold_owner_task_id={identity.get('owner_task_id', '')}\n")
               out.write(f"hold_sidecar_status={sidecar_status}\n")
+              if sidecar_status == "verified":
+                  # JSON keeps even malformed expiry values on one output line;
+                  # only the no-hold-receipt branch below needs a valid expiry.
+                  sidecar_outputs = hold.get("outputs")
+                  expiry = sidecar_outputs.get("expires_at") if isinstance(sidecar_outputs, dict) else None
+                  out.write(f"hold_expires_at_json={json.dumps(expiry)}\n")
           print(f"{release_id} was left {sidecar_status} by run {run_id} attempt {attempt}")
           PY
 
@@ -3016,15 +3025,71 @@ jobs:
           HOLD_RECEIPT: .odp_data/staging-lifecycle/hold-run/staging-lifecycle-hold.json
           HOLD_OWNER_TASK_ID: ${{ steps.retained-hold.outputs.hold_owner_task_id }}
           HOLD_SIDECAR_STATUS: ${{ steps.retained-hold.outputs.hold_sidecar_status }}
+          HOLD_EXPIRES_AT_JSON: ${{ steps.retained-hold.outputs.hold_expires_at_json }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 -I - <<'PY'
           import json
           import os
+          import re
+          import subprocess
+          from datetime import UTC, datetime, timedelta
+          from pathlib import Path
 
           release_id = os.environ["STAGING_RELEASE_ID"]
+          hold_path = Path(os.environ["HOLD_RECEIPT"])
           try:
-              with open(os.environ["HOLD_RECEIPT"], encoding="utf-8") as handle:
+              with hold_path.open(encoding="utf-8") as handle:
                   receipt = json.load(handle)
+          except FileNotFoundError as exc:
+              # Only an absent hold receipt permits this path. An existing but
+              # invalid/refused hold must still satisfy every original check.
+              if os.environ.get("HOLD_SIDECAR_STATUS") != "verified" or os.path.lexists(hold_path):
+                  raise SystemExit(f"Refusing cleanup of {release_id}: hold receipt unreadable: {exc}")
+              release_sha = os.environ["ODAY_RELEASE_SHA"]
+              try:
+                  expiry = json.loads(os.environ.get("HOLD_EXPIRES_AT_JSON") or "null")
+                  if not isinstance(expiry, str) or not re.fullmatch(
+                      r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|\+00:00)", expiry
+                  ):
+                      raise ValueError("sidecar outputs.expires_at must be a valid UTC timestamp")
+                  expires_at = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+                  if expires_at.utcoffset() != timedelta(0):
+                      raise ValueError("sidecar outputs.expires_at must be UTC")
+                  if datetime.now(UTC) < expires_at:
+                      raise ValueError("verified release has not expired")
+                  for name in ("staging-lifecycle-create.json", "staging-rehearsal-receipt.json"):
+                      proof = json.loads(hold_path.with_name(name).read_text(encoding="utf-8"))
+                      if (
+                          not isinstance(proof, dict)
+                          or proof.get("success") is not True
+                          or proof.get("release_id") != release_id
+                          or proof.get("candidate_sha") != release_sha
+                      ):
+                          raise ValueError(f"{name} does not prove successful create/verify of this candidate and release")
+                  # The checkout deliberately stays at the old release SHA for
+                  # Terraform. The active registry must instead come from the
+                  # workflow dispatch ref, never that stale checkout's tree.
+                  endpoint = (
+                      f"repos/{os.environ['GITHUB_REPOSITORY']}/contents/"
+                      "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
+                      f"?ref={os.environ['GITHUB_REF_NAME']}"
+                  )
+                  response = subprocess.run(
+                      ["gh", "api", "-H", "Accept: application/vnd.github.raw+json", endpoint],
+                      check=True, capture_output=True, text=True, timeout=60,
+                  )
+                  registry = json.loads(response.stdout)
+                  release = registry.get("release") if isinstance(registry, dict) else None
+                  active_sha = release.get("candidate_sha") if isinstance(release, dict) else None
+                  if not isinstance(active_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", active_sha):
+                      raise ValueError("dispatch-ref registry lacks an exact release.candidate_sha")
+                  if active_sha == release_sha:
+                      raise ValueError("dispatch-ref registry still names the active staging candidate")
+              except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                  raise SystemExit(f"Refusing cleanup of {release_id}: expired verified admission failed: {exc}")
+              print(f"{release_id} verified release expired at {expiry} and was superseded by {active_sha}")
+              raise SystemExit(0)
           except (OSError, ValueError) as exc:
               raise SystemExit(f"Refusing cleanup of {release_id}: hold receipt unreadable: {exc}")
           receipt = receipt if isinstance(receipt, dict) else {}
