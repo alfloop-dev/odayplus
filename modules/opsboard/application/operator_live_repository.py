@@ -411,20 +411,23 @@ class OperatorLiveRepository:
         visible_store_ids = tuple(
             sorted(str(_value(store, "store_id")) for store in stores)
         )
-        if sections["stores"].available:
+        transactions = []
+        if not sections["stores"].available:
+            sections["transactions"] = self._unavailable(
+                "transaction_repository.list_transactions",
+                reason_code="OPERATOR_STORES_DEPENDENCY_UNAVAILABLE",
+                message="transactions require an available tenant-scoped store set",
+            )
+        elif not visible_store_ids:
+            # No transactions can belong to an empty authorized store set.
+            sections["transactions"] = self._available(sections["stores"].source, transactions)
+        else:
             transactions, sections["transactions"] = self._read_list(
                 "transactions",
                 self._persistence.transaction_repository,
                 "list_transactions",
                 tenant_id=scope.tenant_id,
                 store_ids=visible_store_ids,
-            )
-        else:
-            transactions = []
-            sections["transactions"] = self._unavailable(
-                "transaction_repository.list_transactions",
-                reason_code="OPERATOR_STORES_DEPENDENCY_UNAVAILABLE",
-                message="transactions require an available tenant-scoped store set",
             )
 
         interventions: list[Any] = []

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from fastapi import HTTPException, Response
@@ -744,6 +745,7 @@ def _operator_request(
 
 def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_completeness(
     tmp_path: Any,
+    monkeypatch: Any,
 ) -> None:
     db_path = tmp_path / "two_tenant_isolation.sqlite3"
     bundle = _durable_bundle(db_path)
@@ -910,6 +912,15 @@ def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_complete
         assert heatzone_store_a is not None
         heatzone_store_a.put(hz_result_a)
 
+        bundle.transaction_repository.save_transaction(
+            Transaction(
+                transaction_id="txn-tenant-a",
+                store_id="store-tenant-a",
+                net_amount=123.45,
+                transaction_status="succeeded",
+            )
+        )
+
         live_repo = OperatorLiveRepository(bundle)
 
         state_a = live_repo.load_state(
@@ -951,6 +962,33 @@ def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_complete
         assert sections_a_again["siteScoreDecisions"]["recordCount"] == 1
         assert sections_a_again["ingestionRuns"]["recordCount"] == 1
         assert sections_a_again["heatZones"]["recordCount"] == 1
+
+        # This role is allowed to read the tenant but its effective store set
+        # can resolve to empty. In that case transaction scope is also empty.
+        monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "false")
+        read_transactions = Mock(wraps=bundle.transaction_repository.list_transactions)
+        monkeypatch.setattr(bundle.transaction_repository, "list_transactions", read_transactions)
+        service = OperatorStateService(live_repository=live_repo)
+        guard = require_operator_permission(OPERATOR_CONSOLE_RESOURCE, Action.VIEW)
+        allowed = _operator_request(
+            subject_id="operator-ops-lead", roles=Role.OPERATIONS_MANAGER.value,
+            tenant_id="tenant-a", store_ids="store-tenant-a",
+        )
+        empty = _operator_request(
+            subject_id="operator-ops-lead", roles=Role.OPERATIONS_MANAGER.value,
+            tenant_id="tenant-a", store_ids="store-tenant-b",
+        )
+        guard(allowed)
+        guard(empty)
+        allowed_counts = service.get_today(**_live_operator_request_context(allowed))["meta"]["recordCounts"]
+        assert (allowed_counts["stores"], allowed_counts["transactions"]) == (1, 1)
+        assert allowed_counts["successfulTransactionNet"] == 123.45
+        empty_meta = service.get_today(**_live_operator_request_context(empty))["meta"]
+        empty_counts = empty_meta["recordCounts"]
+        assert (empty_counts["stores"], empty_counts["transactions"]) == (0, 0)
+        assert empty_counts["successfulTransactionNet"] == 0
+        assert empty_meta["sections"]["transactions"]["state"] == "available"
+        read_transactions.assert_called_once_with(tenant_id="tenant-a", store_ids=("store-tenant-a",))
     finally:
         bundle.engine.close()
 
