@@ -658,6 +658,7 @@ class TestNativeGeoExecution(TestNativeGeoReservation):
         from shared.audit.canonical_delivery import CanonicalAuditDelivery
         from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
         from shared.domain.events import validate_event
+        from shared.infrastructure.persistence.factory import native_intake_geo_provider
         from shared.infrastructure.persistence.identity_graph_sql import (
             CanonicalIdentityGraphRepository,
         )
@@ -712,8 +713,10 @@ class TestNativeGeoExecution(TestNativeGeoReservation):
         try:
             queue = DurableJobQueue(engine)
             writer = CanonicalPostgresAuditLog(engine)
+            # A cold runtime graph carries the same factory-composed LIVE adapter.
             cold = CanonicalIdentityGraphRepository(engine, queue, CanonicalIntakeAuditSink(writer,
-                case.graph.audit_sink.retention, CanonicalAuditDelivery(writer, queue, case.graph.audit_sink.delivery.sink)))
+                case.graph.audit_sink.retention, CanonicalAuditDelivery(writer, queue, case.graph.audit_sink.delivery.sink)),
+                geo_provider=native_intake_geo_provider())
             assert NativeIntakeGeoOwner(cold).execute(queue.get(case.io.job_id)) == result
         finally:
             engine.close()

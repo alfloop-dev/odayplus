@@ -17,6 +17,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from modules.external_data.application.native_intake_process_lifecycle import (
     _native_process_run_scope,
@@ -295,18 +296,20 @@ class NativeGeocodeProcessTransport:
     mapping. This adapter only moves the bytes through the fixed child: the
     API key travels on the private credential pipe (never JSON, argv, env,
     hash or journal), one attempt allows exactly one exchange, the guard and
-    hard wall deadline apply, and an unreaped child propagates unchanged.
+    hard wall deadline apply, and an unreaped child propagates unchanged. The
+    client's own response type is injected by its composer, so this transport
+    never names the frozen provider package.
     """
 
-    def __init__(self, *, deadline: float, guard: Callable[[], None], runner=None, clock=None) -> None:
+    def __init__(self, *, deadline: float, guard: Callable[[], None], response_type: Callable[[int, bytes], Any],
+                 runner=None, clock=None) -> None:
         self.deadline, self.guard = deadline, guard
+        self.response_type = response_type
         self.runner = runner or NativeIntakeProcessRunner()
         self.clock = clock
         self.exchange: NativeGeocodeExchange | None = None
 
     def post_json(self, endpoint_url, *, headers, body, credential, timeout_seconds):
-        from modules.external_data.providers.live import GeocodeHttpResponse
-
         if self.exchange is not None:
             # retry_budget is zero for a native attempt; a second call is a bug.
             raise NativeIORejected("NATIVE_GEOCODE_SECOND_EXCHANGE_REJECTED")
@@ -356,4 +359,4 @@ class NativeGeocodeProcessTransport:
         exchange.status, exchange.media_type, exchange.response_body = (
             result["status"], result["media_type"], data)
         exchange.fetched_at = self.clock() if self.clock is not None else None
-        return GeocodeHttpResponse(result["status"], data)
+        return self.response_type(result["status"], data)

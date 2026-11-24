@@ -78,7 +78,7 @@ class CanonicalIdentityGraphRepository:
     job_type = "identity-execution"
 
     def __init__(self, engine: Any, queue: Any, audit_sink: Any, *, delivery_authenticator: Any = None,
-                 identity_service_boundary: Any = None) -> None:
+                 identity_service_boundary: Any = None, geo_provider: Any = None) -> None:
         if (getattr(engine, "dialect", None) != "postgresql"
                 or getattr(queue, "_engine", None) is not engine
                 or getattr(getattr(audit_sink, "writer", None), "engine", None) is not engine):
@@ -86,6 +86,9 @@ class CanonicalIdentityGraphRepository:
         self.engine, self.queue, self.audit_sink = engine, queue, audit_sink
         self.delivery_authenticator = delivery_authenticator
         self.identity_service_boundary = identity_service_boundary
+        # The runtime factory injects the existing LIVE Geo adapter; without it
+        # native READY Geo stays NO_JOB_UNADMITTED.
+        self.geo_provider = geo_provider
 
     def delivery_reference(self, delivery: JobRecord) -> dict:
         if self.delivery_authenticator is not None:

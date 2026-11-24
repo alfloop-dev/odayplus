@@ -442,9 +442,10 @@ def _native_transport(runner: _NativeRunner) -> Any:
     from modules.external_data.application.native_intake_process import (
         NativeGeocodeProcessTransport,
     )
+    from modules.external_data.providers.live import GeocodeHttpResponse
 
     return NativeGeocodeProcessTransport(deadline=_time.monotonic() + 5, guard=lambda: None,
-        runner=runner, clock=lambda: INGESTION_TIME)
+        runner=runner, clock=lambda: INGESTION_TIME, response_type=GeocodeHttpResponse)
 
 
 def test_native_geocode_transport_uses_private_credential_channel_and_journals_one_exchange() -> None:

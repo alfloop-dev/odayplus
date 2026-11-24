@@ -398,6 +398,28 @@ NATIVE_GEO_ACTOR_ROLE = "SVC_INTAKE"
 NATIVE_GEO_ORIGIN_KINDS = frozenset({"IDENTITY_DECISION", "NATIVE_EXACT_URL"})
 
 
+@dataclass(frozen=True)
+class NativeIntakeGeoProvider:
+    """The existing LIVE geocode adapter, injected by the persistence factory.
+
+    Listing never imports the frozen provider packages itself: the factory
+    hands over the original mode resolver, endpoint variable, client,
+    provider, response and error types unchanged. Without this injection the
+    owner is unadmitted, so no configuration can forge production geodata.
+    """
+
+    provider_mode: Any
+    live_mode: Any
+    endpoint_env_var: str
+    client_type: Any
+    provider_type: Any
+    response_type: Any
+    auth_error: type[BaseException]
+    provider_error: type[BaseException]
+    rate_limit_error: type[BaseException]
+    timeout_error: type[BaseException]
+
+
 class NativeIntakeGeoOwner:
     """The single native Intake Geo evidence owner in the original Listing pipeline.
 
@@ -409,6 +431,8 @@ class NativeIntakeGeoOwner:
     def __init__(self, graph: Any, *, geocode_runner: Any = None, snapshot_transport_factory: Any = None,
                  env: Mapping[str, str] | None = None) -> None:
         self.graph, self.engine, self.queue = graph, graph.engine, graph.queue
+        # Only the factory-composed identity graph carries the LIVE adapter.
+        self.geo_provider: NativeIntakeGeoProvider | None = getattr(graph, "geo_provider", None)
         # Component tests may pass an owned synthetic child runner/storage. The
         # runtime never selects a child, address or transport by configuration.
         self.geocode_runner = geocode_runner
@@ -447,19 +471,15 @@ class NativeIntakeGeoOwner:
         import os
         from urllib.parse import urlsplit
 
-        from modules.external_data.connectors.provider_registry import (
-            ExternalProviderMode,
-            external_provider_mode,
-        )
-        from modules.external_data.providers.live import GEOCODE_ENDPOINT_ENV_VAR
         from modules.listing.application.native_intake_retrieval_policy import (
             NativeIntakeGeoUnadmitted,
         )
 
         env = self.env if self.env is not None else os.environ
-        if external_provider_mode(env) is not ExternalProviderMode.LIVE:
+        provider = self.geo_provider
+        if provider is None or provider.provider_mode(env) is not provider.live_mode:
             raise NativeIntakeGeoUnadmitted("NATIVE_GEO_PROVIDER_NOT_LIVE")
-        endpoint = str(env.get(GEOCODE_ENDPOINT_ENV_VAR, "")).strip()
+        endpoint = str(env.get(provider.endpoint_env_var, "")).strip()
         try:
             parts = urlsplit(endpoint)
             valid = (parts.scheme == "https" and bool(parts.hostname) and parts.port in (None, 443)
@@ -1308,23 +1328,19 @@ class NativeIntakeGeoOwner:
         due = now + timedelta(seconds=payload["policy"]["backoff_seconds"][job["attempt"] - 1])
         return due if due < timeout else None
 
-    @staticmethod
-    def _retryable(error: BaseException) -> bool:
-        from modules.external_data.providers.live import (
-            GeocodeProviderAuthError,
-            GeocodeProviderError,
-            GeocodeProviderRateLimitError,
-            GeocodeProviderTimeoutError,
-        )
+    def _retryable(self, error: BaseException) -> bool:
         from modules.listing.application.native_intake_retrieval_runtime import _retryable
         from shared.jobs.queue import JobFenceRejectedError
 
-        if isinstance(error, GeocodeProviderAuthError):
-            return False
-        if isinstance(error, (GeocodeProviderRateLimitError, GeocodeProviderTimeoutError)):
-            return True
-        if isinstance(error, GeocodeProviderError):
-            return error.code == "http_error" and error.status_code is not None and 500 <= error.status_code < 600
+        if (provider := self.geo_provider) is not None:
+            # The original provider error taxonomy decides; only 5xx retries.
+            if isinstance(error, provider.auth_error):
+                return False
+            if isinstance(error, (provider.rate_limit_error, provider.timeout_error)):
+                return True
+            if isinstance(error, provider.provider_error):
+                return (error.code == "http_error" and error.status_code is not None
+                        and 500 <= error.status_code < 600)
         return (_retryable(error) or (isinstance(error, JobFenceRejectedError)
                                       and str(error) == "NATIVE_GEO_ROOT_BUDGET_EXPIRED"))
 
@@ -1537,9 +1553,7 @@ def _native_geo_capture(io: Any) -> dict:
         NativeIORejected,
         NativeIOUnreaped,
     )
-    from modules.external_data.connectors.provider_registry import ExternalProviderMode
     from modules.external_data.geo.pipeline import normalize_address as geo_normalize_address
-    from modules.external_data.providers.live import HttpGeocodeClient, PrimaryGeocodeProvider
     from shared.jobs.queue import JobFenceRejectedError
 
     owner, leases, policy = io.owner, io.leases, io.policy
@@ -1548,16 +1562,18 @@ def _native_geo_capture(io: Any) -> dict:
         raw_address = owner._revision_address(io.tenant, payload["listing_id"], payload["listing_revision_id"])
         correlation_id = job["correlation_id"]
     endpoint = owner.live_endpoint()
+    geo_provider = owner.geo_provider  # live_endpoint() proved the injected LIVE adapter
     normalized = geo_normalize_address(raw_address)
     bucket, _ = io.call("gcs_geocode_bucket", endpoint, {},
                         lambda deadline: io.storage.bucket_info(policy.storage, deadline=deadline))
 
     def lookup(deadline: float) -> tuple:
-        transport = NativeGeocodeProcessTransport(deadline=deadline, guard=leases.guard, runner=owner.geocode_runner)
-        client = HttpGeocodeClient(endpoint, timeout_seconds=max(0.001, deadline - time.monotonic()),
-                                   transport=transport)
-        provider = PrimaryGeocodeProvider(client=client, env=owner.env, mode=ExternalProviderMode.LIVE,
-                                          retry_budget=0, correlation_id=correlation_id)
+        transport = NativeGeocodeProcessTransport(deadline=deadline, guard=leases.guard, runner=owner.geocode_runner,
+                                                  response_type=geo_provider.response_type)
+        client = geo_provider.client_type(endpoint, timeout_seconds=max(0.001, deadline - time.monotonic()),
+                                          transport=transport)
+        provider = geo_provider.provider_type(client=client, env=owner.env, mode=geo_provider.live_mode,
+                                              retry_budget=0, correlation_id=correlation_id)
         candidate, response = provider.lookup_with_payload(normalized)
         return candidate, response, transport.exchange
 
