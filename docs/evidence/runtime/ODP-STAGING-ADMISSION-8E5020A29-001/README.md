@@ -26,9 +26,9 @@
 
 紀錄檔為 `humanops-staging-admission-authorization-20261124.json`（核准編號 `HUMANOPS-STAGING-ADMISSION-20261124U`）：
 
-- 負責人蔡尚志於 Antigravity 對話明確指示完成舊環境清理與新一輪 ephemeral staging 全套演練（「同意」、「都做一做」、「繼續做完阿」、「你把它處理好阿」、「繼續處理」），production `terraform apply` 仍保留待確認後執行。
-- **HD-08u**：`gate-2`（Data Gate）對本候選進 staging 處置為 `passed-with-deviation`（`review_by: 2026-11-30`）。
-- **HD-09u**：`release.stage=dev-verified`、`admission_target=staging`、`decision=go`，僅授權本候選一次 staging release request、一張短期 Supervisor lease 與一次 `Runtime Release` `phase=deploy`（仍須 GitHub `staging` environment 核准，不含 production）。
+- 在 `staging build 45396936799`（`2026-11-24T12:59:33Z` 完成，manifest `sha256:4ccc2c6e30497250baeab7e88cc9873bb2b057e859a9f86aae5f09c8bcdb25e9`）、清理作業 `45396929900` 與 PR `#1762` CI（`45400442340`）完成後，於 Antigravity 對話 `22399345-f387-4dca-9438-6dcf570c24ea` `step_index: 7292`（`2026-11-24T14:06:58Z`，並於 `step_index: 7294` 重申）向負責人蔡尚志逐項出示候選提交 `8e5020a29bad92300cce2fe7262e496fb31370b5`、manifest 雜湊、7 條產品測試線於相同產品樹 `7f1555bbd`（`45353195393`、`45347387596`）實跑之事實、三項 `gate-2` 偏差與複查日期 `2026-11-30`，以及單次 `staging` 部署範圍；負責人於 `step_index: 7295`（`2026-11-24T15:47:30Z`）明確回覆原文：**「核准 HD-08u、HD-09u 及代按本次 staging 環境核准」**（production `terraform apply` 仍保留待確認後執行）。
+- **HD-08u**：`gate-2`（Data Gate）對本候選進 staging 處置為 `passed-with-deviation`（`review_by: 2026-11-30`；外部來源全關不適用、模型推論未啟用不適用、`check_live_production_data.py` 延後至 `staging verify` 與 `production` 閘門實跑）。
+- **HD-09u**：`release.stage=dev-verified`、`admission_target=staging`、`decision=go`，僅授權本候選一次 staging release request、一張短期 Supervisor lease、一次 `Runtime Release` `phase=deploy`，以及代按該次部署之兩道 GitHub `staging` environment 核准（不含 production）。
 
 ## 尚未在 Live Staging 驗證的項目
 

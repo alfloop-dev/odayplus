@@ -22,9 +22,9 @@
     "decision": "go",
     "decision_owner": "Human/Ops",
     "decision_date": "2026-11-24",
-    "decision_note": "GO for staging admission only under HUMANOPS-STAGING-ADMISSION-20261124U: candidate 8e5020a29bad92300cce2fe7262e496fb31370b5, core-ops staging manifest sha256:4ccc2c6e30497250baeab7e88cc9873bb2b057e859a9f86aae5f09c8bcdb25e9, Runtime Release staging build 45396936799. The CI-requested automatic dev deploy 45356221614 of 8e5020a29bad (phase auto) succeeded: every job that ran succeeded, live E2E passed 83 of 83 checks with no blockers, and preflight, migration compatibility, Cloud Run smoke, the worker, migration and scheduler job validations (including immutable image bindings) and the public-egress probe all passed. Dev now serves release odp-8e5020a29bad. Exact push CI 45354646865 and merge group CI 45353137987 succeeded on 8e5020a29bad (change-scope skipped the 7 product lanes because 7f1555bbd..8e5020a29bad touched only 5 .orchestrator/* files), and all 7 product lanes ran and succeeded on the identical product tree at 7f1555bbd1999fd68df4718ab665737faa18cfc9 (push CI 45353195393, merge group CI 45347387596). This authorizes one staging release request, one short-lived lease and one Runtime Release deploy phase only; the GitHub staging environment approval is still required. Production remains outside scope. Gate-2 is cleared with the deviations recorded on it.",
+    "decision_note": "GO for staging admission only under HUMANOPS-STAGING-ADMISSION-20261124U (owner 蔡尚志 explicit post-build reply '核准 HD-08u、HD-09u 及代按本次 staging 環境核准' at 2026-11-24T15:47:30Z, conversation 22399345-f387-4dca-9438-6dcf570c24ea step_index 7295 following step_index 7292 presentation): candidate 8e5020a29bad92300cce2fe7262e496fb31370b5, core-ops staging manifest sha256:4ccc2c6e30497250baeab7e88cc9873bb2b057e859a9f86aae5f09c8bcdb25e9, Runtime Release staging build 45396936799. The CI-requested automatic dev deploy 45356221614 of 8e5020a29bad (phase auto) succeeded: every job that ran succeeded, live E2E passed 83 of 83 checks with no blockers, and preflight, migration compatibility, Cloud Run smoke, the worker, migration and scheduler job validations (including immutable image bindings) and the public-egress probe all passed. Dev now serves release odp-8e5020a29bad. Exact push CI 45354646865 and merge group CI 45353137987 succeeded on 8e5020a29bad (change-scope skipped the 7 product lanes because 7f1555bbd..8e5020a29bad touched only 5 .orchestrator/* files), and all 7 product lanes ran and succeeded on the identical product tree at 7f1555bbd1999fd68df4718ab665737faa18cfc9 (push CI 45353195393, merge group CI 45347387596) as well as on PR #1762 CI 45400442340. This authorizes one staging release request, one short-lived lease, one Runtime Release deploy phase, and proxy approval of the two GitHub staging environment gates for this single deploy only. Production remains outside scope. Gate-2 is cleared with the deviations recorded on it.",
     "human_signoff": {
-      "approver": "Human/Ops (owner 蔡尚志, interactive approval in the Antigravity conversation transcribed by Antigravity; not an external identity-system signature)",
+      "approver": "Human/Ops (owner 蔡尚志, explicit post-build reply '核准 HD-08u、HD-09u 及代按本次 staging 環境核准' at 2026-11-24T15:47:30Z in Antigravity conversation 22399345-f387-4dca-9438-6dcf570c24ea step_index 7295; transcribed by Antigravity; not an external identity-system signature)",
       "date": "2026-11-24",
       "approval_id": "HUMANOPS-STAGING-ADMISSION-20261124U"
     }
@@ -435,8 +435,8 @@
           "receipt_id": "gate-2-8e5020a29bad-20261124",
           "release_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
           "result": "pass",
-          "recorded_at": "2026-11-24T12:56:00Z",
-          "recorded_by": "Antigravity (per-job CI and live dev deploy reconciliation; Human/Ops disposition HD-08u)",
+          "recorded_at": "2026-11-24T15:48:00Z",
+          "recorded_by": "Antigravity (per-job CI and live dev deploy reconciliation; post-build Human/Ops disposition HD-08u at 2026-11-24T15:47:30Z, step_index 7295)",
           "artifact": "docs/evidence/runtime/ODP-STAGING-ADMISSION-8E5020A29-001/candidate-ci-8e5020a29.json",
           "gate_name": "Data Gate",
           "summary": "product-db (canonical mapping and data-quality suites), product-lint-unit and product-e2e-gate passed on identical product tree 7f1555bbd (push CI 45353195393, merge group CI 45347387596; 8e5020a29bad differs only in 5 .orchestrator/* files). The CI-requested automatic dev deploy 45356221614 of 8e5020a29bad (phase auto) succeeded: every job that ran succeeded, live E2E passed 83 of 83 checks with no blockers, and preflight, migration compatibility, Cloud Run smoke, the worker, migration and scheduler job validations (including immutable image bindings) and the public-egress probe all passed. Dev now serves release odp-8e5020a29bad. Source-contract, point-in-time and live freshness/lineage are dispositioned in the deviation, not claimed."
@@ -445,7 +445,7 @@
       "blockers": [],
       "deviation": {
         "description": "For candidate 8e5020a29 entering staging only (core-ops profile): 'source contract and sample data reviewed' is not applicable because every external source is disabled (16 sources audited, no credentials present); 'point-in-time correctness checked for model-ready data' is not applicable because core-ops serves no model; 'freshness and lineage evidence captured' is not satisfied — check_live_production_data.py has never run against this candidate and is deferred to the staging verify run and the production gates. Any later candidate or environment needs a fresh disposition.",
-        "approver": "Human/Ops (owner 蔡尚志, 2026-11-24, decision HD-08u in the Antigravity conversation; transcribed by Antigravity)",
+        "approver": "Human/Ops (owner 蔡尚志, 2026-11-24T15:47:30Z, explicit post-build reply '核准 HD-08u、HD-09u 及代按本次 staging 環境核准' at conversation 22399345-f387-4dca-9438-6dcf570c24ea step_index 7295 following step_index 7292 presentation; transcribed by Antigravity)",
         "review_by": "2026-11-30",
         "artifact": "docs/evidence/runtime/ODP-STAGING-ADMISSION-8E5020A29-001/humanops-staging-admission-authorization-20261124.json"
       },
