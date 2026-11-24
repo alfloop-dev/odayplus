@@ -1234,6 +1234,7 @@ FROZEN_REVIEW_RULES = [
     "${{ env.ODP_FROZEN_REVIEW_PATH && format('!/{0}/**', env.ODP_FROZEN_REVIEW_PATH) || '' }}",
 ]
 FROZEN_REVIEW_HISTORY = "${{ env.ODP_FROZEN_REVIEW_PATH && '0' || '1' }}"
+RUNTIME_RELEASE_FROZEN_PATH = ".orchestrator/test_supervisor.py"
 
 # Sparse checkout denies protected bodies. The ref is pinned per job above.
 ALLOWED_CHECKOUT_INPUTS = {"fetch-depth", "ref", "sparse-checkout", "sparse-checkout-cone-mode"}
@@ -1307,10 +1308,11 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
     preflight_run, proof_run = reference_step_scripts()
     violations: list[str] = []
     scoped = name in FROZEN_REVIEW_WORKFLOWS
+    runtime_release = name == "deploy-dev.yml"
     if scoped:
         if workflow["jobs"].get("freeze-policy") != FROZEN_REVIEW_POLICY:
             violations.append(f"{name}: frozen review policy must resolve before checkout")
-    else:
+    elif not runtime_release:
         steps = load_pr_workflow("assisted-intake-design-validation.yml")["jobs"]["validate-contract-package"]["steps"]
         proof_run = next(step["run"] for step in steps if step.get("name") == DENIAL_PROOF_NAME)
     checkouts = 0
@@ -1363,6 +1365,8 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
             expected_env["PROTECTED_COMPARE_SHAS"] = COMPARED_COMMITS[(name, job_name)]
         if scoped:
             expected_env["PROTECTED_FROZEN_PATH"] = '${{ env.ODP_FROZEN_REVIEW_PATH }}'
+        elif runtime_release:
+            expected_env["PROTECTED_FROZEN_PATH"] = RUNTIME_RELEASE_FROZEN_PATH
         if following.get("env") != expected_env:
             violations.append(f"{here}: denial proof must judge repository configuration and every compared commit")
         for step in guarded:
@@ -1383,7 +1387,11 @@ def protected_checkout_violations(name: str, workflow: dict[str, Any]) -> list[s
             violations.append(f"{here}: checkout ref changed: {inputs.get('ref')!r}")
         if inputs.get("sparse-checkout-cone-mode") is not False:
             violations.append(f"{here}: sparse checkout must stay non-cone")
-        required_rules = DENY_PATTERNS + (FROZEN_REVIEW_RULES if scoped else [])
+        required_rules = DENY_PATTERNS
+        if scoped:
+            required_rules = required_rules + FROZEN_REVIEW_RULES
+        elif runtime_release:
+            required_rules = required_rules + [f"!/{RUNTIME_RELEASE_FROZEN_PATH}", f"!/{RUNTIME_RELEASE_FROZEN_PATH}/**"]
         if str(inputs.get("sparse-checkout") or "").splitlines() != required_rules:
             violations.append(f"{here}: deny patterns changed")
         if (name, job_name) == ("ci.yml", "orchestrator") and inputs.get("fetch-depth") != FROZEN_REVIEW_HISTORY:
@@ -1581,6 +1589,12 @@ def _mutated_job(name: str, job: str, mutate: Any) -> list[str]:
         ("proof after identity removed", "deploy-dev.yml", "deploy", lambda s: s.pop(3)),
         ("deploy proof skipped", "deploy-dev.yml", "deploy", lambda s: s[3].update({"continue-on-error": True})),
         ("deploy deny weakened", "deploy-dev.yml", "deploy", lambda s: s[1]["with"].update({"sparse-checkout": "/*\n"})),
+        ("release frozen proof input dropped", "deploy-dev.yml", "build",
+         lambda s: s[3]["env"].pop("PROTECTED_FROZEN_PATH")),
+        ("release frozen sparse rule dropped", "deploy-dev.yml", "staging_retained_cleanup",
+         lambda s: s[1]["with"].update({"sparse-checkout": "\n".join(DENY_PATTERNS) + "\n"})),
+        ("release frozen proof diverged", "deploy-dev.yml", "staging_retained_cleanup",
+         lambda s: s[3].update({"run": s[3]["run"] + "# drift\n"})),
         ("deploy rest tarball", "deploy-dev.yml", "deploy",
          lambda s: s.append({"name": "x", "run": "gh api repos/o/r/tarball/main > a.tgz"})),
         ("queue ref dropped", "merge-queue-review-gate.yml", "review-gate", lambda s: s[1]["with"].pop("ref")),
@@ -2182,3 +2196,33 @@ def test_denial_proof_refuses_unsafe_ancestor_and_gitlink_trees(checkout_fixture
     _commit_with_entry(fixture, f"{tooling}\n040000 tree {inner}\tguarded")
     fixture.action_checkout(fixture.deny_patterns())
     assert "protected_entry_escape" in fixture.run_proof().stderr
+
+
+def test_runtime_release_frozen_path_stays_out_of_checkout(checkout_fixture: _CheckoutFixture) -> None:
+    """Runtime Release uses the shared frozen proof with its fixed protected path on a local-file checkout."""
+    fixture = checkout_fixture
+    fixture.git(fixture.seed, "switch", "-c", "release-frozen", fixture.clean)
+    frozen = RUNTIME_RELEASE_FROZEN_PATH
+    frozen_oid = fixture.git(fixture.seed, "hash-object", "-w", "--stdin", stdin="synthetic freeze\n").stdout.strip()
+    fixture.git(fixture.seed, "update-index", "--add", "--cacheinfo", f"100644,{frozen_oid},{frozen}")
+    fixture.git(fixture.seed, "commit", "-qm", "release tracking frozen path")
+    fixture.git(fixture.seed, "push", "-q", str(fixture.origin), "release-frozen")
+
+    steps = load_pr_workflow("deploy-dev.yml")["jobs"]["staging_retained_cleanup"]["steps"]
+    proof = next(step for step in steps if step.get("name") == DENIAL_PROOF_NAME)
+    fixture.action_checkout(steps[1]["with"]["sparse-checkout"].splitlines(), ref="release-frozen")
+    assert fixture.git(fixture.checkout, "ls-files", "-t", "--", frozen).stdout.strip() == f"S {frozen}"
+    assert frozen_oid not in fixture.local_objects()
+    assert not os.path.lexists(fixture.checkout / frozen)
+
+    env = {**os.environ, **proof["env"]}
+    env.pop("PROTECTED_COMPARE_SHAS", None)
+    args = ["bash", "-e", "-c", proof["run"]]
+    result = subprocess.run(args, cwd=fixture.checkout, env=env, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert frozen_oid not in fixture.local_objects()
+    assert not os.path.lexists(fixture.checkout / frozen)
+
+    without_frozen_env = {key: value for key, value in env.items() if key != "PROTECTED_FROZEN_PATH"}
+    refused = subprocess.run(args, cwd=fixture.checkout, env=without_frozen_env, capture_output=True, text=True, check=False)
+    assert refused.returncode != 0
