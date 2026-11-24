@@ -190,3 +190,99 @@ def test_pinned_operations_never_dispatch_invalid_generation(binding, generation
         getattr(NativeAssistedSnapshotProcessTransport(guard=lambda: None, runner=fake), operation)(
             binding, key(), generation, deadline=time.monotonic() + 1)
     assert not fake.calls
+
+
+def _geo_key():
+    from modules.external_data.application.native_assisted_snapshot_transport import (
+        GEOCODE_JSON_PURPOSE,
+        native_json_snapshot_object_key,
+    )
+
+    return native_json_snapshot_object_key(GEOCODE_JSON_PURPOSE, TENANT, JOB, 1, 2, CAPTURE)
+
+
+def test_geocode_purpose_has_its_own_key_family_and_never_adopts_assisted_or_retrieval(binding):
+    from modules.external_data.application.native_assisted_snapshot_transport import (
+        ASSISTED_JSON_PURPOSE,
+        GEOCODE_JSON_PURPOSE,
+        bound_json_key,
+    )
+
+    geo = _geo_key()
+    assert "/native-intake-geocode/" in geo and geo != key()
+    bound_json_key(GEOCODE_JSON_PURPOSE, binding, geo)
+    proof = NativeAssistedSnapshotObjectMetadata.from_provider(
+        {**metadata(binding), "name": geo}, binding, geo, purpose=GEOCODE_JSON_PURPOSE)
+    assert proof.uri.endswith(geo)
+    expected = hashlib.sha256(RAW).hexdigest()
+    assert NativeVerifiedAssistedSnapshot.from_download(
+        RAW, proof, expected_sha256=expected, purpose=GEOCODE_JSON_PURPOSE).content_sha256 == expected
+    retrieval = native_snapshot_object_key(TENANT, JOB, 1, 2, CAPTURE)
+    for purpose, other in ((GEOCODE_JSON_PURPOSE, key()), (GEOCODE_JSON_PURPOSE, retrieval),
+                           (ASSISTED_JSON_PURPOSE, geo)):
+        with pytest.raises(NativeAssistedSnapshotProofRejected):
+            bound_json_key(purpose, binding, other)
+        with pytest.raises(NativeAssistedSnapshotProofRejected):
+            NativeAssistedSnapshotObjectMetadata.from_provider(
+                {**metadata(binding), "name": other}, binding, other, purpose=purpose)
+    with pytest.raises(NativeAssistedSnapshotProofRejected, match="NATIVE_GEOCODE_SNAPSHOT_PROOF_REJECTED"):
+        bound_json_key(GEOCODE_JSON_PURPOSE, binding, key())
+    with pytest.raises(NativeAssistedSnapshotProofRejected):
+        NativeVerifiedAssistedSnapshot.from_download(RAW, proof, expected_sha256=expected)
+    with pytest.raises(NativeAssistedSnapshotProofRejected, match="PURPOSE_REJECTED"):
+        bound_json_key(replace(GEOCODE_JSON_PURPOSE), binding, geo)
+
+
+class GeoFakeRunner(FakeRunner):
+    def run(self, request, **kwargs):
+        self.calls.append((request, kwargs))
+        operation = request["operation"]
+        if operation == "gcs_geocode_bucket":
+            return {"kind": "storage#bucket", "name": self.binding.bucket,
+                    "location": "ASIA-EAST1", "locationType": "region"}
+        if operation in {"gcs_geocode_upload", "gcs_geocode_head"}:
+            return {**metadata(self.binding), "name": _geo_key()}
+        if operation == "gcs_geocode_download":
+            return {"body_base64": base64.b64encode(RAW).decode("ascii")}
+        if operation == "gcs_geocode_delete":
+            return {}
+        pytest.fail("Unknown operation")
+
+
+def test_geocode_transport_uses_geo_operations_and_only_its_own_credential(binding, monkeypatch):
+    from modules.external_data.application.native_assisted_snapshot_transport import (
+        GEOCODE_JSON_PURPOSE,
+    )
+
+    fake = GeoFakeRunner(binding)
+    transport = NativeAssistedSnapshotProcessTransport(guard=lambda: None, runner=fake,
+                                                       purpose=GEOCODE_JSON_PURPOSE)
+    monkeypatch.setenv(ASSISTED_STORAGE_CREDENTIAL_ENV, "assisted-only")
+    monkeypatch.delenv(GEOCODE_JSON_PURPOSE.credential_env, raising=False)
+    deadline = time.monotonic() + 1
+    with pytest.raises(NativeIORejected, match="NATIVE_GCS_GEOCODE_CREDENTIAL_UNAVAILABLE"):
+        transport.bucket_info(binding, deadline=deadline)
+    assert fake.calls == []
+    monkeypatch.setenv(GEOCODE_JSON_PURPOSE.credential_env, "geocode-storage")
+    transport.bucket_info(binding, deadline=deadline)
+    assert transport.upload_with_kms_if_absent(binding, _geo_key(), RAW, "application/json",
+                                               deadline=deadline).generation == 7
+    transport.head_version(binding, _geo_key(), 7, deadline=deadline)
+    assert transport.download_version_bounded(binding, _geo_key(), 7, deadline=deadline) == RAW
+    transport.delete_exact_generation(binding, _geo_key(), 7, deadline=deadline)
+    assert [c[0]["operation"] for c in fake.calls] == ["gcs_geocode_bucket", "gcs_geocode_upload",
+        "gcs_geocode_head", "gcs_geocode_download", "gcs_geocode_delete"]
+    assert {c[1]["credential"] for c in fake.calls} == {"geocode-storage"}
+    with pytest.raises(NativeAssistedSnapshotProofRejected):
+        transport.upload_with_kms_if_absent(binding, key(), RAW, "application/json", deadline=deadline)
+    assert len(fake.calls) == 5
+
+
+def test_unknown_json_purpose_is_refused_before_any_dispatch(binding):
+    from modules.external_data.application.native_assisted_snapshot_transport import (
+        GEOCODE_JSON_PURPOSE,
+    )
+
+    with pytest.raises(NativeIORejected, match="NATIVE_IO_PROTOCOL_REJECTED"):
+        NativeAssistedSnapshotProcessTransport(guard=lambda: None, runner=GeoFakeRunner(binding),
+                                               purpose=replace(GEOCODE_JSON_PURPOSE, name="OTHER"))

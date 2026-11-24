@@ -201,3 +201,63 @@ c.main()
         os.kill(process.pid, 0)
     if pid_file.exists():
         assert int(pid_file.read_text()) == process.pid
+
+
+GEO_KEY = KEY.replace("/native-intake-assisted-entry/", "/native-intake-geocode/")
+
+
+def _json_call(monkeypatch, command):
+    calls = []
+    response = Response(200, json.dumps({"kind": "storage#object", "name": command.get("key"), "bucket": BUCKET,
+        "generation": "7", "size": "3", "contentType": "application/json"}).encode(), {})
+    connection = SimpleNamespace(sock=SimpleNamespace(settimeout=lambda value: None),
+        request=lambda *a, **k: calls.append((a, k)), getresponse=lambda: response, close=lambda: None)
+    monkeypatch.setattr(child, "_connection", lambda *a: connection)
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, b"geocode-storage-token")
+    os.close(write_fd)
+    try:
+        result = child.json_gcs_operation({"bucket": BUCKET, "timeout_seconds": 1, **command},
+                                          time.monotonic() + 1, read_fd)
+    finally:
+        try:
+            os.close(read_fd)
+        except OSError:
+            pass
+    return result, calls
+
+
+def test_geocode_json_family_uses_only_its_own_key_namespace(monkeypatch):
+    result, calls = _json_call(monkeypatch, {"operation": "gcs_geocode_head", "key": GEO_KEY, "generation": 7})
+    assert result["name"] == GEO_KEY and len(calls) == 1
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer geocode-storage-token"
+    for operation, other in (("gcs_geocode_head", KEY), ("gcs_assisted_head", GEO_KEY),
+                             ("gcs_geocode_head", KEY.replace("/native-intake-assisted-entry/", "/native-intake-retrieval/"))):
+        monkeypatch.setattr(child, "_connection", lambda *a: pytest.fail("must not connect"))
+        with pytest.raises(child.ChildRejected) as error:
+            child.json_gcs_operation({"operation": operation, "bucket": BUCKET, "timeout_seconds": 1,
+                                      "key": other, "generation": 7}, time.monotonic() + 1, None)
+        assert error.value.code == "NATIVE_GCS_BINDING_REJECTED"
+
+
+def test_assisted_entry_point_never_runs_geocode_or_retrieval_operations(monkeypatch):
+    monkeypatch.setattr(child, "_connection", lambda *a: pytest.fail("must not connect"))
+    for operation in ("gcs_geocode_head", "gcs_head"):
+        with pytest.raises(child.ChildRejected) as error:
+            child.assisted_gcs_operation({"operation": operation, "bucket": BUCKET, "timeout_seconds": 1,
+                                          "key": GEO_KEY, "generation": 7}, time.monotonic() + 1, None)
+        assert error.value.code == "NATIVE_IO_PROTOCOL_REJECTED"
+
+
+def test_geocode_json_upload_keeps_json_media_and_create_only(monkeypatch):
+    result, calls = _json_call(monkeypatch, {"operation": "gcs_geocode_upload", "key": GEO_KEY,
+        "body_base64": base64.b64encode(b"{}x").decode(), "media_type": "application/json", "kms_key_name": KMS})
+    (method, target), kwargs = calls[0]
+    query = parse_qs(urlsplit(target).query)
+    assert method == "POST" and query["ifGenerationMatch"] == ["0"] and query["name"] == [GEO_KEY]
+    monkeypatch.setattr(child, "_connection", lambda *a: pytest.fail("must not connect"))
+    with pytest.raises(child.ChildRejected) as error:
+        child.json_gcs_operation({"operation": "gcs_geocode_upload", "bucket": BUCKET, "timeout_seconds": 1,
+            "key": GEO_KEY, "body_base64": "e30=", "media_type": "text/html", "kms_key_name": KMS},
+            time.monotonic() + 1, None)
+    assert error.value.code == "NATIVE_GCS_BINDING_REJECTED"

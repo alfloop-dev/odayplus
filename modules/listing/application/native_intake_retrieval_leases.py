@@ -36,9 +36,26 @@ class NativeRetrievalLeaseProof:
 
 
 class NativeRetrievalCompositeLeases:
+    """Dual physical/business lease renewal for one purpose-bound native job.
+
+    Retrieval is the default purpose. Another native IO phase (Geo) supplies
+    its own job type, authenticator and current-policy digest; the fenced
+    renewal, pause/join and IO guard stay this single implementation.
+    """
+
+    job_type = JOB_TYPE
+    thread_name = "native-retrieval-dual-leases"
+
+    @staticmethod
+    def _authenticator():
+        return NativeIntakeRetrievalAuthenticator()
+
+    def _current_policy_sha256(self) -> str:
+        return native_intake_retrieval_policy(self.tenant).sha256
+
     def __init__(self, graph, delivery, *, business_fence: int, policy_sha256: str):
         self.graph, self.engine, self.queue, self.delivery = graph, graph.engine, graph.queue, delivery
-        self.tenant, self.generation = NativeIntakeRetrievalAuthenticator().decode(delivery)
+        self.tenant, self.generation = self._authenticator().decode(delivery)
         if type(business_fence) is not int or business_fence < 1:
             raise JobFenceRejectedError("NATIVE_RETRIEVAL_BUSINESS_FENCE_REQUIRED")
         self.business_fence, self.policy_sha256 = business_fence, policy_sha256
@@ -60,12 +77,12 @@ class NativeRetrievalCompositeLeases:
                                        (self.tenant, self.delivery.job_id))
             now = _time(self.engine.query_one("SELECT clock_timestamp() AS now")["now"])
             payload = business["payload"]
-            if (physical is None or physical.status != JobStatus.RUNNING or physical.job_type != JOB_TYPE
+            if (physical is None or physical.status != JobStatus.RUNNING or physical.job_type != self.job_type
                     or physical.payload != self.delivery.payload or physical.locked_by != self.delivery.locked_by
                     or not physical.locked_by or physical.fence_token != self.delivery.fence_token
                     or physical.correlation_id != self.delivery.correlation_id
                     or physical.lease_expires_at is None or physical.lease_expires_at <= now
-                    or business["job_type"] != JOB_TYPE or business["status"] != "RUNNING"
+                    or business["job_type"] != self.job_type or business["status"] != "RUNNING"
                     or business["result"] is not None or business["fence_token"] != self.business_fence
                     or business["cancellation_requested_at"] is not None
                     or business["lease_expires_at"] is None or _time(business["lease_expires_at"]) <= now
@@ -74,7 +91,7 @@ class NativeRetrievalCompositeLeases:
                     or payload.get("accepted_delivery_fence") != physical.fence_token
                     or payload.get("accepted_worker") != physical.locked_by
                     or canonical_sha256(payload["policy"]) != self.policy_sha256
-                    or native_intake_retrieval_policy(self.tenant).sha256 != self.policy_sha256):
+                    or self._current_policy_sha256() != self.policy_sha256):
                 raise JobFenceRejectedError("NATIVE_RETRIEVAL_DUAL_LEASE_NOT_OWNED")
             version = self.queue.heartbeat(self.delivery.job_id, expected_version=physical.version,
                                            fence_token=physical.fence_token)
@@ -121,7 +138,7 @@ class NativeRetrievalCompositeLeases:
             raise JobFenceRejectedError("NATIVE_RETRIEVAL_DUAL_HEARTBEAT_LOST") from failure
         self._renew()
         self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="native-retrieval-dual-leases", daemon=True)
+        self._thread = threading.Thread(target=self._run, name=self.thread_name, daemon=True)
         self._thread.start()
 
     def pause(self):

@@ -283,3 +283,99 @@ def test_untrusted_transport_reply_media_is_fail_closed(media):
     transport = NativeHttpProcessTransport(SimpleNamespace(run=lambda *a, **k: result))
     with pytest.raises(NativeIORejected, match="NATIVE_IO_PROTOCOL_REJECTED"):
         transport.fetch_hop("https://public.example/", deadline=time.monotonic() + 1, guard=lambda: None)
+
+
+@pytest.mark.parametrize("command,credential", [
+    ({"operation": "geocode_post"}, None),
+    ({"operation": "geocode_post"}, "x\nheader"),
+    ({"operation": "http_hop"}, "geocode-key"),
+])
+def test_geocode_post_requires_and_http_hop_refuses_the_private_credential(command, credential, monkeypatch):
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **k: pytest.fail("must not spawn"))
+    with pytest.raises(NativeIORejected, match="NATIVE_IO_CREDENTIAL_CHANNEL_REJECTED"):
+        NativeIntakeProcessRunner().run(command, credential=credential,
+                                       deadline=time.monotonic() + 2, guard=lambda: None)
+
+
+def _geocode_request(**overrides):
+    request = {"operation": "geocode_post", "timeout_seconds": 1, "url": "https://geocode.example/v1?region=tw",
+               "correlation_id": "corr-geo-1", "body_base64": base64.b64encode(b'{"address":"x"}').decode()}
+    request.update(overrides)
+    return request
+
+
+def _credential_pipe(value=b"geocode-key"):
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, value)
+    os.close(write_fd)
+    return read_fd
+
+
+def test_real_geocode_child_reads_key_from_private_pipe_and_still_refuses_private_hosts():
+    with pytest.raises(NativeIORejected, match="NATIVE_HTTP_ADDRESS_REJECTED"):
+        request = _geocode_request(url="https://127.0.0.1/v1")
+        del request["timeout_seconds"]
+        NativeIntakeProcessRunner().run(request, credential="geocode-key",
+                                       deadline=time.monotonic() + 2, guard=lambda: None)
+
+
+def test_geocode_post_sends_key_only_as_api_key_header_and_returns_json(monkeypatch):
+    response = Response(200, {"Content-Type": "application/json; charset=utf-8"}, b'{"result":{}}')
+    calls = http_fixture(monkeypatch, response)
+    result = child.geocode_post(_geocode_request(), time.monotonic() + 1, _credential_pipe())
+    assert result == {"status": 200, "media_type": "application/json",
+                      "body_base64": base64.b64encode(b'{"result":{}}').decode()}
+    (method, target), kwargs = calls[0]
+    assert method == "POST" and target == "/v1?region=tw" and kwargs["body"] == b'{"address":"x"}'
+    headers = kwargs["headers"]
+    assert headers["X-API-Key"] == "geocode-key" and headers["X-Correlation-Id"] == "corr-geo-1"
+    assert headers["Host"] == "geocode.example" and headers["Accept-Encoding"] == "identity"
+    assert not {"Authorization", "Cookie", "Proxy-Authorization"} & headers.keys()
+
+
+@pytest.mark.parametrize("status", [301, 302, 307, 308, 401, 429, 503])
+def test_geocode_post_never_follows_redirects_or_reads_error_bodies(monkeypatch, status):
+    response = Response(status, {"Location": "https://other.example/", "Content-Type": "application/json"}, b"secret")
+    calls = http_fixture(monkeypatch, response)
+    result = child.geocode_post(_geocode_request(), time.monotonic() + 1, _credential_pipe())
+    assert result == {"status": status, "media_type": None, "body_base64": ""}
+    assert len(calls) == 1 and response.read_calls == 0
+
+
+@pytest.mark.parametrize("overrides,code", [
+    ({"url": "http://geocode.example/v1"}, "NATIVE_HTTP_URL_REJECTED"),
+    ({"url": "https://geocode.example:8443/v1"}, "NATIVE_HTTP_URL_REJECTED"),
+    ({"url": "https://user:pw@geocode.example/v1"}, "NATIVE_HTTP_URL_REJECTED"),
+    ({"url": "https://geocode.example/v1#x"}, "NATIVE_HTTP_URL_REJECTED"),
+    ({"correlation_id": "bad\nheader"}, "NATIVE_IO_PROTOCOL_REJECTED"),
+    ({"body_base64": ""}, "NATIVE_IO_LENGTH_REJECTED"),
+    ({"body_base64": base64.b64encode(b"x" * 65537).decode()}, "NATIVE_IO_LENGTH_REJECTED"),
+    ({"headers": {"Authorization": "x"}}, "NATIVE_IO_PROTOCOL_REJECTED"),
+])
+def test_geocode_post_closed_protocol_rejects_before_connecting(monkeypatch, overrides, code):
+    monkeypatch.setattr(child, "_connection", lambda *a: pytest.fail("must not connect"))
+    with pytest.raises(child.ChildRejected) as error:
+        child.geocode_post(_geocode_request(**overrides), time.monotonic() + 1, _credential_pipe())
+    assert error.value.code == code
+
+
+@pytest.mark.parametrize("headers,body,code", [
+    ({"Content-Type": "text/html"}, b"<html>", "NATIVE_HTTP_MEDIA_TYPE_REJECTED"),
+    ({"Content-Type": "application/json", "Content-Encoding": "gzip"}, b"zip", "NATIVE_IO_ENCODING_REJECTED"),
+    ({"Content-Type": "application/json"}, b"x" * 512001, "NATIVE_IO_LENGTH_REJECTED"),
+    ({"Content-Type": "application/json"}, b"", "NATIVE_IO_LENGTH_REJECTED"),
+])
+def test_geocode_post_response_caps_and_media_are_fail_closed(monkeypatch, headers, body, code):
+    http_fixture(monkeypatch, Response(200, headers, body))
+    with pytest.raises(child.ChildRejected) as error:
+        child.geocode_post(_geocode_request(), time.monotonic() + 1, _credential_pipe())
+    assert error.value.code == code
+
+
+def test_geocode_credential_is_not_the_gcs_credential_code():
+    with pytest.raises(child.ChildRejected) as error:
+        child.geocode_post(_geocode_request(), time.monotonic() + 1, None)
+    assert error.value.code == "NATIVE_GEOCODE_CREDENTIAL_UNAVAILABLE"
+    with pytest.raises(child.ChildRejected) as storage:
+        child._storage_token(None)
+    assert storage.value.code == "NATIVE_GCS_CREDENTIAL_UNAVAILABLE"

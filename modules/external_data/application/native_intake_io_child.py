@@ -3,7 +3,9 @@
 This module deliberately imports no product code and launches no descendants.
 The parent owns the wall deadline, leases, permission and process-group cleanup.
 No source-page credential is supported. Only fixed GCS operations may read the
-dedicated storage token from the explicitly inherited private pipe.
+dedicated storage token, and only the closed Geo POST may read the geocode API
+key, from the explicitly inherited private pipe. Neither is ever presented as
+the other's header.
 """
 
 import base64
@@ -38,10 +40,15 @@ _ASSISTED_KEY = re.compile(
     rf"tenants/{_ASSISTED_UUID}/native-intake-assisted-entry/{_ASSISTED_UUID}/"
     rf"[1-9][0-9]{{0,18}}/[1-9][0-9]{{0,18}}/{_ASSISTED_UUID}/raw\Z"
 )
-_ASSISTED_GCS_OPERATIONS = frozenset({
-    "gcs_assisted_bucket", "gcs_assisted_upload", "gcs_assisted_head",
-    "gcs_assisted_download", "gcs_assisted_delete",
-})
+_GEOCODE_KEY = re.compile(
+    rf"tenants/{_ASSISTED_UUID}/native-intake-geocode/{_ASSISTED_UUID}/"
+    rf"[1-9][0-9]{{0,18}}/[1-9][0-9]{{0,18}}/{_ASSISTED_UUID}/raw\Z"
+)
+# Closed JSON evidence purposes: operation family -> its own object-key family.
+_JSON_GCS_FAMILIES = {"gcs_assisted_": _ASSISTED_KEY, "gcs_geocode_": _GEOCODE_KEY}
+_JSON_GCS_VERBS = ("bucket", "upload", "head", "download", "delete")
+_ASSISTED_GCS_OPERATIONS = frozenset("gcs_assisted_" + verb for verb in _JSON_GCS_VERBS)
+_JSON_GCS_OPERATIONS = frozenset(prefix + verb for prefix in _JSON_GCS_FAMILIES for verb in _JSON_GCS_VERBS)
 
 class ChildRejected(ValueError):
     def __init__(self, code, status=None):
@@ -160,9 +167,9 @@ def http_hop(request, deadline):
         connection.close()
 
 
-def _storage_token(descriptor):
+def _private_credential(descriptor, code):
     if type(descriptor) is not int or descriptor < 3:
-        raise ChildRejected("NATIVE_GCS_CREDENTIAL_UNAVAILABLE")
+        raise ChildRejected(code)
     try:
         chunks, size = [], 0
         while True:
@@ -172,13 +179,17 @@ def _storage_token(descriptor):
             chunks.append(block)
             size += len(block)
             if size > 8192:
-                raise ChildRejected("NATIVE_GCS_CREDENTIAL_UNAVAILABLE")
+                raise ChildRejected(code)
         token = b"".join(chunks).decode("ascii")
         if not token or any(ord(c) < 33 or ord(c) > 126 for c in token):
-            raise ChildRejected("NATIVE_GCS_CREDENTIAL_UNAVAILABLE")
+            raise ChildRejected(code)
         return token
     finally:
         os.close(descriptor)
+
+
+def _storage_token(descriptor):
+    return _private_credential(descriptor, "NATIVE_GCS_CREDENTIAL_UNAVAILABLE")
 
 
 def _generation(value):
@@ -250,20 +261,36 @@ def gcs_operation(request, deadline, descriptor):
 
 
 def assisted_gcs_operation(request, deadline, descriptor):
+    if request.get("operation") not in _ASSISTED_GCS_OPERATIONS:
+        raise ChildRejected("NATIVE_IO_PROTOCOL_REJECTED")
+    return json_gcs_operation(request, deadline, descriptor)
+
+
+def json_gcs_operation(request, deadline, descriptor):
+    """Fixed GCS mechanics for one closed JSON purpose family.
+
+    The operation prefix selects only the purpose's own key family; a key,
+    operation or credential of one purpose is never accepted as another.
+    """
     operation = request["operation"]
+    if not isinstance(operation, str) or operation not in _JSON_GCS_OPERATIONS:
+        raise ChildRejected("NATIVE_IO_PROTOCOL_REJECTED")
+    prefix = next(p for p in _JSON_GCS_FAMILIES if operation.startswith(p))
+    verb = operation[len(prefix):]
+    key_family = _JSON_GCS_FAMILIES[prefix]
     common = {"operation", "timeout_seconds", "bucket"}
-    extra = {"gcs_assisted_bucket": set(), "gcs_assisted_upload": {"key", "body_base64", "media_type", "kms_key_name"},
-        "gcs_assisted_head": {"key", "generation"}, "gcs_assisted_download": {"key", "generation"}, "gcs_assisted_delete": {"key", "generation"}}
-    if operation not in extra or set(request) != common | extra[operation]:
+    extra = {"bucket": set(), "upload": {"key", "body_base64", "media_type", "kms_key_name"},
+        "head": {"key", "generation"}, "download": {"key", "generation"}, "delete": {"key", "generation"}}
+    if set(request) != common | extra[verb]:
         raise ChildRejected("NATIVE_IO_PROTOCOL_REJECTED")
     bucket = request["bucket"]
     if not isinstance(bucket, str) or not _BUCKET.fullmatch(bucket) or ".." in bucket:
         raise ChildRejected("NATIVE_GCS_BINDING_REJECTED")
     path, query, method, body = "/storage/v1/b/" + quote(bucket, safe=""), {}, "GET", None
     media_type = "application/json"
-    if operation != "gcs_assisted_bucket":
+    if verb != "bucket":
         key = request["key"]
-        if not isinstance(key, str) or not _ASSISTED_KEY.fullmatch(key):
+        if not isinstance(key, str) or not key_family.fullmatch(key):
             raise ChildRejected("NATIVE_GCS_BINDING_REJECTED")
         parts = key.split("/")
         if any(not UUID(parts[index]).int for index in (1, 3, 6)):
@@ -271,7 +298,7 @@ def assisted_gcs_operation(request, deadline, descriptor):
         _generation(int(parts[4]))
         _generation(int(parts[5]))
         path += "/o/" + quote(key, safe="")
-        if operation == "gcs_assisted_upload":
+        if verb == "upload":
             if not isinstance(request["media_type"], str) or request["media_type"] not in ASSISTED_JSON_MEDIA or not isinstance(request["kms_key_name"], str) or not _KMS.fullmatch(request["kms_key_name"]):
                 raise ChildRejected("NATIVE_GCS_BINDING_REJECTED")
             body = base64.b64decode(request["body_base64"], validate=True)
@@ -281,11 +308,11 @@ def assisted_gcs_operation(request, deadline, descriptor):
             query = {"uploadType": "media", "name": key, "ifGenerationMatch": "0", "kmsKeyName": request["kms_key_name"]}
         elif request["generation"] is not None:
             query["generation"] = str(_generation(request["generation"]))
-        elif operation != "gcs_assisted_head":
+        elif verb != "head":
             raise ChildRejected("NATIVE_GCS_GENERATION_REJECTED")
-        if operation == "gcs_assisted_download":
+        if verb == "download":
             query["alt"] = "media"
-        elif operation == "gcs_assisted_delete":
+        elif verb == "delete":
             method = "DELETE"
             query["ifGenerationMatch"] = str(_generation(request["generation"]))
     token = _storage_token(descriptor)
@@ -296,12 +323,12 @@ def assisted_gcs_operation(request, deadline, descriptor):
             "Accept-Encoding": "identity", "Content-Type": media_type, "Connection": "close"})
         connection.sock.settimeout(_remaining(deadline))
         response = connection.getresponse()
-        if response.status not in ({204} if operation == "gcs_assisted_delete" else {200}):
+        if response.status not in ({204} if verb == "delete" else {200}):
             raise ChildRejected("NATIVE_GCS_HTTP_REJECTED", response.status)
-        if operation == "gcs_assisted_delete":
+        if verb == "delete":
             return {}
-        raw = _content(response, connection, deadline, MAX_CONTENT if operation == "gcs_assisted_download" else MAX_JSON)
-        if operation == "gcs_assisted_download":
+        raw = _content(response, connection, deadline, MAX_CONTENT if verb == "download" else MAX_JSON)
+        if verb == "download":
             actual = response.getheader("x-goog-generation")
             if actual is not None and actual != str(request["generation"]):
                 raise ChildRejected("NATIVE_GCS_GENERATION_REJECTED")
@@ -309,11 +336,68 @@ def assisted_gcs_operation(request, deadline, descriptor):
         metadata = json.loads(raw)
         if not isinstance(metadata, dict):
             raise ChildRejected("NATIVE_GCS_METADATA_REJECTED")
-        fields = ("kind", "name", "location", "locationType") if operation == "gcs_assisted_bucket" else (
+        fields = ("kind", "name", "location", "locationType") if verb == "bucket" else (
             "kind", "name", "bucket", "generation", "size", "contentType", "contentEncoding", "kmsKeyName")
         return {key: metadata[key] for key in fields if key in metadata}
     finally:
         connection.close()
+
+GEOCODE_JSON_MEDIA = frozenset({"application/json"})
+_CORRELATION = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
+
+
+def geocode_post(request, deadline, descriptor):
+    """One closed Geo JSON POST; the parent client owns body/status semantics.
+
+    HTTPS on the default port only, fixed non-secret headers, the API key read
+    from the private pipe into ``X-API-Key`` only, and never a redirect hop.
+    A non-200 status is returned without reading its body.
+    """
+    if set(request) != {"operation", "timeout_seconds", "url", "correlation_id", "body_base64"}:
+        raise ChildRejected("NATIVE_IO_PROTOCOL_REJECTED")
+    url = request["url"]
+    if (not isinstance(url, str) or not 1 <= len(url) <= 4096 or not url.isascii()
+            or any(ord(c) < 33 or ord(c) == 127 for c in url) or "\\" in url):
+        raise ChildRejected("NATIVE_HTTP_URL_REJECTED")
+    parsed = urlsplit(url)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
+            or parsed.password is not None or parsed.fragment or "%" in parsed.hostname
+            or (parsed.port or 443) != 443):
+        raise ChildRejected("NATIVE_HTTP_URL_REJECTED")
+    correlation = request["correlation_id"]
+    if not isinstance(correlation, str) or not _CORRELATION.fullmatch(correlation):
+        raise ChildRejected("NATIVE_IO_PROTOCOL_REJECTED")
+    if not isinstance(request["body_base64"], str):
+        raise ChildRejected("NATIVE_IO_PROTOCOL_REJECTED")
+    body = base64.b64decode(request["body_base64"], validate=True)
+    if not 1 <= len(body) <= MAX_JSON:
+        raise ChildRejected("NATIVE_IO_LENGTH_REJECTED")
+    key = _private_credential(descriptor, "NATIVE_GEOCODE_CREDENTIAL_UNAVAILABLE")
+    host = parsed.hostname
+    target = (parsed.path or "/") + ("?" + parsed.query if parsed.query else "")
+    connection = _connection(host, 443, True, deadline)
+    try:
+        host_header = "[" + host + "]" if ":" in host else host
+        connection.request("POST", target, body=body, headers={"Host": host_header,
+            "Accept": "application/json", "Content-Type": "application/json",
+            "Accept-Encoding": "identity", "X-Correlation-Id": correlation,
+            "X-API-Key": key, "User-Agent": "ODay-Native-Intake/1", "Connection": "close"})
+        connection.sock.settimeout(_remaining(deadline))
+        response = connection.getresponse()
+        status = response.status
+        if status != 200:
+            return {"status": status, "media_type": None, "body_base64": ""}
+        media_type = response.getheader("Content-Type", "").split(";", 1)[0].strip().lower()
+        if media_type not in GEOCODE_JSON_MEDIA:
+            raise ChildRejected("NATIVE_HTTP_MEDIA_TYPE_REJECTED")
+        raw = _content(response, connection, deadline, MAX_CONTENT)
+        if not raw:
+            raise ChildRejected("NATIVE_IO_LENGTH_REJECTED")
+        return {"status": status, "media_type": media_type,
+            "body_base64": base64.b64encode(raw).decode("ascii")}
+    finally:
+        connection.close()
+
 
 def main():
     try:
@@ -334,8 +418,10 @@ def main():
         deadline = time.monotonic() + timeout
         if request.get("operation") == "http_hop" and descriptor is None:
             result = http_hop(request, deadline)
-        elif isinstance(request.get("operation"), str) and request["operation"] in _ASSISTED_GCS_OPERATIONS:
-            result = assisted_gcs_operation(request, deadline, descriptor)
+        elif request.get("operation") == "geocode_post" and descriptor is not None:
+            result = geocode_post(request, deadline, descriptor)
+        elif isinstance(request.get("operation"), str) and request["operation"] in _JSON_GCS_OPERATIONS:
+            result = json_gcs_operation(request, deadline, descriptor)
         elif isinstance(request.get("operation"), str) and request["operation"].startswith("gcs_"):
             result = gcs_operation(request, deadline, descriptor)
         else:

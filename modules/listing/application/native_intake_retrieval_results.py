@@ -42,12 +42,19 @@ _SNAPSHOT_FIELDS = (
 )
 
 
-def dead_letter(owner, job, payload, code, at, *, checkpoint, version, attempt=None):
+def dead_letter(owner, job, payload, code, at, *, checkpoint, version, attempt=None,
+                job_type=JOB_TYPE, causation=None):
+    """Emit the catalogued dead-letter event for one native IO job purpose.
+
+    Retrieval is caused by its parent event; another purpose (Geo) passes its
+    own job type and causation explicitly.
+    """
     owner.graph._outbox(DomainEvent(event_type="job.dead_lettered", producer="job_platform",
         tenant_id=job["tenant_id"], aggregate_type="job", aggregate_id=job["job_id"], aggregate_version=version,
         partition_key=job["tenant_id"] + ":" + job["job_id"], correlation_id=job["correlation_id"],
-        causation_id=payload["event_id"], actor_ref=JOB_TYPE, occurred_at=at, schema_ref="#/payloads/JobDeadLetteredV1",
-        sensitive_fields=["payload.last_error_details"], payload={"job_id": job["job_id"], "job_type": JOB_TYPE,
+        causation_id=payload["event_id"] if causation is None else causation, actor_ref=job_type, occurred_at=at,
+        schema_ref="#/payloads/JobDeadLetteredV1",
+        sensitive_fields=["payload.last_error_details"], payload={"job_id": job["job_id"], "job_type": job_type,
             "checkpoint": checkpoint, "attempt": job["attempt"] if attempt is None else attempt, "error_code": code,
             "dead_lettered_at": at.isoformat(), "last_error_details": {"error_class": "NativeRetrievalFailure"}}))
 

@@ -356,3 +356,94 @@ def test_actual_background_cancellation_stops_io_guard_without_renewing_a_revoke
         job = graph._one("SELECT status,cancellation_requested_at FROM workflow.jobs WHERE job_id=? AND tenant_id=?",
                          (delivery.job_id, controller.tenant))
     assert job["status"] == "RUNNING" and job["cancellation_requested_at"] is not None
+
+
+GEO_TENANT = "11111111-1111-4111-8111-111111111111"
+
+
+def _geo_env(monkeypatch, *, source=None, storage=None, tenants=None):
+    from modules.listing.application.native_intake_retrieval_policy import (
+        GEO_BINDING_ENV,
+        GEO_POLICY_ENV,
+    )
+
+    monkeypatch.setenv(GEO_POLICY_ENV, json.dumps({"policy_id": "synthetic-native-geo", "version": 1,
+        "tenant_ids": tenants or [GEO_TENANT], "max_attempts": 2, "deadline_seconds": 60, "backoff_seconds": [5]}))
+    monkeypatch.setenv(GEO_BINDING_ENV, json.dumps({"version": 1, "global_max_concurrency": 2,
+        "source": source or {"source_id": "geo.synthetic-registered", "source_policy_version": 3,
+                             "provider_id": "geocode.primary_api", "source_contract_id": "geocode_result_snapshot"},
+        "storage_bindings": storage if storage is not None else [{"tenant_id": GEO_TENANT, "bucket": "synthetic-native-geocode",
+            "kms_key_name": "projects/test/locations/asia-east1/keyRings/native/cryptoKeys/geocode",
+            "residency_mode": "TW_ONLY", "retention_class": "STANDARD"}]}))
+
+
+def test_geo_policy_is_explicit_closed_and_separate_from_retrieval(monkeypatch):
+    from modules.listing.application.native_intake_retrieval_policy import (
+        GEO_JOB_TYPE,
+        NativeIntakeGeoUnadmitted,
+        native_intake_geo_policy,
+    )
+
+    for name in (POLICY_ENV, STORAGE_ENV):
+        monkeypatch.delenv(name, raising=False)
+    _geo_env(monkeypatch)
+    policy = native_intake_geo_policy(GEO_TENANT)
+    assert GEO_JOB_TYPE != JOB_TYPE
+    assert policy.source.source_id == "geo.synthetic-registered" and policy.source.source_policy_version == 3
+    assert policy.storage.bucket == "synthetic-native-geocode"
+    assert policy.snapshot()["source_binding"]["provider_id"] == "geocode.primary_api"
+    assert len(policy.sha256) == 64
+    # Geo configuration never makes retrieval admissible, and vice versa.
+    with pytest.raises(Exception, match="NATIVE_RETRIEVAL_POLICY_UNAVAILABLE"):
+        native_intake_retrieval_policy(GEO_TENANT)
+    assert NativeIntakeGeoUnadmitted.outcome == "NO_JOB_UNADMITTED"
+
+
+@pytest.mark.parametrize("mutation,code", [
+    ({"source": {"source_id": "geo.x", "source_policy_version": 0, "provider_id": "geocode.primary_api",
+                 "source_contract_id": "geocode_result_snapshot"}}, "NATIVE_GEO_BINDING_UNAVAILABLE"),
+    ({"source": {"source_id": "geo.x", "source_policy_version": 1, "provider_id": "listing.partner_feed",
+                 "source_contract_id": "geocode_result_snapshot"}}, "NATIVE_GEO_BINDING_UNAVAILABLE"),
+    ({"source": {"source_id": "geo.x", "source_policy_version": 1, "provider_id": "geocode.primary_api",
+                 "source_contract_id": "listing_raw_snapshot"}}, "NATIVE_GEO_BINDING_UNAVAILABLE"),
+    ({"source": {"source_id": " ", "source_policy_version": 1, "provider_id": "geocode.primary_api",
+                 "source_contract_id": "geocode_result_snapshot"}}, "NATIVE_GEO_BINDING_UNAVAILABLE"),
+    ({"storage": [{"tenant_id": GEO_TENANT, "bucket": "synthetic-native-geocode", "kms_key_name":
+                   "projects/test/locations/us-east1/keyRings/native/cryptoKeys/geocode",
+                   "residency_mode": "TW_ONLY", "retention_class": "STANDARD"}]}, "NATIVE_GEO_BINDING_UNAVAILABLE"),
+    ({"storage": []}, "NATIVE_GEO_BINDING_UNAVAILABLE"),
+    ({"tenants": ["22222222-2222-4222-8222-222222222222"]}, "NATIVE_GEO_TENANT_NOT_CONFIGURED"),
+])
+def test_geo_policy_partial_or_unknown_configuration_is_typed_unadmitted(monkeypatch, mutation, code):
+    from modules.listing.application.native_intake_retrieval_policy import (
+        NativeIntakeGeoUnadmitted,
+        native_intake_geo_policy,
+    )
+
+    _geo_env(monkeypatch, **mutation)
+    with pytest.raises(NativeIntakeGeoUnadmitted, match=code):
+        native_intake_geo_policy(GEO_TENANT)
+
+
+def test_geo_policy_absent_is_unadmitted_and_signing_key_is_geo_only(monkeypatch):
+    from modules.listing.application.native_intake_retrieval_policy import (
+        GEO_BINDING_ENV,
+        GEO_POLICY_ENV,
+        GEO_SIGNING_KEY_ENV,
+        NativeIntakeGeoAuthenticator,
+        NativeIntakeGeoUnadmitted,
+        native_intake_geo_policy,
+    )
+
+    monkeypatch.delenv(GEO_POLICY_ENV, raising=False)
+    monkeypatch.delenv(GEO_BINDING_ENV, raising=False)
+    with pytest.raises(NativeIntakeGeoUnadmitted, match="NATIVE_GEO_POLICY_UNAVAILABLE"):
+        native_intake_geo_policy(GEO_TENANT)
+    monkeypatch.setenv(SIGNING_KEY_ENV, "test-only-separate-retrieval-key-" * 2)
+    monkeypatch.delenv(GEO_SIGNING_KEY_ENV, raising=False)
+    job = "33333333-3333-4333-8333-333333333333"
+    with pytest.raises(NativeIntakeGeoUnadmitted, match="NATIVE_GEO_SIGNING_KEY_UNAVAILABLE"):
+        NativeIntakeGeoAuthenticator.sign(job, GEO_TENANT, 1)
+    monkeypatch.setenv(GEO_SIGNING_KEY_ENV, "test-only-separate-geocode-key-" * 2)
+    token = NativeIntakeGeoAuthenticator.sign(job, GEO_TENANT, 1)
+    assert token != NativeIntakeRetrievalAuthenticator.sign(job, GEO_TENANT, 1)

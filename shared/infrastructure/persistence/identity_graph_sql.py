@@ -78,7 +78,7 @@ class CanonicalIdentityGraphRepository:
     job_type = "identity-execution"
 
     def __init__(self, engine: Any, queue: Any, audit_sink: Any, *, delivery_authenticator: Any = None,
-                 identity_service_boundary: Any = None) -> None:
+                 identity_service_boundary: Any = None, geo_provider: Any = None) -> None:
         if (getattr(engine, "dialect", None) != "postgresql"
                 or getattr(queue, "_engine", None) is not engine
                 or getattr(getattr(audit_sink, "writer", None), "engine", None) is not engine):
@@ -86,6 +86,9 @@ class CanonicalIdentityGraphRepository:
         self.engine, self.queue, self.audit_sink = engine, queue, audit_sink
         self.delivery_authenticator = delivery_authenticator
         self.identity_service_boundary = identity_service_boundary
+        # The runtime factory injects the existing LIVE Geo adapter; without it
+        # native READY Geo stays NO_JOB_UNADMITTED.
+        self.geo_provider = geo_provider
 
     def delivery_reference(self, delivery: JobRecord) -> dict:
         if self.delivery_authenticator is not None:
@@ -522,6 +525,15 @@ class CanonicalIdentityGraphRepository:
              "EXACT_IDENTITY_EXECUTED" if decision.get("proposer_service_principal") is not None else "HUMAN_CONFIRMATION_EXECUTED",
              decision["reason"], key, intake["version"], aggregate.version, job_id, plan["input_binding"]["source_snapshot_id"],
              case["match_case_id"], intake["correlation_id"], key, at))
+        # Native READY reserves its Geo evidence job in this same unit. Only a
+        # typed pre-reservation refusal leaves identity unchanged with no job.
+        from modules.listing.application.pipeline import NativeIntakeGeoOwner
+
+        NativeIntakeGeoOwner(self).reserve_in_identity_unit(tenant, intake, origin_kind="IDENTITY_DECISION",
+            origin_id=key, ready_transition_id=transition_id, identity_job_id=job_id, listing_id=listing_id, listing_version=listing_version,
+            listing_revision_id=revision_id, property_id=property_id, property_version=property_version,
+            intake_version=aggregate.version, source_snapshot_id=plan["input_binding"]["source_snapshot_id"],
+            parser_run_id=plan["input_binding"]["parser_run_id"])
         mutation = {"property_versions": {property_id: property_version}, "created_edge_ids": edge_ids,
             "created_redirect_ids": [], "candidate_reassignments": [], "listing_id": listing_id,
             "listing_version": listing_version, "listing_revision_id": revision_id, "intake_id": intake["intake_id"],
