@@ -928,3 +928,203 @@ def test_metadata_lock_wait_past_lease_cannot_publish_score(bridge_database, mon
     finally:
         finish_inference.set()
         bundle.engine.close()
+
+
+# ---------------------------------------------------------------------------
+# Native SQL Score Acceptance, Fault Rollback & Lifecycle Tests (Synthetic)
+# ---------------------------------------------------------------------------
+
+
+def test_native_sql_worker_acceptance_commits_before_inference_finishes(intake_db, tmp_path):
+    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from tests.integration.test_intake_score_delivery_postgresql import _approve_native_score
+    from tests.integration.test_operator_intake_promotion_postgresql import (
+        _claim_native_score_job,
+        _native_bundle,
+    )
+
+    entered, release = Event(), Event()
+
+    class BlockingRuntime(RecordingRuntime):
+        def infer(self, **kwargs):
+            entered.set()
+            assert release.wait(30), "Synthetic model barrier must release"
+            return super().infer(**kwargs)
+
+    worm_dir = tmp_path / "synthetic-native-lifecycle-accept"
+    bundle = _native_bundle(intake_db, worm_dir)
+    observer = None
+    try:
+        _, receipt = _approve_native_score(intake_db, bundle)
+        job_id = receipt["site_score_job_id"]
+        promo_id = receipt["promotion_decision_id"]
+        candidate_id = receipt["candidate_site_id"]
+        assert bundle.canonical_intakes().get_promotion(TENANT, promo_id)["status"] == "SCORE_QUEUED"
+        claimed = _claim_native_score_job(bundle, job_id)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(handle_intake_score, claimed, bundle, model_runtime=BlockingRuntime())
+            try:
+                assert entered.wait(30), "Worker never entered external inference"
+                observer = _native_bundle(intake_db, worm_dir)
+                promo = observer.canonical_intakes().get_promotion(TENANT, promo_id)
+                assert promo["status"] == "COMPLETED"
+                running = _physical(intake_db, job_id)
+                assert running["status"] == "RUNNING"
+                acceptance = running["payload"]["worker_acceptance"]
+                assert acceptance["promotion_decision_id"] == promo_id
+                assert acceptance["promotion_version"] == promo["version"]
+                assert acceptance["audit_event_id"] == promo["audit_event_id"]
+                assert observer._scoped_repository("sitescore_repository", TENANT).history(candidate_id) == []
+            finally:
+                release.set()
+                future.result(timeout=30)
+        assert _physical(intake_db, job_id)["status"] == "SUCCEEDED"
+    finally:
+        release.set()
+        if observer is not None:
+            observer.engine.close()
+        bundle.engine.close()
+
+
+@pytest.mark.parametrize("fault", ["completion_outbox", "acceptance_audit"])
+def test_native_sql_acceptance_write_fault_rolls_back_checkpoint(intake_db, tmp_path, monkeypatch, fault):
+    from modules.listing.application.intake_score_delivery import IntakeScoreJobRepository
+    from tests.integration.test_intake_score_delivery_postgresql import _approve_native_score
+    from tests.integration.test_operator_intake_promotion_postgresql import (
+        _claim_native_score_job,
+        _native_bundle,
+    )
+
+    worm_dir = tmp_path / f"synthetic-native-accept-fault-{fault}"
+    bundle = _native_bundle(intake_db, worm_dir)
+    try:
+        _, receipt = _approve_native_score(intake_db, bundle)
+        job_id = receipt["site_score_job_id"]
+        promo_id = receipt["promotion_decision_id"]
+        claimed = _claim_native_score_job(bundle, job_id)
+        jobs = IntakeScoreJobRepository(bundle)
+        before_job = _physical(intake_db, job_id)
+        before_promo = bundle.canonical_intakes().get_promotion(TENANT, promo_id)
+
+        graph = jobs._native_graph()
+        monkeypatch.setattr(jobs, "_native_graph", lambda: graph)
+        if fault == "completion_outbox":
+            orig_outbox = graph._outbox
+
+            def fail_outbox(event):
+                orig_outbox(event)
+                if event.event_type == "candidate.promotion_completed":
+                    raise RuntimeError("Synthetic native acceptance outbox fault")
+
+            monkeypatch.setattr(graph, "_outbox", fail_outbox)
+        else:
+            orig_audit = graph.audit_sink.persist
+
+            def fail_audit(event, scope):
+                res = orig_audit(event, scope)
+                if event.get("action") == "candidate.promotion_completed":
+                    raise RuntimeError("Synthetic native acceptance audit fault")
+                return res
+
+            monkeypatch.setattr(graph.audit_sink, "persist", fail_audit)
+
+        with pytest.raises(RuntimeError, match="Synthetic native acceptance"):
+            jobs.begin_attempt(claimed)
+        assert _physical(intake_db, job_id) == before_job
+        assert bundle.canonical_intakes().get_promotion(TENANT, promo_id) == before_promo
+    finally:
+        bundle.engine.close()
+
+
+def test_native_sql_transient_retry_and_dead_letter_preserve_completed_promotion(intake_db, tmp_path):
+    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from tests.integration.test_intake_score_delivery_postgresql import _approve_native_score
+    from tests.integration.test_operator_intake_promotion_postgresql import (
+        _claim_native_score_job,
+        _native_bundle,
+    )
+
+    class TimeoutRuntime(RecordingRuntime):
+        def infer(self, **kwargs):
+            self.calls.append(kwargs)
+            raise TimeoutError("Synthetic native transient timeout")
+
+    bundle = _native_bundle(intake_db, tmp_path / "synthetic-native-deadletter")
+    try:
+        _, receipt = _approve_native_score(intake_db, bundle)
+        job_id = receipt["site_score_job_id"]
+        promo_id = receipt["promotion_decision_id"]
+        runtime = TimeoutRuntime()
+        accepted_promo = None
+        for index in range(5):
+            if index:
+                _make_retry_due(intake_db, job_id)
+            handle_intake_score(_claim_native_score_job(bundle, job_id), bundle, model_runtime=runtime)
+            row = _physical(intake_db, job_id)
+            assert row["attempt"] == index + 1
+            promo = bundle.canonical_intakes().get_promotion(TENANT, promo_id)
+            assert promo["status"] == "COMPLETED"
+            if accepted_promo is None:
+                accepted_promo = deepcopy(promo)
+            assert promo == accepted_promo
+            if index < 4:
+                assert row["status"] == "RETRYING"
+        assert len(runtime.calls) == 5
+        assert row["status"] == "DEAD_LETTER" and row["dead_lettered_at"] is not None
+        delivery = bundle.job_queue.get(job_id)
+        assert delivery.status == JobStatus.FAILED and delivery.delivery_state == JobDeliveryState.DEAD_LETTER
+        with intake_db.connect() as conn:
+            conn.execute("SELECT set_config('app.tenant_id', %s, true)", (TENANT,))
+            assert conn.execute(
+                "SELECT count(*) FROM workflow.outbox_events WHERE tenant_id=%s AND event_type='job.dead_lettered'",
+                (TENANT,),
+            ).fetchone()[0] == 1
+            assert conn.execute(
+                "SELECT count(*) FROM workflow.outbox_events WHERE tenant_id=%s AND event_type='candidate.promotion_completed'",
+                (TENANT,),
+            ).fetchone()[0] == 1
+    finally:
+        bundle.engine.close()
+
+
+@pytest.mark.parametrize("binding", ["missing", "promotion_version", "unrelated_audit", "accepted_at_future"])
+def test_native_sql_corrupted_acceptance_rejected_before_result_persistence(intake_db, tmp_path, binding):
+    from modules.listing.application.intake_score_delivery import IntakeScoreJobRepository
+    from tests.integration.test_intake_score_delivery_postgresql import _approve_native_score
+    from tests.integration.test_operator_intake_promotion_postgresql import (
+        _claim_native_score_job,
+        _native_bundle,
+    )
+
+    bundle = _native_bundle(intake_db, tmp_path / f"synthetic-native-corrupt-{binding}")
+    try:
+        _, receipt = _approve_native_score(intake_db, bundle)
+        job_id = receipt["site_score_job_id"]
+        claimed = _claim_native_score_job(bundle, job_id)
+        jobs = IntakeScoreJobRepository(bundle)
+        attempt = jobs.begin_attempt(claimed)
+        assert attempt is not None
+        current = _physical(intake_db, job_id)
+        payload = deepcopy(current["payload"])
+        if binding == "missing":
+            del payload["worker_acceptance"]
+        elif binding == "promotion_version":
+            payload["worker_acceptance"]["promotion_version"] += 1
+        elif binding == "unrelated_audit":
+            payload["worker_acceptance"]["audit_event_id"] = receipt["audit_event_id"]
+        else:
+            payload["worker_acceptance"]["accepted_at"] = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+        with intake_db.connect() as conn:
+            conn.execute(
+                "UPDATE workflow.jobs SET payload=%s::jsonb WHERE job_id=%s",
+                (json.dumps(payload), job_id),
+            )
+        with pytest.raises(JobFenceRejectedError):
+            jobs.commit_success(
+                claimed,
+                attempt,
+                lambda: (_ for _ in ()).throw(AssertionError("Corrupted native acceptance reached persistence")),
+            )
+        assert bundle._scoped_repository("sitescore_repository", TENANT).history(receipt["candidate_site_id"]) == []
+    finally:
+        bundle.engine.close()

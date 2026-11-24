@@ -741,3 +741,800 @@ def test_unresolved_canonical_match_cannot_use_stale_flat_alias(bridge_database,
         assert _snapshot(bundle) == before
     finally:
         bundle.engine.close()
+
+
+# ---------------------------------------------------------------------------
+# Native SQL Promotion & Completion Audit Hydration Tests (Explicitly Synthetic)
+# ---------------------------------------------------------------------------
+
+
+def _ensure_native_address_geo_schema(db) -> None:
+    """Ensure core.address_locations and geo.h3_cells exist in isolated intake_db fixtures."""
+    with db.connect(autocommit=True) as conn:
+        conn.execute("CREATE SCHEMA IF NOT EXISTS core")
+        conn.execute("CREATE SCHEMA IF NOT EXISTS geo")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS core.tenants ("
+            "tenant_id UUID PRIMARY KEY, tenant_name VARCHAR(255) NOT NULL, "
+            "status VARCHAR(50) NOT NULL DEFAULT 'active', "
+            "created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+            "updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS core.address_locations ("
+            "address_id UUID PRIMARY KEY, tenant_id UUID REFERENCES core.tenants(tenant_id), "
+            "revision INTEGER NOT NULL DEFAULT 1, raw_address TEXT NOT NULL, "
+            "normalized_address TEXT, city VARCHAR(100), district VARCHAR(100), "
+            "village VARCHAR(100), road VARCHAR(255), latitude NUMERIC(10, 7), "
+            "longitude NUMERIC(10, 7), geocode_precision VARCHAR(50) DEFAULT 'manual', "
+            "geocode_confidence NUMERIC(3, 2), h3_res_8 VARCHAR(15), h3_res_9 VARCHAR(15), "
+            "h3_res_10 VARCHAR(15), manual_override_flag BOOLEAN DEFAULT FALSE, "
+            "created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+            "updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS geo.h3_cells ("
+            "geo_cell_id UUID PRIMARY KEY, h3_index VARCHAR(15) NOT NULL UNIQUE, "
+            "h3_resolution INTEGER NOT NULL DEFAULT 9, parent_h3_index VARCHAR(15), "
+            "centroid_latitude NUMERIC(10, 7) NOT NULL, centroid_longitude NUMERIC(10, 7) NOT NULL, "
+            "admin_city VARCHAR(100), admin_district VARCHAR(100), service_area_id VARCHAR(100), "
+            "created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+            "updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        conn.execute(
+            "INSERT INTO core.tenants(tenant_id, tenant_name) VALUES (%s, 'Synthetic native tenant') "
+            "ON CONFLICT (tenant_id) DO NOTHING",
+            (TENANT,),
+        )
+
+
+def _native_bundle(db, worm_dir):
+    """Build a PersistenceBundle-compatible native SQL runtime bound to one PostgresEngine."""
+    from types import MethodType, SimpleNamespace
+
+    from modules.listing.application.intake_audit import CanonicalIntakeAuditSink
+    from shared.audit.canonical_delivery import CanonicalAuditDelivery
+    from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
+    from shared.audit.worm import LocalAppendOnlyWormSink
+    from shared.infrastructure.persistence.assisted_listing_intake import DurableAssistedIntakeStore
+    from shared.infrastructure.persistence.factory import PersistenceBundle
+    from shared.infrastructure.persistence.job_queue import DurableJobQueue
+    from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+    from shared.infrastructure.persistence.outbox import DurableOutboxRepository
+    from shared.infrastructure.persistence.postgresql import PostgresDocumentStore, PostgresEngine
+    from shared.infrastructure.persistence.repositories import (
+        DurableListingRepository,
+        DurableSiteScoreRepository,
+    )
+    from tests.intake_workflow_fixture import (
+        SyntheticIntakeAuditRetention,
+        SyntheticIntakeWorkflowPolicy,
+    )
+
+    engine = PostgresEngine(db.url(), bootstrap=False, validate_schema=False)
+    engine.apply_runtime_migration()
+    doc_store = PostgresDocumentStore(engine)
+    queue = DurableJobQueue(engine)
+    outbox = DurableOutboxRepository(engine)
+    store = DurableAssistedIntakeStore(doc_store)
+    worm = LocalAppendOnlyWormSink(worm_dir)
+    writer = CanonicalPostgresAuditLog(engine)
+    delivery = CanonicalAuditDelivery(writer, queue, worm)
+    sink = CanonicalIntakeAuditSink(writer, SyntheticIntakeAuditRetention(), delivery)
+    store.configure_canonical_audit(sink)
+    listing_repo = DurableListingRepository(TenantScopedDocumentStore(doc_store, TENANT))
+    sitescore_repo = DurableSiteScoreRepository(TenantScopedDocumentStore(doc_store, TENANT))
+    bundle = SimpleNamespace(
+        engine=engine,
+        assisted_intake_store=store,
+        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
+        job_queue=queue,
+        outbox_repository=outbox,
+        listing_repository=listing_repo,
+        sitescore_repository=sitescore_repo,
+        learninghub_repository=None,
+    )
+    for name in (
+        "canonical_identity_graph",
+        "canonical_intakes",
+        "_scoped_repository",
+        "listing_repository_for_tenant",
+    ):
+        setattr(bundle, name, MethodType(getattr(PersistenceBundle, name), bundle))
+    return bundle
+
+
+def _seed_native_ready_intake(
+    db,
+    *,
+    tenant_id: str = TENANT,
+    h3_index: str = "8929a1d4d67ffff",
+    floor: str = "1F",
+    area_ping: float = 25.0,
+    frontage_m: float = 6.0,
+    retrieved: bool = False,
+    property_id: str | None = None,
+    address_id: str | None = None,
+) -> dict[str, str]:
+    """Seed one explicitly synthetic native SQL READY Intake + Listing + Revision + Address + Geo."""
+    import hashlib
+    from datetime import timedelta
+
+    _ensure_native_address_geo_schema(db)
+    intake_id = str(uuid4())
+    listing_id = str(uuid4())
+    revision_id = str(uuid4())
+    prop_id = property_id or str(uuid4())
+    addr_id = address_id or str(uuid4())
+    geo_cell_id = str(uuid4())
+    snapshot_id = str(uuid4())
+    source_id = f"synthetic-native-src-{uuid4().hex[:8]}"
+    correlation_id = str(uuid4())
+    assignment_id = str(uuid4())
+    sla_id = str(uuid4())
+    parser_release_id = str(uuid4()) if retrieved else None
+    parser_run_id = str(uuid4()) if retrieved else None
+    now = datetime.now(UTC) - timedelta(minutes=10)
+    addr_text = f"台北市信義區松仁路{uuid4().hex[:4]}號"
+    if address_id is not None:
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT normalized_address FROM core.address_locations WHERE address_id=%s",
+                (address_id,),
+            ).fetchone()
+            assert row is not None
+            addr_text = row[0]
+    normalized = {
+        "address": addr_text,
+        "rent": 54000,
+        "area_ping": area_ping,
+        "floor": floor,
+        "frontage_m": frontage_m,
+        "depth_m": 12.0,
+        "corner_flag": True,
+        "parking_flag": True,
+        "utility_electricity_flag": True,
+        "utility_drainage_flag": True,
+        "utility_gas_flag": True,
+        "confidence": 0.92,
+        "address_id": addr_id,
+        "source_snapshot_id": snapshot_id,
+        "feature_snapshot_time": now.isoformat(),
+        "prior_90d_cell_net_revenue": 1_800_000.0,
+        "prior_90d_cell_transaction_count": 720,
+        "prior_90d_cell_store_count": 4,
+    }
+    with db.connect(autocommit=False) as conn:
+        conn.execute(
+            "INSERT INTO core.tenants(tenant_id, tenant_name) VALUES (%s, 'Synthetic native tenant') "
+            "ON CONFLICT (tenant_id) DO NOTHING",
+            (tenant_id,),
+        )
+        conn.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
+        if address_id is None:
+            conn.execute(
+                "INSERT INTO core.address_locations(address_id,tenant_id,revision,raw_address,normalized_address,"
+                "city,district,latitude,longitude,geocode_precision,geocode_confidence,h3_res_9) "
+                "VALUES (%s,%s,1,%s,%s,'Taipei','Xinyi',25.033964,121.564468,'rooftop',0.95,%s)",
+                (addr_id, tenant_id, addr_text, addr_text, h3_index),
+            )
+        conn.execute(
+            "INSERT INTO geo.h3_cells(geo_cell_id,h3_index,h3_resolution,centroid_latitude,centroid_longitude,"
+            "admin_city,admin_district) VALUES (%s,%s,9,25.033964,121.564468,'Taipei','Xinyi') "
+            "ON CONFLICT (h3_index) DO NOTHING",
+            (geo_cell_id, h3_index),
+        )
+        mode = "APPROVED_RETRIEVAL" if retrieved else "ASSISTED_ENTRY_ONLY"
+        conn.execute(
+            "INSERT INTO intake.source_registry(source_id,display_name,allowed_hosts,"
+            "canonicalization_rule_version,retrieval_mode,policy_owner_subject_id,"
+            "legal_approval_ref,license_approval_ref,review_expires_at,kill_switch,production_enabled) "
+            "VALUES (%s,'Synthetic native source',ARRAY['example.invalid'],'synthetic-v1',%s,%s,"
+            "'synthetic-legal','synthetic-license',now()+interval '7 days',false,true)",
+            (source_id, mode, APPROVER),
+        )
+        if property_id is None:
+            conn.execute(
+                "INSERT INTO identity.properties(property_id,tenant_id,normalized_address,address_fingerprint,"
+                "status,version) VALUES (%s,%s,%s,%s,'ACTIVE',1)",
+                (prop_id, tenant_id, addr_text, hashlib.sha256(addr_text.encode()).hexdigest()),
+            )
+        conn.execute(
+            "INSERT INTO intake.intakes(intake_id,tenant_id,submitter_subject_id,intake_method,original_url,"
+            "source_id,source_policy_state,processing_state,correlation_id,version) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,'READY',%s,3)",
+            (
+                intake_id,
+                tenant_id,
+                MANAGER,
+                "URL" if retrieved else "MANUAL",
+                f"https://example.invalid/synthetic-{intake_id[:8]}" if retrieved else None,
+                source_id,
+                mode,
+                correlation_id,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO intake.source_snapshots(source_snapshot_id,tenant_id,intake_id,source_id,"
+            "raw_object_uri,content_sha256,media_type,byte_length,captured_at,observed_at,capture_method,"
+            "retention_class,encryption_key_ref) VALUES (%s,%s,%s,%s,%s,%s,'application/json',2,%s,%s,"
+            "%s,'BUSINESS_5Y','synthetic-key')",
+            (
+                snapshot_id,
+                tenant_id,
+                intake_id,
+                source_id,
+                f"gs://synthetic-native/{snapshot_id}",
+                hashlib.sha256(snapshot_id.encode()).hexdigest(),
+                now,
+                now,
+                "SERVER_RETRIEVAL" if retrieved else "MANUAL_ENTRY",
+            ),
+        )
+        if retrieved:
+            conn.execute(
+                "INSERT INTO intake.parser_releases(parser_release_id,source_id,package_name,semantic_version,"
+                "input_schema_version,output_schema_version,artifact_uri,artifact_sha256,test_corpus_version,"
+                "validation_status,released_by,released_at) VALUES (%s,%s,'synthetic-native-parser','1.0.0',"
+                "'synthetic-raw-v1','synthetic-normalized-v1','gs://synthetic-parser/artifact.zip',%s,"
+                "'synthetic-corpus-v1','PRODUCTION',%s,%s)",
+                (parser_release_id, source_id, "c" * 64, APPROVER, now - timedelta(days=1)),
+            )
+            conn.execute(
+                "INSERT INTO intake.parser_runs(parser_run_id,tenant_id,intake_id,source_snapshot_id,"
+                "parser_release_id,status,normalized_payload,validation_errors,started_at,completed_at,correlation_id) "
+                "VALUES (%s,%s,%s,%s,%s,'SUCCEEDED',%s::jsonb,'[]'::jsonb,%s,%s,%s)",
+                (
+                    parser_run_id,
+                    tenant_id,
+                    intake_id,
+                    snapshot_id,
+                    parser_release_id,
+                    json.dumps({"floor": floor}),
+                    now,
+                    now + timedelta(minutes=1),
+                    correlation_id,
+                ),
+            )
+        conn.execute(
+            "INSERT INTO intake.intake_stage_transitions(transition_id,tenant_id,intake_id,sequence_no,from_state,"
+            "to_state,actor_subject_id,permission,reason_text,resulting_version,source_policy_version,"
+            "parser_release_id,source_snapshot_id,correlation_id) "
+            "VALUES (%s,%s,%s,1,'SUBMITTED','READY',%s,'intake:write','Synthetic native ready',3,1,%s,%s,%s)",
+            (str(uuid4()), tenant_id, intake_id, MANAGER, parser_release_id, snapshot_id, correlation_id),
+        )
+        conn.execute(
+            "INSERT INTO expansion.listings(listing_id,tenant_id,property_id,source_id,source_listing_id,"
+            "lifecycle_state,version) VALUES (%s,%s,%s,%s,%s,'ACTIVE',1)",
+            (listing_id, tenant_id, prop_id, source_id, f"prov-{listing_id[:8]}"),
+        )
+        conn.execute(
+            "INSERT INTO expansion.listing_revisions(listing_revision_id,tenant_id,listing_id,revision_no,"
+            "revision_kind,source_snapshot_id,parser_run_id,normalized_values,effective_values,"
+            "material_fingerprint,created_by) "
+            "VALUES (%s,%s,%s,1,'CREATED',%s,%s,%s::jsonb,%s::jsonb,%s,%s)",
+            (
+                revision_id,
+                tenant_id,
+                listing_id,
+                snapshot_id,
+                parser_run_id,
+                json.dumps(normalized),
+                json.dumps(normalized),
+                hashlib.sha256(revision_id.encode()).hexdigest(),
+                MANAGER,
+            ),
+        )
+        conn.execute(
+            "UPDATE expansion.listings SET current_revision_id=%s WHERE tenant_id=%s AND listing_id=%s",
+            (revision_id, tenant_id, listing_id),
+        )
+        conn.execute(
+            "UPDATE intake.intakes SET resolved_listing_id=%s WHERE tenant_id=%s AND intake_id=%s",
+            (listing_id, tenant_id, intake_id),
+        )
+        conn.execute(
+            "INSERT INTO workflow.assignments(assignment_id,tenant_id,intake_id,status,owner_subject_id,"
+            "owner_role,assigned_by,queue_key,due_at,version) "
+            "VALUES (%s,%s,%s,'CLAIMED',%s,'EXPANSION_STAFF',%s,'default',now()+interval '2 days',1)",
+            (assignment_id, tenant_id, intake_id, MANAGER, MANAGER),
+        )
+        conn.execute(
+            "INSERT INTO workflow.sla_instances(sla_instance_id,tenant_id,intake_id,assignment_id,policy_version,"
+            "calendar_version,state,started_at,due_soon_at,due_at,breach_at,version) "
+            "VALUES (%s,%s,%s,%s,'synthetic-sla-v1','synthetic-cal-v1','ON_TRACK',now(),"
+            "now()+interval '1 day',now()+interval '2 days',now()+interval '3 days',1)",
+            (sla_id, tenant_id, intake_id, assignment_id),
+        )
+        conn.commit()
+    return {
+        "intake_id": intake_id,
+        "listing_id": listing_id,
+        "revision_id": revision_id,
+        "property_id": prop_id,
+        "address_id": addr_id,
+        "geo_cell_id": geo_cell_id,
+        "snapshot_id": snapshot_id,
+        "source_id": source_id,
+        "correlation_id": correlation_id,
+        "parser_release_id": parser_release_id,
+        "parser_run_id": parser_run_id,
+    }
+
+
+def _claim_native_score_job(bundle, job_id: str):
+    from shared.audit.canonical_delivery import JOB_TYPE as CANONICAL_AUDIT_JOB_TYPE
+    from shared.audit.durable_delivery import JOB_TYPE as DURABLE_AUDIT_JOB_TYPE
+
+    for _ in range(40):
+        job = bundle.job_queue.claim_next(worker_id="synthetic-native-score-worker")
+        assert job is not None, "Native score delivery job must be claimable"
+        if job.job_id == job_id:
+            return job
+        assert job.job_type in {CANONICAL_AUDIT_JOB_TYPE, DURABLE_AUDIT_JOB_TYPE}
+    raise AssertionError("Native score job never reached worker claim")
+
+
+def test_native_sql_promotion_positive_cold_read_replay_and_active_listing_preserved(intake_db, tmp_path):
+    import hashlib
+
+    from modules.listing.application.intake_score_delivery import IntakeScoreJobRepository
+
+    worm_dir = tmp_path / "synthetic-native-worm"
+    bundle = _native_bundle(intake_db, worm_dir)
+    try:
+        ids = _seed_native_ready_intake(intake_db)
+        canonical = bundle.canonical_intakes()
+        score_jobs = IntakeScoreJobRepository(bundle)
+        req_digest = hashlib.sha256(b"synthetic-native-req-oday-g2").hexdigest()
+        proposed, replayed = canonical.request_promotion(
+            TENANT,
+            MANAGER,
+            intake_id=ids["intake_id"],
+            expected_intake_version=3,
+            target_format_code="ODAY_G2",
+            reason="Synthetic native ODAY_G2 request",
+            gate_snapshot_sha256="a" * 64,
+            idempotency_key="synthetic-native-req-1",
+            request_digest=req_digest,
+            return_replay_status=True,
+        )
+        assert not replayed and proposed["status"] == "PENDING_REVIEW"
+        assert proposed["gate_snapshot"]["policy_target_format_code"] == "ODAY_G2"
+        assert proposed["gate_snapshot"]["caller_gate_snapshot_sha256"] == "a" * 64
+        assert len(proposed["gate_snapshot"]["server_gate_snapshot_sha256"]) == 64
+        assert proposed["gate_snapshot"]["listing_version"] == 1
+        assert proposed["gate_snapshot"]["listing_revision_id"] == ids["revision_id"]
+        assert proposed["gate_snapshot"]["property_version"] == 1
+        assert proposed["gate_snapshot"]["address_id"] == ids["address_id"]
+        assert proposed["gate_snapshot"]["address_revision"] == 1
+        assert proposed["gate_snapshot"]["source_policy_version"] == 1
+
+        # Idempotent replay returns exact receipt without duplicating SQL rows.
+        replayed_req, was_replayed = canonical.request_promotion(
+            TENANT,
+            MANAGER,
+            intake_id=ids["intake_id"],
+            expected_intake_version=3,
+            target_format_code="ODAY_G2",
+            reason="Synthetic native ODAY_G2 request",
+            gate_snapshot_sha256="a" * 64,
+            idempotency_key="synthetic-native-req-1",
+            request_digest=req_digest,
+            return_replay_status=True,
+        )
+        assert was_replayed and replayed_req == proposed
+
+        rev_digest = hashlib.sha256(b"synthetic-native-rev-approve").hexdigest()
+        reviewed, rev_replayed = canonical.review_promotion(
+            TENANT,
+            APPROVER,
+            promotion_decision_id=proposed["promotion_decision_id"],
+            expected_version=proposed["version"],
+            decision="APPROVE",
+            reason="Synthetic independent native approval",
+            risk_acknowledged=True,
+            idempotency_key="synthetic-native-rev-1",
+            score_dispatcher=score_jobs,
+            request_digest=rev_digest,
+            return_replay_status=True,
+        )
+        assert not rev_replayed and reviewed["status"] == "SCORE_QUEUED"
+        assert reviewed["candidate_site_id"] and reviewed["site_score_job_id"]
+        assert reviewed["reviewer_subject_id"] == APPROVER
+
+        # Replay of review returns exact receipt.
+        reviewed_again, rev_was_replayed = canonical.review_promotion(
+            TENANT,
+            APPROVER,
+            promotion_decision_id=proposed["promotion_decision_id"],
+            expected_version=proposed["version"],
+            decision="APPROVE",
+            reason="Synthetic independent native approval",
+            risk_acknowledged=True,
+            idempotency_key="synthetic-native-rev-1",
+            score_dispatcher=score_jobs,
+            request_digest=rev_digest,
+            return_replay_status=True,
+        )
+        assert rev_was_replayed and reviewed_again == reviewed
+
+        with intake_db.connect() as conn:
+            conn.execute("SELECT set_config('app.tenant_id', %s, true)", (TENANT,))
+            # SQL Listing MUST remain ACTIVE (never illegal CANDIDATE); zero shadow candidate docs.
+            assert conn.execute(
+                "SELECT lifecycle_state FROM expansion.listings WHERE listing_id=%s",
+                (ids["listing_id"],),
+            ).fetchone() == ("ACTIVE",)
+            assert conn.execute(
+                "SELECT status,version FROM expansion.candidate_sites WHERE candidate_site_id=%s",
+                (reviewed["candidate_site_id"],),
+            ).fetchone() == ("NEW", 1)
+            assert conn.execute(
+                "SELECT count(*) FROM odp_runtime.durable_documents WHERE collection LIKE '%%listing.candidates%%'"
+            ).fetchone()[0] == 0
+            assert conn.execute(
+                "SELECT count(*) FROM workflow.outbox_events WHERE tenant_id=%s AND event_type='candidate.created'",
+                (TENANT,),
+            ).fetchone()[0] == 1
+            assert conn.execute(
+                "SELECT count(*) FROM workflow.outbox_events WHERE tenant_id=%s AND event_type='sitescore.requested'",
+                (TENANT,),
+            ).fetchone()[0] == 1
+            assert conn.execute(
+                "SELECT count(*) FROM audit.audit_events WHERE tenant_id=%s AND audit_event_id=%s",
+                (TENANT, reviewed["audit_event_id"]),
+            ).fetchone()[0] == 1
+    finally:
+        bundle.engine.close()
+
+    # Cold read after engine close/reopen.
+    reopened = _native_bundle(intake_db, worm_dir)
+    try:
+        loaded = reopened.canonical_intakes().get_promotion(TENANT, reviewed["promotion_decision_id"])
+        assert loaded is not None and loaded["status"] == "SCORE_QUEUED"
+        assert loaded["candidate_site_id"] == reviewed["candidate_site_id"]
+        assert loaded["site_score_job_id"] == reviewed["site_score_job_id"]
+        assert loaded["audit_event_id"] == reviewed["audit_event_id"]
+        by_intake = reopened.canonical_intakes().get_promotion_for_intake(TENANT, ids["intake_id"])
+        assert by_intake == loaded
+        candidates = reopened.listing_repository_for_tenant(TENANT).list_candidates()
+        assert len(candidates) == 1
+        assert candidates[0].candidate_site.candidate_site_id == reviewed["candidate_site_id"]
+        assert candidates[0].listing.listing_status == "candidate"
+    finally:
+        reopened.engine.close()
+
+
+def test_native_sql_promotion_denials_no_shadow_fallback_and_duplicate_conflict(intake_db, tmp_path):
+    from modules.listing.application.intake_score_delivery import IntakeScoreJobRepository
+    from modules.listing.domain.intake_states import DomainValidationError
+
+    bundle = _native_bundle(intake_db, tmp_path / "synthetic-native-denials-worm")
+    try:
+        ids = _seed_native_ready_intake(intake_db)
+        canonical = bundle.canonical_intakes()
+        score_jobs = IntakeScoreJobRepository(bundle)
+
+        # 1. Unavailable target_format_code fails closed.
+        for bad_target in ("FORMAT-A", "oday_g2", " ODAY_G2 "):
+            with pytest.raises(DomainValidationError, match="HARD_RULE_POLICY_UNAVAILABLE"):
+                canonical.request_promotion(
+                    TENANT,
+                    MANAGER,
+                    intake_id=ids["intake_id"],
+                    expected_intake_version=3,
+                    target_format_code=bad_target,
+                    reason="Synthetic unavailable target",
+                    gate_snapshot_sha256="a" * 64,
+                    idempotency_key=f"synthetic-bad-{bad_target}",
+                )
+
+        # 2. Hard-rule failure (2F floor) denied without persisting promotion.
+        bad_floor_ids = _seed_native_ready_intake(intake_db, h3_index="8929a1d4d63ffff", floor="2F")
+        with pytest.raises(DomainValidationError, match="hard rule failures"):
+            canonical.request_promotion(
+                TENANT,
+                MANAGER,
+                intake_id=bad_floor_ids["intake_id"],
+                expected_intake_version=3,
+                target_format_code="ODAY_G2",
+                reason="Synthetic 2F floor rejection",
+                gate_snapshot_sha256="a" * 64,
+                idempotency_key="synthetic-bad-floor",
+            )
+        assert canonical.get_promotion_for_intake(TENANT, bad_floor_ids["intake_id"]) is None
+
+        # 3. Missing/revoked SQL address fails closed even if a shadow address exists in durable_documents.
+        shadow_repo = bundle.listing_repository_for_tenant(TENANT)
+        shadow_addr = AddressLocation(
+            address_id=ids["address_id"],
+            raw_address="Synthetic shadow address",
+            normalized_address="Synthetic shadow address",
+            geocode_confidence=0.99,
+            h3_res_9="8929a1d4d67ffff",
+        )
+        shadow_repo._store.put(shadow_repo._ADDRESSES, ids["address_id"], shadow_addr)
+        with intake_db.connect() as conn:
+            conn.execute("DELETE FROM core.address_locations WHERE address_id=%s", (ids["address_id"],))
+        with pytest.raises(DomainValidationError, match="NATIVE_ADDRESS_UNAVAILABLE"):
+            canonical.request_promotion(
+                TENANT,
+                MANAGER,
+                intake_id=ids["intake_id"],
+                expected_intake_version=3,
+                target_format_code="ODAY_G2",
+                reason="Synthetic missing SQL address with shadow doc present",
+                gate_snapshot_sha256="a" * 64,
+                idempotency_key="synthetic-no-shadow-fallback",
+            )
+        assert canonical.get_promotion_for_intake(TENANT, ids["intake_id"]) is None
+
+        # 4. Self-review, foreign tenant, version drift, and duplicate active (property_id, target_format_code).
+        good_ids = _seed_native_ready_intake(intake_db, h3_index="8929a1d4d6bffff")
+        proposed = canonical.request_promotion(
+            TENANT,
+            MANAGER,
+            intake_id=good_ids["intake_id"],
+            expected_intake_version=3,
+            target_format_code="ODAY_G2",
+            reason="Synthetic native request",
+            gate_snapshot_sha256="a" * 64,
+            idempotency_key="synthetic-good-req",
+        )
+        with pytest.raises(DomainValidationError, match="SELF_REVIEW_DENIED"):
+            canonical.review_promotion(
+                TENANT,
+                MANAGER,
+                promotion_decision_id=proposed["promotion_decision_id"],
+                expected_version=proposed["version"],
+                decision="APPROVE",
+                reason="Synthetic self review",
+                risk_acknowledged=True,
+                idempotency_key="synthetic-self-review",
+                score_dispatcher=score_jobs,
+            )
+        assert canonical.get_promotion(str(uuid4()), proposed["promotion_decision_id"]) is None
+
+        # Mutate address revision between request and review -> PROMOTION_GATE_INPUT_CHANGED.
+        with intake_db.connect() as conn:
+            conn.execute(
+                "UPDATE core.address_locations SET revision=revision+1 WHERE address_id=%s",
+                (good_ids["address_id"],),
+            )
+        with pytest.raises(DomainValidationError, match="PROMOTION_GATE_INPUT_CHANGED"):
+            canonical.review_promotion(
+                TENANT,
+                APPROVER,
+                promotion_decision_id=proposed["promotion_decision_id"],
+                expected_version=proposed["version"],
+                decision="APPROVE",
+                reason="Synthetic drift review",
+                risk_acknowledged=True,
+                idempotency_key="synthetic-drift-review",
+                score_dispatcher=score_jobs,
+            )
+        # Restore address revision and approve, then test duplicate active candidate on same property + ODAY_G2.
+        with intake_db.connect() as conn:
+            conn.execute(
+                "UPDATE core.address_locations SET revision=1 WHERE address_id=%s",
+                (good_ids["address_id"],),
+            )
+        approved = canonical.review_promotion(
+            TENANT,
+            APPROVER,
+            promotion_decision_id=proposed["promotion_decision_id"],
+            expected_version=proposed["version"],
+            decision="APPROVE",
+            reason="Synthetic valid review",
+            risk_acknowledged=True,
+            idempotency_key="synthetic-valid-review",
+            score_dispatcher=score_jobs,
+        )
+        assert approved["status"] == "SCORE_QUEUED"
+        dup_ids = _seed_native_ready_intake(
+            intake_db,
+            h3_index="8929a1d4d6bffff",
+            property_id=good_ids["property_id"],
+            address_id=good_ids["address_id"],
+        )
+        with pytest.raises(DomainValidationError, match="DUPLICATE_CANDIDATE"):
+            canonical.request_promotion(
+                TENANT,
+                MANAGER,
+                intake_id=dup_ids["intake_id"],
+                expected_intake_version=3,
+                target_format_code="ODAY_G2",
+                reason="Synthetic duplicate property+format promotion",
+                gate_snapshot_sha256="a" * 64,
+                idempotency_key="synthetic-dup-prop-format",
+            )
+    finally:
+        bundle.engine.close()
+
+
+@pytest.mark.parametrize("fault", ["audit", "outbox", "queue"])
+def test_native_sql_promotion_review_fault_rolls_back_all_sql_artifacts(intake_db, tmp_path, monkeypatch, fault):
+    from modules.listing.application.intake_score_delivery import IntakeScoreJobRepository
+
+    bundle = _native_bundle(intake_db, tmp_path / f"synthetic-native-fault-{fault}")
+    try:
+        ids = _seed_native_ready_intake(intake_db)
+        canonical = bundle.canonical_intakes()
+        score_jobs = IntakeScoreJobRepository(bundle)
+        proposed = canonical.request_promotion(
+            TENANT,
+            MANAGER,
+            intake_id=ids["intake_id"],
+            expected_intake_version=3,
+            target_format_code="ODAY_G2",
+            reason="Synthetic fault rollback request",
+            gate_snapshot_sha256="a" * 64,
+            idempotency_key="synthetic-fault-req",
+        )
+        if fault == "audit":
+            original = canonical.graph.audit_sink.persist
+
+            def failing_audit(event, scope):
+                res = original(event, scope)
+                if event.get("action") == "promotion.score_queued":
+                    raise RuntimeError("Synthetic native audit fault")
+                return res
+
+            monkeypatch.setattr(canonical.graph.audit_sink, "persist", failing_audit)
+        elif fault == "outbox":
+            original_outbox = canonical.graph._outbox
+
+            def failing_outbox(event):
+                original_outbox(event)
+                if event.event_type == "candidate.created":
+                    raise RuntimeError("Synthetic native outbox fault")
+
+            monkeypatch.setattr(canonical.graph, "_outbox", failing_outbox)
+        else:
+            def failing_enqueue(*_args, **_kwargs):
+                raise RuntimeError("Synthetic native score queue fault")
+
+            monkeypatch.setattr(score_jobs, "enqueue", failing_enqueue)
+
+        with pytest.raises(RuntimeError, match="Synthetic native"):
+            canonical.review_promotion(
+                TENANT,
+                APPROVER,
+                promotion_decision_id=proposed["promotion_decision_id"],
+                expected_version=proposed["version"],
+                decision="APPROVE",
+                reason="Synthetic fault review",
+                risk_acknowledged=True,
+                idempotency_key="synthetic-fault-rev",
+                score_dispatcher=score_jobs,
+            )
+        after = canonical.get_promotion(TENANT, proposed["promotion_decision_id"])
+        assert after["status"] == "PENDING_REVIEW"
+        assert after["candidate_site_id"] is None and after["site_score_job_id"] is None
+        assert bundle.listing_repository_for_tenant(TENANT).list_candidates() == []
+        with intake_db.connect() as conn:
+            conn.execute("SELECT set_config('app.tenant_id', %s, true)", (TENANT,))
+            assert conn.execute(
+                "SELECT count(*) FROM workflow.jobs WHERE tenant_id=%s AND job_type='intake-sitescore'",
+                (TENANT,),
+            ).fetchone()[0] == 0
+    finally:
+        bundle.engine.close()
+
+
+def test_native_sql_completion_audit_hydration_for_rejected_completed_and_tampered(intake_db, tmp_path):
+    from modules.listing.application.intake_completion import (
+        CompletionRequirement,
+        IntakeWorkIncomplete,
+        verify_completion,
+    )
+    from modules.listing.application.intake_score_delivery import IntakeScoreJobRepository
+    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from modules.sitescore.tests.test_sitescore_production_runtime import RecordingRuntime
+
+    worm_dir = tmp_path / "synthetic-native-completion-worm"
+    bundle = _native_bundle(intake_db, worm_dir)
+    try:
+        canonical = bundle.canonical_intakes()
+        score_jobs = IntakeScoreJobRepository(bundle)
+
+        # 1. REJECTED native promotion hydrates completion audit cleanly.
+        rej_ids = _seed_native_ready_intake(intake_db, h3_index="8929a1d4d63ffff")
+        p_rej = canonical.request_promotion(
+            TENANT,
+            MANAGER,
+            intake_id=rej_ids["intake_id"],
+            expected_intake_version=3,
+            target_format_code="ODAY_G2",
+            reason="Synthetic reject completion test",
+            gate_snapshot_sha256="a" * 64,
+            idempotency_key="synthetic-comp-rej-req",
+        )
+        r_rej = canonical.review_promotion(
+            TENANT,
+            APPROVER,
+            promotion_decision_id=p_rej["promotion_decision_id"],
+            expected_version=p_rej["version"],
+            decision="REJECT",
+            reason="Synthetic independent rejection",
+            risk_acknowledged=True,
+            idempotency_key="synthetic-comp-rej-rev",
+        )
+        assert r_rej["status"] == "REJECTED"
+        rej_req = CompletionRequirement.parse({
+            "kind": "promotion",
+            "allowed_states": ["REJECTED"],
+            "minimum_count": 1,
+            "require_audit": True,
+        })
+        with bundle.canonical_identity_graph().transaction(TENANT):
+            st_rej = canonical.workflow_command_state(TENANT, rej_ids["intake_id"])
+            proofs = verify_completion(st_rej, st_rej.intakes[rej_ids["intake_id"]], [rej_req])
+            assert len(proofs) == 1 and proofs[0]["state"] == "REJECTED"
+
+        # 2. Approved promotion distinguishes SCORE_QUEUED -> COMPLETED -> score SUCCEEDED + immutable report.
+        ids = _seed_native_ready_intake(intake_db, h3_index="8929a1d4d67ffff")
+        p_ok = canonical.request_promotion(
+            TENANT,
+            MANAGER,
+            intake_id=ids["intake_id"],
+            expected_intake_version=3,
+            target_format_code="ODAY_G2",
+            reason="Synthetic completion test",
+            gate_snapshot_sha256="a" * 64,
+            idempotency_key="synthetic-comp-ok-req",
+        )
+        r_ok = canonical.review_promotion(
+            TENANT,
+            APPROVER,
+            promotion_decision_id=p_ok["promotion_decision_id"],
+            expected_version=p_ok["version"],
+            decision="APPROVE",
+            reason="Synthetic independent approval",
+            risk_acknowledged=True,
+            idempotency_key="synthetic-comp-ok-rev",
+            score_dispatcher=score_jobs,
+        )
+        promo_req = CompletionRequirement.parse({
+            "kind": "promotion",
+            "allowed_states": ["COMPLETED"],
+            "minimum_count": 1,
+            "require_audit": True,
+        })
+        job_req = CompletionRequirement.parse({
+            "kind": "job",
+            "allowed_states": ["SUCCEEDED"],
+            "minimum_count": 1,
+            "require_audit": True,
+            "action": "intake-sitescore",
+        })
+        with bundle.canonical_identity_graph().transaction(TENANT):
+            st_queued = canonical.workflow_command_state(TENANT, ids["intake_id"])
+            with pytest.raises(IntakeWorkIncomplete):
+                verify_completion(st_queued, st_queued.intakes[ids["intake_id"]], [promo_req])
+            with pytest.raises(IntakeWorkIncomplete):
+                verify_completion(st_queued, st_queued.intakes[ids["intake_id"]], [job_req])
+
+        # Execute worker -> promotion COMPLETED AND score job SUCCEEDED with immutable report.
+        claimed = _claim_native_score_job(bundle, r_ok["site_score_job_id"])
+        handle_intake_score(claimed, bundle, model_runtime=RecordingRuntime())
+        with bundle.canonical_identity_graph().transaction(TENANT):
+            st_done = canonical.workflow_command_state(TENANT, ids["intake_id"])
+            both_proofs = verify_completion(st_done, st_done.intakes[ids["intake_id"]], [promo_req, job_req])
+            assert {item["resource_type"] for item in both_proofs} == {"promotion", "job"}
+
+        # 3. Missing immutable report breaks job completion proof even when workflow.jobs says SUCCEEDED.
+        report_id = st_done.jobs[r_ok["site_score_job_id"]]["result"]["report_id"]
+        bundle.engine.execute(
+            "DELETE FROM durable_documents WHERE doc_id=?",
+            (report_id,),
+        )
+        with bundle.canonical_identity_graph().transaction(TENANT):
+            st_tampered = canonical.workflow_command_state(TENANT, ids["intake_id"])
+            # Promotion acceptance proof still holds, while score job completion proof fails closed.
+            assert verify_completion(st_tampered, st_tampered.intakes[ids["intake_id"]], [promo_req])
+            with pytest.raises(IntakeWorkIncomplete):
+                verify_completion(st_tampered, st_tampered.intakes[ids["intake_id"]], [job_req])
+    finally:
+        bundle.engine.close()

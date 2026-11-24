@@ -765,3 +765,227 @@ class TestNoFallbackValuesRemainInPromotionPath:
 
         found = [f"{token!r} -- {why}" for token, why in forbidden.items() if token in source]
         assert not found, "fail-open substitutions reintroduced: " + "; ".join(found)
+
+
+class TestNativeHardRulePolicyAndServerGateSnapshot:
+    """Explicitly synthetic unit tests for native SQL promotion hard-rule and gate pinning."""
+
+    @pytest.mark.parametrize("bad_target", ["FORMAT-A", "oday_g2", " ODAY_G2 ", "ODAY_G3", "", None])
+    def test_resolve_hard_rule_policy_fails_closed_for_unavailable_targets(self, bad_target: Any) -> None:
+        from modules.listing.application.promotion import resolve_hard_rule_policy
+
+        with pytest.raises(DomainValidationError) as excinfo:
+            resolve_hard_rule_policy(bad_target)
+        assert excinfo.value.code is DenialCode.SOURCE_POLICY_DENIED
+        assert "HARD_RULE_POLICY_UNAVAILABLE" in str(excinfo.value)
+
+    def test_resolve_hard_rule_policy_matches_oday_g2_and_hashes_deterministically(self) -> None:
+        from modules.listing.application.promotion import (
+            hard_rule_policy_fingerprint,
+            resolve_hard_rule_policy,
+        )
+
+        policy = resolve_hard_rule_policy("ODAY_G2")
+        assert policy.target_format_code == "ODAY_G2"
+        digest_a = hard_rule_policy_fingerprint(policy)
+        digest_b = hard_rule_policy_fingerprint(resolve_hard_rule_policy("ODAY_G2"))
+        assert len(digest_a) == 64 and digest_a == digest_b
+
+    def test_server_gate_snapshot_preserves_caller_hash_as_claim_only(self) -> None:
+        from modules.listing.application.promotion import (
+            build_server_gate_snapshot,
+            evaluate_native_hard_rules,
+        )
+
+        repo = _seed_repository(geocode_confidence=0.95)
+        listing = replace(
+            repo.get_listing(LISTING_ID),
+            frontage_m=6.0,
+            parking_flag=True,
+            utility_electricity_flag=True,
+            utility_drainage_flag=True,
+        )
+        address = repo.get_address(ADDRESS_ID)
+        policy, failures, policy_sha = evaluate_native_hard_rules(
+            listing, address, target_format_code="ODAY_G2",
+        )
+        assert failures == ()
+        versions = {
+            "listing_id": LISTING_ID,
+            "listing_version": 1,
+            "listing_revision_id": "synthetic-rev-1",
+            "property_id": "synthetic-prop-1",
+            "property_version": 1,
+            "address_id": ADDRESS_ID,
+            "address_revision": 1,
+            "geo_cell_id": "synthetic-geo-1",
+            "geo_version": "synthetic-geo-v1",
+            "source_id": "approved-provider",
+            "source_policy_version": 1,
+            "source_snapshot_id": "synthetic-snap-1",
+            "source_snapshot_version": 1,
+        }
+        snap_a = build_server_gate_snapshot(
+            caller_gate_snapshot_sha256="a" * 64,
+            target_format_code="ODAY_G2",
+            policy=policy,
+            policy_sha256=policy_sha,
+            hard_rule_failures=failures,
+            gate_errors=(),
+            native_versions=versions,
+            evaluated_at="2026-11-24T00:00:00Z",
+        )
+        snap_b = build_server_gate_snapshot(
+            caller_gate_snapshot_sha256="b" * 64,
+            target_format_code="ODAY_G2",
+            policy=policy,
+            policy_sha256=policy_sha,
+            hard_rule_failures=failures,
+            gate_errors=(),
+            native_versions=versions,
+            evaluated_at="2026-11-24T00:00:00Z",
+        )
+        assert snap_a["caller_gate_snapshot_sha256"] == "a" * 64
+        assert snap_b["caller_gate_snapshot_sha256"] == "b" * 64
+        # Server gate digest is independent of the caller's unverified hash claim.
+        assert snap_a["server_gate_snapshot_sha256"] == snap_b["server_gate_snapshot_sha256"]
+        assert snap_a["policy_sha256"] == policy_sha
+        assert snap_a["policy_target_format_code"] == "ODAY_G2"
+
+    def test_native_promotion_service_detects_version_drift_and_hard_rule_failure(self) -> None:
+        repo = _seed_repository(geocode_confidence=0.95)
+        passing_listing = replace(
+            repo.get_listing(LISTING_ID),
+            frontage_m=6.0,
+            parking_flag=True,
+            utility_electricity_flag=True,
+            utility_drainage_flag=True,
+        )
+        object.__setattr__(passing_listing, "property_id", "synthetic-prop-native-1")
+        address = repo.get_address(ADDRESS_ID)
+        state = {"listing_version": 1, "listing": passing_listing}
+
+        class _NativeListingRepo:
+            def get_listing(self, lid: str) -> dict[str, Any] | None:
+                if lid != LISTING_ID:
+                    return None
+                lst = state["listing"]
+                return {
+                    "id": lst.listing_id,
+                    "listing_id": lst.listing_id,
+                    "source_id": lst.source_id,
+                    "source_listing_id": lst.source_listing_id,
+                    "address": address.normalized_address,
+                    "address_id": address.address_id,
+                    "rent_amount": lst.rent_amount,
+                    "area_ping": lst.area_ping,
+                    "floor": lst.floor,
+                    "frontage_m": lst.frontage_m,
+                    "geocode_confidence": address.geocode_confidence,
+                    "h3Index": address.h3_res_9,
+                    "h3_res_9": address.h3_res_9,
+                    "property_id": "synthetic-prop-native-1",
+                }
+
+            def get_domain_listing(self, lid: str) -> Listing | None:
+                return state["listing"] if lid == LISTING_ID else None
+
+            def get_address(self, aid: str) -> AddressLocation | None:
+                return address if aid == ADDRESS_ID else None
+
+            def get_native_gate_context(self, lid: str) -> dict[str, Any]:
+                return {
+                    "domain_listing": state["listing"],
+                    "domain_address": address,
+                    "evaluated_at": "2026-11-24T00:00:00Z",
+                    "versions": {
+                        "intake_id": INTAKE_ID,
+                        "intake_version": 3,
+                        "listing_id": lid,
+                        "listing_version": state["listing_version"],
+                        "listing_revision_id": "synthetic-rev-1",
+                        "property_id": "synthetic-prop-native-1",
+                        "property_version": 1,
+                        "address_id": ADDRESS_ID,
+                        "address_revision": 1,
+                        "geo_cell_id": "synthetic-geo-1",
+                        "geo_version": "synthetic-geo-v1",
+                        "source_id": "approved-provider",
+                        "source_policy_version": 1,
+                        "source_snapshot_id": "synthetic-snap-1",
+                        "source_snapshot_version": 1,
+                    },
+                }
+
+            def list_candidates(self) -> list[Any]:
+                return []
+
+            def save_candidate(self, _cand: Any) -> None:
+                pass
+
+            def save_listing(self, _lst: Any) -> None:
+                pass
+
+        class _NativeIntakeRepo:
+            def get_listing_intake(self, iid: str) -> dict[str, Any] | None:
+                if iid != INTAKE_ID:
+                    return None
+                return {
+                    "id": INTAKE_ID,
+                    "intake_id": INTAKE_ID,
+                    "tenantId": TENANT,
+                    "parent_owner": "native_sql",
+                    "processing_state": "READY",
+                    "stage": "READY",
+                    "status": "READY",
+                    "resolved_listing_id": LISTING_ID,
+                    "matchResult": {"targetListingId": LISTING_ID},
+                }
+
+        promo_repo = _PromotionRepository()
+        service = PromotionService(
+            promotion_repository=promo_repo,
+            listing_repository=_NativeListingRepo(),
+            intake_repository=_NativeIntakeRepo(),
+        )
+        # Hard-rule failure (2F floor) is rejected at request time.
+        state["listing"] = replace(passing_listing, floor="2F")
+        object.__setattr__(state["listing"], "property_id", "synthetic-prop-native-1")
+        with pytest.raises(DomainValidationError, match="hard rule failures"):
+            service.request_promotion(
+                intake_id=INTAKE_ID,
+                target_format_code="ODAY_G2",
+                reason="Synthetic 2F floor rejection",
+                gate_snapshot_sha256="a" * 64,
+                context=TransitionContext(
+                    actor=Actor(actor_id="proposer-1", role=PrincipalRole.EXPANSION_STAFF, tenant_id=TENANT),
+                    idempotency_key="native-unit-fail-hr",
+                ),
+            )
+
+        # Valid ODAY_G2 passes request, then version drift is rejected at review time.
+        state["listing"] = passing_listing
+        proposed = service.request_promotion(
+            intake_id=INTAKE_ID,
+            target_format_code="ODAY_G2",
+            reason="Synthetic native unit request",
+            gate_snapshot_sha256="a" * 64,
+            context=TransitionContext(
+                actor=Actor(actor_id="proposer-1", role=PrincipalRole.EXPANSION_STAFF, tenant_id=TENANT),
+                idempotency_key="native-unit-pass",
+            ),
+        )
+        assert proposed["status"] == "PENDING_REVIEW"
+        assert proposed["gate_snapshot"]["policy_target_format_code"] == "ODAY_G2"
+        state["listing_version"] = 2
+        with pytest.raises(DomainValidationError, match="PROMOTION_GATE_INPUT_CHANGED"):
+            service.review_promotion(
+                promotion_decision_id=proposed["promotion_decision_id"],
+                decision="APPROVE",
+                reason="Synthetic native unit review after drift",
+                risk_acknowledged=True,
+                context=TransitionContext(
+                    actor=Actor(actor_id="reviewer-1", role=PrincipalRole.EXPANSION_MANAGER, tenant_id=TENANT),
+                    idempotency_key="native-unit-rev-drift",
+                ),
+            )

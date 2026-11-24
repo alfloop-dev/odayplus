@@ -203,7 +203,12 @@ def handle_intake_score(
             raise ValueError("SITESCORE_CANDIDATE_UNAVAILABLE")
         candidate = deepcopy(candidate)
         original_site = candidate.candidate_site
-        candidate.candidate_site = replace(original_site, site_status=original_site.site_status if fresh else "scored")
+        next_status = (
+            original_site.site_status
+            if fresh or original_site.site_status in {"approved", "opened"}
+            else "scored"
+        )
+        candidate.candidate_site = replace(original_site, site_status=next_status)
         formal = {field.name for field in fields(original_site)}
         for name, value in vars(original_site).items():
             if name not in formal:

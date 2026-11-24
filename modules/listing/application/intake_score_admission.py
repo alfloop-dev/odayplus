@@ -83,6 +83,21 @@ def validate_score_admission(engine: Any, intake: dict[str, Any], candidate: Any
     source_id = intake.get("source_id")
     if not _nonempty(source_id) or source_id != listing.source_id:
         _deny("SITESCORE_SOURCE_BINDING_DENIED")
+    if intake.get("parent_owner") == "native_sql":
+        native_intake = engine.query_one(
+            "SELECT intake_id,tenant_id,source_id,source_policy_state,processing_state,"
+            "resolved_listing_id,legal_hold,deleted_at FROM intake.intakes "
+            "WHERE tenant_id=? AND intake_id=? FOR SHARE",
+            (tenant, intake_id),
+        )
+        if (native_intake is None
+                or native_intake["deleted_at"] is not None
+                or native_intake["processing_state"] != "READY"
+                or native_intake["legal_hold"]
+                or native_intake["source_id"] != source_id
+                or native_intake["source_policy_state"] != intake.get("policy_state")
+                or str(native_intake["resolved_listing_id"] or "") != str(listing.listing_id)):
+            _deny("SITESCORE_NATIVE_INTAKE_ADMISSION_DENIED")
     policy_version = _positive_version(intake.get("source_policy_version"), "SITESCORE_SOURCE_POLICY_PIN_REQUIRED")
     policy = engine.query_one("SELECT * FROM intake.source_registry WHERE source_id=? FOR SHARE", (source_id,))
     if (policy is None or policy["version"] != policy_version

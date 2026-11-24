@@ -52,9 +52,30 @@ def read_current_candidate_inputs(
 ) -> CurrentCandidateInputs:
     """Read under the caller's existing same-engine tenant transaction.
 
-    Keep the writer's partitioned advisory key, including when no metadata row
-    exists yet. A plain metadata get would miss a concurrent first revocation.
+    Native SQL-owned candidates verify their tenant-qualified SQL candidate/
+    promotion/sourceListing/address/geo/hard-rule proofs without falling back
+    to durable_documents. Retained candidates keep the writer's partitioned
+    advisory key, including when no metadata row exists yet.
     """
+    engine = getattr(getattr(repository, "_store", None), "engine", None)
+    tenant_id = getattr(repository, "tenant_id", "")
+    if getattr(engine, "dialect", None) == "postgresql" and tenant_id:
+        from shared.infrastructure.persistence.canonical_intakes_sql import (
+            is_native_sql_owned,
+            read_native_current_candidate_inputs,
+        )
+
+        if getattr(candidate, "parent_owner", None) == "native_sql" or is_native_sql_owned(
+            engine,
+            tenant_id,
+            candidate_site_id=candidate.candidate_site.candidate_site_id,
+            listing_id=candidate.candidate_site.listing_id,
+            promotion_decision_id=getattr(candidate.candidate_site, "promotion_decision_id", None),
+        ):
+            native_listing, native_address, native_attrs = read_native_current_candidate_inputs(
+                engine, tenant_id, candidate,
+            )
+            return CurrentCandidateInputs(native_listing, native_address, native_attrs)
     listing = repository.get_listing(candidate.candidate_site.listing_id)
     address = repository.get_address(candidate.candidate_site.address_id)
     if listing is None or address is None:
@@ -187,6 +208,54 @@ class CandidateScoreContextReader:
                 or not isinstance(intake_id, str) or not intake_id
                 or payload.get("candidate_site_id") != candidate.candidate_site.candidate_site_id):
             _denied("SITESCORE_PARENT_BINDING_DENIED")
+        from modules.listing.application.intake_score_delivery import _digest
+        from shared.infrastructure.persistence.canonical_intakes_sql import (
+            is_native_sql_owned,
+            load_native_score_parents,
+        )
+
+        is_native = payload.get("parent_owner") == "native_sql" or is_native_sql_owned(
+            self.engine,
+            self.tenant_id,
+            promotion_decision_id=promotion_id,
+            candidate_site_id=candidate.candidate_site.candidate_site_id,
+            listing_id=candidate.candidate_site.listing_id,
+        )
+        if is_native:
+            # Match worker parent lock order before locking the exact job.
+            # Native SQL parents never fall back to durable_documents.
+            intake, promotion, native_candidate = load_native_score_parents(
+                self.engine,
+                self.tenant_id,
+                intake_id=intake_id,
+                promotion_decision_id=promotion_id,
+                candidate_site_id=candidate.candidate_site.candidate_site_id,
+                job_id=str(row["job_id"]),
+                lock_mode=1,
+                document_store=getattr(self.repository, "_store", None),
+            )
+            locked_rows = self.engine.query(
+                "SELECT job_id,payload FROM workflow.jobs WHERE tenant_id=? "
+                "AND aggregate_type='candidate_site' AND aggregate_id=? AND job_type='intake-sitescore' FOR SHARE",
+                (self.tenant_id, candidate.candidate_site.candidate_site_id),
+            )
+            if len(locked_rows) != 1 or _digest(locked_rows[0]) != _digest(row):
+                _denied("SITESCORE_PARENT_BINDING_DENIED")
+            if (
+                promotion.get("listing_id") != candidate.candidate_site.listing_id
+                or native_candidate.candidate_site.candidate_site_id != candidate.candidate_site.candidate_site_id
+            ):
+                _denied("SITESCORE_PARENT_BINDING_DENIED")
+            receipt = validate_score_admission(self.engine, intake, native_candidate)
+            return {
+                **admission_state("verified"),
+                "intakeId": intake_id, "promotionDecisionId": promotion_id,
+                "jobId": str(row["job_id"]), "sourceId": receipt["source_id"],
+                "sourcePolicyVersion": receipt["source_policy_version"],
+                "sourceSnapshotId": receipt["source_snapshot_id"],
+                "sourcePolicySha256": receipt["source_policy_sha256"],
+                "sourceSnapshotMetadataSha256": receipt["source_snapshot_metadata_sha256"],
+            }
         # Match worker parent lock order before locking the exact job. The
         # initial tenant-qualified query only discovers references, never grants
         # admission; re-read the locked job after loading its exact parents.
@@ -201,7 +270,6 @@ class CandidateScoreContextReader:
             "AND aggregate_type='candidate_site' AND aggregate_id=? AND job_type='intake-sitescore' FOR SHARE",
             (self.tenant_id, candidate.candidate_site.candidate_site_id),
         )
-        from modules.listing.application.intake_score_delivery import _digest
 
         if len(locked_rows) != 1 or _digest(locked_rows[0]) != _digest(row):
             _denied("SITESCORE_PARENT_BINDING_DENIED")

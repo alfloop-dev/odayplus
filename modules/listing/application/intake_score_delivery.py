@@ -15,17 +15,24 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, is_dataclass, replace
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from enum import Enum
 from typing import Any
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 
 from modules.listing.application.intake_score_admission import validate_score_admission
 from modules.listing.application.intake_score_retry_policy import score_retry_policy
 from modules.listing.application.intake_workflow_bootstrap import record_workflow_change
 from modules.sitescore.application.candidate_features import feature_from_candidate
+from shared.audit.backlog import CanonicalAuditBacklog
 from shared.domain.events import DomainEvent
 from shared.infrastructure.persistence.assisted_listing_intake import _STATE_COLLECTIONS
+from shared.infrastructure.persistence.canonical_intakes_sql import (
+    is_native_sql_owned,
+    load_native_intake_projection,
+    load_native_score_parents,
+    reconstruct_native_candidate_draft,
+)
 from shared.jobs.queue import (
     JobDeliveryState,
     JobFenceRejectedError,
@@ -173,6 +180,48 @@ class IntakeScoreJobRepository:
             raise ScoreDeliveryUnavailable("SITESCORE_CANDIDATE_BINDING_UNAVAILABLE")
         return repo
 
+    def _native_graph(self) -> Any:
+        graph = self.persistence.canonical_identity_graph()
+        if (
+            getattr(graph, "engine", None) is not self.engine
+            or getattr(getattr(getattr(graph, "audit_sink", None), "writer", None), "engine", None) is not self.engine
+        ):
+            raise ScoreDeliveryUnavailable("SITESCORE_TRANSACTION_BINDING_UNAVAILABLE")
+        return graph
+
+    def _is_native_promotion(self, tenant: str, promotion: dict[str, Any]) -> bool:
+        if promotion.get("parent_owner") == "native_sql":
+            return True
+        return is_native_sql_owned(
+            self.engine,
+            tenant,
+            promotion_decision_id=promotion.get("promotion_decision_id"),
+            intake_id=promotion.get("intake_id"),
+            candidate_site_id=promotion.get("candidate_site_id"),
+        )
+
+    def _is_native_row(self, row: dict[str, Any]) -> bool:
+        payload = row.get("payload") or {}
+        if payload.get("parent_owner") == "native_sql":
+            return True
+        return is_native_sql_owned(
+            self.engine,
+            str(row["tenant_id"]),
+            promotion_decision_id=payload.get("promotion_decision_id"),
+            intake_id=payload.get("intake_id"),
+            candidate_site_id=payload.get("candidate_site_id"),
+        )
+
+    def _is_native_job_id(self, job_id: str, tenant: str) -> bool:
+        if getattr(self.engine._local, "connection", None) is not None:
+            self._tenant(tenant)
+            row = self._row(job_id, tenant)
+            return False if row is None else self._is_native_row(row)
+        with self.engine.lock:
+            self._tenant(tenant)
+            row = self._row(job_id, tenant)
+            return False if row is None else self._is_native_row(row)
+
     def _candidate(self, tenant: str, candidate_id: str) -> Any:
         return next((item for item in self._repository(tenant).list_candidates()
                      if item.candidate_site.candidate_site_id == candidate_id), None)
@@ -189,6 +238,20 @@ class IntakeScoreJobRepository:
     def _parents(self, row: dict[str, Any], *, live: bool = False) -> tuple[dict, dict, Any]:
         payload, tenant = row["payload"], str(row["tenant_id"])
         intake_id, promotion_id = payload["intake_id"], payload["promotion_decision_id"]
+        if self._is_native_row(row):
+            if str(row["aggregate_id"]) != payload["candidate_site_id"]:
+                raise ScoreDeliveryDenied("SITESCORE_PARENT_BINDING_DENIED")
+            repo = self._repository(tenant)
+            return load_native_score_parents(
+                self.engine,
+                tenant,
+                intake_id=intake_id,
+                promotion_decision_id=promotion_id,
+                candidate_site_id=payload["candidate_site_id"],
+                job_id=str(row["job_id"]),
+                lock_mode=2 if live else 1,
+                document_store=repo._store,
+            )
         if live:
             intake, promotion = self.store.intakes.get(intake_id), self.store.promotions.get(promotion_id)
         else:
@@ -214,13 +277,16 @@ class IntakeScoreJobRepository:
 
     def _fingerprint(self, intake: dict, promotion: dict, candidate: Any) -> str:
         repo = self._repository(intake["scope"]["tenant_id"])
-        return _digest({
+        data = {
             "intake": {k: intake.get(k) for k in ("version", "status", "stage", "scope", "match_result", "resolved_listing_id", "source_policy_version", "parser_release_id")},
             "promotion": {k: promotion.get(k) for k in ("version", "status", "gate_snapshot_sha256", "listing_id", "candidate_site_id", "site_score_job_id")},
             "candidate": candidate,
             "listing": repo.get_listing(candidate.candidate_site.listing_id),
             "address": repo.get_address(candidate.candidate_site.address_id),
-        })
+        }
+        if intake.get("parent_owner") == "native_sql" or promotion.get("parent_owner") == "native_sql":
+            data["gate_snapshot"] = promotion.get("gate_snapshot")
+        return _digest(data)
 
     def _receipt(self, row: dict[str, Any]) -> dict[str, Any]:
         status = row["status"]
@@ -234,10 +300,15 @@ class IntakeScoreJobRepository:
         }
 
     def _audit_snapshot(self, row: dict) -> dict:
-        return {**self._receipt(row), "canonical_status": row["status"],
-                "next_attempt_at": _jsonable(row.get("next_attempt_at")),
-                "retry_policy": deepcopy(row["payload"].get("retry_policy")),
-                "worker_acceptance": deepcopy(row["payload"].get("worker_acceptance"))}
+        snapshot = {
+            **self._receipt(row), "canonical_status": row["status"],
+            "next_attempt_at": _jsonable(row.get("next_attempt_at")),
+            "retry_policy": deepcopy(row["payload"].get("retry_policy")),
+            "worker_acceptance": deepcopy(row["payload"].get("worker_acceptance")),
+        }
+        if row.get("result") is not None:
+            snapshot["result"] = deepcopy(row["result"])
+        return snapshot
 
     def get_job(self, job_id: str, tenant_id: str) -> dict[str, Any] | None:
         try:
@@ -260,8 +331,33 @@ class IntakeScoreJobRepository:
             self._tenant(tenant)
             job_id = str(uuid5(UUID(promotion["promotion_decision_id"]), "sitescore"))
             promotion["site_score_job_id"] = job_id
-            candidate = self._candidate(tenant, promotion["candidate_site_id"])
-            intake = self.store.intakes.get(promotion["intake_id"])
+            native = self._is_native_promotion(tenant, promotion)
+            if native:
+                repo = self._repository(tenant)
+                candidate = reconstruct_native_candidate_draft(
+                    self.engine,
+                    tenant,
+                    promotion["candidate_site_id"],
+                    document_store=repo._store,
+                    lock_mode=2,
+                )
+                revision_row = self.engine.query_one(
+                    "SELECT r.* FROM expansion.listings l JOIN expansion.listing_revisions r "
+                    "ON r.tenant_id=l.tenant_id AND r.listing_id=l.listing_id AND r.listing_revision_id=l.current_revision_id "
+                    "WHERE l.tenant_id=? AND l.listing_id=? FOR SHARE",
+                    (tenant, promotion["listing_id"]),
+                )
+                intake = load_native_intake_projection(
+                    self.engine,
+                    tenant,
+                    promotion["intake_id"],
+                    gate_snapshot=promotion.get("gate_snapshot"),
+                    revision_row=revision_row,
+                    lock_mode=1,
+                )
+            else:
+                candidate = self._candidate(tenant, promotion["candidate_site_id"])
+                intake = self.store.intakes.get(promotion["intake_id"])
             if candidate is None or intake is None or intake["scope"]["tenant_id"] != tenant:
                 raise ScoreDeliveryDenied("SITESCORE_PARENT_BINDING_DENIED")
             self._current_inputs(tenant, candidate)
@@ -280,6 +376,8 @@ class IntakeScoreJobRepository:
                 "admission": admission,
                 "retry_policy": retry_policy,
             }
+            if native:
+                payload["parent_owner"] = "native_sql"
             token = self._signed(job_id, tenant, 1)
             self.engine.execute(
                 "INSERT INTO workflow.jobs(job_id,tenant_id,job_type,aggregate_type,aggregate_id,"
@@ -327,6 +425,17 @@ class IntakeScoreJobRepository:
 
     @contextmanager
     def _unit(self, job_id: str, tenant: str):
+        if self._is_native_job_id(job_id, tenant):
+            with self._native_graph().transaction(tenant):
+                initial = self._row(job_id, tenant)
+                if initial is None:
+                    raise ScoreDeliveryDenied("SITESCORE_JOB_UNAVAILABLE")
+                self._parents(initial, live=True)  # parent locks precede job and delivery locks
+                row = self._row(job_id, tenant, lock=True)
+                self.engine.query_one("SELECT job_id FROM durable_jobs WHERE job_id=? FOR UPDATE", (job_id,))
+                intake, promotion, candidate = self._parents(row, live=True)
+                yield row, intake, promotion, candidate
+            return
         with self.engine.lock:
             self._tenant(tenant)
             self.engine.query_one("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", (f"operator-intake-submission:{tenant}",))
@@ -400,7 +509,18 @@ class IntakeScoreJobRepository:
                 raise ValueError("Acceptance timestamp outside job lifetime")
         except (ValueError, TypeError, OverflowError) as exc:
             raise JobFenceRejectedError("SITESCORE_ACCEPTANCE_TIME_REJECTED") from exc
-        audit = self.store.workflow_audits.get(acceptance["audit_event_id"])
+        if self._is_native_row(row):
+            audit_id = acceptance.get("audit_event_id")
+            try:
+                UUID(str(audit_id))
+            except (TypeError, ValueError, AttributeError) as exc:
+                raise JobFenceRejectedError("SITESCORE_ACCEPTANCE_AUDIT_REJECTED") from exc
+            graph = self._native_graph()
+            audit = graph.audit_sink.writer.get_event(str(row["tenant_id"]), str(audit_id))
+            if not audit or not graph.audit_sink.is_committed({**audit, "canonical_event_sha256": audit.get("event_sha256")}):
+                raise JobFenceRejectedError("SITESCORE_ACCEPTANCE_AUDIT_REJECTED")
+        else:
+            audit = self.store.workflow_audits.get(acceptance["audit_event_id"])
         audit_parent = {
             "tenant_id": str(row["tenant_id"]),
             "promotion_decision_id": row["payload"]["promotion_decision_id"],
@@ -410,25 +530,56 @@ class IntakeScoreJobRepository:
             "version": promotion["version"], "status": "COMPLETED",
         }
         if (not audit or audit["resource_type"] != "promotion_decision"
-                or audit["resource_id"] != promotion["promotion_decision_id"]
+                or str(audit["resource_id"]) != promotion["promotion_decision_id"]
                 or audit["action"] != "candidate.promotion_completed"
                 or audit["service_principal"] != "sitescore_worker"
                 or audit["result"] != "SUCCEEDED"
-                or audit["tenant_id"] != str(row["tenant_id"])
-                or audit["correlation_id"] != str(row["correlation_id"])
+                or str(audit["tenant_id"]) != str(row["tenant_id"])
+                or str(audit["correlation_id"]) != str(row["correlation_id"])
+                or not isinstance(audit.get("after_value"), dict)
                 or any(audit["after_value"].get(key) != value for key, value in audit_parent.items())):
             raise JobFenceRejectedError("SITESCORE_ACCEPTANCE_AUDIT_REJECTED")
         return True
 
     def _accept(self, row: dict, intake: dict, promotion: dict, candidate: Any) -> None:
         before = deepcopy(promotion)
-        self._promotion(promotion, "COMPLETED")
-        audit_id = record_workflow_change(
-            self.store, intake, resource_type="promotion_decision", before=before, after=promotion,
-            action="candidate.promotion_completed", actor_id=row["payload"]["actor_id"],
-            service_principal="sitescore_worker", correlation_id=str(row["correlation_id"]),
-        )
-        self.store.promotions[promotion["promotion_decision_id"]] = promotion
+        native = self._is_native_row(row)
+        self._promotion(promotion, "COMPLETED", native=native)
+        if native:
+            tenant = str(row["tenant_id"])
+            CanonicalAuditBacklog(self.engine).require_available(tenant)
+            graph = self._native_graph()
+            audit_id = str(uuid4())
+            promotion["audit_event_id"] = audit_id
+            at = self._now().astimezone(UTC).isoformat().replace("+00:00", "Z")
+            gate_snapshot = promotion.get("gate_snapshot") if isinstance(promotion.get("gate_snapshot"), dict) else {}
+            graph.audit_sink.persist(
+                {
+                    "audit_event_id": audit_id,
+                    "tenant_id": tenant,
+                    "resource_type": "promotion_decision",
+                    "resource_id": promotion["promotion_decision_id"],
+                    "decision_id": promotion["promotion_decision_id"],
+                    "action": "candidate.promotion_completed",
+                    "result": "SUCCEEDED",
+                    "actor_subject_id": row["payload"]["actor_id"],
+                    "service_principal": "sitescore_worker",
+                    "correlation_id": str(row["correlation_id"]),
+                    "occurred_at": at,
+                    "source_snapshot_id": gate_snapshot.get("source_snapshot_id"),
+                    "parser_run_id": gate_snapshot.get("parser_run_id"),
+                    "before_value": before,
+                    "after_value": deepcopy(promotion),
+                },
+                intake["scope"],
+            )
+        else:
+            audit_id = record_workflow_change(
+                self.store, intake, resource_type="promotion_decision", before=before, after=promotion,
+                action="candidate.promotion_completed", actor_id=row["payload"]["actor_id"],
+                service_principal="sitescore_worker", correlation_id=str(row["correlation_id"]),
+            )
+            self.store.promotions[promotion["promotion_decision_id"]] = promotion
         payload = deepcopy(row["payload"])
         payload["worker_acceptance"] = {
             "tenant_id": str(row["tenant_id"]), "job_id": str(row["job_id"]),
@@ -634,7 +785,7 @@ class IntakeScoreJobRepository:
                                  delivery_state=JobDeliveryState.DEAD_LETTER if exhausted else None)
         self._schedule_delivery(current, None, after_status_update=True)
         if not self._accepted(row, promotion):
-            self._promotion(promotion, "SCORE_FAILED")
+            self._promotion(promotion, "SCORE_FAILED", native=self._is_native_row(row))
         failed = _with_candidate_status(candidate, "SCORING_FAILED")
         if candidate.candidate_site.site_status not in {"approved", "opened"}:
             self._repository(str(row["tenant_id"])).save_candidate(failed)
@@ -670,10 +821,14 @@ class IntakeScoreJobRepository:
             retry_policy = score_retry_policy()
             if retry_policy["max_attempts"] != row["max_attempts"]:
                 raise ScoreDeliveryDenied("SITESCORE_REPLAY_BUDGET_CHANGE_DENIED")
+            native = self._is_native_row(row)
             if not accepted:
-                self._promotion(promotion, "SCORE_QUEUED")
-            candidate = _with_candidate_status(candidate, "new")
-            self._repository(tenant_id).save_candidate(candidate)
+                self._promotion(promotion, "SCORE_QUEUED", native=native)
+            if candidate.candidate_site.site_status not in {"approved", "opened"}:
+                candidate = _with_candidate_status(candidate, "new")
+                self._repository(tenant_id).save_candidate(candidate)
+                if native:
+                    candidate = self._candidate(tenant_id, candidate.candidate_site.candidate_site_id)
             payload = deepcopy(row["payload"])
             payload["generation"] += 1
             payload.pop("model_admission", None)
@@ -750,10 +905,33 @@ class IntakeScoreJobRepository:
         row.update(changes)
         row["version"] += 1
 
-    def _promotion(self, promotion: dict, status: str) -> None:
+    def _promotion(self, promotion: dict, status: str, *, native: bool = False) -> None:
         allowed = {("SCORE_QUEUED", "COMPLETED"), ("SCORE_QUEUED", "SCORE_FAILED"), ("SCORE_FAILED", "SCORE_QUEUED")}
         if (promotion["status"], status) not in allowed:
             raise ScoreDeliveryConflict("SITESCORE_PROMOTION_STATE_CONFLICT")
+        previous_status = promotion["status"]
+        previous_version = promotion["version"]
+        if native or promotion.get("parent_owner") == "native_sql":
+            if status == "COMPLETED":
+                row = self.engine.query_one(
+                    "UPDATE expansion.promotion_decisions SET status=?,version=version+1,executed_at=clock_timestamp() "
+                    "WHERE tenant_id=? AND promotion_decision_id=? AND status=? AND version=? RETURNING version,executed_at",
+                    (status, promotion["tenant_id"], promotion["promotion_decision_id"], previous_status, previous_version),
+                )
+            else:
+                row = self.engine.query_one(
+                    "UPDATE expansion.promotion_decisions SET status=?,version=version+1 "
+                    "WHERE tenant_id=? AND promotion_decision_id=? AND status=? AND version=? RETURNING version,executed_at",
+                    (status, promotion["tenant_id"], promotion["promotion_decision_id"], previous_status, previous_version),
+                )
+            if row is None:
+                raise ScoreDeliveryConflict("SITESCORE_PROMOTION_STATE_CONFLICT")
+            promotion["status"] = status
+            promotion["version"] = int(row["version"])
+            if row.get("executed_at") is not None:
+                executed_at = _time(row["executed_at"])
+                promotion["executed_at"] = executed_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+            return
         promotion["status"] = status
         promotion["version"] += 1
         self.store.promotions[promotion["promotion_decision_id"]] = promotion
@@ -761,6 +939,33 @@ class IntakeScoreJobRepository:
     def _audit(self, row: dict, intake: dict, action: str, actor: str, *, result: str = "SUCCEEDED") -> None:
         service = ("candidate_promotion_service" if action == "sitescore.enqueue"
                    else "job_platform" if action == "sitescore.replay_requested" else "sitescore_worker")
+        if self._is_native_row(row):
+            tenant = str(row["tenant_id"])
+            CanonicalAuditBacklog(self.engine).require_available(tenant)
+            graph = self._native_graph()
+            at = self._now().astimezone(UTC).isoformat().replace("+00:00", "Z")
+            admission = row["payload"].get("admission") or {}
+            graph.audit_sink.persist(
+                {
+                    "audit_event_id": str(uuid4()),
+                    "tenant_id": tenant,
+                    "resource_type": "job",
+                    "resource_id": str(row["job_id"]),
+                    "decision_id": row["payload"].get("promotion_decision_id"),
+                    "action": action,
+                    "result": result,
+                    "actor_subject_id": actor,
+                    "service_principal": service,
+                    "correlation_id": str(row["correlation_id"]),
+                    "occurred_at": at,
+                    "source_snapshot_id": admission.get("source_snapshot_id"),
+                    "parser_run_id": admission.get("parser_run_id"),
+                    "before_value": row.pop("_previous_receipt", None),
+                    "after_value": self._audit_snapshot(row),
+                },
+                intake["scope"],
+            )
+            return
         record_workflow_change(self.store, intake, resource_type="job", before=row.pop("_previous_receipt", None),
                                after=self._audit_snapshot(row), action=action, actor_id=actor, result=result,
                                service_principal=service, correlation_id=str(row["correlation_id"]))
@@ -770,7 +975,7 @@ class IntakeScoreJobRepository:
         aggregate = ("promotion_decision" if promotion else "job" if job_event else "candidate_site")
         aggregate_id = (row["payload"]["promotion_decision_id"] if promotion else str(row["job_id"]) if job_event
                         else row["payload"]["candidate_site_id"])
-        self.outbox.save(DomainEvent(
+        domain_event = DomainEvent(
             event_type=event, payload=payload, tenant_id=str(row["tenant_id"]),
             aggregate_type=aggregate, aggregate_id=aggregate_id,
             aggregate_version=payload["version"] if promotion else row["version"],
@@ -778,4 +983,8 @@ class IntakeScoreJobRepository:
             producer=producer, schema_ref=f"#/payloads/{schema}",
             sensitive_fields=({"sitescore.failed": ["payload.error_details"],
                                "job.dead_lettered": ["payload.last_error_details"]}.get(event, [])),
-        ))
+        )
+        if self._is_native_row(row):
+            self._native_graph()._outbox(domain_event)
+            return
+        self.outbox.save(domain_event)

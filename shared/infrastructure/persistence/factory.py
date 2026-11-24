@@ -256,7 +256,9 @@ class PersistenceBundle:
         )
 
         return CanonicalIntakeRepository(
-            self.canonical_identity_graph(), self.assisted_intake_workflow_policy,
+            self.canonical_identity_graph(),
+            self.assisted_intake_workflow_policy,
+            replay_store=self.assisted_intake_store,
         )
 
 

@@ -1,8 +1,11 @@
 """Create real native Intake anchors without inventing processed evidence."""
 
+import hashlib
+import json
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
+from typing import Any
 from uuid import UUID, uuid4
 
 from modules.listing.application.intake_authorization import authorize_intake_action
@@ -14,15 +17,19 @@ from modules.listing.application.intake_workflow_bootstrap import (
 from modules.listing.domain.identity_graph import IdentityConflictError, IdentityNotFoundError
 from modules.listing.domain.intake_states import (
     Actor,
+    DenialCode,
+    DomainValidationError,
     IntakeAggregate,
     IntakeStage,
     IntakeStateMachine,
     PrincipalRole,
     TransitionContext,
 )
+from modules.listing.domain.models import CandidateSiteDraft
 from shared.audit.backlog import CanonicalAuditBacklog
 from shared.auth import Principal, Role
 from shared.domain.events import DomainEvent
+from shared.domain.models import AddressLocation, CandidateSite, Listing
 from shared.jobs.queue import JobStatus
 
 # Catalogued payload contracts for the events the shared workflow commands emit.
@@ -33,6 +40,998 @@ _WORKFLOW_EVENT_SCHEMAS = {
     "assignment.completed": "#/payloads/AssignmentStateChangedV1",
     "sla.state_changed": "#/payloads/SlaStateChangedV1",
 }
+
+_SQL_TO_DOMAIN_CANDIDATE_STATUS = {
+    "NEW": "new",
+    "SCREENED": "screened",
+    "SCORING": "scoring",
+    "SCORED": "scored",
+    "VISITED": "visited",
+    "REJECTED": "rejected",
+    "APPROVED": "approved",
+    "OPENED": "opened",
+    "SCORING_FAILED": "SCORING_FAILED",
+}
+_DOMAIN_TO_SQL_CANDIDATE_STATUS = {
+    **{value: key for key, value in _SQL_TO_DOMAIN_CANDIDATE_STATUS.items()},
+    "scoring_failed": "SCORING_FAILED",
+    **{key: key for key in _SQL_TO_DOMAIN_CANDIDATE_STATUS},
+}
+_LOCK_SUFFIX = ("", " FOR SHARE", " FOR UPDATE")
+
+
+def sql_candidate_status(status: str) -> str:
+    mapped = _DOMAIN_TO_SQL_CANDIDATE_STATUS.get(str(status or "").strip())
+    if mapped is None:
+        raise ValueError(f"Unsupported candidate status: {status!r}")
+    return mapped
+
+
+def domain_candidate_status(status: str) -> str:
+    mapped = _SQL_TO_DOMAIN_CANDIDATE_STATUS.get(str(status or "").strip().upper())
+    if mapped is None:
+        raise ValueError(f"Unsupported SQL candidate status: {status!r}")
+    return mapped
+
+
+def _valid_uuid(value: Any) -> str | None:
+    if not isinstance(value, (str, UUID)):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = str(UUID(text))
+    except (ValueError, TypeError, AttributeError):
+        return None
+    return parsed if parsed == text.lower() else None
+
+
+def _ensure_tenant_context(engine: Any, tenant: str) -> str:
+    clean = _valid_uuid(tenant)
+    if clean is None:
+        raise PermissionError("TENANT_SCOPE_DENIED")
+    current = engine.query_one("SELECT current_setting('app.tenant_id', true) AS tenant")["tenant"]
+    if current and current != clean:
+        raise PermissionError("TENANT_SCOPE_DENIED")
+    engine.query_one("SELECT set_config('app.tenant_id', ?, true)", (clean,))
+    return clean
+
+
+def native_intake_tables_available(engine: Any) -> bool:
+    if getattr(engine, "dialect", None) != "postgresql":
+        return False
+    row = engine.query_one("SELECT to_regclass('expansion.candidate_sites') AS rel")
+    return bool(row and row.get("rel") is not None)
+
+
+def is_native_sql_owned(
+    engine: Any,
+    tenant: str,
+    *,
+    intake_id: str | None = None,
+    promotion_decision_id: str | None = None,
+    candidate_site_id: str | None = None,
+    listing_id: str | None = None,
+) -> bool:
+    """Return True only for actual tenant-qualified normalized SQL ownership."""
+    if not native_intake_tables_available(engine):
+        return False
+    clean_tenant = _valid_uuid(tenant)
+    if clean_tenant is None:
+        return False
+    _ensure_tenant_context(engine, clean_tenant)
+    if promotion_decision_id is not None:
+        pid = _valid_uuid(promotion_decision_id)
+        if pid is not None and engine.query_one(
+            "SELECT 1 FROM expansion.promotion_decisions WHERE tenant_id=? AND promotion_decision_id=? LIMIT 1",
+            (clean_tenant, pid),
+        ) is not None:
+            return True
+    if candidate_site_id is not None:
+        cid = _valid_uuid(candidate_site_id)
+        if cid is not None and engine.query_one(
+            "SELECT 1 FROM expansion.candidate_sites WHERE tenant_id=? AND candidate_site_id=? LIMIT 1",
+            (clean_tenant, cid),
+        ) is not None:
+            return True
+    if listing_id is not None:
+        lid = _valid_uuid(listing_id)
+        if lid is not None and engine.query_one(
+            "SELECT 1 FROM expansion.listings WHERE tenant_id=? AND listing_id=? LIMIT 1",
+            (clean_tenant, lid),
+        ) is not None:
+            return True
+    if intake_id is not None:
+        iid = _valid_uuid(intake_id)
+        if iid is not None:
+            row = engine.query_one(
+                "SELECT intake_id,resolved_listing_id FROM intake.intakes "
+                "WHERE tenant_id=? AND intake_id=? AND deleted_at IS NULL",
+                (clean_tenant, iid),
+            )
+            if row is not None and (
+                row.get("resolved_listing_id") is not None
+                or engine.query_one(
+                    "SELECT 1 FROM expansion.promotion_decisions WHERE tenant_id=? AND intake_id=? LIMIT 1",
+                    (clean_tenant, iid),
+                ) is not None
+                or engine.query_one(
+                    "SELECT 1 FROM workflow.assignments WHERE tenant_id=? AND intake_id=? LIMIT 1",
+                    (clean_tenant, iid),
+                ) is not None
+                or engine.query_one(
+                    "SELECT 1 FROM intake.intake_stage_transitions WHERE tenant_id=? AND intake_id=? LIMIT 1",
+                    (clean_tenant, iid),
+                ) is not None
+            ):
+                return True
+    return False
+
+
+def _geo_cell_version(geo_row: dict[str, Any]) -> str:
+    payload = {
+        "geo_cell_id": str(geo_row["geo_cell_id"]),
+        "h3_index": str(geo_row["h3_index"]),
+        "h3_resolution": int(geo_row["h3_resolution"]),
+        "parent_h3_index": geo_row.get("parent_h3_index"),
+        "centroid_latitude": str(geo_row["centroid_latitude"]) if geo_row.get("centroid_latitude") is not None else None,
+        "centroid_longitude": str(geo_row["centroid_longitude"]) if geo_row.get("centroid_longitude") is not None else None,
+        "admin_city": geo_row.get("admin_city"),
+        "admin_district": geo_row.get("admin_district"),
+        "service_area_id": geo_row.get("service_area_id"),
+    }
+    return "geo-cell-v1:" + hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _parse_optional_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("Timezone-aware datetime is required")
+    return parsed.astimezone(UTC)
+
+
+def _parse_optional_date(value: Any) -> date | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value))
+
+
+def _row_to_domain_address(row: dict[str, Any]) -> AddressLocation:
+    return AddressLocation(
+        address_id=str(row["address_id"]),
+        raw_address=str(row.get("raw_address") or ""),
+        normalized_address=str(row.get("normalized_address") or ""),
+        city=str(row.get("city") or ""),
+        district=str(row.get("district") or ""),
+        village=str(row.get("village") or ""),
+        road=str(row.get("road") or ""),
+        latitude=float(row["latitude"]) if row.get("latitude") is not None else None,
+        longitude=float(row["longitude"]) if row.get("longitude") is not None else None,
+        geocode_precision=str(row.get("geocode_precision") or "manual"),
+        geocode_confidence=float(row["geocode_confidence"]) if row.get("geocode_confidence") is not None else None,
+        h3_res_8=str(row.get("h3_res_8") or ""),
+        h3_res_9=str(row.get("h3_res_9") or ""),
+        h3_res_10=str(row.get("h3_res_10") or ""),
+        manual_override_flag=bool(row.get("manual_override_flag")),
+        tenant_id=str(row.get("tenant_id") or ""),
+        revision=int(row.get("revision") or 1),
+    )
+
+
+def load_native_address(
+    engine: Any,
+    tenant: str,
+    *,
+    address_id: str | None = None,
+    normalized_address: str | None = None,
+    lock_mode: int = 0,
+) -> tuple[dict[str, Any], AddressLocation]:
+    """Load an actual tenant-qualified core.address_locations row; never manufacture one."""
+    clean_tenant = _ensure_tenant_context(engine, tenant)
+    suffix = _LOCK_SUFFIX[lock_mode]
+    if address_id is not None:
+        clean_addr_id = _valid_uuid(address_id)
+        if clean_addr_id is None:
+            raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_ADDRESS_UNAVAILABLE")
+        row = engine.query_one(
+            "SELECT address_id,raw_address,normalized_address,city,district,village,road,"  # nosec B608 -- fixed literal lock suffix; values bound as ?.
+            "latitude,longitude,geocode_precision,geocode_confidence,h3_res_8,h3_res_9,h3_res_10,"
+            "manual_override_flag,tenant_id,revision FROM core.address_locations "
+            "WHERE address_id=? AND tenant_id=?" + suffix,
+            (clean_addr_id, clean_tenant),
+        )
+        if row is None:
+            raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_ADDRESS_UNAVAILABLE")
+        if normalized_address and row.get("normalized_address") and row["normalized_address"] != normalized_address:
+            raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_ADDRESS_MISMATCH")
+        return row, _row_to_domain_address(row)
+    if not normalized_address or not normalized_address.strip():
+        raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_ADDRESS_UNAVAILABLE")
+    rows = engine.query(
+        "SELECT address_id,raw_address,normalized_address,city,district,village,road,"  # nosec B608 -- fixed literal lock suffix; values bound as ?.
+        "latitude,longitude,geocode_precision,geocode_confidence,h3_res_8,h3_res_9,h3_res_10,"
+        "manual_override_flag,tenant_id,revision FROM core.address_locations "
+        "WHERE tenant_id=? AND normalized_address=? ORDER BY address_id LIMIT 2" + suffix,
+        (clean_tenant, normalized_address),
+    )
+    if len(rows) != 1:
+        raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_ADDRESS_UNAVAILABLE")
+    return rows[0], _row_to_domain_address(rows[0])
+
+
+def load_native_geo_cell(engine: Any, h3_index: str, *, lock_mode: int = 0) -> tuple[dict[str, Any], str]:
+    """Load an actual geo.h3_cells record; unknown Geo fails closed."""
+    if not isinstance(h3_index, str) or not h3_index.strip():
+        raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_GEO_CELL_UNAVAILABLE")
+    suffix = _LOCK_SUFFIX[lock_mode]
+    row = engine.query_one(
+        "SELECT geo_cell_id,h3_index,h3_resolution,parent_h3_index,centroid_latitude,"  # nosec B608 -- fixed literal lock suffix; values bound as ?.
+        "centroid_longitude,admin_city,admin_district,service_area_id FROM geo.h3_cells "
+        "WHERE h3_index=?" + suffix,
+        (h3_index.strip(),),
+    )
+    if row is None:
+        raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_GEO_CELL_UNAVAILABLE")
+    return row, _geo_cell_version(row)
+
+
+def _domain_listing_from_native_rows(
+    tenant: str,
+    listing_row: dict[str, Any],
+    revision_row: dict[str, Any],
+    address_id: str,
+    *,
+    domain_status: str,
+) -> Listing:
+    eff = _json_value(revision_row.get("effective_values"))
+    if not isinstance(eff, dict):
+        raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_LISTING_REVISION_CORRUPT")
+    rent_raw = eff.get("rent") if eff.get("rent") is not None else eff.get("rent_amount", eff.get("rentPerMonth"))
+    area_raw = eff.get("areaPing") if eff.get("areaPing") is not None else eff.get("area_ping", eff.get("area"))
+    frontage_raw = eff.get("frontage_m") if eff.get("frontage_m") is not None else eff.get("frontageMeters", eff.get("frontage"))
+    confidence_raw = eff.get("confidence")
+    confidence = float(confidence_raw) if isinstance(confidence_raw, (int, float)) and not isinstance(confidence_raw, bool) else None
+    listing = Listing(
+        listing_id=str(listing_row["listing_id"]),
+        source_listing_id=str(listing_row.get("source_listing_id") or ""),
+        source_id=str(listing_row["source_id"]),
+        listing_status=domain_status,
+        address_id=address_id,
+        rent_amount=float(rent_raw) if isinstance(rent_raw, (int, float)) and not isinstance(rent_raw, bool) else 0.0,
+        currency=str(eff.get("currency") or "TWD"),
+        area_ping=float(area_raw) if isinstance(area_raw, (int, float)) and not isinstance(area_raw, bool) else 0.0,
+        floor=str(eff.get("floor") or ""),
+        frontage_m=float(frontage_raw) if isinstance(frontage_raw, (int, float)) and not isinstance(frontage_raw, bool) else 0.0,
+        depth_m=float(eff["depth_m"]) if isinstance(eff.get("depth_m"), (int, float)) and not isinstance(eff.get("depth_m"), bool) else 0.0,
+        corner_flag=bool(eff.get("corner_flag", False)),
+        parking_flag=bool(eff.get("parking_flag", eff.get("parkingOrTemporaryStop", False))),
+        utility_electricity_flag=bool(eff.get("utility_electricity_flag", False)),
+        utility_drainage_flag=bool(eff.get("utility_drainage_flag", False)),
+        utility_gas_flag=bool(eff.get("utility_gas_flag", False)),
+        available_from=_parse_optional_date(eff.get("available_from")),
+        snapshot_id=str(revision_row["source_snapshot_id"]) if revision_row.get("source_snapshot_id") else "",
+        confidence=confidence,
+        tenant_id=tenant,
+    )
+    object.__setattr__(listing, "property_id", str(listing_row["property_id"]))
+    if listing_row.get("current_observation_id") is not None:
+        object.__setattr__(listing, "listing_obs_id", str(listing_row["current_observation_id"]))
+    for attr, keys in (
+        ("prior_90d_cell_net_revenue", ("prior_90d_cell_net_revenue", "prior90dCellNetRevenue")),
+        ("prior_90d_cell_transaction_count", ("prior_90d_cell_transaction_count", "prior90dCellTransactionCount")),
+        ("prior_90d_cell_store_count", ("prior_90d_cell_store_count", "prior90dCellStoreCount")),
+        ("feature_snapshot_time", ("feature_snapshot_time", "featureSnapshotTime")),
+        ("rent_benchmark_median", ("rent_benchmark_median", "rentBenchmarkMedian")),
+        ("rent_benchmark_p25", ("rent_benchmark_p25", "rentBenchmarkP25")),
+        ("rent_benchmark_p75", ("rent_benchmark_p75", "rentBenchmarkP75")),
+        ("rent_benchmark_sample_count", ("rent_benchmark_sample_count", "rentBenchmarkSampleCount")),
+        ("rent_benchmark_id", ("rent_benchmark_id", "rentBenchmarkId")),
+    ):
+        for key in keys:
+            if key in eff and eff[key] is not None:
+                val = eff[key]
+                if attr == "feature_snapshot_time":
+                    val = _parse_optional_datetime(val)
+                elif attr in {"prior_90d_cell_transaction_count", "prior_90d_cell_store_count", "rent_benchmark_sample_count"}:
+                    val = int(val)
+                elif attr in {"prior_90d_cell_net_revenue", "rent_benchmark_median", "rent_benchmark_p25", "rent_benchmark_p75"}:
+                    val = float(val)
+                object.__setattr__(listing, attr, val)
+                break
+    return listing
+
+
+def prove_native_listing_candidate_relation(
+    engine: Any,
+    tenant: str,
+    *,
+    listing_id: str,
+    candidate_site_id: str | None = None,
+    promotion_decision_id: str | None = None,
+    expected_listing_version: int | None = None,
+    expected_revision_id: str | None = None,
+) -> dict[str, Any]:
+    """Prove the verified tenant-qualified candidate/promotion/sourceListing relation.
+
+    SQL expansion.listings remains ACTIVE; this check proves candidate
+    membership in the same SQL unit without writing illegal CANDIDATE or shadow state.
+    """
+    clean_tenant = _ensure_tenant_context(engine, tenant)
+    lid = _valid_uuid(listing_id)
+    if lid is None:
+        raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "NATIVE_LISTING_CANDIDATE_RELATION_UNPROVEN")
+    listing = engine.query_one(
+        "SELECT * FROM expansion.listings WHERE tenant_id=? AND listing_id=? FOR SHARE",
+        (clean_tenant, lid),
+    )
+    if (
+        listing is None
+        or listing["lifecycle_state"] != "ACTIVE"
+        or listing["legal_hold"]
+        or listing["archived_at"] is not None
+        or listing["property_id"] is None
+        or listing["current_revision_id"] is None
+        or (expected_listing_version is not None and listing["version"] != expected_listing_version)
+        or (expected_revision_id is not None and str(listing["current_revision_id"]) != expected_revision_id)
+    ):
+        raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "NATIVE_LISTING_CANDIDATE_RELATION_UNPROVEN")
+    prop = engine.query_one(
+        "SELECT * FROM identity.properties WHERE tenant_id=? AND property_id=? FOR SHARE",
+        (clean_tenant, listing["property_id"]),
+    )
+    if prop is None or prop["status"] != "ACTIVE" or prop["current_redirect_property_id"] is not None:
+        raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "NATIVE_LISTING_CANDIDATE_RELATION_UNPROVEN")
+    if candidate_site_id is not None:
+        cid = _valid_uuid(candidate_site_id)
+        if cid is None:
+            raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "NATIVE_LISTING_CANDIDATE_RELATION_UNPROVEN")
+        candidate = engine.query_one(
+            "SELECT * FROM expansion.candidate_sites WHERE tenant_id=? AND candidate_site_id=? FOR SHARE",
+            (clean_tenant, cid),
+        )
+    else:
+        rows = engine.query(
+            "SELECT * FROM expansion.candidate_sites WHERE tenant_id=? AND source_listing_id=? "
+            "AND status NOT IN ('REJECTED','OPENED') ORDER BY created_at DESC,candidate_site_id DESC LIMIT 2 FOR SHARE",
+            (clean_tenant, lid),
+        )
+        candidate = rows[0] if len(rows) == 1 else None
+    if (
+        candidate is None
+        or str(candidate["source_listing_id"]) != lid
+        or str(candidate["property_id"]) != str(listing["property_id"])
+    ):
+        raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "NATIVE_LISTING_CANDIDATE_RELATION_UNPROVEN")
+    pid = _valid_uuid(promotion_decision_id) if promotion_decision_id is not None else str(candidate["promotion_decision_id"])
+    if pid is None or str(candidate["promotion_decision_id"]) != pid:
+        raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "NATIVE_LISTING_CANDIDATE_RELATION_UNPROVEN")
+    promo = engine.query_one(
+        "SELECT * FROM expansion.promotion_decisions WHERE tenant_id=? AND promotion_decision_id=? FOR SHARE",
+        (clean_tenant, pid),
+    )
+    if (
+        promo is None
+        or str(promo["listing_id"]) != lid
+        or str(promo["property_id"]) != str(listing["property_id"])
+        or promo["target_format_code"] != candidate["target_format_code"]
+        or promo["status"] not in {"CANDIDATE_CREATING", "CANDIDATE_CREATED", "SCORE_QUEUED", "COMPLETED", "SCORE_FAILED"}
+        or (promo["candidate_site_id"] is not None and str(promo["candidate_site_id"]) != str(candidate["candidate_site_id"]))
+    ):
+        raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "NATIVE_LISTING_CANDIDATE_RELATION_UNPROVEN")
+    return {"listing": listing, "property": prop, "candidate": candidate, "promotion": promo}
+
+
+def load_native_listing_bundle(
+    engine: Any,
+    tenant: str,
+    listing_id: str,
+    *,
+    expected_address_id: str | None = None,
+    lock_mode: int = 0,
+    domain_status: str | None = None,
+) -> dict[str, Any]:
+    """Load complete normalized SQL Listing, Revision, Property, Address and Geo."""
+    clean_tenant = _ensure_tenant_context(engine, tenant)
+    lid = _valid_uuid(listing_id)
+    if lid is None:
+        raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_LISTING_UNAVAILABLE")
+    suffix = _LOCK_SUFFIX[lock_mode]
+    listing_row = engine.query_one(
+        "SELECT * FROM expansion.listings WHERE tenant_id=? AND listing_id=?" + suffix,  # nosec B608 -- fixed literal lock suffix; values bound as ?.
+        (clean_tenant, lid),
+    )
+    if listing_row is None:
+        raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_LISTING_UNAVAILABLE")
+    if (
+        listing_row["property_id"] is None
+        or listing_row["current_revision_id"] is None
+        or listing_row["archived_at"] is not None
+    ):
+        raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_LISTING_LINEAGE_INCOMPLETE")
+    revision_row = engine.query_one(
+        "SELECT * FROM expansion.listing_revisions WHERE tenant_id=? AND listing_id=? AND listing_revision_id=?" + suffix,  # nosec B608
+        (clean_tenant, lid, listing_row["current_revision_id"]),
+    )
+    if revision_row is None:
+        raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_LISTING_REVISION_UNAVAILABLE")
+    prop_row = engine.query_one(
+        "SELECT * FROM identity.properties WHERE tenant_id=? AND property_id=?" + suffix,  # nosec B608
+        (clean_tenant, listing_row["property_id"]),
+    )
+    if prop_row is None or prop_row["status"] != "ACTIVE" or prop_row["current_redirect_property_id"] is not None:
+        raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_PROPERTY_UNAVAILABLE")
+    eff = _json_value(revision_row.get("effective_values"))
+    if not isinstance(eff, dict):
+        raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_LISTING_REVISION_CORRUPT")
+    explicit_addr_id = expected_address_id or eff.get("address_id") or eff.get("addressId")
+    address_row, domain_address = load_native_address(
+        engine,
+        clean_tenant,
+        address_id=str(explicit_addr_id) if explicit_addr_id is not None else None,
+        normalized_address=prop_row.get("normalized_address"),
+        lock_mode=min(lock_mode, 1),
+    )
+    geo_row, geo_version = load_native_geo_cell(engine, domain_address.h3_res_9, lock_mode=min(lock_mode, 1))
+    effective_status = domain_status if domain_status is not None else str(listing_row["lifecycle_state"]).lower()
+    domain_listing = _domain_listing_from_native_rows(
+        clean_tenant,
+        listing_row,
+        revision_row,
+        domain_address.address_id,
+        domain_status=effective_status,
+    )
+    return {
+        "listing_row": listing_row,
+        "revision_row": revision_row,
+        "property_row": prop_row,
+        "address_row": address_row,
+        "geo_row": geo_row,
+        "geo_version": geo_version,
+        "domain_listing": domain_listing,
+        "domain_address": domain_address,
+    }
+
+
+def _recorded_source_policy_version(engine: Any, tenant: str, intake_id: str) -> int | None:
+    row = engine.query_one(
+        "SELECT source_policy_version FROM intake.intake_stage_transitions "
+        "WHERE tenant_id=? AND intake_id=? AND source_policy_version IS NOT NULL "
+        "ORDER BY sequence_no DESC LIMIT 1",
+        (tenant, intake_id),
+    )
+    if row is None or row.get("source_policy_version") is None:
+        return None
+    return int(row["source_policy_version"])
+
+
+def load_native_intake_projection(
+    engine: Any,
+    tenant: str,
+    intake_id: str,
+    *,
+    gate_snapshot: dict[str, Any] | None = None,
+    revision_row: dict[str, Any] | None = None,
+    lock_mode: int = 0,
+) -> dict[str, Any]:
+    """Project one native SQL Intake + pinned source/snapshot/parser facts."""
+    clean_tenant = _ensure_tenant_context(engine, tenant)
+    iid = _valid_uuid(intake_id)
+    if iid is None:
+        raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_INTAKE_UNAVAILABLE")
+    suffix = _LOCK_SUFFIX[lock_mode]
+    intake_row = engine.query_one(
+        "SELECT * FROM intake.intakes WHERE tenant_id=? AND intake_id=? AND deleted_at IS NULL" + suffix,  # nosec B608
+        (clean_tenant, iid),
+    )
+    if intake_row is None:
+        raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_INTAKE_UNAVAILABLE")
+    recorded_policy_version = _recorded_source_policy_version(engine, clean_tenant, iid)
+    if gate_snapshot is not None:
+        policy_version = gate_snapshot.get("source_policy_version")
+        if recorded_policy_version is not None and policy_version != recorded_policy_version:
+            raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_SOURCE_POLICY_VERSION_MISMATCH")
+    else:
+        policy_version = recorded_policy_version
+
+    snapshot_id = (
+        str(revision_row["source_snapshot_id"])
+        if revision_row is not None and revision_row.get("source_snapshot_id") is not None
+        else (gate_snapshot.get("source_snapshot_id") if isinstance(gate_snapshot, dict) else None)
+    )
+    parser_run_id = (
+        str(revision_row["parser_run_id"])
+        if revision_row is not None and revision_row.get("parser_run_id") is not None
+        else (gate_snapshot.get("parser_run_id") if isinstance(gate_snapshot, dict) else None)
+    )
+    parser_release_id = None
+    parser_release_version = None
+    parser_input_schema = None
+    parser_output_schema = None
+    parser_run_version = None
+    snapshot_version = None
+    if snapshot_id is not None:
+        snap = engine.query_one(
+            "SELECT source_snapshot_id,capture_method,version FROM intake.source_snapshots "
+            "WHERE tenant_id=? AND source_snapshot_id=? FOR SHARE",
+            (clean_tenant, snapshot_id),
+        )
+        if snap is not None:
+            snapshot_version = int(snap["version"])
+            if snap["capture_method"] != "MANUAL_ENTRY":
+                if parser_run_id is not None:
+                    run = engine.query_one(
+                        "SELECT parser_run_id,parser_release_id,version FROM intake.parser_runs "
+                        "WHERE tenant_id=? AND parser_run_id=? FOR SHARE",
+                        (clean_tenant, parser_run_id),
+                    )
+                    if run is not None:
+                        parser_run_version = int(run["version"])
+                        parser_release_id = str(run["parser_release_id"])
+                        if isinstance(gate_snapshot, dict) and gate_snapshot.get("parser_release_version") is not None:
+                            parser_release_version = gate_snapshot.get("parser_release_version")
+                            parser_input_schema = gate_snapshot.get("parser_input_schema_version")
+                            parser_output_schema = gate_snapshot.get("parser_output_schema_version")
+                        else:
+                            release = engine.query_one(
+                                "SELECT version,input_schema_version,output_schema_version FROM intake.parser_releases "
+                                "WHERE parser_release_id=? FOR SHARE",
+                                (parser_release_id,),
+                            )
+                            if release is not None:
+                                parser_release_version = int(release["version"])
+                                parser_input_schema = release["input_schema_version"]
+                                parser_output_schema = release["output_schema_version"]
+    scope = {
+        "tenant_id": clean_tenant,
+        **{
+            key: str(intake_row[key])
+            for key in ("brand_id", "region_id", "assigned_area_id", "heat_zone_id")
+            if intake_row.get(key) is not None
+        },
+    }
+    return {
+        "parent_owner": "native_sql",
+        "intake_id": str(intake_row["intake_id"]),
+        "id": str(intake_row["intake_id"]),
+        "tenantId": clean_tenant,
+        "scope": scope,
+        "state": intake_row["processing_state"],
+        "stage": intake_row["processing_state"],
+        "processing_state": intake_row["processing_state"],
+        "version": int(intake_row["version"]),
+        "intake_method": intake_row["intake_method"],
+        "source_id": intake_row["source_id"],
+        "policy_state": intake_row["source_policy_state"],
+        "source_policy_version": policy_version,
+        "source_snapshot_id": snapshot_id,
+        "source_snapshot_version": snapshot_version,
+        "parser_run_id": parser_run_id,
+        "parser_run_version": parser_run_version,
+        "parser_release_id": parser_release_id,
+        "parser_release_version": parser_release_version,
+        "parser_input_schema_version": parser_input_schema,
+        "parser_output_schema_version": parser_output_schema,
+        "resolved_listing_id": str(intake_row["resolved_listing_id"]) if intake_row.get("resolved_listing_id") else None,
+        "correlation_id": str(intake_row["correlation_id"]),
+        "submitted_by": str(intake_row["submitter_subject_id"]),
+        "legal_hold": bool(intake_row.get("legal_hold")),
+    }
+
+
+def _row_to_promotion_dict(row: dict[str, Any], *, audit_event_id: str | None = None) -> dict[str, Any]:
+    gate_snapshot = _json_value(row.get("gate_snapshot"))
+    if not isinstance(gate_snapshot, dict):
+        gate_snapshot = {}
+    caller_sha = gate_snapshot.get("caller_gate_snapshot_sha256") or gate_snapshot.get("server_gate_snapshot_sha256") or ""
+    result = {
+        "parent_owner": "native_sql",
+        "promotion_decision_id": str(row["promotion_decision_id"]),
+        "tenant_id": str(row["tenant_id"]),
+        "intake_id": str(row["intake_id"]),
+        "listing_id": str(row["listing_id"]),
+        "property_id": str(row["property_id"]),
+        "target_format_code": row["target_format_code"],
+        "status": row["status"],
+        "decision_type": row.get("decision_type") or "STANDARD",
+        "version": int(row["version"]),
+        "proposer": str(row["proposer_subject_id"]),
+        "proposer_subject_id": str(row["proposer_subject_id"]),
+        "reviewer": str(row["reviewer_subject_id"]) if row.get("reviewer_subject_id") else None,
+        "reviewer_subject_id": str(row["reviewer_subject_id"]) if row.get("reviewer_subject_id") else None,
+        "reason": row["reason"],
+        "risk_acknowledged": bool(row.get("risk_acknowledged")),
+        "gate_snapshot": gate_snapshot,
+        "gate_snapshot_sha256": caller_sha,
+        "candidate_site_id": str(row["candidate_site_id"]) if row.get("candidate_site_id") else None,
+        "site_score_job_id": str(row["site_score_job_id"]) if row.get("site_score_job_id") else None,
+        "created_at": _instant(row.get("created_at")),
+        "reviewed_at": _instant(row.get("reviewed_at")),
+        "executed_at": _instant(row.get("executed_at")),
+    }
+    if audit_event_id is not None:
+        result["audit_event_id"] = audit_event_id
+    return result
+
+
+def reconstruct_native_candidate_draft(
+    engine: Any,
+    tenant: str,
+    candidate_site_id: str,
+    *,
+    document_store: Any = None,
+    lock_mode: int = 0,
+) -> CandidateSiteDraft | None:
+    """Reconstruct native CandidateSiteDraft from immutable SQL references plus live fences."""
+    clean_tenant = _ensure_tenant_context(engine, tenant)
+    cid = _valid_uuid(candidate_site_id)
+    if cid is None:
+        return None
+    suffix = _LOCK_SUFFIX[lock_mode]
+    cand_row = engine.query_one(
+        "SELECT * FROM expansion.candidate_sites WHERE tenant_id=? AND candidate_site_id=?" + suffix,  # nosec B608
+        (clean_tenant, cid),
+    )
+    if cand_row is None:
+        return None
+    promo_row = engine.query_one(
+        "SELECT * FROM expansion.promotion_decisions WHERE tenant_id=? AND promotion_decision_id=?" + suffix,  # nosec B608
+        (clean_tenant, cand_row["promotion_decision_id"]),
+    )
+    if (
+        promo_row is None
+        or str(promo_row["listing_id"]) != str(cand_row["source_listing_id"])
+        or str(promo_row["property_id"]) != str(cand_row["property_id"])
+        or promo_row["target_format_code"] != cand_row["target_format_code"]
+        or (promo_row["candidate_site_id"] is not None and str(promo_row["candidate_site_id"]) != cid)
+    ):
+        raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "NATIVE_CANDIDATE_PROMOTION_BINDING_DENIED")
+    gate_snapshot = _json_value(promo_row.get("gate_snapshot"))
+    if not isinstance(gate_snapshot, dict) or not gate_snapshot.get("address_id"):
+        raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_CANDIDATE_GATE_SNAPSHOT_INVALID")
+    bundle = load_native_listing_bundle(
+        engine,
+        clean_tenant,
+        str(cand_row["source_listing_id"]),
+        expected_address_id=str(gate_snapshot["address_id"]),
+        lock_mode=min(lock_mode, 1),
+        domain_status="candidate" if True else "active",
+    )
+    if bundle["listing_row"]["lifecycle_state"] != "ACTIVE":
+        raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "NATIVE_LISTING_NOT_ACTIVE")
+    domain_listing = bundle["domain_listing"]
+    domain_address = bundle["domain_address"]
+    hr_failures = gate_snapshot.get("hard_rule_failures")
+    if isinstance(hr_failures, list) and all(isinstance(item, str) for item in hr_failures):
+        object.__setattr__(domain_listing, "hard_rule_failures", list(hr_failures))
+
+    c_site = CandidateSite(
+        candidate_site_id=cid,
+        listing_id=str(cand_row["source_listing_id"]),
+        address_id=domain_address.address_id,
+        target_format_code=cand_row["target_format_code"],
+        site_status=domain_candidate_status(cand_row["status"]),
+        created_by=str(promo_row.get("reviewer_subject_id") or promo_row["proposer_subject_id"]),
+        created_at=_parse_optional_datetime(cand_row.get("created_at")) or datetime.now(UTC),
+    )
+    object.__setattr__(c_site, "tenant_id", clean_tenant)
+    object.__setattr__(c_site, "promotion_decision_id", str(cand_row["promotion_decision_id"]))
+    object.__setattr__(c_site, "version", int(cand_row["version"]))
+
+    recommendation = None
+    model_version = None
+    review_id = None
+    job_row = engine.query_one(
+        "SELECT status,result FROM workflow.jobs WHERE tenant_id=? AND job_type='intake-sitescore' "
+        "AND aggregate_type='candidate_site' AND aggregate_id=? ORDER BY created_at DESC,job_id DESC LIMIT 1",
+        (clean_tenant, cid),
+    )
+    if job_row is not None and job_row["status"] == "SUCCEEDED":
+        result = _json_value(job_row.get("result"))
+        if isinstance(result, dict):
+            report_id = result.get("report_id")
+            if document_store is not None and isinstance(report_id, str) and report_id:
+                report = document_store.get("sitescore.reports", report_id)
+                if report is not None and report.candidate_site_id == cid:
+                    recommendation = getattr(report.recommendation, "value", report.recommendation)
+                    model_version = report.model_version
+            if model_version is None and isinstance(result.get("model_version"), str):
+                model_version = result["model_version"]
+    if document_store is not None:
+        for decision in document_store.list_all("sitescore.decisions"):
+            if getattr(decision, "candidate_site_id", None) == cid:
+                review_id = getattr(decision, "decision_id", None)
+                break
+
+    draft = CandidateSiteDraft(
+        listing=domain_listing,
+        address=domain_address,
+        candidate_site=c_site,
+        feasibility_flags=tuple(hr_failures) if isinstance(hr_failures, list) else (),
+        heat_zone_id=domain_address.h3_res_9,
+        listing_source=domain_listing.source_id,
+        status="CANDIDATE",
+        score=None,
+        recommendation=recommendation,
+        model_version=model_version,
+        dataset_snapshot_id=domain_listing.snapshot_id or None,
+        review_id=review_id,
+        prior_90d_cell_net_revenue=getattr(domain_listing, "prior_90d_cell_net_revenue", None),
+        prior_90d_cell_transaction_count=getattr(domain_listing, "prior_90d_cell_transaction_count", None),
+        prior_90d_cell_store_count=getattr(domain_listing, "prior_90d_cell_store_count", None),
+        feature_snapshot_time=getattr(domain_listing, "feature_snapshot_time", None),
+        property_entity_id=str(cand_row["property_id"]),
+        listing_observation_id=getattr(domain_listing, "listing_obs_id", None),
+        rent_benchmark_median=getattr(domain_listing, "rent_benchmark_median", None),
+        rent_benchmark_p25=getattr(domain_listing, "rent_benchmark_p25", None),
+        rent_benchmark_p75=getattr(domain_listing, "rent_benchmark_p75", None),
+        rent_benchmark_sample_count=getattr(domain_listing, "rent_benchmark_sample_count", None),
+        rent_benchmark_id=getattr(domain_listing, "rent_benchmark_id", None),
+    )
+    object.__setattr__(draft, "parent_owner", "native_sql")
+    return draft
+
+
+def list_native_candidate_drafts(engine: Any, tenant: str, *, document_store: Any = None) -> list[CandidateSiteDraft]:
+    clean_tenant = _ensure_tenant_context(engine, tenant)
+    rows = engine.query(
+        "SELECT candidate_site_id FROM expansion.candidate_sites WHERE tenant_id=? ORDER BY created_at,candidate_site_id",
+        (clean_tenant,),
+    )
+    drafts: list[CandidateSiteDraft] = []
+    for row in rows:
+        draft = reconstruct_native_candidate_draft(
+            engine, clean_tenant, str(row["candidate_site_id"]), document_store=document_store
+        )
+        if draft is not None:
+            drafts.append(draft)
+    return drafts
+
+
+def save_native_candidate_cas(
+    engine: Any,
+    tenant: str,
+    candidate: CandidateSiteDraft,
+    *,
+    expected_state: str | None = None,
+) -> dict[str, Any]:
+    """Insert or CAS-update a native expansion.candidate_sites row without shadow docs."""
+    clean_tenant = _ensure_tenant_context(engine, tenant)
+    site = candidate.candidate_site
+    cid = _valid_uuid(site.candidate_site_id)
+    if cid is None:
+        raise ValueError("Native candidate requires a UUID candidate_site_id")
+    existing = engine.query_one(
+        "SELECT * FROM expansion.candidate_sites WHERE tenant_id=? AND candidate_site_id=? FOR UPDATE",
+        (clean_tenant, cid),
+    )
+    target_sql = sql_candidate_status(site.site_status)
+    if existing is None:
+        promo_id = _valid_uuid(getattr(site, "promotion_decision_id", None))
+        lid = _valid_uuid(site.listing_id)
+        prop_id = _valid_uuid(candidate.property_entity_id or getattr(candidate.listing, "property_id", None))
+        if promo_id is None or lid is None or prop_id is None:
+            raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "NATIVE_CANDIDATE_RELATION_REQUIRED")
+        promo = engine.query_one(
+            "SELECT * FROM expansion.promotion_decisions WHERE tenant_id=? AND promotion_decision_id=? FOR UPDATE",
+            (clean_tenant, promo_id),
+        )
+        if (
+            promo is None
+            or str(promo["listing_id"]) != lid
+            or str(promo["property_id"]) != prop_id
+            or promo["target_format_code"] != site.target_format_code
+            or promo["status"] != "CANDIDATE_CREATING"
+        ):
+            raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "NATIVE_CANDIDATE_PROMOTION_CONFLICT")
+        try:
+            row = engine.query_one(
+                "INSERT INTO expansion.candidate_sites (candidate_site_id,tenant_id,property_id,"
+                "source_listing_id,promotion_decision_id,target_format_code,status,version) "
+                "VALUES (?,?,?,?,?,?,?,1) RETURNING *",
+                (cid, clean_tenant, prop_id, lid, promo_id, site.target_format_code, target_sql),
+            )
+        except Exception as exc:
+            if (
+                getattr(exc, "sqlstate", None) == "23505"
+                and getattr(getattr(exc, "diag", None), "constraint_name", None) == "ux_active_candidate_property_format"
+            ):
+                raise DomainValidationError(DenialCode.DEPENDENCY_CONFLICT, "DUPLICATE_CANDIDATE") from exc
+            raise
+        object.__setattr__(site, "version", int(row["version"]))
+        return row
+
+    if expected_state is not None and existing["status"] != sql_candidate_status(expected_state):
+        raise ValueError("CANDIDATE_REVIEW_PRECONDITION_CONFLICT")
+    expected_version = getattr(site, "version", None)
+    if expected_version is not None and int(existing["version"]) != int(expected_version):
+        raise IdentityConflictError("NATIVE_CANDIDATE_VERSION_CONFLICT")
+    if existing["status"] in {"APPROVED", "OPENED"} and expected_state is None:
+        # Retries and score callbacks never overwrite approved/opened decisions.
+        object.__setattr__(site, "version", int(existing["version"]))
+        return existing
+    if target_sql == existing["status"]:
+        object.__setattr__(site, "version", int(existing["version"]))
+        return existing
+    updated = engine.query_one(
+        "UPDATE expansion.candidate_sites SET status=?,version=version+1,updated_at=clock_timestamp() "
+        "WHERE tenant_id=? AND candidate_site_id=? AND version=? RETURNING *",
+        (target_sql, clean_tenant, cid, int(existing["version"])),
+    )
+    if updated is None:
+        raise IdentityConflictError("NATIVE_CANDIDATE_VERSION_CONFLICT")
+    object.__setattr__(site, "version", int(updated["version"]))
+    return updated
+
+
+def read_native_current_candidate_inputs(
+    engine: Any,
+    tenant: str,
+    candidate: Any,
+) -> tuple[Listing, AddressLocation, dict[str, Any]]:
+    """Independently verify native SQL parent/candidate/listing/address/geo/hard-rule proofs."""
+    from modules.listing.application.intake_score_delivery import ScoreDeliveryDenied
+    from modules.listing.application.promotion import evaluate_native_hard_rules
+
+    clean_tenant = _ensure_tenant_context(engine, tenant)
+    cid = _valid_uuid(getattr(candidate.candidate_site, "candidate_site_id", None))
+    lid = _valid_uuid(getattr(candidate.candidate_site, "listing_id", None))
+    if cid is None or lid is None:
+        raise ScoreDeliveryDenied("SITESCORE_CURRENT_INPUT_UNAVAILABLE")
+    try:
+        relation = prove_native_listing_candidate_relation(
+            engine,
+            clean_tenant,
+            listing_id=lid,
+            candidate_site_id=cid,
+        )
+    except (DomainValidationError, ValueError) as exc:
+        raise ScoreDeliveryDenied("SITESCORE_CURRENT_CANDIDATE_GATE_DENIED") from exc
+    promo = relation["promotion"]
+    listing_row = relation["listing"]
+    prop_row = relation["property"]
+    gate_snapshot = _json_value(promo.get("gate_snapshot"))
+    if not isinstance(gate_snapshot, dict):
+        raise ScoreDeliveryDenied("SITESCORE_CURRENT_INPUT_UNAVAILABLE")
+    intake_row = engine.query_one(
+        "SELECT * FROM intake.intakes WHERE tenant_id=? AND intake_id=? AND deleted_at IS NULL FOR SHARE",
+        (clean_tenant, promo["intake_id"]),
+    )
+    if (
+        intake_row is None
+        or intake_row["processing_state"] != "READY"
+        or intake_row["legal_hold"]
+        or str(intake_row.get("resolved_listing_id") or "") != lid
+    ):
+        raise ScoreDeliveryDenied("SITESCORE_CURRENT_INPUT_UNAVAILABLE")
+    if (
+        gate_snapshot.get("listing_version") != int(listing_row["version"])
+        or gate_snapshot.get("listing_revision_id") != str(listing_row["current_revision_id"])
+        or gate_snapshot.get("property_version") != int(prop_row["version"])
+        or gate_snapshot.get("property_id") != str(prop_row["property_id"])
+    ):
+        raise ScoreDeliveryDenied("SITESCORE_CANDIDATE_INPUT_STALE")
+    try:
+        bundle = load_native_listing_bundle(
+            engine,
+            clean_tenant,
+            lid,
+            expected_address_id=str(gate_snapshot.get("address_id") or ""),
+            lock_mode=1,
+            domain_status="active",
+        )
+    except (DomainValidationError, ValueError) as exc:
+        raise ScoreDeliveryDenied("SITESCORE_CURRENT_INPUT_UNAVAILABLE") from exc
+    address_row = bundle["address_row"]
+    geo_row = bundle["geo_row"]
+    if (
+        str(address_row["address_id"]) != str(candidate.candidate_site.address_id)
+        or int(address_row["revision"]) != gate_snapshot.get("address_revision")
+        or str(geo_row["geo_cell_id"]) != gate_snapshot.get("geo_cell_id")
+        or bundle["geo_version"] != gate_snapshot.get("geo_version")
+    ):
+        raise ScoreDeliveryDenied("SITESCORE_CANDIDATE_INPUT_STALE")
+    try:
+        _, failures, policy_sha = evaluate_native_hard_rules(
+            bundle["domain_listing"],
+            bundle["domain_address"],
+            target_format_code=promo["target_format_code"],
+        )
+    except DomainValidationError as exc:
+        raise ScoreDeliveryDenied("SITESCORE_CURRENT_HARD_RULE_GATE_DENIED") from exc
+    if policy_sha != gate_snapshot.get("policy_sha256") or failures:
+        raise ScoreDeliveryDenied("SITESCORE_CURRENT_HARD_RULE_GATE_DENIED")
+    verified_listing = _domain_listing_from_native_rows(
+        clean_tenant,
+        listing_row,
+        bundle["revision_row"],
+        bundle["domain_address"].address_id,
+        domain_status="candidate",
+    )
+    object.__setattr__(verified_listing, "hard_rule_failures", list(failures))
+    current_attrs = {key: value for key, value in vars(verified_listing).items() if key != "listing_status"}
+    current_attrs["hard_rule_failures"] = list(failures)
+    return verified_listing, bundle["domain_address"], current_attrs
+
+
+def load_native_score_parents(
+    engine: Any,
+    tenant: str,
+    *,
+    intake_id: str,
+    promotion_decision_id: str,
+    candidate_site_id: str,
+    job_id: str,
+    lock_mode: int = 0,
+    document_store: Any = None,
+) -> tuple[dict[str, Any], dict[str, Any], CandidateSiteDraft]:
+    """Load and verify native SQL intake/promotion/candidate parents in canonical lock order."""
+    from modules.listing.application.intake_score_delivery import ScoreDeliveryDenied
+
+    clean_tenant = _ensure_tenant_context(engine, tenant)
+    iid = _valid_uuid(intake_id)
+    pid = _valid_uuid(promotion_decision_id)
+    cid = _valid_uuid(candidate_site_id)
+    jid = _valid_uuid(job_id)
+    if None in (iid, pid, cid, jid):
+        raise ScoreDeliveryDenied("SITESCORE_PARENT_BINDING_DENIED")
+    suffix = _LOCK_SUFFIX[lock_mode]
+    promo_row = engine.query_one(
+        "SELECT * FROM expansion.promotion_decisions WHERE tenant_id=? AND promotion_decision_id=?" + suffix,  # nosec B608
+        (clean_tenant, pid),
+    )
+    if (
+        promo_row is None
+        or str(promo_row["intake_id"]) != iid
+        or str(promo_row.get("candidate_site_id") or "") != cid
+        or str(promo_row.get("site_score_job_id") or "") != jid
+    ):
+        raise ScoreDeliveryDenied("SITESCORE_PARENT_BINDING_DENIED")
+    gate_snapshot = _json_value(promo_row.get("gate_snapshot"))
+    if not isinstance(gate_snapshot, dict):
+        raise ScoreDeliveryDenied("SITESCORE_PARENT_BINDING_DENIED")
+    try:
+        candidate = reconstruct_native_candidate_draft(
+            engine, clean_tenant, cid, document_store=document_store, lock_mode=lock_mode
+        )
+    except (DomainValidationError, ValueError) as exc:
+        raise ScoreDeliveryDenied("SITESCORE_PARENT_BINDING_DENIED") from exc
+    if candidate is None or str(candidate.candidate_site.listing_id) != str(promo_row["listing_id"]):
+        raise ScoreDeliveryDenied("SITESCORE_PARENT_BINDING_DENIED")
+    revision_row = engine.query_one(
+        "SELECT r.* FROM expansion.listings l JOIN expansion.listing_revisions r "
+        "ON r.tenant_id=l.tenant_id AND r.listing_id=l.listing_id AND r.listing_revision_id=l.current_revision_id "
+        "WHERE l.tenant_id=? AND l.listing_id=? FOR SHARE",
+        (clean_tenant, promo_row["listing_id"]),
+    )
+    try:
+        intake = load_native_intake_projection(
+            engine, clean_tenant, iid, gate_snapshot=gate_snapshot, revision_row=revision_row, lock_mode=lock_mode
+        )
+    except (DomainValidationError, ValueError) as exc:
+        raise ScoreDeliveryDenied("SITESCORE_PARENT_BINDING_DENIED") from exc
+    if intake["resolved_listing_id"] != str(promo_row["listing_id"]):
+        raise ScoreDeliveryDenied("SITESCORE_PARENT_BINDING_DENIED")
+    audit_row = engine.query_one(
+        "SELECT audit_event_id FROM audit.audit_events WHERE tenant_id=? "
+        "AND resource_type='promotion_decision' AND resource_id=? AND result='SUCCEEDED' "
+        "AND jsonb_typeof(after_value->'version')='number' AND after_value->>'version'=? "
+        "AND after_value->>'status'=? ORDER BY sequence_no DESC LIMIT 1",
+        (clean_tenant, pid, str(int(promo_row["version"])), promo_row["status"]),
+    )
+    promotion = _row_to_promotion_dict(
+        promo_row,
+        audit_event_id=str(audit_row["audit_event_id"]) if audit_row is not None else None,
+    )
+    return intake, promotion, candidate
 
 
 def _instant(value) -> str | None:
@@ -95,9 +1094,10 @@ class _NativeWorkflowState(SimpleNamespace):
 
 
 class CanonicalIntakeRepository:
-    def __init__(self, graph, workflow_policy=None):
+    def __init__(self, graph, workflow_policy=None, *, replay_store=None):
         self.graph, self.engine = graph, graph.engine
         self.workflow_policy = workflow_policy
+        self.replay_store = replay_store
 
     def get(self, tenant: str, intake_id: str) -> dict:
         UUID(intake_id)
@@ -595,16 +1595,110 @@ class CanonicalIntakeRepository:
                         row["audit_event_id"] = executed_audit["audit_event_id"]
                         executed_decisions[row["decision_id"]] = (verified_decision, verified_job)
                 decisions[row["decision_id"]] = row
-            # Corrections, promotions, and intake jobs have no native per-row
-            # canonical audit producer yet. Rows are still loaded so unresolved
-            # sibling work blocks completion while require_audit=true fails closed.
+            # Corrections have no native per-row canonical audit producer yet.
+            # Rows are still loaded so unresolved sibling work blocks completion
+            # while require_audit=true fails closed.
             corrections = self.engine.query("SELECT correction_id,intake_id,tenant_id,status,version "
                 "FROM intake.human_corrections WHERE tenant_id=? AND intake_id=?", (tenant, intake_id))
-            promotions = self.engine.query("SELECT promotion_decision_id,intake_id,tenant_id,status,version "
-                "FROM expansion.promotion_decisions WHERE tenant_id=? AND intake_id=?", (tenant, intake_id))
-            jobs = self.engine.query("SELECT job_id,aggregate_id AS intake_id,tenant_id,status,version,job_type "
+            raw_promotions = self.engine.query(
+                "SELECT * FROM expansion.promotion_decisions WHERE tenant_id=? AND intake_id=? "
+                "ORDER BY created_at,promotion_decision_id",
+                (tenant, intake_id),
+            )
+            promotions: dict[str, dict[str, Any]] = {}
+            verified_completed_promotions: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+            workflow_outbox: dict[str, dict[str, Any]] = {}
+            for raw_promo in raw_promotions:
+                promo_row: dict[str, Any] = {
+                    "promotion_decision_id": str(raw_promo["promotion_decision_id"]),
+                    "intake_id": str(raw_promo["intake_id"]),
+                    "tenant_id": str(raw_promo["tenant_id"]),
+                    "listing_id": str(raw_promo["listing_id"]),
+                    "property_id": str(raw_promo["property_id"]),
+                    "target_format_code": raw_promo["target_format_code"],
+                    "candidate_site_id": str(raw_promo["candidate_site_id"]) if raw_promo.get("candidate_site_id") else None,
+                    "site_score_job_id": str(raw_promo["site_score_job_id"]) if raw_promo.get("site_score_job_id") else None,
+                    "status": raw_promo["status"],
+                    "version": int(raw_promo["version"]),
+                }
+                proof = self._native_promotion_proof(tenant, intake, raw_promo)
+                if proof is not None:
+                    promo_audit, promo_outbox, gate_snapshot = proof
+                    committed.append(promo_audit)
+                    promo_row["audit_event_id"] = promo_audit["audit_event_id"]
+                    if promo_outbox is not None:
+                        workflow_outbox[str(promo_outbox["event_id"])] = promo_outbox
+                        promo_row["outbox_event_id"] = str(promo_outbox["event_id"])
+                    if raw_promo["status"] == "COMPLETED":
+                        verified_completed_promotions[promo_row["promotion_decision_id"]] = (raw_promo, gate_snapshot)
+                promotions[promo_row["promotion_decision_id"]] = promo_row
+
+            intake_jobs = self.engine.query(
+                "SELECT job_id,aggregate_id AS intake_id,tenant_id,status,version,job_type "
                 "FROM workflow.jobs WHERE tenant_id=? AND aggregate_type='intake' AND aggregate_id=?",
-                (tenant, intake_id))
+                (tenant, intake_id),
+            )
+            jobs_map: dict[str, dict[str, Any]] = {
+                str(row["job_id"]): {
+                    "job_id": str(row["job_id"]),
+                    "intake_id": str(row["intake_id"]),
+                    "tenant_id": str(row["tenant_id"]),
+                    "status": row["status"],
+                    "version": int(row["version"]),
+                    "job_type": row["job_type"],
+                }
+                for row in intake_jobs
+            }
+            candidate_ids = [
+                str(row["candidate_site_id"])
+                for row in raw_promotions
+                if row.get("candidate_site_id") is not None
+            ]
+            if candidate_ids:
+                from shared.infrastructure.persistence.operator_domains import (
+                    TenantScopedDocumentStore,
+                )
+                from shared.infrastructure.persistence.postgresql import PostgresDocumentStore
+
+                scoped_docs = TenantScopedDocumentStore(PostgresDocumentStore(self.engine), tenant)
+                score_jobs = self.engine.query(
+                    "SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_type='intake-sitescore' "
+                    "AND aggregate_type='candidate_site' AND aggregate_id=ANY(?::uuid[]) "
+                    "ORDER BY created_at,job_id",
+                    (tenant, candidate_ids),
+                )
+                promo_by_candidate = {
+                    str(row["candidate_site_id"]): row
+                    for row in raw_promotions
+                    if row.get("candidate_site_id") is not None
+                }
+                for raw_job in score_jobs:
+                    job_id = str(raw_job["job_id"])
+                    cand_id = str(raw_job["aggregate_id"])
+                    linked_promo = promo_by_candidate.get(cand_id)
+                    job_row: dict[str, Any] = {
+                        "job_id": job_id,
+                        "intake_id": intake_id,
+                        "tenant_id": str(raw_job["tenant_id"]),
+                        "status": raw_job["status"],
+                        "version": int(raw_job["version"]),
+                        "job_type": raw_job["job_type"],
+                        "candidate_site_id": cand_id,
+                        "promotion_decision_id": str(linked_promo["promotion_decision_id"]) if linked_promo else None,
+                    }
+                    if linked_promo is not None:
+                        verified_pair = verified_completed_promotions.get(str(linked_promo["promotion_decision_id"]))
+                        if verified_pair is not None:
+                            job_proof = self._native_score_job_proof(
+                                tenant, intake, verified_pair[0], verified_pair[1], raw_job, document_store=scoped_docs,
+                            )
+                            if job_proof is not None:
+                                job_audit, acceptance, result_receipt = job_proof
+                                committed.append(job_audit)
+                                job_row["audit_event_id"] = job_audit["audit_event_id"]
+                                job_row["worker_acceptance"] = deepcopy(acceptance)
+                                job_row["result"] = deepcopy(result_receipt)
+                    jobs_map[job_id] = job_row
             return _NativeWorkflowState(
                 graph=self.graph,
                 intake=intake, intakes={intake_id: intake_shape},
@@ -612,12 +1706,12 @@ class CanonicalIntakeRepository:
                 slas={sla["sla_instance_id"]: sla_shape},
                 decisions=decisions,
                 corrections={row["correction_id"]: row for row in corrections},
-                promotions={row["promotion_decision_id"]: row for row in promotions},
-                jobs={row["job_id"]: row for row in jobs},
+                promotions=promotions,
+                jobs=jobs_map,
                 workflow_audits={audit["audit_event_id"]: audit for audit in committed},
                 committed_audits=tuple(committed),
                 executed_decisions=executed_decisions,
-                workflow_outbox={},
+                workflow_outbox=workflow_outbox,
                 baseline={"assignments": deepcopy({assignment["assignment_id"]: assignment_shape}),
                           "slas": deepcopy({sla["sla_instance_id"]: sla_shape})})
 
@@ -973,3 +2067,891 @@ class CanonicalIntakeRepository:
             self.graph._outbox(event)
             self._initialize_workflow(row, reason=reason, idempotency_key=idempotency_key)
             return {**receipt, "outbox_event_id": event.event_id}
+
+    def _promotion_latest_committed_audit(self, tenant: str, promotion_decision_id: str, *, version: int, status: str) -> dict[str, Any] | None:
+        rows = self.engine.query(
+            "SELECT audit_event_id FROM audit.audit_events WHERE tenant_id=? "
+            "AND resource_type='promotion_decision' AND resource_id=? AND result='SUCCEEDED' "
+            "AND jsonb_typeof(after_value->'version')='number' AND after_value->>'version'=? "
+            "AND after_value->>'status'=? ORDER BY sequence_no DESC LIMIT 1",
+            (tenant, promotion_decision_id, str(version), status),
+        )
+        if not rows:
+            return None
+        return self._load_committed_audit(tenant, rows[0]["audit_event_id"])
+
+    def _native_promotion_proof(
+        self, tenant: str, intake: dict[str, Any], promo: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any]] | None:
+        """Verify true committed native promotion, audit, outbox and revision binding."""
+        promo_id = str(promo["promotion_decision_id"])
+        intake_id = str(intake["intake_id"])
+        listing_id = str(promo["listing_id"])
+        property_id = str(promo["property_id"])
+        status = promo["status"]
+        version = int(promo["version"])
+        gate_snapshot = _json_value(promo.get("gate_snapshot"))
+        if (
+            str(promo.get("tenant_id")) != tenant
+            or str(promo.get("intake_id")) != intake_id
+            or status not in {"REJECTED", "COMPLETED"}
+            or not isinstance(gate_snapshot, dict)
+            or str(intake.get("resolved_listing_id") or "") != listing_id
+        ):
+            return None
+        listing = self.engine.query_one(
+            "SELECT * FROM expansion.listings WHERE tenant_id=? AND listing_id=?",
+            (tenant, listing_id),
+        )
+        if (
+            listing is None
+            or str(listing.get("property_id") or "") != property_id
+            or str(listing.get("current_revision_id") or "") != str(gate_snapshot.get("listing_revision_id") or "")
+            or int(listing["version"]) != gate_snapshot.get("listing_version")
+        ):
+            return None
+
+        if status == "REJECTED":
+            if (
+                not promo.get("proposer_subject_id")
+                or not promo.get("reviewer_subject_id")
+                or str(promo["reviewer_subject_id"]) == str(promo["proposer_subject_id"])
+                or not promo.get("reviewed_at")
+                or promo.get("candidate_site_id") is not None
+                or promo.get("site_score_job_id") is not None
+            ):
+                return None
+            loaded = self._promotion_latest_committed_audit(tenant, promo_id, version=version, status="REJECTED")
+            if loaded is None:
+                return None
+            after = loaded.get("after_value")
+            if (
+                loaded.get("action") != "promotion.rejected"
+                or loaded.get("resource_type") != "promotion_decision"
+                or loaded.get("resource_id") != promo_id
+                or loaded.get("actor_subject_id") != str(promo["reviewer_subject_id"])
+                or loaded.get("service_principal") is not None
+                or loaded.get("result") != "SUCCEEDED"
+                or not isinstance(after, dict)
+                or after.get("promotion_decision_id") != promo_id
+                or after.get("intake_id") != intake_id
+                or after.get("listing_id") != listing_id
+                or after.get("status") != "REJECTED"
+                or type(after.get("version")) is not int
+                or after["version"] != version
+                or after.get("reviewer_subject_id") != str(promo["reviewer_subject_id"])
+            ):
+                return None
+            return {**loaded, "intake_id": intake_id}, None, gate_snapshot
+
+        # status == "COMPLETED" (worker-accepted promotion)
+        cand_id = str(promo["candidate_site_id"]) if promo.get("candidate_site_id") else None
+        job_id = str(promo["site_score_job_id"]) if promo.get("site_score_job_id") else None
+        if (
+            intake["processing_state"] != "READY"
+            or listing["lifecycle_state"] != "ACTIVE"
+            or listing["legal_hold"]
+            or not cand_id
+            or not job_id
+            or not promo.get("reviewer_subject_id")
+            or str(promo["reviewer_subject_id"]) == str(promo["proposer_subject_id"])
+        ):
+            return None
+        candidate = self.engine.query_one(
+            "SELECT * FROM expansion.candidate_sites WHERE tenant_id=? AND candidate_site_id=?",
+            (tenant, cand_id),
+        )
+        if (
+            candidate is None
+            or str(candidate["promotion_decision_id"]) != promo_id
+            or str(candidate["source_listing_id"]) != listing_id
+            or str(candidate["property_id"]) != property_id
+            or candidate["target_format_code"] != promo["target_format_code"]
+        ):
+            return None
+        job = self.engine.query_one(
+            "SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=? "
+            "AND job_type='intake-sitescore' AND aggregate_type='candidate_site' AND aggregate_id=?",
+            (tenant, job_id, cand_id),
+        )
+        if job is None:
+            return None
+        payload = _json_value(job.get("payload"))
+        acceptance = payload.get("worker_acceptance") if isinstance(payload, dict) else None
+        if (
+            not isinstance(acceptance, dict)
+            or acceptance.get("tenant_id") != tenant
+            or acceptance.get("job_id") != job_id
+            or acceptance.get("intake_id") != intake_id
+            or acceptance.get("promotion_decision_id") != promo_id
+            or acceptance.get("candidate_site_id") != cand_id
+            or acceptance.get("promotion_version") != version
+            or type(acceptance.get("accepted_fence")) is not int
+            or not 0 < acceptance["accepted_fence"] <= int(job["fence_token"])
+        ):
+            return None
+        loaded = self._load_committed_audit(tenant, acceptance.get("audit_event_id"))
+        if loaded is None:
+            return None
+        after = loaded.get("after_value")
+        if (
+            loaded.get("resource_type") != "promotion_decision"
+            or loaded.get("resource_id") != promo_id
+            or loaded.get("action") != "candidate.promotion_completed"
+            or loaded.get("service_principal") != "sitescore_worker"
+            or loaded.get("result") != "SUCCEEDED"
+            or loaded.get("correlation_id") != str(job["correlation_id"])
+            or not isinstance(after, dict)
+            or after.get("tenant_id") != tenant
+            or after.get("promotion_decision_id") != promo_id
+            or after.get("intake_id") != intake_id
+            or after.get("listing_id") != listing_id
+            or after.get("candidate_site_id") != cand_id
+            or after.get("site_score_job_id") != job_id
+            or after.get("status") != "COMPLETED"
+            or type(after.get("version")) is not int
+            or after["version"] != version
+        ):
+            return None
+        outbox_row = self.engine.query_one(
+            "SELECT event_id,event_type,aggregate_type,aggregate_id,aggregate_version,correlation_id "
+            "FROM workflow.outbox_events WHERE tenant_id=? AND aggregate_type='promotion_decision' "
+            "AND aggregate_id=? AND aggregate_version=? AND event_type='candidate.promotion_completed'",
+            (tenant, promo_id, version),
+        )
+        if outbox_row is None or str(outbox_row["correlation_id"]) != str(job["correlation_id"]):
+            return None
+        return {**loaded, "intake_id": intake_id}, outbox_row, gate_snapshot
+
+    def _native_score_job_proof(
+        self,
+        tenant: str,
+        intake: dict[str, Any],
+        promo: dict[str, Any],
+        gate_snapshot: dict[str, Any],
+        job: dict[str, Any],
+        *,
+        document_store: Any,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None:
+        """Verify committed score SUCCEEDED job, canonical audit and immutable report."""
+        if job.get("status") != "SUCCEEDED":
+            return None
+        job_id = str(job["job_id"])
+        intake_id = str(intake["intake_id"])
+        promo_id = str(promo["promotion_decision_id"])
+        cand_id = str(promo["candidate_site_id"])
+        job_version = int(job["version"])
+        payload = _json_value(job.get("payload"))
+        result = _json_value(job.get("result"))
+        acceptance = payload.get("worker_acceptance") if isinstance(payload, dict) else None
+        if (
+            str(job.get("tenant_id")) != tenant
+            or str(job.get("aggregate_id")) != cand_id
+            or str(promo.get("site_score_job_id") or "") != job_id
+            or not isinstance(payload, dict)
+            or payload.get("parent_owner") != "native_sql"
+            or payload.get("intake_id") != intake_id
+            or payload.get("promotion_decision_id") != promo_id
+            or payload.get("candidate_site_id") != cand_id
+            or not isinstance(acceptance, dict)
+            or not isinstance(result, dict)
+            or not all(result.get(key) for key in ("report_id", "report_version", "sitescore_run_id", "prediction_run_id", "model_version"))
+            or type(result.get("report_version")) is not int
+            or result["report_version"] < 1
+        ):
+            return None
+        delivery = self.engine.query_one(
+            "SELECT status FROM durable_jobs WHERE job_id=?",
+            (job_id,),
+        )
+        if delivery is None or delivery["status"] != JobStatus.SUCCEEDED.value:
+            return None
+        # Immutable report & run artifacts must actually exist in the tenant store.
+        report = document_store.get("sitescore.reports", str(result["report_id"]))
+        sitescore_run = document_store.get("sitescore.sitescore_runs", str(result["sitescore_run_id"]))
+        prediction_run = document_store.get("sitescore.prediction_runs", str(result["prediction_run_id"]))
+        if (
+            report is None
+            or report.report_id != result["report_id"]
+            or report.candidate_site_id != cand_id
+            or report.report_version != result["report_version"]
+            or report.sitescore_run_id != result["sitescore_run_id"]
+            or report.model_version != result["model_version"]
+            or sitescore_run is None
+            or sitescore_run.candidate_site_id != cand_id
+            or sitescore_run.prediction_run_id != result["prediction_run_id"]
+            or prediction_run is None
+            or prediction_run.prediction_run_id != result["prediction_run_id"]
+        ):
+            return None
+        rows = self.engine.query(
+            "SELECT audit_event_id FROM audit.audit_events WHERE tenant_id=? "
+            "AND resource_type='job' AND resource_id=? AND action='sitescore.completed' "
+            "AND service_principal='sitescore_worker' AND result='SUCCEEDED' "
+            "AND jsonb_typeof(after_value->'version')='number' AND after_value->>'version'=? "
+            "AND after_value->>'status'='SUCCEEDED' ORDER BY sequence_no DESC LIMIT 1",
+            (tenant, job_id, str(job_version)),
+        )
+        if not rows:
+            return None
+        loaded = self._load_committed_audit(tenant, rows[0]["audit_event_id"])
+        if loaded is None:
+            return None
+        after = loaded.get("after_value")
+        audited_result = after.get("result") if isinstance(after, dict) else None
+        if (
+            loaded.get("resource_type") != "job"
+            or loaded.get("resource_id") != job_id
+            or loaded.get("action") != "sitescore.completed"
+            or loaded.get("service_principal") != "sitescore_worker"
+            or loaded.get("result") != "SUCCEEDED"
+            or loaded.get("correlation_id") != str(job["correlation_id"])
+            or not isinstance(after, dict)
+            or after.get("job_id") != job_id
+            or after.get("tenant_id") != tenant
+            or after.get("intake_id") != intake_id
+            or after.get("promotion_decision_id") != promo_id
+            or after.get("candidate_site_id") != cand_id
+            or after.get("status") != "SUCCEEDED"
+            or type(after.get("version")) is not int
+            or after["version"] != job_version
+            or not isinstance(audited_result, dict)
+            or any(audited_result.get(key) != result.get(key) for key in (
+                "report_id", "report_version", "sitescore_run_id", "prediction_run_id", "model_version"
+            ))
+        ):
+            return None
+        return {**loaded, "intake_id": intake_id}, acceptance, result
+
+    def promotion_owner(
+        self,
+        tenant: str,
+        *,
+        intake_id: str | None = None,
+        promotion_decision_id: str | None = None,
+        candidate_site_id: str | None = None,
+        listing_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Identify actual tenant-qualified normalized SQL ownership for promotion/candidate paths."""
+        selected = [v for v in (intake_id, promotion_decision_id, candidate_site_id, listing_id) if v is not None]
+        if len(selected) != 1:
+            raise ValueError("Exactly one native promotion/candidate resource is required")
+        clean_id = _valid_uuid(selected[0])
+        if clean_id is None:
+            return None
+        with self.graph.transaction(tenant):
+            if promotion_decision_id is not None:
+                row = self.engine.query_one(
+                    "SELECT promotion_decision_id,intake_id,listing_id,property_id,candidate_site_id,site_score_job_id "
+                    "FROM expansion.promotion_decisions WHERE tenant_id=? AND promotion_decision_id=?",
+                    (tenant, clean_id),
+                )
+                return None if row is None else {"owner": "native_sql", **{k: str(v) if v is not None else None for k, v in row.items()}}
+            if candidate_site_id is not None:
+                row = self.engine.query_one(
+                    "SELECT candidate_site_id,promotion_decision_id,source_listing_id AS listing_id,property_id "
+                    "FROM expansion.candidate_sites WHERE tenant_id=? AND candidate_site_id=?",
+                    (tenant, clean_id),
+                )
+                return None if row is None else {"owner": "native_sql", **{k: str(v) if v is not None else None for k, v in row.items()}}
+            if listing_id is not None:
+                row = self.engine.query_one(
+                    "SELECT listing_id,property_id FROM expansion.listings WHERE tenant_id=? AND listing_id=?",
+                    (tenant, clean_id),
+                )
+                return None if row is None else {"owner": "native_sql", **{k: str(v) if v is not None else None for k, v in row.items()}}
+            if is_native_sql_owned(self.engine, tenant, intake_id=clean_id):
+                row = self.engine.query_one(
+                    "SELECT intake_id,resolved_listing_id FROM intake.intakes WHERE tenant_id=? AND intake_id=? AND deleted_at IS NULL",
+                    (tenant, clean_id),
+                )
+                return None if row is None else {
+                    "owner": "native_sql",
+                    "intake_id": str(row["intake_id"]),
+                    "listing_id": str(row["resolved_listing_id"]) if row.get("resolved_listing_id") else None,
+                }
+            return None
+
+    def get_promotion(self, tenant: str, promotion_decision_id: str) -> dict[str, Any] | None:
+        pid = _valid_uuid(promotion_decision_id)
+        if pid is None:
+            return None
+        with self.graph.transaction(tenant):
+            row = self.engine.query_one(
+                "SELECT * FROM expansion.promotion_decisions WHERE tenant_id=? AND promotion_decision_id=?",
+                (tenant, pid),
+            )
+            if row is None:
+                return None
+            audit = self._promotion_latest_committed_audit(
+                tenant, pid, version=int(row["version"]), status=row["status"],
+            )
+            return _row_to_promotion_dict(row, audit_event_id=audit["audit_event_id"] if audit else None)
+
+    def get_promotion_for_intake(self, tenant: str, intake_id: str) -> dict[str, Any] | None:
+        iid = _valid_uuid(intake_id)
+        if iid is None:
+            return None
+        with self.graph.transaction(tenant):
+            row = self.engine.query_one(
+                "SELECT * FROM expansion.promotion_decisions WHERE tenant_id=? AND intake_id=? "
+                "ORDER BY created_at DESC,version DESC,promotion_decision_id DESC LIMIT 1",
+                (tenant, iid),
+            )
+            if row is None:
+                return None
+            pid = str(row["promotion_decision_id"])
+            audit = self._promotion_latest_committed_audit(
+                tenant, pid, version=int(row["version"]), status=row["status"],
+            )
+            return _row_to_promotion_dict(row, audit_event_id=audit["audit_event_id"] if audit else None)
+
+    def list_promotions(self, tenant: str, *, intake_id: str | None = None) -> list[dict[str, Any]]:
+        with self.graph.transaction(tenant):
+            if intake_id is not None:
+                iid = _valid_uuid(intake_id)
+                if iid is None:
+                    return []
+                rows = self.engine.query(
+                    "SELECT * FROM expansion.promotion_decisions WHERE tenant_id=? AND intake_id=? "
+                    "ORDER BY created_at,promotion_decision_id",
+                    (tenant, iid),
+                )
+            else:
+                rows = self.engine.query(
+                    "SELECT * FROM expansion.promotion_decisions WHERE tenant_id=? "
+                    "ORDER BY created_at,promotion_decision_id",
+                    (tenant,),
+                )
+            result = []
+            for row in rows:
+                pid = str(row["promotion_decision_id"])
+                audit = self._promotion_latest_committed_audit(
+                    tenant, pid, version=int(row["version"]), status=row["status"],
+                )
+                result.append(_row_to_promotion_dict(row, audit_event_id=audit["audit_event_id"] if audit else None))
+            return result
+
+    def _native_promotion_adapters(
+        self,
+        tenant: str,
+        intake_row: dict[str, Any],
+        *,
+        gate_snapshot: dict[str, Any] | None = None,
+    ):
+        from modules.listing.application.intake_score_admission import validate_score_admission
+        from modules.listing.application.intake_score_delivery import ScoreDeliveryDenied
+
+        engine = self.engine
+        graph = self.graph
+
+        class _NativeOutboxAdapter:
+            def save(self, event: DomainEvent) -> None:
+                graph._outbox(event)
+
+        class _NativeIntakeAdapter:
+            def __init__(self) -> None:
+                self._cached: dict[str, Any] | None = None
+
+            def get_listing_intake(self, target_intake_id: str) -> dict[str, Any] | None:
+                if str(target_intake_id) != str(intake_row["intake_id"]):
+                    return None
+                if self._cached is None:
+                    rev = None
+                    if intake_row.get("resolved_listing_id") is not None:
+                        rev = engine.query_one(
+                            "SELECT r.* FROM expansion.listings l JOIN expansion.listing_revisions r "
+                            "ON r.tenant_id=l.tenant_id AND r.listing_id=l.listing_id AND r.listing_revision_id=l.current_revision_id "
+                            "WHERE l.tenant_id=? AND l.listing_id=? FOR SHARE",
+                            (tenant, intake_row["resolved_listing_id"]),
+                        )
+                    self._cached = load_native_intake_projection(
+                        engine, tenant, str(intake_row["intake_id"]),
+                        gate_snapshot=gate_snapshot, revision_row=rev, lock_mode=2,
+                    )
+                return deepcopy(self._cached)
+
+        class _NativeListingAdapter:
+            def __init__(self, intake_adapter: _NativeIntakeAdapter) -> None:
+                self._intake_adapter = intake_adapter
+                self._bundles: dict[str, dict[str, Any]] = {}
+
+            def _load(self, listing_id: str) -> dict[str, Any]:
+                expected_addr = gate_snapshot.get("address_id") if isinstance(gate_snapshot, dict) else None
+                bundle = load_native_listing_bundle(
+                    engine, tenant, listing_id,
+                    expected_address_id=str(expected_addr) if expected_addr else None,
+                    lock_mode=2, domain_status=None,
+                )
+                self._bundles[str(listing_id)] = bundle
+                return bundle
+
+            def get_listing(self, listing_id: str) -> dict[str, Any] | None:
+                bundle = self._load(listing_id)
+                listing = bundle["domain_listing"]
+                addr = bundle["domain_address"]
+                d: dict[str, Any] = {
+                    "id": listing.listing_id,
+                    "listing_id": listing.listing_id,
+                    "listingId": listing.listing_id,
+                    "source_listing_id": listing.source_listing_id,
+                    "source_id": listing.source_id,
+                    "status": listing.listing_status,
+                    "listing_status": listing.listing_status,
+                    "address_id": listing.address_id,
+                    "address": addr.normalized_address or addr.raw_address,
+                    "address_raw": addr.raw_address,
+                    "rent_amount": listing.rent_amount,
+                    "rentPerMonth": listing.rent_amount,
+                    "currency": listing.currency,
+                    "area_ping": listing.area_ping,
+                    "areaPing": listing.area_ping,
+                    "floor": listing.floor,
+                    "frontage_m": listing.frontage_m,
+                    "depth_m": listing.depth_m,
+                    "corner_flag": listing.corner_flag,
+                    "parking_flag": listing.parking_flag,
+                    "utility_electricity_flag": listing.utility_electricity_flag,
+                    "utility_drainage_flag": listing.utility_drainage_flag,
+                    "utility_gas_flag": listing.utility_gas_flag,
+                    "confidence": listing.effective_confidence,
+                    "snapshot_id": listing.snapshot_id,
+                    "datasetSnapshotId": listing.snapshot_id or None,
+                    "geocode_confidence": addr.geocode_confidence,
+                    "geocodeConfidence": addr.geocode_confidence,
+                    "h3_res_9": addr.h3_res_9,
+                    "h3Index": addr.h3_res_9,
+                    "h3_index": addr.h3_res_9,
+                    "hz": addr.h3_res_9,
+                    "heatZoneId": addr.h3_res_9,
+                    "latitude": addr.latitude,
+                    "longitude": addr.longitude,
+                    "property_id": str(bundle["listing_row"]["property_id"]),
+                }
+                for attr in (
+                    "listing_obs_id", "prior_90d_cell_net_revenue", "prior_90d_cell_transaction_count",
+                    "prior_90d_cell_store_count", "feature_snapshot_time", "rent_benchmark_median",
+                    "rent_benchmark_p25", "rent_benchmark_p75", "rent_benchmark_sample_count", "rent_benchmark_id",
+                ):
+                    if hasattr(listing, attr):
+                        d[attr] = getattr(listing, attr)
+                return d
+
+            def get_domain_listing(self, listing_id: str) -> Listing | None:
+                bundle = self._bundles.get(str(listing_id)) or self._load(listing_id)
+                return bundle["domain_listing"]
+
+            def get_address(self, address_id: str) -> AddressLocation | None:
+                for bundle in self._bundles.values():
+                    if bundle["domain_address"].address_id == str(address_id):
+                        return bundle["domain_address"]
+                _, addr = load_native_address(engine, tenant, address_id=str(address_id), lock_mode=1)
+                return addr
+
+            def get_native_gate_context(self, listing_id: str) -> dict[str, Any]:
+                bundle = self._bundles.get(str(listing_id)) or self._load(listing_id)
+                intake_proj = self._intake_adapter.get_listing_intake(str(intake_row["intake_id"]))
+                if intake_proj is None:
+                    raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, "NATIVE_INTAKE_UNAVAILABLE")
+                domain_listing = bundle["domain_listing"]
+                probe = SimpleNamespace(
+                    listing=domain_listing,
+                    dataset_snapshot_id=domain_listing.snapshot_id or None,
+                )
+                try:
+                    admission = validate_score_admission(engine, intake_proj, probe)
+                except ScoreDeliveryDenied as exc:
+                    raise DomainValidationError(DenialCode.SOURCE_POLICY_DENIED, str(exc)) from exc
+                now_iso = _instant(engine.query_one("SELECT clock_timestamp() AS at")["at"])
+                listing_sql = bundle["listing_row"]
+                rev_sql = bundle["revision_row"]
+                prop_sql = bundle["property_row"]
+                addr_sql = bundle["address_row"]
+                geo_sql = bundle["geo_row"]
+                versions = {
+                    "intake_id": intake_proj["intake_id"],
+                    "intake_version": intake_proj["version"],
+                    "listing_id": str(listing_sql["listing_id"]),
+                    "listing_version": int(listing_sql["version"]),
+                    "listing_revision_id": str(rev_sql["listing_revision_id"]),
+                    "listing_revision_no": int(rev_sql["revision_no"]),
+                    "property_id": str(prop_sql["property_id"]),
+                    "property_version": int(prop_sql["version"]),
+                    "address_id": str(addr_sql["address_id"]),
+                    "address_revision": int(addr_sql["revision"]),
+                    "geo_cell_id": str(geo_sql["geo_cell_id"]),
+                    "geo_version": bundle["geo_version"],
+                    "h3_res_9": bundle["domain_address"].h3_res_9,
+                    "source_id": admission["source_id"],
+                    "source_policy_version": admission["source_policy_version"],
+                    "source_snapshot_id": admission["source_snapshot_id"],
+                    "source_snapshot_version": admission["source_snapshot_version"],
+                    "parser_run_id": admission.get("parser_run_id"),
+                    "parser_run_version": admission.get("parser_run_version"),
+                    "parser_release_id": admission.get("parser_release_id"),
+                    "parser_release_version": admission.get("parser_release_version"),
+                    "parser_input_schema_version": admission.get("parser_input_schema_version"),
+                    "parser_output_schema_version": admission.get("parser_output_schema_version"),
+                }
+                return {
+                    "domain_listing": domain_listing,
+                    "domain_address": bundle["domain_address"],
+                    "versions": versions,
+                    "evaluated_at": now_iso,
+                }
+
+            def list_candidates(self) -> list[CandidateSiteDraft]:
+                return list_native_candidate_drafts(engine, tenant)
+
+            def save_candidate(self, candidate: CandidateSiteDraft) -> None:
+                save_native_candidate_cas(engine, tenant, candidate)
+
+            def save_listing(self, listing: Any) -> None:
+                if hasattr(listing, "get"):
+                    lid = str(listing.get("listing_id") or listing.get("id") or "")
+                    cid = listing.get("candidateId") or listing.get("candidate_site_id")
+                    pid = listing.get("promotionDecisionId") or listing.get("promotion_decision_id")
+                else:
+                    lid = str(listing.listing_id)
+                    cid = getattr(listing, "candidate_site_id", None)
+                    pid = getattr(listing, "promotion_decision_id", None)
+                bundle = self._bundles.get(lid)
+                prove_native_listing_candidate_relation(
+                    engine,
+                    tenant,
+                    listing_id=lid,
+                    candidate_site_id=str(cid) if cid else None,
+                    promotion_decision_id=str(pid) if pid else None,
+                    expected_listing_version=int(bundle["listing_row"]["version"]) if bundle else None,
+                    expected_revision_id=str(bundle["listing_row"]["current_revision_id"]) if bundle else None,
+                )
+
+        class _NativePromotionAdapter:
+            def __init__(self) -> None:
+                self._persisted_versions: dict[str, int] = {}
+
+            def get_promotion(self, promotion_decision_id: str) -> dict[str, Any] | None:
+                pid = _valid_uuid(promotion_decision_id)
+                if pid is None:
+                    return None
+                row = engine.query_one(
+                    "SELECT * FROM expansion.promotion_decisions WHERE tenant_id=? AND promotion_decision_id=? FOR UPDATE",
+                    (tenant, pid),
+                )
+                if row is None:
+                    return None
+                self._persisted_versions[pid] = int(row["version"])
+                return _row_to_promotion_dict(row)
+
+            def list_promotions(self) -> list[dict[str, Any]]:
+                rows = engine.query(
+                    "SELECT * FROM expansion.promotion_decisions WHERE tenant_id=? ORDER BY created_at,promotion_decision_id",
+                    (tenant,),
+                )
+                return [_row_to_promotion_dict(row) for row in rows]
+
+            def save_promotion(self, promo: dict[str, Any]) -> None:
+                pid = str(promo["promotion_decision_id"])
+                existing_version = self._persisted_versions.get(pid)
+                if existing_version is None:
+                    row = engine.query_one(
+                        "SELECT version FROM expansion.promotion_decisions WHERE tenant_id=? AND promotion_decision_id=? FOR UPDATE",
+                        (tenant, pid),
+                    )
+                    if row is not None:
+                        existing_version = int(row["version"])
+                if existing_version is None:
+                    try:
+                        engine.execute(
+                            "INSERT INTO expansion.promotion_decisions (promotion_decision_id,tenant_id,intake_id,"
+                            "listing_id,property_id,target_format_code,status,proposer_subject_id,reason,"
+                            "risk_acknowledged,gate_snapshot,version,created_at) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?)",
+                            (
+                                pid, tenant, str(promo["intake_id"]), str(promo["listing_id"]),
+                                str(promo["property_id"]), promo["target_format_code"], promo["status"],
+                                str(promo["proposer_subject_id"]), promo["reason"],
+                                bool(promo.get("risk_acknowledged", False)),
+                                json.dumps(promo["gate_snapshot"], sort_keys=True, separators=(",", ":"), default=str),
+                                int(promo["version"]),
+                                promo["created_at"],
+                            ),
+                        )
+                    except Exception as exc:
+                        if (
+                            getattr(exc, "sqlstate", None) == "23505"
+                            and getattr(getattr(exc, "diag", None), "constraint_name", None) == "ux_active_promotion_request"
+                        ):
+                            raise DomainValidationError(DenialCode.DEPENDENCY_CONFLICT, "ACTIVE_PROMOTION_CONFLICT") from exc
+                        raise
+                    self._persisted_versions[pid] = int(promo["version"])
+                    return
+
+                reviewer = promo.get("reviewer_subject_id") or promo.get("reviewer")
+                reviewed_at = promo.get("reviewed_at")
+                reason_val = promo.get("review_reason") or promo.get("reason")
+                updated = engine.execute(
+                    "UPDATE expansion.promotion_decisions SET status=?,reviewer_subject_id=?,reviewed_at=?,"
+                    "reason=?,risk_acknowledged=?,candidate_site_id=?,site_score_job_id=?,version=? "
+                    "WHERE tenant_id=? AND promotion_decision_id=? AND version=?",
+                    (
+                        promo["status"], reviewer, reviewed_at, reason_val,
+                        bool(promo.get("risk_acknowledged", False)),
+                        promo.get("candidate_site_id"), promo.get("site_score_job_id"),
+                        int(promo["version"]), tenant, pid, existing_version,
+                    ),
+                )
+                if updated.rowcount != 1:
+                    raise IdentityConflictError("NATIVE_PROMOTION_VERSION_CONFLICT")
+                self._persisted_versions[pid] = int(promo["version"])
+
+        intake_adapter = _NativeIntakeAdapter()
+        return _NativePromotionAdapter(), _NativeListingAdapter(intake_adapter), intake_adapter, _NativeOutboxAdapter()
+
+    def _replay_store(self, explicit: Any) -> Any:
+        return explicit if explicit is not None else self.replay_store
+
+    def _read_native_replay(
+        self, replay_store: Any, tenant: str, actor_id: str, operation: str, key: str, resource_id: str, digest: str,
+    ) -> dict[str, Any] | None:
+        prior = replay_store.read_command_replay(tenant, actor_id, operation, key, resource_id)
+        if prior is None:
+            return None
+        if prior[0] != digest:
+            raise IdentityConflictError("IDEMPOTENCY_KEY_REUSED")
+        return deepcopy(prior[1])
+
+    def _write_native_replay(
+        self, replay_store: Any, tenant: str, actor_id: str, operation: str, key: str, resource_id: str,
+        digest: str, receipt: dict[str, Any], status_code: int,
+    ) -> None:
+        from shared.infrastructure.persistence.assisted_listing_intake import _STATE_COLLECTIONS
+
+        replay_key = replay_store.command_replay_key(tenant, actor_id, operation, key, resource_id)
+        replay_store._store.put(
+            _STATE_COLLECTIONS["replays"],
+            f"{tenant}:{replay_key}",
+            replay_store._wrap(tenant, replay_key, (digest, deepcopy(receipt), status_code)),
+        )
+
+    def request_promotion(
+        self,
+        tenant: str,
+        actor_id: str,
+        *,
+        intake_id: str,
+        expected_intake_version: int,
+        target_format_code: str,
+        reason: str,
+        gate_snapshot_sha256: str,
+        idempotency_key: str,
+        correlation_id: str | None = None,
+        actor_role: PrincipalRole = PrincipalRole.EXPANSION_STAFF,
+        replay_store: Any = None,
+        request_digest: str | None = None,
+        return_replay_status: bool = False,
+    ) -> dict[str, Any] | tuple[dict[str, Any], bool]:
+        """Request native SQL candidate promotion inside one SERIALIZABLE Graph UoW."""
+        from modules.listing.application.promotion import PromotionService
+
+        UUID(tenant)
+        UUID(actor_id)
+        UUID(intake_id)
+        if not reason or not reason.strip() or not idempotency_key:
+            raise ValueError("Explicit promotion reason and idempotency_key are required")
+        active_replay = self._replay_store(replay_store)
+        with self.graph.transaction(tenant):
+            if active_replay is not None and request_digest is not None:
+                prior = self._read_native_replay(
+                    active_replay, tenant, actor_id, "requestCandidatePromotion",
+                    idempotency_key, intake_id, request_digest,
+                )
+                if prior is not None:
+                    return (prior, True) if return_replay_status else prior
+            CanonicalAuditBacklog(self.engine).require_available(tenant)
+            intake_row = self.graph._one(
+                "SELECT * FROM intake.intakes WHERE tenant_id=? AND intake_id=? AND deleted_at IS NULL FOR UPDATE",
+                (tenant, intake_id),
+            )
+            if int(intake_row["version"]) != expected_intake_version:
+                raise IdentityConflictError("CANONICAL_INTAKE_VERSION_CONFLICT")
+            if intake_row["processing_state"] != "READY":
+                raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "WORKFLOW_STATE_DENIED")
+            if intake_row["legal_hold"]:
+                raise DomainValidationError(DenialCode.LEGAL_HOLD_CONFLICT, "LEGAL_HOLD_CONFLICT")
+            promo_repo, listing_repo, intake_repo, outbox_repo = self._native_promotion_adapters(tenant, intake_row)
+            service = PromotionService(
+                promotion_repository=promo_repo,
+                listing_repository=listing_repo,
+                intake_repository=intake_repo,
+                outbox_repository=outbox_repo,
+            )
+            corr = correlation_id or str(intake_row["correlation_id"])
+            UUID(corr)
+            promo_record = service.request_promotion(
+                intake_id=intake_id,
+                target_format_code=target_format_code,
+                reason=reason,
+                gate_snapshot_sha256=gate_snapshot_sha256,
+                context=TransitionContext(
+                    actor=Actor(actor_id=actor_id, role=actor_role, tenant_id=tenant),
+                    idempotency_key=idempotency_key,
+                    correlation_id=corr,
+                ),
+            )
+            audit_id = str(uuid4())
+            promo_record["audit_event_id"] = audit_id
+            at = _instant(self.engine.query_one("SELECT clock_timestamp() AS at")["at"])
+            scope = {
+                "tenant_id": tenant,
+                **{k: str(intake_row[k]) if intake_row.get(k) else None for k in (
+                    "brand_id", "region_id", "assigned_area_id", "heat_zone_id"
+                )},
+            }
+            self.graph.audit_sink.persist(
+                {
+                    "audit_event_id": audit_id,
+                    "tenant_id": tenant,
+                    "resource_type": "promotion_decision",
+                    "resource_id": promo_record["promotion_decision_id"],
+                    "decision_id": promo_record["promotion_decision_id"],
+                    "action": "intake.promotion_requested",
+                    "result": "SUCCEEDED",
+                    "actor_subject_id": actor_id,
+                    "correlation_id": corr,
+                    "occurred_at": at,
+                    "source_snapshot_id": promo_record["gate_snapshot"].get("source_snapshot_id"),
+                    "parser_run_id": promo_record["gate_snapshot"].get("parser_run_id"),
+                    "before_value": None,
+                    "after_value": deepcopy(promo_record),
+                    "reason": reason,
+                },
+                scope,
+            )
+            if active_replay is not None and request_digest is not None:
+                self._write_native_replay(
+                    active_replay, tenant, actor_id, "requestCandidatePromotion",
+                    idempotency_key, intake_id, request_digest, promo_record, 202,
+                )
+            return (promo_record, False) if return_replay_status else promo_record
+
+    def review_promotion(
+        self,
+        tenant: str,
+        actor_id: str,
+        *,
+        promotion_decision_id: str,
+        expected_version: int,
+        decision: str,
+        reason: str,
+        risk_acknowledged: bool,
+        idempotency_key: str,
+        correlation_id: str | None = None,
+        actor_role: PrincipalRole = PrincipalRole.EXPANSION_MANAGER,
+        score_dispatcher: Any = None,
+        score_queue_hook: Any = None,
+        replay_store: Any = None,
+        request_digest: str | None = None,
+        return_replay_status: bool = False,
+    ) -> dict[str, Any] | tuple[dict[str, Any], bool]:
+        """Review native SQL promotion, create candidate and reserve first-score job atomically."""
+        from modules.listing.application.promotion import PromotionService
+
+        UUID(tenant)
+        UUID(actor_id)
+        UUID(promotion_decision_id)
+        if not reason or not reason.strip() or not risk_acknowledged or not idempotency_key:
+            raise DomainValidationError(
+                DenialCode.RISK_ACKNOWLEDGEMENT_REQUIRED,
+                "Explicit review reason, risk_acknowledged and idempotency_key are required",
+            )
+        active_replay = self._replay_store(replay_store)
+        with self.graph.transaction(tenant):
+            if active_replay is not None and request_digest is not None:
+                prior = self._read_native_replay(
+                    active_replay, tenant, actor_id, "reviewPromotionDecision",
+                    idempotency_key, promotion_decision_id, request_digest,
+                )
+                if prior is not None:
+                    return (prior, True) if return_replay_status else prior
+            CanonicalAuditBacklog(self.engine).require_available(tenant)
+            promo_row = self.graph._one(
+                "SELECT * FROM expansion.promotion_decisions WHERE tenant_id=? AND promotion_decision_id=? FOR UPDATE",
+                (tenant, promotion_decision_id),
+            )
+            if promo_row["status"] != "PENDING_REVIEW":
+                raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "WORKFLOW_STATE_DENIED")
+            if int(promo_row["version"]) != expected_version:
+                raise IdentityConflictError("NATIVE_PROMOTION_VERSION_CONFLICT")
+            if str(promo_row["proposer_subject_id"]) == actor_id:
+                raise DomainValidationError(DenialCode.SELF_REVIEW_DENIED, "SELF_REVIEW_DENIED")
+            intake_row = self.graph._one(
+                "SELECT * FROM intake.intakes WHERE tenant_id=? AND intake_id=? AND deleted_at IS NULL FOR UPDATE",
+                (tenant, promo_row["intake_id"]),
+            )
+            if intake_row["processing_state"] != "READY" or intake_row["legal_hold"]:
+                raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "WORKFLOW_STATE_DENIED")
+            before_promo = _row_to_promotion_dict(promo_row)
+            gate_snapshot = before_promo["gate_snapshot"]
+            promo_repo, listing_repo, intake_repo, outbox_repo = self._native_promotion_adapters(
+                tenant, intake_row, gate_snapshot=gate_snapshot,
+            )
+            service = PromotionService(
+                promotion_repository=promo_repo,
+                listing_repository=listing_repo,
+                intake_repository=intake_repo,
+                outbox_repository=outbox_repo,
+                score_queue_hook=score_queue_hook,
+                score_dispatcher=score_dispatcher if decision == "APPROVE" else None,
+            )
+            corr = correlation_id or str(intake_row["correlation_id"])
+            UUID(corr)
+            updated = service.review_promotion(
+                promotion_decision_id=promotion_decision_id,
+                decision=decision,
+                reason=reason,
+                risk_acknowledged=risk_acknowledged,
+                context=TransitionContext(
+                    actor=Actor(actor_id=actor_id, role=actor_role, tenant_id=tenant),
+                    idempotency_key=idempotency_key,
+                    correlation_id=corr,
+                ),
+            )
+            updated["reviewer_subject_id"] = actor_id
+            audit_id = str(uuid4())
+            updated["audit_event_id"] = audit_id
+            at = _instant(self.engine.query_one("SELECT clock_timestamp() AS at")["at"])
+            scope = {
+                "tenant_id": tenant,
+                **{k: str(intake_row[k]) if intake_row.get(k) else None for k in (
+                    "brand_id", "region_id", "assigned_area_id", "heat_zone_id"
+                )},
+            }
+            self.graph.audit_sink.persist(
+                {
+                    "audit_event_id": audit_id,
+                    "tenant_id": tenant,
+                    "resource_type": "promotion_decision",
+                    "resource_id": promotion_decision_id,
+                    "decision_id": promotion_decision_id,
+                    "action": "promotion." + updated["status"].lower(),
+                    "result": "SUCCEEDED",
+                    "actor_subject_id": actor_id,
+                    "correlation_id": corr,
+                    "occurred_at": at,
+                    "source_snapshot_id": gate_snapshot.get("source_snapshot_id"),
+                    "parser_run_id": gate_snapshot.get("parser_run_id"),
+                    "before_value": before_promo,
+                    "after_value": deepcopy(updated),
+                    "reason": reason,
+                },
+                scope,
+            )
+            if updated["status"] == "SCORE_QUEUED" and score_dispatcher is not None:
+                score_dispatcher.seal_enqueue(updated["site_score_job_id"], tenant)
+            if active_replay is not None and request_digest is not None:
+                self._write_native_replay(
+                    active_replay, tenant, actor_id, "reviewPromotionDecision",
+                    idempotency_key, promotion_decision_id, request_digest, updated, 200,
+                )
+            return (updated, False) if return_replay_status else updated

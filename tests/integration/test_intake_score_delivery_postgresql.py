@@ -1009,3 +1009,252 @@ def test_current_operator_metadata_revocation_cannot_publish_score(bridge_databa
         assert bundle.assisted_intake_store.promotions[receipt["promotion_decision_id"]]["status"] == expected
     finally:
         bundle.engine.close()
+
+
+# ---------------------------------------------------------------------------
+# Native SQL First-Score Delivery, Current-Input Reader & CAS Tests (Synthetic)
+# ---------------------------------------------------------------------------
+
+
+def _approve_native_score(intake_db, bundle, *, retrieved: bool = False):
+    from modules.listing.application.intake_score_delivery import IntakeScoreJobRepository
+    from tests.integration.test_operator_intake_promotion_postgresql import (
+        _seed_native_ready_intake,
+    )
+
+    ids = _seed_native_ready_intake(intake_db, retrieved=retrieved)
+    canonical = bundle.canonical_intakes()
+    score_jobs = IntakeScoreJobRepository(bundle)
+    proposed = canonical.request_promotion(
+        TENANT,
+        MANAGER,
+        intake_id=ids["intake_id"],
+        expected_intake_version=3,
+        target_format_code="ODAY_G2",
+        reason="Synthetic native score request",
+        gate_snapshot_sha256="a" * 64,
+        idempotency_key=f"synthetic-native-score-req-{ids['intake_id']}",
+    )
+    reviewed = canonical.review_promotion(
+        TENANT,
+        APPROVER,
+        promotion_decision_id=proposed["promotion_decision_id"],
+        expected_version=proposed["version"],
+        decision="APPROVE",
+        reason="Synthetic native score approval",
+        risk_acknowledged=True,
+        idempotency_key=f"synthetic-native-score-rev-{ids['intake_id']}",
+        score_dispatcher=score_jobs,
+    )
+    return ids, reviewed
+
+
+def test_native_sql_worker_delivery_context_reader_cas_and_cold_duplicate(intake_db, tmp_path):
+    from modules.listing.application.candidate_score_context import CandidateScoreContextReader
+    from modules.listing.domain.identity_graph import IdentityConflictError
+    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from tests.integration.test_operator_intake_promotion_postgresql import (
+        _claim_native_score_job,
+        _native_bundle,
+    )
+
+    worm_dir = tmp_path / "synthetic-native-delivery-worm"
+    bundle = _native_bundle(intake_db, worm_dir)
+    try:
+        ids, receipt = _approve_native_score(intake_db, bundle, retrieved=True)
+        job_id = receipt["site_score_job_id"]
+        candidate_id = receipt["candidate_site_id"]
+        repo = bundle.listing_repository_for_tenant(TENANT)
+
+        # Native SQL reads succeed without shadow documents.
+        cands = repo.list_candidates()
+        assert len(cands) == 1 and cands[0].candidate_site.candidate_site_id == candidate_id
+        assert repo.get_listing(ids["listing_id"]).listing_id == ids["listing_id"]
+        assert repo.get_address(ids["address_id"]).h3_res_9 == "8929a1d4d67ffff"
+        reader = CandidateScoreContextReader(
+            tenant_id=TENANT,
+            repository=repo,
+            engine=bundle.engine,
+            store=bundle.assisted_intake_store,
+        )
+        observed = reader.read(cands[0])
+        assert observed.admission["currentInputs"]["state"] == "verified"
+        assert observed.admission["source"]["state"] == "verified"
+        assert observed.admission["pit"]["state"] == "verified"
+
+        # Worker executes score job and commits immutable report + scored status.
+        claimed = _claim_native_score_job(bundle, job_id)
+        runtime = RecordingRuntime()
+        handle_intake_score(claimed, bundle, model_runtime=runtime)
+        assert len(runtime.calls) == 1
+        current = _physical(intake_db, job_id)
+        assert current["status"] == "SUCCEEDED"
+        assert bundle.job_queue.get(job_id).status == JobStatus.SUCCEEDED
+        assert bundle.canonical_intakes().get_promotion(TENANT, receipt["promotion_decision_id"])["status"] == "COMPLETED"
+        reports = _report_repository(bundle)
+        report = reports.get_report(current["result"]["report_id"])
+        assert report is not None and report.candidate_site_id == candidate_id
+        assert len(reports.history(candidate_id)) == 1
+        scored = repo.list_candidates()[0]
+        assert scored.candidate_site.site_status == "scored"
+        assert scored.model_version == "sitescore:approved-2026.07.24"
+
+        # Stale version CAS on save_candidate fails closed.
+        stale = deepcopy(scored)
+        stale.candidate_site = replace(stale.candidate_site, site_status="visited")
+        object.__setattr__(stale.candidate_site, "version", 1)
+        with pytest.raises(IdentityConflictError, match="NATIVE_CANDIDATE_VERSION_CONFLICT"):
+            repo.save_candidate(stale)
+
+        # Approved decision is never overwritten by subsequent save_candidate without expected_state.
+        approved_cand = deepcopy(scored)
+        approved_cand.candidate_site = replace(approved_cand.candidate_site, site_status="approved")
+        object.__setattr__(approved_cand.candidate_site, "version", scored.candidate_site.version)
+        repo.save_candidate(approved_cand)
+        assert repo.list_candidates()[0].candidate_site.site_status == "approved"
+        downgrade = deepcopy(repo.list_candidates()[0])
+        downgrade.candidate_site = replace(downgrade.candidate_site, site_status="scored")
+        object.__setattr__(downgrade.candidate_site, "version", repo.list_candidates()[0].candidate_site.version)
+        repo.save_candidate(downgrade)
+        assert repo.list_candidates()[0].candidate_site.site_status == "approved"
+    finally:
+        bundle.engine.close()
+
+    # Cold restart duplicate delivery is strictly read-only.
+    reopened = _native_bundle(intake_db, worm_dir)
+    try:
+        dup_runtime = RecordingRuntime()
+        handle_intake_score(claimed, reopened, model_runtime=dup_runtime)
+        assert dup_runtime.calls == []
+        assert _physical(intake_db, job_id) == current
+        assert len(_report_repository(reopened).history(candidate_id)) == 1
+    finally:
+        reopened.engine.close()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["kill_switch", "parser_rollback", "listing_version", "address_revision", "geo_removed", "intake_state"],
+)
+def test_native_sql_live_revocation_or_version_drift_discards_inferred_score(intake_db, tmp_path, mutation):
+    from modules.listing.application.intake_score_delivery import ScoreDeliveryDenied
+    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from tests.integration.test_operator_intake_promotion_postgresql import (
+        _claim_native_score_job,
+        _native_bundle,
+    )
+
+    bundle = _native_bundle(intake_db, tmp_path / f"synthetic-native-revoke-{mutation}")
+    try:
+        ids, receipt = _approve_native_score(intake_db, bundle, retrieved=(mutation == "parser_rollback"))
+        job_id = receipt["site_score_job_id"]
+        claimed = _claim_native_score_job(bundle, job_id)
+
+        class RevokingRuntime(RecordingRuntime):
+            def infer(self, **kwargs):
+                result = super().infer(**kwargs)
+                with intake_db.connect() as conn:
+                    conn.execute("SELECT set_config('app.tenant_id', %s, true)", (TENANT,))
+                    if mutation == "kill_switch":
+                        conn.execute(
+                            "UPDATE intake.source_registry SET kill_switch=true WHERE source_id=%s",
+                            (ids["source_id"],),
+                        )
+                    elif mutation == "parser_rollback":
+                        conn.execute(
+                            "UPDATE intake.parser_releases SET validation_status='ROLLED_BACK' WHERE parser_release_id=%s",
+                            (ids["parser_release_id"],),
+                        )
+                    elif mutation == "listing_version":
+                        conn.execute(
+                            "UPDATE expansion.listings SET version=version+1 WHERE listing_id=%s",
+                            (ids["listing_id"],),
+                        )
+                    elif mutation == "address_revision":
+                        conn.execute(
+                            "UPDATE core.address_locations SET revision=revision+1 WHERE address_id=%s",
+                            (ids["address_id"],),
+                        )
+                    elif mutation == "geo_removed":
+                        conn.execute("DELETE FROM geo.h3_cells WHERE geo_cell_id=%s", (ids["geo_cell_id"],))
+                    else:
+                        conn.execute(
+                            "UPDATE intake.intakes SET processing_state='QUARANTINED' WHERE intake_id=%s",
+                            (ids["intake_id"],),
+                        )
+                return result
+
+        runtime = RevokingRuntime()
+        with pytest.raises((ScoreDeliveryDenied, JobFenceRejectedError)):
+            handle_intake_score(claimed, bundle, model_runtime=runtime)
+        assert len(runtime.calls) == 1
+        assert _physical(intake_db, job_id)["status"] != "SUCCEEDED"
+        assert _report_repository(bundle).history(receipt["candidate_site_id"]) == []
+        assert bundle.canonical_intakes().get_promotion(TENANT, receipt["promotion_decision_id"])["status"] == "COMPLETED"
+    finally:
+        bundle.engine.close()
+
+
+def test_native_sql_same_job_retry_preserves_candidate_and_never_overwrites_approved(intake_db, tmp_path):
+    from modules.listing.application.intake_score_delivery import IntakeScoreJobRepository
+    from modules.sitescore.application.intake_score_worker import handle_intake_score
+    from tests.integration.test_operator_intake_promotion_postgresql import (
+        _claim_native_score_job,
+        _native_bundle,
+    )
+
+    class PermanentFailureRuntime(RecordingRuntime):
+        def infer(self, **kwargs):
+            raise ProductionModelInputError("Synthetic native permanent input failure")
+
+    bundle = _native_bundle(intake_db, tmp_path / "synthetic-native-retry-worm")
+    try:
+        _, receipt = _approve_native_score(intake_db, bundle)
+        job_id = receipt["site_score_job_id"]
+        candidate_id = receipt["candidate_site_id"]
+        promo_id = receipt["promotion_decision_id"]
+        jobs = IntakeScoreJobRepository(bundle)
+
+        handle_intake_score(_claim_native_score_job(bundle, job_id), bundle, model_runtime=PermanentFailureRuntime())
+        failed = _physical(intake_db, job_id)
+        assert failed["status"] == "FAILED"
+        accepted_promo = bundle.canonical_intakes().get_promotion(TENANT, promo_id)
+        assert accepted_promo["status"] == "COMPLETED"
+
+        # Simulate an explicit review approval before retry: retry & score callback must preserve approved.
+        with intake_db.connect() as conn:
+            conn.execute("SELECT set_config('app.tenant_id', %s, true)", (TENANT,))
+            conn.execute(
+                "UPDATE expansion.candidate_sites SET status='APPROVED',version=version+1 WHERE candidate_site_id=%s",
+                (candidate_id,),
+            )
+        requeued = jobs.retry_score(
+            job_id,
+            tenant_id=TENANT,
+            actor_id=APPROVER,
+            expected_version=failed["version"],
+            checkpoint="SCORE_QUEUED",
+            reason="Synthetic repaired native input",
+            override_retry_budget=False,
+            risk_acknowledged=True,
+            correlation_id=str(uuid4()),
+            request_key="synthetic-native-retry-1",
+        )
+        assert requeued["status"] == "QUEUED"
+        assert bundle.listing_repository_for_tenant(TENANT).list_candidates()[0].candidate_site.site_status == "approved"
+        assert bundle.canonical_intakes().get_promotion(TENANT, promo_id) == accepted_promo
+
+        handle_intake_score(_claim_native_score_job(bundle, job_id), bundle, model_runtime=RecordingRuntime())
+        assert _physical(intake_db, job_id)["status"] == "SUCCEEDED"
+        cands = bundle.listing_repository_for_tenant(TENANT).list_candidates()
+        assert len(cands) == 1 and cands[0].candidate_site.candidate_site_id == candidate_id
+        assert cands[0].candidate_site.site_status == "approved"
+        assert len(_report_repository(bundle).history(candidate_id)) == 1
+        with intake_db.connect() as conn:
+            conn.execute("SELECT set_config('app.tenant_id', %s, true)", (TENANT,))
+            assert conn.execute(
+                "SELECT count(*) FROM workflow.outbox_events WHERE tenant_id=%s AND event_type='candidate.promotion_completed'",
+                (TENANT,),
+            ).fetchone()[0] == 1
+    finally:
+        bundle.engine.close()

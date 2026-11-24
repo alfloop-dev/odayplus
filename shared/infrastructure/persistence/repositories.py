@@ -5312,6 +5312,22 @@ class DurableListingRepository:
     def tenant_id(self) -> str:
         return getattr(self._store, "tenant_id", "")
 
+    def _native_tenant(self) -> str | None:
+        from shared.infrastructure.persistence.canonical_intakes_sql import (
+            _valid_uuid,
+            native_intake_tables_available,
+        )
+
+        engine = getattr(self._store, "engine", None)
+        if engine is None or getattr(engine, "dialect", None) != "postgresql":
+            return None
+        tenant = _valid_uuid(self.tenant_id)
+        if tenant is None:
+            return None
+        if not native_intake_tables_available(engine):
+            return None
+        return tenant
+
     def has_duplicate(self, key: ListingDedupKey) -> bool:
         return (
             self._store.get(self._DEDUP, key.source_key) is not None
@@ -5319,8 +5335,30 @@ class DurableListingRepository:
         )
 
     def save_listing(
-        self, listing: Listing, address: AddressLocation, key: ListingDedupKey
+        self, listing: Listing, address: AddressLocation | None = None, key: ListingDedupKey | None = None
     ) -> None:
+        native_tenant = self._native_tenant()
+        if native_tenant is not None:
+            from shared.infrastructure.persistence.canonical_intakes_sql import (
+                is_native_sql_owned,
+                prove_native_listing_candidate_relation,
+            )
+
+            engine = self._store.engine
+            with engine.lock:
+                if is_native_sql_owned(engine, native_tenant, listing_id=listing.listing_id):
+                    if listing.listing_status == "candidate":
+                        prove_native_listing_candidate_relation(
+                            engine,
+                            native_tenant,
+                            listing_id=listing.listing_id,
+                            candidate_site_id=getattr(listing, "candidate_site_id", None),
+                            promotion_decision_id=getattr(listing, "promotion_decision_id", None),
+                        )
+                        return
+                    raise ValueError("NATIVE_LISTING_DIRECT_MUTATION_DENIED")
+        if address is None or key is None:
+            raise ValueError("address and key are required for retained document listing save")
         self._store.put(self._LISTINGS, listing.listing_id, listing)
         self._store.put(self._ADDRESSES, address.address_id, address)
         self._store.put(self._DEDUP, key.source_key, True)
@@ -5350,6 +5388,20 @@ class DurableListingRepository:
         from dataclasses import replace
         candidate_id = candidate.candidate_site.candidate_site_id
         with self.candidate_guard(candidate_id):
+            native_tenant = self._native_tenant()
+            if native_tenant is not None:
+                from shared.infrastructure.persistence.canonical_intakes_sql import (
+                    is_native_sql_owned,
+                    save_native_candidate_cas,
+                )
+
+                engine = self._store.engine
+                promo_id = getattr(candidate.candidate_site, "promotion_decision_id", None)
+                if getattr(candidate, "parent_owner", None) == "native_sql" or is_native_sql_owned(
+                    engine, native_tenant, candidate_site_id=candidate_id, promotion_decision_id=promo_id,
+                ):
+                    save_native_candidate_cas(engine, native_tenant, candidate)
+                    return
             existing = self._store.get(self._CANDIDATES, candidate_id)
             if existing is not None and (existing.review_id or existing.candidate_site.site_status in {"approved", "opened"}):
                 candidate = deepcopy(candidate)
@@ -5361,6 +5413,25 @@ class DurableListingRepository:
                               expected_state: str) -> None:
         candidate_id = candidate.candidate_site.candidate_site_id
         with self.candidate_guard(candidate_id):
+            native_tenant = self._native_tenant()
+            if native_tenant is not None:
+                from shared.infrastructure.persistence.canonical_intakes_sql import (
+                    is_native_sql_owned,
+                    reconstruct_native_candidate_draft,
+                    save_native_candidate_cas,
+                )
+
+                engine = self._store.engine
+                if is_native_sql_owned(engine, native_tenant, candidate_site_id=candidate_id):
+                    current = reconstruct_native_candidate_draft(
+                        engine, native_tenant, candidate_id, document_store=self._store, lock_mode=2,
+                    )
+                    if current is None or current.review_id != expected_review_id:
+                        raise ValueError("CANDIDATE_REVIEW_PRECONDITION_CONFLICT")
+                    save_native_candidate_cas(
+                        engine, native_tenant, candidate, expected_state=expected_state,
+                    )
+                    return
             existing = self._store.get(self._CANDIDATES, candidate_id)
             if (existing is None or existing.review_id != expected_review_id
                     or existing.candidate_site.site_status != expected_state):
@@ -5368,15 +5439,108 @@ class DurableListingRepository:
             self._store.put(self._CANDIDATES, candidate_id, candidate)
 
     def list_candidates(self) -> list[CandidateSiteDraft]:
+        native_tenant = self._native_tenant()
+        if native_tenant is not None:
+            from shared.infrastructure.persistence.canonical_intakes_sql import (
+                list_native_candidate_drafts,
+            )
+
+            engine = self._store.engine
+            with engine.lock:
+                native = list_native_candidate_drafts(engine, native_tenant, document_store=self._store)
+                native_ids = {item.candidate_site.candidate_site_id for item in native}
+                retained = [
+                    item for item in self._store.list_all(self._CANDIDATES)
+                    if item.candidate_site.candidate_site_id not in native_ids
+                ]
+                return [*native, *retained]
         return self._store.list_all(self._CANDIDATES)
 
     def list_listings(self) -> list[Listing]:
+        native_tenant = self._native_tenant()
+        if native_tenant is not None:
+            from shared.infrastructure.persistence.canonical_intakes_sql import (
+                _ensure_tenant_context,
+                load_native_listing_bundle,
+                prove_native_listing_candidate_relation,
+            )
+
+            engine = self._store.engine
+            with engine.lock:
+                _ensure_tenant_context(engine, native_tenant)
+                rows = engine.query(
+                    "SELECT listing_id FROM expansion.listings WHERE tenant_id=? ORDER BY created_at,listing_id",
+                    (native_tenant,),
+                )
+                native: list[Listing] = []
+                native_ids: set[str] = set()
+                for row in rows:
+                    lid = str(row["listing_id"])
+                    native_ids.add(lid)
+                    has_cand = False
+                    try:
+                        prove_native_listing_candidate_relation(engine, native_tenant, listing_id=lid)
+                        has_cand = True
+                    except Exception:
+                        has_cand = False
+                    bundle = load_native_listing_bundle(
+                        engine, native_tenant, lid,
+                        domain_status="candidate" if has_cand else None,
+                    )
+                    native.append(bundle["domain_listing"])
+                retained = [
+                    item for item in self._store.list_all(self._LISTINGS)
+                    if item.listing_id not in native_ids
+                ]
+                return [*native, *retained]
         return self._store.list_all(self._LISTINGS)
 
     def get_listing(self, listing_id: str) -> Listing | None:
+        native_tenant = self._native_tenant()
+        if native_tenant is not None:
+            from shared.infrastructure.persistence.canonical_intakes_sql import (
+                is_native_sql_owned,
+                load_native_listing_bundle,
+                prove_native_listing_candidate_relation,
+            )
+
+            engine = self._store.engine
+            with engine.lock:
+                if is_native_sql_owned(engine, native_tenant, listing_id=listing_id):
+                    has_cand = False
+                    try:
+                        prove_native_listing_candidate_relation(engine, native_tenant, listing_id=listing_id)
+                        has_cand = True
+                    except Exception:
+                        has_cand = False
+                    bundle = load_native_listing_bundle(
+                        engine, native_tenant, listing_id,
+                        domain_status="candidate" if has_cand else None,
+                    )
+                    return bundle["domain_listing"]
         return self._store.get(self._LISTINGS, listing_id)
 
     def get_address(self, address_id: str) -> AddressLocation | None:
+        native_tenant = self._native_tenant()
+        if native_tenant is not None:
+            from shared.infrastructure.persistence.canonical_intakes_sql import (
+                _row_to_domain_address,
+                _valid_uuid,
+            )
+
+            aid = _valid_uuid(address_id)
+            if aid is not None:
+                engine = self._store.engine
+                with engine.lock:
+                    row = engine.query_one(
+                        "SELECT address_id,raw_address,normalized_address,city,district,village,road,"
+                        "latitude,longitude,geocode_precision,geocode_confidence,h3_res_8,h3_res_9,h3_res_10,"
+                        "manual_override_flag,tenant_id,revision FROM core.address_locations "
+                        "WHERE address_id=? AND tenant_id=?",
+                        (aid, native_tenant),
+                    )
+                    if row is not None:
+                        return _row_to_domain_address(row)
         return self._store.get(self._ADDRESSES, address_id)
 
     def clear(self) -> None:

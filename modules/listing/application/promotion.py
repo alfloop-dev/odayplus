@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
-from collections.abc import Callable
-from dataclasses import replace
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -16,7 +18,78 @@ from modules.listing.domain.intake_states import (
     PromotionStateMachine,
     TransitionContext,
 )
+from modules.listing.domain.models import ListingHardRulePolicy
 from shared.domain.events import DomainEvent
+
+
+def resolve_hard_rule_policy(target_format_code: str) -> ListingHardRulePolicy:
+    """Return the sole existing ListingHardRulePolicy only for its exact target.
+
+    Other formats without an explicit existing policy remain unavailable.
+    Never normalize, strip, case-fold or rename another target onto ODAY_G2.
+    """
+    policy = ListingHardRulePolicy()
+    if not isinstance(target_format_code, str) or target_format_code != policy.target_format_code:
+        raise DomainValidationError(
+            DenialCode.SOURCE_POLICY_DENIED,
+            f"HARD_RULE_POLICY_UNAVAILABLE: no explicit hard-rule policy for target_format_code {target_format_code!r}",
+        )
+    return policy
+
+
+def hard_rule_policy_fingerprint(policy: ListingHardRulePolicy) -> str:
+    """Canonical SHA-256 fingerprint of the existing ListingHardRulePolicy."""
+    return hashlib.sha256(
+        json.dumps(asdict(policy), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def evaluate_native_hard_rules(
+    listing: Any,
+    address: Any,
+    *,
+    target_format_code: str,
+) -> tuple[ListingHardRulePolicy, tuple[str, ...], str]:
+    """Evaluate the sole existing hard-rule policy for an explicit native target."""
+    policy = resolve_hard_rule_policy(target_format_code)
+    failures = policy.evaluate(listing, address)
+    return policy, failures, hard_rule_policy_fingerprint(policy)
+
+
+def build_server_gate_snapshot(
+    *,
+    caller_gate_snapshot_sha256: str,
+    target_format_code: str,
+    policy: ListingHardRulePolicy,
+    policy_sha256: str,
+    hard_rule_failures: Sequence[str],
+    gate_errors: Sequence[str],
+    native_versions: Mapping[str, Any],
+    evaluated_at: str,
+) -> dict[str, Any]:
+    """Assemble the authoritative server gate_snapshot for native promotion.
+
+    Caller hash remains only its existing claim under
+    ``caller_gate_snapshot_sha256``; server versions, failures and policy
+    canonical fingerprint are independently recorded by the backend.
+    """
+    server_body = {
+        "target_format_code": target_format_code,
+        "policy_target_format_code": policy.target_format_code,
+        "policy_sha256": policy_sha256,
+        "hard_rule_failures": list(hard_rule_failures),
+        "gate_errors": list(gate_errors),
+        **{key: value for key, value in native_versions.items()},
+        "evaluated_at": evaluated_at,
+    }
+    server_digest = hashlib.sha256(
+        json.dumps(server_body, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+    return {
+        **server_body,
+        "caller_gate_snapshot_sha256": caller_gate_snapshot_sha256,
+        "server_gate_snapshot_sha256": server_digest,
+    }
 
 
 def to_state_enum(status: str) -> PromotionState:
@@ -106,6 +179,60 @@ class PromotionService:
         self.score_queue_hook = score_queue_hook
         self.score_dispatcher = score_dispatcher
 
+    @staticmethod
+    def _is_native_parent(record: Any) -> bool:
+        return isinstance(record, Mapping) and record.get("parent_owner") == "native_sql"
+
+    @staticmethod
+    def _candidate_identity(cand: Any) -> tuple[str | None, str | None, str | None, str | None]:
+        if hasattr(cand, "candidate_site"):
+            site = cand.candidate_site
+            return (
+                getattr(site, "listing_id", None),
+                getattr(cand, "property_entity_id", None) or getattr(site, "property_id", None),
+                getattr(site, "target_format_code", None),
+                getattr(site, "site_status", None),
+            )
+        if hasattr(cand, "get"):
+            return (
+                cand.get("listingId") or cand.get("listing_id"),
+                cand.get("propertyId") or cand.get("property_id"),
+                cand.get("targetFormatCode") or cand.get("target_format_code"),
+                cand.get("status") or cand.get("site_status"),
+            )
+        return (
+            getattr(cand, "listing_id", None),
+            getattr(cand, "property_id", None),
+            getattr(cand, "target_format_code", None),
+            getattr(cand, "site_status", None),
+        )
+
+    def _assert_no_duplicate_candidate(
+        self,
+        *,
+        listing_id: str,
+        property_id: str | None,
+        target_format_code: str,
+        native: bool,
+    ) -> None:
+        for cand in self.listing_repository.list_candidates():
+            c_listing_id, c_property_id, c_format, c_status = self._candidate_identity(cand)
+            if native:
+                if str(c_status or "").upper() in {"REJECTED", "OPENED"}:
+                    continue
+                if c_listing_id == listing_id or (
+                    property_id and c_property_id == property_id and c_format == target_format_code
+                ):
+                    raise DomainValidationError(
+                        DenialCode.DEPENDENCY_CONFLICT,
+                        "DUPLICATE_CANDIDATE",
+                    )
+            elif c_listing_id == listing_id:
+                raise DomainValidationError(
+                    DenialCode.DEPENDENCY_CONFLICT,
+                    "DUPLICATE_CANDIDATE",
+                )
+
     def request_promotion(
         self,
         intake_id: str,
@@ -118,6 +245,8 @@ class PromotionService:
         if not intake:
             raise ValueError(f"Intake {intake_id} not found")
 
+        native = self._is_native_parent(intake)
+
         # Check tenant isolation
         intake_tenant = intake.get("tenantId") or intake.get("scope", {}).get("tenant_id")
         if intake_tenant and context.actor.tenant_id != intake_tenant:
@@ -126,31 +255,70 @@ class PromotionService:
                 "Tenant isolation mismatch"
             )
 
-        target_listing_id = (intake.get("matchResult") or {}).get("targetListingId")
+        if native:
+            if (intake.get("processing_state") or intake.get("state")) != "READY":
+                raise DomainValidationError(
+                    DenialCode.WORKFLOW_STATE_DENIED,
+                    "Native Intake must be READY before candidate promotion",
+                )
+            target_listing_id = intake.get("resolved_listing_id")
+        else:
+            target_listing_id = (intake.get("matchResult") or {}).get("targetListingId")
         if not target_listing_id:
             raise ValueError("Intake not resolved to listing")
 
         listing = self.listing_repository.get_listing(target_listing_id)
         if not listing:
             raise ValueError(f"Listing {target_listing_id} not found")
-        self._property_identity(listing)
+        property_id = self._property_identity(listing)
 
         # Verify listing status
-        if listing.get("status") in {"duplicate", "archived", "expired"}:
+        raw_status = str(listing.get("status") or "").lower()
+        if raw_status in {"duplicate", "archived", "expired", "removed", "stale", "quarantined"}:
             raise DomainValidationError(
                 DenialCode.WORKFLOW_STATE_DENIED,
                 f"Listing status {listing.get('status')} is not eligible for promotion"
             )
 
-        self._assert_recorded_hard_rules(listing)
-
-        # Validate candidate gate (listing fields validation)
-        validation_errors = self._validate_listing_fields(listing)
-        if validation_errors:
-            raise DomainValidationError(
-                DenialCode.SOURCE_POLICY_DENIED,
-                f"Candidate gate failed: missing {', '.join(validation_errors)}"
+        server_gate_snapshot: dict[str, Any] | None = None
+        if native:
+            gate_ctx = self.listing_repository.get_native_gate_context(target_listing_id)
+            policy, hr_failures, policy_sha = evaluate_native_hard_rules(
+                gate_ctx["domain_listing"],
+                gate_ctx["domain_address"],
+                target_format_code=target_format_code,
             )
+            validation_errors = self._validate_listing_fields(listing)
+            server_gate_snapshot = build_server_gate_snapshot(
+                caller_gate_snapshot_sha256=gate_snapshot_sha256,
+                target_format_code=target_format_code,
+                policy=policy,
+                policy_sha256=policy_sha,
+                hard_rule_failures=hr_failures,
+                gate_errors=validation_errors,
+                native_versions=gate_ctx["versions"],
+                evaluated_at=gate_ctx["evaluated_at"],
+            )
+            if validation_errors:
+                raise DomainValidationError(
+                    DenialCode.SOURCE_POLICY_DENIED,
+                    f"Candidate gate failed: missing {', '.join(validation_errors)}",
+                )
+            if hr_failures:
+                raise DomainValidationError(
+                    DenialCode.WORKFLOW_STATE_DENIED,
+                    f"Listing has hard rule failures: {', '.join(hr_failures)}",
+                )
+        else:
+            self._assert_recorded_hard_rules(listing)
+
+            # Validate candidate gate (listing fields validation)
+            validation_errors = self._validate_listing_fields(listing)
+            if validation_errors:
+                raise DomainValidationError(
+                    DenialCode.SOURCE_POLICY_DENIED,
+                    f"Candidate gate failed: missing {', '.join(validation_errors)}"
+                )
 
         # A live or completed decision is intake-scoped. Rejected and failed
         # decisions are terminal attempts, so a fresh idempotency key may open
@@ -164,18 +332,12 @@ class PromotionService:
                 return promo
 
         # Check duplicate candidate
-        for cand in self.listing_repository.list_candidates():
-            if hasattr(cand, "candidate_site"):
-                c_listing_id = getattr(cand.candidate_site, "listing_id", None)
-            elif hasattr(cand, "get"):
-                c_listing_id = cand.get("listingId") or cand.get("listing_id")
-            else:
-                c_listing_id = getattr(cand, "listing_id", None)
-            if c_listing_id == target_listing_id:
-                raise DomainValidationError(
-                    DenialCode.DEPENDENCY_CONFLICT,
-                    "DUPLICATE_CANDIDATE"
-                )
+        self._assert_no_duplicate_candidate(
+            listing_id=target_listing_id,
+            property_id=property_id,
+            target_format_code=target_format_code,
+            native=native,
+        )
 
         # Initialize promotion decision
         promo_id = str(uuid.uuid4())
@@ -218,6 +380,10 @@ class PromotionService:
             "reason": reason,
             "created_at": datetime.now(UTC).isoformat(),
         }
+        if native:
+            promo_record["property_id"] = property_id
+            promo_record["gate_snapshot"] = server_gate_snapshot
+            promo_record["parent_owner"] = "native_sql"
         self.promotion_repository.save_promotion(promo_record)
 
         # Emit candidate.promotion_requested event
@@ -252,6 +418,8 @@ class PromotionService:
         if not promo:
             raise ValueError(f"Promotion decision {promotion_decision_id} not found")
 
+        native = self._is_native_parent(promo)
+
         if context.actor.tenant_id != promo.get("tenant_id"):
             raise DomainValidationError(
                 DenialCode.TENANT_SCOPE_DENIED,
@@ -282,11 +450,70 @@ class PromotionService:
             # It runs before state transition so a gate failure leaves the
             # durable record in PENDING_REVIEW rather than mutating it to APPROVED
             # without a candidate or stranding the promotion mid-saga.
-            promotion_address = self._assert_promotable(listing)
-            property_id = self._property_identity(listing)
+            if native:
+                gate_ctx = self.listing_repository.get_native_gate_context(listing_id)
+                recorded = promo.get("gate_snapshot")
+                if not isinstance(recorded, dict):
+                    raise DomainValidationError(
+                        DenialCode.SOURCE_POLICY_DENIED,
+                        "PROMOTION_GATE_SNAPSHOT_REQUIRED",
+                    )
+                current_versions = gate_ctx["versions"]
+                for version_key in (
+                    "intake_id",
+                    "listing_id",
+                    "listing_version",
+                    "listing_revision_id",
+                    "property_id",
+                    "property_version",
+                    "address_id",
+                    "address_revision",
+                    "geo_cell_id",
+                    "geo_version",
+                    "source_id",
+                    "source_policy_version",
+                    "source_snapshot_id",
+                    "source_snapshot_version",
+                    "parser_run_id",
+                    "parser_run_version",
+                    "parser_release_id",
+                    "parser_release_version",
+                ):
+                    if recorded.get(version_key) != current_versions.get(version_key):
+                        raise DomainValidationError(
+                            DenialCode.WORKFLOW_STATE_DENIED,
+                            f"PROMOTION_GATE_INPUT_CHANGED: {version_key}",
+                        )
+                policy, hr_failures, policy_sha = evaluate_native_hard_rules(
+                    gate_ctx["domain_listing"],
+                    gate_ctx["domain_address"],
+                    target_format_code=promo["target_format_code"],
+                )
+                if recorded.get("policy_sha256") != policy_sha:
+                    raise DomainValidationError(
+                        DenialCode.WORKFLOW_STATE_DENIED,
+                        "PROMOTION_GATE_POLICY_CHANGED",
+                    )
+                validation_errors = self._validate_listing_fields(listing)
+                if validation_errors:
+                    raise DomainValidationError(
+                        DenialCode.SOURCE_POLICY_DENIED,
+                        f"Candidate gate failed at promotion: missing {', '.join(validation_errors)}",
+                    )
+                if hr_failures:
+                    raise DomainValidationError(
+                        DenialCode.WORKFLOW_STATE_DENIED,
+                        f"Listing has hard rule failures: {', '.join(hr_failures)}",
+                    )
+                promotion_address = gate_ctx["domain_address"]
+                property_id = self._property_identity(listing)
+            else:
+                promotion_address = self._assert_promotable(listing)
+                property_id = self._property_identity(listing)
         else:
             listing = None
             promotion_address = None
+            property_id = promo.get("property_id")
 
         current_state = to_state_enum(promo["status"])
         promo_agg = PromotionAggregate(
@@ -309,6 +536,7 @@ class PromotionService:
         promo["version"] = promo_agg.version
         promo["status"] = to_status_str(target_state)
         promo["reviewer"] = context.actor.actor_id
+        promo["reviewer_subject_id"] = context.actor.actor_id
         promo["reviewed_at"] = datetime.now(UTC).isoformat()
         promo["review_reason"] = reason
         promo["risk_acknowledged"] = risk_acknowledged
@@ -347,13 +575,12 @@ class PromotionService:
             self.promotion_repository.save_promotion(promo)
 
             # Check duplicate candidate again
-            for cand in self.listing_repository.list_candidates():
-                c_listing_id = cand.get("listingId") if hasattr(cand, "get") else cand.candidate_site.listing_id
-                if c_listing_id == listing_id:
-                    raise DomainValidationError(
-                        DenialCode.DEPENDENCY_CONFLICT,
-                        "DUPLICATE_CANDIDATE"
-                    )
+            self._assert_no_duplicate_candidate(
+                listing_id=listing_id,
+                property_id=property_id,
+                target_format_code=promo["target_format_code"],
+                native=native,
+            )
 
             # The gate already ran, above the saga. Every accessor below reads
             # a value the gate confirmed is present; none of them substitutes
@@ -481,6 +708,10 @@ class PromotionService:
                     site_status="new",
                     created_by=context.actor.actor_id,
                 )
+                if native:
+                    object.__setattr__(c_site, "tenant_id", context.actor.tenant_id)
+                    object.__setattr__(c_site, "promotion_decision_id", promotion_decision_id)
+                    object.__setattr__(c_site, "version", 1)
                 candidate_listing = (
                     self.listing_repository.get_domain_listing(listing_id)
                     if hasattr(self.listing_repository, "get_domain_listing")
@@ -511,19 +742,27 @@ class PromotionService:
                     rent_benchmark_sample_count=int(bench_count) if bench_count is not None else None,
                     rent_benchmark_id=bench_id,
                 )
+                if native:
+                    object.__setattr__(draft, "parent_owner", "native_sql")
                 self.listing_repository.save_candidate(draft)
             else:
                 self.listing_repository.save_candidate(candidate_dict)
 
             candidate_created_flag = True
 
-            # Mark listing status as candidate
+            # Mark listing status as candidate (native SQL proves the relation
+            # in the same UoW while keeping SQL expansion.listings ACTIVE).
             if hasattr(listing, "get"):
                 listing["status"] = "candidate"
                 listing["candidateId"] = candidate_id
+                if native:
+                    listing["promotionDecisionId"] = promotion_decision_id
                 self.listing_repository.save_listing(listing)
             else:
                 updated_listing = _listing_with_status(listing, "candidate")
+                if native:
+                    object.__setattr__(updated_listing, "candidate_site_id", candidate_id)
+                    object.__setattr__(updated_listing, "promotion_decision_id", promotion_decision_id)
                 self.listing_repository.save_listing(updated_listing)
 
             # Transition CANDIDATE_CREATING -> CANDIDATE_CREATED
@@ -553,6 +792,11 @@ class PromotionService:
             )
 
         except Exception as exc:
+            if native:
+                # The enclosing SERIALIZABLE SQL transaction rolls back all
+                # partial writes atomically without writing shadow state.
+                raise exc
+
             # Compensate listing status
             if before_status:
                 if hasattr(listing, "get"):
