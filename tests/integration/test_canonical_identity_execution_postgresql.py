@@ -609,7 +609,10 @@ class TestNativeGeoExecution(TestNativeGeoReservation):
         registry.handle(delivery, runtime)
         io = SyntheticGeoIO(owner.graph, database)
         io.job_id = pipeline.NativeIntakeGeoOwner.job_id(receipt["decision_id"])
-        geo_owner = pipeline.NativeIntakeGeoOwner(owner.graph, geocode_runner=io,
+        # Same composition as native_intake_geo_owner(persistence): the runtime
+        # factory graph carries the injected LIVE adapter; only the child and
+        # storage are synthetic.
+        geo_owner = pipeline.NativeIntakeGeoOwner(runtime.canonical_identity_graph(), geocode_runner=io,
                                                    snapshot_transport_factory=io.factory)
         monkeypatch.setattr(pipeline, "native_intake_geo_owner", lambda persistence: geo_owner)
         from apps.worker.oday_worker import main as worker_main
