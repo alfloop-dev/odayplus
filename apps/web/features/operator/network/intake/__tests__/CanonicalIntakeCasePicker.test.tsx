@@ -153,7 +153,10 @@ describe("sole native owner reference after complete provider replacement", () =
     await screen.findByRole("alert");
     expect(unavailable).toHaveBeenCalledOnce();
     expect(posts(context)).toHaveLength(0);
+    await waitFor(() => expect(screen.getByTestId("intake-submit-button")).toBeEnabled());
+    expect(screen.getByTestId("intake-url-input")).toBeEnabled();
     expect(screen.getByTestId("intake-url-input")).toHaveValue("https://source.example/unsent-input");
+    expect(screen.getByLabelText("送件原因")).toBeEnabled();
     expect(screen.getByLabelText("送件原因")).toHaveValue("original unsent reason");
     unavailable.mockRestore();
     fireEvent.click(screen.getByTestId("intake-submit-button"));
