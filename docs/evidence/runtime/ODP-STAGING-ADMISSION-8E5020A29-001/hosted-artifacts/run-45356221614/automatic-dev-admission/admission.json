@@ -1,0 +1,11 @@
+{
+  "admitted": true,
+  "authority": "protected-dev-ci-standing-policy-v1",
+  "environment": "dev",
+  "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+  "manifest_digest": "sha256:ea7722f6c37b09ff3d091124dec9f6efc264c56a66c7876c1de2cae81f961819",
+  "release_profile": "dev-admin",
+  "ci_run_id": "45354646865",
+  "build_run_id": "45356221614",
+  "live_deployment_verified": false
+}
