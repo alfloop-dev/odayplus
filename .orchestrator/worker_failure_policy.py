@@ -483,6 +483,19 @@ def is_provider_quota_banner(config: dict[str, Any] | None, provider: str | None
     )
 
 @_entrypoint
+def zero_exit_run_may_report_quota_banner(worker: dict[str, Any] | None) -> bool:
+    """A zero-exit run still awaiting its disposition, so its banner is trusted.
+
+    Shared by the scan and the pause writer so a banner found by one is never
+    discarded by the other. A terminated run, or one whose lifecycle is already
+    settled as completed, must never establish a provider pause.
+    """
+    if not isinstance(worker, dict) or not is_structured_successful_worker(worker):
+        return False
+    lifecycle_status = str(worker.get("status") or "").strip().lower()
+    return lifecycle_status not in {"completed", "success", "succeeded"}
+
+@_entrypoint
 def detect_zero_exit_provider_quota_banner(config: dict[str, Any], worker: dict[str, Any]) -> str | None:
     """The quota banner of a provider CLI that exited 0 without progress.
 
@@ -493,7 +506,7 @@ def detect_zero_exit_provider_quota_banner(config: dict[str, Any], worker: dict[
     `is_provider_quota_banner` signatures count here -- generic markers such as
     "quota exceeded" must not pause a provider from a run that exited cleanly.
     """
-    if not isinstance(worker, dict) or worker_was_terminated(worker):
+    if not zero_exit_run_may_report_quota_banner(worker):
         return None
     provider = str(worker.get("provider") or worker.get("agent_id") or "")
     lines = _worker_log_lines(worker)
@@ -1449,7 +1462,13 @@ def mark_provider_dispatch_paused(
     worker: dict[str, Any] | None = None,
 ) -> bool:
     worker_obj = worker if isinstance(worker, dict) else _lookup_worker_record(state, worker_run_id)
-    if worker_log_scan_should_be_skipped(worker_obj):
+    # A clean exit proves nothing about the provider except when the provider's
+    # own quota banner is the reason: pi reports its usage limit that way, and
+    # refusing the pause here would relaunch the task into the same banner.
+    if worker_log_scan_should_be_skipped(worker_obj) and not (
+        zero_exit_run_may_report_quota_banner(worker_obj)
+        and is_provider_quota_banner(config, provider, reason)
+    ):
         return False
     settings = provider_guardrail_settings(config)
     provider_id = normalize_agent_id(provider or "")

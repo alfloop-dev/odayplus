@@ -901,6 +901,54 @@ def test_zero_exit_scan_ignores_generic_quota_text_and_other_providers(tmp_path)
     assert sv.detect_zero_exit_provider_quota_banner(CFG, killed) is None
 
 
+def _pause_pi(tmp_path, worker: dict, reason: str) -> tuple[bool, dict]:
+    cfg = {
+        "paths": {"activity_log": str(pathlib.Path(tmp_path) / "activity.jsonl")},
+        "providers": {"pi": {"delivery_mode": "pi"}},
+        "agents": {"pi": {"provider": "pi", "account_pool": "pi_chatgpt"}},
+        "account_pools": {"pi_chatgpt": {"max_concurrent": 1}},
+    }
+    state: dict = {"workers": {worker["run_id"]: worker}}
+    paused = sv.mark_provider_dispatch_paused(
+        cfg,
+        state,
+        "pi",
+        reason,
+        worker_run_id=worker["run_id"],
+        failure_kind="quota_terminal",
+        pause_kind="quota_terminal",
+        worker=worker,
+    )
+    return paused, state
+
+
+def test_zero_exit_pi_banner_writes_pause_and_pool_cooldown(tmp_path):
+    worker = _zero_exit_worker(tmp_path, "pi", PI_USAGE_LIMIT + "\n")
+    paused, state = _pause_pi(tmp_path, worker, PI_USAGE_LIMIT)
+    assert paused is True
+    assert state["provider_guardrails"]["dispatch_pauses"]["pi"]["pause_kind"] == "quota_terminal"
+    assert state["account_pool_runtime"]["pi_chatgpt"]["state"] == "cooldown"
+
+
+def test_zero_exit_pause_guards_hold_outside_the_banner(tmp_path):
+    cases = (
+        ({}, "402 You have no quota"),  # generic quota wording
+        ({}, "Error: quota exceeded for test fixture"),
+        ({"status": "completed"}, PI_USAGE_LIMIT),  # lifecycle already settled
+        ({"status": "completed", "runner_status": "", "exit_code": None}, PI_USAGE_LIMIT),
+        ({"status": "superseded"}, PI_USAGE_LIMIT),  # terminated
+        ({"signal": "SIGTERM"}, PI_USAGE_LIMIT),
+        ({"exit_code": -15, "runner_status": "failed"}, PI_USAGE_LIMIT),
+    )
+    for extra, reason in cases:
+        worker = _zero_exit_worker(tmp_path, "pi", reason + "\n", **extra)
+        paused, state = _pause_pi(tmp_path, worker, reason)
+        assert paused is False, (extra, reason)
+        assert not state.get("provider_guardrails", {}).get("dispatch_pauses"), (extra, reason)
+        assert not state.get("account_pool_runtime"), (extra, reason)
+        assert sv.detect_zero_exit_provider_quota_banner(CFG, worker) is None, (extra, reason)
+
+
 def test_generic_provider_quota_markers_still_classified():
     """Non-agy provider quota text keeps its existing classification."""
     for reason in (

@@ -281,6 +281,7 @@ _FAILURE_HELPER_FUNCTIONS = [
 "is_pi_provider",
 "is_pi_usage_limit_banner",
 "is_provider_quota_banner",
+"zero_exit_run_may_report_quota_banner",
 "detect_zero_exit_provider_quota_banner",
 "is_cloud_run_quota_error",
 "is_human_gate_agent",
