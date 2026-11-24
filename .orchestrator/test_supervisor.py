@@ -18982,6 +18982,112 @@ class SuccessfulWorkerPostconditionTests(unittest.TestCase):
         reassign.assert_called_once()
 
 
+    def _pi_banner_worker(self, task: dict[str, Any], log_text: str) -> dict[str, Any]:
+        # The committed example roster has no pi lane; add it as the live
+        # config declares it so the run is matched to its Pi assignment.
+        self.config.setdefault("providers", {})["pi"] = {
+            "delivery_mode": "pi",
+            "pi": {"cli": ".orchestrator/bin/pi", "llm_provider": "openai-codex"},
+        }
+        self.config.setdefault("agents", {})["pi"] = {
+            "display_name": "Pi",
+            "account_pool": "pi_chatgpt",
+            "provider": "pi",
+            "adapter": "pi",
+        }
+        worker = self._worker(task, run_id="pi-usage-limit-1", agent_id="pi")
+        handle = tempfile.NamedTemporaryFile("w", suffix=".log", delete=False, encoding="utf-8")
+        with handle:
+            handle.write(log_text)
+        self.addCleanup(os.unlink, handle.name)
+        worker["log_path"] = handle.name
+        return worker
+
+    def _run_with_quota_mocks(self, run: Any) -> tuple[bool, mock.Mock, mock.Mock]:
+        with (
+            mock.patch.object(supervisor, "mark_provider_dispatch_paused", return_value=True) as pause,
+            mock.patch.object(supervisor, "fence_account_pool_workers"),
+            mock.patch.object(supervisor, "worker_writers_are_alive", return_value=False),
+            mock.patch.object(supervisor, "write_failure_evidence", return_value="evidence/pi.json"),
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value=None) as reassign,
+        ):
+            return run(), pause, reassign
+
+    def test_poll_zero_exit_pi_usage_limit_is_quota_not_no_progress(self) -> None:
+        """pi prints its usage limit and exits 0; that is a quota failure."""
+        task = self._task()
+        task["owner"] = "Pi"
+        worker = self._pi_banner_worker(task, "Codex error: The usage limit has been reached\n")
+        streak_key = f"{task['id']}:pi"
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "provider_guardrails": {"task_failure_streaks": {}},
+        }
+        changed, pause, _reassign = self._run_with_quota_mocks(
+            lambda: self._poll(state, task, current_head="a" * 40)
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "failed")
+        self.assertNotEqual(worker["last_error"], supervisor.NO_PROGRESS_WORKER_EXIT_REASON)
+        self.assertIn("usage limit has been reached", worker["last_error"])
+        pause.assert_called_once()
+        self.assertEqual(pause.call_args.kwargs["pause_kind"], "quota_terminal")
+        # A provider quota outage is environmental: it must not count toward the
+        # task's own failure streak the way a no-progress exit does.
+        self.assertNotIn(streak_key, state["provider_guardrails"]["task_failure_streaks"])
+
+    def test_poll_zero_exit_without_banner_stays_no_progress(self) -> None:
+        task = self._task()
+        task["owner"] = "Pi"
+        worker = self._pi_banner_worker(task, "Error: quota exceeded in fixture output\nfinished\n")
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "provider_guardrails": {"task_failure_streaks": {}},
+        }
+        changed, pause, _reassign = self._run_with_quota_mocks(
+            lambda: self._poll(state, task, current_head="a" * 40)
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "failed")
+        self.assertEqual(worker["last_error"], supervisor.NO_PROGRESS_WORKER_EXIT_REASON)
+        pause.assert_not_called()
+
+    def test_boot_reconciliation_zero_exit_pi_usage_limit_is_quota_not_no_progress(self) -> None:
+        task = self._task()
+        task["owner"] = "Pi"
+        worker = self._pi_banner_worker(task, "Codex error: The usage limit has been reached\n")
+        streak_key = f"{task['id']}:pi"
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "provider_guardrails": {"task_failure_streaks": {streak_key: {"count": 1}}},
+        }
+
+        def run() -> bool:
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                mock.patch.object(supervisor, "resolve_task_progress_head", return_value="a" * 40),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                return supervisor.reconcile_runtime_on_boot(self.config, state)
+
+        changed, pause, _reassign = self._run_with_quota_mocks(run)
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "failed")
+        self.assertNotEqual(worker["last_error"], supervisor.NO_PROGRESS_WORKER_EXIT_REASON)
+        self.assertIn("usage limit has been reached", worker["last_error"])
+        pause.assert_called_once()
+        self.assertEqual(pause.call_args.kwargs["pause_kind"], "quota_terminal")
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"][streak_key]["count"], 1)
+
+
 class SupervisorFailureLoopCoverageTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = load_test_config()

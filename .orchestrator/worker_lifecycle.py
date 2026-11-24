@@ -1794,7 +1794,18 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         # detection even when it has not satisfied the task postcondition yet.
         # Keep failure-scan eligibility separate from the completion outcome so
         # the no-progress path below can still record and reassign the task.
-        failure_reason = None if runner_succeeded else detect_worker_failure(worker)
+        # The one exception is a provider quota banner: pi prints its usage
+        # limit and exits 0, and reading that as "no progress" never paused
+        # the lane, so the task was relaunched into the same banner every few
+        # minutes.
+        if runner_succeeded:
+            failure_reason = (
+                detect_zero_exit_provider_quota_banner(config, worker)
+                if success_outcome == "no_progress"
+                else None
+            )
+        else:
+            failure_reason = detect_worker_failure(worker)
         if failure_reason and worker.get("status") != "failed":
             failure = classify_worker_failure(config, worker, failure_reason)
             failure_summary = summarize_failure_reason(failure_reason, str(worker.get("provider") or worker.get("agent_id") or ""))
