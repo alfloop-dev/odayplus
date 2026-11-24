@@ -66,7 +66,7 @@ describe("complete notification route", () => {
     render(<ShellNotificationPage {...props()} />);
     const opener = await screen.findByRole("button", { name: "查看通知詳情 A" }); opener.focus(); fireEvent.click(opener);
     const first = await screen.findByRole("dialog", { name: "Notice A" });
-    expect(within(first).getByRole("button", { name: "關閉" })).toHaveFocus();
+    await waitFor(() => expect(within(first).getByRole("button", { name: "關閉" })).toHaveFocus());
     fireEvent.click(within(first).getByRole("button", { name: "下一筆" }));
     const next = await screen.findByRole("dialog", { name: "Notice B" });
     expect(new URL(window.location.href).searchParams.get("notification")).toBe("B");
