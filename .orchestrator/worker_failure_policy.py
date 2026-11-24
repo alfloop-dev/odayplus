@@ -360,21 +360,27 @@ def worker_log_scan_should_be_skipped(worker: dict[str, Any] | None) -> bool:
     return False
 
 
+def _worker_log_lines(worker: dict[str, Any]) -> list[str]:
+    log_path_value = worker.get("log_path")
+    if not log_path_value:
+        return []
+    log_path = Path(log_path_value)
+    if not log_path.exists():
+        return []
+    try:
+        return log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return []
+
+
 @_entrypoint
 def detect_worker_failure(worker: dict[str, Any]) -> str | None:
     if worker_log_scan_should_be_skipped(worker):
         return None
     if worker_has_terminated_background_tasks(worker):
         return "agy background lifecycle interrupted: command cancelled or terminal result missing"
-    log_path_value = worker.get("log_path")
-    if not log_path_value:
-        return None
-    log_path = Path(log_path_value)
-    if not log_path.exists():
-        return None
-    try:
-        lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    except OSError:
+    lines = _worker_log_lines(worker)
+    if not lines:
         return None
 
     fallback: str | None = None
@@ -438,6 +444,77 @@ def is_claude_session_limit_banner(config: dict[str, Any] | None, provider: str 
     if not reason or not is_claude_provider(config, provider):
         return False
     return bool(CLAUDE_SESSION_LIMIT_PATTERN.search(str(reason)))
+
+@_entrypoint
+def is_pi_provider(config: dict[str, Any] | None, provider: str | None) -> bool:
+    """True when `provider` is served by the pi CLI adapter."""
+    provider_id = str(provider or "").strip().lower()
+    if not provider_id:
+        return False
+    if re.fullmatch(r"pi\d*", provider_id):
+        return True
+    providers = (config or {}).get("providers")
+    entry = providers.get(provider_id) if isinstance(providers, dict) else None
+    if not isinstance(entry, dict):
+        return False
+    if str(entry.get("delivery_mode") or entry.get("adapter") or "").strip().lower() == "pi":
+        return True
+    return isinstance(entry.get("pi"), dict)
+
+@_entrypoint
+def is_pi_usage_limit_banner(config: dict[str, Any] | None, provider: str | None, reason: str | None) -> bool:
+    """True only for pi's usage-limit banner on a pi provider."""
+    if not reason or not is_pi_provider(config, provider):
+        return False
+    return bool(PI_USAGE_LIMIT_PATTERN.search(str(reason).strip()))
+
+@_entrypoint
+def is_provider_quota_banner(config: dict[str, Any] | None, provider: str | None, reason: str | None) -> bool:
+    """A provider's own quota banner, matched by full signature and provider.
+
+    These are the only quota signals precise enough to trust from any log line:
+    each requires the banner's continuation text and the provider that prints
+    it, so the same words quoted in task output stay a task failure.
+    """
+    return (
+        is_antigravity_quota_banner(config, provider, reason)
+        or is_claude_session_limit_banner(config, provider, reason)
+        or is_pi_usage_limit_banner(config, provider, reason)
+    )
+
+@_entrypoint
+def zero_exit_run_may_report_quota_banner(worker: dict[str, Any] | None) -> bool:
+    """A zero-exit run still awaiting its disposition, so its banner is trusted.
+
+    Shared by the scan and the pause writer so a banner found by one is never
+    discarded by the other. A terminated run, or one whose lifecycle is already
+    settled as completed, must never establish a provider pause.
+    """
+    if not isinstance(worker, dict) or not is_structured_successful_worker(worker):
+        return False
+    lifecycle_status = str(worker.get("status") or "").strip().lower()
+    return lifecycle_status not in {"completed", "success", "succeeded"}
+
+@_entrypoint
+def detect_zero_exit_provider_quota_banner(config: dict[str, Any], worker: dict[str, Any]) -> str | None:
+    """The quota banner of a provider CLI that exited 0 without progress.
+
+    pi prints "Codex error: The usage limit has been reached" and exits 0, so
+    `worker_log_scan_should_be_skipped` hides it and the run used to be recorded
+    as no progress: no provider pause, and the task was relaunched into the same
+    banner every few minutes. A zero-exit log is otherwise task output, so only
+    `is_provider_quota_banner` signatures count here -- generic markers such as
+    "quota exceeded" must not pause a provider from a run that exited cleanly.
+    """
+    if not zero_exit_run_may_report_quota_banner(worker):
+        return None
+    provider = str(worker.get("provider") or worker.get("agent_id") or "")
+    lines = _worker_log_lines(worker)
+    for idx in range(len(lines) - 1, -1, -1):
+        is_auth, stripped = _is_authoritative_log_line(lines, idx)
+        if is_auth and is_provider_quota_banner(config, provider, stripped):
+            return stripped
+    return None
 
 @_entrypoint
 def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reason: str | None) -> dict[str, Any]:
@@ -523,9 +600,7 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         return {"kind": "auth", "transient": False, "label": "auth"}
     if normalized.startswith("agy background lifecycle interrupted:") or BACKGROUND_TASK_TERMINATED_PATTERN.fullmatch(normalized):
         return {"kind": "interrupted", "transient": True, "label": "background task terminated on exit"}
-    if is_antigravity_quota_banner(config, provider, reason):
-        return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
-    if is_claude_session_limit_banner(config, provider, reason):
+    if is_provider_quota_banner(config, provider, reason):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if is_cloud_run_quota_error(reason):
         return {"kind": "terminal", "transient": False, "label": "terminal"}
@@ -1387,7 +1462,13 @@ def mark_provider_dispatch_paused(
     worker: dict[str, Any] | None = None,
 ) -> bool:
     worker_obj = worker if isinstance(worker, dict) else _lookup_worker_record(state, worker_run_id)
-    if worker_log_scan_should_be_skipped(worker_obj):
+    # A clean exit proves nothing about the provider except when the provider's
+    # own quota banner is the reason: pi reports its usage limit that way, and
+    # refusing the pause here would relaunch the task into the same banner.
+    if worker_log_scan_should_be_skipped(worker_obj) and not (
+        zero_exit_run_may_report_quota_banner(worker_obj)
+        and is_provider_quota_banner(config, provider, reason)
+    ):
         return False
     settings = provider_guardrail_settings(config)
     provider_id = normalize_agent_id(provider or "")

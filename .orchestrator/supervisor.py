@@ -278,6 +278,11 @@ _FAILURE_HELPER_FUNCTIONS = [
 "is_captured_orchestrator_record",
 "is_claude_provider",
 "is_claude_session_limit_banner",
+"is_pi_provider",
+"is_pi_usage_limit_banner",
+"is_provider_quota_banner",
+"zero_exit_run_may_report_quota_banner",
+"detect_zero_exit_provider_quota_banner",
 "is_cloud_run_quota_error",
 "is_human_gate_agent",
 "is_interrupted_failure_kind",
@@ -601,8 +606,19 @@ SESSION_ID_PATTERNS = [
     re.compile(r'"sessionId"\s*:\s*"([^"]+)"'),
 ]
 URL_PATTERN = re.compile(r"https://github\.com/[^\s)]+")
+# pi (`openai-codex` provider) usage-limit banner. pi prints this one line and
+# still exits 0, so it is only ever seen through the zero-exit quota scan in
+# `detect_zero_exit_provider_quota_banner`; listing it below as well keeps a
+# non-zero pi exit from hiding the same banner. Line-anchored on pi's own
+# "Codex error:" prefix so a quoted or grepped copy in task output does not
+# match.
+PI_USAGE_LIMIT_PATTERN = re.compile(
+    r"^codex\s+error:\s*the\s+usage\s+limit\s+has\s+been\s+reached\b",
+    re.IGNORECASE,
+)
 WORKER_FAILURE_PATTERNS = (
     re.compile(r"^Error when talking to gemini api\b", re.IGNORECASE),
+    PI_USAGE_LIMIT_PATTERN,
     re.compile(r'"error"\s*:\s*"rate_limit"', re.IGNORECASE),
     re.compile(r'"type"\s*:\s*"rate_limit_event"', re.IGNORECASE),
     re.compile(r'"error"\s*:\s*"authentication_failed"', re.IGNORECASE),
@@ -3035,9 +3051,19 @@ def update_from_log(config: dict[str, Any], worker: dict[str, Any]) -> None:
 # task failure. Matching requires agy's full signature (the "Individual quota
 # reached" phrase plus its upgrade/reset continuation) AND an antigravity
 # provider, so only the real provider banner is treated as a quota outage.
+#
+# agy also emits a second banner when its third-party (Claude/GPT) models run
+# out: "Third-party quota reached. Please switch to Gemini models or upgrade
+# your subscription to increase your limits. Resets in 150h16m1s." That one
+# used to fall through to the generic 429/RESOURCE_EXHAUSTED capacity markers,
+# so the exhausted pool was cooled only for the short probe window instead of
+# its stated reset, and an Opus dispatch was relaunched into the same banner
+# roughly every 6 minutes (ODP-NATIVE-PROMOTION-FIRSTSCORE-SQL-261123,
+# 2026-11-24).
 AGY_QUOTA_SIGNATURE_PATTERN = re.compile(
-    r"individual\s+quota\s+reached\b[\s.:,!-]*"
-    r"(?:please\s+upgrade\s+your\s+subscription|resets?\s+in\b|try\s+again\s+(?:in|after)\b)",
+    r"(?:individual|third[\s-]party)\s+quota\s+reached\b[\s.:,!-]*"
+    r"(?:please\s+(?:upgrade\s+your\s+subscription|switch\s+to\s+gemini\s+models?)"
+    r"|resets?\s+in\b|try\s+again\s+(?:in|after)\b)",
     re.IGNORECASE,
 )
 
@@ -3726,7 +3752,12 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             changed = True
             continue
 
-        if runner_succeeded:
+        # A provider CLI that printed its quota banner and still exited 0 (pi)
+        # is a quota failure, not a worker that ran and achieved nothing.
+        zero_exit_quota_reason = (
+            detect_zero_exit_provider_quota_banner(config, worker) if runner_succeeded else None
+        )
+        if runner_succeeded and not zero_exit_quota_reason:
             reason = NO_PROGRESS_WORKER_EXIT_REASON
             failure_count = record_task_failure_streak(
                 state,
@@ -3759,7 +3790,9 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 changed = True
                 continue
 
-        detected_reason = None if runner_succeeded else detect_worker_failure(worker)
+        detected_reason = zero_exit_quota_reason or (
+            None if runner_succeeded else detect_worker_failure(worker)
+        )
         if detected_reason:
             failure = classify_worker_failure(config, worker, detected_reason)
             failure_summary = summarize_failure_reason(
