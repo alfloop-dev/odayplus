@@ -396,6 +396,13 @@ NATIVE_GEO_DONE_CHECKPOINT = "GEOCODED"
 NATIVE_GEO_MEDIA_TYPE = "application/json"
 NATIVE_GEO_ACTOR_ROLE = "SVC_INTAKE"
 NATIVE_GEO_ORIGIN_KINDS = frozenset({"IDENTITY_DECISION", "NATIVE_EXACT_URL"})
+# Each recorded time names whose clock it is; none is ever the provider's.
+NATIVE_GEO_FETCHED_BASIS = "WORKER_CLOCK_RESPONSE_RECEIVED"
+NATIVE_GEO_CAPTURED_BASIS = "FETCHED_AT"
+NATIVE_GEO_EXCHANGE_BASIS = "DATABASE_CLOCK_IO_JOURNAL"
+_NATIVE_GEO_ADDRESS_COLUMNS = (
+    "address_id,tenant_id,revision,raw_address,normalized_address,city,district,village,road,latitude,longitude,"
+    "geocode_precision,geocode_confidence,h3_res_8,h3_res_9,h3_res_10,manual_override_flag")
 
 
 @dataclass(frozen=True)
@@ -403,12 +410,13 @@ class NativeIntakeGeoProvider:
     """The existing LIVE geocode adapter, injected by the persistence factory.
 
     Listing never imports the frozen provider packages itself: the factory
-    hands over the original mode resolver, endpoint variable, client,
+    hands over the original startup validation, endpoint variable, client,
     provider, response and error types unchanged. Without this injection the
     owner is unadmitted, so no configuration can forge production geodata.
     """
 
-    provider_mode: Any
+    validate: Any
+    config_error: type[BaseException]
     live_mode: Any
     endpoint_env_var: str
     client_type: Any
@@ -463,22 +471,38 @@ class NativeIntakeGeoOwner:
             raise ValueError("NATIVE_GEO_TIME_UNAVAILABLE")
         return value
 
-    def live_endpoint(self) -> str:
-        """Only an explicit LIVE provider with an HTTPS endpoint may produce geodata.
+    def admitted_provider(self) -> tuple[str, datetime | None]:
+        """The validated LIVE ``geocode.primary_api`` endpoint and licence end.
 
-        Fixture, disabled and unknown modes are never production-geodata ready.
+        The original provider validation owns mode, allowlist, licence,
+        credential and credential-status refusals; this only requires that it
+        selected the explicitly bound provider and an HTTPS endpoint. Fixture,
+        disabled and unknown modes are never production-geodata ready.
         """
         import os
+        from datetime import time, timedelta
         from urllib.parse import urlsplit
 
         from modules.listing.application.native_intake_retrieval_policy import (
+            GEO_PROVIDER_ID,
+            GEO_SOURCE_CONTRACT_ID,
             NativeIntakeGeoUnadmitted,
         )
 
         env = self.env if self.env is not None else os.environ
         provider = self.geo_provider
-        if provider is None or provider.provider_mode(env) is not provider.live_mode:
+        if provider is None:
             raise NativeIntakeGeoUnadmitted("NATIVE_GEO_PROVIDER_NOT_LIVE")
+        try:
+            validation = provider.validate(env=env)
+        except provider.config_error as error:
+            raise NativeIntakeGeoUnadmitted("NATIVE_GEO_PROVIDER_VALIDATION_REFUSED") from error
+        if validation.mode is not provider.live_mode:
+            raise NativeIntakeGeoUnadmitted("NATIVE_GEO_PROVIDER_NOT_LIVE")
+        selected = next((entry for entry in validation.providers if entry.provider_id == GEO_PROVIDER_ID), None)
+        if (selected is None or selected.source_contract_id != GEO_SOURCE_CONTRACT_ID
+                or selected.endpoint_env_var != provider.endpoint_env_var):
+            raise NativeIntakeGeoUnadmitted("NATIVE_GEO_PROVIDER_NOT_SELECTED")
         endpoint = str(env.get(provider.endpoint_env_var, "")).strip()
         try:
             parts = urlsplit(endpoint)
@@ -488,7 +512,34 @@ class NativeIntakeGeoOwner:
             valid = False
         if not valid:
             raise NativeIntakeGeoUnadmitted("NATIVE_GEO_PROVIDER_ENDPOINT_UNAVAILABLE")
-        return endpoint
+        expires_on = selected.license.expires_on
+        # The original check still accepts the licence on its last UTC date.
+        return endpoint, (None if expires_on is None
+                          else datetime.combine(expires_on + timedelta(days=1), time.min, tzinfo=UTC))
+
+    def _source_authority(self, source: Mapping[str, Any], endpoint: str, *, source_id: str, version: int,
+                          now: datetime) -> Any:
+        """The original source-policy rule applied to the Geo source and endpoint host.
+
+        The registered Geo source must itself be associated with the endpoint
+        host and hold current grants and nonzero retrieval limits. ``None``
+        means not admitted; no listing-source approval is ever consulted.
+        """
+        from urllib.parse import urlsplit
+
+        from modules.listing.application.native_intake_source_policy_rules import (
+            evaluate_native_source_policy,
+        )
+
+        host = urlsplit(endpoint).hostname
+        matches = self.engine.query(
+            "SELECT s.source_id FROM intake.source_registry s WHERE EXISTS "
+            "(SELECT 1 FROM unnest(s.allowed_hosts) AS h(host) WHERE lower(h.host)=?) "
+            "ORDER BY s.source_id LIMIT 2", (host,))
+        classified = evaluate_native_source_policy(dict(source), source_host=host, expected_source_id=source_id,
+                                                   host_match_count=len(matches), now=now)
+        return (classified if source["version"] == version and classified.target_state == "RETRIEVING"
+                and classified.valid_until is not None else None)
 
     def native_intake(self, tenant: str, intake: Mapping[str, Any]) -> bool:
         """True only for an Intake the native start producer committed."""
@@ -513,24 +564,31 @@ class NativeIntakeGeoOwner:
         import json
 
         from modules.external_data.application.assisted_intake import normalize_address
-        from modules.listing.application.native_intake_identity import NativeIntakeIdentityOwner
         from modules.listing.application.native_intake_retrieval_policy import (
             NativeIntakeGeoAuthenticator,
             NativeIntakeGeoUnadmitted,
             native_intake_geo_policy,
         )
+        from modules.listing.application.native_intake_source_policy_rules import (
+            NativeSourcePolicyRuleUnavailable,
+        )
 
         policy = native_intake_geo_policy(tenant)
         token = NativeIntakeGeoAuthenticator.sign(job_id, tenant, 1)
-        self.live_endpoint()
+        endpoint, _ = self.admitted_provider()
         if listing_revision_id is None:
             raise NativeIntakeGeoUnadmitted("NATIVE_GEO_LISTING_REVISION_UNAVAILABLE")
         source = self.engine.query_one("SELECT * FROM intake.source_registry WHERE source_id=? FOR SHARE",
                                        (policy.source.source_id,))
         # The Geo provider grant is its own registered source; the listing
         # source's retrieval approval is never reused for it.
-        if (source is None or source["version"] != policy.source.source_policy_version
-                or not NativeIntakeIdentityOwner._source_reusable(source, self._clock())):
+        try:
+            admitted = source is not None and self._source_authority(
+                source, endpoint, source_id=policy.source.source_id, version=policy.source.source_policy_version,
+                now=self._clock()) is not None
+        except NativeSourcePolicyRuleUnavailable as error:
+            raise NativeIntakeGeoUnadmitted("NATIVE_GEO_SOURCE_NOT_ADMITTED") from error
+        if not admitted:
             raise NativeIntakeGeoUnadmitted("NATIVE_GEO_SOURCE_NOT_ADMITTED")
         revision = self.engine.query_one(
             "SELECT effective_values FROM expansion.listing_revisions WHERE tenant_id=? AND listing_id=? "
@@ -583,6 +641,16 @@ class NativeIntakeGeoOwner:
                 tenant, intake, listing_id, listing_revision_id, job_id)
         except NativeIntakeGeoUnadmitted:
             return None
+        # The canonical graph reader, not the raw creation-time property, names
+        # the effective Property and its redirects for this READY Listing.
+        identity = self.graph.resolve_listing(tenant, listing_id)
+        if (identity["effective_property_id"] != property_id or identity["current_property_version"] != property_version
+                or identity["listing_version"] != listing_version):
+            raise ValueError("NATIVE_GEO_READY_IDENTITY_CONFLICT")
+        lineage = self._lineage(tenant, intake["intake_id"], listing_id, listing_revision_id, parser_run_id)
+        if parser_run_id is not None and not self._parser_bound(lineage, intake["intake_id"], parser_run_id,
+                                                                source_snapshot_id):
+            raise ValueError("NATIVE_GEO_PARSER_RUN_UNPROVEN")
         at = self._clock()
         audit_id = str(uuid4())
         occurrence = intake["intake_id"] + ":" + origin_id
@@ -595,7 +663,8 @@ class NativeIntakeGeoOwner:
                    "intake_version": intake_version, "listing_id": listing_id, "listing_version": listing_version,
                    "listing_revision_id": listing_revision_id, "property_id": property_id,
                    "property_version": property_version, "source_snapshot_id": source_snapshot_id,
-                   "parser_run_id": parser_run_id, "address_sha256": address_sha256,
+                   "parser_run_id": parser_run_id, "property_binding": self._property_binding(identity),
+                   "input_lineage": lineage, "address_sha256": address_sha256,
                    "geo_source_version": source["version"], "policy": policy.snapshot(),
                    "policy_sha256": policy.sha256, "delivery_generation": 1,
                    "attempt_token_sha256": hashlib.sha256(token.encode()).hexdigest(),
@@ -658,9 +727,85 @@ class NativeIntakeGeoOwner:
 
     @staticmethod
     def _provenance(payload: Mapping[str, Any]) -> dict:
-        return {key: payload[key] for key in ("origin_kind", "ready_transition_id", "listing_id", "listing_version",
-                                              "listing_revision_id", "property_id", "property_version",
-                                              "address_sha256", "geo_source_version", "policy_sha256")}
+        from modules.listing.application.native_intake_retrieval_policy import canonical_sha256
+
+        return {**{key: payload[key] for key in ("origin_kind", "ready_transition_id", "identity_job_id", "listing_id",
+                                                 "listing_version", "listing_revision_id", "property_id",
+                                                 "property_version", "source_snapshot_id", "parser_run_id",
+                                                 "address_sha256", "geo_source_version", "policy_sha256")},
+                "property_binding_sha256": canonical_sha256(payload["property_binding"]),
+                "input_lineage_sha256": canonical_sha256(payload["input_lineage"])}
+
+    @staticmethod
+    def _property_binding(identity: Mapping[str, Any]) -> dict:
+        """Listing -> source edge -> redirect path, as the canonical reader proved it."""
+        return {"listing_property_id": None if identity["property_id_at_creation"] is None
+                else str(identity["property_id_at_creation"]),
+                "source_edge_id": None if identity["source_edge_id"] is None else str(identity["source_edge_id"]),
+                "redirect_path": [str(value) for value in identity["redirect_path"]]}
+
+    def _lineage(self, tenant: str, intake_id: str, listing_id: str, revision_id: str,
+                 parser_run_id: str | None, before: Any = None) -> dict:
+        """Exact current revision, parser and correction inputs of this READY.
+
+        The consuming Intake's own parser phase and the Listing revision's
+        original source/parser stay separate: an exact-existing READY keeps a
+        revision that another Intake produced. Values enter only as hashes.
+        """
+        import hashlib
+
+        before = before or (lambda: None)
+
+        def digest(value: Any) -> str | None:
+            return None if value is None else hashlib.sha256(str(value).encode()).hexdigest()
+
+        def key(value: Any) -> str | None:
+            return None if value is None else str(value)
+
+        before()
+        revision = self.engine.query_one(
+            "SELECT revision_no,revision_kind,source_snapshot_id,parser_run_id,material_fingerprint,"
+            "effective_values::text AS effective_text FROM expansion.listing_revisions "
+            "WHERE tenant_id=? AND listing_id=? AND listing_revision_id=? FOR SHARE",
+            (tenant, listing_id, revision_id))
+        if revision is None:
+            raise LookupError("NATIVE_GEO_LISTING_REVISION_MISSING")
+        revision_parser = key(revision["parser_run_id"])
+        runs = sorted({value for value in (parser_run_id, revision_parser) if value is not None})
+        parsers = []
+        if runs:
+            before()
+            parsers = self.engine.query(
+                "SELECT parser_run_id,intake_id,source_snapshot_id,status,version,"
+                "normalized_payload::text AS normalized_text FROM intake.parser_runs "
+                "WHERE tenant_id=? AND parser_run_id=ANY(?::uuid[]) ORDER BY parser_run_id FOR SHARE", (tenant, runs))
+        before()
+        corrections = self.engine.query(
+            "SELECT correction_id,status,version,listing_id,parser_run_id,"
+            "after_effective_value::text AS value_text FROM intake.human_corrections WHERE tenant_id=? "
+            "AND (intake_id=? OR (listing_id=? AND status='APPLIED' AND parser_run_id=?::uuid)) "
+            "ORDER BY correction_id FOR SHARE", (tenant, intake_id, listing_id, revision_parser))
+        before()
+        return {
+            "revision": {"revision_no": revision["revision_no"], "revision_kind": revision["revision_kind"],
+                         "source_snapshot_id": key(revision["source_snapshot_id"]), "parser_run_id": revision_parser,
+                         "material_fingerprint": revision["material_fingerprint"].strip(),
+                         "effective_values_sha256": digest(revision["effective_text"])},
+            "parser_runs": [{"parser_run_id": key(row["parser_run_id"]), "intake_id": key(row["intake_id"]),
+                             "source_snapshot_id": key(row["source_snapshot_id"]), "status": row["status"],
+                             "version": row["version"], "normalized_sha256": digest(row["normalized_text"])}
+                            for row in parsers],
+            "corrections": [{"correction_id": key(row["correction_id"]), "status": row["status"],
+                             "version": row["version"], "listing_id": key(row["listing_id"]),
+                             "parser_run_id": key(row["parser_run_id"]), "value_sha256": digest(row["value_text"])}
+                            for row in corrections]}
+
+    @staticmethod
+    def _parser_bound(lineage: Mapping[str, Any], intake_id: str, parser_run_id: str,
+                      source_snapshot_id: str | None) -> bool:
+        runs = [run for run in lineage["parser_runs"] if run["parser_run_id"] == parser_run_id]
+        return (len(runs) == 1 and runs[0]["status"] == "SUCCEEDED" and runs[0]["intake_id"] == intake_id
+                and runs[0]["source_snapshot_id"] == source_snapshot_id)
 
     @staticmethod
     def _object(value: Any) -> dict:
@@ -808,6 +953,7 @@ class NativeIntakeGeoOwner:
 
     def _parent(self, tenant: str, intake: Mapping[str, Any], payload: Mapping[str, Any], before: Any) -> None:
         """The committed native identity READY unit is the only Geo parent."""
+        from modules.listing.domain.identity_graph import IdentityGraphError
         from shared.jobs.queue import JobFenceRejectedError
 
         if (intake["processing_state"] != "READY" or intake["version"] != payload["intake_version"]
@@ -824,11 +970,13 @@ class NativeIntakeGeoOwner:
         if transition is None or not self.native_intake(tenant, intake):
             raise JobFenceRejectedError("NATIVE_GEO_PARENT_PROOF_MISSING")
         before()
+        self._identity_receipt(tenant, intake, payload, before)
+        before()
         listing = self.engine.query_one("SELECT * FROM expansion.listings WHERE tenant_id=? AND listing_id=? FOR SHARE",
                                         (tenant, payload["listing_id"]))
         if (listing is None or listing["version"] != payload["listing_version"]
                 or str(listing["current_revision_id"]) != payload["listing_revision_id"]
-                or str(listing["property_id"]) != payload["property_id"] or listing["lifecycle_state"] != "ACTIVE"):
+                or listing["lifecycle_state"] != "ACTIVE"):
             raise JobFenceRejectedError("NATIVE_GEO_CURRENT_LISTING_CHANGED")
         before()
         prop = self.engine.query_one("SELECT * FROM identity.properties WHERE tenant_id=? AND property_id=? FOR SHARE",
@@ -836,6 +984,25 @@ class NativeIntakeGeoOwner:
         if (prop is None or prop["version"] != payload["property_version"] or prop["status"] != "ACTIVE"
                 or prop["current_redirect_property_id"] is not None):
             raise JobFenceRejectedError("NATIVE_GEO_CURRENT_PROPERTY_CHANGED")
+        before()
+        # A merged creation-time Property is legitimate while its exact edge and
+        # redirect path still end at the bound effective Property and version.
+        try:
+            identity = self.graph.resolve_listing(tenant, payload["listing_id"])
+        except IdentityGraphError as error:
+            raise JobFenceRejectedError("NATIVE_GEO_CURRENT_IDENTITY_GRAPH_CHANGED") from error
+        if (identity["effective_property_id"] != payload["property_id"]
+                or identity["current_property_version"] != payload["property_version"]
+                or self._property_binding(identity) != payload["property_binding"]):
+            raise JobFenceRejectedError("NATIVE_GEO_CURRENT_IDENTITY_GRAPH_CHANGED")
+        try:
+            lineage = self._lineage(tenant, intake["intake_id"], payload["listing_id"],
+                                    payload["listing_revision_id"], payload["parser_run_id"], before)
+        except LookupError as error:
+            raise JobFenceRejectedError("NATIVE_GEO_CURRENT_LINEAGE_CHANGED") from error
+        if lineage != payload["input_lineage"] or (payload["parser_run_id"] is not None and not self._parser_bound(
+                lineage, intake["intake_id"], payload["parser_run_id"], payload["source_snapshot_id"])):
+            raise JobFenceRejectedError("NATIVE_GEO_CURRENT_LINEAGE_CHANGED")
         before()
         # Revisions are immutable; the listing version and current revision
         # above pin it. An exact-existing READY keeps the original revision, so
@@ -847,13 +1014,78 @@ class NativeIntakeGeoOwner:
             raise JobFenceRejectedError("NATIVE_GEO_CURRENT_ADDRESS_CHANGED")
         before()
 
+    def _identity_receipt(self, tenant: str, intake: Mapping[str, Any], payload: Mapping[str, Any],
+                          before: Any) -> None:
+        """The now-committed original identity result and audit of this origin.
+
+        Reservation ran before that result existed. Each origin's own existing
+        verifier re-proves its terminal row, audit and evidence here; the Geo
+        job then binds the exact graph values that result committed.
+        """
+        from modules.listing.application.native_intake_identity import NativeIntakeIdentityOwner
+        from shared.jobs.queue import JobFenceRejectedError
+
+        expected = {"listing_id": payload["listing_id"], "listing_version": payload["listing_version"]}
+        try:
+            before()
+            job = self.graph._one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
+                                  (tenant, payload["identity_job_id"]))
+            before()
+            if payload["origin_kind"] == "IDENTITY_DECISION":
+                decision = self.graph._one("SELECT * FROM identity.match_decisions WHERE tenant_id=? "
+                                           "AND match_decision_id=?", (tenant, payload["origin_id"]))
+                before()
+                result = self.graph.execution_receipt(tenant, job, decision)
+                binding = decision["after_graph"]["plan"]["input_binding"]
+                applied = sorted(row["correction_id"] for row in payload["input_lineage"]["corrections"]
+                                 if row["status"] == "APPLIED" and row["listing_id"] == payload["listing_id"]
+                                 and row["parser_run_id"] == payload["parser_run_id"])
+                proven = (decision["decision_type"] in {"CREATE", "REVISE", "DUPLICATE"}
+                          and all(result[key] == value for key, value in expected.items())
+                          and result["listing_revision_id"] == payload["listing_revision_id"]
+                          and result["intake_id"] == intake["intake_id"]
+                          and result["intake_version"] == payload["intake_version"]
+                          and result["property_versions"] == {payload["property_id"]: payload["property_version"]}
+                          and (decision["decision_type"] == "DUPLICATE" and result["applied_correction_ids"] == []
+                               or sorted(result["applied_correction_ids"]) == applied)
+                          and binding["source_snapshot_id"] == payload["source_snapshot_id"]
+                          and binding["parser_run_id"] == payload["parser_run_id"])
+            else:
+                delivery = self.queue.get(payload["identity_job_id"])
+                owner = NativeIntakeIdentityOwner(self.graph)
+                before()
+                result = None if delivery is None else owner._committed_result(
+                    delivery, tenant, self._object(job["payload"]).get("delivery_generation"))
+                proof = {} if result is None else result["identity_evidence"]
+                proven = (result is not None and result["processing_state"] == "READY"
+                          and result["intake_id"] == intake["intake_id"]
+                          and result["version"] == payload["intake_version"]
+                          and result["transition_id"] == payload["ready_transition_id"]
+                          and self._object(job["payload"])["event_id"] == payload["origin_id"]
+                          and proof["outcome"] == "EXACT_EXISTING"
+                          and all(proof[key] == value for key, value in expected.items())
+                          and proof["effective_property_id"] == payload["property_id"]
+                          and proof["property_versions"][payload["property_id"]] == payload["property_version"]
+                          and payload["parser_run_id"] is None and payload["source_snapshot_id"] is None)
+        except (ValueError, KeyError, TypeError, AttributeError) as error:
+            # Every verifier refusal is typed ValueError; only this root's own
+            # expired budget keeps its separate retryable meaning.
+            if str(error) == "NATIVE_GEO_ROOT_BUDGET_EXPIRED":
+                raise
+            raise JobFenceRejectedError("NATIVE_GEO_PARENT_RECEIPT_REJECTED") from error
+        if not proven:
+            raise JobFenceRejectedError("NATIVE_GEO_PARENT_RECEIPT_REJECTED")
+        before()
+
     def _current_source(self, payload: Mapping[str, Any], before: Any) -> tuple:
         """Current Geo source authority; a historical admission grants no IO."""
         import json
         from types import SimpleNamespace
 
-        from modules.listing.application.native_intake_identity import NativeIntakeIdentityOwner
-        from modules.listing.application.native_intake_retrieval_policy import canonical_sha256
+        from modules.listing.application.native_intake_retrieval_policy import (
+            NativeIntakeGeoUnadmitted,
+            canonical_sha256,
+        )
         from modules.listing.application.native_intake_source_policy_rules import (
             source_policy_snapshot_json,
         )
@@ -863,10 +1095,18 @@ class NativeIntakeGeoOwner:
         source = self.graph._one("SELECT * FROM intake.source_registry WHERE source_id=? FOR SHARE",
                                  (binding["source_id"],))
         before()
-        now = self._clock()
-        allowed = (source["version"] == payload["geo_source_version"] == binding["source_policy_version"]
-                   and NativeIntakeIdentityOwner._source_reusable(source, now))
-        valid_until = self._time(source["review_expires_at"]) if allowed else now
+        now, authority, license_until = self._clock(), None, None
+        try:
+            endpoint, license_until = self.admitted_provider()
+        except NativeIntakeGeoUnadmitted:
+            # A provider revoked after reservation is a denied current source.
+            pass
+        else:
+            authority = self._source_authority(source, endpoint, source_id=binding["source_id"],
+                                               version=binding["source_policy_version"], now=now)
+        allowed = authority is not None and source["version"] == payload["geo_source_version"]
+        valid_until = now if not allowed else min(
+            value for value in (authority.valid_until, license_until) if value is not None)
         return source, SimpleNamespace(
             target_state=NATIVE_GEO_CHECKPOINT if allowed else "DENIED",
             effective_policy="APPROVED_RETRIEVAL" if allowed else "DENIED",
@@ -987,13 +1227,14 @@ class NativeIntakeGeoOwner:
                 or bucket.location_type != "region"):
             raise JobFenceRejectedError("NATIVE_GEO_UPLOAD_JOURNAL_REJECTED")
         source_id = payload["policy"]["source_binding"]["source_id"]
-        # Truthful snapshot: the Geo source owns it; capture time is the DB time
-        # the provider exchange was admitted, never a provider-claimed time.
+        # Truthful snapshot: the Geo source owns it; capture time is the actual
+        # response receipt time, never a provider-claimed time.
+        fetched_at = evidence["fetched_at"].isoformat()
         snapshot = {"source_snapshot_id": str(uuid4()), "tenant_id": intake["tenant_id"],
                     "intake_id": intake["intake_id"], "source_id": source_id, "original_url": None,
                     "canonical_url": None, "raw_object_uri": metadata.uri, "content_sha256": verified.content_sha256,
                     "media_type": metadata.media_type, "byte_length": metadata.byte_length,
-                    "captured_at": lookup["admitted_at"], "observed_at": lookup["admitted_at"],
+                    "captured_at": fetched_at, "observed_at": fetched_at,
                     "capture_method": "SERVER_RETRIEVAL", "retention_class": binding["retention_class"],
                     "encryption_key_ref": metadata.kms_key_version_name, "object_generation": metadata.generation,
                     "residency_mode": binding["residency_mode"], "version": 1}
@@ -1018,13 +1259,65 @@ class NativeIntakeGeoOwner:
     @staticmethod
     def _geocode_result(result: Any) -> dict:
         address = result.address
-        observed = result.provider_observed_at
-        return {"provider": result.geocode_provider, "provider_request_id": result.provider_request_id,
-                "provider_observed_at": None if observed is None else observed.isoformat(),
+        return {"provider_request_id": result.provider_request_id,
                 "precision": address.geocode_precision, "confidence": address.geocode_confidence,
                 "latitude": address.latitude, "longitude": address.longitude,
                 "h3_res_8": address.h3_res_8, "h3_res_9": address.h3_res_9, "h3_res_10": address.h3_res_10,
                 "admin_match_flag": result.admin_match_flag, "quality_flags": list(result.quality_flags)}
+
+    @staticmethod
+    def _provider_result(payload: Mapping[str, Any], provider_claim: str | None) -> dict:
+        """The selected registered provider/source, apart from any vendor label.
+
+        A label inside the response is recorded only as the vendor's claim; it
+        never selects a provider or grants source authority.
+        """
+        binding = payload["policy"]["source_binding"]
+        return {**{key: binding[key] for key in ("provider_id", "source_contract_id", "source_id",
+                                                 "source_policy_version")},
+                "vendor_provider_claim": provider_claim}
+
+    @staticmethod
+    def _timestamps(exchange: Mapping[str, Any], fetched_at: datetime, observed: datetime | None) -> dict:
+        return {"fetched_at": fetched_at.isoformat(), "fetched_at_basis": NATIVE_GEO_FETCHED_BASIS,
+                "captured_at_basis": NATIVE_GEO_CAPTURED_BASIS,
+                "exchange_admitted_at": exchange["admitted_at"], "exchange_finished_at": exchange["finished_at"],
+                "exchange_basis": NATIVE_GEO_EXCHANGE_BASIS,
+                "provider_observed_at": None if observed is None else observed.isoformat(),
+                "provider_observed_at_basis": "UNKNOWN" if observed is None else "PROVIDER_SUPPLIED"}
+
+    @staticmethod
+    def _mint_address_id() -> str:
+        from uuid import uuid4
+
+        return str(uuid4())
+
+    def _address_record(self, address_id: str) -> tuple[dict | None, str | None]:
+        """The exact stored Address columns and their hash; never raw text in logs."""
+        import hashlib
+
+        from modules.listing.application.native_intake_retrieval_policy import canonical_json
+
+        row = self.engine.query_one("SELECT " + _NATIVE_GEO_ADDRESS_COLUMNS +  # nosec B608 -- fixed column list; value bound as ?.
+                                    " FROM address_locations WHERE address_id=?", (address_id,))
+        if row is None:
+            return None, None
+        facts = {name: None if value is None else str(value) for name, value in row.items()}
+        return row, hashlib.sha256(canonical_json(facts).encode()).hexdigest()
+
+    @staticmethod
+    def _address_matches(row: Mapping[str, Any] | None, tenant: str, revision: int, geocode: Mapping[str, Any]) -> bool:
+        def same(value: Any, expected: Any, tolerance: float) -> bool:
+            # The Address owner's NUMERIC columns may round the provider value.
+            return ((value is None) == (expected is None)
+                    and (value is None or abs(float(value) - float(expected)) <= tolerance))
+
+        return (row is not None and str(row["tenant_id"]) == tenant and row["revision"] == revision
+                and row["geocode_precision"] == geocode["precision"] and not row["manual_override_flag"]
+                and same(row["geocode_confidence"], geocode["confidence"], 0.005 + 1e-9)
+                and all(same(row[name], geocode[name], 1e-6) and row[name] is not None
+                        for name in ("latitude", "longitude"))
+                and all((row[key] or "") == (geocode[key] or "") for key in ("h3_res_8", "h3_res_9", "h3_res_10")))
 
     def _commit(self, delivery: Any, leases: Any, evidence: Mapping[str, Any]) -> dict:
         """Commit snapshot, Address, audit, outbox and both job rows atomically."""
@@ -1042,16 +1335,31 @@ class NativeIntakeGeoOwner:
             self._positive_source(payload, classified)
             snapshot, snapshot_event_id = self._snapshot(intake, job, payload, evidence, before)
             geo = evidence["geo"]
-            address = replace(geo.address, address_id=str(uuid4()), tenant_id=tenant, revision=1)
+            address = replace(geo.address, address_id=self._mint_address_id(), tenant_id=tenant, revision=1)
+            before()
+            # The Address owner upserts by id; a genuinely new result may never
+            # overwrite any existing Address.
+            if self._address_record(address.address_id)[0] is not None:
+                raise JobFenceRejectedError("NATIVE_GEO_ADDRESS_COLLISION")
             before()
             DurableAddressLocationRepository(self.engine).save_address(address)
+            before()
+            geocode = self._geocode_result(geo)
+            stored, address_record_sha256 = self._address_record(address.address_id)
+            if not self._address_matches(stored, tenant, address.revision, geocode):
+                raise JobFenceRejectedError("NATIVE_GEO_ADDRESS_READBACK_REJECTED")
+            exchange = next(i for i in payload["attempt_intents"]
+                            if i["intent_id"] == evidence["exchange_intent"]["intent_id"])
             at, audit_id = self._clock(), str(uuid4())
             result = {"job_id": job["job_id"], "intake_id": intake["intake_id"], "status": "SUCCEEDED",
                       "code": "NATIVE_GEO_EVIDENCE_COMMITTED", "origin_kind": payload["origin_kind"],
                       "origin_id": payload["origin_id"],
                       "listing_id": payload["listing_id"], "listing_revision_id": payload["listing_revision_id"],
                       "property_id": payload["property_id"], "address_id": address.address_id,
-                      "address_revision": address.revision, "geocode": self._geocode_result(geo),
+                      "address_revision": address.revision, "address_record_sha256": address_record_sha256,
+                      "geocode": geocode,
+                      "provider": self._provider_result(payload, evidence["provider_claim"]),
+                      "timestamps": self._timestamps(exchange, evidence["fetched_at"], geo.provider_observed_at),
                       "source_snapshot_id": snapshot["source_snapshot_id"],
                       "snapshot_created_event_id": snapshot_event_id, "audit_event_id": audit_id,
                       "correlation_id": job["correlation_id"],
@@ -1123,7 +1431,8 @@ class NativeIntakeGeoOwner:
         physical = self.queue.get(delivery.job_id)
         fields = {"job_id", "intake_id", "status", "code", "origin_kind", "origin_id", "listing_id",
                   "listing_revision_id",
-                  "property_id", "address_id", "address_revision", "geocode", "source_snapshot_id",
+                  "property_id", "address_id", "address_revision", "address_record_sha256", "geocode", "provider",
+                  "timestamps", "source_snapshot_id",
                   "snapshot_created_event_id", "audit_event_id", "correlation_id", "native_snapshot_proof",
                   "accepted_delivery_fence", "accepted_worker", "accepted_business_fence", "accepted_attempt"}
         if (set(result) != fields or physical is None or physical.job_type != GEO_JOB_TYPE
@@ -1191,19 +1500,20 @@ class NativeIntakeGeoOwner:
                        for entry in (upload, lookup))
                 or upload["arguments"]["content_sha256"] != snapshot["content_sha256"]
                 or upload["arguments"]["byte_length"] != snapshot["byte_length"]
-                or snapshot["captured_at"] != lookup["admitted_at"]
+                or snapshot["captured_at"] != result["timestamps"]["fetched_at"]
+                or snapshot["observed_at"] != result["timestamps"]["fetched_at"]
                 or snapshot["raw_object_uri"] != "gs://" + binding["bucket"] + "/" + upload["arguments"]["key"]):
             raise JobFenceRejectedError("NATIVE_GEO_TERMINAL_UPLOAD_JOURNAL_REJECTED")
+        observed = result["timestamps"]["provider_observed_at"]
+        if (result["provider"] != self._provider_result(payload, result["provider"].get("vendor_provider_claim"))
+                or result["timestamps"] != self._timestamps(
+                    lookup, self._time(result["timestamps"]["fetched_at"]),
+                    None if observed is None else self._time(observed))):
+            raise JobFenceRejectedError("NATIVE_GEO_TERMINAL_PROVIDER_TIME_REJECTED")
         before()
-        address = self.engine.query_one(
-            "SELECT address_id,tenant_id,revision,latitude,longitude,geocode_precision,geocode_confidence,"
-            "h3_res_8,h3_res_9,h3_res_10 FROM address_locations WHERE address_id=?", (result["address_id"],))
-        geocode = result["geocode"]
-        if (address is None or str(address["tenant_id"]) != tenant or address["revision"] != result["address_revision"]
-                or address["geocode_precision"] != geocode["precision"]
-                or any((address[key] or "") != (geocode[key] or "") for key in ("h3_res_8", "h3_res_9", "h3_res_10"))
-                or any(address[key] is None or abs(float(address[key]) - float(geocode[name])) > 1e-6
-                       for key, name in (("latitude", "latitude"), ("longitude", "longitude")))):
+        row, record_sha256 = self._address_record(result["address_id"])
+        if (record_sha256 != result["address_record_sha256"]
+                or not self._address_matches(row, tenant, result["address_revision"], result["geocode"])):
             raise JobFenceRejectedError("NATIVE_GEO_TERMINAL_ADDRESS_CHANGED")
         before()
         return result
@@ -1561,15 +1871,16 @@ def _native_geo_capture(io: Any) -> dict:
         _, job, payload, _, _, _, _ = io._fresh(None)
         raw_address = owner._revision_address(io.tenant, payload["listing_id"], payload["listing_revision_id"])
         correlation_id = job["correlation_id"]
-    endpoint = owner.live_endpoint()
-    geo_provider = owner.geo_provider  # live_endpoint() proved the injected LIVE adapter
+    endpoint, _ = owner.admitted_provider()
+    geo_provider = owner.geo_provider  # admitted_provider() proved the injected LIVE adapter
     normalized = geo_normalize_address(raw_address)
     bucket, _ = io.call("gcs_geocode_bucket", endpoint, {},
                         lambda deadline: io.storage.bucket_info(policy.storage, deadline=deadline))
 
     def lookup(deadline: float) -> tuple:
         transport = NativeGeocodeProcessTransport(deadline=deadline, guard=leases.guard, runner=owner.geocode_runner,
-                                                  response_type=geo_provider.response_type)
+                                                  response_type=geo_provider.response_type,
+                                                  clock=lambda: datetime.now(UTC))
         client = geo_provider.client_type(endpoint, timeout_seconds=max(0.001, deadline - time.monotonic()),
                                           transport=transport)
         provider = geo_provider.provider_type(client=client, env=owner.env, mode=geo_provider.live_mode,
@@ -1582,6 +1893,7 @@ def _native_geo_capture(io: Any) -> dict:
         lookup)
     raw = None if exchange is None else exchange.response_body
     if (exchange is None or exchange.status != 200 or not isinstance(raw, bytes) or not raw
+            or exchange.fetched_at is None
             or exchange.media_type != NATIVE_GEO_MEDIA_TYPE or not isinstance(response, dict)
             or json.loads(raw.decode("utf-8")) != response):
         raise NativeGeoResultRejected("NATIVE_GEO_RESULT_INVALID")
@@ -1590,10 +1902,21 @@ def _native_geo_capture(io: Any) -> dict:
     geo = GeoPipeline().result_from_candidate(normalized, candidate)
     digest = hashlib.sha256(raw).hexdigest()
     capture_id = str(uuid4())
+    # The existing external contract rejects unknown precision, a missing
+    # provider request identity and malformed numbers; without a market cell
+    # or a 0-1 confidence the response is no geo evidence either.
+    contract = validate_record(external_contract(policy.source.source_contract_id), {
+        "source_geocode_id": candidate.provider_request_id or None, "address_raw": normalized.raw_address,
+        "latitude": candidate.latitude, "longitude": candidate.longitude,
+        "geocode_precision": candidate.precision, "confidence": candidate.confidence, "snapshot_id": capture_id})
+    if (not contract.ok or "coordinates_out_of_market" in geo.quality_flags
+            or not 0 <= candidate.confidence <= 1):
+        raise NativeGeoResultRejected("NATIVE_GEO_RESULT_INVALID")
     key = native_json_snapshot_object_key(GEOCODE_JSON_PURPOSE, io.tenant, io.delivery.job_id, io.generation,
                                           leases.business_fence, capture_id)
     arguments = {"key": key, "content_sha256": digest, "byte_length": len(raw), "media_type": NATIVE_GEO_MEDIA_TYPE,
                  "capture_id": capture_id}
+    upload_error: Exception | None = None
     try:
         metadata, upload = io.call("gcs_geocode_upload", endpoint, arguments,
             lambda deadline: io.storage.upload_with_kms_if_absent(policy.storage, key, raw, NATIVE_GEO_MEDIA_TYPE,
@@ -1602,7 +1925,8 @@ def _native_geo_capture(io: Any) -> dict:
         io.object_metadata, io.upload_intent = metadata, upload
     except NativeIOUnreaped:
         raise
-    except (NativeIORejected, NativeAssistedSnapshotProofRejected):
+    except (NativeIORejected, NativeAssistedSnapshotProofRejected) as error:
+        upload_error = error
         # Reconcile only this exact committed upload intent/key.
         with leases.root():
             _, _, current, _, _, _, _ = io._fresh(endpoint)
@@ -1613,8 +1937,17 @@ def _native_geo_capture(io: Any) -> dict:
                 raise JobFenceRejectedError("NATIVE_GEO_UNKNOWN_UPLOAD_INTENT_MISSING") from None
             upload = matches[0]
         generation = None
-    metadata, _ = io.call("gcs_geocode_head", endpoint, {"key": key, "generation": generation},
-        lambda deadline: io.storage.head_version(policy.storage, key, generation, deadline=deadline))
+    try:
+        metadata, _ = io.call("gcs_geocode_head", endpoint, {"key": key, "generation": generation},
+            lambda deadline: io.storage.head_version(policy.storage, key, generation, deadline=deadline))
+    except NativeIOUnreaped:
+        raise
+    except NativeIORejected as error:
+        if upload_error is not None and error.status == 404:
+            # Reconciliation proved no object exists; the original upload
+            # failure alone decides whether this attempt is retryable.
+            raise upload_error from None
+        raise
     io.object_metadata, io.upload_intent = metadata, upload
     downloaded, _ = io.call("gcs_geocode_download", endpoint, {"key": key, "generation": metadata.generation},
         lambda deadline: io.storage.download_version_bounded(policy.storage, key, metadata.generation,
@@ -1624,7 +1957,7 @@ def _native_geo_capture(io: Any) -> dict:
     if metadata.media_type != NATIVE_GEO_MEDIA_TYPE or metadata.byte_length != len(raw):
         raise NativeAssistedSnapshotProofRejected("NATIVE_GEOCODE_SNAPSHOT_PROOF_REJECTED")
     return {"verified": verified, "upload": upload, "bucket": bucket, "exchange_intent": exchange_intent,
-            "geo": geo}
+            "geo": geo, "fetched_at": exchange.fetched_at, "provider_claim": candidate.provider_claim}
 
 
 def native_intake_geo_owner(persistence: Any) -> NativeIntakeGeoOwner:

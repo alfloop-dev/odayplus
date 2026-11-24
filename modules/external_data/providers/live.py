@@ -2237,12 +2237,13 @@ def _candidate_from_geocode_payload(
     precision = _normalized_geocode_precision(
         str(result.get("precision") or result.get("geocode_precision") or "unknown")
     )
+    claim = result.get("provider_id") or result.get("geocode_provider")
     return GeocodeCandidate(
         latitude=latitude,
         longitude=longitude,
         precision=precision,
         confidence=confidence,
-        provider=str(result.get("provider_id") or result.get("geocode_provider") or provider_id),
+        provider=str(claim or provider_id),
         admin_city=str(result.get("city") or result.get("admin_city") or normalized_address.city),
         admin_district=str(
             result.get("district") or result.get("admin_district") or normalized_address.district
@@ -2250,6 +2251,7 @@ def _candidate_from_geocode_payload(
         provider_request_id=request_id,
         provider_observed_at=observed_at,
         quality_flags=tuple(flags),
+        provider_claim=str(claim) if claim else None,
     )
 
 

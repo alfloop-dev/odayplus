@@ -355,8 +355,9 @@ def native_intake_geo_provider() -> Any:
     never import the frozen producer packages themselves.
     """
     from modules.external_data.connectors.provider_registry import (
+        ExternalProviderConfigError,
         ExternalProviderMode,
-        external_provider_mode,
+        validate_external_providers_or_raise,
     )
     from modules.external_data.providers.live import (
         GEOCODE_ENDPOINT_ENV_VAR,
@@ -371,7 +372,8 @@ def native_intake_geo_provider() -> Any:
     from modules.listing.application.pipeline import NativeIntakeGeoProvider
 
     return NativeIntakeGeoProvider(
-        provider_mode=external_provider_mode, live_mode=ExternalProviderMode.LIVE,
+        validate=validate_external_providers_or_raise, config_error=ExternalProviderConfigError,
+        live_mode=ExternalProviderMode.LIVE,
         endpoint_env_var=GEOCODE_ENDPOINT_ENV_VAR, client_type=HttpGeocodeClient,
         provider_type=PrimaryGeocodeProvider, response_type=GeocodeHttpResponse,
         auth_error=GeocodeProviderAuthError, provider_error=GeocodeProviderError,

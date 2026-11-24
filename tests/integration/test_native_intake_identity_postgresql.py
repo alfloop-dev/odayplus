@@ -822,7 +822,9 @@ def test_original_submission_proof_cannot_adopt_coordinated_actor_or_scope_rewri
     assert phase_snapshot(identity_case) == before
 
 
-@pytest.mark.parametrize("geo", ["disabled", "enabled", "admitted_audit_failure"])
+@pytest.mark.parametrize("geo", ["disabled", "credential_revoked", "zero_concurrency", "enabled", "redirected",
+                                 "identity_audit_lost", "correction_added", "redirect_reversed",
+                                 "admitted_audit_failure"])
 def test_exact_url_ready_reserves_native_geo_in_the_same_identity_unit(identity_case, monkeypatch, geo):
     from modules.listing.application.intake_audit import CanonicalIntakeAuditSink
     from modules.listing.application.native_intake_retrieval_policy import GEO_JOB_TYPE
@@ -830,7 +832,16 @@ def test_exact_url_ready_reserves_native_geo_in_the_same_identity_unit(identity_
         NATIVE_GEO_REQUESTED_ACTION,
         NativeIntakeGeoOwner,
     )
-    from tests.integration.test_canonical_identity_execution_postgresql import _enable_native_geo
+    from tests.integration.test_canonical_identity_execution_postgresql import (
+        _assert_committed_geo_evidence,
+        _assert_no_geo_evidence,
+        _enable_native_geo,
+        _geo_job,
+        _geo_worker_case,
+        _prepare_geo_database,
+        _refuse_geo,
+        _run_geo_worker,
+    )
 
     start, owner = identity_case
     graph, ids, _, db = start[0]
@@ -843,9 +854,20 @@ def test_exact_url_ready_reserves_native_geo_in_the_same_identity_unit(identity_
             "VALUES (%s,%s,%s,1,'CREATED','{}'::jsonb,%s::jsonb,%s)",
             (revision, ids["tenant"], ids["listing"], json.dumps({"address": "台北市信義區市府路1號"}), "f" * 64))
         conn.execute("UPDATE expansion.listings SET current_revision_id=%s WHERE listing_id=%s", (revision, ids["listing"]))
+    _prepare_geo_database(db, ids["tenant"])
     if geo != "disabled":
-        _enable_native_geo(monkeypatch, db, ids["tenant"])
+        source_id = _enable_native_geo(monkeypatch, db, ids["tenant"])
+    if geo in {"credential_revoked", "zero_concurrency"}:
+        _refuse_geo(monkeypatch, db, source_id, geo)
     submission, source_result, admission = prepare(identity_case, "exact")
+    redirected = geo in {"redirected", "redirect_reversed"}
+    if redirected:
+        # The Listing still names its creation-time Property, now MERGED.
+        with db.connect() as conn:
+            conn.execute("UPDATE identity.properties SET status='MERGED',current_redirect_property_id=%s,version=version+1 "
+                         "WHERE property_id=%s", (ids["target"], ids["source"]))
+            conn.execute("INSERT INTO identity.property_redirects (tenant_id,from_property_id,to_property_id,decision_id) "
+                         "VALUES (%s,%s,%s,%s)", (ids["tenant"], ids["source"], ids["target"], ids["decision"]))
     defer_audit(graph)
     if geo == "admitted_audit_failure":
         original = CanonicalIntakeAuditSink.persist
@@ -876,7 +898,7 @@ def test_exact_url_ready_reserves_native_geo_in_the_same_identity_unit(identity_
     result = owner.execute(delivery)
     assert after["processing_state"] == "READY" and after["resolved_listing_id"] == ids["listing"]
     jobs, deliveries = geo_rows()
-    if geo == "disabled":
+    if geo in {"disabled", "credential_revoked", "zero_concurrency"}:
         assert jobs == [] and deliveries == []
         return
     assert len(jobs) == 1 and len(deliveries) == 1
@@ -890,5 +912,35 @@ def test_exact_url_ready_reserves_native_geo_in_the_same_identity_unit(identity_
     assert payload["listing_id"] == ids["listing"] and payload["listing_revision_id"] == revision
     assert payload["source_snapshot_id"] is None and payload["parser_run_id"] is None
     assert "attempt_token" not in payload and len(payload["address_sha256"]) == 64
+    effective = ids["target"] if redirected else ids["source"]
+    assert payload["property_id"] == effective == result["identity_evidence"]["effective_property_id"]
+    assert payload["property_binding"]["listing_property_id"] == ids["source"]
+    assert payload["property_binding"]["redirect_path"] == ([ids["source"], ids["target"]] if redirected else [ids["source"]])
+    assert payload["input_lineage"]["corrections"] == [] and payload["input_lineage"]["parser_runs"] == []
     # Replaying the historical identity success adds no Geo work.
     assert owner.execute(delivery) == result and geo_rows() == (jobs, deliveries)
+    # The same default ODayWorker then handles the reserved job.
+    case = _geo_worker_case(monkeypatch, graph, ids, db, start[2], origin, {"intake_id": submission["intake_id"]}, source_id)
+    if geo in {"enabled", "redirected"}:
+        committed = _assert_committed_geo_evidence(case)["result"]
+        assert committed["origin_kind"] == "NATIVE_EXACT_URL" and committed["property_id"] == effective
+        return
+    with db.connect() as conn:
+        if geo == "identity_audit_lost":
+            changed = conn.execute("UPDATE workflow.jobs SET result=jsonb_set(result,'{audit_event_id}',to_jsonb(%s::text)) "
+                                   "WHERE job_id=%s", (str(uuid4()), admission["job_id"]))
+        elif geo == "correction_added":
+            changed = conn.execute("INSERT INTO intake.human_corrections (tenant_id,intake_id,field_path,field_classification,"
+                "corrected_value,after_effective_value,reason,proposed_by,status) VALUES (%s,%s,'address','INTERNAL',"
+                "'\"changed\"'::jsonb,'\"changed\"'::jsonb,'Synthetic late correction',%s,'PROPOSED')",
+                (ids["tenant"], submission["intake_id"], str(uuid4())))
+        else:
+            changed = conn.execute("UPDATE identity.property_redirects SET reversed_at=clock_timestamp() "
+                                   "WHERE from_property_id=%s", (ids["source"],))
+        assert changed.rowcount == 1
+    assert _run_geo_worker(case).status == JobStatus.FAILED and case.io.calls == []
+    assert _geo_job(case)["last_error"]["causes"][0]["code"] == {
+        "identity_audit_lost": "NATIVE_GEO_PARENT_RECEIPT_REJECTED",
+        "correction_added": "NATIVE_GEO_CURRENT_LINEAGE_CHANGED",
+        "redirect_reversed": "NATIVE_GEO_CURRENT_IDENTITY_GRAPH_CHANGED"}[geo]
+    _assert_no_geo_evidence(case)

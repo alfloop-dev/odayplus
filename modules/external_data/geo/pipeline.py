@@ -44,6 +44,9 @@ class GeocodeCandidate:
     provider_request_id: str = ""
     provider_observed_at: datetime | None = None
     quality_flags: tuple[str, ...] = ()
+    # The vendor's own provider label, when its payload carried one. ``provider``
+    # keeps its original claim-or-registered fallback for existing callers.
+    provider_claim: str | None = None
 
 
 @dataclass(frozen=True)

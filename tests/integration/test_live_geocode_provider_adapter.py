@@ -515,3 +515,97 @@ def test_native_geocode_transport_maps_reaped_deadline_but_never_hides_unreaped(
         _NativeRunner(NativeIORejected("NATIVE_HTTP_ADDRESS_REJECTED"))))
     with pytest.raises(NativeIORejected, match="NATIVE_HTTP_ADDRESS_REJECTED"):
         rejected.lookup_with_payload(address)
+
+
+def _native_geo_owner(**env: str) -> Any:
+    from types import SimpleNamespace
+
+    from modules.listing.application.pipeline import NativeIntakeGeoOwner
+    from shared.infrastructure.persistence.factory import native_intake_geo_provider
+
+    graph = SimpleNamespace(engine=None, queue=None, geo_provider=native_intake_geo_provider())
+    return NativeIntakeGeoOwner(graph, env={"ODP_EXTERNAL_PROVIDER_MODE": "live",
+        "ODP_PRODUCTION_PROVIDER_IDS": "geocode.primary_api",
+        "ODP_GEOCODE_PROVIDER_URL": "https://geocode.synthetic.invalid/v1",
+        "ODP_GEOCODE_PROVIDER_API_KEY": "synthetic-not-a-credential", **env})
+
+
+def _production_env() -> dict[str, str]:
+    return {"ODP_DEPLOY_ENV": "production",
+            "ODP_PRODUCTION_PROVIDER_IDS": "geocode.primary_api,poi.commercial_api,admin_boundary.official_dataset",
+            "ODP_POI_PROVIDER_URL": "https://poi.synthetic.invalid", "ODP_POI_PROVIDER_API_KEY": "synthetic-not-a-credential",
+            **{name: "https://admin.synthetic.invalid" if name.endswith("URL") else "synthetic-not-a-credential"
+               for name in _admin_boundary_env()}}
+
+
+def _admin_boundary_env() -> list[str]:
+    from modules.external_data.connectors import provider_registry as registered
+
+    entry = next(p for p in registered() if p.provider_id == "admin_boundary.official_dataset")
+    return [*entry.required_env_vars, *([entry.endpoint_env_var] if entry.endpoint_env_var else [])]
+
+
+def _change_geo_license(monkeypatch: pytest.MonkeyPatch, **changes: Any) -> None:
+    from dataclasses import replace
+    from importlib import import_module
+
+    registry = import_module("modules.external_data.connectors.provider_registry")
+    monkeypatch.setattr(registry, "PROVIDER_REGISTRY", tuple(
+        replace(p, license=replace(p.license, **changes)) if p.provider_id == "geocode.primary_api" else p
+        for p in registry.PROVIDER_REGISTRY))
+
+
+def test_native_geo_admits_only_the_original_validated_live_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import UTC, date, datetime
+
+    assert _native_geo_owner().admitted_provider() == ("https://geocode.synthetic.invalid/v1", None)
+    assert _native_geo_owner(**_production_env()).admitted_provider()[1] is None
+    _change_geo_license(monkeypatch, expires_on=date(2099, 12, 30))
+    assert _native_geo_owner().admitted_provider()[1] == datetime(2099, 12, 31, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(("env", "code"), [
+    ({"ODP_EXTERNAL_PROVIDER_MODE": "fixture"}, "NOT_LIVE"),
+    ({"ODP_EXTERNAL_PROVIDER_MODE": "disabled"}, "NOT_LIVE"),
+    ({"ODP_EXTERNAL_PROVIDER_MODE": "unrecognised"}, "NOT_LIVE"),
+    ({"ODP_PRODUCTION_PROVIDER_IDS": "poi.commercial_api", "ODP_POI_PROVIDER_API_KEY": "synthetic-not-a-credential"},
+     "NOT_SELECTED"),
+    ({"ODP_PRODUCTION_PROVIDER_IDS": "geocode.primary_api,unknown.provider"}, "VALIDATION_REFUSED"),
+    ({"ODP_PRODUCTION_PROVIDER_IDS": ""}, "VALIDATION_REFUSED"),
+    ({"ODP_DEPLOY_ENV": "production"}, "VALIDATION_REFUSED"),
+    ({"ODP_GEOCODE_PROVIDER_API_KEY": "placeholder"}, "VALIDATION_REFUSED"),
+    *[({"ODP_GEOCODE_PROVIDER_AUTH_STATUS": status}, "VALIDATION_REFUSED")
+      for status in ("expired", "unauthorized", "revoked", "invalid")],
+    ({"ODP_GEOCODE_PROVIDER_URL": "http://geocode.synthetic.invalid/v1"}, "ENDPOINT_UNAVAILABLE"),
+    ({"ODP_GEOCODE_PROVIDER_URL": ""}, "ENDPOINT_UNAVAILABLE"),
+])
+def test_native_geo_refuses_unvalidated_or_unselected_provider(env: dict[str, str], code: str) -> None:
+    from modules.listing.application.native_intake_retrieval_policy import NativeIntakeGeoUnadmitted
+
+    with pytest.raises(NativeIntakeGeoUnadmitted, match="NATIVE_GEO_PROVIDER_" + code):
+        _native_geo_owner(**env).admitted_provider()
+
+
+@pytest.mark.parametrize("change", ["expired", "not_for_production"])
+def test_native_geo_keeps_the_original_license_refusals(monkeypatch: pytest.MonkeyPatch, change: str) -> None:
+    from datetime import date
+
+    from modules.listing.application.native_intake_retrieval_policy import NativeIntakeGeoUnadmitted
+
+    _change_geo_license(monkeypatch, **({"expires_on": date(2026, 1, 1)} if change == "expired"
+                                        else {"allowed_in_production": False}))
+    with pytest.raises(NativeIntakeGeoUnadmitted, match="NATIVE_GEO_PROVIDER_VALIDATION_REFUSED"):
+        _native_geo_owner(**_production_env()).admitted_provider()
+
+
+def test_vendor_provider_label_stays_a_claim_beside_the_selected_provider() -> None:
+    from modules.external_data.geo import normalize_address
+    from modules.external_data.providers.live import _candidate_from_geocode_payload
+
+    normalized = normalize_address("台北市信義區市府路1號")
+    point = {"latitude": 25.03, "longitude": 121.56, "precision": "rooftop", "confidence": 0.9}
+    claimed = _candidate_from_geocode_payload({"result": {**point, "provider_id": "vendor"}}, normalized, "geocode.primary_api")
+    silent = _candidate_from_geocode_payload({"result": point}, normalized, "geocode.primary_api")
+    assert (claimed.provider, claimed.provider_claim) == ("vendor", "vendor")
+    assert (silent.provider, silent.provider_claim) == ("geocode.primary_api", None)
+    assert silent.provider_observed_at is None
