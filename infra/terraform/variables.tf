@@ -62,6 +62,12 @@ variable "cloud_run_services_managed" {
   default     = true
 }
 
+variable "cloud_run_api_service_deployed" {
+  type        = bool
+  description = "Where cloud_run_services_managed is false, whether the Runtime Release deploy path has created the API Cloud Run service (local.api_service_name). Cloud Monitoring's OIDC-authenticated API uptime check targets monitored_resource.type = 'cloud_run_revision', and CreateUptimeCheckConfig returns 404 NOT_FOUND until that service exists in the project. Ignored when cloud_run_services_managed is true."
+  default     = false
+}
+
 variable "api_image" {
   type        = string
   description = "API container image of the Terraform-owned Cloud Run API. Required when cloud_run_services_managed is true; production requires an immutable sha256 digest."

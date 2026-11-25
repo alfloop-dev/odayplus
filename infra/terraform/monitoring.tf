@@ -51,10 +51,30 @@ locals {
 
   monitoring_cloud_sql_database_id = "${var.project_id}:${module.runtime_foundation.cloud_sql_instance_name}"
 
+  # GCP Cloud Monitoring rejects service_agent_authentication (OIDC_TOKEN) on
+  # uptime_url ("400 Service agent authentication is not supported for arbitrary
+  # URLs") and requires monitored_resource.type = "cloud_run_revision", which in
+  # turn verifies at CreateUptimeCheckConfig time that local.api_service_name
+  # exists in var.project_id ("404 Error confirming monitored resource").
+  monitoring_api_uptime_enabled = (
+    var.monitoring_api_uptime_host != ""
+    && (local.cloud_run_managed || var.cloud_run_api_service_deployed)
+  )
+
   monitoring_uptime_checks = merge(
-    { web = google_monitoring_uptime_check_config.web_login.uptime_check_id },
-    var.monitoring_api_uptime_host != "" ? {
-      api = google_monitoring_uptime_check_config.api_health[0].uptime_check_id
+    {
+      web = {
+        check_id      = google_monitoring_uptime_check_config.web_login.uptime_check_id
+        resource_type = "uptime_url"
+        group_by      = "resource.label.host"
+      }
+    },
+    local.monitoring_api_uptime_enabled ? {
+      api = {
+        check_id      = google_monitoring_uptime_check_config.api_health[0].uptime_check_id
+        resource_type = "cloud_run_revision"
+        group_by      = "resource.label.service_name"
+      }
     } : {},
   )
 
@@ -122,11 +142,12 @@ resource "google_monitoring_uptime_check_config" "web_login" {
 }
 
 resource "google_monitoring_uptime_check_config" "api_health" {
-  # The API is IAM-only and Terraform pins INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER,
-  # so external uptime checkers cannot reach the run.app host. The check is
-  # created only once an operator names a host the checkers can reach; prod
-  # requires it (checks.tf).
-  count = var.monitoring_api_uptime_host != "" ? 1 : 0
+  # The API is IAM-only (roles/run.invoker). GCP Cloud Monitoring permits
+  # service_agent_authentication (OIDC_TOKEN) on native cloud_run_revision
+  # targets, never on arbitrary uptime_url custom domains (HTTP 400), and
+  # confirms at creation time that local.api_service_name exists (HTTP 404
+  # before the first Runtime Release deploy when cloud_run_services_managed = false).
+  count = local.monitoring_api_uptime_enabled ? 1 : 0
 
   display_name = "${local.name_prefix} api /platform/health"
   period       = local.monitoring_uptime_period
@@ -136,7 +157,6 @@ resource "google_monitoring_uptime_check_config" "api_health" {
     path           = "/platform/health"
     port           = 443
     use_ssl        = true
-    validate_ssl   = true
     request_method = "GET"
 
     accepted_response_status_codes {
@@ -149,16 +169,22 @@ resource "google_monitoring_uptime_check_config" "api_health" {
   }
 
   monitored_resource {
-    type = "uptime_url"
+    type = "cloud_run_revision"
     labels = {
-      project_id = var.project_id
-      host       = var.monitoring_api_uptime_host
+      project_id         = var.project_id
+      location           = var.region
+      service_name       = local.api_service_name
+      configuration_name = ""
+      revision_name      = ""
     }
   }
 
   user_labels = local.labels
 
-  depends_on = [google_project_service.required]
+  depends_on = [
+    google_project_service.required,
+    google_cloud_run_v2_service.api,
+  ]
 }
 
 # Service-scoped, so it exists only with a Terraform-owned API (see
@@ -188,7 +214,7 @@ resource "google_monitoring_alert_policy" "uptime_failure" {
     display_name = "${each.key} uptime check failed from more than one region"
 
     condition_threshold {
-      filter          = "resource.type = \"uptime_url\" AND metric.type = \"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.labels.check_id = \"${each.value}\""
+      filter          = "resource.type = \"${each.value.resource_type}\" AND metric.type = \"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.labels.check_id = \"${each.value.check_id}\""
       comparison      = "COMPARISON_GT"
       threshold_value = 1
       duration        = local.monitoring_uptime_duration
@@ -197,7 +223,7 @@ resource "google_monitoring_alert_policy" "uptime_failure" {
         alignment_period     = local.monitoring_uptime_period
         per_series_aligner   = "ALIGN_NEXT_OLDER"
         cross_series_reducer = "REDUCE_COUNT_FALSE"
-        group_by_fields      = ["resource.label.host"]
+        group_by_fields      = [each.value.group_by]
       }
 
       trigger {

@@ -20,7 +20,8 @@ release_sha = "REPLACE_WITH_40_HEX_GIT_SHA"
 # deploy_cloud_run_waji.sh owns the services, their images and their warm
 # minimum (ODP_CLOUD_RUN_MIN_INSTANCES >= 2 in the production environment), so
 # api_image / web_image / *_min_instances / *_invoker_members are not set here.
-cloud_run_services_managed = false
+cloud_run_services_managed     = false
+cloud_run_api_service_deployed = false # flip to true once the first Runtime Release deploy creates oday-prod-api
 
 # A new private-IP, CMEK, REGIONAL instance. The hand-made oday-prod-sql keeps
 # running untouched: never import it and never reuse its name here.

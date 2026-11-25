@@ -814,7 +814,18 @@ class ProductionCoreOpsPlanTests(unittest.TestCase):
         return set(re.findall(r"^  # (\S+) will be created$", output, re.MULTILINE))
 
     def test_core_ops_production_plans_the_foundation_without_cloud_run(self) -> None:
-        code, output = self._plan("prod_core_ops", self._tfvars())
+        # Pre-first-release foundation bootstrap: oday-prod-api does not exist
+        # yet, so the cloud_run_revision uptime check waits until the first
+        # Runtime Release deploy creates the service.
+        bootstrap_code, bootstrap_output = self._plan("prod_core_ops_bootstrap", self._tfvars())
+        self.assertEqual(bootstrap_code, 0, bootstrap_output)
+        self.assertNotIn("google_monitoring_uptime_check_config.api_health[0]", self._created(bootstrap_output))
+        self.assertIn("google_monitoring_uptime_check_config.web_login", self._created(bootstrap_output))
+        self.assertIn('google_monitoring_alert_policy.uptime_failure["web"]', self._created(bootstrap_output))
+
+        # Steady-state after first deploy: cloud_run_api_service_deployed = true
+        # enables the OIDC-authenticated cloud_run_revision uptime check and alert.
+        code, output = self._plan("prod_core_ops", self._tfvars(cloud_run_api_service_deployed=True))
         self.assertEqual(code, 0, output)
         created = self._created(output)
         self.assertFalse(
@@ -832,8 +843,11 @@ class ProductionCoreOpsPlanTests(unittest.TestCase):
             'google_monitoring_alert_policy.cloud_run_5xx_ratio["api"]',
             "google_monitoring_alert_policy.api_latency_p95",
             "google_monitoring_uptime_check_config.api_health[0]",
+            'google_monitoring_alert_policy.uptime_failure["api"]',
         ):
             self.assertIn(address, created)
+        self.assertRegex(output, r'type\s+=\s+"cloud_run_revision"')
+        self.assertIn('resource.type = \\"cloud_run_revision\\"', output)
         self.assertNotIn("staging_deployer", output)
         self.assertRegex(output, r'"attribute\.ref"\s*=\s*"assertion\.ref"')
         self.assertNotIn('"attribute.aud"', output)

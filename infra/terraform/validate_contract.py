@@ -107,6 +107,7 @@ REQUIRED_TOKENS = {
         'path           = "/login"',
         'path           = "/platform/health"',
         'type = "OIDC_TOKEN"',
+        'type = "cloud_run_revision"',
         "monitoring_api_latency_p95_threshold_ms = 3000",
         "monitoring_5xx_ratio_threshold = 0.05",
         "run.googleapis.com/request_count",
