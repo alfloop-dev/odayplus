@@ -2631,6 +2631,189 @@ def test_retained_cleanup_never_bypasses_a_present_hold_receipt_for_expiry(
     assert not Path(expired_verified["FAKE_GH_LOG"]).exists()
 
 
+def test_retained_cleanup_admits_unpersisted_created_hold_only_when_flagged(
+    fake_cloud: dict[str, object],
+) -> None:
+    state_dir = _retained_bundle(fake_cloud, hold=_held(recovery_bundle_absent=True))
+    hold_res = _run_step(
+        _release_jobs()[RETAINED_CLEANUP_JOB],
+        RETAINED_HOLD_STEP,
+        _retained_env(fake_cloud, state_dir),
+    )
+    assert hold_res.returncode == 0, hold_res.stderr
+    assert _outputs(fake_cloud)["hold_recovery_bundle_absent"] == "true"
+
+    created_meta = {"state_status": "created", "owner_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001"}
+    env = _receipt_env(fake_cloud, _hold_receipt(fake_cloud, metadata=created_meta))
+    env["HOLD_RECOVERY_BUNDLE_ABSENT"] = "true"
+    receipt_res = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, env)
+    assert receipt_res.returncode == 0, receipt_res.stderr
+
+    # With recovery_bundle_absent=true, non-'created' states must be refused.
+    bad_env = _receipt_env(fake_cloud, _hold_receipt(fake_cloud))
+    bad_env["HOLD_RECOVERY_BUNDLE_ABSENT"] = "true"
+    refused = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, bad_env)
+    assert refused.returncode != 0
+    assert "unpersisted hold state" in refused.stderr
+
+
+def test_retained_cleanup_reconstructs_unpersisted_bundle_from_failed_deploy_run(
+    fake_cloud: dict[str, object],
+) -> None:
+    """Staging deploy 45104336909 (e9ef7b5159b1): create+hold succeeded, GCS bundle upload failed."""
+    import hashlib
+
+    tmp: Path = fake_cloud["tmp"]  # type: ignore[assignment]
+    bin_dir = tmp / "unpersisted-bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    state_dir = tmp / "unpersisted-state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    artifacts_src = tmp / "unpersisted-artifacts"
+    (artifacts_src / "runtime-release-staging-lifecycle-receipts").mkdir(parents=True)
+    (artifacts_src / "release-admission-receipt-staging").mkdir(parents=True)
+
+    rhash = hashlib.sha256(RETAINED_RELEASE_ID.encode("utf-8")).hexdigest()[:8]
+    stem = f"{RETAINED_RELEASE_ID}-{rhash}"
+    manifest_digest = "sha256:" + "d" * 64
+    img_base = "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev"
+
+    def write_artifacts(*, expires_at: str = "2000-01-01T00:00:00Z", active_sha: str = "b" * 40) -> None:
+        (artifacts_src / "runs.json").write_text(
+            json.dumps({
+                "workflow_runs": [{
+                    "id": 45104336909,
+                    "run_attempt": 1,
+                    "display_title": f"Runtime Release staging deploy {RETAINED_SHA}",
+                    "status": "completed",
+                    "conclusion": "failure",
+                }]
+            }),
+            encoding="utf-8",
+        )
+        (artifacts_src / "registry.json").write_text(
+            json.dumps({"release": {"candidate_sha": active_sha}}), encoding="utf-8"
+        )
+        (artifacts_src / "runtime-release-staging-lifecycle-receipts/staging-lifecycle-create.json").write_text(
+            json.dumps({
+                "action": "create",
+                "release_id": RETAINED_RELEASE_ID,
+                "candidate_sha": RETAINED_SHA,
+                "manifest_digest_prefix": "d" * 16,
+                "success": True,
+                "resources": [{
+                    "id": "db-1",
+                    "type": "google_sql_database",
+                    "name": "stg_db",
+                    "created_at": "2000-01-01T00:00:00Z",
+                    "expires_at": expires_at,
+                    "labels": {"release_id": stem, "tenant": "tenant-123"},
+                }],
+            }),
+            encoding="utf-8",
+        )
+        (artifacts_src / "runtime-release-staging-lifecycle-receipts/staging-lifecycle-hold.json").write_text(
+            json.dumps({
+                "action": "hold",
+                "release_id": RETAINED_RELEASE_ID,
+                "success": True,
+                "metadata": {"state_status": "created", "owner_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001", "ttl_hours": 24},
+                "resources": [{
+                    "id": "db-1",
+                    "release_id": RETAINED_RELEASE_ID,
+                    "status": "retained_for_debugging",
+                    "created_at": "2000-01-01T00:00:00Z",
+                    "expires_at": expires_at,
+                }],
+            }),
+            encoding="utf-8",
+        )
+        (artifacts_src / "release-admission-receipt-staging/release-admission-receipt.json").write_text(
+            json.dumps({
+                "admitted": True,
+                "target_environment": "staging",
+                "allowed_action": "deploy",
+                "release_id": RETAINED_RELEASE_ID,
+                "candidate_sha": RETAINED_SHA,
+                "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+                "manifest_digest": manifest_digest,
+                "release_profile": "core-ops",
+                "component_images": {
+                    key: f"{img_base}/oday-staging-{key}@sha256:" + "e" * 64
+                    for key in ("api", "web", "worker", "scheduler")
+                },
+            }),
+            encoding="utf-8",
+        )
+
+    gcloud_stub = bin_dir / "gcloud"
+    gcloud_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo 'CommandException: One or more URLs matched no objects.' >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    gcloud_stub.chmod(0o755)
+    gh_stub = bin_dir / "gh"
+    gh_stub.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, pathlib, shutil, sys\n"
+        "src = pathlib.Path(os.environ['FAKE_UNPERSISTED_SRC'])\n"
+        "if sys.argv[1] == 'api':\n"
+        "    endpoint = sys.argv[-1]\n"
+        "    if 'runs?' in endpoint:\n"
+        "        print((src / 'runs.json').read_text())\n"
+        "    else:\n"
+        "        print((src / 'registry.json').read_text())\n"
+        "elif sys.argv[1:3] == ['run', 'download']:\n"
+        "    dest = pathlib.Path(sys.argv[sys.argv.index('-D') + 1])\n"
+        "    for sub in ('runtime-release-staging-lifecycle-receipts', 'release-admission-receipt-staging'):\n"
+        "        shutil.copytree(src / sub, dest / sub, dirs_exist_ok=True)\n",
+        encoding="utf-8",
+    )
+    gh_stub.chmod(0o755)
+
+    base_env = _retained_env(fake_cloud, state_dir)
+    base_env.update(
+        PATH=f"{bin_dir}:{os.environ['PATH']}",
+        FAKE_UNPERSISTED_SRC=str(artifacts_src),
+        STAGING_BUNDLE_URI="gs://recovery-bucket/oday-plus/ephemeral-staging/odp-aaaaaaaaaaaa/bundle",
+        RELEASE_TASK_ID="ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+        GITHUB_REPOSITORY="example/odayplus",
+        GITHUB_REF_NAME="dev",
+        GCP_PROJECT_ID="odayplus-runtime-20260825",
+        GCP_REGION="asia-east1",
+        GCP_CLOUD_SQL_INSTANCE="odayplus-runtime-20260825:asia-east1:oday-staging-foundation-sql",
+        ODP_STAGING_VPC_NETWORK="oday-staging-vpc",
+        ODP_STAGING_VPC_SUBNETWORK="oday-staging-subnet",
+        ODP_STAGING_KMS_KEY_ID="projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/kr/cryptoKeys/k",
+        ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT="github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    )
+
+    # Unexpired release is refused during bundle reconstruction.
+    write_artifacts(expires_at="2999-01-01T00:00:00Z")
+    unexpired = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], "Read staging recovery bundle with staging identity", base_env)
+    assert unexpired.returncode != 0
+    assert "has not yet expired" in unexpired.stderr
+
+    # Active registry candidate is refused during bundle reconstruction.
+    write_artifacts(active_sha=RETAINED_SHA)
+    active_refused = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], "Read staging recovery bundle with staging identity", base_env)
+    assert active_refused.returncode != 0
+    assert "active staging candidate" in active_refused.stderr
+
+    # Expired, superseded pre-persist hold reconstructs cleanly with admitted release_profile='core-ops'.
+    write_artifacts()
+    reconstructed = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], "Read staging recovery bundle with staging identity", base_env)
+    assert reconstructed.returncode == 0, reconstructed.stderr
+    tfvars = json.loads((state_dir / f"{stem}.tfvars.json").read_text(encoding="utf-8"))
+    assert tfvars["release_profile"] == "core-ops"
+    assert tfvars["manifest_digest"] == manifest_digest
+    hold_res = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_HOLD_STEP, base_env)
+    assert hold_res.returncode == 0, hold_res.stderr
+    assert _outputs(fake_cloud)["hold_run_id"] == "45104336909"
+    assert _outputs(fake_cloud)["hold_recovery_bundle_absent"] == "true"
+
+
 def test_retained_cleanup_never_uses_expiry_for_a_held_sidecar_without_a_hold_receipt(
     expired_verified: dict[str, str],
 ) -> None:

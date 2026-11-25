@@ -251,6 +251,8 @@ jobs:
             !**/test_listing_production_asset.py*
             !**/*\\*
             !**/*\\*/**
+            !/.orchestrator/test_supervisor.py
+            !/.orchestrator/test_supervisor.py/**
 
       - name: Assert exact release SHA is checked out
         env:
@@ -279,6 +281,7 @@ jobs:
         env:
           GIT_CONFIG_NOSYSTEM: "1"
           GIT_CONFIG_GLOBAL: /dev/null
+          PROTECTED_FROZEN_PATH: .orchestrator/test_supervisor.py
         run: |
           python3 -I - <<'PY'
           import os
@@ -291,6 +294,8 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          frozen_path = os.environ.get("PROTECTED_FROZEN_PATH")
+          frozen = wc.normalize_protected_paths([frozen_path] if frozen_path else [])
           root = Path.cwd()
           compare = os.environ.get("PROTECTED_COMPARE_SHAS")
           endpoints = [] if compare is None else compare.split()
@@ -303,11 +308,11 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
-          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)
-          domains = [wc.protected_body_tree_entries(root, sha, (denied,)) for sha in endpoints]
+          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
+          domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
           failures = [
               label
               for label, failed in (
@@ -316,7 +321,7 @@ jobs:
                   )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
-                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,)))),
+                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,), frozen_paths=frozen))),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
                   ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
@@ -487,6 +492,8 @@ jobs:
             !**/test_listing_production_asset.py*
             !**/*\\*
             !**/*\\*/**
+            !/.orchestrator/test_supervisor.py
+            !/.orchestrator/test_supervisor.py/**
 
       - name: Assert exact release SHA is checked out
         run: |
@@ -511,6 +518,7 @@ jobs:
         env:
           GIT_CONFIG_NOSYSTEM: "1"
           GIT_CONFIG_GLOBAL: /dev/null
+          PROTECTED_FROZEN_PATH: .orchestrator/test_supervisor.py
         run: |
           python3 -I - <<'PY'
           import os
@@ -523,6 +531,8 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          frozen_path = os.environ.get("PROTECTED_FROZEN_PATH")
+          frozen = wc.normalize_protected_paths([frozen_path] if frozen_path else [])
           root = Path.cwd()
           compare = os.environ.get("PROTECTED_COMPARE_SHAS")
           endpoints = [] if compare is None else compare.split()
@@ -535,11 +545,11 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
-          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)
-          domains = [wc.protected_body_tree_entries(root, sha, (denied,)) for sha in endpoints]
+          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
+          domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
           failures = [
               label
               for label, failed in (
@@ -548,7 +558,7 @@ jobs:
                   )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
-                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,)))),
+                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,), frozen_paths=frozen))),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
                   ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
@@ -993,6 +1003,8 @@ jobs:
             !**/test_listing_production_asset.py*
             !**/*\\*
             !**/*\\*/**
+            !/.orchestrator/test_supervisor.py
+            !/.orchestrator/test_supervisor.py/**
 
       - name: Assert the dispatch event SHA is checked out
         env:
@@ -1023,6 +1035,7 @@ jobs:
         env:
           GIT_CONFIG_NOSYSTEM: "1"
           GIT_CONFIG_GLOBAL: /dev/null
+          PROTECTED_FROZEN_PATH: .orchestrator/test_supervisor.py
           PROTECTED_COMPARE_SHAS: ${{ inputs.release_sha }} ${{ github.sha }}
         run: |
           python3 -I - <<'PY'
@@ -1036,6 +1049,8 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          frozen_path = os.environ.get("PROTECTED_FROZEN_PATH")
+          frozen = wc.normalize_protected_paths([frozen_path] if frozen_path else [])
           root = Path.cwd()
           compare = os.environ.get("PROTECTED_COMPARE_SHAS")
           endpoints = [] if compare is None else compare.split()
@@ -1048,11 +1063,11 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
-          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)
-          domains = [wc.protected_body_tree_entries(root, sha, (denied,)) for sha in endpoints]
+          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
+          domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
           failures = [
               label
               for label, failed in (
@@ -1061,7 +1076,7 @@ jobs:
                   )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
-                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,)))),
+                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,), frozen_paths=frozen))),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
                   ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
@@ -1474,6 +1489,8 @@ jobs:
             !**/test_listing_production_asset.py*
             !**/*\\*
             !**/*\\*/**
+            !/.orchestrator/test_supervisor.py
+            !/.orchestrator/test_supervisor.py/**
       - name: Assert automatic admission checkout identity
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
@@ -1493,6 +1510,7 @@ jobs:
         env:
           GIT_CONFIG_NOSYSTEM: "1"
           GIT_CONFIG_GLOBAL: /dev/null
+          PROTECTED_FROZEN_PATH: .orchestrator/test_supervisor.py
         run: |
           python3 -I - <<'PY'
           import os
@@ -1505,6 +1523,8 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          frozen_path = os.environ.get("PROTECTED_FROZEN_PATH")
+          frozen = wc.normalize_protected_paths([frozen_path] if frozen_path else [])
           root = Path.cwd()
           compare = os.environ.get("PROTECTED_COMPARE_SHAS")
           endpoints = [] if compare is None else compare.split()
@@ -1517,11 +1537,11 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
-          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)
-          domains = [wc.protected_body_tree_entries(root, sha, (denied,)) for sha in endpoints]
+          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
+          domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
           failures = [
               label
               for label, failed in (
@@ -1530,7 +1550,7 @@ jobs:
                   )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
-                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,)))),
+                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,), frozen_paths=frozen))),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
                   ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
@@ -1767,6 +1787,8 @@ jobs:
             !**/test_listing_production_asset.py*
             !**/*\\*
             !**/*\\*/**
+            !/.orchestrator/test_supervisor.py
+            !/.orchestrator/test_supervisor.py/**
 
       - name: Assert exact release SHA is checked out
         run: |
@@ -1791,6 +1813,7 @@ jobs:
         env:
           GIT_CONFIG_NOSYSTEM: "1"
           GIT_CONFIG_GLOBAL: /dev/null
+          PROTECTED_FROZEN_PATH: .orchestrator/test_supervisor.py
         run: |
           python3 -I - <<'PY'
           import os
@@ -1803,6 +1826,8 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          frozen_path = os.environ.get("PROTECTED_FROZEN_PATH")
+          frozen = wc.normalize_protected_paths([frozen_path] if frozen_path else [])
           root = Path.cwd()
           compare = os.environ.get("PROTECTED_COMPARE_SHAS")
           endpoints = [] if compare is None else compare.split()
@@ -1815,11 +1840,11 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
-          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)
-          domains = [wc.protected_body_tree_entries(root, sha, (denied,)) for sha in endpoints]
+          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
+          domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
           failures = [
               label
               for label, failed in (
@@ -1828,7 +1853,7 @@ jobs:
                   )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
-                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,)))),
+                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,), frozen_paths=frozen))),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
                   ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
@@ -2475,6 +2500,8 @@ jobs:
             !**/test_listing_production_asset.py*
             !**/*\\*
             !**/*\\*/**
+            !/.orchestrator/test_supervisor.py
+            !/.orchestrator/test_supervisor.py/**
 
       - name: Assert exact release SHA is checked out
         run: |
@@ -2499,6 +2526,7 @@ jobs:
         env:
           GIT_CONFIG_NOSYSTEM: "1"
           GIT_CONFIG_GLOBAL: /dev/null
+          PROTECTED_FROZEN_PATH: .orchestrator/test_supervisor.py
         run: |
           python3 -I - <<'PY'
           import os
@@ -2511,6 +2539,8 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          frozen_path = os.environ.get("PROTECTED_FROZEN_PATH")
+          frozen = wc.normalize_protected_paths([frozen_path] if frozen_path else [])
           root = Path.cwd()
           compare = os.environ.get("PROTECTED_COMPARE_SHAS")
           endpoints = [] if compare is None else compare.split()
@@ -2523,11 +2553,11 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
-          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)
-          domains = [wc.protected_body_tree_entries(root, sha, (denied,)) for sha in endpoints]
+          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
+          domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
           failures = [
               label
               for label, failed in (
@@ -2536,7 +2566,7 @@ jobs:
                   )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
-                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,)))),
+                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,), frozen_paths=frozen))),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
                   ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
@@ -2757,6 +2787,8 @@ jobs:
             !**/test_listing_production_asset.py*
             !**/*\\*
             !**/*\\*/**
+            !/.orchestrator/test_supervisor.py
+            !/.orchestrator/test_supervisor.py/**
 
       - name: Assert exact release SHA is checked out
         run: |
@@ -2781,6 +2813,7 @@ jobs:
         env:
           GIT_CONFIG_NOSYSTEM: "1"
           GIT_CONFIG_GLOBAL: /dev/null
+          PROTECTED_FROZEN_PATH: .orchestrator/test_supervisor.py
         run: |
           python3 -I - <<'PY'
           import os
@@ -2793,6 +2826,8 @@ jobs:
           import worktree_cleanliness as wc
 
           denied = "tests/sources"
+          frozen_path = os.environ.get("PROTECTED_FROZEN_PATH")
+          frozen = wc.normalize_protected_paths([frozen_path] if frozen_path else [])
           root = Path.cwd()
           compare = os.environ.get("PROTECTED_COMPARE_SHAS")
           endpoints = [] if compare is None else compare.split()
@@ -2805,11 +2840,11 @@ jobs:
           patterns = Path(git("rev-parse", "--git-path", "info/sparse-checkout").strip()).read_text().split()
           index = git("ls-files", "-z", "--", f":(literal){denied}").split("\0")
           verdicts = [
-              wc.inspect_protected_git_metadata(root, "HEAD", (denied,), worktree_path=root, check_index=True),
-              *(wc.inspect_protected_git_metadata(root, sha, (denied,)) for sha in endpoints),
+              wc.inspect_protected_git_metadata(root, "HEAD", (denied, *frozen), worktree_path=root, check_index=True),
+              *(wc.inspect_protected_git_metadata(root, sha, (denied, *frozen)) for sha in endpoints),
           ]
-          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True)
-          domains = [wc.protected_body_tree_entries(root, sha, (denied,)) for sha in endpoints]
+          body = wc.protected_body_checkout_refusal(root, prefixes=(denied,), require_sparse=True, frozen_paths=frozen)
+          domains = [wc.protected_body_tree_entries(root, sha, (denied,), frozen_paths=frozen) for sha in endpoints]
           failures = [
               label
               for label, failed in (
@@ -2818,7 +2853,7 @@ jobs:
                   )),
                   ("sparse checkout disabled", git("config", "--get", "core.sparseCheckout").strip() != "true"),
                   ("cone mode", git("config", "--type=bool", "--default", "false", "--get", "core.sparseCheckoutCone").strip() != "false"),
-                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,)))),
+                  ("deny patterns changed", patterns != list(wc.protected_body_sparse_patterns((denied,), frozen_paths=frozen))),
                   ("blob filter changed", git("config", "--get", "remote.origin.partialclonefilter").strip() != "blob:none"),
                   ("denied path in index", any(index)),
                   ("denied path materialized", os.path.lexists(denied)),
@@ -2909,9 +2944,203 @@ jobs:
           } >> "${GITHUB_ENV}"
 
       - name: Read staging recovery bundle with staging identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GCP_CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+          ODP_STAGING_VPC_NETWORK: ${{ vars.ODP_STAGING_VPC_NETWORK }}
+          ODP_STAGING_VPC_SUBNETWORK: ${{ vars.ODP_STAGING_VPC_SUBNETWORK }}
+          ODP_STAGING_KMS_KEY_ID: ${{ vars.ODP_STAGING_KMS_KEY_ID }}
+          ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
         run: |
           set -euo pipefail
-          gcloud storage cp "${STAGING_BUNDLE_URI}/*" "${STAGING_STATE_DIR}/"
+          if ls_out="$(gcloud storage ls "${STAGING_BUNDLE_URI}/*" 2>&1)"; then
+            gcloud storage cp "${STAGING_BUNDLE_URI}/*" "${STAGING_STATE_DIR}/"
+          elif printf '%s\n' "${ls_out}" | grep -q "matched no objects"; then
+            python3 -I - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          import subprocess
+          import tempfile
+          from datetime import UTC, datetime, timedelta
+          from pathlib import Path
+
+          state_dir = Path(os.environ["STAGING_STATE_DIR"])
+          release_id = os.environ["STAGING_RELEASE_ID"]
+          release_sha = os.environ["ODAY_RELEASE_SHA"]
+          task_id = os.environ["RELEASE_TASK_ID"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          ref_name = os.environ["GITHUB_REF_NAME"]
+          project_id = os.environ["GCP_PROJECT_ID"]
+          region = os.environ["GCP_REGION"]
+          sql_conn = os.environ["GCP_CLOUD_SQL_INSTANCE"]
+          vpc_net = os.environ["ODP_STAGING_VPC_NETWORK"]
+          vpc_subnet = os.environ["ODP_STAGING_VPC_SUBNETWORK"]
+          kms_key = os.environ["ODP_STAGING_KMS_KEY_ID"]
+          deployer_sa = os.environ["ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT"]
+
+          def parse_utc(raw):
+              if not isinstance(raw, str) or "T" not in raw or "\n" in raw or "\r" in raw:
+                  raise ValueError("expiry must be a single-line ISO-8601 UTC timestamp")
+              parsed = datetime.fromisoformat(raw)
+              if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+                  raise ValueError("expiry must carry a zero UTC offset")
+              return parsed.astimezone(UTC)
+
+          try:
+              runs_raw = subprocess.check_output(
+                  ["gh", "api", f"repos/{repo}/actions/workflows/deploy-dev.yml/runs?event=workflow_dispatch&per_page=100"],
+                  text=True,
+              )
+              runs = json.loads(runs_raw).get("workflow_runs") or []
+              expected_title = f"Runtime Release staging deploy {release_sha}"
+              failed_runs = [
+                  (int(r["id"]), int(r.get("run_attempt") or 1))
+                  for r in runs
+                  if isinstance(r, dict)
+                  and r.get("display_title") == expected_title
+                  and r.get("status") == "completed"
+                  and r.get("conclusion") == "failure"
+              ]
+              if not failed_runs:
+                  raise ValueError(f"no failed staging deploy run found for {release_sha}")
+              run_id, run_attempt = max(failed_runs)
+
+              reg_raw = subprocess.check_output(
+                  ["gh", "api", "-H", "Accept: application/vnd.github.raw+json",
+                   f"repos/{repo}/contents/docs/evidence/gates/RELEASE_GATE_REGISTRY.json?ref={ref_name}"],
+                  text=True,
+              )
+              reg = json.loads(reg_raw)
+              active_sha = ((reg.get("release") or {}) if isinstance(reg, dict) else {}).get("candidate_sha")
+              if not isinstance(active_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", active_sha):
+                  raise ValueError("dispatch-ref registry lacks an exact release.candidate_sha")
+              if active_sha == release_sha:
+                  raise ValueError("dispatch-ref registry still names the active staging candidate")
+
+              with tempfile.TemporaryDirectory() as tmp:
+                  tmp_path = Path(tmp)
+                  subprocess.run(
+                      ["gh", "run", "download", str(run_id), "-R", repo,
+                       "-n", "runtime-release-staging-lifecycle-receipts",
+                       "-n", "release-admission-receipt-staging",
+                       "-D", str(tmp_path)],
+                      check=True,
+                  )
+                  create_doc = json.loads((tmp_path / "runtime-release-staging-lifecycle-receipts/staging-lifecycle-create.json").read_text(encoding="utf-8"))
+                  hold_doc = json.loads((tmp_path / "runtime-release-staging-lifecycle-receipts/staging-lifecycle-hold.json").read_text(encoding="utf-8"))
+                  adm_doc = json.loads((tmp_path / "release-admission-receipt-staging/release-admission-receipt.json").read_text(encoding="utf-8"))
+
+              if (
+                  create_doc.get("action") != "create"
+                  or create_doc.get("success") is not True
+                  or create_doc.get("release_id") != release_id
+                  or create_doc.get("candidate_sha") != release_sha
+              ):
+                  raise ValueError("staging-lifecycle-create.json does not prove successful create for this release")
+              if (
+                  hold_doc.get("action") != "hold"
+                  or hold_doc.get("success") is not True
+                  or hold_doc.get("release_id") != release_id
+              ):
+                  raise ValueError("staging-lifecycle-hold.json does not prove a successful hold for this release")
+              meta = hold_doc.get("metadata") or {}
+              if meta.get("state_status") != "created" or meta.get("owner_task_id") != task_id:
+                  raise ValueError("hold receipt does not record a pre-verification 'created' hold for this task")
+              hold_resources = hold_doc.get("resources") or []
+              create_resources = create_doc.get("resources") or []
+              if not hold_resources or not create_resources:
+                  raise ValueError("create/hold receipts contain empty resource inventories")
+              now = datetime.now(UTC)
+              created_at = None
+              for row in hold_resources:
+                  if not isinstance(row, dict) or row.get("release_id") != release_id or row.get("status") != "retained_for_debugging":
+                      raise ValueError("hold receipt contains unexpected resource row")
+                  exp = parse_utc(row.get("expires_at"))
+                  if now < exp:
+                      raise ValueError(f"retained release has not yet expired ({row.get('expires_at')})")
+                  if created_at is None:
+                      created_at = row.get("created_at")
+              parse_utc(created_at)
+
+              manifest_digest = adm_doc.get("manifest_digest") or ""
+              if (
+                  adm_doc.get("admitted") is not True
+                  or adm_doc.get("target_environment") != "staging"
+                  or adm_doc.get("allowed_action") != "deploy"
+                  or adm_doc.get("release_id") != release_id
+                  or adm_doc.get("candidate_sha") != release_sha
+                  or adm_doc.get("task_id") != task_id
+                  or not re.fullmatch(r"sha256:[0-9a-f]{64}", manifest_digest)
+                  or manifest_digest.removeprefix("sha256:")[:16] != create_doc.get("manifest_digest_prefix")
+              ):
+                  raise ValueError("release-admission-receipt.json does not match create receipt")
+              images = adm_doc.get("component_images") or {}
+              for key in ("api", "web", "worker", "scheduler"):
+                  if not isinstance(images.get(key), str) or not re.search(r"@sha256:[0-9a-f]{64}$", images[key]):
+                      raise ValueError(f"missing immutable {key} image digest in admission receipt")
+              profile = adm_doc.get("release_profile")
+              if profile not in ("full", "core-ops"):
+                  raise ValueError(f"invalid release_profile {profile!r}")
+
+              suffix = re.sub(r"[^a-z0-9-]", "-", release_id.lower()).strip("-")
+              rhash = hashlib.sha256(release_id.encode("utf-8")).hexdigest()[:8]
+              stem = f"{suffix[:48]}-{rhash}"
+              first_labels = (create_resources[0].get("labels") or {}) if isinstance(create_resources[0], dict) else {}
+              if first_labels.get("release_id") != stem:
+                  raise ValueError(f"derived stem {stem!r} does not match resource label {first_labels.get('release_id')!r}")
+              sql_parts = sql_conn.split(":")
+              if len(sql_parts) != 3:
+                  raise ValueError("GCP_CLOUD_SQL_INSTANCE must be project:region:instance")
+
+              tfvars = {
+                  "project_id": project_id,
+                  "region": region,
+                  "release_id": release_id,
+                  "candidate_sha": release_sha,
+                  "manifest_digest": manifest_digest,
+                  "api_image": images["api"],
+                  "web_image": images["web"],
+                  "worker_image": images["worker"],
+                  "scheduler_image": images["scheduler"],
+                  "ttl_hours": int(meta.get("ttl_hours") or 24),
+                  "created_at": created_at,
+                  "owner_task_id": task_id,
+                  "release_profile": profile,
+                  "cloud_sql_instance_name": sql_parts[2],
+                  "cloud_sql_connection_name": sql_conn,
+                  "network_name": vpc_net,
+                  "subnetwork_name": vpc_subnet,
+                  "kms_key_id": kms_key,
+                  "deployer_service_account_email": deployer_sa,
+                  "tenant_id": first_labels.get("tenant") or None,
+                  "additional_labels": {},
+              }
+              (state_dir / f"{stem}.tfvars.json").write_text(json.dumps(tfvars, indent=2), encoding="utf-8")
+              (state_dir / f"{stem}.inventory.json").write_text(json.dumps(create_resources, indent=2), encoding="utf-8")
+              (state_dir / f"{stem}.lifecycle.json").write_text(
+                  json.dumps({"release_id": release_id, "status": "created", "identity": {"release_id": release_id, "candidate_sha": release_sha, "owner_task_id": task_id, "created_at": created_at}}, indent=2),
+                  encoding="utf-8",
+              )
+              (state_dir / "staging-terraform-outputs.json").write_text(
+                  json.dumps({"release_id": release_id, "staging_project_id": project_id}, indent=2),
+                  encoding="utf-8",
+              )
+              (state_dir / f"hold-{run_id}-{run_attempt}-{stem}.lifecycle.json").write_text(
+                  json.dumps({"release_id": release_id, "status": "held", "recovery_bundle_absent": True, "identity": {"release_id": release_id, "candidate_sha": release_sha, "owner_task_id": task_id, "created_at": created_at}}, indent=2),
+                  encoding="utf-8",
+              )
+              print(f"Reconstructed unpersisted pre-recovery hold bundle for {release_id} from failed run {run_id} attempt {run_attempt}")
+          except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+              raise SystemExit(f"Refusing cleanup of {release_id}: unpersisted hold reconstruction failed: {exc}")
+          PY
+          else
+            printf '%s\n' "${ls_out}" >&2
+            exit 1
+          fi
           test -s "${STAGING_STATE_DIR}/staging-terraform-outputs.json"
           inventory_file="$(printf '%s\n' "${STAGING_STATE_DIR}"/*.inventory.json)"
           test -s "${inventory_file}"
@@ -3003,6 +3232,8 @@ jobs:
               out.write(f"hold_run_id={run_id}\nhold_run_attempt={attempt}\n")
               out.write(f"hold_owner_task_id={identity.get('owner_task_id', '')}\n")
               out.write(f"hold_sidecar_status={sidecar_status}\n")
+              if hold.get("recovery_bundle_absent") is True:
+                  out.write("hold_recovery_bundle_absent=true\n")
               if sidecar_status == "verified":
                   # JSON keeps even malformed expiry values on one output line;
                   # only the no-hold-receipt branch below needs a valid expiry.
@@ -3026,6 +3257,7 @@ jobs:
           HOLD_OWNER_TASK_ID: ${{ steps.retained-hold.outputs.hold_owner_task_id }}
           HOLD_SIDECAR_STATUS: ${{ steps.retained-hold.outputs.hold_sidecar_status }}
           HOLD_EXPIRES_AT_JSON: ${{ steps.retained-hold.outputs.hold_expires_at_json }}
+          HOLD_RECOVERY_BUNDLE_ABSENT: ${{ steps.retained-hold.outputs.hold_recovery_bundle_absent }}
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 -I - <<'PY'
@@ -3121,7 +3353,10 @@ jobs:
           else:
               if receipt.get("action") != "hold" or receipt.get("success") is not True:
                   errors.append("hold receipt does not record a successful hold")
-              if state_status not in ("verification_failed", "verified"):
+              if os.environ.get("HOLD_RECOVERY_BUNDLE_ABSENT") == "true":
+                  if state_status != "created":
+                      errors.append(f"unpersisted hold state was {state_status!r}, not 'created'")
+              elif state_status not in ("verification_failed", "verified"):
                   errors.append(f"held state was {state_status!r}, not 'verification_failed' or 'verified'")
               owner_matches = bool(sidecar_owner) and receipt_owner == sidecar_owner
           if receipt.get("release_id") != release_id:
