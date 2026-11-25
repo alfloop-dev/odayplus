@@ -30,10 +30,13 @@ restart seam only and never to steady state.
 from __future__ import annotations
 
 import copy
+import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 THIS_DIR = Path(__file__).resolve().parent
@@ -385,6 +388,222 @@ class WorkerSettlementPathTests(unittest.TestCase):
                     "above depend on its absence, so if that is intended they need to "
                     "change with it -- this is a decision, not a lint failure.",
                 )
+
+
+class ZeroExitProviderQuotaSettlementTests(unittest.TestCase):
+    """Both settlement paths report a zero-exit provider quota banner as quota."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        # The committed example roster, never this host's config.json, with every
+        # coordination path moved off the checkout: the pause writer is not mocked.
+        self.config = json.loads((THIS_DIR / "config.example.json").read_text(encoding="utf-8"))
+        root = Path(self.tmp.name)
+        self.config["paths"] = {
+            key: str(root / Path(str(value)).name) for key, value in (self.config.get("paths") or {}).items()
+        }
+        self.config.setdefault("provider_guardrails", {})["generic_exit_reassign_after"] = 2
+
+    @staticmethod
+    def _task(*, status: str = "in_progress", next_step: str = "Implement packet") -> dict[str, Any]:
+        return {
+            "id": "ODP-POSTCONDITION-001",
+            "status": status,
+            "owner": "Antigravity4",
+            "reviewer": "Codex6",
+            "next": next_step,
+            "depends_on": [],
+        }
+
+    @staticmethod
+    def _worker(
+        task: dict[str, Any],
+        *,
+        run_id: str = "antigravity4-postcondition-1",
+        reason: str = "owned_in_progress_dispatch",
+        agent_id: str = "antigravity4",
+        dispatch_head: str = "a" * 40,
+    ) -> dict[str, Any]:
+        dispatch_task = {
+            "id": task["id"],
+            "status": task["status"],
+            "owner": task["owner"],
+            "reviewer": task["reviewer"],
+            "next": task["next"],
+            "head": dispatch_head,
+        }
+        return {
+            "run_id": run_id,
+            "task_id": task["id"],
+            "provider": agent_id,
+            "agent_id": agent_id,
+            "status": "running",
+            "queue_event_id": f"evt-{run_id}",
+            "pid": 999999,
+            "runner_status": "completed",
+            "exit_code": 0,
+            "last_event_at": "2026-07-31T15:00:00Z",
+            "request_snapshot": {
+                "reason": reason,
+                "metadata": {
+                    "logical_agent_id": agent_id,
+                    "task": dispatch_task,
+                },
+            },
+        }
+
+    def _poll(self, state: dict[str, Any], task: dict[str, Any], *, current_head: str) -> bool:
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "resolve_task_progress_head", return_value=current_head),
+            mock.patch.object(supervisor, "detect_worker_failure", side_effect=AssertionError("zero-exit worker must use postcondition path")),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            return supervisor.poll_workers(self.config, state)
+
+    def _pi_banner_worker(self, task: dict[str, Any], log_text: str) -> dict[str, Any]:
+        # The committed example roster has no pi lane; add it as the live
+        # config declares it so the run is matched to its Pi assignment.
+        self.config.setdefault("providers", {})["pi"] = {
+            "delivery_mode": "pi",
+            "pi": {"cli": ".orchestrator/bin/pi", "llm_provider": "openai-codex"},
+        }
+        self.config.setdefault("agents", {})["pi"] = {
+            "display_name": "Pi",
+            "account_pool": "pi_chatgpt",
+            "provider": "pi",
+            "adapter": "pi",
+        }
+        self.config.setdefault("account_pools", {})["pi_chatgpt"] = {
+            "state": "healthy",
+            "max_concurrent": 1,
+        }
+        worker = self._worker(task, run_id="pi-usage-limit-1", agent_id="pi")
+        handle = tempfile.NamedTemporaryFile("w", suffix=".log", delete=False, encoding="utf-8")
+        with handle:
+            handle.write(log_text)
+        self.addCleanup(os.unlink, handle.name)
+        worker["log_path"] = handle.name
+        return worker
+
+    def _run_quota_path(self, run: Any) -> bool:
+        # The pause writer is deliberately NOT mocked: it has its own zero-exit
+        # guard, and mocking it once hid that the pause was never written.
+        with (
+            mock.patch.object(supervisor, "worker_writers_are_alive", return_value=False),
+            mock.patch.object(supervisor, "write_failure_evidence", return_value="evidence/pi.json"),
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value=None),
+        ):
+            return run()
+
+    def _assert_pi_quota_paused(self, state: dict[str, Any], run_id: str) -> None:
+        pause = state["provider_guardrails"]["dispatch_pauses"]["pi"]
+        self.assertEqual(pause["pause_kind"], "quota_terminal")
+        self.assertEqual(pause["worker_run_id"], run_id)
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "pi"))
+        pool = state["account_pool_runtime"]["pi_chatgpt"]
+        self.assertEqual(pool["state"], "cooldown")
+        self.assertEqual(pool["effective_concurrency"], 0)
+        self.assertEqual(pool["failure_kind"], "quota_terminal")
+        self.assertEqual(pool["last_worker_run_id"], run_id)
+        self.assertEqual(pool["next_probe_at"], pause["blocked_until"])
+
+    def _boot(self, state: dict[str, Any], task: dict[str, Any]) -> bool:
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "resolve_task_progress_head", return_value="a" * 40),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            return supervisor.reconcile_runtime_on_boot(self.config, state)
+
+    def test_poll_zero_exit_pi_usage_limit_is_quota_not_no_progress(self) -> None:
+        """pi prints its usage limit and exits 0; that is a quota failure."""
+        task = self._task()
+        task["owner"] = "Pi"
+        worker = self._pi_banner_worker(task, "Codex error: The usage limit has been reached\n")
+        streak_key = f"{task['id']}:pi"
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "provider_guardrails": {"task_failure_streaks": {}},
+        }
+        changed = self._run_quota_path(
+            lambda: self._poll(state, task, current_head="a" * 40)
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "failed")
+        self.assertNotEqual(worker["last_error"], supervisor.NO_PROGRESS_WORKER_EXIT_REASON)
+        self.assertIn("usage limit has been reached", worker["last_error"])
+        self._assert_pi_quota_paused(state, worker["run_id"])
+        # A provider quota outage is environmental: it must not count toward the
+        # task's own failure streak the way a no-progress exit does.
+        self.assertNotIn(streak_key, state["provider_guardrails"]["task_failure_streaks"])
+
+    def test_poll_zero_exit_without_banner_stays_no_progress(self) -> None:
+        task = self._task()
+        task["owner"] = "Pi"
+        worker = self._pi_banner_worker(task, "Error: quota exceeded in fixture output\nfinished\n")
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "provider_guardrails": {"task_failure_streaks": {}},
+        }
+        changed = self._run_quota_path(
+            lambda: self._poll(state, task, current_head="a" * 40)
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "failed")
+        self.assertEqual(worker["last_error"], supervisor.NO_PROGRESS_WORKER_EXIT_REASON)
+        self.assertFalse(state["provider_guardrails"].get("dispatch_pauses"))
+        self.assertFalse(state.get("account_pool_runtime"))
+
+    def test_boot_reconciliation_zero_exit_pi_usage_limit_is_quota_not_no_progress(self) -> None:
+        task = self._task()
+        task["owner"] = "Pi"
+        worker = self._pi_banner_worker(task, "Codex error: The usage limit has been reached\n")
+        streak_key = f"{task['id']}:pi"
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "provider_guardrails": {"task_failure_streaks": {streak_key: {"count": 1}}},
+        }
+
+        changed = self._run_quota_path(lambda: self._boot(state, task))
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "failed")
+        self.assertNotEqual(worker["last_error"], supervisor.NO_PROGRESS_WORKER_EXIT_REASON)
+        self.assertIn("usage limit has been reached", worker["last_error"])
+        self._assert_pi_quota_paused(state, worker["run_id"])
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"][streak_key]["count"], 1)
+
+    def test_boot_reconciliation_zero_exit_without_banner_never_pauses(self) -> None:
+        task = self._task()
+        task["owner"] = "Pi"
+        worker = self._pi_banner_worker(task, "Error: quota exceeded in fixture output\nfinished\n")
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "provider_guardrails": {"task_failure_streaks": {}},
+        }
+        changed = self._run_quota_path(lambda: self._boot(state, task))
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "failed")
+        self.assertFalse(state["provider_guardrails"].get("dispatch_pauses"))
+        self.assertFalse(state.get("account_pool_runtime"))
+        self.assertEqual(
+            state["provider_guardrails"]["task_failure_streaks"][f"{task['id']}:pi"]["count"], 1
+        )
 
 
 if __name__ == "__main__":
