@@ -166,9 +166,14 @@ describe("Operator API banner accurately labels the permitted data lane", () => 
   it("blocks seed data with the unavailable gate and unready banner for an authenticated session", async () => {
     reads(envelopes.seed);
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
-    await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "seed"));
+    // The first render already gates with data-status="seed" (initial fixture
+    // status maps to "seed"), so wait for the banner's final authenticated
+    // state instead of the gate, which would resolve before bootstrap settles.
+    await waitFor(() => expect(
+      screen.getByTestId("operator-console").querySelector('[data-data-status="seed"]'),
+    ).toBeInTheDocument());
+    expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "seed");
     const banner = screen.getByTestId("operator-console").querySelector('[data-data-status="seed"]');
-    expect(banner).toBeInTheDocument();
     expect(banner).toHaveTextContent("正式資料未就緒");
     expect(screen.queryByText("Local fixture mode")).not.toBeInTheDocument();
     expect(screen.queryByText("Seed KPI")).not.toBeInTheDocument();
