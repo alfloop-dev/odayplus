@@ -1,9 +1,9 @@
-# ODay Plus 核心營運版上線說明（core-ops）— 草稿
+# ODay Plus 核心營運版上線說明（core-ops）— 草稿（2026-11-27 版）
 
 > **DRAFT · 未核准 · 不可對外發布。**
 >
 > - 版本、日期與 build 都留白，要等 production GO 決策後才能填入。
-> - 內容依 `docs/design/ODP_CORE_OPS_RELEASE_PROFILE.md` 與現行程式整理。
+> - 內容依 `docs/design/ODP_CORE_OPS_RELEASE_PROFILE.md` 與 `origin/dev` @ `48c5271b5` 的程式整理。
 > - 每一項「可用功能」都必須通過 `uat-plan.md` 的對應案例，才能保留在正式版說明中。
 
 | 欄位 | 值 |
@@ -13,6 +13,7 @@
 | release SHA | （留白：production admission 的 candidate SHA） |
 | manifest digest | （留白） |
 | 發布範圍 | `core-ops`：核心營運；不含模型功能 |
+| 網址 | `https://console.oday-plus.com.tw`（`live-readback-20261127.md` `L-4.1`、`L-2.7`） |
 
 ---
 
@@ -22,17 +23,17 @@ ODay Plus 先開放**核心營運功能**。需要預測模型的功能還沒開
 
 ### 可以使用
 
-依 `docs/design/ODP_CORE_OPS_RELEASE_PROFILE.md:8`、`:24`、`:207`：
+依 `docs/design/ODP_CORE_OPS_RELEASE_PROFILE.md:8`、`:22-24`、`:285-291`：
 
 - **登入與帳號**
   - 以受邀帳號登入。首次登入必須更換密碼。
   - 支援登出、閒置自動登出，以及連續登入失敗保護。
-  - 登入方式依部署設定：預設是帳號密碼，Google 登入是選用（`.github/workflows/deploy-dev.yml:1245-1252`）。**production 實際採用哪一種待確認。**
+  - 登入方式是帳號密碼。production 範本設定為本機密碼登入，沒有啟用 Google 登入（`infra/terraform/env/prod.tfvars.example:4-6`、`:15`）。
 - **權限**
   - 依角色顯示可用的功能。沒有權限的操作會明確被拒絕，不會顯示成空白。
   - 系統管理員負責管理使用者、角色與功能開關。管理員帳號**不能**查看營運資料，營運工作要用營運角色帳號。
 - **資料隔離**：不同租戶的資料彼此隔離，跨租戶存取會被拒絕並記錄。
-- **稽核**：重要操作與被拒絕的操作都會留下稽核紀錄，可匯出證據包。
+- **稽核**：重要操作與被拒絕的操作都會留下稽核紀錄，可匯出證據包。稽核紀錄另存於鎖定 7 年的不可竄改儲存（`L-2.5`）。
 - **營運主控台（不依賴模型的部分，待 UAT 確認）**：Today 總覽、門市營運議題處理、治理核可流程、物件代填流程的權限控管。
 
 ### 尚未開放
@@ -46,13 +47,13 @@ ODay Plus 先開放**核心營運功能**。需要預測模型的功能還沒開
 - **Learning Hub** 模型登錄
 - **求解器相關功能**（例如 NetPlan 情境）
 
-依據：`apps/web/src/lib/auth/operatorReleaseStatus.ts:8-13`；design `:160-170`。
+依據：`apps/web/src/lib/auth/operatorReleaseStatus.ts:8-13`；design `:240-250`。
 
-模型就緒、而且通過模型風險審查之後，會另行發布完整版本（design `:8`、`:185-188`）。
+模型就緒、而且通過模型風險審查之後，會另行發布完整版本（design `:8`、`:265-268`）。
 
 ### 外部資料
 
-第三方資料來源目前**全部關閉**（`.github/workflows/deploy-dev.yml:1268-1270`），系統不會向外部抓取資料。
+第三方資料來源目前**全部關閉**（`.github/workflows/deploy-dev.yml:1745`），系統不會向外部抓取資料。
 
 ---
 
@@ -61,10 +62,11 @@ ODay Plus 先開放**核心營運功能**。需要預測模型的功能還沒開
 1. 模型相依的頁面與操作會顯示不可用，請不要把畫面上的空白或拒絕當成資料錯誤。
 2. 只有系統管理員的管理頁面會顯示「發布範圍」說明（`apps/web/src/app/operator/page.tsx:31-35`）。一般營運頁面沒有這段說明，請以本文件為準。
 3. 帳號只能由系統管理員邀請建立，不開放自行註冊（`shared/identity/invitation_service.py:15-18`）。
+4. 上線初期若發現必須暫停對外服務，系統可能暫時無法開啟（`runbook-core-ops.md` §6）。資料會保留，修正後恢復。是否在公告中寫這一點，由負責人決定。
 
 ## 問題回報
 
-- 回報窗口：（留白，由 Support Lead 填寫）
+- 回報窗口：（留白，由 Support Lead 或負責人填寫）
 - 緊急聯絡：（留白，見 `monitoring-oncall-plan.md` §4）
 
 ---
