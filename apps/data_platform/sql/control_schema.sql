@@ -13,6 +13,10 @@ CREATE TABLE IF NOT EXISTS {{control_schema}}.ingestion_runs (
     ),
     resumed_from TEXT,
     final_cursor TEXT,
+    -- NULL for legacy/non-extraction metadata and snapshot source kinds.
+    -- These are the actual source query bounds, not dates inferred from labels.
+    window_start TIMESTAMPTZ,
+    window_end TIMESTAMPTZ,
     processed_count BIGINT NOT NULL DEFAULT 0 CHECK (processed_count >= 0),
     valid_loaded BIGINT NOT NULL DEFAULT 0 CHECK (valid_loaded >= 0),
     quarantined_count BIGINT NOT NULL DEFAULT 0 CHECK (quarantined_count >= 0),
@@ -29,7 +33,27 @@ CREATE TABLE IF NOT EXISTS {{control_schema}}.ingestion_runs (
 );
 ALTER TABLE {{control_schema}}.ingestion_runs
     ADD COLUMN IF NOT EXISTS reconciled BOOLEAN NOT NULL DEFAULT FALSE,
-    ADD COLUMN IF NOT EXISTS partition_complete BOOLEAN NOT NULL DEFAULT FALSE;
+    ADD COLUMN IF NOT EXISTS partition_complete BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS window_start TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS window_end TIMESTAMPTZ;
+DO $extraction_window_constraint$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = '{{control_schema}}.ingestion_runs'::regclass
+          AND conname = 'ingestion_runs_window_bounds_check'
+    ) THEN
+        ALTER TABLE {{control_schema}}.ingestion_runs
+            ADD CONSTRAINT ingestion_runs_window_bounds_check CHECK (
+                (window_start IS NULL AND window_end IS NULL)
+                OR (
+                    window_start IS NOT NULL AND window_end IS NOT NULL
+                    AND window_end > window_start
+                )
+            );
+    END IF;
+END;
+$extraction_window_constraint$;
 CREATE INDEX IF NOT EXISTS ix_data_plane_runs_partition
     ON {{control_schema}}.ingestion_runs(source_kind, partition_key, started_at DESC);
 
