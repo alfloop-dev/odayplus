@@ -619,8 +619,8 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
         except RuntimeError:
             fail_closed_rejection = True
 
-        # Verify watch window recording fails closed when passed caller-supplied mock transport
-        start_time = datetime.now(UTC) - timedelta(minutes=20)
+        # Verify watch window recording fails closed on sub-governed window or mock transport to default path
+        start_time = datetime.now(UTC) - timedelta(minutes=35)
         end_time = datetime.now(UTC)
         watch_window_fail_closed = False
         try:
@@ -630,10 +630,14 @@ def observability_runtime_checks(root: Path = ROOT) -> list[CheckResult]:
                 start_time=start_time,
                 end_time=end_time,
                 gcp_project="alfaloop-data-project",
+                gcp_region="asia-east1",
+                api_service="oday-prod-api",
+                web_service="oday-prod-web",
+                manifest_path=root / "docs" / "evidence" / "gates" / "RELEASE_MANIFEST.json",
                 provider_route=monitoring_route,
                 query_transport=mock_provider_transport,
             )
-        except (ValueError, RuntimeError):
+        except (ValueError, RuntimeError, FileNotFoundError):
             watch_window_fail_closed = True
 
         watch_window_ok = watch_window_fail_closed
