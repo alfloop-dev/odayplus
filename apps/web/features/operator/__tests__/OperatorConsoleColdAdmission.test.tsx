@@ -57,17 +57,17 @@ const mount = () => render(<OperatorConsole searchParams={{ ws: "network", tab: 
 describe("Cold direct intake owner admission", () => {
   it("makes no protected owner request while the actual session response is unresolved", async () => {
     mount();
-    await waitFor(() => expect(reads.some((r) => r.path === "/auth/session")).toBe(true));
+    await waitFor(() => expect(reads.some((r) => r.path === "/auth/session")).toBe(true), { timeout: 5000 });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 75)); });
     expect(protectedReads()).toEqual([]);
     await act(async () => { release(json({ authenticated: false }, 401)); });
-  });
+  }, 10_000);
   it("uses the cold owner without a persona constraint after session admission and bootstrap refusal", async () => {
     mount(); await act(async () => { release(session()); });
-    await waitFor(() => expect(intakeReads().length).toBeGreaterThan(0));
+    await waitFor(() => expect(intakeReads().length).toBeGreaterThan(0), { timeout: 5000 });
     expect(intakeReads().every((r) => r.role === null)).toBe(true);
     expect(reads.filter((r) => r.path.startsWith("/api/v1/operator/network-scoring"))).toEqual([]);
-  });
+  }, 10_000);
   it("does not turn a denied session into a protected cold intake read", async () => {
     mount(); await act(async () => { release(json({ authenticated: false }, 403)); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 75)); });

@@ -137,11 +137,46 @@ describe("Operator API banner accurately labels the permitted data lane", () => 
     await screen.findByText("Live unresolved");
     expect(screen.getByText("目前顯示的是經驗證的正式營運資料。")).toBeInTheDocument();
   });
-  it("keeps actual seed data explicitly labelled as a local fixture", async () => {
-    reads(envelopes.seed); render(<OperatorConsole searchParams={{ ws: "today" }} />);
-    await screen.findByText("Local fixture mode");
-    expect(screen.getByText("本機示範資料，僅供開發與測試使用。")).toBeInTheDocument();
+  it("keeps actual seed data explicitly labelled as a local fixture in a no-auth POC session", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/auth/session") {
+        return Promise.resolve(new Response(JSON.stringify({ detail: "unauthenticated" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }));
+      }
+      if (url === "/api/v1/operator/bootstrap") {
+        return Promise.resolve(new Response(JSON.stringify(envelopes.seed), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }));
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    }));
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    await screen.findByText("Seed KPI");
+    const banner = screen.getByTestId("operator-console").querySelector('[data-data-status="fixture"]');
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent("Local fixture mode");
+    expect(banner).toHaveTextContent("本機示範資料，僅供開發與測試使用。");
     expect(screen.queryByText("開發／驗收 API 資料")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
+  });
+  it("blocks seed data with the unavailable gate and unready banner for an authenticated session", async () => {
+    reads(envelopes.seed);
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    // The first render already gates with data-status="seed" (initial fixture
+    // status maps to "seed"), so wait for the banner's final authenticated
+    // state instead of the gate, which would resolve before bootstrap settles.
+    await waitFor(() => expect(
+      screen.getByTestId("operator-console").querySelector('[data-data-status="seed"]'),
+    ).toBeInTheDocument());
+    expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "seed");
+    const banner = screen.getByTestId("operator-console").querySelector('[data-data-status="seed"]');
+    expect(banner).toHaveTextContent("正式資料未就緒");
+    expect(screen.queryByText("Local fixture mode")).not.toBeInTheDocument();
+    expect(screen.queryByText("Seed KPI")).not.toBeInTheDocument();
   });
   it("retains production auth-denied admission and cannot label a rejected payload as live", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true"); reads({ detail: "denied" }, 403);

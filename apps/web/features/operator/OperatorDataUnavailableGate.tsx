@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Button, StatusBadge } from "./componentPrimitives";
 import {
   classifyLoadFailure,
@@ -35,6 +36,23 @@ export function OperatorDataUnavailableGate({
   const failureKind = failure?.kind ?? (technicalDetail ? classifyLoadFailure(technicalDetail) : undefined);
   const message = unavailableDataMessage(status, failureKind);
   const isLoading = status === "loading";
+
+  const diagnostics = JSON.stringify({
+    error_code: message.code,
+    correlation_id: failure?.correlationId,
+    http_status: failure?.httpStatus,
+    occurred_at: failure?.occurredAt,
+  }, null, 2);
+  const [copyResult, setCopyResult] = useState<{ diagnostics: string; copied: boolean } | null>(null);
+
+  async function copyDiagnostics() {
+    try {
+      await navigator.clipboard.writeText(diagnostics);
+      setCopyResult({ diagnostics, copied: true });
+    } catch {
+      setCopyResult({ diagnostics, copied: false });
+    }
+  }
 
   return (
     <section
@@ -83,6 +101,16 @@ export function OperatorDataUnavailableGate({
                 </>
               ) : null}
             </dl>
+            <div className={styles.dataUnavailableActions}>
+              <Button onClick={() => void copyDiagnostics()} size="sm" variant="secondary">
+                複製診斷資訊
+              </Button>
+              {copyResult?.diagnostics === diagnostics ? (
+                <p role="status">
+                  {copyResult.copied ? "已複製診斷資訊" : "無法自動複製，請選取上方診斷欄位。"}
+                </p>
+              ) : null}
+            </div>
           </details>
         )}
       </div>
