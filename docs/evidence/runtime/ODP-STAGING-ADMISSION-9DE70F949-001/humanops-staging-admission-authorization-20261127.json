@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "record_kind": "humanops-runtime-release-staging-admission-authorization",
+  "status": "approved",
+  "is_approval": true,
+  "task_id": "ODP-STAGING-ADMISSION-9DE70F949-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-STAGING-ADMISSION-20261127W",
+  "candidate_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+  "manifest_digest": "sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd",
+  "manifest_run_id": "45995201655",
+  "target_environment": "staging",
+  "release_profile": "core-ops",
+  "approved_at": "2026-11-27T12:52:49Z",
+  "authorization_basis": {
+    "conversation_id": "22399345-f387-4dca-9438-6dcf570c24ea",
+    "presentation_step_index": 8256,
+    "presentation_at": "2026-11-27T12:41:52Z",
+    "approval_step_index": 8257,
+    "user_reply": "核准 HD-08w、HD-09w、代按本次 staging cleanup 與 staging deploy 環境核准，及補齊上述 2 項正式環境前置設定",
+    "user_reply_at": "2026-11-27T12:52:49Z",
+    "context": "After staging build 45995201655 completed (producing canonical core-ops manifest sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd with 16 external sources disabled and 0 credentials, production npm audit 0 findings, and all 5 stg-odp-9de70f949915-5c64b623-* targets absent), exact push CI 45989131033 and merge_group CI 45981989694 ran and passed all 12 jobs (including all 7 product lanes directly on 9de70f949915706d1bad1bc25c24b681eeb902e9 with zero scope skips), and automatic dev deploy 45996059587 completed at 2026-11-27T12:40Z (live E2E 83/83 passed, 0 blockers; dev serves odp-9de70f949915), Antigravity presented the complete post-build facts to owner 蔡尚志 in conversation 22399345-f387-4dca-9438-6dcf570c24ea at step_index 8256 (2026-11-27T12:41:52Z): exact candidate 9de70f949915706d1bad1bc25c24b681eeb902e9; manifest sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd and all 4 component digests; CI runs 45989131033 and 45981989694; automatic dev deploy 45996059587; the three explicit gate-2 Data Gate deviations with review_by 2026-12-04 (HD-08w); single-use staging admission/lease/deploy scope plus single-use cleanup of expired superseded staging odp-8e5020a29bad (HD-09w); proxy approval of the GitHub staging environment gates for that single cleanup and single deploy; and two non-deploy production pre-flight settings (artifactregistry.reader on oday-plus-dev and ODP_PRODUCTION_WATCH_CLOSEOUT_URI). At step_index 8257 (2026-11-27T12:52:49Z), owner 蔡尚志 explicitly replied verbatim: '核准 HD-08w、HD-09w、代按本次 staging cleanup 與 staging deploy 環境核准，及補齊上述 2 項正式環境前置設定'.",
+    "interpretation": "Owner 蔡尚志 explicitly approved HD-08w, HD-09w, proxy approval of the GitHub staging environment gates for the single cleanup of expired odp-8e5020a29bad and the single staging deploy of 9de70f949915706d1bad1bc25c24b681eeb902e9, and the two pre-flight IAM/variable bindings in Antigravity conversation 22399345-f387-4dca-9438-6dcf570c24ea at step_index 8257 (2026-11-27T12:52:49Z), after reviewing the completed build/manifest, dev deploy, and deviation terms presented at step_index 8256 (2026-11-27T12:41:52Z). Transcribed by Antigravity; not an external identity-system signature."
+  },
+  "authorized_scope": {
+    "max_release_requests": 1,
+    "max_short_lived_supervisor_leases": 1,
+    "runtime_release_deploy_phases": 1,
+    "superseded_staging_cleanup_phases": 1,
+    "superseded_staging_cleanup_candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+    "allowed_environment": "staging",
+    "external_sources_enabled": false,
+    "production_deployments": false,
+    "github_staging_environment_approval_still_required": true,
+    "supervisor_lease_still_required": true,
+    "github_staging_environment_proxy_approval_authorized": true,
+    "github_staging_environment_proxy_basis": "Conversation 22399345-f387-4dca-9438-6dcf570c24ea step_index 8257 at 2026-11-27T12:52:49Z ('核准 HD-08w、HD-09w、代按本次 staging cleanup 與 staging deploy 環境核准，及補齊上述 2 項正式環境前置設定') for one Runtime Release staging cleanup of 8e5020a29bad92300cce2fe7262e496fb31370b5 and one Runtime Release staging deploy of 9de70f949915706d1bad1bc25c24b681eeb902e9 only."
+  },
+  "recorded_by": "Antigravity (interactive owner-response transcription; no external identity signature claimed)",
+  "evidence": {
+    "exact_ci": "docs/evidence/runtime/ODP-STAGING-ADMISSION-9DE70F949-001/candidate-ci-9de70f949.json",
+    "staging_build_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/45995201655",
+    "dev_deploy_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/45996059587",
+    "previous_staging_cleanup_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/45629190947",
+    "exact_candidate_ci_workflow_urls": [
+      "https://github.com/alfloop-dev/odayplus/actions/runs/45989131033",
+      "https://github.com/alfloop-dev/odayplus/actions/runs/45981989694"
+    ],
+    "included_pull_requests": [
+      "https://github.com/alfloop-dev/odayplus/pull/1762",
+      "https://github.com/alfloop-dev/odayplus/pull/1767",
+      "https://github.com/alfloop-dev/odayplus/pull/1769",
+      "https://github.com/alfloop-dev/odayplus/pull/1770",
+      "https://github.com/alfloop-dev/odayplus/pull/1763",
+      "https://github.com/alfloop-dev/odayplus/pull/1772",
+      "https://github.com/alfloop-dev/odayplus/pull/1771",
+      "https://github.com/alfloop-dev/odayplus/pull/1768"
+    ],
+    "previous_staging_deploy_url": "https://github.com/alfloop-dev/odayplus/actions/runs/45555693188"
+  },
+  "decisions": {
+    "HD-08w": {
+      "decision": "approve",
+      "subject": "gate-2 Data Gate passed-with-deviation for this candidate's staging admission only, review_by 2026-12-04",
+      "accepted_deviations": [
+        "source contract and sample data reviewed: not applicable — the core-ops profile keeps every external source disabled (sources-off attestation in the build manifest: 16 sources audited, all disabled, zero credentials present).",
+        "point-in-time correctness checked for model-ready data: not applicable — core-ops serves no model (release_profile.model_readiness=not_claimed).",
+        "freshness and lineage evidence captured: check_live_production_data.py has never run against this candidate; deferred to the staging verify run and the production gates, not claimed as passed."
+      ]
+    },
+    "HD-09w": {
+      "decision": "approve",
+      "subject": "release.stage=dev-verified, admission_target=staging, decision=go for this exact candidate and the manifest produced by its staging build (plus single-use cleanup of expired superseded staging odp-8e5020a29bad)",
+      "dev_deploy_result": "CI-requested automatic dev deploy 45996059587 succeeded on 9de70f949915706d1bad1bc25c24b681eeb902e9: live E2E 83/83, no blockers, job immutable image bindings passed, and public-egress probe denied as expected."
+    }
+  }
+}
