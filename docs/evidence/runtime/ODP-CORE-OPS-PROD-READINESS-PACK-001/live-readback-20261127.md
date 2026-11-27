@@ -55,7 +55,7 @@
 | # | 事實 | 讀取方式 |
 |---|---|---|
 | L-5.1 | `8e5020a29` 的 staging deploy 成功：Runtime Release run `45555693188`，2026-11-25 | Claude 唯讀讀回 GitHub Actions run |
-| L-5.2 | 但 dev 之後又合併了含程式碼的 #1763、#1769、#1770。ancestry 規則只允許 evidence-only descendant，所以 `8e5020a29` 無法上 production，**不採用** | Claude 依 dev 歷史判斷；ancestry 規則見 `delivery_toolchain/e2e/check_release_gate_registry.py:708`、`:731` |
+| L-5.2 | 但 dev 之後又合併了含程式碼的 #1763、#1769、#1770。ancestry 規則只允許 evidence-only descendant，所以 `8e5020a29` 無法上 production，**不採用** | Claude 依 dev 歷史判斷；ancestry 規則見 `delivery_toolchain/e2e/check_release_gate_registry.py:731`；evidence-only 路徑定義在 `:691-728`（見 `README.md` §1） |
 | L-5.3 | staging release `odp-8e5020a29bad` 的 TTL 已在 2026-11-26 05:48Z 到期 | Claude 唯讀讀回 staging release 標籤 |
 
 repo 內的 registry 仍綁定 `8e5020a29`（`docs/evidence/gates/RELEASE_GATE_REGISTRY.json:15-31`）。run `45555693188` 沒有收進 repo 的 evidence 目錄。

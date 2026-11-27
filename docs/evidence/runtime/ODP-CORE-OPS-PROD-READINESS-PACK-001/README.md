@@ -22,7 +22,7 @@
 - 沒有改本資料夾以外的任何檔案（含 product code、workflow、`docs/evidence/gates/RELEASE_GATE_REGISTRY.json`）。
 - 沒有觸發任何 workflow，沒有呼叫 GCP 或 GitHub 的寫入 API。
 
-所有檔案只放在本資料夾，這是刻意的：production dispatch 的 ref 必須是 candidate 的 evidence-only descendant，改到 `docs/evidence/` 以外的路徑就會讓 candidate 失效（`.github/workflows/deploy-dev.yml:1104-1127`；`delivery_toolchain/e2e/check_release_gate_registry.py:708`、`:731`）。
+所有檔案只放在本資料夾（task 範圍如此規定）。production dispatch 的 ref 必須是 candidate 的 evidence-only descendant（`.github/workflows/deploy-dev.yml:1104-1127` 呼叫 `delivery_toolchain/e2e/check_release_gate_registry.py:731` 的 `check_candidate_ancestry`）。「evidence-only」的路徑由同檔 `is_evidence_path`（`:691-728`）定義：`docs/evidence/`、`docs/release/`、`docs/runbooks/`、`docs/testing/`、`docs/uat/`、`docs/audits/code-boundary-inventory.csv`、`.orchestrator/`、`scripts/orchestrator/` 與 ai-status 看板相關檔案（`:708-726`）。改到這些路徑以外（product code、infra、workflow、`delivery_toolchain/`、dependency lock 等）才會讓 candidate 失效。本包其他檔案說「evidence 以外的路徑」時，都是指這個定義。
 
 ## 2. 檔案索引
 

@@ -67,8 +67,9 @@
 3. 經既有的邀請 API 建立帳號：在 `/operator?view=admin` 的使用者管理畫面操作，或直接呼叫同一個端點 `POST /api/v1/operator/users/invite`（`apps/web/features/operator/UserRoleManagementController.tsx:269`；`apps/api/app/routes/operator_modules/users_roles.py:511-547`）。
    - body：`username`、`email`、`name`、`roles`、`scope`、`lifetime_seconds`（最多 259200 秒，即 72 小時）、`reason`（`users_roles.py:79-90`）。
    - 角色必須是 `Role` enum 的值（`shared/identity/invitation_service.py:179-181`）；tenant 一律取自邀請者（`invitation_service.py:206-220`）。
-   - 回應包含一次性的邀請 token（`users_roles.py:539-540`）。
-4. Claude 把邀請連結交給負責人（以對話傳遞，不寫入 repo）。負責人在 `/auth/invitations` 接受邀請並設定密碼（`apps/web/src/app/auth/invitations/route.ts:177`；`apps/api/app/routes/identity_invitations.py:42-60`）。
+   - 回應包含 `invitation_id` 與一次性的邀請 token（`users_roles.py:539-540`；畫面上的「邀請已建立」對話框也會顯示這兩項，`UserRoleManagementController.tsx:289`、`:898-900`）。token 只顯示一次。
+4. Claude 把 **邀請 ID（`invitation_id`）、邀請 token 與登入名稱（`username`）** 私下交給負責人（以對話傳遞，不寫入 repo、log 或收據）。**不產生邀請連結**：`/auth/invitations` 只要網址帶任何 query string 就回 422 `INVITATION_INPUT_INVALID`（GET `apps/web/src/app/auth/invitations/route.ts:116`、POST `:145`），頁面也明示 token 不得放入網址（`:120`；`UserRoleManagementController.tsx:898`）。
+   負責人開 `https://console-staging.oday-plus.com.tw/auth/invitations`（不帶任何參數），在表單輸入邀請 ID、token、登入名稱，並設定密碼（表單欄位 `route.ts:122-125`；POST 必填 `invitation_id`、`token`、`username`、`password`，`:154`）。Web 轉送到 `/api/v1/auth/invitations/accept`（`route.ts:177`；`apps/api/app/routes/identity_invitations.py:42-60`）。
 5. 負責人首次登入時必須換密碼；換之前 API 回 403 `PASSWORD_CHANGE_REQUIRED`（`apps/api/oday_api/security/dependencies.py:306-332`）。這本身就是 UAT-CO-01。
 6. Claude 記錄建立了哪些帳號（帳號名稱、角色、建立時間），**不記錄**密碼或 token。
 
@@ -83,7 +84,7 @@
 | 區域主管 | `regional_supervisor` | 範圍較窄的營運角色（`rbac.py:144-149`） | §3.2 邀請 |
 | 稽核 | `auditor` | 稽核 VIEW／EXPORT（`rbac.py:189-197`） | §3.2 邀請 |
 | 唯讀 | `operator_viewer` | 唯讀負向案例；必須綁定 tenant（`rbac.py:88-91`；`identity.py:42-43`） | §3.2 邀請 |
-| 無業務權限帳號 | 只有登入、沒有業務角色 | 越權拒絕測試 | §3.2 邀請；邀請 API 要求至少一個角色（`users_roles.py:86`），用哪個最小角色**待確認** |
+| 無業務權限帳號 | 只有登入、沒有業務角色 | 越權拒絕測試 | §3.2 邀請；邀請 API 要求至少一個角色（`users_roles.py:87`），用哪個最小角色**待確認** |
 | 第二租戶的營運帳號 | `operations_manager`，tenant 不同 | 租戶隔離測試 | **staging 做不到**：每個 release 只有一個 tenant，邀請的 tenant 取自邀請者（`invitation_service.py:206-220`）。UAT-CO-11 的處置見 §4 |
 
 ## 4. 測試案例

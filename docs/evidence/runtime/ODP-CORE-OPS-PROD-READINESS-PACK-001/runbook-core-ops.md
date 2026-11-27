@@ -9,7 +9,7 @@
 
 一般事故流程仍依照 `docs/runbooks/incident-management.md` 與 `docs/runbooks/observability-and-runbook.md`。
 
-本文件尚未併入 `docs/runbooks/`。併入需要另開 task 並經審閱；改到 evidence 以外的路徑會讓 candidate 失效（見 `README.md` §1）。
+本文件尚未併入 `docs/runbooks/`。併入需要另開 task 並經審閱。`docs/runbooks/` 屬於 evidence-only 路徑（`delivery_toolchain/e2e/check_release_gate_registry.py:710`），所以併入**不會**讓 candidate 失效，凍結期間也可以合併（定義見 `README.md` §1）。
 
 - 行號以 `origin/dev` @ `48c5271b5d882d824d432f3483ab4415030bb8e6` 為準。
 - GCP／GitHub 現況引用 `live-readback-20261127.md`（`L-…`）；負責人決定 A–H 見同檔 §2。

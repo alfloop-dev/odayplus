@@ -60,7 +60,7 @@ lease issuer 的檔頭仍寫著「還沒有 release 到達 `staging-verified`，
 3. staging 通過後**直接**接 production，中間不再換 candidate。
 4. production 完成後解凍。
 
-**為什麼要凍結：** production dispatch 的 ref E 必須是 C 的 evidence-only descendant（`deploy-dev.yml:1104-1127`；規則在 `check_release_gate_registry.py:708`、`:731`）。凍結期間 dev 若又合併了 evidence 以外的變更，E 就不再合格，必須重建 candidate。鏈 U 正是因此不採用（`L-5.2`）。
+**為什麼要凍結：** production dispatch 的 ref E 必須是 C 的 evidence-only descendant（`deploy-dev.yml:1104-1127`；規則在 `check_release_gate_registry.py:731`；evidence-only 路徑定義在 `:691-728`）。凍結期間 dev 若又合併了 evidence 以外的變更，E 就不再合格，必須重建 candidate。鏈 U 正是因此不採用（`L-5.2`）。
 
 ## 2. 步驟
 

@@ -128,7 +128,7 @@ gcloud run services get-iam-policy "$WEB" --project="$PROJECT" --region="$REGION
 curl -sS -o /dev/null -w '%{http_code}\n' https://console.oday-plus.com.tw/login   # 預期 200
 ```
 
-再以 `runbook-core-ops.md` §2 讀 `/platform/release-identity`，確認 `release_sha` 是前滾 release 的 SHA。
+再以 `runbook-core-ops.md` §2 讀 `/api/v1/platform/release-identity`，確認 `release_sha` 是前滾 release 的 SHA。
 
 **例外路徑：不經新 release 直接重開。** 只有負責人判定原因已排除、舊 release 本身沒有問題時才使用（例如外部依賴暫時故障）：
 
@@ -209,7 +209,7 @@ python3 product_ops/deployment/bluegreen_release.py \
 | 1 | 讀回基準：`gcloud run services get-iam-policy <STAGING_WEB> --project=odayplus-runtime-20260825 --region=<REGION> --format=json`；`curl` `https://console-staging.oday-plus.com.tw/login` | `stg-web-iam-before.json`；HTTP 狀態（預期 200） |
 | 2 | 撤銷：`gcloud run services remove-iam-policy-binding <STAGING_WEB> --member=allUsers --role=roles/run.invoker …` | 命令、開始與結束時間 |
 | 3 | 讀回驗證：IAM policy 沒有 `allUsers`；`curl` 回 401 或 403；量從撤銷到 `curl` 被拒的時間 | `stg-web-iam-after.json`；HTTP 狀態；生效秒數 |
-| 4 | 確認 API、worker、資料不受影響：以 `runbook-core-ops.md` §2 讀 staging 的 `/platform/release-identity`（走 API 的直接路徑） | 讀回內容 |
+| 4 | 確認 API、worker、資料不受影響：以 `runbook-core-ops.md` §2 路徑 B 的方式直接讀 staging API 的 `/api/v1/platform/release-identity`。staging API 的網址取 Terraform output `staging_api_uri`（`infra/terraform/modules/ephemeral_staging/outputs.tf:1-4`；staging verify 也用它，`product_ops/deployment/staging_lifecycle.py:246`）；呼叫者需對 staging API 有 `roles/run.invoker` | 讀回內容 |
 | 5 | 恢復（例外路徑的命令）：`gcloud run services add-iam-policy-binding <STAGING_WEB> --member=allUsers --role=roles/run.invoker …` | 命令與時間 |
 | 6 | 讀回驗證：IAM policy 有 `allUsers`；`curl` 回 200；以 staging 的 `staging-admin` 登入一次 | `stg-web-iam-restored.json`；HTTP 狀態 |
 | 7 | 確認 staging cleanup 前 IAM 已和 Terraform 一致（第 6 步之後即一致），避免 destroy 時與實際狀態不符 | 讀回內容 |

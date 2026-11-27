@@ -90,7 +90,7 @@
 ### HD-05 選定 core-ops candidate SHA，並觸發 staging build
 
 - **狀態**：**已決定**程序（決定 A，2026-11-27）：先在不凍結下備妥文件，再凍結 `ready_dispatcher`，以當時的 dev tip 當 candidate C；staging 通過後直接接 production；完成後解凍。具體 SHA **待選定**，build dispatch **待簽**。
-- **凍結前要先合併的變更**：只要會改到 evidence 以外的路徑，就必須在凍結前合併，否則會讓 C 失效（`deploy-dev.yml:1104-1127`；`check_release_gate_registry.py:708`、`:731`）。目前已知：
+- **凍結前要先合併的變更**：只要會改到 evidence 以外的路徑，就必須在凍結前合併，否則會讓 C 失效（`deploy-dev.yml:1104-1127`；`check_release_gate_registry.py:731`；evidence-only 路徑定義在 `:691-728`）。目前已知：
   - `ODP-PROD-WATCH-RECEIPT-REAL-METRICS-261127`（**pending**，`L-6.2`）。不先合併，C 上線後 `staging_closeout` 只會 defer，staging 不會自動清理。
 - **build 參數**：`phase=build`、`environment=staging`、`release_profile=core-ops`、`initial_release_recovery=true`（`deploy-dev.yml:145-155`；`deployment-plan.md` §2 步驟 1）。
 - **建議決策者**：Release owner／負責人。
