@@ -1,0 +1,552 @@
+{
+  "action": "verify",
+  "release_id": "odp-9de70f949915",
+  "candidate_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+  "manifest_digest_prefix": "964d00090d8516b3",
+  "success": true,
+  "timestamp": "2026-11-27T15:30:40Z",
+  "resources": [
+    {
+      "stage": "db_expand_migration",
+      "success": true,
+      "status": "passed",
+      "details": "Stage db_expand_migration passed verification for odp-9de70f949915",
+      "target_resource": "stg_odp_9de70f949915_5c64b623",
+      "proof": {
+        "job": "stg-odp-9de70f949915-5c64b623-migration",
+        "image_digest": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:42549e1a440f2c9edf78d70e377f26d03f4ab29a91cb93e7406f74ad28496850",
+        "egress": "ALL_TRAFFIC",
+        "execution": "succeeded"
+      }
+    },
+    {
+      "stage": "data_platform_snapshot",
+      "success": true,
+      "status": "passed",
+      "details": "Stage data_platform_snapshot passed verification for odp-9de70f949915",
+      "target_resource": "stg-odp-9de70f94-5c64b623-data-odayplus-runtime-20260825",
+      "proof": {
+        "endpoint": "https://stg-odp-9de70f949915-5c64b623-api-2l6wuyl67q-de.a.run.app/platform/health",
+        "status": "verified"
+      }
+    },
+    {
+      "stage": "api_web_authenticated_smoke",
+      "success": true,
+      "status": "passed",
+      "details": "Stage api_web_authenticated_smoke passed verification for odp-9de70f949915",
+      "target_resource": "stg-odp-9de70f949-5c64b623-rt@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "proof": {
+        "endpoint": "https://stg-odp-9de70f949915-5c64b623-web-2l6wuyl67q-de.a.run.app/operator",
+        "status": "verified",
+        "release_profile": {
+          "name": "core-ops",
+          "verified": true,
+          "model_checks": [
+            "runtime:model_limitation_reported",
+            "runtime:model_capability:avm",
+            "runtime:model_capability:forecastops",
+            "runtime:model_capability:heatzone",
+            "runtime:model_capability:sitescore",
+            "runtime:model_no_surrogate_markers",
+            "models:registry_refused",
+            "models:no_surrogate_markers"
+          ]
+        }
+      }
+    },
+    {
+      "stage": "web_custom_domain",
+      "success": true,
+      "status": "passed",
+      "details": "Stage web_custom_domain passed verification for odp-9de70f949915",
+      "target_resource": "stg-odp-9de70f949-5c64b623-rt@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "proof": {
+        "endpoint": "https://console-staging.oday-plus.com.tw/operator",
+        "status": "verified",
+        "custom_domain": {
+          "host": "console-staging.oday-plus.com.tw",
+          "load_balancer": "oday-staging-web-lb",
+          "address": "8.232.196.105",
+          "ssl_policy": "oday-staging-web-lb",
+          "min_tls_version": "TLS_1_2",
+          "dns": [
+            "8.232.196.105"
+          ],
+          "certificate": "oday-staging-web-lb-979243f1",
+          "certificate_status": "ACTIVE",
+          "domain_status": "ACTIVE",
+          "network_endpoint_group": "stg-odp-9de70f949915-5c64b623-web-neg"
+        }
+      }
+    },
+    {
+      "stage": "worker_idempotency",
+      "success": true,
+      "status": "passed",
+      "details": "Stage worker_idempotency passed verification for odp-9de70f949915",
+      "target_resource": "stg-odp-9de70f949-5c64b623-rt@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "proof": {
+        "job": "stg-odp-9de70f949915-5c64b623-worker",
+        "execution": "succeeded",
+        "status": "verified",
+        "worker_idempotency": {
+          "ok": true,
+          "checks": [
+            {
+              "name": "worker:enqueue",
+              "ok": true
+            },
+            {
+              "name": "worker:idempotent_replay",
+              "ok": true
+            },
+            {
+              "name": "worker:drain_trigger",
+              "ok": true
+            },
+            {
+              "name": "worker:terminal_disabled",
+              "ok": true
+            },
+            {
+              "name": "audit:durable_receipt",
+              "ok": true
+            },
+            {
+              "name": "audit:idempotent_replay_receipt",
+              "ok": true
+            },
+            {
+              "name": "audit:receipt_integrity",
+              "ok": true
+            },
+            {
+              "name": "audit:no_surrogate_markers",
+              "ok": true
+            }
+          ],
+          "terminal_status": "succeeded",
+          "expected_terminal_status": "succeeded",
+          "secret_values_redacted": true
+        }
+      }
+    },
+    {
+      "stage": "scheduler_oneshot",
+      "success": true,
+      "status": "passed",
+      "details": "Stage scheduler_oneshot passed verification for odp-9de70f949915",
+      "target_resource": "stg-odp-9de70f949-5c64b623-rt@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "proof": {
+        "job": "stg-odp-9de70f949915-5c64b623-scheduler",
+        "image_digest": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:3a76179ae40ff68df2b6c3a0470243a791888314b596b85971a22307f2749105",
+        "egress": "ALL_TRAFFIC",
+        "execution": "succeeded"
+      }
+    },
+    {
+      "stage": "backup_restore_drill",
+      "success": true,
+      "status": "passed",
+      "details": "Stage backup_restore_drill passed verification for odp-9de70f949915",
+      "target_resource": "stg-odp-9de70f949-5c64b623-rt@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "proof": {
+        "backup_uri": "gs://stg-odp-9de70f94-5c64b623-data-odayplus-runtime-20260825/rehearsal/odp-9de70f949915/database.sql",
+        "restore": "succeeded"
+      }
+    },
+    {
+      "stage": "rollback_rehearsal",
+      "success": true,
+      "status": "passed",
+      "details": "Stage rollback_rehearsal passed verification for odp-9de70f949915",
+      "target_resource": "stg-odp-9de70f949-5c64b623-rt@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "proof": {
+        "restore": "succeeded",
+        "traffic_pointer": "rollback_target_restored_and_read_back",
+        "rollback_targets": [
+          {
+            "service": "stg-odp-9de70f949915-5c64b623-api",
+            "rollback_target": [
+              "stg-odp-9de70f949915-5c64b623-api-00001-kgx"
+            ],
+            "rehearsal_revision": "stg-odp-9de70f949915-5c64b623-api-rb-5c64b623-9de70f94",
+            "health_readback": "verified",
+            "traffic_pointer": "rollback_target_restored_and_read_back",
+            "restore": "succeeded"
+          },
+          {
+            "service": "stg-odp-9de70f949915-5c64b623-web",
+            "rollback_target": [
+              "stg-odp-9de70f949915-5c64b623-web-00001-xf8"
+            ],
+            "rehearsal_revision": "stg-odp-9de70f949915-5c64b623-web-rb-5c64b623-9de70f94",
+            "health_readback": "verified",
+            "traffic_pointer": "rollback_target_restored_and_read_back",
+            "restore": "succeeded"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "public_egress_denied_probe",
+      "success": true,
+      "status": "passed",
+      "details": "Stage public_egress_denied_probe passed verification for odp-9de70f949915",
+      "target_resource": "stg-odp-9de70f949-5c64b623-rt@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "proof": {
+        "job": "stg-odp-9de70f949915-5c64b623-worker",
+        "image_digest": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:42549e1a440f2c9edf78d70e377f26d03f4ab29a91cb93e7406f74ad28496850",
+        "egress": "ALL_TRAFFIC",
+        "execution": "succeeded",
+        "status": "denied",
+        "probe": "public_egress_denied"
+      }
+    },
+    {
+      "stage": "external_providers_disabled_readback",
+      "success": true,
+      "status": "passed",
+      "details": "Stage external_providers_disabled_readback passed verification for odp-9de70f949915",
+      "target_resource": "stg_odp_9de70f949915_5c64b623",
+      "proof": {
+        "endpoint": "https://stg-odp-9de70f949915-5c64b623-api-2l6wuyl67q-de.a.run.app/readiness",
+        "status": "verified"
+      }
+    },
+    {
+      "stage": "live_e2e_gate",
+      "success": true,
+      "status": "passed",
+      "details": "Stage live_e2e_gate passed verification for odp-9de70f949915",
+      "target_resource": "stg-odp-9de70f949-5c64b623-rt@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "proof": {
+        "status": "verified",
+        "admin_bootstrap": {
+          "job": "stg-odp-9de70f949915-5c64b623-admin-bootstrap",
+          "execution": "succeeded"
+        },
+        "live_e2e_gate": {
+          "ok": true,
+          "release_profile": {
+            "name": "core-ops",
+            "model_readiness_claimed": false,
+            "full_product_acceptance_claimed": false
+          },
+          "checks": [
+            {
+              "name": "config:api_url",
+              "ok": true
+            },
+            {
+              "name": "config:web_url",
+              "ok": true
+            },
+            {
+              "name": "config:expected_sha",
+              "ok": true
+            },
+            {
+              "name": "config:operator_credential",
+              "ok": true
+            },
+            {
+              "name": "config:api_transport_credential",
+              "ok": true
+            },
+            {
+              "name": "config:operator_role",
+              "ok": true
+            },
+            {
+              "name": "config:external_provider_mode",
+              "ok": true
+            },
+            {
+              "name": "config:required_providers",
+              "ok": true
+            },
+            {
+              "name": "config:provider_registry_known",
+              "ok": true
+            },
+            {
+              "name": "config:snapshot_providers",
+              "ok": true
+            },
+            {
+              "name": "config:worker_probe_provider",
+              "ok": true
+            },
+            {
+              "name": "config:expected_deployment",
+              "ok": true
+            },
+            {
+              "name": "config:worker_polling",
+              "ok": true
+            },
+            {
+              "name": "config:release_profile",
+              "ok": true
+            },
+            {
+              "name": "config:release_profile_deployment",
+              "ok": true
+            },
+            {
+              "name": "config:dev_admin_account",
+              "ok": true
+            },
+            {
+              "name": "config:dev_admin_denied_role",
+              "ok": true
+            },
+            {
+              "name": "release:platform_version",
+              "ok": true
+            },
+            {
+              "name": "release:no_surrogate_markers",
+              "ok": true
+            },
+            {
+              "name": "runtime:readiness",
+              "ok": true
+            },
+            {
+              "name": "runtime:persistence",
+              "ok": true
+            },
+            {
+              "name": "runtime:release_profile",
+              "ok": true
+            },
+            {
+              "name": "runtime:provider_mode_alignment",
+              "ok": true
+            },
+            {
+              "name": "runtime:provider",
+              "ok": true
+            },
+            {
+              "name": "runtime:model_limitation_reported",
+              "ok": true
+            },
+            {
+              "name": "runtime:provider_probe",
+              "ok": true
+            },
+            {
+              "name": "runtime:model_capability:avm",
+              "ok": true
+            },
+            {
+              "name": "runtime:model_capability:forecastops",
+              "ok": true
+            },
+            {
+              "name": "runtime:model_capability:heatzone",
+              "ok": true
+            },
+            {
+              "name": "runtime:model_capability:sitescore",
+              "ok": true
+            },
+            {
+              "name": "runtime:data_origin",
+              "ok": true
+            },
+            {
+              "name": "runtime:no_blocking_reasons",
+              "ok": true
+            },
+            {
+              "name": "runtime:no_surrogate_markers",
+              "ok": true
+            },
+            {
+              "name": "auth:anonymous_denied",
+              "ok": true
+            },
+            {
+              "name": "auth:operator_bootstrap",
+              "ok": true
+            },
+            {
+              "name": "auth:operator_bootstrap:provenance",
+              "ok": true
+            },
+            {
+              "name": "auth:web_operator_requires_login",
+              "ok": true
+            },
+            {
+              "name": "models:registry_refused",
+              "ok": true
+            },
+            {
+              "name": "models:no_surrogate_markers",
+              "ok": true
+            },
+            {
+              "name": "worker:enqueue",
+              "ok": true
+            },
+            {
+              "name": "worker:idempotent_replay",
+              "ok": true
+            },
+            {
+              "name": "worker:drain_trigger",
+              "ok": true
+            },
+            {
+              "name": "worker:terminal_disabled",
+              "ok": true
+            },
+            {
+              "name": "audit:durable_receipt",
+              "ok": true
+            },
+            {
+              "name": "audit:idempotent_replay_receipt",
+              "ok": true
+            },
+            {
+              "name": "audit:receipt_integrity",
+              "ok": true
+            },
+            {
+              "name": "audit:no_surrogate_markers",
+              "ok": true
+            },
+            {
+              "name": "data:ingestion_runs",
+              "ok": true
+            },
+            {
+              "name": "data:no_surrogate_markers",
+              "ok": true
+            },
+            {
+              "name": "session:anonymous_session_denied",
+              "ok": true
+            },
+            {
+              "name": "session:anonymous_api_denied",
+              "ok": true
+            },
+            {
+              "name": "session:invalid_credentials_refused",
+              "ok": true
+            },
+            {
+              "name": "session:must_change_enforced",
+              "ok": true
+            },
+            {
+              "name": "session:first_login_password_rotated",
+              "ok": true
+            },
+            {
+              "name": "session:password_login",
+              "ok": true
+            },
+            {
+              "name": "session:session_resolves_account",
+              "ok": true
+            },
+            {
+              "name": "admin:identity_user_list",
+              "ok": true
+            },
+            {
+              "name": "admin:bootstrap_audited",
+              "ok": true
+            },
+            {
+              "name": "admin:bootstrap_principal_bound",
+              "ok": true
+            },
+            {
+              "name": "session:cross_tenant_denied",
+              "ok": true
+            },
+            {
+              "name": "admin:foreign_tenant_unmodified_readback",
+              "ok": true
+            },
+            {
+              "name": "admin:business_shell_denied",
+              "ok": true
+            },
+            {
+              "name": "session:wrong_role_denied",
+              "ok": true
+            },
+            {
+              "name": "admin:admin_page_served",
+              "ok": true
+            },
+            {
+              "name": "session:logout",
+              "ok": true
+            },
+            {
+              "name": "session:revoked_session_refused",
+              "ok": true
+            },
+            {
+              "name": "admin:logout_revokes_admin_api",
+              "ok": true
+            },
+            {
+              "name": "session:html_form_invalid_redirect",
+              "ok": true
+            },
+            {
+              "name": "session:html_form_password_login",
+              "ok": true
+            },
+            {
+              "name": "session:html_form_session_resolves_account",
+              "ok": true
+            },
+            {
+              "name": "admin:html_form_admin_page_served",
+              "ok": true
+            },
+            {
+              "name": "session:html_form_logout",
+              "ok": true
+            },
+            {
+              "name": "session:html_form_revoked_session_refused",
+              "ok": true
+            }
+          ],
+          "blocking_dependencies": [],
+          "full_acceptance_status": "NOT_ADMITTED",
+          "secret_values_redacted": true
+        }
+      }
+    }
+  ],
+  "errors": [],
+  "remediation_required": false,
+  "remediation_notes": "Staging rehearsal verification completed successfully.",
+  "metadata": {
+    "dry_run": false,
+    "secret_values_redacted": true,
+    "external_sources_expected_enabled": [],
+    "public_egress": "default_deny",
+    "identity_scope": "release_scoped_least_privilege",
+    "staging_runtime_sa": "stg-odp-9de70f949-5c64b623-rt@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "staging_web_sa": "stg-odp-9de70f949-5c64b623-web@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "stages_count": 11,
+    "remote_state_verified": true
+  }
+}

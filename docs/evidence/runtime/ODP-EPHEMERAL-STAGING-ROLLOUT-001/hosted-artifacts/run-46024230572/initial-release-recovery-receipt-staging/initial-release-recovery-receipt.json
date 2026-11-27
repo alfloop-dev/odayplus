@@ -1,0 +1,62 @@
+{
+  "absence_readback": {
+    "kind": "runtime-release-target-absence-readback",
+    "probe_command": "gcloud run services list --format=value(metadata.name); gcloud run jobs list --format=value(metadata.name)",
+    "project": "odayplus-runtime-20260825",
+    "region": "asia-east1",
+    "target_environment": "staging",
+    "targets": [
+      {
+        "component": "api",
+        "exists": false,
+        "resource_kind": "cloud-run-service",
+        "resource_name": "stg-odp-9de70f949915-5c64b623-api",
+        "serving_traffic": false
+      },
+      {
+        "component": "migration",
+        "exists": false,
+        "resource_kind": "cloud-run-job",
+        "resource_name": "stg-odp-9de70f949915-5c64b623-migration",
+        "serving_traffic": false
+      },
+      {
+        "component": "scheduler",
+        "exists": false,
+        "resource_kind": "cloud-run-job",
+        "resource_name": "stg-odp-9de70f949915-5c64b623-scheduler",
+        "serving_traffic": false
+      },
+      {
+        "component": "web",
+        "exists": false,
+        "resource_kind": "cloud-run-service",
+        "resource_name": "stg-odp-9de70f949915-5c64b623-web",
+        "serving_traffic": false
+      },
+      {
+        "component": "worker",
+        "exists": false,
+        "resource_kind": "cloud-run-job",
+        "resource_name": "stg-odp-9de70f949915-5c64b623-worker",
+        "serving_traffic": false
+      }
+    ]
+  },
+  "binding_digest": "sha256:1ee7e760d1ff396e164b18ab69f7d3b0f02f54f380b7b495685f040c666b49b0",
+  "candidate_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+  "environment": "staging",
+  "kind": "initial-release-recovery-verification",
+  "manifest_digest": "sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd",
+  "observed_at": "2026-11-27T15:23:48+00:00",
+  "recovery_actions": [
+    "hold-release-scoped-namespace-for-forensics",
+    "cleanup-release-scoped-namespace-after-ttl"
+  ],
+  "recovery_method": "forensic-hold-release-scoped-namespace",
+  "release_id": "odp-9de70f949915",
+  "rollback_target_available": false,
+  "schema_version": 1,
+  "target_environment": "staging",
+  "verified_absent": true
+}

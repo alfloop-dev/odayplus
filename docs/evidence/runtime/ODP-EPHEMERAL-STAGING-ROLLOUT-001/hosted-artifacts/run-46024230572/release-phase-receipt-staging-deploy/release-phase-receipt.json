@@ -1,0 +1,26 @@
+{
+  "receipt_kind": "runtime-release-phase-precheck",
+  "schema_version": 1,
+  "verifier": "delivery_toolchain/release/check_release_phase.py",
+  "phase": "deploy",
+  "environment": "staging",
+  "release_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+  "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+  "admitted": true,
+  "checked_at": "2026-11-27T15:22:05+00:00",
+  "lease_supplied": true,
+  "release_profile": "full",
+  "image_handoff": {
+    "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api@sha256:c67086c8b349d11967a3baf53cfaf0e339938252b1006cdd4eb40ee5a413da73",
+    "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:5db31d30e98b9728048688fe05a2ac2da7a27978e6159531db127376a112c540",
+    "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:42549e1a440f2c9edf78d70e377f26d03f4ab29a91cb93e7406f74ad28496850",
+    "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:3a76179ae40ff68df2b6c3a0470243a791888314b596b85971a22307f2749105"
+  },
+  "manifest_handoff": {
+    "run_id": "45995201655",
+    "manifest_digest": "sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd"
+  },
+  "blockers_zh_tw": [],
+  "summary_zh_tw": "deploy 階段前置條件全部通過；release_sha=9de70f949915706d1bad1bc25c24b681eeb902e9、environment=staging。",
+  "secret_values_redacted": true
+}
