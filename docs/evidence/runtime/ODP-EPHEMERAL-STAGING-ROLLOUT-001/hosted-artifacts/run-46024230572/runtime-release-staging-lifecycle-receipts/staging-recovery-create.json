@@ -1,0 +1,39 @@
+{
+  "release_id": "odp-9de70f949915",
+  "candidate_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+  "manifest_digest": "sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd",
+  "phase": "create",
+  "status": "created",
+  "run_attempt": "46024230572-1",
+  "secret_values_redacted": true,
+  "objects": [
+    {
+      "object_uri": "gs://oday-staging-recovery-odayplus-runtime-20260825/oday-plus/ephemeral-staging/odp-9de70f949915/bundle/odp-9de70f949915-5c64b623.tfvars.json",
+      "generation": "1795793407920432",
+      "content_sha256": "49234e7deef351ab72d8c5ebfa64b3a7d9529c0f5681cc3371a693aac09deed8",
+      "size_bytes": 1860,
+      "verified_at": "2026-11-27T15:30:12Z"
+    },
+    {
+      "object_uri": "gs://oday-staging-recovery-odayplus-runtime-20260825/oday-plus/ephemeral-staging/odp-9de70f949915/bundle/odp-9de70f949915-5c64b623.inventory.json",
+      "generation": "1795793415567418",
+      "content_sha256": "17c493c4d3320234dde3211ead64536666f44cab2386372d8d103ffe1ff6bb4a",
+      "size_bytes": 20347,
+      "verified_at": "2026-11-27T15:30:18Z"
+    },
+    {
+      "object_uri": "gs://oday-staging-recovery-odayplus-runtime-20260825/oday-plus/ephemeral-staging/odp-9de70f949915/bundle/odp-9de70f949915-5c64b623.lifecycle.json",
+      "generation": "1795793421076706",
+      "content_sha256": "bfd38f3e89909d915f9952e9fb27bc8b999325f6d6f1b07919908eb0928f1d0b",
+      "size_bytes": 7251,
+      "verified_at": "2026-11-27T15:30:24Z"
+    },
+    {
+      "object_uri": "gs://oday-staging-recovery-odayplus-runtime-20260825/oday-plus/ephemeral-staging/odp-9de70f949915/bundle/staging-terraform-outputs.json",
+      "generation": "1795793427776253",
+      "content_sha256": "d7cb7b901da8b2e56ba6017be99d75596a188351edc0872c18eab48f7388a2ca",
+      "size_bytes": 5731,
+      "verified_at": "2026-11-27T15:30:30Z"
+    }
+  ]
+}

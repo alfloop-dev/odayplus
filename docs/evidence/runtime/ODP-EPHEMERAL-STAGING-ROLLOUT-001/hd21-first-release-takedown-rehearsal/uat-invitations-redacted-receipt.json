@@ -1,0 +1,60 @@
+{
+  "kind": "core-ops-staging-uat-invitations",
+  "schema_version": 1,
+  "release_id": "odp-9de70f949915",
+  "candidate_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+  "environment": "staging",
+  "web_url": "https://console-staging.oday-plus.com.tw",
+  "issued_by": "staging-admin (executed by Antigravity via deborah.lu@dev.cctech-support.com per HD-13/HD-32)",
+  "tokens_persisted": false,
+  "accounts": [
+    {
+      "username": "uat-ops-manager",
+      "display_name": "UAT 營運主管",
+      "roles": [
+        "operations_manager"
+      ],
+      "invitation_id": "e7eb6e89-54fc-485f-a959-d535a4aefc92",
+      "tenant_id": "7bdc9434-4223-5862-95ab-072a507181c9",
+      "created_at": "2026-11-27T22:52:32Z",
+      "expires_at": "2026-11-28T22:52:32.379597+00:00",
+      "audit_event_id": "456f15bd-b4bc-47c2-8bd5-c92a3255bb80"
+    },
+    {
+      "username": "uat-reg-supervisor",
+      "display_name": "UAT 區域主管",
+      "roles": [
+        "regional_supervisor"
+      ],
+      "invitation_id": "3f0f755b-81c6-40ae-8dba-d71182620cc9",
+      "tenant_id": "7bdc9434-4223-5862-95ab-072a507181c9",
+      "created_at": "2026-11-27T22:52:32Z",
+      "expires_at": "2026-11-28T22:52:32.479549+00:00",
+      "audit_event_id": "bfa8f503-57d8-407e-8056-4b7bc233a12a"
+    },
+    {
+      "username": "uat-auditor",
+      "display_name": "UAT 稽核員",
+      "roles": [
+        "auditor"
+      ],
+      "invitation_id": "b22f3a05-bee9-4c32-93db-ce3f54ae13fa",
+      "tenant_id": "7bdc9434-4223-5862-95ab-072a507181c9",
+      "created_at": "2026-11-27T22:52:32Z",
+      "expires_at": "2026-11-28T22:52:32.571616+00:00",
+      "audit_event_id": "d874bde5-a508-4070-9f53-a3efeb88fff3"
+    },
+    {
+      "username": "uat-viewer",
+      "display_name": "UAT 唯讀觀察員",
+      "roles": [
+        "operator_viewer"
+      ],
+      "invitation_id": "f17a9346-1bd7-4c76-a0a3-761ff3f196d9",
+      "tenant_id": "7bdc9434-4223-5862-95ab-072a507181c9",
+      "created_at": "2026-11-27T22:52:32Z",
+      "expires_at": "2026-11-28T22:52:32.656862+00:00",
+      "audit_event_id": "404597e5-7335-45bd-803d-696c370a0a54"
+    }
+  ]
+}

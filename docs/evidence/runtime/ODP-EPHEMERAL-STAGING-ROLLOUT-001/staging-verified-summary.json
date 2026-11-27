@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "kind": "ephemeral-staging-verified-summary",
+  "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+  "release_id": "odp-9de70f949915",
+  "release_profile": "core-ops",
+  "candidate_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+  "manifest_digest": "sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd",
+  "staging_build_run_id": 45995201655,
+  "staging_deploy_run_id": 46024230572,
+  "prior_expired_staging_cleanup_run_id": 46020319575,
+  "lease": {
+    "lease_id": "lease-56ee417e9b6e02dae2b11bbf0e9f185f",
+    "approval_id": "HUMANOPS-STAGING-LEASE-20261127W-R2",
+    "admitted": true,
+    "verified_at": "2026-11-27T15:24:23+00:00"
+  },
+  "immutable_component_digests": {
+    "api": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api@sha256:c67086c8b349d11967a3baf53cfaf0e339938252b1006cdd4eb40ee5a413da73"
+    },
+    "migration": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:42549e1a440f2c9edf78d70e377f26d03f4ab29a91cb93e7406f74ad28496850",
+      "shares_image_with": "worker"
+    },
+    "scheduler": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:3a76179ae40ff68df2b6c3a0470243a791888314b596b85971a22307f2749105"
+    },
+    "web": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:5db31d30e98b9728048688fe05a2ac2da7a27978e6159531db127376a112c540"
+    },
+    "worker": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:42549e1a440f2c9edf78d70e377f26d03f4ab29a91cb93e7406f74ad28496850"
+    }
+  },
+  "rehearsal_11_stages": {
+    "stages_count": 11,
+    "success": true,
+    "errors": [],
+    "remote_state_verified": true,
+    "external_sources_expected_enabled": [],
+    "public_egress": "default_deny",
+    "remote_staging_proof": "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/hosted-artifacts/run-46024230572/runtime-release-staging-validation/remote-staging-proof/staging-46024230572.json"
+  },
+  "custom_domain_and_auth": {
+    "web_hostname": "console-staging.oday-plus.com.tw",
+    "https_verified": true,
+    "oauth_callback_status": "not-applicable",
+    "oauth_callback_decision_ref": "D15 (Google OAuth disabled; auth_mode=local password sign-in verified in live_e2e_gate and HD-21 post-restore staging-admin sign-in)",
+    "password_login_verified": true
+  },
+  "recovery_storage_and_bundles": {
+    "prerequisite_readiness_ref": "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/recovery-storage-readiness.json",
+    "initial_lifecycle_bundle": {
+      "object_uri": "gs://oday-staging-recovery-odayplus-runtime-20260825/oday-plus/ephemeral-staging/odp-9de70f949915/bundle/odp-9de70f949915-5c64b623.lifecycle.json",
+      "generation": "1795793421076706",
+      "content_sha256": "bfd38f3e89909d915f9952e9fb27bc8b999325f6d6f1b07919908eb0928f1d0b"
+    },
+    "verified_final_bundles": [
+      {
+        "object_uri": "gs://oday-staging-recovery-odayplus-runtime-20260825/oday-plus/ephemeral-staging/odp-9de70f949915/bundle/hold-46024230572-1-odp-9de70f949915-5c64b623.lifecycle.json",
+        "generation": "1795794185986489",
+        "content_sha256": "0df87f04c4075ed4331d9616fe9dd0a8426e9dde58053b9f20d3e17228e5beff",
+        "size_bytes": 6803,
+        "verified_at": "2026-11-27T15:43:10Z"
+      }
+    ],
+    "hd21_first_release_takedown_rehearsal": "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/hd21-first-release-takedown-rehearsal/hd21-staging-takedown-rehearsal-receipt.json"
+  },
+  "lifecycle_retention_and_cleanup": {
+    "superseded_release_cleanup_proof": "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/hosted-artifacts/run-46020319575/runtime-release-staging-retained-cleanup-receipts/staging-lifecycle-cleanup.json",
+    "current_release_disposition": "Live on console-staging.oday-plus.com.tw awaiting production watch-window closeout (staging_closeout) or TTL cleanup"
+  }
+}

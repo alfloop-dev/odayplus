@@ -1,0 +1,70 @@
+{
+  "kind": "first-release-web-public-access-takedown-rehearsal",
+  "schema_version": 1,
+  "plan_reference": "docs/evidence/runtime/ODP-CORE-OPS-PROD-READINESS-PACK-001/rollback-plan.md#5.1",
+  "decision_reference": "Decision D / HD-21 / HD-32 (owner 蔡尚志 confirmed 2026-11-27T22:41:31Z)",
+  "executor_identity": "deborah.lu@dev.cctech-support.com",
+  "project": "odayplus-runtime-20260825",
+  "region": "asia-east1",
+  "release_id": "odp-9de70f949915",
+  "candidate_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+  "manifest_digest": "sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd",
+  "web_service": "stg-odp-9de70f949915-5c64b623-web",
+  "web_custom_domain": "https://console-staging.oday-plus.com.tw",
+  "baseline": {
+    "iam_file": "stg-web-iam-before.json",
+    "traffic_file": "stg-web-traffic-before.txt",
+    "all_users_invoker": true,
+    "login_http_status": 200
+  },
+  "revoke": {
+    "started_at": "2026-11-27T22:50:48Z",
+    "command_completed_at": "2026-11-27T22:50:51Z",
+    "iam_file": "stg-web-iam-after.json",
+    "all_users_invoker": false,
+    "login_http_status": 403,
+    "observed_at": "2026-11-27T22:52:23Z",
+    "propagation_seconds": 94.62
+  },
+  "api_unaffected_during_revoke": {
+    "api_url": "https://stg-odp-9de70f949915-5c64b623-api-2l6wuyl67q-de.a.run.app",
+    "http_status": 200,
+    "release_identity": {
+      "status": "ok",
+      "service": "oday-api",
+      "api_version": "0.1.0",
+      "release_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+      "time": "2026-11-27T22:52:24.692366+00:00",
+      "correlation_id": "b912599e-a7a7-4a3a-8dd8-430ce56f1933",
+      "release_profile": "core-ops",
+      "release_profile_valid": true,
+      "manifest_digest": ""
+    }
+  },
+  "restore": {
+    "started_at": "2026-11-27T22:52:24Z",
+    "command_completed_at": "2026-11-27T22:52:26Z",
+    "iam_file": "stg-web-iam-restored.json",
+    "all_users_invoker": true,
+    "iam_bindings_match_baseline": true,
+    "login_http_status": 200,
+    "observed_at": "2026-11-27T22:52:28Z",
+    "propagation_seconds": 4.21,
+    "staging_admin_login_http_status": 303,
+    "web_bff_release_identity": {
+      "status": "ok",
+      "service": "oday-api",
+      "api_version": "0.1.0",
+      "release_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+      "time": "2026-11-27T22:52:30.356636+00:00",
+      "correlation_id": "c3cce6f4-0a02-4ef6-9d13-a7b41d500470",
+      "release_profile": "core-ops",
+      "release_profile_valid": true,
+      "manifest_digest": "",
+      "web_release_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+      "web_release_profile": "core-ops",
+      "web_manifest_digest": ""
+    }
+  },
+  "result": "pass"
+}

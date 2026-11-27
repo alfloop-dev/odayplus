@@ -1,0 +1,245 @@
+{
+  "checks": [
+    {
+      "detail": "configured",
+      "name": "env:ODP_STAGING_DEPLOY_URL",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "env:ODP_STAGING_API_URL",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "env:ODP_STAGING_SECRET_OWNER",
+      "ok": true
+    },
+    {
+      "detail": "configured",
+      "name": "env:ODP_STAGING_OPERATOR_IDENTITY",
+      "ok": true
+    },
+    {
+      "detail": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+      "name": "expected_sha",
+      "ok": true
+    },
+    {
+      "detail": "audience=https://stg-odp-9de70f949915-5c64b623-api-2l6wuyl67q-de.a.run.app",
+      "name": "auth:identity_token",
+      "ok": true
+    },
+    {
+      "detail": "status=ok correlation_id=corr-staging-46024230572",
+      "name": "smoke:/platform/health",
+      "ok": true
+    },
+    {
+      "detail": "release_sha=9de70f949915706d1bad1bc25c24b681eeb902e9",
+      "name": "smoke:/platform/version",
+      "ok": true
+    }
+  ],
+  "correlation_id": "corr-staging-46024230572",
+  "expected_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+  "generated_at": "2026-11-27T15:43:00Z",
+  "health": {
+    "correlation_id": "corr-staging-46024230572",
+    "data_mode": "live",
+    "dependencies": {
+      "database": "healthy",
+      "external_providers": {
+        "checked_at": null,
+        "configuration_errors": [],
+        "configuration_valid": true,
+        "connectivity_healthy": false,
+        "expires_at": null,
+        "mode": "disabled",
+        "probes": [],
+        "required_provider_ids": [],
+        "status": "disabled"
+      },
+      "job_queue": "healthy (durable postgresql job queue)"
+    },
+    "modes": {
+      "data": {
+        "blockingReasons": [],
+        "liveReady": true,
+        "mode": "live",
+        "operatorRepositoryProbe": {
+          "checkedAt": "2026-11-27T15:43:01.438381+00:00",
+          "errors": [],
+          "persistenceMode": "postgresql",
+          "ready": true,
+          "repository": "OperatorLiveRepository"
+        },
+        "operatorRepositoryReady": true,
+        "origin": {
+          "completeness": "request-scoped",
+          "kind": "authoritative",
+          "persistenceMode": "postgresql",
+          "repository": "OperatorLiveRepository",
+          "sourceId": "operator-live-repository"
+        }
+      },
+      "deploymentMode": "staging",
+      "models": {
+        "autoSeeded": false,
+        "blockingReasons": [
+          "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
+        ],
+        "capabilities": {
+          "avm": {
+            "available": false,
+            "error": null,
+            "governedDisabled": true,
+            "governedDisabledEvidence": {
+              "activationGate": "Requires >= 120 eligible labeled PG16 rows in model_ready.valuation_view (mature realized transaction outcomes) and independent label-authority approval",
+              "activationThreshold": 120,
+              "autoSeeded": false,
+              "eligibleCount": 0,
+              "inventoryVersion": "pg16-production-model-inventory-2026-07-25-v1",
+              "observedAt": "2026-07-25T15:20:00Z",
+              "observedCount": 0,
+              "owner": "avm-platform-team",
+              "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+              "sourceContract": "model_ready.valuation_view@valuation-view-v1"
+            },
+            "modelName": "dealroom_avm",
+            "outcomeContractRequired": true,
+            "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+            "requiredForPlatformReadiness": true,
+            "service": "avm",
+            "trainable": true,
+            "trainingSpecKey": "avm"
+          },
+          "forecastops": {
+            "available": false,
+            "error": "MLFLOW_TRACKING_URI is required for production model execution",
+            "governedDisabled": false,
+            "governedDisabledEvidence": null,
+            "modelName": "forecast_revenue_interval",
+            "outcomeContractRequired": true,
+            "reasonCode": "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE",
+            "requiredForPlatformReadiness": true,
+            "service": "forecastops",
+            "trainable": true,
+            "trainingSpecKey": "forecastops"
+          },
+          "heatzone": {
+            "available": false,
+            "error": null,
+            "governedDisabled": true,
+            "governedDisabledEvidence": {
+              "activationGate": "Requires >= 200 eligible labeled PG16 rows in model_ready.heatzone_training_view (approved immutable opened_on authority) and independent label-authority approval",
+              "activationThreshold": 200,
+              "autoSeeded": false,
+              "eligibleCount": 0,
+              "inventoryVersion": "pg16-production-model-inventory-2026-07-25-v1",
+              "observedAt": "2026-07-25T15:20:00Z",
+              "observedCount": 0,
+              "owner": "heatzone-platform-team",
+              "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+              "sourceContract": "model_ready.heatzone_training_view@heatzone-training-view-v2"
+            },
+            "modelName": "heatzone_priority",
+            "outcomeContractRequired": true,
+            "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+            "requiredForPlatformReadiness": true,
+            "service": "heatzone",
+            "trainable": true,
+            "trainingSpecKey": "heatzone"
+          },
+          "sitescore": {
+            "available": false,
+            "error": null,
+            "governedDisabled": true,
+            "governedDisabledEvidence": {
+              "activationGate": "Requires >= 200 eligible labeled PG16 rows in model_ready.candidate_site_view and independent label-authority approval",
+              "activationThreshold": 200,
+              "autoSeeded": false,
+              "eligibleCount": 0,
+              "inventoryVersion": "pg16-production-model-inventory-2026-07-25-v1",
+              "observedAt": "2026-07-25T15:20:00Z",
+              "observedCount": 0,
+              "owner": "sitescore-platform-team",
+              "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+              "sourceContract": "model_ready.candidate_site_view@candidate-site-view-v2"
+            },
+            "modelName": "sitescore_propensity",
+            "outcomeContractRequired": true,
+            "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+            "requiredForPlatformReadiness": true,
+            "service": "sitescore",
+            "trainable": true,
+            "trainingSpecKey": "sitescore"
+          }
+        },
+        "error": "forecastops: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE: MLFLOW_TRACKING_URI is required for production model execution",
+        "learninghubRegistryBound": false,
+        "mode": "mlflow-production-unverified",
+        "productionBindingsReady": false,
+        "requiredServices": [
+          "avm",
+          "forecastops",
+          "heatzone",
+          "sitescore"
+        ]
+      },
+      "persistence": {
+        "configuredMode": "postgresql",
+        "durable": true,
+        "production_persistence_supported": true,
+        "reachable": true,
+        "runtimeMode": "postgresql"
+      },
+      "provider": {
+        "configurationValid": true,
+        "connectivityHealthy": false,
+        "healthy": true,
+        "live": false,
+        "mode": "disabled",
+        "probeEvidence": {
+          "checked_at": null,
+          "configuration_errors": [],
+          "configuration_valid": true,
+          "connectivity_healthy": false,
+          "expires_at": null,
+          "mode": "disabled",
+          "probes": [],
+          "required_provider_ids": [],
+          "status": "disabled"
+        }
+      },
+      "releaseProfile": {
+        "error": null,
+        "modelReadinessClaimed": false,
+        "name": "core-ops",
+        "valid": true
+      },
+      "requireLiveData": true
+    },
+    "service": "oday-api",
+    "status": "ok",
+    "time": "2026-11-27T15:43:01.438431+00:00",
+    "version": "0.1.0"
+  },
+  "ok": true,
+  "schema_version": 1,
+  "staging": {
+    "api_url": "https://stg-odp-9de70f949915-5c64b623-api-2l6wuyl67q-de.a.run.app",
+    "deploy_url": "https://stg-odp-9de70f949915-5c64b623-web-2l6wuyl67q-de.a.run.app",
+    "operator_identity": "stg-odp-9de70f949-5c64b623-rt@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "secret_owner": "stg-odp-9de70f949-5c64b623-rt@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "secret_values_redacted": true
+  },
+  "version": {
+    "api_version": "0.1.0",
+    "correlation_id": "corr-staging-46024230572",
+    "release_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+    "service": "oday-api",
+    "status": "ok",
+    "time": "2026-11-27T15:43:01.644997+00:00"
+  }
+}
