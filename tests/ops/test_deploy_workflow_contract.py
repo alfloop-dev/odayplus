@@ -2028,6 +2028,117 @@ def test_staging_closeout_present_but_invalid_watch_receipt_fails(fake_cloud: di
     assert "verified" not in _outputs(fake_cloud)
 
 
+def test_staging_closeout_accepts_valid_real_metrics_watch_receipt_without_provider_secret(
+    fake_cloud: dict[str, object],
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from shared.observability.watch_window import record_deployment_watch_window_status
+
+    tmp = fake_cloud["tmp"]  # type: ignore[assignment]
+    api_digest = "sha256:" + "1" * 64
+    web_digest = "sha256:" + "2" * 64
+    manifest = tmp / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "release_id": "odp-" + PROD_RELEASE_SHA[:12],
+                "candidate_sha": PROD_RELEASE_SHA,
+                "manifest_digest": "sha256:" + "a" * 64,
+                "components": {
+                    "api": {"image": f"asia-east1-docker.pkg.dev/oday-prod/r/api@{api_digest}"},
+                    "web": {"image": f"asia-east1-docker.pkg.dev/oday-prod/r/web@{web_digest}"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    end_dt = datetime(2026, 11, 27, 6, 30, 0, tzinfo=UTC)
+    start_dt = end_dt - timedelta(minutes=30)
+    pts = [start_dt + timedelta(seconds=30), end_dt - timedelta(seconds=30)]
+
+    def fake_gcp_transport(method: str, url: str, params=None, payload=None, headers=None):
+        pr = params or {}
+        if url.endswith("/services/oday-prod-api"):
+            return 200, {"trafficStatuses": [{"revision": "oday-prod-api-00001-a", "percent": 100}]}
+        if url.endswith("/services/oday-prod-web"):
+            return 200, {"trafficStatuses": [{"revision": "oday-prod-web-00001-b", "percent": 100}]}
+        if url.endswith("/revisions/oday-prod-api-00001-a"):
+            return 200, {"containers": [{"image": f"asia-east1-docker.pkg.dev/oday-prod/r/api@{api_digest}"}]}
+        if url.endswith("/revisions/oday-prod-web-00001-b"):
+            return 200, {"containers": [{"image": f"asia-east1-docker.pkg.dev/oday-prod/r/web@{web_digest}"}]}
+        flt = str(pr.get("filter") or "")
+        svc = "oday-prod-api" if "oday-prod-api" in flt else "oday-prod-web"
+        rev = "oday-prod-api-00001-a" if svc == "oday-prod-api" else "oday-prod-web-00001-b"
+        if "request_count" in flt:
+            return 200, {
+                "timeSeries": [
+                    {
+                        "metric": {"type": "run.googleapis.com/request_count", "labels": {"response_code_class": "2xx"}},
+                        "resource": {
+                            "type": "cloud_run_revision",
+                            "labels": {"project_id": "oday-prod", "location": "asia-east1", "service_name": svc, "revision_name": rev},
+                        },
+                        "points": [{"interval": {"endTime": ts.isoformat()}, "value": {"int64Value": "50"}} for ts in pts],
+                    }
+                ]
+            }
+        return 200, {
+            "timeSeries": [
+                {
+                    "metric": {"type": "run.googleapis.com/request_latencies", "labels": {}},
+                    "resource": {
+                        "type": "cloud_run_revision",
+                        "labels": {"project_id": "oday-prod", "location": "asia-east1", "service_name": svc, "revision_name": rev},
+                    },
+                    "points": [
+                        {
+                            "interval": {"endTime": ts.isoformat()},
+                            "value": {
+                                "distributionValue": {
+                                    "count": "50",
+                                    "bucketOptions": {"explicitBuckets": {"bounds": [100.0, 500.0, 5000.0]}},
+                                    "bucketCounts": ["10", "40", "0", "0"],
+                                }
+                            },
+                        }
+                        for ts in pts
+                    ],
+                }
+            ]
+        }
+
+    receipt = tmp / "stored-valid-receipt.json"
+    record_deployment_watch_window_status(
+        release_sha=PROD_RELEASE_SHA,
+        start_time=start_dt,
+        end_time=end_dt,
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        api_service="oday-prod-api",
+        web_service="oday-prod-web",
+        manifest_path=manifest,
+        receipt_path=receipt,
+        query_transport=fake_gcp_transport,
+    )
+
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+    env.pop("MONITORING_PROVIDER_SECRET", None)
+    env.pop("ONCALL_PROVIDER_SECRET", None)
+    env.update(
+        ODP_PRODUCTION_WATCH_CLOSEOUT_URI="gs://watch/receipt.json",
+        STAGING_WATCH_RECEIPT=str(tmp / "watch.json"),
+        STAGING_RELEASE_ID="odp-" + PROD_RELEASE_SHA[:12],
+        FAKE_WATCH_RECEIPT=str(receipt),
+    )
+
+    result = _run_step(_release_jobs()["staging_closeout"], WATCH_STEP, env)
+
+    assert result.returncode == 0, result.stderr
+    assert _outputs(fake_cloud)["verified"] == "true"
+
+
 # --------------------------------------------------------------------------
 # ODP-STAGING-RETAINED-CLEANUP-261117: operator cleanup of a held staging release
 #

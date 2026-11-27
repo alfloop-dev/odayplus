@@ -160,15 +160,51 @@ Recovery checks:
 
 ## Release-SHA Dashboard Traceability & Watch-Window Receipt
 
-All production deployments tag platform metrics with the exact deployment `release_sha`.
-Cloud Monitoring dashboards in `infra/monitoring/dashboards.json` support exact `release_sha` filtering for live observability and watch-window verification.
+Production watch-window verification reads real built-in Cloud Run metrics from Cloud Monitoring (`run.googleapis.com/request_count` and `run.googleapis.com/request_latencies`), filtered by `resource.type="cloud_run_revision"`, `resource.labels.service_name`, `resource.labels.revision_name`, and `resource.labels.location`.
+Release binding does not rely on custom `metric.labels.release_sha` labels or synthetic provider signatures; instead, `shared/observability/watch_window.py` queries the Cloud Run Admin API v2 to confirm that both the production API and Web services route 100% traffic to a single active revision whose container image digest matches the admitted `RELEASE_MANIFEST.json`.
+The minimum observation window and SLO thresholds (`watch_window_minutes=30`, 5xx error rate `< 5%`, p95 latency `< 5s`) are loaded directly from `docs/evidence/runtime/ODP-PROD-OPS-WATCH-PARAMS-001/prod-ops-governance-parameters.json`.
 
 ### Watch-Window Receipt Procedure
 
-1. **Watch-Window Activation**: Following deployment of SHA `release_sha`, monitor the 15-minute post-deploy watch window via `platform-health` dashboard.
-2. **Traceability Verification**: Ensure `deployment_watch_window_status` metric reports `WATCH_PASSED` for the deployed `release_sha`.
-3. **Telemetry Receipt**: Confirm `api_error_count`, `job_failure_count`, and `dlq_message_count` filtered by `release_sha` remain zero or within SLO thresholds throughout the watch window.
-4. **Audit Evidence**: Store the watch-window receipt containing `release_sha`, `watch_window_minutes`, `status`, and `timestamp` in execution evidence logs before release finalization.
+1. **Observe the Governed Watch Window**: After production traffic switchover for `RELEASE_SHA`, monitor production API and Web services for at least the governed `watch_window_minutes` (30 minutes).
+2. **Generate the Receipt with Production Read-Only Identity**: Using an operator identity with Cloud Run and Cloud Monitoring read permissions (Application Default Credentials via `gcloud auth application-default login` or `GOOGLE_OAUTH_ACCESS_TOKEN`; no `MONITORING_PROVIDER_SECRET` is required), run:
+
+   ```bash
+   python3 -m shared.observability.watch_window record \
+     --project "<PROD_GCP_PROJECT>" \
+     --region "<GCP_REGION>" \
+     --api-service "<PROD_API_SERVICE>" \
+     --web-service "<PROD_WEB_SERVICE>" \
+     --release-sha "<RELEASE_SHA>" \
+     --manifest "<PATH_TO_ADMITTED_RELEASE_MANIFEST_JSON>" \
+     --start "<WINDOW_START_ISO8601_UTC>" \
+     --end "<WINDOW_END_ISO8601_UTC>" \
+     --output ./production-watch-window-receipt.json
+   ```
+
+   If the window is shorter than 30 minutes, either service has no data or insufficient points, 5xx ratio `>= 5%`, p95 latency `>= 5s`, or either service's 100%-traffic revision digest does not match the admitted manifest, the command fails closed (`WATCH_FAILED` or refusal, non-zero exit).
+3. **Verify Locally Before Upload**:
+
+   ```bash
+   python3 -m shared.observability.watch_window verify \
+     --release-sha "<RELEASE_SHA>" \
+     --receipt ./production-watch-window-receipt.json
+   ```
+
+   This recomputes `canonical_receipt_hash` over all receipt fields and raw `timeSeries` and re-evaluates all metrics against `prod-ops-governance-parameters.json`.
+4. **Upload Receipt for Staging Closeout**: With an operator/deploy identity authorized to write to the closeout bucket, upload the verified receipt to `ODP_PRODUCTION_WATCH_CLOSEOUT_URI`:
+
+   ```bash
+   gcloud storage cp ./production-watch-window-receipt.json "${ODP_PRODUCTION_WATCH_CLOSEOUT_URI}"
+   ```
+
+5. **Close Out Ephemeral Staging**: Re-run the `staging_closeout` job (`Verify production watch and clean up ephemeral staging`) in the production `Runtime Release` workflow run. `staging_closeout` reads `ODP_PRODUCTION_WATCH_CLOSEOUT_URI` with read-only staging WIF credentials and validates it via `verify_watch_window_receipt(release_sha, path)` before cleaning up ephemeral staging.
+
+### Trust Boundary
+
+- **Producer**: Operator identity with production read-only access (`roles/run.viewer` + `roles/monitoring.viewer`) generates the receipt from real Cloud Run Admin API + Cloud Monitoring responses.
+- **Storage**: `ODP_PRODUCTION_WATCH_CLOSEOUT_URI` resides in a GCS bucket writable only by authorized deploy/operations identities.
+- **Consumer**: `staging_closeout` holds read-only (`storage.objects.get`) access via staging WIF identity and enforces `canonical_receipt_hash`, SHA binding, manifest-digest binding, and raw `timeSeries` re-evaluation fail-closed.
 
 ## Acceptance
 
@@ -176,4 +212,4 @@ Cloud Monitoring dashboards in `infra/monitoring/dashboards.json` support exact 
 - High-risk operations have an explicit mitigation.
 - Audit failure and PriceOps hard-constraint failure are treated as high severity.
 - Every alert in `infra/monitoring/alerts.json` resolves to a section here.
-- Dashboard traceability and watch-window receipt are verified against exact `release_sha`.
+- Production watch-window receipt is generated from real Cloud Run metrics, bound to admitted manifest digests, and verified against exact `release_sha`.

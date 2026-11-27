@@ -981,6 +981,292 @@ def test_validate_routing_config_rejects_malformed_exact_sha_binding(monkeypatch
             router.validate_routing_config()
 
 
+def _write_test_watch_manifest(
+    tmp_path: Path,
+    release_sha: str,
+    *,
+    api_digest: str = "sha256:" + "1" * 64,
+    web_digest: str = "sha256:" + "2" * 64,
+) -> Path:
+    manifest = {
+        "schema_version": 2,
+        "release_id": f"odp-{release_sha[:12]}",
+        "candidate_sha": release_sha,
+        "manifest_digest": "sha256:" + "a" * 64,
+        "components": {
+            "api": {
+                "image": f"asia-east1-docker.pkg.dev/oday-prod/oday-plus/oday-prod-api@{api_digest}",
+            },
+            "web": {
+                "image": f"asia-east1-docker.pkg.dev/oday-prod/oday-plus/oday-prod-web@{web_digest}",
+            },
+        },
+    }
+    manifest_file = tmp_path / f"RELEASE_MANIFEST_{release_sha[:8]}.json"
+    manifest_file.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return manifest_file
+
+
+def _build_latency_distribution_series(
+    *,
+    gcp_project: str,
+    gcp_region: str,
+    service_name: str,
+    revision_name: str,
+    timestamps: list[datetime],
+    bucket_counts_per_point: list[int],
+    explicit_bounds: list[float] | None = None,
+) -> list[dict[str, Any]]:
+    bounds = explicit_bounds or [50.0, 200.0, 1000.0, 5000.0, 10000.0]
+    total_per_point = sum(bucket_counts_per_point)
+    return [
+        {
+            "metric": {
+                "type": "run.googleapis.com/request_latencies",
+                "labels": {"response_code_class": "2xx"},
+            },
+            "resource": {
+                "type": "cloud_run_revision",
+                "labels": {
+                    "project_id": gcp_project,
+                    "location": gcp_region,
+                    "service_name": service_name,
+                    "revision_name": revision_name,
+                },
+            },
+            "points": [
+                {
+                    "interval": {"endTime": ts.isoformat()},
+                    "value": {
+                        "distributionValue": {
+                            "count": str(total_per_point),
+                            "bucketOptions": {"explicitBuckets": {"bounds": bounds}},
+                            "bucketCounts": [str(c) for c in bucket_counts_per_point],
+                        }
+                    },
+                }
+                for ts in timestamps
+            ],
+        }
+    ]
+
+
+def _build_request_count_series(
+    *,
+    gcp_project: str,
+    gcp_region: str,
+    service_name: str,
+    revision_name: str,
+    timestamps: list[datetime],
+    ok_per_point: int = 99,
+    err_5xx_per_point: int = 1,
+) -> list[dict[str, Any]]:
+    series: list[dict[str, Any]] = []
+    if ok_per_point > 0:
+        series.append(
+            {
+                "metric": {
+                    "type": "run.googleapis.com/request_count",
+                    "labels": {"response_code_class": "2xx"},
+                },
+                "resource": {
+                    "type": "cloud_run_revision",
+                    "labels": {
+                        "project_id": gcp_project,
+                        "location": gcp_region,
+                        "service_name": service_name,
+                        "revision_name": revision_name,
+                    },
+                },
+                "points": [
+                    {
+                        "interval": {"endTime": ts.isoformat()},
+                        "value": {"int64Value": str(ok_per_point)},
+                    }
+                    for ts in timestamps
+                ],
+            }
+        )
+    if err_5xx_per_point > 0:
+        series.append(
+            {
+                "metric": {
+                    "type": "run.googleapis.com/request_count",
+                    "labels": {"response_code_class": "5xx"},
+                },
+                "resource": {
+                    "type": "cloud_run_revision",
+                    "labels": {
+                        "project_id": gcp_project,
+                        "location": gcp_region,
+                        "service_name": service_name,
+                        "revision_name": revision_name,
+                    },
+                },
+                "points": [
+                    {
+                        "interval": {"endTime": ts.isoformat()},
+                        "value": {"int64Value": str(err_5xx_per_point)},
+                    }
+                    for ts in timestamps
+                ],
+            }
+        )
+    return series
+
+
+def _make_real_cloud_run_watch_transport(
+    *,
+    gcp_project: str = "oday-prod",
+    gcp_region: str = "asia-east1",
+    api_service: str = "oday-prod-api",
+    web_service: str = "oday-prod-web",
+    api_revision: str = "oday-prod-api-00012-abc",
+    web_revision: str = "oday-prod-web-00012-def",
+    api_digest: str = "sha256:" + "1" * 64,
+    web_digest: str = "sha256:" + "2" * 64,
+    start_dt: datetime,
+    end_dt: datetime,
+    api_traffic: list[dict[str, Any]] | None = None,
+    web_traffic: list[dict[str, Any]] | None = None,
+    api_rc_series: list[dict[str, Any]] | None = None,
+    api_lat_series: list[dict[str, Any]] | None = None,
+    web_rc_series: list[dict[str, Any]] | None = None,
+    web_lat_series: list[dict[str, Any]] | None = None,
+    paginate_api_rc: bool = False,
+    seen_filters: list[str] | None = None,
+):
+    from datetime import timedelta
+
+    mid_dt = start_dt + (end_dt - start_dt) / 2
+    default_ts = [start_dt + timedelta(seconds=30), mid_dt, end_dt - timedelta(seconds=30)]
+
+    rc_by_service = {
+        api_service: (
+            _build_request_count_series(
+                gcp_project=gcp_project,
+                gcp_region=gcp_region,
+                service_name=api_service,
+                revision_name=api_revision,
+                timestamps=default_ts,
+                ok_per_point=98,
+                err_5xx_per_point=2,
+            )
+            if api_rc_series is None
+            else api_rc_series
+        ),
+        web_service: (
+            _build_request_count_series(
+                gcp_project=gcp_project,
+                gcp_region=gcp_region,
+                service_name=web_service,
+                revision_name=web_revision,
+                timestamps=default_ts,
+                ok_per_point=100,
+                err_5xx_per_point=0,
+            )
+            if web_rc_series is None
+            else web_rc_series
+        ),
+    }
+    lat_by_service = {
+        api_service: (
+            _build_latency_distribution_series(
+                gcp_project=gcp_project,
+                gcp_region=gcp_region,
+                service_name=api_service,
+                revision_name=api_revision,
+                timestamps=default_ts,
+                # Bounds [50, 200, 1000, 5000, 10000]: 95 in [50,200), 5 in [200,1000) -> p95 ~ 200ms
+                bucket_counts_per_point=[0, 95, 5, 0, 0, 0],
+            )
+            if api_lat_series is None
+            else api_lat_series
+        ),
+        web_service: (
+            _build_latency_distribution_series(
+                gcp_project=gcp_project,
+                gcp_region=gcp_region,
+                service_name=web_service,
+                revision_name=web_revision,
+                timestamps=default_ts,
+                bucket_counts_per_point=[10, 88, 2, 0, 0, 0],
+            )
+            if web_lat_series is None
+            else web_lat_series
+        ),
+    }
+
+    revisions_by_service = {
+        api_service: (api_revision, api_digest, api_traffic),
+        web_service: (web_revision, web_digest, web_traffic),
+    }
+
+    def transport(
+        method: str,
+        url: str,
+        params: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        assert method == "GET"
+        pr = params or {}
+        if "/revisions/" in url:
+            for svc, (rev, digest, _) in revisions_by_service.items():
+                if url.endswith(f"/services/{svc}/revisions/{rev}"):
+                    return 200, {
+                        "name": f"projects/{gcp_project}/locations/{gcp_region}/services/{svc}/revisions/{rev}",
+                        "containers": [
+                            {
+                                "image": f"asia-east1-docker.pkg.dev/{gcp_project}/oday-plus/{svc}@{digest}",
+                            }
+                        ],
+                    }
+            return 404, {"error": f"revision not found: {url}"}
+
+        if "/services/" in url:
+            for svc, (rev, _, custom_traffic) in revisions_by_service.items():
+                if url.endswith(f"/services/{svc}"):
+                    traffic = (
+                        custom_traffic
+                        if custom_traffic is not None
+                        else [
+                            {
+                                "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION",
+                                "revision": rev,
+                                "percent": 100,
+                            }
+                        ]
+                    )
+                    return 200, {
+                        "name": f"projects/{gcp_project}/locations/{gcp_region}/services/{svc}",
+                        "trafficStatuses": traffic,
+                    }
+            return 404, {"error": f"service not found: {url}"}
+
+        if "/timeSeries" in url:
+            flt = str(pr.get("filter") or "")
+            assert "metric.labels.release_sha" not in flt
+            if seen_filters is not None:
+                seen_filters.append(flt)
+            svc = api_service if f'service_name="{api_service}"' in flt else web_service
+            if 'metric.type="run.googleapis.com/request_count"' in flt:
+                series = rc_by_service[svc]
+                if paginate_api_rc and svc == api_service and len(series) >= 2:
+                    if pr.get("pageToken") == "page-2":
+                        return 200, {"timeSeries": series[1:]}
+                    return 200, {"timeSeries": series[:1], "nextPageToken": "page-2"}
+                return (200, {"timeSeries": series}) if series else (200, {})
+            if 'metric.type="run.googleapis.com/request_latencies"' in flt:
+                series = lat_by_service[svc]
+                return (200, {"timeSeries": series}) if series else (200, {})
+            return 400, {"error": f"unexpected filter: {flt}"}
+
+        return 404, {"error": f"unexpected url: {url}"}
+
+    return transport
+
+
 def test_release_sha_dashboard_traceability_and_watch_window_receipt(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
@@ -988,10 +1274,14 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(
 
     from shared.observability.metrics import default_registry
     from shared.observability.watch_window import (
-        compute_provider_watch_signature,
+        load_watch_governance_parameters,
         record_deployment_watch_window_status,
         verify_watch_window_receipt,
     )
+
+    # Ensure no monitoring/oncall provider secret is required
+    monkeypatch.delenv("MONITORING_PROVIDER_SECRET", raising=False)
+    monkeypatch.delenv("ONCALL_PROVIDER_SECRET", raising=False)
 
     # 1. Verify dashboards.json carries release_sha_traceability and watch-window panels
     dashboards_path = MONITORING / "dashboards.json"
@@ -1002,7 +1292,6 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(
     assert traceability.get("enabled") is True
     assert traceability.get("metric_label") == "release_sha"
     assert traceability.get("exact_sha_binding") == "${RELEASE_SHA}"
-    assert traceability.get("watch_window_minutes") == 15
     assert traceability.get("receipt_required") is True
     assert traceability.get("receipt_artifact_path") == "docs/evidence/watch_window_receipt.json"
 
@@ -1010,102 +1299,62 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(
     panels = {p["title"]: p for p in platform_health["panels"]}
     assert "Release SHA traceability" in panels
     assert "Release watch-window receipt" in panels
-    assert panels["Release SHA traceability"]["label_filter"] == "release_sha=${RELEASE_SHA}"
-    assert panels["Release watch-window receipt"]["label_filter"] == "release_sha=${RELEASE_SHA}"
 
-    # 2. Record watch-window status and verify receipt creation & metric emission
+    # 2. Record watch-window status using real Cloud Run metrics + admitted manifest
+    gov = load_watch_governance_parameters()
+    assert gov["watch_window_minutes"] == 30
+    assert gov["max_error_rate_percent"] == 5.0
+    assert gov["max_p95_latency_seconds"] == 5.0
+
     receipt_file = tmp_path / "watch_window_receipt.json"
     test_sha = "10c620969a90627e4a67053a4708658f99faa07f"
+    manifest_file = _write_test_watch_manifest(tmp_path, test_sha)
     registry = default_registry()
-    monitoring_route = "https://monitoring.googleapis.com/v3"
 
-    start_dt = datetime.now(UTC) - timedelta(minutes=20)
-    end_dt = datetime.now(UTC)
-
-    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", "test-sec-750")
-
-    def mock_query_transport(
-        method: str,
-        url: str,
-        params: dict | None = None,
-        payload: dict | None = None,
-    ) -> tuple[int, dict]:
-        p_dict = payload or {}
-        pr_dict = params or {}
-        g_proj = p_dict.get("gcp_project") or pr_dict.get("gcp_project") or "alfaloop-data-project"
-        r_sha = p_dict.get("release_sha") or pr_dict.get("release_sha") or test_sha
-        s_iso = pr_dict.get("interval.startTime", start_dt.isoformat())
-        e_iso = pr_dict.get("interval.endTime", end_dt.isoformat())
-        ts = [
-            {
-                "metric": {
-                    "type": "custom.googleapis.com/api_error_count",
-                    "labels": {"release_sha": r_sha},
-                },
-                "resource": {"type": "global", "labels": {"project_id": g_proj}},
-                "points": [
-                    {
-                        "interval": {"endTime": s_iso},
-                        "value": {"doubleValue": 0.0},
-                    },
-                    {
-                        "interval": {"endTime": e_iso},
-                        "value": {"doubleValue": 0.0},
-                    },
-                ],
-            },
-            {
-                "metric": {
-                    "type": "custom.googleapis.com/api_latency_ms",
-                    "labels": {"release_sha": r_sha},
-                },
-                "resource": {"type": "global", "labels": {"project_id": g_proj}},
-                "points": [
-                    {
-                        "interval": {"endTime": s_iso},
-                        "value": {"doubleValue": 12.5},
-                    },
-                    {
-                        "interval": {"endTime": e_iso},
-                        "value": {"doubleValue": 14.2},
-                    },
-                ],
-            },
-        ]
-        raw_resp = {"gcp_project": g_proj, "release_sha": r_sha, "timeSeries": ts}
-        proof_hash = hashlib.sha256(
-            json.dumps(raw_resp, sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        prov_rcpt = f"prov-query-rcpt-{r_sha[:8]}"
-        sig_token, rb_token = compute_provider_watch_signature(
-            provider_secret="test-sec-750",
-            provider_receipt_id=prov_rcpt,
-            gcp_project=g_proj,
-            release_sha=r_sha,
-            start_iso=s_iso,
-            end_iso=e_iso,
-            proof_hash=proof_hash,
-        )
-        raw_resp["provider_receipt_id"] = prov_rcpt
-        raw_resp["provider_signature"] = sig_token
-        raw_resp["provider_readback_identity"] = rb_token
-        return 200, raw_resp
+    end_dt = datetime(2026, 11, 27, 6, 30, 0, tzinfo=UTC)
+    start_dt = end_dt - timedelta(minutes=30)
+    seen_filters: list[str] = []
+    transport = _make_real_cloud_run_watch_transport(
+        start_dt=start_dt,
+        end_dt=end_dt,
+        paginate_api_rc=True,
+        seen_filters=seen_filters,
+    )
 
     receipt = record_deployment_watch_window_status(
         release_sha=test_sha,
-        status=1,
         start_time=start_dt,
         end_time=end_dt,
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        api_service="oday-prod-api",
+        web_service="oday-prod-web",
+        manifest_path=manifest_file,
         registry=registry,
         receipt_path=receipt_file,
-        gcp_project="alfaloop-data-project",
-        provider_route=monitoring_route,
-        query_transport=mock_query_transport,
+        query_transport=transport,
     )
 
     assert receipt["release_sha"] == test_sha
     assert receipt["status"] == "WATCH_PASSED"
     assert receipt["status_code"] == 1
+    assert receipt["watch_window_minutes"] == 30
+    assert receipt["gcp_project"] == "oday-prod"
+    assert receipt["gcp_region"] == "asia-east1"
+    assert receipt["failure_reasons"] == []
+    assert receipt["services"]["api"]["revision_name"] == "oday-prod-api-00012-abc"
+    assert receipt["services"]["web"]["revision_name"] == "oday-prod-web-00012-def"
+    assert receipt["services"]["api"]["digest_matched"] is True
+    assert receipt["services"]["web"]["digest_matched"] is True
+    assert receipt["services"]["api"]["metrics"]["error_rate_percent"] == 2.0
+    assert receipt["services"]["web"]["metrics"]["error_rate_percent"] == 0.0
+    assert receipt["services"]["api"]["metrics"]["p95_latency_seconds"] < 5.0
+    assert receipt["services"]["web"]["metrics"]["p95_latency_seconds"] < 5.0
+    assert "provider_receipt_id" not in json.dumps(receipt)
+    assert "provider_signature" not in json.dumps(receipt)
+    assert "provider_readback_identity" not in json.dumps(receipt)
+    assert "metric.labels.release_sha" not in json.dumps(receipt)
+    assert len(seen_filters) == 5  # 2 pages for api request_count + api lat + web rc + web lat
     assert receipt_file.exists()
 
     snapshot = registry.snapshot()
@@ -1114,548 +1363,459 @@ def test_release_sha_dashboard_traceability_and_watch_window_receipt(
     assert series["value"] == 1.0
     assert series["labels"] == {"release_sha": test_sha, "status": "WATCH_PASSED"}
 
-    # 3. Verify watch-window receipt artifact validation
+    # 3. Verify watch-window receipt artifact validation (no secret required)
     verified = verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)
     assert verified["release_sha"] == test_sha
     assert verified["status"] == "WATCH_PASSED"
+    assert verified["canonical_receipt_hash"] == receipt["canonical_receipt_hash"]
+
+
+def test_watch_window_cli_record_and_verify_roundtrip(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    import subprocess
+    import sys
+    from datetime import timedelta
+
+    from shared.observability.watch_window import main as watch_cli_main
+
+    monkeypatch.delenv("MONITORING_PROVIDER_SECRET", raising=False)
+    monkeypatch.delenv("ONCALL_PROVIDER_SECRET", raising=False)
+
+    test_sha = "30c620969a90627e4a67053a4708658f99faa07f"
+    manifest_file = _write_test_watch_manifest(tmp_path, test_sha)
+    receipt_file = tmp_path / "cli_watch_receipt.json"
+    end_dt = datetime(2026, 11, 27, 7, 0, 0, tzinfo=UTC)
+    start_dt = end_dt - timedelta(minutes=30)
+    transport = _make_real_cloud_run_watch_transport(start_dt=start_dt, end_dt=end_dt)
+
+    rc_record = watch_cli_main(
+        [
+            "record",
+            "--project",
+            "oday-prod",
+            "--region",
+            "asia-east1",
+            "--api-service",
+            "oday-prod-api",
+            "--web-service",
+            "oday-prod-web",
+            "--release-sha",
+            test_sha,
+            "--manifest",
+            str(manifest_file),
+            "--start",
+            start_dt.isoformat(),
+            "--end",
+            end_dt.isoformat(),
+            "--output",
+            str(receipt_file),
+        ],
+        query_transport=transport,
+    )
+    assert rc_record == 0
+    rec_out = json.loads(capsys.readouterr().out)
+    assert rec_out["status"] == "WATCH_PASSED"
+    assert rec_out["release_sha"] == test_sha
+
+    # Verify via module CLI subprocess with no provider secrets
+    env = dict(os.environ)
+    env.pop("MONITORING_PROVIDER_SECRET", None)
+    env.pop("ONCALL_PROVIDER_SECRET", None)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "shared.observability.watch_window",
+            "verify",
+            "--release-sha",
+            test_sha,
+            "--receipt",
+            str(receipt_file),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    ver_out = json.loads(proc.stdout)
+    assert ver_out["verified"] is True
+    assert ver_out["release_sha"] == test_sha
 
 
 def test_watch_window_receipt_negative_cases(tmp_path: Path, monkeypatch: Any) -> None:
     from datetime import timedelta
 
     from shared.observability.watch_window import (
-        compute_provider_watch_signature,
+        compute_canonical_receipt_hash,
         record_deployment_watch_window_status,
         verify_watch_window_receipt,
     )
+    from shared.observability.watch_window import (
+        main as watch_cli_main,
+    )
+
+    monkeypatch.delenv("MONITORING_PROVIDER_SECRET", raising=False)
+    monkeypatch.delenv("ONCALL_PROVIDER_SECRET", raising=False)
 
     receipt_file = tmp_path / "watch_window_receipt.json"
     valid_sha_1 = "10c620969a90627e4a67053a4708658f99faa07f"
     valid_sha_2 = "20c620969a90627e4a67053a4708658f99faa07f"
-    monitoring_route = "https://monitoring.googleapis.com/v3"
-    start_dt = datetime.now(UTC) - timedelta(minutes=20)
-    end_dt = datetime.now(UTC)
-
-    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", "test-sec-880")
-
-    def mock_query_transport(
-        method: str,
-        url: str,
-        params: dict | None = None,
-        payload: dict | None = None,
-    ) -> tuple[int, dict]:
-        pr_dict = params or {}
-        s_iso = pr_dict.get("interval.startTime", start_dt.isoformat())
-        e_iso = pr_dict.get("interval.endTime", end_dt.isoformat())
-        ts = [
-            {
-                "metric": {
-                    "type": "custom.googleapis.com/api_error_count",
-                    "labels": {"release_sha": valid_sha_1},
-                },
-                "resource": {
-                    "type": "global",
-                    "labels": {"project_id": "alfaloop-data-project"},
-                },
-                "points": [
-                    {
-                        "interval": {"endTime": s_iso},
-                        "value": {"doubleValue": 0.0},
-                    },
-                    {
-                        "interval": {"endTime": e_iso},
-                        "value": {"doubleValue": 0.0},
-                    },
-                ],
-            },
-            {
-                "metric": {
-                    "type": "custom.googleapis.com/api_latency_ms",
-                    "labels": {"release_sha": valid_sha_1},
-                },
-                "resource": {
-                    "type": "global",
-                    "labels": {"project_id": "alfaloop-data-project"},
-                },
-                "points": [
-                    {
-                        "interval": {"endTime": s_iso},
-                        "value": {"doubleValue": 12.5},
-                    },
-                    {
-                        "interval": {"endTime": e_iso},
-                        "value": {"doubleValue": 14.2},
-                    },
-                ],
-            },
-        ]
-        raw_resp = {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": valid_sha_1,
-            "timeSeries": ts,
-        }
-        proof_hash = hashlib.sha256(
-            json.dumps(raw_resp, sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        prov_rcpt = "prov-rcpt-10c62096"
-        sig_token, rb_token = compute_provider_watch_signature(
-            provider_secret="test-sec-880",
-            provider_receipt_id=prov_rcpt,
-            gcp_project="alfaloop-data-project",
-            release_sha=valid_sha_1,
-            start_iso=s_iso,
-            end_iso=e_iso,
-            proof_hash=proof_hash,
-        )
-        raw_resp["provider_receipt_id"] = prov_rcpt
-        raw_resp["provider_signature"] = sig_token
-        raw_resp["provider_readback_identity"] = rb_token
-        return 200, raw_resp
+    manifest_file = _write_test_watch_manifest(tmp_path, valid_sha_1)
+    end_dt = datetime(2026, 11, 27, 6, 30, 0, tzinfo=UTC)
+    start_dt = end_dt - timedelta(minutes=30)
+    mid_dt = start_dt + timedelta(minutes=15)
+    pts_ts = [start_dt + timedelta(seconds=30), mid_dt, end_dt - timedelta(seconds=30)]
 
     # Case 1: Absent watch receipt artifact
     with pytest.raises(FileNotFoundError, match="Watch-window receipt artifact absent"):
         verify_watch_window_receipt(expected_release_sha=valid_sha_1, receipt_path=receipt_file)
 
     # Case 2: Release SHA mismatch
+    transport_ok = _make_real_cloud_run_watch_transport(start_dt=start_dt, end_dt=end_dt)
     record_deployment_watch_window_status(
         release_sha=valid_sha_1,
-        status=1,
         start_time=start_dt,
         end_time=end_dt,
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        api_service="oday-prod-api",
+        web_service="oday-prod-web",
+        manifest_path=manifest_file,
         receipt_path=receipt_file,
-        gcp_project="alfaloop-data-project",
-        provider_route=monitoring_route,
-        query_transport=mock_query_transport,
+        query_transport=transport_ok,
     )
     with pytest.raises(ValueError, match="Release SHA mismatch"):
         verify_watch_window_receipt(expected_release_sha=valid_sha_2, receipt_path=receipt_file)
 
-    # Case 3: Failed watch receipt (status_code = 0 / WATCH_FAILED)
-    def mock_query_fail_transport(
-        method: str,
-        url: str,
-        params: dict | None = None,
-        payload: dict | None = None,
-    ) -> tuple[int, dict]:
-        pr_dict = params or {}
-        s_iso = pr_dict.get("interval.startTime", start_dt.isoformat())
-        e_iso = pr_dict.get("interval.endTime", end_dt.isoformat())
-        ts = [
-            {
-                "metric": {
-                    "type": "custom.googleapis.com/api_error_count",
-                    "labels": {"release_sha": valid_sha_1},
-                },
-                "resource": {
-                    "type": "global",
-                    "labels": {"project_id": "alfaloop-data-project"},
-                },
-                "points": [
-                    {
-                        "interval": {"endTime": s_iso},
-                        "value": {"doubleValue": 0.0},
-                    },
-                    {
-                        "interval": {"endTime": e_iso},
-                        "value": {"doubleValue": 5.0},
-                    },
-                ],
-            }
-        ]
-        raw_resp = {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": valid_sha_1,
-            "timeSeries": ts,
-        }
-        proof_hash = hashlib.sha256(
-            json.dumps(raw_resp, sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        prov_rcpt = "prov-rcpt-10c62096"
-        sig_token, rb_token = compute_provider_watch_signature(
-            provider_secret="test-sec-880",
-            provider_receipt_id=prov_rcpt,
-            gcp_project="alfaloop-data-project",
-            release_sha=valid_sha_1,
-            start_iso=s_iso,
-            end_iso=e_iso,
-            proof_hash=proof_hash,
-        )
-        raw_resp["provider_receipt_id"] = prov_rcpt
-        raw_resp["provider_signature"] = sig_token
-        raw_resp["provider_readback_identity"] = rb_token
-        return 200, raw_resp
-
-    record_deployment_watch_window_status(
-        release_sha=valid_sha_1,
-        status=0,
-        start_time=start_dt,
-        end_time=end_dt,
-        receipt_path=receipt_file,
-        gcp_project="alfaloop-data-project",
-        provider_route=monitoring_route,
-        query_transport=mock_query_fail_transport,
+    # Case 3: 5xx error rate >= 5% fails closed as WATCH_FAILED (and CLI exits 1)
+    high_5xx_rc = _build_request_count_series(
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        service_name="oday-prod-api",
+        revision_name="oday-prod-api-00012-abc",
+        timestamps=pts_ts,
+        ok_per_point=94,
+        err_5xx_per_point=6,  # 6.0% >= 5.0%
     )
+    transport_5xx = _make_real_cloud_run_watch_transport(
+        start_dt=start_dt,
+        end_dt=end_dt,
+        api_rc_series=high_5xx_rc,
+    )
+    rc_5xx = watch_cli_main(
+        [
+            "record",
+            "--project",
+            "oday-prod",
+            "--region",
+            "asia-east1",
+            "--api-service",
+            "oday-prod-api",
+            "--web-service",
+            "oday-prod-web",
+            "--release-sha",
+            valid_sha_1,
+            "--manifest",
+            str(manifest_file),
+            "--start",
+            start_dt.isoformat(),
+            "--end",
+            end_dt.isoformat(),
+            "--output",
+            str(receipt_file),
+        ],
+        query_transport=transport_5xx,
+    )
+    assert rc_5xx == 1
+    failed_5xx = json.loads(receipt_file.read_text(encoding="utf-8"))
+    assert failed_5xx["status"] == "WATCH_FAILED"
+    assert failed_5xx["status_code"] == 0
+    assert any("5xx error rate" in reason for reason in failed_5xx["failure_reasons"])
     with pytest.raises(ValueError, match="Watch-window verification failed"):
         verify_watch_window_receipt(expected_release_sha=valid_sha_1, receipt_path=receipt_file)
-
-    # Case 4: Short/forged SHA rejected during recording
-    with pytest.raises(ValueError, match="exact full 40-character hexadecimal string"):
+    with pytest.raises(ValueError, match="5xx error rate"):
         record_deployment_watch_window_status(
-            release_sha="short-sha-123",
+            release_sha=valid_sha_1,
             status=1,
             start_time=start_dt,
             end_time=end_dt,
+            gcp_project="oday-prod",
+            gcp_region="asia-east1",
+            api_service="oday-prod-api",
+            web_service="oday-prod-web",
+            manifest_path=manifest_file,
             receipt_path=receipt_file,
+            query_transport=transport_5xx,
         )
 
-    # Case 5: Sub-15-minute receipt rejected during recording
-    short_start = datetime.now(UTC) - timedelta(minutes=5)
-    with pytest.raises(ValueError, match="less than the required 15-minute minimum"):
+    # Case 4: p95 latency >= 5s fails closed as WATCH_FAILED
+    high_p95_lat = _build_latency_distribution_series(
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        service_name="oday-prod-web",
+        revision_name="oday-prod-web-00012-def",
+        timestamps=pts_ts,
+        # Bounds [50, 200, 1000, 5000, 10000]: 90 in [50,200), 10 in [5000,10000) -> p95 = 7500ms = 7.5s
+        bucket_counts_per_point=[0, 90, 0, 0, 10, 0],
+    )
+    transport_p95 = _make_real_cloud_run_watch_transport(
+        start_dt=start_dt,
+        end_dt=end_dt,
+        web_lat_series=high_p95_lat,
+    )
+    failed_p95 = record_deployment_watch_window_status(
+        release_sha=valid_sha_1,
+        start_time=start_dt,
+        end_time=end_dt,
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        api_service="oday-prod-api",
+        web_service="oday-prod-web",
+        manifest_path=manifest_file,
+        receipt_path=receipt_file,
+        query_transport=transport_p95,
+    )
+    assert failed_p95["status"] == "WATCH_FAILED"
+    assert failed_p95["services"]["web"]["metrics"]["p95_latency_seconds"] >= 5.0
+    assert any("p95 latency" in reason for reason in failed_p95["failure_reasons"])
+    with pytest.raises(ValueError, match="Watch-window verification failed"):
+        verify_watch_window_receipt(expected_release_sha=valid_sha_1, receipt_path=receipt_file)
+
+    # Case 5: Missing data for one service (Web has zero timeSeries) fails closed
+    transport_no_web = _make_real_cloud_run_watch_transport(
+        start_dt=start_dt,
+        end_dt=end_dt,
+        web_rc_series=[],
+        web_lat_series=[],
+    )
+    failed_no_web = record_deployment_watch_window_status(
+        release_sha=valid_sha_1,
+        start_time=start_dt,
+        end_time=end_dt,
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        api_service="oday-prod-api",
+        web_service="oday-prod-web",
+        manifest_path=manifest_file,
+        receipt_path=receipt_file,
+        query_transport=transport_no_web,
+    )
+    assert failed_no_web["status"] == "WATCH_FAILED"
+    assert any("missing run.googleapis.com/request_count data" in r for r in failed_no_web["failure_reasons"])
+    assert any("missing run.googleapis.com/request_latencies data" in r for r in failed_no_web["failure_reasons"])
+    with pytest.raises(ValueError, match="Watch-window verification failed"):
+        verify_watch_window_receipt(expected_release_sha=valid_sha_1, receipt_path=receipt_file)
+
+    # Case 6: Short/forged SHA rejected during recording
+    with pytest.raises(ValueError, match="exact full 40-character hexadecimal string"):
+        record_deployment_watch_window_status(
+            release_sha="short-sha-123",
+            start_time=start_dt,
+            end_time=end_dt,
+            gcp_project="oday-prod",
+            gcp_region="asia-east1",
+            api_service="oday-prod-api",
+            web_service="oday-prod-web",
+            manifest_path=manifest_file,
+            receipt_path=receipt_file,
+            query_transport=transport_ok,
+        )
+
+    # Case 7: Window < 30 minutes rejected during recording (governed minimum = 30m / 1800s)
+    short_start = end_dt - timedelta(minutes=29)
+    with pytest.raises(ValueError, match="30-minute minimum"):
         record_deployment_watch_window_status(
             release_sha=valid_sha_1,
-            status=1,
             start_time=short_start,
             end_time=end_dt,
+            gcp_project="oday-prod",
+            gcp_region="asia-east1",
+            api_service="oday-prod-api",
+            web_service="oday-prod-web",
+            manifest_path=manifest_file,
             receipt_path=receipt_file,
+            query_transport=transport_ok,
         )
+
+    # Case 7b: Crafted receipt with < 30 minute window rejected during verification even with valid hash
+    record_deployment_watch_window_status(
+        release_sha=valid_sha_1,
+        start_time=start_dt,
+        end_time=end_dt,
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        api_service="oday-prod-api",
+        web_service="oday-prod-web",
+        manifest_path=manifest_file,
+        receipt_path=receipt_file,
+        query_transport=transport_ok,
+    )
+    short_receipt = json.loads(receipt_file.read_text(encoding="utf-8"))
+    short_receipt["start_time"] = short_start.isoformat()
+    short_receipt["observed_duration_seconds"] = 1740.0
+    short_receipt["canonical_receipt_hash"] = compute_canonical_receipt_hash(short_receipt)
+    receipt_file.write_text(json.dumps(short_receipt, indent=2), encoding="utf-8")
+    with pytest.raises(ValueError, match="30-minute minimum"):
+        verify_watch_window_receipt(expected_release_sha=valid_sha_1, receipt_path=receipt_file)
 
 
 def test_watch_window_binding_mismatch_mutations(tmp_path: Path, monkeypatch: Any) -> None:
     from datetime import timedelta
 
     from shared.observability.watch_window import (
-        compute_provider_watch_signature,
+        compute_canonical_receipt_hash,
         record_deployment_watch_window_status,
+        verify_watch_window_receipt,
     )
 
-    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", "test-sec-880")
+    monkeypatch.delenv("MONITORING_PROVIDER_SECRET", raising=False)
+    monkeypatch.delenv("ONCALL_PROVIDER_SECRET", raising=False)
 
     receipt_file = tmp_path / "watch_window_receipt.json"
     valid_sha = "10c620969a90627e4a67053a4708658f99faa07f"
-    monitoring_route = "https://monitoring.googleapis.com/v3"
-    start_dt = datetime.now(UTC) - timedelta(minutes=20)
-    end_dt = datetime.now(UTC)
+    manifest_file = _write_test_watch_manifest(tmp_path, valid_sha)
+    end_dt = datetime(2026, 11, 27, 6, 30, 0, tzinfo=UTC)
+    start_dt = end_dt - timedelta(minutes=30)
 
-    # Mutation 1: Project mismatch in provider query response
-    def mismatch_project_transport(
-        method: str,
-        url: str,
-        params: dict | None = None,
-        payload: dict | None = None,
-    ) -> tuple[int, dict]:
-        return 200, {
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": valid_sha},
-                    },
-                    "resource": {"labels": {"project_id": "wrong-gcp-project"}},
-                    "points": [
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 12.5},
-                        }
-                    ],
-                }
-            ]
-        }
-
-    with pytest.raises(ValueError, match="project mismatch"):
+    # Mutation 1: Cloud Run revision image digest does not match admitted manifest
+    mismatch_digest_transport = _make_real_cloud_run_watch_transport(
+        start_dt=start_dt,
+        end_dt=end_dt,
+        api_digest="sha256:" + "9" * 64,
+    )
+    with pytest.raises(ValueError, match="does not match admitted manifest digest"):
         record_deployment_watch_window_status(
             release_sha=valid_sha,
-            status=1,
             start_time=start_dt,
             end_time=end_dt,
+            gcp_project="oday-prod",
+            gcp_region="asia-east1",
+            api_service="oday-prod-api",
+            web_service="oday-prod-web",
+            manifest_path=manifest_file,
             receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
-            provider_route=monitoring_route,
+            query_transport=mismatch_digest_transport,
+        )
+
+    # Mutation 2: Cloud Run traffic is split (< 100% on one revision)
+    split_traffic_transport = _make_real_cloud_run_watch_transport(
+        start_dt=start_dt,
+        end_dt=end_dt,
+        web_traffic=[
+            {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION", "revision": "oday-prod-web-00012-def", "percent": 80},
+            {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION", "revision": "oday-prod-web-00011-old", "percent": 20},
+        ],
+    )
+    with pytest.raises(ValueError, match="must route 100% traffic to a single revision"):
+        record_deployment_watch_window_status(
+            release_sha=valid_sha,
+            start_time=start_dt,
+            end_time=end_dt,
+            gcp_project="oday-prod",
+            gcp_region="asia-east1",
+            api_service="oday-prod-api",
+            web_service="oday-prod-web",
+            manifest_path=manifest_file,
+            receipt_path=receipt_file,
+            query_transport=split_traffic_transport,
+        )
+
+    # Mutation 3: Project label mismatch in Cloud Monitoring response
+    wrong_proj_rc = _build_request_count_series(
+        gcp_project="wrong-gcp-project",
+        gcp_region="asia-east1",
+        service_name="oday-prod-api",
+        revision_name="oday-prod-api-00012-abc",
+        timestamps=[start_dt + timedelta(seconds=30), end_dt - timedelta(seconds=30)],
+    )
+    mismatch_project_transport = _make_real_cloud_run_watch_transport(
+        start_dt=start_dt,
+        end_dt=end_dt,
+        api_rc_series=wrong_proj_rc,
+    )
+    with pytest.raises(ValueError, match="resource.labels.project_id mismatch"):
+        record_deployment_watch_window_status(
+            release_sha=valid_sha,
+            start_time=start_dt,
+            end_time=end_dt,
+            gcp_project="oday-prod",
+            gcp_region="asia-east1",
+            api_service="oday-prod-api",
+            web_service="oday-prod-web",
+            manifest_path=manifest_file,
+            receipt_path=receipt_file,
             query_transport=mismatch_project_transport,
         )
 
-    # Mutation 2: Release SHA mismatch in provider query response
-    def mismatch_sha_transport(
-        method: str,
-        url: str,
-        params: dict | None = None,
-        payload: dict | None = None,
-    ) -> tuple[int, dict]:
-        return 200, {
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": "20c620969a90627e4a67053a4708658f99faa07f"},
-                    },
-                    "resource": {"labels": {"project_id": "alfaloop-data-project"}},
-                    "points": [
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 12.5},
-                        }
-                    ],
-                }
-            ]
-        }
-
-    with pytest.raises(ValueError, match="release_sha mismatch"):
-        record_deployment_watch_window_status(
-            release_sha=valid_sha,
-            status=1,
-            start_time=start_dt,
-            end_time=end_dt,
-            receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
-            provider_route=monitoring_route,
-            query_transport=mismatch_sha_transport,
-        )
-
-    # Mutation 3: Empty timeSeries list in provider query response (Exploit B mitigation check)
-    def empty_data_transport(
-        method: str,
-        url: str,
-        params: dict | None = None,
-        payload: dict | None = None,
-    ) -> tuple[int, dict]:
-        return 200, {"timeSeries": []}
-
-    with pytest.raises(ValueError, match="returned zero timeSeries data"):
-        record_deployment_watch_window_status(
-            release_sha=valid_sha,
-            status=1,
-            start_time=start_dt,
-            end_time=end_dt,
-            receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
-            provider_route=monitoring_route,
-            query_transport=empty_data_transport,
-        )
-
-    # Mutation 4: Error count > 0 in provider response when requested status is 1
-    def error_count_transport(
-        method: str,
-        url: str,
-        params: dict | None = None,
-        payload: dict | None = None,
-    ) -> tuple[int, dict]:
-        return 200, {
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_error_count",
-                        "labels": {"release_sha": valid_sha},
-                    },
-                    "resource": {"labels": {"project_id": "alfaloop-data-project"}},
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 3.0},
-                        },
-                    ],
-                },
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": valid_sha},
-                    },
-                    "resource": {"labels": {"project_id": "alfaloop-data-project"}},
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 10.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 10.0},
-                        },
-                    ],
-                },
-            ]
-        }
-
-    with pytest.raises(ValueError, match="metric values indicate health/error failure"):
-        record_deployment_watch_window_status(
-            release_sha=valid_sha,
-            status=1,
-            start_time=start_dt,
-            end_time=end_dt,
-            receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
-            provider_route=monitoring_route,
-            query_transport=error_count_transport,
-        )
-
-    # Mutation 5: Circular status metric returned in watch window readback
-    def circular_metric_transport(
-        method: str,
-        url: str,
-        params: dict | None = None,
-        payload: dict | None = None,
-    ) -> tuple[int, dict]:
-        return 200, {
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/deployment_watch_window_status",
-                        "labels": {"release_sha": valid_sha},
-                    },
-                    "resource": {"labels": {"project_id": "alfaloop-data-project"}},
-                    "points": [
-                        {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 1.0}}
-                    ],
-                }
-            ]
-        }
-
-    with pytest.raises(ValueError, match="deployment_watch_window_status metric type"):
-        record_deployment_watch_window_status(
-            release_sha=valid_sha,
-            status=1,
-            start_time=start_dt,
-            end_time=end_dt,
-            receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
-            provider_route=monitoring_route,
-            query_transport=circular_metric_transport,
-        )
-
-    # Mutation 6: Point timestamp outside requested watch window
-    def out_of_window_transport(
-        method: str,
-        url: str,
-        params: dict | None = None,
-        payload: dict | None = None,
-    ) -> tuple[int, dict]:
-        old_ts = (datetime.now(UTC) - timedelta(hours=5)).isoformat()
-        return 200, {
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": valid_sha},
-                    },
-                    "resource": {"labels": {"project_id": "alfaloop-data-project"}},
-                    "points": [{"interval": {"endTime": old_ts}, "value": {"doubleValue": 12.5}}],
-                }
-            ]
-        }
-
+    # Mutation 4: Point timestamp outside requested watch window
+    out_of_window_rc = _build_request_count_series(
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        service_name="oday-prod-api",
+        revision_name="oday-prod-api-00012-abc",
+        timestamps=[start_dt - timedelta(hours=3), end_dt - timedelta(seconds=30)],
+    )
+    out_of_window_transport = _make_real_cloud_run_watch_transport(
+        start_dt=start_dt,
+        end_dt=end_dt,
+        api_rc_series=out_of_window_rc,
+    )
     with pytest.raises(ValueError, match="lies outside requested watch window"):
         record_deployment_watch_window_status(
             release_sha=valid_sha,
-            status=1,
             start_time=start_dt,
             end_time=end_dt,
+            gcp_project="oday-prod",
+            gcp_region="asia-east1",
+            api_service="oday-prod-api",
+            web_service="oday-prod-web",
+            manifest_path=manifest_file,
             receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
-            provider_route=monitoring_route,
             query_transport=out_of_window_transport,
         )
 
-    # Mutation 7: Tampered receipt artifact fails canonical SHA-256 integrity verification
-    def valid_latency_transport(
-        method: str,
-        url: str,
-        params: dict | None = None,
-        payload: dict | None = None,
-    ) -> tuple[int, dict]:
-        pr_dict = params or {}
-        s_iso = pr_dict.get("interval.startTime", start_dt.isoformat())
-        e_iso = pr_dict.get("interval.endTime", end_dt.isoformat())
-        ts = [
-            {
-                "metric": {
-                    "type": "custom.googleapis.com/api_error_count",
-                    "labels": {"release_sha": valid_sha},
-                },
-                "resource": {"labels": {"project_id": "alfaloop-data-project"}},
-                "points": [
-                    {
-                        "interval": {"endTime": s_iso},
-                        "value": {"doubleValue": 0.0},
-                    },
-                    {
-                        "interval": {"endTime": e_iso},
-                        "value": {"doubleValue": 0.0},
-                    },
-                ],
-            },
-            {
-                "metric": {
-                    "type": "custom.googleapis.com/api_latency_ms",
-                    "labels": {"release_sha": valid_sha},
-                },
-                "resource": {"labels": {"project_id": "alfaloop-data-project"}},
-                "points": [
-                    {
-                        "interval": {"endTime": s_iso},
-                        "value": {"doubleValue": 10.0},
-                    },
-                    {
-                        "interval": {"endTime": e_iso},
-                        "value": {"doubleValue": 10.0},
-                    },
-                ],
-            },
-        ]
-        raw_resp = {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": valid_sha,
-            "timeSeries": ts,
-        }
-        proof_hash = hashlib.sha256(
-            json.dumps(raw_resp, sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        prov_rcpt = "prov-rcpt-10c62096"
-        sig_token, rb_token = compute_provider_watch_signature(
-            provider_secret="test-sec-880",
-            provider_receipt_id=prov_rcpt,
-            gcp_project="alfaloop-data-project",
-            release_sha=valid_sha,
-            start_iso=s_iso,
-            end_iso=e_iso,
-            proof_hash=proof_hash,
-        )
-        raw_resp["provider_receipt_id"] = prov_rcpt
-        raw_resp["provider_signature"] = sig_token
-        raw_resp["provider_readback_identity"] = rb_token
-        return 200, raw_resp
-
+    # Mutation 5: Tampered receipt fails canonical_receipt_hash verification
+    valid_transport = _make_real_cloud_run_watch_transport(start_dt=start_dt, end_dt=end_dt)
     record_deployment_watch_window_status(
         release_sha=valid_sha,
-        status=1,
         start_time=start_dt,
         end_time=end_dt,
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        api_service="oday-prod-api",
+        web_service="oday-prod-web",
+        manifest_path=manifest_file,
         receipt_path=receipt_file,
-        gcp_project="alfaloop-data-project",
-        provider_route=monitoring_route,
-        query_transport=valid_latency_transport,
+        query_transport=valid_transport,
     )
-
-    # Tamper with receipt file
     receipt_content = json.loads(receipt_file.read_text(encoding="utf-8"))
-    receipt_content["verified_points_count"] = 999  # Tamper point count
+    receipt_content["services"]["api"]["metrics"]["total_requests"] = 999999
     receipt_file.write_text(json.dumps(receipt_content, indent=2), encoding="utf-8")
-
-    from shared.observability.watch_window import verify_watch_window_receipt
-
-    with pytest.raises(ValueError, match="Tampered receipt rejected|integrity check failed"):
+    with pytest.raises(ValueError, match="canonical_receipt_hash mismatch"):
         verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)
 
-    # Mutation 8: Passing on-call alert route as monitoring provider_route fails closed
+    # Mutation 6: Even if canonical_receipt_hash is recomputed after tampering metrics, verifier re-evaluates raw_time_series and rejects
+    receipt_content["canonical_receipt_hash"] = compute_canonical_receipt_hash(receipt_content)
+    receipt_file.write_text(json.dumps(receipt_content, indent=2), encoding="utf-8")
+    with pytest.raises(ValueError, match="do not match recomputed raw_time_series metrics"):
+        verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)
+
+    # Mutation 7: Passing on-call alert route as monitoring provider_route fails closed
     with pytest.raises(ValueError, match="On-call alert route|ONCALL_ENDPOINT_URL"):
         record_deployment_watch_window_status(
             release_sha=valid_sha,
-            status=1,
             start_time=start_dt,
             end_time=end_dt,
+            gcp_project="oday-prod",
+            gcp_region="asia-east1",
+            api_service="oday-prod-api",
+            web_service="oday-prod-web",
+            manifest_path=manifest_file,
             receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
             provider_route="https://oncall-router.oday.plus/api/v1/alerts",
+            query_transport=valid_transport,
         )
 
 
@@ -2221,90 +2381,75 @@ def test_watch_window_rejects_single_point_or_unallowlisted_counter(tmp_path: Pa
     from shared.observability.watch_window import record_deployment_watch_window_status
 
     test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
+    manifest_file = _write_test_watch_manifest(tmp_path, test_sha)
     receipt_file = tmp_path / "watch_receipt.json"
-    start_dt = datetime.now(UTC) - timedelta(minutes=20)
-    end_dt = datetime.now(UTC)
+    end_dt = datetime(2026, 11, 27, 6, 30, 0, tzinfo=UTC)
+    start_dt = end_dt - timedelta(minutes=30)
 
-    # Attack 2a: Single arbitrary positive point with window_coverage_seconds=0
-    def single_point_transport(
-        method: str, url: str, params: dict = None, payload: dict = None
-    ) -> tuple[int, dict]:
-        return 200, {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": test_sha,
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": test_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 12.5},
-                        }
-                    ],
-                }
+    # Attack 2a: Single timestamp point (coverage = 0s) fails closed
+    single_pt_rc = _build_request_count_series(
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        service_name="oday-prod-api",
+        revision_name="oday-prod-api-00012-abc",
+        timestamps=[end_dt - timedelta(seconds=30)],
+    )
+    single_point_transport = _make_real_cloud_run_watch_transport(
+        start_dt=start_dt,
+        end_dt=end_dt,
+        api_rc_series=single_pt_rc,
+    )
+    res_single = record_deployment_watch_window_status(
+        release_sha=test_sha,
+        start_time=start_dt,
+        end_time=end_dt,
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        api_service="oday-prod-api",
+        web_service="oday-prod-web",
+        manifest_path=manifest_file,
+        receipt_path=receipt_file,
+        query_transport=single_point_transport,
+    )
+    assert res_single["status"] == "WATCH_FAILED"
+    assert any("insufficient run.googleapis.com/request_count data points" in r for r in res_single["failure_reasons"])
+
+    # Attack 2b: Unexpected/unallowlisted metric type returned in timeSeries rejected immediately
+    bad_metric_series = [
+        {
+            "metric": {"type": "custom.googleapis.com/attacker_counter", "labels": {"response_code_class": "2xx"}},
+            "resource": {
+                "type": "cloud_run_revision",
+                "labels": {
+                    "project_id": "oday-prod",
+                    "location": "asia-east1",
+                    "service_name": "oday-prod-api",
+                    "revision_name": "oday-prod-api-00012-abc",
+                },
+            },
+            "points": [
+                {"interval": {"endTime": start_dt.isoformat()}, "value": {"int64Value": "10"}},
+                {"interval": {"endTime": end_dt.isoformat()}, "value": {"int64Value": "10"}},
             ],
         }
-
-    with pytest.raises(ValueError, match="requires multiple timestamped points"):
+    ]
+    attacker_transport = _make_real_cloud_run_watch_transport(
+        start_dt=start_dt,
+        end_dt=end_dt,
+        api_rc_series=bad_metric_series,
+    )
+    with pytest.raises(ValueError, match="Unexpected Cloud Monitoring metric.type"):
         record_deployment_watch_window_status(
             release_sha=test_sha,
-            status=1,
             start_time=start_dt,
             end_time=end_dt,
+            gcp_project="oday-prod",
+            gcp_region="asia-east1",
+            api_service="oday-prod-api",
+            web_service="oday-prod-web",
+            manifest_path=manifest_file,
             receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
-            provider_route="https://monitoring.googleapis.com/v3",
-            query_transport=single_point_transport,
-        )
-
-    # Attack 2b: Unallowlisted attacker counter metric
-    def attacker_counter_transport(
-        method: str, url: str, params: dict = None, payload: dict = None
-    ) -> tuple[int, dict]:
-        return 200, {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": test_sha,
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/attacker_counter",
-                        "labels": {"release_sha": test_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 1.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 1.0},
-                        },
-                    ],
-                }
-            ],
-        }
-
-    with pytest.raises(ValueError, match="un-allowlisted metric type"):
-        record_deployment_watch_window_status(
-            release_sha=test_sha,
-            status=1,
-            start_time=start_dt,
-            end_time=end_dt,
-            receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
-            provider_route="https://monitoring.googleapis.com/v3",
-            query_transport=attacker_counter_transport,
+            query_transport=attacker_transport,
         )
 
 
@@ -2314,115 +2459,42 @@ def test_verify_watch_window_receipt_rejects_tampered_proof_or_circular_metric(
     from datetime import timedelta
 
     from shared.observability.watch_window import (
-        compute_provider_watch_signature,
+        compute_canonical_receipt_hash,
         record_deployment_watch_window_status,
         verify_watch_window_receipt,
     )
 
+    monkeypatch.delenv("MONITORING_PROVIDER_SECRET", raising=False)
     test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
+    manifest_file = _write_test_watch_manifest(tmp_path, test_sha)
     receipt_file = tmp_path / "watch_receipt.json"
-    start_dt = datetime.now(UTC) - timedelta(minutes=20)
-    end_dt = datetime.now(UTC)
-
-    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", "test-sec-1950")
-
-    def valid_transport(
-        method: str, url: str, params: dict = None, payload: dict = None
-    ) -> tuple[int, dict]:
-        pr_dict = params or {}
-        s_iso = pr_dict.get("interval.startTime", start_dt.isoformat())
-        e_iso = pr_dict.get("interval.endTime", end_dt.isoformat())
-        ts = [
-            {
-                "metric": {
-                    "type": "custom.googleapis.com/api_error_count",
-                    "labels": {"release_sha": test_sha},
-                },
-                "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
-                "points": [
-                    {
-                        "interval": {"endTime": s_iso},
-                        "value": {"doubleValue": 0.0},
-                    },
-                    {
-                        "interval": {"endTime": e_iso},
-                        "value": {"doubleValue": 0.0},
-                    },
-                ],
-            },
-            {
-                "metric": {
-                    "type": "custom.googleapis.com/api_latency_ms",
-                    "labels": {"release_sha": test_sha},
-                },
-                "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
-                "points": [
-                    {
-                        "interval": {"endTime": s_iso},
-                        "value": {"doubleValue": 12.5},
-                    },
-                    {
-                        "interval": {"endTime": e_iso},
-                        "value": {"doubleValue": 14.2},
-                    },
-                ],
-            },
-        ]
-        raw_resp = {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": test_sha,
-            "timeSeries": ts,
-        }
-        proof_hash = hashlib.sha256(
-            json.dumps(raw_resp, sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        prov_rcpt = f"prov-rcpt-{test_sha[:8]}"
-        sig_token, rb_token = compute_provider_watch_signature(
-            provider_secret="test-sec-1950",
-            provider_receipt_id=prov_rcpt,
-            gcp_project="alfaloop-data-project",
-            release_sha=test_sha,
-            start_iso=s_iso,
-            end_iso=e_iso,
-            proof_hash=proof_hash,
-        )
-        raw_resp["provider_receipt_id"] = prov_rcpt
-        raw_resp["provider_signature"] = sig_token
-        raw_resp["provider_readback_identity"] = rb_token
-        return 200, raw_resp
+    end_dt = datetime(2026, 11, 27, 6, 30, 0, tzinfo=UTC)
+    start_dt = end_dt - timedelta(minutes=30)
+    valid_transport = _make_real_cloud_run_watch_transport(start_dt=start_dt, end_dt=end_dt)
 
     record_deployment_watch_window_status(
         release_sha=test_sha,
-        status=1,
         start_time=start_dt,
         end_time=end_dt,
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        api_service="oday-prod-api",
+        web_service="oday-prod-web",
+        manifest_path=manifest_file,
         receipt_path=receipt_file,
-        gcp_project="alfaloop-data-project",
-        provider_route="https://monitoring.googleapis.com/v3",
         query_transport=valid_transport,
     )
+    assert verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)["status"] == "WATCH_PASSED"
 
-    # Confirm valid receipt verifies cleanly
-    assert (
-        verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)[
-            "status"
-        ]
-        == "WATCH_PASSED"
-    )
-
-    # Attack 3a: Tamper provider metric in stored receipt to circular status metric with value 0
+    # Attack 3a: Tamper stored raw_time_series metric type to circular metric (even with recomputed hash)
     raw_data = json.loads(receipt_file.read_text(encoding="utf-8"))
-    raw_data["monitoring_query_execution"]["provider_query_response"]["timeSeries"][0]["metric"][
-        "type"
-    ] = "custom.googleapis.com/deployment_watch_window_status"
-    raw_data["monitoring_query_execution"]["provider_query_response"]["timeSeries"][0]["points"][0][
-        "value"
-    ]["doubleValue"] = 0
+    raw_data["services"]["api"]["raw_time_series"]["request_count"][0]["metric"]["type"] = (
+        "custom.googleapis.com/deployment_watch_window_status"
+    )
+    raw_data["canonical_receipt_hash"] = compute_canonical_receipt_hash(raw_data)
     receipt_file.write_text(json.dumps(raw_data), encoding="utf-8")
 
-    with pytest.raises(
-        ValueError, match="circular deployment_watch_window_status metric|integrity check failed"
-    ):
+    with pytest.raises(ValueError, match="Unexpected Cloud Monitoring metric.type"):
         verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)
 
 
@@ -2430,202 +2502,60 @@ def test_round5_reproduced_gaps_mutation_coverage(tmp_path: Path, monkeypatch: A
     from datetime import timedelta
 
     from shared.observability.watch_window import (
-        compute_provider_watch_signature,
+        compute_canonical_receipt_hash,
         record_deployment_watch_window_status,
         verify_watch_window_receipt,
     )
 
+    monkeypatch.delenv("MONITORING_PROVIDER_SECRET", raising=False)
     test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
+    manifest_file = _write_test_watch_manifest(tmp_path, test_sha)
     receipt_file = tmp_path / "round5_gap_receipt.json"
-    start_dt = datetime.now(UTC) - timedelta(minutes=20)
-    end_dt = datetime.now(UTC)
+    end_dt = datetime(2026, 11, 27, 6, 30, 0, tzinfo=UTC)
+    start_dt = end_dt - timedelta(minutes=30)
 
-    # Round 5 Gap 1: REQUEST_COUNT_ONLY_PASS MUST BE REJECTED when status=1
-    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", "test-sec-2070")
-
-    def request_count_only_transport(
-        method: str, url: str, params: dict = None, payload: dict = None
-    ) -> tuple[int, dict]:
-        pr_dict = params or {}
-        s_iso = pr_dict.get("interval.startTime", start_dt.isoformat())
-        e_iso = pr_dict.get("interval.endTime", end_dt.isoformat())
-        ts = [
-            {
-                "metric": {
-                    "type": "custom.googleapis.com/api_request_count",
-                    "labels": {"release_sha": test_sha},
-                },
-                "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
-                "points": [
-                    {
-                        "interval": {"endTime": s_iso},
-                        "value": {"doubleValue": 10.0},
-                    },
-                    {
-                        "interval": {"endTime": e_iso},
-                        "value": {"doubleValue": 15.0},
-                    },
-                ],
-            }
-        ]
-        raw_resp = {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": test_sha,
-            "timeSeries": ts,
-        }
-        proof_hash = hashlib.sha256(
-            json.dumps(raw_resp, sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        prov_rcpt = f"prov-rcpt-{test_sha[:8]}"
-        sig_token, rb_token = compute_provider_watch_signature(
-            provider_secret="test-sec-2070",
-            provider_receipt_id=prov_rcpt,
-            gcp_project="alfaloop-data-project",
-            release_sha=test_sha,
-            start_iso=s_iso,
-            end_iso=e_iso,
-            proof_hash=proof_hash,
-        )
-        raw_resp["provider_receipt_id"] = prov_rcpt
-        raw_resp["provider_signature"] = sig_token
-        raw_resp["provider_readback_identity"] = rb_token
-        return 200, raw_resp
-
-    with pytest.raises(
-        ValueError,
-        match="requires an explicit independent error/failure signal AND latency/health signal",
-    ):
+    # Gap 1: request_count only (missing request_latencies) MUST fail closed
+    rc_only_transport = _make_real_cloud_run_watch_transport(
+        start_dt=start_dt,
+        end_dt=end_dt,
+        api_lat_series=[],
+    )
+    with pytest.raises(ValueError, match="missing run.googleapis.com/request_latencies data"):
         record_deployment_watch_window_status(
             release_sha=test_sha,
             status=1,
             start_time=start_dt,
             end_time=end_dt,
+            gcp_project="oday-prod",
+            gcp_region="asia-east1",
+            api_service="oday-prod-api",
+            web_service="oday-prod-web",
+            manifest_path=manifest_file,
             receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
-            provider_route="https://monitoring.googleapis.com/v3",
-            query_transport=request_count_only_transport,
+            query_transport=rc_only_transport,
         )
 
-    # Round 5 Gap 2: TAMPERED_PROVIDER_PROOF_VERIFY_PASS MUST BE REJECTED by verifier
-    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", "test-sec-2070")
-
-    def valid_full_transport(
-        method: str, url: str, params: dict = None, payload: dict = None
-    ) -> tuple[int, dict]:
-        pr_dict = params or {}
-        s_iso = pr_dict.get("interval.startTime", start_dt.isoformat())
-        e_iso = pr_dict.get("interval.endTime", end_dt.isoformat())
-        ts = [
-            {
-                "metric": {
-                    "type": "custom.googleapis.com/api_error_count",
-                    "labels": {"release_sha": test_sha},
-                },
-                "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
-                "points": [
-                    {
-                        "interval": {"endTime": s_iso},
-                        "value": {"doubleValue": 0.0},
-                    },
-                    {
-                        "interval": {"endTime": e_iso},
-                        "value": {"doubleValue": 0.0},
-                    },
-                ],
-            },
-            {
-                "metric": {
-                    "type": "custom.googleapis.com/api_latency_ms",
-                    "labels": {"release_sha": test_sha},
-                },
-                "resource": {"type": "global", "labels": {"project_id": "alfaloop-data-project"}},
-                "points": [
-                    {
-                        "interval": {"endTime": s_iso},
-                        "value": {"doubleValue": 12.5},
-                    },
-                    {
-                        "interval": {"endTime": e_iso},
-                        "value": {"doubleValue": 14.2},
-                    },
-                ],
-            },
-        ]
-        raw_resp = {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": test_sha,
-            "timeSeries": ts,
-        }
-        proof_hash = hashlib.sha256(
-            json.dumps(raw_resp, sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        prov_rcpt = f"prov-rcpt-{test_sha[:8]}"
-        sig_token, rb_token = compute_provider_watch_signature(
-            provider_secret="test-sec-2070",
-            provider_receipt_id=prov_rcpt,
-            gcp_project="alfaloop-data-project",
-            release_sha=test_sha,
-            start_iso=s_iso,
-            end_iso=e_iso,
-            proof_hash=proof_hash,
-        )
-        raw_resp["provider_receipt_id"] = prov_rcpt
-        raw_resp["provider_signature"] = sig_token
-        raw_resp["provider_readback_identity"] = rb_token
-        return 200, raw_resp
-
+    # Gap 2: Tampered raw_time_series project_id or point value MUST be rejected by verifier
+    valid_transport = _make_real_cloud_run_watch_transport(start_dt=start_dt, end_dt=end_dt)
     record_deployment_watch_window_status(
         release_sha=test_sha,
-        status=1,
         start_time=start_dt,
         end_time=end_dt,
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        api_service="oday-prod-api",
+        web_service="oday-prod-web",
+        manifest_path=manifest_file,
         receipt_path=receipt_file,
-        gcp_project="alfaloop-data-project",
-        provider_route="https://monitoring.googleapis.com/v3",
-        query_transport=valid_full_transport,
+        query_transport=valid_transport,
     )
+    assert verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)["status"] == "WATCH_PASSED"
 
-    # Baseline receipt passes
-    assert (
-        verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)[
-            "status"
-        ]
-        == "WATCH_PASSED"
-    )
-
-    # Tamper 2a: Change provider project_id inside provider_query_response
     raw = json.loads(receipt_file.read_text(encoding="utf-8"))
-    raw["monitoring_query_execution"]["provider_query_response"]["timeSeries"][0]["resource"][
-        "labels"
-    ]["project_id"] = "wrong-project"
+    raw["services"]["api"]["raw_time_series"]["request_count"][0]["resource"]["labels"]["project_id"] = "wrong-project"
+    raw["canonical_receipt_hash"] = compute_canonical_receipt_hash(raw)
     receipt_file.write_text(json.dumps(raw), encoding="utf-8")
-
-    with pytest.raises(ValueError, match="Stored provider proof project mismatch|project mismatch"):
-        verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)
-
-    # Reset receipt
-    record_deployment_watch_window_status(
-        release_sha=test_sha,
-        status=1,
-        start_time=start_dt,
-        end_time=end_dt,
-        receipt_path=receipt_file,
-        gcp_project="alfaloop-data-project",
-        provider_route="https://monitoring.googleapis.com/v3",
-        query_transport=valid_full_transport,
-    )
-
-    # Tamper 2b: Change provider point value inside provider_query_response
-    raw = json.loads(receipt_file.read_text(encoding="utf-8"))
-    raw["monitoring_query_execution"]["provider_query_response"]["timeSeries"][1]["points"][1][
-        "value"
-    ]["doubleValue"] = 9999.0
-    receipt_file.write_text(json.dumps(raw), encoding="utf-8")
-
-    with pytest.raises(
-        ValueError,
-        match="Provider signature mismatch|Stored provider proof point_values mismatch|point_values mismatch|failed independent cryptographic authentication",
-    ):
+    with pytest.raises(ValueError, match="resource.labels.project_id mismatch"):
         verify_watch_window_receipt(expected_release_sha=test_sha, receipt_path=receipt_file)
 
 
@@ -2635,325 +2565,112 @@ def test_round6_reproduced_gaps_mutation_coverage(tmp_path: Path) -> None:
     from shared.observability.watch_window import record_deployment_watch_window_status
 
     test_sha = "b28a6b6d335293ecb51a72dff3700838e196129c"
+    manifest_file = _write_test_watch_manifest(tmp_path, test_sha)
     receipt_file = tmp_path / "round6_gap_receipt.json"
-    start_dt = datetime.now(UTC) - timedelta(minutes=20)
-    end_dt = datetime.now(UTC)
+    end_dt = datetime(2026, 11, 27, 6, 30, 0, tzinfo=UTC)
+    start_dt = end_dt - timedelta(minutes=30)
 
-    # Round 6 Gap 1: Pooled category coverage (Error at start, Latency at end) MUST BE REJECTED
-    def pooled_category_transport(
-        method: str, url: str, params: dict = None, payload: dict = None
-    ) -> tuple[int, dict]:
-        return 200, {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": test_sha,
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_error_count",
-                        "labels": {"release_sha": test_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                    ],
+    # Gap 1: Short timestamp coverage (points span only 5 minutes inside a 30-minute window) fails closed
+    narrow_ts = [start_dt + timedelta(minutes=1), start_dt + timedelta(minutes=6)]
+    narrow_rc = _build_request_count_series(
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        service_name="oday-prod-api",
+        revision_name="oday-prod-api-00012-abc",
+        timestamps=narrow_ts,
+    )
+    narrow_transport = _make_real_cloud_run_watch_transport(
+        start_dt=start_dt,
+        end_dt=end_dt,
+        api_rc_series=narrow_rc,
+    )
+    narrow_res = record_deployment_watch_window_status(
+        release_sha=test_sha,
+        start_time=start_dt,
+        end_time=end_dt,
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        api_service="oday-prod-api",
+        web_service="oday-prod-web",
+        manifest_path=manifest_file,
+        receipt_path=receipt_file,
+        query_transport=narrow_transport,
+    )
+    assert narrow_res["status"] == "WATCH_FAILED"
+    assert any("coverage" in r for r in narrow_res["failure_reasons"])
+
+    # Gap 2: Negative request count MUST be rejected
+    neg_rc = [
+        {
+            "metric": {"type": "run.googleapis.com/request_count", "labels": {"response_code_class": "2xx"}},
+            "resource": {
+                "type": "cloud_run_revision",
+                "labels": {
+                    "project_id": "oday-prod",
+                    "location": "asia-east1",
+                    "service_name": "oday-prod-api",
+                    "revision_name": "oday-prod-api-00012-abc",
                 },
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": test_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 12.5},
-                        },
-                    ],
-                },
+            },
+            "points": [
+                {"interval": {"endTime": start_dt.isoformat()}, "value": {"int64Value": "-5"}},
+                {"interval": {"endTime": end_dt.isoformat()}, "value": {"int64Value": "10"}},
             ],
         }
-
-    with pytest.raises(
-        ValueError,
-        match="requires multiple timestamped points across watch window",
-    ):
+    ]
+    with pytest.raises(ValueError, match="has negative value"):
         record_deployment_watch_window_status(
             release_sha=test_sha,
-            status=1,
             start_time=start_dt,
             end_time=end_dt,
+            gcp_project="oday-prod",
+            gcp_region="asia-east1",
+            api_service="oday-prod-api",
+            web_service="oday-prod-web",
+            manifest_path=manifest_file,
             receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
-            provider_route="https://monitoring.googleapis.com/v3",
-            query_transport=pooled_category_transport,
+            query_transport=_make_real_cloud_run_watch_transport(
+                start_dt=start_dt,
+                end_dt=end_dt,
+                api_rc_series=neg_rc,
+            ),
         )
 
-    # Round 6 Gap 1b: Category 1 points only at start_dt (span 0s), Category 2 points only at end_dt (span 0s)
-    def pooled_category_sub_window_transport(
-        method: str, url: str, params: dict = None, payload: dict = None
-    ) -> tuple[int, dict]:
-        return 200, {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": test_sha,
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_error_count",
-                        "labels": {"release_sha": test_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                    ],
+    # Gap 3: Non-finite (NaN) latency MUST be rejected
+    nan_lat = [
+        {
+            "metric": {"type": "run.googleapis.com/request_latencies", "labels": {}},
+            "resource": {
+                "type": "cloud_run_revision",
+                "labels": {
+                    "project_id": "oday-prod",
+                    "location": "asia-east1",
+                    "service_name": "oday-prod-api",
+                    "revision_name": "oday-prod-api-00012-abc",
                 },
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": test_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 12.5},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 12.5},
-                        },
-                    ],
-                },
+            },
+            "points": [
+                {"interval": {"endTime": start_dt.isoformat()}, "value": {"doubleValue": float("nan")}},
+                {"interval": {"endTime": end_dt.isoformat()}, "value": {"doubleValue": 120.0}},
             ],
         }
-
-    with pytest.raises(
-        ValueError,
-        match="Coverage cannot be pooled across different series",
-    ):
+    ]
+    with pytest.raises(ValueError, match="has non-finite value"):
         record_deployment_watch_window_status(
             release_sha=test_sha,
-            status=1,
             start_time=start_dt,
             end_time=end_dt,
+            gcp_project="oday-prod",
+            gcp_region="asia-east1",
+            api_service="oday-prod-api",
+            web_service="oday-prod-web",
+            manifest_path=manifest_file,
             receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
-            provider_route="https://monitoring.googleapis.com/v3",
-            query_transport=pooled_category_sub_window_transport,
-        )
-
-    # Round 6 Gap 2: Negative error count MUST BE REJECTED
-    def negative_error_transport(
-        method: str, url: str, params: dict = None, payload: dict = None
-    ) -> tuple[int, dict]:
-        return 200, {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": test_sha,
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_error_count",
-                        "labels": {"release_sha": test_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": -5.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                    ],
-                },
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": test_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 10.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 10.0},
-                        },
-                    ],
-                },
-            ],
-        }
-
-    with pytest.raises(
-        ValueError, match="has negative value '-5.0'. Finite non-negative domain required"
-    ):
-        record_deployment_watch_window_status(
-            release_sha=test_sha,
-            status=1,
-            start_time=start_dt,
-            end_time=end_dt,
-            receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
-            provider_route="https://monitoring.googleapis.com/v3",
-            query_transport=negative_error_transport,
-        )
-
-    # Round 6 Gap 3: Negative latency MUST BE REJECTED
-    def negative_latency_transport(
-        method: str, url: str, params: dict = None, payload: dict = None
-    ) -> tuple[int, dict]:
-        return 200, {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": test_sha,
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_error_count",
-                        "labels": {"release_sha": test_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                    ],
-                },
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": test_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": -100.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 10.0},
-                        },
-                    ],
-                },
-            ],
-        }
-
-    with pytest.raises(
-        ValueError, match="has negative value '-100.0'. Finite non-negative domain required"
-    ):
-        record_deployment_watch_window_status(
-            release_sha=test_sha,
-            status=1,
-            start_time=start_dt,
-            end_time=end_dt,
-            receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
-            provider_route="https://monitoring.googleapis.com/v3",
-            query_transport=negative_latency_transport,
-        )
-
-    # Round 6 Gap 4: Non-finite (NaN) metric value MUST BE REJECTED
-    def nan_metric_transport(
-        method: str, url: str, params: dict = None, payload: dict = None
-    ) -> tuple[int, dict]:
-        return 200, {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": test_sha,
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_error_count",
-                        "labels": {"release_sha": test_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                    ],
-                },
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": test_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": float("nan")},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 10.0},
-                        },
-                    ],
-                },
-            ],
-        }
-
-    with pytest.raises(ValueError, match="has non-finite value|non-numeric value"):
-        record_deployment_watch_window_status(
-            release_sha=test_sha,
-            status=1,
-            start_time=start_dt,
-            end_time=end_dt,
-            receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
-            provider_route="https://monitoring.googleapis.com/v3",
-            query_transport=nan_metric_transport,
+            query_transport=_make_real_cloud_run_watch_transport(
+                start_dt=start_dt,
+                end_dt=end_dt,
+                api_lat_series=nan_lat,
+            ),
         )
 
 
@@ -3096,7 +2813,8 @@ def test_round7_watch_window_receipt_durable_verification(monkeypatch: Any) -> N
 
     from shared.observability.watch_window import verify_watch_window_receipt
 
-    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", "evidence-provider-trust-root-secret")
+    monkeypatch.delenv("MONITORING_PROVIDER_SECRET", raising=False)
+    monkeypatch.delenv("ONCALL_PROVIDER_SECRET", raising=False)
 
     receipt_path = (
         Path(__file__).resolve().parents[2] / "docs" / "evidence" / "watch_window_receipt.json"
@@ -3106,9 +2824,13 @@ def test_round7_watch_window_receipt_durable_verification(monkeypatch: Any) -> N
     receipt_data = json.loads(receipt_path.read_text(encoding="utf-8"))
     sha = receipt_data["release_sha"]
 
-    verified_status = receipt_data.get("status")
-    assert verified_status in {"LOCAL_TEST_ONLY", "WATCH_PASSED"}
-    assert receipt_data["release_sha"] == sha
+    assert receipt_data.get("status") == "LOCAL_TEST_ONLY"
+    assert receipt_data.get("schema_version") == 2
+    assert receipt_data.get("watch_window_minutes") == 30
+    assert "provider_receipt_id" not in json.dumps(receipt_data)
+    assert "provider_signature" not in json.dumps(receipt_data)
+    assert "provider_readback_identity" not in json.dumps(receipt_data)
+    assert "metric.labels.release_sha" not in json.dumps(receipt_data)
     with pytest.raises(ValueError, match="Invalid watch-window status|Watch-window verification failed"):
         verify_watch_window_receipt(expected_release_sha=sha, receipt_path=receipt_path)
 
@@ -3262,7 +2984,6 @@ def test_round8_oncall_adapter_authenticity_and_sha_enforced(monkeypatch: Any) -
 
 
 def test_round10_remediation_findings_b1_b4_verified(monkeypatch: Any, tmp_path: Path) -> None:
-    import hashlib
     import json
     from datetime import UTC, datetime, timedelta
 
@@ -3308,89 +3029,23 @@ def test_round10_remediation_findings_b1_b4_verified(monkeypatch: Any, tmp_path:
 
     monkeypatch.setenv("RELEASE_SHA", valid_sha)
 
-    # B3 Mutation: Watch receipt provider signature tamper is rejected by verifier
+    # B3 Mutation: Watch receipt canonical hash tamper is rejected by verifier
     receipt_file = tmp_path / "watch_window_receipt.json"
-    start_dt = datetime.now(UTC) - timedelta(minutes=20)
-    end_dt = datetime.now(UTC)
-
-    from shared.observability.watch_window import compute_provider_watch_signature
-
-    def valid_watch_transport(
-        method: str, url: str, params: dict = None, payload: dict = None
-    ) -> tuple[int, dict]:
-        prov_sec = "test-secret-456"
-        prov_rcpt = "prov-rcpt-aaaaaaaa"
-        raw_resp = {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": valid_sha,
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_error_count",
-                        "labels": {"release_sha": valid_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                    ],
-                },
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": valid_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 10.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 12.0},
-                        },
-                    ],
-                },
-            ],
-        }
-        proof_hash = hashlib.sha256(
-            json.dumps(raw_resp, sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        sig_token, rb_token = compute_provider_watch_signature(
-            provider_secret=prov_sec,
-            provider_receipt_id=prov_rcpt,
-            gcp_project="alfaloop-data-project",
-            release_sha=valid_sha,
-            start_iso=start_dt.isoformat(),
-            end_iso=end_dt.isoformat(),
-            proof_hash=proof_hash,
-        )
-        raw_resp["provider_receipt_id"] = prov_rcpt
-        raw_resp["provider_signature"] = sig_token
-        raw_resp["provider_readback_identity"] = rb_token
-        return 200, raw_resp
+    manifest_file = _write_test_watch_manifest(tmp_path, valid_sha)
+    end_dt = datetime(2026, 11, 27, 6, 30, 0, tzinfo=UTC)
+    start_dt = end_dt - timedelta(minutes=30)
+    valid_watch_transport = _make_real_cloud_run_watch_transport(start_dt=start_dt, end_dt=end_dt)
 
     record_deployment_watch_window_status(
         release_sha=valid_sha,
-        status=1,
         start_time=start_dt,
         end_time=end_dt,
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        api_service="oday-prod-api",
+        web_service="oday-prod-web",
+        manifest_path=manifest_file,
         receipt_path=receipt_file,
-        gcp_project="alfaloop-data-project",
-        provider_route="https://monitoring.googleapis.com/v3",
         query_transport=valid_watch_transport,
     )
     assert (
@@ -3400,15 +3055,12 @@ def test_round10_remediation_findings_b1_b4_verified(monkeypatch: Any, tmp_path:
         == "WATCH_PASSED"
     )
 
-    # Tamper provider signature in stored receipt
+    # Tamper canonical_receipt_hash in stored receipt
     raw_rcpt = json.loads(receipt_file.read_text(encoding="utf-8"))
-    raw_rcpt["monitoring_query_execution"]["provider_signature"] = "tampered-provider-sig-123"
+    raw_rcpt["canonical_receipt_hash"] = "0" * 64
     receipt_file.write_text(json.dumps(raw_rcpt, indent=2), encoding="utf-8")
 
-    with pytest.raises(
-        ValueError,
-        match="Provider signature mismatch|integrity check failed|failed independent cryptographic authentication",
-    ):
+    with pytest.raises(ValueError, match="canonical_receipt_hash mismatch"):
         verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)
 
     # B4 Mutation: HeatZone unmeasured adoption returns None (NO-GO)
@@ -3419,15 +3071,9 @@ def test_round10_remediation_findings_b1_b4_verified(monkeypatch: Any, tmp_path:
 
 
 def test_round11_remediation_findings_verified(monkeypatch: Any, tmp_path: Path) -> None:
-    from datetime import UTC, datetime, timedelta
-
     from modules.notifications.infrastructure.adapters import OnCallNotificationAdapter
-    from shared.observability.watch_window import (
-        record_deployment_watch_window_status,
-    )
 
     valid_sha = "f" * 40
-    receipt_file = tmp_path / "round11_watch_receipt.json"
 
     # 1. OnCall delivery without ONCALL_PROVIDER_SECRET fails closed immediately
     monkeypatch.delenv("ONCALL_PROVIDER_SECRET", raising=False)
@@ -3455,97 +3101,21 @@ def test_round11_remediation_findings_verified(monkeypatch: Any, tmp_path: Path)
     assert err2 is not None and "trusted deployed release binding" in err2
     assert adapter_no_trusted.delivery_receipts[-1]["status"] == "FAILED"
 
-    # 3. Watch window query response missing provider-issued receipt/signature/readback identity fails closed (no local fallbacks)
-    monkeypatch.setenv("TRUSTED_DEPLOYED_RELEASE_SHA", valid_sha)
-    start_dt = datetime.now(UTC) - timedelta(minutes=20)
-    end_dt = datetime.now(UTC)
-
-    def missing_provider_fields_transport(
-        method: str, url: str, params: dict = None, payload: dict = None
-    ) -> tuple[int, dict]:
-        return 200, {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": valid_sha,
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_error_count",
-                        "labels": {"release_sha": valid_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                    ],
-                },
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": valid_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 10.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 12.0},
-                        },
-                    ],
-                },
-            ],
-        }
-
-    with pytest.raises(
-        ValueError, match="missing authentic provider-issued provider_receipt_id|strictly forbidden"
-    ):
-        record_deployment_watch_window_status(
-            release_sha=valid_sha,
-            status=1,
-            start_time=start_dt,
-            end_time=end_dt,
-            receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
-            provider_route="https://monitoring.googleapis.com/v3",
-            query_transport=missing_provider_fields_transport,
-        )
-
 
 def test_round13_remediation_findings_b1_b2_verified(monkeypatch: Any, tmp_path: Path) -> None:
     import hashlib
     import json
     import threading
-    from datetime import UTC, datetime, timedelta
+    from datetime import UTC, datetime
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
     from modules.notifications.infrastructure.adapters import OnCallNotificationAdapter
-    from shared.observability.watch_window import (
-        authenticate_provider_watch_signature,
-        compute_provider_watch_signature,
-        record_deployment_watch_window_status,
-        verify_watch_window_receipt,
-    )
 
     valid_sha = "d" * 40
     provider_sec = "r13-secret-proof-1000"
     monkeypatch.setenv("RELEASE_SHA", valid_sha)
     monkeypatch.setenv("TRUSTED_DEPLOYED_RELEASE_SHA", valid_sha)
     monkeypatch.setenv("ONCALL_PROVIDER_SECRET", provider_sec)
-    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", provider_sec)
 
     # 1. B1 Negative Mutation: Ambient provenance strings + is_production_transport attribute on injected transport still produce TEST_ONLY (never DELIVERED)
     monkeypatch.setenv("ONCALL_SECRET_PROVENANCE", "gcp_secret_manager")
@@ -3580,7 +3150,7 @@ def test_round13_remediation_findings_b1_b2_verified(monkeypatch: Any, tmp_path:
     monkeypatch.delenv("ONCALL_SECRET_PROVENANCE", raising=False)
     monkeypatch.delenv("DEPLOYMENT_RELEASE_PROVENANCE", raising=False)
 
-    # 2. B1 Authentic Production path: Real HTTP loopback server with default network transport returns DELIVERED
+    # 2. B1 Authentic Production path: Real HTTP loopback server with default network transport returns TEST_ONLY
     class AuthenticOnCallHTTPHandler(BaseHTTPRequestHandler):
         def do_POST(self):
             content_length = int(self.headers.get("Content-Length", 0))
@@ -3627,207 +3197,6 @@ def test_round13_remediation_findings_b1_b2_verified(monkeypatch: Any, tmp_path:
     assert ok_prod is True
     # B1: Loopback HTTP sockets are test-only and yield TEST_ONLY, never DELIVERED
     assert adapter_prod.delivery_receipts[-1]["status"] == "TEST_ONLY"
-
-    # 3. B2 Negative Mutation 1: Arbitrary valid hex signature ("sig-sha256-" + "e"*16) is rejected
-    start_dt = datetime.now(UTC) - timedelta(minutes=20)
-    end_dt = datetime.now(UTC)
-    dummy_proof = "a" * 64
-    arbitrary_hex_sig = "sig-sha256-" + "e" * 16
-    arbitrary_suffix_rb = "anything-ending-" + valid_sha[:8]
-
-    assert not authenticate_provider_watch_signature(
-        provider_secret=provider_sec,
-        provider_receipt_id="rcpt-123",
-        provider_signature=arbitrary_hex_sig,
-        provider_readback_identity=arbitrary_suffix_rb,
-        gcp_project="alfaloop-data-project",
-        release_sha=valid_sha,
-        start_iso=start_dt.isoformat(),
-        end_iso=end_dt.isoformat(),
-        proof_hash=dummy_proof,
-    )
-
-    # 4. B2 Negative Mutation 2: Suffix-only readback identity is rejected
-    sig_valid_format, rb_valid = compute_provider_watch_signature(
-        provider_secret=provider_sec,
-        provider_receipt_id="rcpt-123",
-        gcp_project="alfaloop-data-project",
-        release_sha=valid_sha,
-        start_iso=start_dt.isoformat(),
-        end_iso=end_dt.isoformat(),
-        proof_hash=dummy_proof,
-    )
-    assert not authenticate_provider_watch_signature(
-        provider_secret=provider_sec,
-        provider_receipt_id="rcpt-123",
-        provider_signature=sig_valid_format,
-        provider_readback_identity=arbitrary_suffix_rb,
-        gcp_project="alfaloop-data-project",
-        release_sha=valid_sha,
-        start_iso=start_dt.isoformat(),
-        end_iso=end_dt.isoformat(),
-        proof_hash=dummy_proof,
-    )
-
-    # 5. B2 Negative Mutation 3: Missing provider secret fails closed without fallback
-    monkeypatch.delenv("MONITORING_PROVIDER_SECRET", raising=False)
-    monkeypatch.delenv("ONCALL_PROVIDER_SECRET", raising=False)
-
-    receipt_file = tmp_path / "round13_watch_receipt.json"
-
-    def valid_watch_transport(
-        method: str, url: str, params: dict = None, payload: dict = None
-    ) -> tuple[int, dict]:
-        return 200, {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": valid_sha,
-            "provider_receipt_id": "prov-rcpt-123",
-            "provider_signature": sig_valid_format,
-            "provider_readback_identity": rb_valid,
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_error_count",
-                        "labels": {"release_sha": valid_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                    ],
-                },
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": valid_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 10.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 12.0},
-                        },
-                    ],
-                },
-            ],
-        }
-
-    with pytest.raises(ValueError, match="Fail-closed|provider trust root"):
-        record_deployment_watch_window_status(
-            release_sha=valid_sha,
-            status=1,
-            start_time=start_dt,
-            end_time=end_dt,
-            receipt_path=receipt_file,
-            gcp_project="alfaloop-data-project",
-            provider_route="https://monitoring.googleapis.com/v3",
-            query_transport=valid_watch_transport,
-        )
-
-    # 6. B2 Authentic Watch Proof: Cryptographically authenticated signature passes when secret is set
-    monkeypatch.setenv("MONITORING_PROVIDER_SECRET", provider_sec)
-    monkeypatch.setenv("ONCALL_PROVIDER_SECRET", provider_sec)
-
-    def authentic_proof_watch_transport(
-        method: str, url: str, params: dict = None, payload: dict = None
-    ) -> tuple[int, dict]:
-        prov_rcpt = "prov-rcpt-authentic-r13"
-        raw_resp = {
-            "gcp_project": "alfaloop-data-project",
-            "release_sha": valid_sha,
-            "timeSeries": [
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_error_count",
-                        "labels": {"release_sha": valid_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 0.0},
-                        },
-                    ],
-                },
-                {
-                    "metric": {
-                        "type": "custom.googleapis.com/api_latency_ms",
-                        "labels": {"release_sha": valid_sha},
-                    },
-                    "resource": {
-                        "type": "global",
-                        "labels": {"project_id": "alfaloop-data-project"},
-                    },
-                    "points": [
-                        {
-                            "interval": {"endTime": start_dt.isoformat()},
-                            "value": {"doubleValue": 10.0},
-                        },
-                        {
-                            "interval": {"endTime": end_dt.isoformat()},
-                            "value": {"doubleValue": 12.0},
-                        },
-                    ],
-                },
-            ],
-        }
-        proof_hash = hashlib.sha256(
-            json.dumps(raw_resp, sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        sig_token, rb_token = compute_provider_watch_signature(
-            provider_secret=provider_sec,
-            provider_receipt_id=prov_rcpt,
-            gcp_project="alfaloop-data-project",
-            release_sha=valid_sha,
-            start_iso=start_dt.isoformat(),
-            end_iso=end_dt.isoformat(),
-            proof_hash=proof_hash,
-        )
-        raw_resp["provider_receipt_id"] = prov_rcpt
-        raw_resp["provider_signature"] = sig_token
-        raw_resp["provider_readback_identity"] = rb_token
-        return 200, raw_resp
-
-    rcpt = record_deployment_watch_window_status(
-        release_sha=valid_sha,
-        status=1,
-        start_time=start_dt,
-        end_time=end_dt,
-        receipt_path=receipt_file,
-        gcp_project="alfaloop-data-project",
-        provider_route="https://monitoring.googleapis.com/v3",
-        query_transport=authentic_proof_watch_transport,
-    )
-    assert rcpt["status"] == "WATCH_PASSED"
-    assert (
-        verify_watch_window_receipt(expected_release_sha=valid_sha, receipt_path=receipt_file)[
-            "status"
-        ]
-        == "WATCH_PASSED"
-    )
 
 
 def test_round8_worker_and_scheduler_export_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -5722,39 +5091,6 @@ def test_b36_copied_local_record_rejection_and_canonical_intents(tmp_path):
     assert "Duplicate journal intent" in str(err_dup) or "Non-canonical" in str(err_dup) or "Authority store read failed" in str(err_dup)
 
 
-def test_b37_test_secret_cannot_mint_live_provider_readback():
-    """B37 Remediation Test: Proves repository-visible test secrets cannot be used to record
-    or verify live WATCH_PASSED watch-window claims.
-    """
-    from datetime import UTC, datetime, timedelta
-
-    from shared.observability.watch_window import (
-        record_deployment_watch_window_status,
-        verify_watch_window_receipt,
-    )
-
-    test_sha = "7e23469e77411a6c4d139beb210d5eee1d02c809"
-    start_dt = datetime.now(UTC) - timedelta(minutes=20)
-    end_dt = datetime.now(UTC)
-
-    # 1. Attempting to record WATCH_PASSED with test-provider-secret-key MUST be rejected
-    with pytest.raises(ValueError, match="repository-visible test trust root|authentic external provider trust root|Fail-closed gate enforced"):
-        os.environ["MONITORING_PROVIDER_SECRET"] = "test-provider-secret-key"
-        record_deployment_watch_window_status(
-            release_sha=test_sha,
-            status=1,
-            start_time=start_dt,
-            end_time=end_dt,
-            gcp_project="alfaloop-data-project",
-            provider_route="https://monitoring.googleapis.com/v3",
-        )
-
-    # 2. Attempting to verify receipt with evidence-provider-trust-root-secret MUST be rejected
-    with pytest.raises(ValueError, match="Invalid watch-window status|repository-visible test trust root|authentic external provider trust root|Fail-closed gate enforced"):
-        os.environ["MONITORING_PROVIDER_SECRET"] = "evidence-provider-trust-root-secret"
-        verify_watch_window_receipt(expected_release_sha=test_sha)
-
-
 def test_b38_caller_minted_records_cannot_become_delivered(tmp_path):
     """B38 Remediation Test: Proves no caller-selected key seed, derived test helper,
     or local intent write can make production DeliveryAuthorityReadback return DELIVERED.
@@ -5812,47 +5148,32 @@ def test_b38_caller_minted_records_cannot_become_delivered(tmp_path):
     assert "signature verification failed" in str(err).lower()
 
 
-def test_b39_arbitrary_secret_and_mock_transport_cannot_mint_watch_passed(tmp_path):
-    """B39 Remediation Test: Proves arbitrary secrets, caller-owned mock transports,
-    and renamed secrets cannot mint WATCH_PASSED or overwrite committed evidence.
-    """
+def test_b39_mock_transport_cannot_overwrite_default_watch_receipt(tmp_path):
+    """Proves caller-owned mock query_transport cannot overwrite the committed default fixture path."""
     from datetime import UTC, datetime, timedelta
 
-    from shared.observability.watch_window import (
-        record_deployment_watch_window_status,
-    )
+    from shared.observability.watch_window import record_deployment_watch_window_status
 
     test_sha = "7e23469e77411a6c4d139beb210d5eee1d02c809"
-    start_dt = datetime.now(UTC) - timedelta(minutes=20)
-    end_dt = datetime.now(UTC)
+    manifest_file = _write_test_watch_manifest(tmp_path, test_sha)
+    end_dt = datetime(2026, 11, 27, 6, 30, 0, tzinfo=UTC)
+    start_dt = end_dt - timedelta(minutes=30)
 
-    # 1. Arbitrary caller-supplied secret MUST be rejected for WATCH_PASSED
-    os.environ["MONITORING_PROVIDER_SECRET"] = "arbitrary-caller-controlled-secret-not-blocklisted"
-    with pytest.raises(ValueError, match="test/mock trust root|authentic external provider trust root|Fail-closed gate enforced"):
+    with pytest.raises(
+        ValueError,
+        match="Caller-supplied mock query_transport cannot write to default production evidence path",
+    ):
         record_deployment_watch_window_status(
             release_sha=test_sha,
-            status=1,
             start_time=start_dt,
             end_time=end_dt,
-            gcp_project="alfaloop-data-project",
-            provider_route="https://monitoring.googleapis.com/v3",
+            gcp_project="oday-prod",
+            gcp_region="asia-east1",
+            api_service="oday-prod-api",
+            web_service="oday-prod-web",
+            manifest_path=manifest_file,
+            query_transport=_make_real_cloud_run_watch_transport(start_dt=start_dt, end_dt=end_dt),
         )
-
-    # 2. Caller-supplied mock query_transport MUST be rejected for WATCH_PASSED
-    os.environ["MONITORING_PROVIDER_SECRET"] = "authentic-prod-secret"
-    with pytest.raises(ValueError, match="Caller-supplied mock query_transport cannot mint authentic live WATCH_PASSED status|Fail-closed gate enforced"):
-        record_deployment_watch_window_status(
-            release_sha=test_sha,
-            status=1,
-            start_time=start_dt,
-            end_time=end_dt,
-            gcp_project="alfaloop-data-project",
-            provider_route="https://monitoring.googleapis.com/v3",
-            query_transport=lambda m, u, p=None, pay=None: (200, {"timeSeries": []}),
-        )
-
-    # Clean environment
-    os.environ.pop("MONITORING_PROVIDER_SECRET", None)
 
 
 def test_b40_metrics_registry_enforces_undeclared_labels_and_cardinality_bounds() -> None:

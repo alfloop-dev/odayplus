@@ -1,56 +1,96 @@
 {
+  "canonical_receipt_hash": "88e46b1f7743a55fe0421eb1b707820c10efc4a2ec775bd2153a1024c5ce1adc",
+  "end_time": "2026-11-27T00:30:00+00:00",
+  "failure_reasons": [
+    "LOCAL_TEST_ONLY fixture: not a live production watch-window receipt"
+  ],
+  "gcp_project": "local-test-only-project",
+  "gcp_region": "asia-east1",
+  "governance_parameters": {
+    "max_error_rate_percent": 5.0,
+    "max_p95_latency_seconds": 5.0,
+    "source_path": "docs/evidence/runtime/ODP-PROD-OPS-WATCH-PARAMS-001/prod-ops-governance-parameters.json",
+    "source_sha256": "0373a4afa5d65ef2a024e51f9f0dda993663634492556e6fde15f3e6c2a0f3b9",
+    "watch_window_minutes": 30
+  },
+  "manifest_digest": null,
+  "manifest_file_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "metric_name": "deployment_watch_window_status",
+  "note": "LOCAL_TEST_ONLY fixture: authentic Cloud Run production metrics readback is generated out-of-band by operator identity; rejected by verify_watch_window_receipt.",
+  "observed_duration_seconds": 1800.0,
+  "observed_metric_types": [
+    "run.googleapis.com/request_count",
+    "run.googleapis.com/request_latencies"
+  ],
+  "recorded_at": "2026-11-27T00:30:00+00:00",
   "release_sha": "7e23469e77411a6c4d139beb210d5eee1d02c809",
-  "gcp_project": "alfaloop-data-project",
+  "schema_version": 2,
+  "services": {
+    "api": {
+      "deployed_image": "asia-east1-docker.pkg.dev/local-test-only-project/oday-plus/oday-prod-api@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "deployed_image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "digest_matched": false,
+      "manifest_image": "asia-east1-docker.pkg.dev/local-test-only-project/oday-plus/oday-prod-api@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "manifest_image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "metrics": {
+        "error_5xx_requests": 0,
+        "error_rate_percent": null,
+        "p95_latency_ms": null,
+        "p95_latency_seconds": null,
+        "request_count_coverage_seconds": 0.0,
+        "request_count_distinct_timestamps": 0,
+        "request_count_points": 0,
+        "request_latencies_coverage_seconds": 0.0,
+        "request_latencies_distinct_timestamps": 0,
+        "request_latencies_points": 0,
+        "total_requests": 0
+      },
+      "query_filters": {
+        "request_count": "metric.type=\"run.googleapis.com/request_count\" AND resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"oday-prod-api\" AND resource.labels.revision_name=\"oday-prod-api-local-test-only\" AND resource.labels.location=\"asia-east1\"",
+        "request_latencies": "metric.type=\"run.googleapis.com/request_latencies\" AND resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"oday-prod-api\" AND resource.labels.revision_name=\"oday-prod-api-local-test-only\" AND resource.labels.location=\"asia-east1\""
+      },
+      "raw_time_series": {
+        "request_count": [],
+        "request_latencies": []
+      },
+      "revision_name": "oday-prod-api-local-test-only",
+      "service_name": "oday-prod-api",
+      "traffic_percent": 0
+    },
+    "web": {
+      "deployed_image": "asia-east1-docker.pkg.dev/local-test-only-project/oday-plus/oday-prod-web@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "deployed_image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "digest_matched": false,
+      "manifest_image": "asia-east1-docker.pkg.dev/local-test-only-project/oday-plus/oday-prod-web@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "manifest_image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "metrics": {
+        "error_5xx_requests": 0,
+        "error_rate_percent": null,
+        "p95_latency_ms": null,
+        "p95_latency_seconds": null,
+        "request_count_coverage_seconds": 0.0,
+        "request_count_distinct_timestamps": 0,
+        "request_count_points": 0,
+        "request_latencies_coverage_seconds": 0.0,
+        "request_latencies_distinct_timestamps": 0,
+        "request_latencies_points": 0,
+        "total_requests": 0
+      },
+      "query_filters": {
+        "request_count": "metric.type=\"run.googleapis.com/request_count\" AND resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"oday-prod-web\" AND resource.labels.revision_name=\"oday-prod-web-local-test-only\" AND resource.labels.location=\"asia-east1\"",
+        "request_latencies": "metric.type=\"run.googleapis.com/request_latencies\" AND resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"oday-prod-web\" AND resource.labels.revision_name=\"oday-prod-web-local-test-only\" AND resource.labels.location=\"asia-east1\""
+      },
+      "raw_time_series": {
+        "request_count": [],
+        "request_latencies": []
+      },
+      "revision_name": "oday-prod-web-local-test-only",
+      "service_name": "oday-prod-web",
+      "traffic_percent": 0
+    }
+  },
+  "start_time": "2026-11-27T00:00:00+00:00",
   "status": "LOCAL_TEST_ONLY",
   "status_code": 0,
-  "start_time": "2026-07-31T09:22:22.622435+00:00",
-  "end_time": "2026-07-31T09:37:22.622448+00:00",
-  "observed_duration_seconds": 900.0,
-  "watch_window_minutes": 15,
-  "verified_points_count": 0,
-  "observed_metric_types": [],
-  "point_timestamps": [],
-  "point_values": [],
-  "query_params": {
-    "filter": "metric.labels.release_sha=\"7e23469e77411a6c4d139beb210d5eee1d02c809\"",
-    "interval.startTime": "2026-07-31T09:22:22.622435+00:00",
-    "interval.endTime": "2026-07-31T09:37:22.622448+00:00"
-  },
-  "monitoring_query_execution": {
-    "readback_status": "LOCAL_TEST_ONLY",
-    "readback_verified": false,
-    "provider_receipt_id": "LOCAL_TEST_ONLY",
-    "provider_signature": "LOCAL_TEST_ONLY",
-    "provider_readback_identity": "LOCAL_TEST_ONLY",
-    "observed_series_count": 0,
-    "verified_points_count": 0,
-    "observed_metric_types": [],
-    "observed_window_minutes": 15,
-    "observed_duration_seconds": 900.0,
-    "query_start_time": "2026-07-31T09:22:22.622435+00:00",
-    "query_end_time": "2026-07-31T09:37:22.622448+00:00",
-    "executed_at": "2026-08-01T15:00:00.000000+00:00",
-    "provider_query_response": {
-      "gcp_project": "alfaloop-data-project",
-      "release_sha": "7e23469e77411a6c4d139beb210d5eee1d02c809",
-      "timeSeries": [],
-      "note": "LOCAL_TEST_ONLY evidence: authentic Cloud Monitoring provider readback is pending live GCP deployment (release status: NO-GO)."
-    },
-    "provider_proof_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-    "receipt_hash": "0570cdb2efbbe2e0f71737374ae637a4d74973aaa72d0c187f72008569ec0c79"
-  },
-  "observed_results": {
-    "error_count": 0,
-    "health_check_pass": false,
-    "telemetry_verified": false,
-    "observed_metric_types": [],
-    "verified_points_count": 0,
-    "window_coverage_seconds": 0.0
-  },
-  "recorded_at": "2026-08-01T15:00:00.000000+00:00",
-  "metric_name": "deployment_watch_window_status",
-  "note": "LOCAL_TEST_ONLY evidence: authentic Cloud Monitoring provider readback is pending live GCP deployment (release status: NO-GO).",
-  "provider_proof_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-  "canonical_receipt_hash": "0570cdb2efbbe2e0f71737374ae637a4d74973aaa72d0c187f72008569ec0c79",
-  "receipt_hash": "0570cdb2efbbe2e0f71737374ae637a4d74973aaa72d0c187f72008569ec0c79"
+  "watch_window_minutes": 30
 }
