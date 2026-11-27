@@ -509,25 +509,34 @@ class TaxSpec:
 
 @dataclass(frozen=True, slots=True)
 class ResidualValueSpec:
-    """Versioned salvage value, deposit recovery, and reinstatement specification."""
+    """Versioned salvage value, deposit recovery, and reinstatement specification.
+
+    A policy may be an explicit unknown (None): it is readable and serialized
+    as None, never defaulted or coerced, and refused by the shared calculation
+    guard. Omitted keys keep the legacy generic defaults.
+    """
 
     spec_id: str
     version: str
-    equipment_salvage_ratio: float = 0.12
-    fitout_salvage_ratio: float = 0.0
-    recover_lease_deposit: bool = True
-    decommissioning_and_reinstatement_cost: float = 60_000.0
+    equipment_salvage_ratio: float | None = 0.12
+    fitout_salvage_ratio: float | None = 0.0
+    recover_lease_deposit: bool | None = True
+    decommissioning_and_reinstatement_cost: float | None = 60_000.0
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ResidualValueSpec:
+        def policy(key: str, default: Any, kind: type) -> Any:
+            value = data.get(key, default)
+            return None if value is None else kind(value)
+
         return cls(
             spec_id=str(data["spec_id"]),
             version=str(data["version"]),
-            equipment_salvage_ratio=float(data.get("equipment_salvage_ratio", 0.12)),
-            fitout_salvage_ratio=float(data.get("fitout_salvage_ratio", 0.0)),
-            recover_lease_deposit=bool(data.get("recover_lease_deposit", True)),
-            decommissioning_and_reinstatement_cost=float(
-                data.get("decommissioning_and_reinstatement_cost", 60_000.0)
+            equipment_salvage_ratio=policy("equipment_salvage_ratio", 0.12, float),
+            fitout_salvage_ratio=policy("fitout_salvage_ratio", 0.0, float),
+            recover_lease_deposit=policy("recover_lease_deposit", True, bool),
+            decommissioning_and_reinstatement_cost=policy(
+                "decommissioning_and_reinstatement_cost", 60_000.0, float
             ),
         )
 

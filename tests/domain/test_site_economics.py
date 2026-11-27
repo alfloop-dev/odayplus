@@ -48,6 +48,7 @@ from modules.site_economics.domain.formats import (
     DRYER_STACK_15KG_V1,
     VENDING_DETERGENT_SMART_V1,
     WASHER_LARGE_20KG_V1,
+    build_accepted_g2_v2,
     build_default_g2_standard_v1,
 )
 from tests.site_economics_fixtures import (
@@ -187,8 +188,14 @@ def test_new_six_combo_payload_cannot_reuse_the_retained_mixed_g2_version():
 def test_accepted_default_roundtrips_through_original_registry_without_inventing_inputs():
     import json
 
+    from modules.site_economics.application.context_inputs import content_sha256
+
     registry = TargetFormatRegistry()
-    spec = registry.get("ODAY_G2")
+    spec = registry.get("ODAY_G2", "2.0.0")
+    # The original immutable snapshot and zero-argument factory never change.
+    assert spec == build_accepted_g2_v2() and spec.format_version == "2.0.0"
+    assert content_sha256(spec.to_dict()) == (
+        "ba663edcf8fd65a4e1bb3f9ad2b18ec7b8fed0503527f9901e119a5602d2f877")
     raw = json.loads(json.dumps(spec.to_dict(), allow_nan=False))
     restored = TargetFormatSpec.from_dict(raw)
     registry.register(restored)
@@ -231,7 +238,7 @@ def test_accepted_default_roundtrips_through_original_registry_without_inventing
                    "監視系統35000→29122", "家具備品26000→21633"):
         assert detail in spec.description
     raw["capital_assets"][0]["unit_capex"] += 1
-    assert registry.get("ODAY_G2") == spec
+    assert registry.get("ODAY_G2", "2.0.0") == spec
     with pytest.raises(ValueError, match="declared package must conserve"):
         TargetFormatSpec.from_dict(raw)
     for changed in (replace(spec, description="changed source"),
@@ -244,17 +251,70 @@ def test_accepted_default_roundtrips_through_original_registry_without_inventing
     assert all("cycle_minutes" not in item["machine_model"] for item in historical.to_dict()["machine_mix"]["items"])
 
 
+def test_accepted_fitout_zero_residual_is_versioned_partial_policy_not_a_relabel():
+    import json
+
+    registry = TargetFormatRegistry()
+    original = registry.get("ODAY_G2", "2.0.0")
+    current = registry.get("ODAY_G2")
+    assert current == registry.get("ODAY_G2", "2.1.0") == build_accepted_g2_v2("2.1.0")
+    assert current.format_version == "2.1.0"
+    # Only the version, typed residual policy and its source note change.
+    assert replace(current, format_version="2.0.0", residual_spec=None,
+                   description=original.description) == original
+    assert current.description.startswith(original.description)
+    assert "G2-FITOUT-INFRASTRUCTURE-DEPRECIATION-BASIS-USER-013" in current.description
+    assert current.package_total_untaxed == 5_546_000 == 5_346_000 + current.unallocated_package_cost
+    assert current.fitout_spec.compute_total_fitout(0) == 915245
+    assert current.fitout_spec.fitout_useful_life_months == 60
+    residual = current.residual_spec
+    assert residual.fitout_salvage_ratio == 0 and type(residual.fitout_salvage_ratio) is float
+    for field in ("equipment_salvage_ratio", "recover_lease_deposit",
+                  "decommissioning_and_reinstatement_cost"):
+        assert getattr(residual, field) is None
+    raw = json.loads(json.dumps(current.to_dict(), allow_nan=False))
+    assert raw["residual_spec"] == {"spec_id": "RES-G2-ACCEPTED-V2", "version": "2.1.0",
+        "equipment_salvage_ratio": None, "fitout_salvage_ratio": 0.0,
+        "recover_lease_deposit": None, "decommissioning_and_reinstatement_cost": None}
+    restored = TargetFormatSpec.from_dict(raw)
+    # Known 0 stays 0; unknown stays None (never a default or bool(None) -> False).
+    assert restored == current and restored.to_dict() == raw
+    assert restored.residual_spec.recover_lease_deposit is None
+    assert restored.residual_spec.fitout_salvage_ratio == 0
+    for field in ("utilities_spec", "maintenance_spec", "financing_spec", "tax_spec",
+                  "ramp_spec", "seasonality_spec"):
+        assert raw[field] is None
+    registry.register(restored)
+    with pytest.raises(ValueError, match="TARGET_FORMAT_IMMUTABLE_VERSION"):
+        registry.register(replace(current, residual_spec=replace(residual, fitout_salvage_ratio=0.1)))
+    with pytest.raises(ValueError, match="TARGET_FORMAT_IMMUTABLE_VERSION"):
+        registry.register(replace(original, residual_spec=residual))
+    with pytest.raises(ValueError, match="TARGET_FORMAT_VERSION_UNKNOWN"):
+        build_accepted_g2_v2("2.2.0")
+    # A declared package must still state every residual key, known or unknown.
+    for field in raw["residual_spec"]:
+        incomplete = json.loads(json.dumps(raw))
+        del incomplete["residual_spec"][field]
+        with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
+            TargetFormatSpec.from_dict(incomplete)
+    # Generic omitted keys keep the legacy complete defaults.
+    assert ResidualValueSpec.from_dict({"spec_id": "R", "version": "1"}) == ResidualValueSpec(
+        spec_id="R", version="1", equipment_salvage_ratio=0.12, fitout_salvage_ratio=0.0,
+        recover_lease_deposit=True, decommissioning_and_reinstatement_cost=60_000.0)
+
+
+@pytest.mark.parametrize("version", ["2.0.0", "2.1.0"])
 @pytest.mark.parametrize("entry", ["direct", "market_context", "simulator"])
 @pytest.mark.parametrize("insurance", [None, 0, 3456.25])
 @pytest.mark.parametrize("capex", [None, 0, 5546000])
-def test_accepted_default_is_refused_at_each_original_entry_even_with_overrides(entry, insurance, capex):
+def test_accepted_default_is_refused_at_each_original_entry_even_with_overrides(entry, insurance, capex, version):
     from unittest.mock import Mock
 
-    spec = TargetFormatRegistry().get("ODAY_G2")
+    spec = TargetFormatRegistry().get("ODAY_G2", version)
     untouched = spec.to_dict()
     simulator = Mock(spec=SiteEconomicsSimulator)
     service = SiteEconomicsService(simulator=simulator)
-    overrides = SimulationOverrides(insurance_annual_cost=insurance,
+    overrides = SimulationOverrides(format_version=version, insurance_annual_cost=insurance,
         custom_equipment_capex=capex, custom_fitout_capex=capex)
     with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
         if entry == "direct":
@@ -279,11 +339,15 @@ def test_accepted_default_is_refused_at_each_original_entry_even_with_overrides(
     "residual_spec", "ramp_spec", "seasonality_spec", "target_area_ping_min",
     "target_area_ping_max", "recommended_area_ping", "baseline_turns_per_day",
     "water_liters_per_cycle", "electricity_kwh_per_cycle", "gas_kg_per_cycle",
-    "detergent_cost_per_cycle", "monthly_maintenance_per_unit", "monthly_fixed_operating_cost"])
+    "detergent_cost_per_cycle", "monthly_maintenance_per_unit", "monthly_fixed_operating_cost",
+    "equipment_salvage_ratio", "fitout_salvage_ratio", "recover_lease_deposit",
+    "decommissioning_and_reinstatement_cost"])
 def test_each_required_unknown_independently_refuses_a_complete_engineering_g2(field):
     spec = _capital_asset_format()
     if field == "monthly_fixed_operating_cost":
         spec = replace(spec, capital_assets=(replace(spec.capital_assets[0], **{field: None}),))
+    elif field in spec.residual_spec.to_dict():
+        spec = replace(spec, residual_spec=replace(spec.residual_spec, **{field: None}))
     elif field in spec.machine_mix.items[0].machine_model.to_dict():
         first, second = spec.machine_mix.items
         first = replace(first, machine_model=replace(first.machine_model, **{field: None}))
@@ -327,10 +391,16 @@ def test_package_semantics_are_optional_but_conserved_and_unallocated_cost_block
     ("recommended_area_ping", False), ("format_version", 2), ("quantity", 3.5),
     ("model_id", "  invalid"), ("cycle_minutes", "55"), ("baseline_turns_per_day", "7"),
     ("water_liters_per_cycle", False), ("gas_kg_per_cycle", float("nan")),
-    ("unit_capex", None), ("useful_life_months", 60.5), ("base_cycle_price", float("inf"))])
+    ("unit_capex", None), ("useful_life_months", 60.5), ("base_cycle_price", float("inf")),
+    ("residual:fitout_salvage_ratio", "0"), ("residual:fitout_salvage_ratio", True),
+    ("residual:equipment_salvage_ratio", float("nan")), ("residual:recover_lease_deposit", 0),
+    ("residual:decommissioning_and_reinstatement_cost", "0"), ("residual:spec_id", None)])
 def test_partial_g2_unknown_support_never_coerces_malformed_known_values(field, value):
     raw = TargetFormatRegistry().get("ODAY_G2").to_dict()
-    if field in raw:
+    assert raw["format_version"] == "2.1.0"
+    if field.startswith("residual:"):
+        raw["residual_spec"][field.removeprefix("residual:")] = value
+    elif field in raw:
         raw[field] = value
     elif field == "quantity":
         raw["machine_mix"]["items"][0][field] = value
@@ -346,7 +416,8 @@ def test_partial_g2_unknown_support_never_coerces_malformed_known_values(field, 
     "utilities_spec", "maintenance_spec", "financing_spec", "tax_spec", "residual_spec",
     "ramp_spec", "seasonality_spec", "baseline_turns_per_day", "water_liters_per_cycle",
     "electricity_kwh_per_cycle", "gas_kg_per_cycle", "detergent_cost_per_cycle",
-    "monthly_maintenance_per_unit"])
+    "monthly_maintenance_per_unit", "equipment_salvage_ratio", "fitout_salvage_ratio",
+    "recover_lease_deposit", "decommissioning_and_reinstatement_cost"])
 def test_non_g2_unresolved_inputs_refuse_at_all_original_entries(entry, format_code, missing):
     from unittest.mock import Mock
 
@@ -364,6 +435,9 @@ def test_non_g2_unresolved_inputs_refuse_at_all_original_entries(entry, format_c
 
         spec = replace(spec, capital_assets=(CapitalAssetSpec.from_dict(dict(
             _synthetic_capital_asset_payload(), monthly_fixed_operating_cost=None)),))
+    elif missing in spec.residual_spec.to_dict():
+        # Partial residual knowledge with every other input complete.
+        spec = replace(spec, residual_spec=replace(spec.residual_spec, **{missing: None}))
     elif missing in spec.machine_mix.items[0].machine_model.to_dict():
         first, *rest = spec.machine_mix.items
         first = replace(first, machine_model=replace(first.machine_model, **{missing: None}))
@@ -432,7 +506,7 @@ def test_complete_declared_packages_preserve_all_original_entry_calculations(for
 @pytest.mark.parametrize("policy", ["utilities_spec", "maintenance_spec", "financing_spec",
     "tax_spec", "residual_spec", "ramp_spec", "seasonality_spec"])
 def test_partial_package_unknown_policy_cannot_inherit_legacy_defaults(policy):
-    raw = TargetFormatRegistry().get("ODAY_G2").to_dict()
+    raw = TargetFormatRegistry().get("ODAY_G2", "2.0.0").to_dict()
     assert raw[policy] is None
     assert TargetFormatSpec.from_dict(raw).to_dict()[policy] is None
     raw[policy] = {"spec_id": "INCOMPLETE-POLICY", "version": "1.0.0"}
@@ -565,7 +639,8 @@ def test_target_format_registry_and_resolution() -> None:
 
     g2 = reg.get("ODAY_G2")
     assert g2.format_code == "ODAY_G2"
-    assert g2.format_version == "2.0.0"
+    assert g2.format_version == "2.1.0"
+    assert reg.get("ODAY_G2", "2.0.0").residual_spec is None
     assert g2.recommended_area_ping is None
     assert g2.package_total_untaxed == 5_546_000
 
@@ -1524,7 +1599,7 @@ def test_fitout_residual_uses_effective_cost_same_amortization_and_single_termin
 
 
 @pytest.mark.parametrize("ratio", [float("nan"), float("inf"), -float("inf"),
-    -0.01, 1.01, "0.25", None, True, False, complex(0.25, 0), [], 10**400])
+    -0.01, 1.01, "0.25", True, False, complex(0.25, 0), [], 10**400])
 def test_fitout_residual_direct_dataclass_requires_finite_numeric_fraction(ratio):
     spec = synthetic_g2_format()
     spec = replace(spec, residual_spec=replace(spec.residual_spec, fitout_salvage_ratio=ratio))
