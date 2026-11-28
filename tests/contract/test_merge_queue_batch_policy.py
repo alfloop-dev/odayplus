@@ -323,12 +323,14 @@ def test_scenario_2_solo_pr_bounded_wait_timeout() -> None:
     assert 0 < wait_minutes <= 360, "Wait minutes must be bounded and positive"
 
     timeout_minutes = dev_queue.get("check_response_timeout_minutes")
-    assert timeout_minutes == 60, "Check response timeout must be 60 minutes"
+    assert timeout_minutes == 90
     assert wait_minutes < timeout_minutes, "Wait ceiling must be well within check timeout"
+    product_db_timeout = _load_yaml(CI_WORKFLOW_PATH)["jobs"]["product-db"]["timeout-minutes"]
+    assert timeout_minutes > product_db_timeout, "Allow the database job to finish and report"
 
     ruleset_params = build_ruleset_payload(dev_queue, "dev")["rules"][0]["parameters"]
     assert ruleset_params["min_entries_to_merge_wait_minutes"] == 10
-    assert ruleset_params["check_response_timeout_minutes"] == 60
+    assert ruleset_params["check_response_timeout_minutes"] == timeout_minutes
 
     runbook_text = RUNBOOK_PATH.read_text(encoding="utf-8")
     assert "min_entries_to_merge_wait_minutes" in runbook_text

@@ -17,7 +17,7 @@
         "max_entries_to_merge": 5,
         "min_entries_to_merge": 2,
         "min_entries_to_merge_wait_minutes": 10,
-        "check_response_timeout_minutes": 60
+        "check_response_timeout_minutes": 90
       }
     }
   }

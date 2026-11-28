@@ -35,13 +35,14 @@ applied by `delivery_toolchain/github/apply_branch_protection.py`.
 |---|---|---|
 | `merge_method` | `MERGE` | Matches the existing closeout flow (`gh pr merge --merge`) and `dev`'s merge-commit history. Squash would rewrite the task commit and drop the `LLM-Agent` / `Task-ID` / `Reviewer` trailers the hooks enforce. |
 | `grouping_strategy` | `ALLGREEN` | Every entry's own merge commit must be green, not just the group head. At this fleet's throughput (~1.5 merges/hour) the queue is rarely deeper than two, so the extra CI is cheap and a bad entry is ejected without bisecting the group. |
-| `check_response_timeout_minutes` | `60` | CI measures ~25 minutes. 60 leaves 2x headroom, so a slow runner does not eject an otherwise good PR. |
+| `check_response_timeout_minutes` | `90` | The required `product` check waits for `product-db`, which can run up to 70 minutes. The extra 20 minutes covers runner startup and required status reporting. On 2026-11-23, [merge group #1750](https://github.com/alfloop-dev/odayplus/actions/runs/45135581836) finished successfully after the previous 60-minute limit had ejected it. |
 | `max_entries_to_build` | `5` | Cap on concurrent speculative CI runs. |
 | `max_entries_to_merge` | `5` | Cap on how many PRs land in one group. |
 | `min_entries_to_merge` | `2` | Minimum PRs to accumulate before merging group when available. Enables batching for concurrent PRs to reduce merge commit churn and base branch rebase races on `dev`. |
 | `min_entries_to_merge_wait_minutes` | `10` | Bounded wait ceiling: holds a solo PR for up to 10 minutes to accumulate companion PRs before merging solo. Official GitHub documentation notes merge limits affect merges after build checks pass; offline configuration tests cannot verify GitHub timer start points or zero-added-latency claims, so real solo-PR timeline behavior is listed as a WP-35C live verification item. |
 
 D21 confirmed the batch requirement. The `min_entries_to_merge = 2` and `min_entries_to_merge_wait_minutes = 10` parameters were first adopted by Codex as an adjustable engineering default; on 2026-10-02 they received itemized H08 sign-off (Option B) and live activation approval, and were applied to the `dev-merge-queue` ruleset and read back. Before that date the live ruleset still ran `1` / `5` minutes. See [`docs/evidence/human-decisions/ODP-MERGE-QUEUE-H08-ACTIVATION-001/README.md`](../evidence/human-decisions/ODP-MERGE-QUEUE-H08-ACTIVATION-001/README.md); live batch formation and real solo-PR hold time remain WP-35C observation items.
+The `check_response_timeout_minutes` change from `60` to `90` (`ODP-DEV-MERGE-QUEUE-CHECK-TIMEOUT-261123`) received explicit H08 approval and live activation approval from the owner (蔡尚志) on 2026-11-27 in an interactive session, with all other queue parameters unchanged. Claude transcribed that approval; it is not the owner's own signature.
 They transition repository policy from single-entry baseline (`min_entries_to_merge = 1`) to conservative batching.
 Note that repository policy updates in `policy.json` (WP-35B) are distinct from live GitHub ruleset activation (WP-35C), which requires explicit operator authorization via `apply_branch_protection.py` and live solo-PR timeline receipt verification.
 See [`docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/implementation-handoff.md`](../evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/implementation-handoff.md) and [`docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-IMPLEMENTATION-001/README.md`](../evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-IMPLEMENTATION-001/README.md).
@@ -249,7 +250,7 @@ is `false`.
 
 | Symptom | Likely cause | First move |
 |---|---|---|
-| Every queued PR is ejected after ~60 min | a required context is not reporting on `merge_group` | check the PR's `merge_group` workflow runs; confirm the triggers in `ci.yml` and `merge-queue-review-gate.yml` |
+| A PR is ejected with `checks_timed_out` | a required context did not report before the live deadline | compare the live timeout and ejection time with the `merge_group` workflow and job timestamps. If a context never appears, check the triggers in `ci.yml` and `merge-queue-review-gate.yml` |
 | `gh pr merge` fails with a merge-queue error | a caller is still merging directly | that caller needs the `--auto` enqueue path |
 | Queue merges nothing while PRs sit "ready to merge" | nothing is enqueueing them | check the task's `merge_route` and `next`: `blocked` / `unknown` / `stalled` say why; the dispatcher stage (`dispatch_ready_tasks`) must be running - it is skipped while watchdog safe mode, discussion planning, or a dirty control plane holds dispatch |
 | PRs still report `BEHIND` | `strict` is still on for `dev` | re-apply the policy; see "`strict` must be off on `dev`" above |
