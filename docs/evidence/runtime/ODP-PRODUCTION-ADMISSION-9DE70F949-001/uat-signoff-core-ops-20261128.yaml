@@ -1,0 +1,37 @@
+uat_session_id: UAT-CORE-OPS-9DE70F949-20261128
+module: core-ops
+role: Human/Ops (Product Owner / QA Lead / Security Owner / SRE Owner / Business Owner consolidated sign-off per Decision B)
+tester_name: 蔡尚志
+tester_department: Executive / Operations
+date: "2026-11-28"
+environment: ephemeral-staging (https://console-staging.oday-plus.com.tw, namespace odp-9de70f949915)
+build_version: odp-9de70f949915
+git_commit: "9de70f949915706d1bad1bc25c24b681eeb902e9"
+manifest_digest: "sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd"
+data_snapshot: "ephemeral-staging isolated release database (external providers disabled)"
+model_versions: "not-applicable (core-ops; models truthfully refused)"
+feature_flags: "core-ops profile; auth_mode=local (D15 Google OAuth disabled); external_sources_expected_enabled=[]"
+scope_disposition:
+  included:
+    - authentication, password rotation on first login, session lifecycle, logout, login throttling (UAT-CO-01..06)
+    - RBAC role navigation, unauthorized action refusal, platform_admin business-data non-visibility, user/role invitation management (UAT-CO-07..10)
+    - security audit logging and auditor evidence export (UAT-CO-12..13)
+    - Store Ops, Governance, assisted listing intake permission boundaries (UAT-CO-14..16)
+    - truthful model refusal without surrogate predictions and admin release scope notice (UAT-CO-17..19)
+  excluded_by_owner_decision_A3:
+    - PriceOps, AdLift, Growth workspace, Franchisee portal (excluded from core-ops initial release scope; deferred to full profile release)
+  single_tenant_staging_disposition_A3:
+    - UAT-CO-11 cross-tenant isolation cannot issue a second-tenant invitation on single-tenant ephemeral staging; accepted via exact-SHA automated suites (tests/security/test_tenant_isolation_guard.py, tests/e2e/test_password_first_security_e2e.py, tests/e2e/test_live_business_journeys.py in CI 45989131033 / 45981989694) and live E2E gate checks in staging deploy 46024230572.
+invitations_issued_receipt: "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/hd21-first-release-takedown-rehearsal/uat-invitations-redacted-receipt.json"
+open_p0_defects: 0
+open_p1_defects: 0
+decision:
+  accepted: true
+  accepted_with_conditions: true
+conditions:
+  - owner: "Human/Ops (蔡尚志)"
+    due_date: "2027-02-25"
+    condition: "Re-run full cross-persona UAT (including model-dependent workflows and Franchisee/Growth/PriceOps/AdLift) prior to promoting any release under release_profile=full."
+sign_off_by: "蔡尚志 (Human/Ops, conversation 22399345-f387-4dca-9438-6dcf570c24ea step_index 8666)"
+signature_date: "2026-11-28T03:43:06Z"
+audit_export_ref: "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/hosted-artifacts/run-46024230572/runtime-release-staging-validation/remote-staging-proof/staging-46024230572.json"

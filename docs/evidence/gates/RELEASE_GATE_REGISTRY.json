@@ -1,9 +1,9 @@
 {
   "schema_version": "2.0.0",
   "registry_id": "ODP-RELEASE-GATE-REGISTRY",
-  "task_id": "ODP-STAGING-ADMISSION-9DE70F949-001",
-  "generated_at": "2026-11-27",
-  "description": "Candidate 9de70f949915706d1bad1bc25c24b681eeb902e9 (Runtime Release staging build 45995201655, core-ops manifest sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd) is dev-verified by the successful automatic dev deploy 45996059587, and admitted to staging only under HUMANOPS-STAGING-ADMISSION-20261127W (HD-08w, HD-09w). Exact push CI 45989131033 and merge group CI 45981989694 ran and passed all 12 jobs (including all 7 product lanes directly on 9de70f949915706d1bad1bc25c24b681eeb902e9 with zero scope skips). Gate 2 is passed-with-deviation for staging; gates 1 and 4 are blocked pending owner decision HD-07; gates 3, 5 and 6 block production. A Supervisor lease and the GitHub staging environment approval are still required before any deploy.",
+  "task_id": "ODP-PRODUCTION-ADMISSION-9DE70F949-001",
+  "generated_at": "2026-11-28",
+  "description": "Candidate 9de70f949915706d1bad1bc25c24b681eeb902e9 (Runtime Release staging build 45995201655, core-ops manifest sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd) is staging-verified by the 11-stage ephemeral staging rehearsal 46024230572 (PR #1774 merged; ODP-EPHEMERAL-STAGING-ROLLOUT-001 done), HD-21 Web allUsers takedown/restore rehearsal, HD-20 production Cloud SQL DR drill (RTO 4.93m), and owner UAT sign-off, and is admitted to production under HUMANOPS-PRODUCTION-GO-20261128A (2026-11-28T03:43:06Z). Gates 3, 5, and 6 are passed-with-deviation for core-ops production admission; dev-boundary gates 1 and 4 remain recorded as open historical dev-boundary dispositions pending HD-07.",
   "migration": {
     "from_schema_version": "1.0.0",
     "source_registry_id": "ODP-RELEASE-GATE-REGISTRY",
@@ -16,17 +16,17 @@
     "candidate_ref": "refs/heads/dev",
     "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
     "manifest_digest": "sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd",
-    "stage": "dev-verified",
-    "environment": "dev",
-    "admission_target": "staging",
+    "stage": "staging-verified",
+    "environment": "staging",
+    "admission_target": "production",
     "decision": "go",
     "decision_owner": "Human/Ops",
-    "decision_date": "2026-11-27",
-    "decision_note": "GO for staging admission only under HUMANOPS-STAGING-ADMISSION-20261127W (owner 蔡尚志 explicit post-build reply '核准 HD-08w、HD-09w、代按本次 staging cleanup 與 staging deploy 環境核准，及補齊上述 2 項正式環境前置設定' at 2026-11-27T12:52:49Z, conversation 22399345-f387-4dca-9438-6dcf570c24ea step_index 8257 following step_index 8256 presentation): candidate 9de70f949915706d1bad1bc25c24b681eeb902e9, core-ops staging manifest sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd, Runtime Release staging build 45995201655. The CI-requested automatic dev deploy 45996059587 of 9de70f949915 (phase auto) succeeded: every job that ran succeeded, live E2E passed 83 of 83 checks with no blockers, and preflight, migration compatibility, Cloud Run smoke, the worker, migration and scheduler job validations (including immutable image bindings) and the public-egress probe all passed. Dev now serves release odp-9de70f949915. Exact push CI 45989131033 and merge group CI 45981989694 both ran and passed all 7 product lanes directly on 9de70f949915706d1bad1bc25c24b681eeb902e9. This authorizes one staging release request, one short-lived lease, one Runtime Release deploy phase, one Runtime Release cleanup phase for expired superseded 8e5020a29bad92300cce2fe7262e496fb31370b5, and proxy approval of the corresponding GitHub staging environment gates only. Production deployment remains outside scope. Gate-2 is cleared with the deviations recorded on it.",
+    "decision_date": "2026-11-28",
+    "decision_note": "PRODUCTION GO for core-ops release odp-9de70f949915 under HUMANOPS-PRODUCTION-GO-20261128A (owner 蔡尚志 explicit post-rehearsal, post-DR-drill, post-UAT sign-off at 2026-11-28T03:43:06Z, conversation 22399345-f387-4dca-9438-6dcf570c24ea step_index 8666): candidate 9de70f949915706d1bad1bc25c24b681eeb902e9, staging-sealed immutable manifest sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd from build 45995201655, verified across automatic dev deploy 45996059587 (83/83 live E2E) and full 11-stage ephemeral staging rehearsal 46024230572 on console-staging.oday-plus.com.tw. Gates 3, 5, and 6 are cleared as passed-with-deviation for core-ops with explicit owner-approved deviations and review_by 2027-02-25. Authorizes one single-use Supervisor production deploy lease and one Runtime Release production deploy phase.",
     "human_signoff": {
-      "approver": "Human/Ops (owner 蔡尚志, explicit post-build reply '核准 HD-08w、HD-09w、代按本次 staging cleanup 與 staging deploy 環境核准，及補齊上述 2 項正式環境前置設定' at 2026-11-27T12:52:49Z in Antigravity conversation 22399345-f387-4dca-9438-6dcf570c24ea step_index 8257; transcribed by Antigravity; not an external identity-system signature)",
-      "date": "2026-11-27",
-      "approval_id": "HUMANOPS-STAGING-ADMISSION-20261127W"
+      "approver": "Human/Ops (owner 蔡尚志, explicit post-rehearsal/post-DR/post-UAT Production GO approval at 2026-11-28T03:43:06Z in Antigravity conversation 22399345-f387-4dca-9438-6dcf570c24ea step_index 8666; transcribed by Antigravity)",
+      "date": "2026-11-28",
+      "approval_id": "HUMANOPS-PRODUCTION-GO-20261128A"
     }
   },
   "gates": [
@@ -602,8 +602,8 @@
       "scope": "Model or decision-model promotion and optimization releases: dataset snapshots, baseline/segment/calibration metrics, model cards, hard-constraint feasibility, infeasibility diagnostics, and rollback paths.",
       "owner": "Codex2",
       "reviewer": "Antigravity2",
-      "status": "blocked",
-      "status_date": "2026-11-27",
+      "status": "passed-with-deviation",
+      "status_date": "2026-11-28",
       "release_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
       "stage": "staging-verified",
       "environment": "staging",
@@ -619,21 +619,39 @@
       "evidence": [
         {
           "kind": "doc",
-          "ref": "docs/evidence/PRODUCTION_MODEL_RISK_ACCEPTANCE_2026-07-25.md",
-          "description": "Recorded production model risk acceptance that this gate must supersede with real release evidence."
+          "ref": "docs/design/ODP_CORE_OPS_RELEASE_PROFILE.md",
+          "description": "Core-ops release profile specification and §8 Gate-3 deviation contract."
         },
         {
           "kind": "doc",
-          "ref": "docs/evidence/ODP_FIN_ML_002_CLOSEOUT.md",
-          "description": "ML closeout packet referenced for model lifecycle evidence conventions."
+          "ref": "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/staging-verified-summary.json",
+          "description": "11-stage ephemeral staging rehearsal and HD-21 first-release takedown rehearsal summary for 9de70f949915."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/humanops-production-go-authorization-20261128.json",
+          "description": "Owner HD-15 / HD-24 Production GO authorization signing the core-ops Gate-3 deviation."
         }
       ],
-      "receipts": [],
-      "blockers": [
-        "No Model and Solver Gate receipt is bound to release candidate 9de70f949915706d1bad1bc25c24b681eeb902e9 in this registry.",
-        "Reconciled from legacy references: canonical task HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001 (owner Human/Ops) covers specific BRAND_TRANSFER/FORMAT_CONVERSION/LEASE/PARTIAL/CDC/merge-queue dispositions, but does not own formal ForecastOps model release/history/production alias or general model-risk approval. Formal model release/history/production alias and general model-risk acceptance require unassigned proposal to coordinator (Authority: Product Owner + ML Risk Owner; Required Input: ForecastOps model card, SiteScore/AVM validation, production alias binding; Acceptance: named human signoff receipt). Staging model and solver execution rehearsal is exercised under active task ODP-EPHEMERAL-STAGING-ROLLOUT-001 (owner Antigravity5).",
-        "Solver domain tasks (ODP-BRAND-TRANSFER-IMPLEMENTATION-001, ODP-FORMAT-CONVERSION-IMPLEMENTATION-001, ODP-NET002-LEASE-IMPLEMENTATION-001) remain blocked on upstream dependencies; gate ownership by Codex2 (reviewer Antigravity2)."
-      ]
+      "receipts": [
+        {
+          "receipt_id": "gate-3-9de70f949915-core-ops-20261128",
+          "release_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+          "result": "pass",
+          "recorded_at": "2026-11-28T03:43:06Z",
+          "recorded_by": "Antigravity (live core-ops model-refusal verification & Human/Ops HD-15 sign-off at step_index 8666)",
+          "artifact": "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/humanops-production-go-authorization-20261128.json",
+          "gate_name": "Model and Solver Gate",
+          "summary": "Core-ops release 9de70f949915706d1bad1bc25c24b681eeb902e9 claims no model or solver readiness (manifest.release_profile.name=core-ops, model_readiness=not_claimed). Compensating controls verified live in dev deploy 45996059587 and 11-stage staging rehearsal 46024230572: runtime reports productionBindingsReady=false and PRODUCTION_MODEL_BINDINGS_UNVERIFIED, Learning Hub registry refuses with 503, no surrogate predictions exist, and admin UI renders OperatorReleaseNotice. Human approval and first-release rollback/takedown path (HD-21) are recorded and rehearsed on staging."
+        }
+      ],
+      "blockers": [],
+      "deviation": {
+        "description": "Applies exclusively to core-ops candidate 9de70f949915706d1bad1bc25c24b681eeb902e9 (manifest.release_profile.name=core-ops, model_readiness=not_claimed): dataset snapshot hash, baseline/segment metrics, calibration/coverage, model/decision cards, and solver runtime diagnostics are deviated because all model-dependent and solver surfaces (ForecastOps, AVM, HeatZone, SiteScore, Learning Hub, NetPlan) remain truthfully refused in production without surrogate predictions. Reopen trigger: if any model acquires an approved production alias or productionBindingsReady=true, this deviation immediately expires and requires full Gate-3 evaluation under release_profile=full.",
+        "approver": "Human/Ops (owner 蔡尚志 as risk_owner, Product Owner & ML Risk Authority, 2026-11-28T03:43:06Z, HD-15 in conversation 22399345-f387-4dca-9438-6dcf570c24ea step_index 8666)",
+        "review_by": "2027-02-25",
+        "artifact": "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/humanops-production-go-authorization-20261128.json"
+      }
     },
     {
       "id": "gate-4",
@@ -721,8 +739,8 @@
       "scope": "Domain and integration releases and user-visible release candidates: business-critical flow evidence, API P95 / batch window / render runtime budgets, and role-based UAT sign-off with zero open P0/P1 defects.",
       "owner": "Codex2",
       "reviewer": "Human/Ops",
-      "status": "blocked",
-      "status_date": "2026-11-27",
+      "status": "passed-with-deviation",
+      "status_date": "2026-11-28",
       "release_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
       "stage": "staging-verified",
       "environment": "staging",
@@ -741,27 +759,40 @@
           "description": "Deterministic product E2E readiness report mapping P0 scenarios to executable tests."
         },
         {
-          "kind": "doc",
-          "ref": "docs/evidence/ODP_LIVE_E2E_GATE.md",
-          "description": "Live end-to-end acceptance gate definition for a deployed release."
-        },
-        {
           "kind": "script",
           "ref": "delivery_toolchain/e2e/check_live_e2e_gate.py",
-          "description": "Fail-closed live E2E gate that drives the deployed runtime bound to one exact release SHA."
+          "description": "Fail-closed live E2E gate bound to exact release SHA and core-ops profile."
         },
         {
           "kind": "doc",
-          "ref": "docs/uat",
-          "description": "UAT plan and formal acceptance documentation set."
+          "ref": "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/hosted-artifacts/run-46024230572/runtime-release-staging-validation/remote-staging-proof/staging-46024230572.json",
+          "description": "Live 11-stage ephemeral staging rehearsal proof including live_e2e_gate on console-staging.oday-plus.com.tw."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/uat-signoff-core-ops-20261128.yaml",
+          "description": "Owner-signed core-ops ephemeral staging UAT acceptance record (0 P0 / 0 P1 defects)."
         }
       ],
-      "receipts": [],
-      "blockers": [
-        "No E2E, Performance and UAT Gate receipt is bound to release candidate 9de70f949915706d1bad1bc25c24b681eeb902e9 in this registry.",
-        "Reconciled from legacy references: exact-SHA live ephemeral staging end-to-end rehearsal, backup/restore drill, and rollback rehearsal are assigned to active task ODP-EPHEMERAL-STAGING-ROLLOUT-001 (owner Antigravity5).",
-        "Runtime NFR measurement (SHARED-008, PERF/BATCH/AVAIL/RPO) is assigned to active task ODP-NFR-RUNTIME-EVIDENCE-001 (owner Antigravity3); cross-role UAT defect closeout and formal sign-off require human/ops decision when staging is live (proposal submitted to coordinator); gate ownership by Codex2 (reviewer Human/Ops)."
-      ]
+      "receipts": [
+        {
+          "receipt_id": "gate-5-9de70f949915-core-ops-20261128",
+          "release_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+          "result": "pass",
+          "recorded_at": "2026-11-28T03:43:06Z",
+          "recorded_by": "Antigravity (exact-SHA CI E2E/perf, live staging E2E gate 46024230572, and owner UAT sign-off HD-13/HD-16)",
+          "artifact": "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/uat-signoff-core-ops-20261128.yaml",
+          "gate_name": "E2E, Performance and UAT Gate",
+          "summary": "product-e2e-gate and performance-gate passed directly on 9de70f949915706d1bad1bc25c24b681eeb902e9 (push CI 45989131033, merge_group CI 45981989694); live_e2e_gate passed on both dev (45996059587, 83/83) and ephemeral staging (46024230572, 11/11 rehearsal stages on console-staging.oday-plus.com.tw); 4 core-ops role invitations were issued on ephemeral staging and UAT was signed off by owner 蔡尚志 with 0 open P0/P1 defects (docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/uat-signoff-core-ops-20261128.yaml). Post-deploy runtime NFR observation and core-ops scope boundaries are recorded in the deviation."
+        }
+      ],
+      "blockers": [],
+      "deviation": {
+        "description": "For core-ops candidate 9de70f949915706d1bad1bc25c24b681eeb902e9: (1) canonical Playwright specs include fixture-driven model surfaces in CI, which prove spec execution integrity only and are not claimed as live model readiness (models are refused in core-ops), and static PRODUCT_E2E_EXECUTION_RECEIPT.json is not re-generated per SHA; (2) ODP-NFR-BATCH-002 daily batch cutoff is not-applicable in core-ops (HD-14), while in-process CI performance-gate passed and Cloud Monitoring api p95 > 3000ms alerting is active, with live 24h production API P95 (ODP-NFR-PERF-001-PROD), monthly availability (ODP-NFR-AVAIL-003), and render budget observations tracked post-cutover under ODP-POSTDEPLOY-WATCH-CLOSEOUT-001; (3) UAT excludes PriceOps, AdLift, Growth, and Franchisee from core-ops and covers UAT-CO-11 cross-tenant isolation via exact-SHA automated and live-gate checks due to single-tenant ephemeral staging (HD-13 / A3).",
+        "approver": "Human/Ops (owner 蔡尚志, 2026-11-28T03:43:06Z, HD-13 / HD-14 / HD-16 in conversation 22399345-f387-4dca-9438-6dcf570c24ea step_index 8666)",
+        "review_by": "2027-02-25",
+        "artifact": "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/humanops-production-go-authorization-20261128.json"
+      }
     },
     {
       "id": "gate-6",
@@ -770,8 +801,8 @@
       "scope": "Production release and high-risk or subsidy-committing decisions: release note, deployment and rollback plans, monitoring watch window and on-call route, backup/DR review, decision-log export, and a reproducible evidence manifest.",
       "owner": "Claude",
       "reviewer": "Human/Ops",
-      "status": "blocked",
-      "status_date": "2026-11-27",
+      "status": "passed-with-deviation",
+      "status_date": "2026-11-28",
       "release_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
       "stage": "staging-verified",
       "environment": "staging",
@@ -788,36 +819,54 @@
       "evidence": [
         {
           "kind": "doc",
-          "ref": "docs/evidence/DEPLOYMENT_HEALTH_BACKUP_ROLLBACK_EVIDENCE.md",
-          "description": "Deployment health, backup, and rollback evidence packet."
+          "ref": "docs/runbooks/core-ops.md",
+          "description": "Approved core-ops operational runbook including release-identity verification and Decision D takedown procedure."
         },
         {
-          "kind": "script",
-          "ref": "delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py",
-          "description": "Verifier for the deployment health, backup, and rollback evidence packet."
+          "kind": "doc",
+          "ref": "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/release-notes-core-ops-odp-9de70f949915.md",
+          "description": "Owner-approved core-ops release notes for odp-9de70f949915 (HD-23)."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/hd21-first-release-takedown-rehearsal/hd21-staging-takedown-rehearsal-receipt.json",
+          "description": "Live staging rehearsal receipt proving first-release Web allUsers takedown (403) and restore (200) procedure (HD-21)."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/production-dr-drill/production-dr-drill-receipt.json",
+          "description": "Production Cloud SQL backup and restore DR drill receipt on oday-prod-foundation-sql (RTO 4.93m <= 240m, PITR=true, HD-20)."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/evidence-manifest-rtm-9de70f949915.json",
+          "description": "Hash-reproducible RTM and Gate 0-6 evidence manifest for candidate 9de70f949915."
         },
         {
           "kind": "doc",
           "ref": "docs/evidence/AUDIT_EVIDENCE_RETENTION_PROOF.md",
-          "description": "Audit evidence retention proof for the decision-log and evidence-manifest checks."
-        },
-        {
-          "kind": "doc",
-          "ref": "docs/evidence/SUBSIDY_EVIDENCE_MATRIX.md",
-          "description": "Subsidy audit evidence matrix for high-risk commitment decisions."
-        },
-        {
-          "kind": "doc",
-          "ref": "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md",
-          "description": "Product release go/no-go packet whose human checklist rows remain pending."
+          "description": "Audit evidence retention and hash-chain proof backed by 7-year locked production WORM bucket."
         }
       ],
-      "receipts": [],
-      "blockers": [
-        "No Ops, Release and Audit Gate receipt is bound to release candidate 9de70f949915706d1bad1bc25c24b681eeb902e9 in this registry.",
-        "Pre-production admission readiness (required prior to production admission): runbook review, deployment and rollback plan review, backup/DR review, decision-log retention proof (docs/evidence/AUDIT_EVIDENCE_RETENTION_PROOF.md), subsidy audit matrix (docs/evidence/SUBSIDY_EVIDENCE_MATRIX.md), on-call route assignment, and Stage 0-7 / Gate 0-6 final gate audit readiness require coordinator disposition / Human/Ops final go/no-go signoff in docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md (every Human/Ops row remains pending-human; gate ownership by Claude, reviewer Human/Ops).",
-        "Post-production closeout (downstream of production rollout): post-deploy production watch window, staging cleanup, and final release archive are assigned to active task ODP-POSTDEPLOY-WATCH-CLOSEOUT-001 (owner Antigravity5, canonical depends_on ODP-PROD-BLUEGREEN-ROLLOUT-001). Structural remediation ledger closeout is assigned to active task ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001 (owner Antigravity5). Post-deploy activities do not block pre-production admission, resolving circular production-order dependency."
-      ]
+      "receipts": [
+        {
+          "receipt_id": "gate-6-9de70f949915-core-ops-20261128",
+          "release_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+          "result": "pass",
+          "recorded_at": "2026-11-28T03:43:06Z",
+          "recorded_by": "Antigravity (ops readiness verification, HD-20 DR drill, HD-21 takedown rehearsal, and Human/Ops HD-17/23/24 GO)",
+          "artifact": "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/evidence-manifest-rtm-9de70f949915.json",
+          "gate_name": "Ops, Release and Audit Gate",
+          "summary": "Completed and approved for 9de70f949915706d1bad1bc25c24b681eeb902e9: core-ops release notes (HD-23), deployment & rollback plans with live staging rollback_rehearsal (46024230572) and HD-21 Web allUsers takedown/restore rehearsal, promoted docs/runbooks/core-ops.md, 6 active Cloud Monitoring alert policies + owner email on-call route + 30-min watch window with PR #1771 real Cloud Run metrics watch receipt & configured ODP_PRODUCTION_WATCH_CLOSEOUT_URI (HD-22), 7-year locked audit WORM bucket + HD-20 Cloud SQL DR drill (backup 1795819475472 restored to RUNNABLE in 4.93m; post-billing automated backup 1795802400000 SUCCESSFUL), and reproducible SHA-256 RTM evidence manifest (sha256:61ae9694d655cbe057d5e4ec4308fa5685427b3cc0b456f4155ddff45db15c74)."
+        }
+      ],
+      "blockers": [],
+      "deviation": {
+        "description": "For core-ops first production release 9de70f949915706d1bad1bc25c24b681eeb902e9: (1) legacy PV-008 docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md intentionally remains conditional for full-profile model release while RELEASE_GATE_REGISTRY.json is the sole authoritative GO record for core-ops; (2) Cloud Monitoring (6 policies + email channel + Web uptime check) is the authoritative alerting plane while in-app AlertRouter remains unwired to paging, and oday-prod-api Cloud Monitoring uptime check enables immediately after first deploy creates oday-prod-api; (3) in the HD-20 DR drill, the initial in-VPC SQL probe job split gcloud --args on commas before temporary instance deletion, so restored readiness was verified via RESTORE_VOLUME=DONE and RUNNABLE state while pre-release empty schema baseline was verified via in-VPC read-only SQL probe against oday-prod-foundation-sql; live production WORM decision-log export sample and 30-minute post-deploy watch window closeout are executed immediately post-cutover under ODP-POSTDEPLOY-WATCH-CLOSEOUT-001.",
+        "approver": "Human/Ops (owner 蔡尚志, 2026-11-28T03:43:06Z, HD-17 / HD-20 / HD-21 / HD-22 / HD-23 / HD-24 in conversation 22399345-f387-4dca-9438-6dcf570c24ea step_index 8666)",
+        "review_by": "2027-02-25",
+        "artifact": "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/humanops-production-go-authorization-20261128.json"
+      }
     }
   ],
   "candidate_rebind": {
