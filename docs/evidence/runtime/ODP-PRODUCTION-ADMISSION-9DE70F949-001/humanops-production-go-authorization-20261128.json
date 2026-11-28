@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "record_kind": "humanops-runtime-release-production-go-authorization",
+  "status": "approved",
+  "is_approval": true,
+  "task_id": "ODP-PRODUCTION-ADMISSION-9DE70F949-001",
+  "approved_by": "Human/Ops",
+  "approver_name": "蔡尚志",
+  "approval_id": "HUMANOPS-PRODUCTION-GO-20261128A",
+  "candidate_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+  "manifest_digest": "sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd",
+  "manifest_run_id": "45995201655",
+  "staging_deploy_run_id": "46024230572",
+  "target_environment": "production",
+  "release_profile": "core-ops",
+  "approved_at": "2026-11-28T03:43:06Z",
+  "decisions_covered": {
+    "HD-13": "Ephemeral staging UAT signed off by owner 蔡尚志 with 0 P0 / 0 P1 defects (PriceOps/AdLift/Growth/Franchisee excluded from core-ops; UAT-CO-11 single-tenant staging limitation covered by exact-SHA automated & live-gate tests).",
+    "HD-14": "ODP-NFR-BATCH-002 daily batch cutoff recorded not-applicable for core-ops (no daily model batch).",
+    "HD-15": "Gate-3 (Model and Solver Gate) approved passed-with-deviation for core-ops (risk_owner & approver: 蔡尚志, review_by: 2027-02-25; reopens immediately if any model acquires a production alias).",
+    "HD-16": "Gate-5 (E2E, Performance and UAT Gate) approved passed-with-deviation for core-ops (live E2E passed on dev 45996059587 & staging 46024230572, UAT signed off, post-deploy 24h P95 & monthly availability tracked under ODP-POSTDEPLOY-WATCH-CLOSEOUT-001).",
+    "HD-17": "Gate-6 (Ops, Release and Audit Gate) approved passed-with-deviation for core-ops (release notes, deployment/rollback plans, HD-21 staging takedown rehearsal, HD-20 prod Cloud SQL DR drill RTO=4.93m, runbook docs/runbooks/core-ops.md, 6 live Cloud Monitoring alerts + 30m watch window, WORM 7y lock, and RTM hash manifest completed).",
+    "HD-23": "Core-ops release notes approved (release-notes-core-ops-odp-9de70f949915.md).",
+    "HD-24": "Production GO approved: RELEASE_GATE_REGISTRY.json advanced to stage=staging-verified, environment=staging, admission_target=production, decision=go.",
+    "HD-25": "Authorized single-use Supervisor production deploy lease for candidate 9de70f949915706d1bad1bc25c24b681eeb902e9 / manifest sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd.",
+    "HD-26": "Authorized proxy-approval of the two GitHub production environment deployment gates (admission and deploy) for this single release."
+  },
+  "chronological_basis": {
+    "conversation_id": "22399345-f387-4dca-9438-6dcf570c24ea",
+    "candidate_ci_completed": [
+      45989131033,
+      45981989694
+    ],
+    "staging_build_completed": {
+      "run_id": 45995201655,
+      "manifest_digest": "sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd"
+    },
+    "dev_auto_deploy_completed": {
+      "run_id": 45996059587,
+      "live_e2e": "83/83 passed"
+    },
+    "staging_rehearsal_completed": {
+      "run_id": 46024230572,
+      "completed_at": "2026-11-27T15:46:48Z",
+      "stages_passed": "11/11",
+      "evidence_pr_merged": {
+        "pr_number": 1774,
+        "merge_commit": "0525cf68afbf6aa6ab966d2b8d9a7fd1be479326"
+      }
+    },
+    "pre_go_drills_owner_confirmation": {
+      "confirmed_at": "2026-11-27T22:41:31Z",
+      "selections": [
+        "A1: 同意以目前 deborah.lu 身分執行 HD-21 staging allUsers 撤銷/恢復演練，並提交 run 46024230572 證據 PR 將 ODP-EPHEMERAL-STAGING-ROLLOUT-001 結案為 done",
+        "A2: 同意對 oday-prod-foundation-sql 建演練備份、建立臨時 ZONAL 執行個體還原並以 VPC 內唯讀查詢驗證 RPO/RTO，完成收據後立即刪除臨時執行個體並保留該筆備份作證據",
+        "A3: 請先建立 core-ops 四角色邀請碼（operations_manager、regional_supervisor、auditor、operator_viewer）供我在 console-staging 實測簽核；PriceOps/AdLift/Growth/Franchisee 排除於本次 core-ops，UAT-CO-11 單租戶限制以自動化與 live gate 證據替代"
+      ]
+    },
+    "hd21_staging_takedown_rehearsal_completed_at": "2026-11-27T22:52:32Z",
+    "hd20_prod_dr_drill_completed_at": "2026-11-27T23:06:49Z",
+    "post_drill_uat_presentation_step_index": 8657,
+    "initial_user_reply_step_index": 8658,
+    "initial_user_reply_at": "2026-11-28T03:41:07Z",
+    "clarification_question_step_index": 8666,
+    "final_production_go_reply_at": "2026-11-28T03:43:06Z",
+    "final_production_go_verbatim": "A1: (Recommended) 是：確認 HD-13 UAT 簽核通過（零 P0/P1），正式核准 candidate 9de70f949915706d1bad1bc25c24b681eeb902e9（manifest sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd）之 HD-15（Gate-3 passed-with-deviation，review_by 2027-02-25）、HD-16（Gate-5）、HD-17（Gate-6）、HD-23（上線說明）、HD-24 Production GO（stage=staging-verified / admission_target=production / decision=go）、HD-25 單次 production 部署租約，並授權代按本次 HD-26 GitHub production 環境兩道核准閘門"
+  }
+}

@@ -1,0 +1,88 @@
+[
+  {
+    "backupKind": "SNAPSHOT",
+    "databaseVersion": "POSTGRES_16",
+    "description": "odp-dr-drill-20261127T2244Z",
+    "diskEncryptionConfiguration": {
+      "kind": "sql#diskEncryptionConfiguration",
+      "kmsKeyName": "projects/odayplus-prod-20260826/locations/asia-east1/keyRings/oday-prod-runtime/cryptoKeys/oday-prod-runtime"
+    },
+    "diskEncryptionStatus": {
+      "kind": "sql#diskEncryptionStatus",
+      "kmsKeyVersionName": "projects/odayplus-prod-20260826/locations/asia-east1/keyRings/oday-prod-runtime/cryptoKeys/oday-prod-runtime/cryptoKeyVersions/1"
+    },
+    "endTime": "2026-11-27T22:46:27.010Z",
+    "enqueuedTime": "2026-11-27T22:44:35.472Z",
+    "id": "1795819475472",
+    "instance": "oday-prod-foundation-sql",
+    "kind": "sql#backupRun",
+    "location": "asia",
+    "selfLink": "https://sqladmin.googleapis.com/sql/v1beta4/projects/odayplus-prod-20260826/instances/oday-prod-foundation-sql/backupRuns/1795819475472",
+    "startTime": "2026-11-27T22:44:35.480Z",
+    "status": "SUCCESSFUL",
+    "type": "ON_DEMAND",
+    "windowStartTime": "2026-11-27T22:44:35.472Z"
+  },
+  {
+    "backupKind": "SNAPSHOT",
+    "databaseVersion": "POSTGRES_16",
+    "diskEncryptionConfiguration": {
+      "kind": "sql#diskEncryptionConfiguration",
+      "kmsKeyName": "projects/odayplus-prod-20260826/locations/asia-east1/keyRings/oday-prod-runtime/cryptoKeys/oday-prod-runtime"
+    },
+    "diskEncryptionStatus": {
+      "kind": "sql#diskEncryptionStatus",
+      "kmsKeyVersionName": "projects/odayplus-prod-20260826/locations/asia-east1/keyRings/oday-prod-runtime/cryptoKeys/oday-prod-runtime/cryptoKeyVersions/1"
+    },
+    "endTime": "2026-11-27T19:42:50.566Z",
+    "enqueuedTime": "2026-11-27T19:41:19.285Z",
+    "id": "1795802400000",
+    "instance": "oday-prod-foundation-sql",
+    "kind": "sql#backupRun",
+    "location": "asia-east1",
+    "selfLink": "https://sqladmin.googleapis.com/sql/v1beta4/projects/odayplus-prod-20260826/instances/oday-prod-foundation-sql/backupRuns/1795802400000",
+    "startTime": "2026-11-27T19:41:19.302Z",
+    "status": "SUCCESSFUL",
+    "type": "AUTOMATED",
+    "windowStartTime": "2026-11-27T18:00:00Z"
+  },
+  {
+    "backupKind": "SNAPSHOT",
+    "databaseVersion": "POSTGRES_16",
+    "diskEncryptionConfiguration": {
+      "kind": "sql#diskEncryptionConfiguration",
+      "kmsKeyName": "projects/odayplus-prod-20260826/locations/asia-east1/keyRings/oday-prod-runtime/cryptoKeys/oday-prod-runtime"
+    },
+    "diskEncryptionStatus": {
+      "kind": "sql#diskEncryptionStatus",
+      "kmsKeyVersionName": "projects/odayplus-prod-20260826/locations/asia-east1/keyRings/oday-prod-runtime/cryptoKeys/oday-prod-runtime/cryptoKeyVersions/1"
+    },
+    "endTime": "2026-11-25T19:04:32.342Z",
+    "enqueuedTime": "2026-11-25T19:03:01.078Z",
+    "id": "1795629600000",
+    "instance": "oday-prod-foundation-sql",
+    "kind": "sql#backupRun",
+    "location": "asia-east1",
+    "selfLink": "https://sqladmin.googleapis.com/sql/v1beta4/projects/odayplus-prod-20260826/instances/oday-prod-foundation-sql/backupRuns/1795629600000",
+    "startTime": "2026-11-25T19:03:01.091Z",
+    "status": "SUCCESSFUL",
+    "type": "AUTOMATED",
+    "windowStartTime": "2026-11-25T18:00:00Z"
+  },
+  {
+    "backupKind": "SNAPSHOT",
+    "databaseVersion": "POSTGRES_16",
+    "description": "Backup created automatically during an update operation after enabling point-in-time recovery",
+    "endTime": "2026-11-25T06:54:17.956Z",
+    "enqueuedTime": "2026-11-25T06:54:02.008Z",
+    "id": "1795589642008",
+    "instance": "oday-prod-foundation-sql",
+    "kind": "sql#backupRun",
+    "location": "asia-east1",
+    "selfLink": "https://sqladmin.googleapis.com/sql/v1beta4/projects/odayplus-prod-20260826/instances/oday-prod-foundation-sql/backupRuns/1795589642008",
+    "startTime": "2026-11-25T06:54:02.011Z",
+    "status": "SUCCESSFUL",
+    "type": "AUTOMATED",
+    "windowStartTime": "2026-11-25T06:54:02.008Z"
+  }
+]

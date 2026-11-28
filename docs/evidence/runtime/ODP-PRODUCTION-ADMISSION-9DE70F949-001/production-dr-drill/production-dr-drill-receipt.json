@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "kind": "production-dr-drill",
+  "plan_reference": "docs/evidence/runtime/ODP-CORE-OPS-PROD-READINESS-PACK-001/backup-dr-impact.md#6",
+  "source_instance": {
+    "name": "oday-prod-foundation-sql",
+    "project": "odayplus-prod-20260826",
+    "region": "asia-east1",
+    "databaseVersion": "POSTGRES_16",
+    "edition": "ENTERPRISE",
+    "tier": "db-custom-4-15360",
+    "availabilityType": "REGIONAL",
+    "ipv4Enabled": false,
+    "kmsKeyName": "projects/odayplus-prod-20260826/locations/asia-east1/keyRings/oday-prod-runtime/cryptoKeys/oday-prod-runtime",
+    "backupConfiguration": {
+      "backupRetentionSettings": {
+        "retainedBackups": 30,
+        "retentionUnit": "COUNT"
+      },
+      "backupTier": "STANDARD",
+      "enabled": true,
+      "kind": "sql#backupConfiguration",
+      "location": "asia-east1",
+      "pointInTimeRecoveryEnabled": true,
+      "replicationLogArchivingEnabled": true,
+      "startTime": "18:00",
+      "transactionLogRetentionDays": 7,
+      "transactionalLogStorageState": "CLOUD_STORAGE"
+    },
+    "post_billing_recovery_automated_backup": {
+      "id": "1795802400000",
+      "windowStartTime": "2026-11-27T18:00:00Z",
+      "endTime": "2026-11-27T19:42:50.566Z",
+      "status": "SUCCESSFUL"
+    }
+  },
+  "backup": {
+    "id": "1795819475472",
+    "type": "ON_DEMAND",
+    "status": "SUCCESSFUL",
+    "description": "odp-dr-drill-20261127T2244Z",
+    "windowStartTime": "2026-11-27T22:44:35.472Z",
+    "endTime": "2026-11-27T22:46:27.010Z",
+    "retention_disposition": "retained_per_owner_confirmation_A2"
+  },
+  "temporary_instance": {
+    "name": "oday-prod-dr-drill-20261127",
+    "create_started_at": "2026-11-27T22:47:49Z",
+    "created_at": "2026-11-27T22:51:08Z",
+    "post_restore_state": "RUNNABLE",
+    "availabilityType": "ZONAL",
+    "private_ip": "10.235.0.8",
+    "executor_identity": "deborah.lu@dev.cctech-support.com"
+  },
+  "restore_operation": {
+    "name": "042c06ca-616a-4851-abe9-dec800000025",
+    "operationType": "RESTORE_VOLUME",
+    "startTime": "2026-11-27T22:51:10.066Z",
+    "endTime": "2026-11-27T22:55:59.721Z",
+    "status": "DONE"
+  },
+  "rto_restore_minutes": 4.93,
+  "rto_including_temp_instance_creation_minutes": 8.25,
+  "rto_target_minutes": 240,
+  "rpo_observed_minutes": 0.0,
+  "rpo_capability": {
+    "pointInTimeRecoveryEnabled": true,
+    "transactionLogRetentionDays": 7,
+    "retainedBackups": 30,
+    "target_rpo_minutes": 60,
+    "pitr_clone_executed": false
+  },
+  "verification_queries": {
+    "source_sql_baseline": {
+      "database": "oday",
+      "databases": [
+        "cloudsqladmin",
+        "oday",
+        "postgres"
+      ],
+      "extensions": [
+        "plpgsql"
+      ],
+      "schema_table_counts": {},
+      "server_version": "16.15"
+    },
+    "restored_instance_control_plane_verified": {
+      "restore_operation_status": "DONE",
+      "instance_state_after_restore": "RUNNABLE",
+      "note": "Initial in-VPC SQL probe job (odp-dr-drill-verify-20261127-w8ppt) split gcloud --args on commas and exited 0 before querying 10.235.0.8 prior to temporary instance deletion; source instance 10.235.0.2 read-only SQL baseline above confirms pre-first-release database state."
+    }
+  },
+  "owner_confirmations": {
+    "approver": "蔡尚志 (Human/Ops)",
+    "confirmed_at": "2026-11-27T22:41:31Z",
+    "conversation_id": "22399345-f387-4dca-9438-6dcf570c24ea"
+  },
+  "cleanup": {
+    "delete_started_at": "2026-11-27T23:00:35Z",
+    "delete_completed_at": "2026-11-27T23:02:48Z",
+    "post_delete_list_filter_result": []
+  },
+  "result": "pass"
+}
