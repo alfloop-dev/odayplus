@@ -34,12 +34,23 @@ locals {
   oidc_enabled = var.auth_mode == "oidc"
   name_prefix  = "oday-${var.environment}"
 
-  # Cloud Run service names, shared by cloud_run.tf and the load balancer's
-  # serverless NEGs. The NEGs name the service rather than reference the
-  # resource, so a targeted apply of the staging load balancer
-  # (load_balancer.tf) never pulls the root stack's own services into its graph.
-  api_service_name = "${local.name_prefix}-api"
-  web_service_name = "${local.name_prefix}-web"
+  # Cloud Run service names, shared by cloud_run.tf, the load balancer's
+  # serverless NEGs and the monitoring alert filters. Those name the service
+  # rather than reference the resource, so a targeted apply of the staging load
+  # balancer never pulls the root stack's own services into its graph, and they
+  # keep working where cloud_run_services_managed is false and the Runtime
+  # Release deploy path creates services of these names (production:
+  # oday-prod-api / oday-prod-web).
+  api_service_name  = "${local.name_prefix}-api"
+  web_service_name  = "${local.name_prefix}-web"
+  cloud_run_managed = var.cloud_run_services_managed
+
+  # ODP-CORE-OPS-RELEASE-PROFILE-001 F2: only the full profile serves approved
+  # models, so only it requires the MLflow registry and model approval inputs.
+  # core-ops keeps the forecast engine/model the release entrypoint requires for
+  # every deploy (deploy_cloud_run_waji.sh) and never takes placeholder values.
+  full_release_profile           = var.release_profile == "full"
+  release_model_config_env_names = local.full_release_profile ? local.required_model_config_env_names : toset(["ODP_FORECAST_ENGINE", "ODP_FORECAST_MODEL"])
 
   # Host of the governed public Web origin. The uptime check and the custom
   # domain load balancer both use this one parse of web_base_url.
@@ -154,8 +165,8 @@ locals {
   web_plain_env = merge(
     {
       ODAY_RELEASE_SHA                     = var.release_sha
-      ODP_API_BASE_URL                     = google_cloud_run_v2_service.api.uri
-      ODP_API_SERVICE_AUDIENCE             = google_cloud_run_v2_service.api.uri
+      ODP_API_BASE_URL                     = one(google_cloud_run_v2_service.api[*].uri)
+      ODP_API_SERVICE_AUDIENCE             = one(google_cloud_run_v2_service.api[*].uri)
       ODP_AUTH_MODE                        = var.auth_mode
       ODP_AUTH_OIDC_ENABLED                = tostring(local.oidc_enabled)
       ODP_AUTH_LOCAL_ISSUER                = "urn:odp:identity:local"
@@ -247,18 +258,19 @@ locals {
   production_contract_values = concat(
     [
       var.project_id,
-      var.api_image,
-      var.web_image,
       var.release_sha,
       var.database_name,
       var.database_user,
-      var.mlflow_tracking_uri,
       var.web_base_url,
       var.api_public_host,
       local.auth_issuer,
       local.auth_jwks_uri,
       var.monitoring_api_uptime_host,
     ],
+    # Images are inputs only of Terraform-owned services.
+    local.cloud_run_managed ? [var.api_image, var.web_image] : [],
+    # core-ops does not require MLflow; a supplied URI is still screened.
+    local.full_release_profile ? [var.mlflow_tracking_uri] : compact([var.mlflow_tracking_uri]),
     local.auth_audiences,
     local.oidc_enabled ? [
       var.web_oidc_client_id,

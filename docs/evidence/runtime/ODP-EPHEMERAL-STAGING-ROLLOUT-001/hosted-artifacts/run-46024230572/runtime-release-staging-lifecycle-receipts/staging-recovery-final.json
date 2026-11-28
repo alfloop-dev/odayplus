@@ -1,0 +1,23 @@
+{
+  "release_id": "odp-9de70f949915",
+  "candidate_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+  "manifest_digest": "sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd",
+  "phase": "final",
+  "status": "verified",
+  "run_attempt": "46024230572-1",
+  "secret_values_redacted": true,
+  "objects": [
+    {
+      "object_uri": "gs://oday-staging-recovery-odayplus-runtime-20260825/oday-plus/ephemeral-staging/odp-9de70f949915/bundle/hold-46024230572-1-odp-9de70f949915-5c64b623.lifecycle.json",
+      "generation": "1795794185986489",
+      "content_sha256": "0df87f04c4075ed4331d9616fe9dd0a8426e9dde58053b9f20d3e17228e5beff",
+      "size_bytes": 6803,
+      "verified_at": "2026-11-27T15:43:10Z"
+    }
+  ],
+  "initial_lifecycle": {
+    "object_uri": "gs://oday-staging-recovery-odayplus-runtime-20260825/oday-plus/ephemeral-staging/odp-9de70f949915/bundle/odp-9de70f949915-5c64b623.lifecycle.json",
+    "generation": "1795793421076706",
+    "content_sha256": "bfd38f3e89909d915f9952e9fb27bc8b999325f6d6f1b07919908eb0928f1d0b"
+  }
+}

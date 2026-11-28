@@ -1,0 +1,13 @@
+{
+  "bindings": [
+    {
+      "members": [
+        "allUsers",
+        "serviceAccount:stg-odp-9de70f949-5c64b623-rt@odayplus-runtime-20260825.iam.gserviceaccount.com"
+      ],
+      "role": "roles/run.invoker"
+    }
+  ],
+  "etag": "BwZhSeDRiWI=",
+  "version": 1
+}

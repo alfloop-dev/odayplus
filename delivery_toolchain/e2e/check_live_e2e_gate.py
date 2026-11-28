@@ -105,8 +105,9 @@ BOOTSTRAP_AUDIT_EVENT = "identity.account.bootstrap"
 # and adds a real password sign-in/session/sign-out journey through the Web.
 # ODP-CORE-OPS-RELEASE-PROFILE-001: ``core-ops`` ships core operations to dev,
 # staging and production ahead of trained models. It shares dev-admin's
-# "missing models must be truthfully refused" scope but not its dev-only
-# password journey or ODP_DEV_ADMIN_* inputs.
+# "missing models must be truthfully refused" scope but not its
+# ODP_DEV_ADMIN_* inputs. The password journey itself is run for dev-admin and
+# for every staging run (GateConfig.password_journey).
 RELEASE_PROFILE_FULL = "full"
 RELEASE_PROFILE_DEV_ADMIN = "dev-admin"
 RELEASE_PROFILE_CORE_OPS = "core-ops"
@@ -295,7 +296,8 @@ DEPENDENCY_ACTIONS: Mapping[str, str] = {
     ),
     "session": (
         "Repair the Web password sign-in path: the provisioned operator account "
-        "(ODP_DEV_ADMIN_USERNAME/ODP_DEV_ADMIN_PASSWORD), the durable Web "
+        "(ODP_DEV_ADMIN_USERNAME/ODP_DEV_ADMIN_PASSWORD on dev; the release's "
+        "admin bootstrap job and admin secrets on staging), the durable Web "
         "session store and login throttle in PostgreSQL, and the session "
         "secret/identity signing key shared by Web and API."
     ),
@@ -409,6 +411,19 @@ class GateConfig:
     @property
     def dev_admin(self) -> bool:
         return self.release_profile == RELEASE_PROFILE_DEV_ADMIN
+
+    @property
+    def password_journey(self) -> bool:
+        """Whether the release must prove the Web password sign-in journey.
+
+        dev-admin always does. Staging does for every admitted profile: Google
+        user OAuth is off there (D15), so password sign-in is its only human
+        sign-in (ODP-EPHEMERAL-STAGING-ROLLOUT-001). Staging signs in as its
+        release-scoped bootstrap administrator (``bootstrap_admin_*`` plus the
+        one-time secret in ``dev_admin_initial_password``), never a dev input.
+        """
+
+        return self.dev_admin or self.expected_deployment == "staging"
 
     @property
     def model_readiness_claimed(self) -> bool:
@@ -1014,7 +1029,7 @@ def _release_profile_config_checks(config: GateConfig) -> list[CheckResult]:
             ),
             "release-profile",
         )
-    if config.dev_admin:
+    if config.password_journey:
         resolved_username = config.dev_admin_username or config.bootstrap_admin_username
         resolved_password = config.dev_admin_password or config.bootstrap_admin_password
         _check(
@@ -1025,6 +1040,8 @@ def _release_profile_config_checks(config: GateConfig) -> list[CheckResult]:
                 "configured"
                 if resolved_username and resolved_password
                 else f"missing {DEV_ADMIN_USERNAME_ENV}/{DEV_ADMIN_PASSWORD_ENV}"
+                if config.dev_admin
+                else "missing the release-scoped password sign-in account"
             ),
             "config",
         )
@@ -1822,6 +1839,9 @@ def _check_dev_admin_session(
     business shell refusal (for pure platform_admin), and sign-out. No
     bearer, role, or tenant header is injected; the only identity the API sees
     is the one the Web session carries.
+
+    It runs whenever ``config.password_journey`` holds: the dev-admin profile,
+    and every staging release with its release-scoped bootstrap administrator.
 
     The supported operations exercised, in order:
 
@@ -3181,7 +3201,7 @@ def evaluate_gate(
             provider=runtime_provider,
             checks=checks,
         )
-        if config.dev_admin:
+        if config.password_journey:
             _check_dev_admin_session(
                 web=web_http,
                 config=config,

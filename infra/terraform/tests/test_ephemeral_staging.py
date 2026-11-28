@@ -151,7 +151,7 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
     def test_all_release_scoped_cloud_run_resources_use_controlled_vpc_egress(self) -> None:
         main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
 
-        self.assertEqual(main_tf.count('egress = "ALL_TRAFFIC"'), 5)
+        self.assertEqual(main_tf.count('egress = "ALL_TRAFFIC"'), 6)
         self.assertNotIn('egress = "PRIVATE_RANGES_ONLY"', main_tf)
 
     def test_module_variables_validation_rules(self) -> None:
@@ -319,11 +319,10 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         # Local and smoke audiences are distinct release-bound values.
         self.assertIn('local_identity_audience = "urn:odp:staging-identity:${local.release_label}"', main_tf)
         self.assertIn('smoke_token_audience = "urn:odp:staging-smoke:${local.release_label}"', main_tf)
-        # No OIDC, bootstrap, dev cohort or caller-supplied key input.
+        # No OIDC, dev cohort or caller-supplied key input.
         for forbidden in (
             "ODP_WEB_OIDC",
             "ODP_AUTH_OIDC",
-            "ODP_IDENTITY_BOOTSTRAP",
             "ODP_DEV_ADMIN",
             "ODP_AUTH_HS256_KEYS",
             "ODP_AUTH_LOCAL_HS256_KEYS",
@@ -331,6 +330,12 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, main_tf)
             self.assertNotIn(forbidden, vars_tf)
+        # The deployment bootstrap inputs exist only on the release's own
+        # admin bootstrap job (ODP-EPHEMERAL-STAGING-ROLLOUT-001), never as a
+        # caller variable and never on a service.
+        self.assertNotIn("ODP_IDENTITY_BOOTSTRAP", vars_tf)
+        bootstrap = main_tf.index('resource "google_cloud_run_v2_job" "staging_admin_bootstrap"')
+        self.assertNotIn("ODP_IDENTITY_BOOTSTRAP", main_tf[:bootstrap])
         self.assertNotRegex(vars_tf, r'variable\s+"[^"]*(signing|identity|session|secret)[^"]*"')
 
     def test_staging_api_is_reachable_by_the_runner_but_iam_only(self) -> None:
@@ -809,6 +814,42 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
             f'secret_id             = "{names["secret_identity_key"]}"',
             planned("google_secret_manager_secret.staging_identity_token_signing_key"),
         )
+
+        # ODP-EPHEMERAL-STAGING-ROLLOUT-001: the release-scoped admin the live
+        # gate signs in as is created by the product's own bootstrap entrypoint
+        # in this release's tenant and database, from this release's secret.
+        from datetime import UTC, datetime, timedelta
+
+        from product_ops.deployment.staging_lifecycle import derive_release_tenant_id
+
+        job = planned("google_cloud_run_v2_job.staging_admin_bootstrap")
+        self.assertRegex(job, rf'\+ name\s+= "{re.escape(names["cloud_run_admin_bootstrap_job"])}"\n')
+        self.assertRegex(job, r'\+ args\s+= \[\n\s+\+ "-m",\n\s+\+ "shared\.identity\.bootstrap",\n')
+        self.assertRegex(
+            job,
+            r'\+ volumes \{\n\s+\+ name = "cloudsql"\n\n\s+\+ cloud_sql_instance \{\n'
+            rf'\s+\+ instances = \[\n\s+\+ "{re.escape(config.cloud_sql_connection_name)}",\n',
+        )
+        self.assertRegex(
+            job,
+            r'\+ volume_mounts \{\n\s+\+ mount_path = "/cloudsql"\n\s+\+ name\s+= "cloudsql"\n\s+\}',
+        )
+        self.assertEqual(env_value(job, "ODP_IDENTITY_BOOTSTRAP_TENANT_ID"), derive_release_tenant_id(release_id))
+        self.assertEqual(env_value(job, "ODP_IDENTITY_BOOTSTRAP_USERNAME"), "staging-admin")
+        self.assertEqual(env_value(job, "ODP_DEPLOY_ENV"), "staging")
+        created = datetime.strptime(config.created_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        self.assertEqual(
+            env_value(job, "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT"),
+            (created + timedelta(hours=min(config.ttl_hours, 72))).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+        self.assertEqual(env_secret(job, "ODP_IDENTITY_BOOTSTRAP_SECRET"), names["secret_admin_initial"])
+        self.assertEqual(env_secret(job, "ODAY_DATABASE_URL"), names["secret_db_url"])
+        for key in ("secret_admin_initial", "secret_admin_sign_in"):
+            resource = "staging_admin_initial" if key == "secret_admin_initial" else "staging_admin_sign_in"
+            self.assertIn(
+                f'secret_id             = "{names[key]}"',
+                planned(f"google_secret_manager_secret.{resource}"),
+            )
 
     def test_planned_web_neg_is_the_one_the_lifecycle_attaches_and_detaches(self) -> None:
         """The NEG name Terraform plans is the name cleanup derives from release_id."""

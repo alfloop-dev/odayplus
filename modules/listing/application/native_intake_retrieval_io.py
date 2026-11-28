@@ -39,34 +39,53 @@ MAX_INTENTS = 64
 
 
 class NativeIntakeRetrievalIO:
+    """Durable fenced intent journal around each bounded native IO operation.
+
+    Retrieval is the default purpose. The native Geo phase reuses this one
+    journal/quota/lease mechanism with its own closed operation family, rate
+    operation, input binding and current policy; it adds no second journal.
+    """
+
+    operations = _OPERATIONS
+    delete_operation = "gcs_delete"
+    rate_operation = "http_hop"
+    input_key = "input_sha256"
+    upload_operation = "gcs_upload"
+
     def __init__(self, owner, delivery, leases, policy):
         self.owner, self.delivery, self.leases, self.policy = owner, delivery, leases, policy
         self.snapshots = NativeIntakeSnapshotMetadataRepository(owner.graph)
         self.tenant, self.generation = owner.auth.decode(delivery)
+        self._transports(owner, leases)
+        self.object_metadata = None
+        self.upload_intent = None
+
+    def _transports(self, owner, leases):
         self.http = owner.http_transport or NativeHttpProcessTransport()
         factory = owner.snapshot_transport_factory or NativeSnapshotProcessTransport
         self.storage = factory(guard=leases.guard)
-        self.object_metadata = None
-        self.upload_intent = None
+
+    def _current_policy(self):
+        return native_intake_retrieval_policy(self.tenant)
 
     def _fresh(self, url, *, settlement=False):
         return self.owner._fresh(self.delivery, self.tenant, self.generation, url=url,
             settlement=settlement, business_fence=self.leases.business_fence)
 
     def _intent(self, operation, url, arguments):
-        if operation not in _OPERATIONS:
+        if operation not in self.operations:
             raise JobFenceRejectedError("NATIVE_RETRIEVAL_OPERATION_REJECTED")
         with self.leases.root():
             physical, job, payload, before, intake, source, classified = self._fresh(url)
             self.owner._positive_source(payload, classified)
-            if operation == "gcs_delete":
+            if operation == self.delete_operation:
                 metadata = self.object_metadata
                 if (metadata is None or self.upload_intent is None
                         or arguments != {"key": self.upload_intent["arguments"]["key"], "generation": metadata.generation}
                         or metadata.uri != "gs://" + self.policy.storage.bucket + "/" + arguments["key"]):
                     raise JobFenceRejectedError("NATIVE_RETRIEVAL_CLEANUP_OWNERSHIP_UNPROVEN")
                 uploads = [i for i in payload["attempt_intents"] if i["intent_id"] == self.upload_intent["intent_id"]]
-                if (len(uploads) != 1 or uploads[0]["operation"] != "gcs_upload"
+                if (len(uploads) != 1 or uploads[0]["operation"] != self.upload_operation
                         or uploads[0]["arguments"]["key"] != arguments["key"]
                         or uploads[0]["delivery_generation"] != self.generation
                         or uploads[0]["business_fence"] != job["fence_token"]
@@ -84,12 +103,12 @@ class NativeIntakeRetrievalIO:
             if not isinstance(intents, list) or len(intents) >= MAX_INTENTS:
                 raise JobFenceRejectedError("NATIVE_RETRIEVAL_INTENT_BUDGET_EXHAUSTED")
             reservation = self.owner.quota.reserve(source, global_limit=self.policy.global_max_concurrency,
-                charge_rate=operation == "http_hop", before=before)
+                charge_rate=operation == self.rate_operation, before=before)
             at = self.owner._clock()
             intent = {"intent_id": str(uuid4()), "operation": operation, "arguments": arguments,
                 "delivery_generation": self.generation, "physical_fence": physical.fence_token,
                 "business_fence": job["fence_token"], "attempt": job["attempt"], "worker": physical.locked_by,
-                "input_sha256": payload["input_sha256"], "source_snapshot_sha256": classified.source_snapshot_sha256,
+                "input_sha256": payload[self.input_key], "source_snapshot_sha256": classified.source_snapshot_sha256,
                 "source_version": source["version"], "url": url, "reservation": asdict(reservation),
                 "admitted_at": at.isoformat(), "state": "ADMITTED"}
             updated = {**payload, "attempt_intents": [*intents, intent]}
@@ -102,7 +121,7 @@ class NativeIntakeRetrievalIO:
                  classified.valid_until.isoformat())).rowcount != 1:
                 raise JobFenceRejectedError("NATIVE_RETRIEVAL_INTENT_COMMIT_REJECTED")
             before()
-            if native_intake_retrieval_policy(self.tenant) != self.policy:
+            if self._current_policy() != self.policy:
                 raise JobFenceRejectedError("NATIVE_RETRIEVAL_INTENT_CONFIG_CHANGED")
         return intent
 
@@ -216,5 +235,5 @@ class NativeIntakeRetrievalIO:
             return
         key = self.upload_intent["arguments"]["key"]
         generation = self.object_metadata.generation
-        self.call("gcs_delete", self.upload_intent["url"], {"key": key, "generation": generation},
+        self.call(self.delete_operation, self.upload_intent["url"], {"key": key, "generation": generation},
             lambda deadline: self.storage.delete_exact_generation(self.policy.storage, key, generation, deadline=deadline))

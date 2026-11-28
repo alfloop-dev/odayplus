@@ -187,7 +187,11 @@ describe("Operator shared header chrome", () => {
     expect(within(gate).getByTestId("operator-data-unavailable-correlation")).toHaveTextContent(correlationId);
   });
 
-  it("treats an upstream 504 as a timeout and reports the server correlation id", async () => {
+  it.each(["true", "false"])("keeps diagnostics accurate after an upstream 504 in production=%s", async (productionMode) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", productionMode);
+    const writeText = vi.spyOn(navigator.clipboard, "writeText")
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new DOMException("clipboard denied", "NotAllowedError"));
     stubAuthenticatedFetch(
       vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ error: { code: "WEB_API_UPSTREAM_TIMEOUT", retryable: true } }), {
@@ -204,7 +208,26 @@ describe("Operator shared header chrome", () => {
     expect(within(gate).getByTestId("operator-data-unavailable-correlation")).toHaveTextContent(
       "corr-from-server",
     );
-    expect(within(gate).getByTestId("operator-data-unavailable-technical")).toHaveTextContent("504");
+    const banner = screen.getByTestId("operator-console").querySelector('[data-data-status="error"]');
+    expect(banner).toHaveTextContent("正式資料未就緒");
+    expect(banner).not.toHaveTextContent("Local fixture mode");
+
+    const technical = within(gate).getByTestId("operator-data-unavailable-technical");
+    expect(technical).toHaveTextContent("504");
+    expect(technical).toHaveTextContent("Operator bootstrap returned 504");
+    technical.setAttribute("open", "");
+    const copy = within(technical).getByRole("button", { name: "複製診斷資訊" });
+    fireEvent.click(copy);
+    expect(await within(technical).findByText("已複製診斷資訊")).toBeInTheDocument();
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(writeText.mock.calls[0]![0])).toEqual({
+      error_code: "OPERATOR_DATA_TIMEOUT",
+      correlation_id: "corr-from-server",
+      http_status: 504,
+      occurred_at: expect.any(String),
+    });
+    fireEvent.click(copy);
+    expect(await within(technical).findByText("無法自動複製，請選取上方診斷欄位。")).toBeInTheDocument();
     // A persistent upstream timeout uses the whole cold-start budget, then gates.
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/api/v1/operator/bootstrap")).toHaveLength(4);
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url) === "/auth/session")).toBe(true);

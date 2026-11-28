@@ -1,145 +1,133 @@
-# core-ops production 監控、watch window 與值班計畫（DRAFT · 未簽署）
+# core-ops production 監控、watch window 與值班計畫（DRAFT · 未簽署 · 2026-11-27 版）
 
-行號以 `origin/dev` @ `5d761526` 為準。
+- 行號以 `origin/dev` @ `48c5271b5d882d824d432f3483ab4415030bb8e6` 為準。
+- GCP／GitHub 現況引用 `live-readback-20261127.md`（`L-…`）；負責人決定 A–H 見同檔 §2。
 
 **結論先講：**
 
-- repo 內**沒有任何已部署的告警基礎設施**：Terraform 沒有 Cloud Monitoring 的 alert policy、uptime check、notification channel、log metric、log sink、dashboard，也沒有 SLO 資源。
-- 告警只以 JSON 設定加上應用程式內的路由程式碼存在。路由的接收者是角色字串，不是真人或真實的通道。
-- watch window 是純人工作業，沒有 receipt 產生者。
-- gate-6 的「monitoring watch window and on-call route assigned and live」（`docs/evidence/gates/RELEASE_GATE_REGISTRY.json:458`）目前是**缺**。
+- **2026-10-24 版說「沒有任何告警基礎設施」，已過時。** `infra/terraform/monitoring.tf` 已存在（ODP-PROD-MONITORING-ALERTING-001，PR #1593，2026-10-24 合併）。live 上 production 已有 email 通道、6 條啟用中的告警政策與 Web uptime check（`L-3`）。
+- **告警路由已由負責人決定（決定 C）**：Cloud Monitoring 以 email 寄給負責人，負責人擔任 on-call。
+- **watch window** 依 PROD-OPS-05 為 30 分鐘，人工判斷。另外由 Claude 在上線後 24 小時內每小時讀回健康狀態（決定 C）。
+- **仍缺**：watch receipt 無法以真實資料產生（`L-6`，修正 pending）；`ODP_PRODUCTION_WATCH_CLOSEOUT_URI` 未設（`L-4.3`）；應用程式內的告警路由（`alerts.json`）仍沒有接到真實通道。
+- gate-6 的「monitoring watch window and on-call route assigned and live」（`docs/evidence/gates/RELEASE_GATE_REGISTRY.json:760`）：從「缺」改為「**部分**」。
 
-## 1. repo 內實際存在的監控
+## 1. 監控現況
 
-### 1.1 基礎設施（Terraform）
+### 1.1 Terraform（`infra/terraform/monitoring.tf`）
+
+| 資源 | 內容 | 依據 |
+|---|---|---|
+| 通知通道 | email channel，來自 `monitoring_notification_emails`，或沿用既有 channel ID（`monitoring_notification_channel_ids`）。production 兩者都沒有時，plan 會失敗 | `monitoring.tf:94-105`、`:32-35`；`infra/terraform/checks.tf:175-182` |
+| Web uptime | `<prefix> web /login`，每 60 秒，逾時 10 秒 | `monitoring.tf:107-142`、`:20` |
+| API uptime | `<prefix> api /platform/health`，以 Monitoring service agent 的 OIDC token 驗證；production 必須設定 `monitoring_api_uptime_host`，而且要等於 `api_public_host` | `monitoring.tf:144-192`；`checks.tf:175-194`；`infra/terraform/env/prod.tfvars.example:72` |
+| uptime 失敗告警 | 多於一個區域失敗、持續 180 秒（約 3 次） | `monitoring.tf:204-239`、`:21` |
+| 5xx 比率 | API 與 Web 各一條，門檻 5%、持續 300 秒 | `monitoring.tf:241-284`、`:15-19` |
+| API p95 | 3000 ms、持續 300 秒（依核准的 NFR ≤ 3.0 秒） | `monitoring.tf:286-319`、`:9-13` |
+| Cloud Run job 失敗 | 任一 execution 失敗即觸發 | `monitoring.tf:321-357` |
+| Cloud SQL 飽和 | CPU 80%、disk 85%、連線數 80%，持續 600 秒；這三個門檻是工程預設值，沒有核准來源 | `monitoring.tf:359-435`、`:23-30` |
+| Monitoring API | `required_apis` 已包含 `monitoring.googleapis.com` | `infra/terraform/main.tf:87` |
+| API uptime 的 invoker | production 的 API 由部署流程建立，部署腳本授予 Monitoring 通知 service agent `roles/run.invoker` | `deploy_cloud_run_waji.sh:1028-1039`、`:1163` |
+
+### 1.2 live（`L-3`）
+
+- email 通道「ODay Plus prod alert email」存在（`L-3.1`）。依決定 C，收件人是負責人；本包不記錄 email 地址。
+- 6 條啟用中的告警政策：web uptime、Cloud SQL saturation、api 5xx > 5%、api p95 > 3000 ms、web 5xx > 5%、Cloud Run job failed（`L-3.2`）。與 §1.1 的 Terraform 定義一一對應。
+- uptime check「oday-prod web /login」存在（`L-3.3`）。
+- **`L-3` 沒有列出 API uptime check。** production 的 API 要等首次部署才會存在（`L-2.8`），所以在那之前這個 check 不可能通過。live 上是否已建立，**未讀回**。首次部署後要再讀一次。
+
+### 1.3 應用程式內（與 2026-10-24 版相同，仍未接線）
 
 | 項目 | 現況 | 依據 |
 |---|---|---|
-| Cloud Monitoring／Logging 資源 | 不存在。`infra/terraform` 底下所有子目錄都沒有 `google_monitoring_*`、`google_logging_metric`、`google_logging_project_sink` | 已搜尋整個 `infra/terraform`，查無結果 |
-| 啟用的 API | `required_apis` 共 10 個，不含 `monitoring.googleapis.com` 與 `logging.googleapis.com` | `infra/terraform/main.tf:59-70` |
-| Cloud Run probe | API：startup probe 打 `/readiness`，liveness probe 打 `/liveness`。Web：TCP 3000 | `infra/terraform/cloud_run.tf:102-123`、`:276-295` |
-| 監控相關 IAM | 只有 `roles/logging.viewer` 給 deployer SA，用途是讀 egress receipt；沒有 `roles/monitoring.*` | `infra/terraform/iam.tf:194-198` |
+| 告警設定檔 | `infra/monitoring/alerts.json` 的 12 條告警只有文字條件；接收者是角色字串（`admin`、`ops-lead`、`oncall-engineer`），不是真人 | `alerts.json:124-139` |
+| `AlertRouter` | 把接收者角色字串當 `user_id` 送到 notification service；讀 `RELEASE_SHA` 或 `TRUSTED_DEPLOYED_RELEASE_SHA`，部署路徑只設 `ODAY_RELEASE_SHA` | `shared/observability/alerts.py:43-49`、`:154-168`；`deploy-dev.yml:1733` |
+| 實際觸發告警的程式 | 只有 `dlq-spike`，在 assisted listing intake worker | `apps/worker/assisted_listing_intake/worker.py:221` |
+| on-call 傳送 | 需要 `ONCALL_ENDPOINT_URL`、`ONCALL_PROVIDER_SECRET`；Terraform 與 workflow 都沒設 | `modules/notifications/infrastructure/adapters.py:757-760` |
 
-Runtime Release 的 production 部署是用 `gcloud` 直接部署，不執行 Terraform root stack（`docs/design/ODP_CORE_OPS_RELEASE_PROFILE.md:135`）。所以就算 Terraform 裡有 probe，production 實際的 probe 設定也要看 `deploy_cloud_run_waji.sh` 的 `gcloud run deploy` 參數。本包**未驗證**這一點。
+結論：production 的告警以 Cloud Monitoring 為準（§1.1、§1.2）。`audit-write-failure`、`unauthorized-spike`、`dlq-spike` 這類應用層訊號，**沒有**對應的 Cloud Monitoring 告警，也沒有經 `AlertRouter` 送到真實通道。是否要補（例如以 log-based metric 建告警），**仍待決**（HD-22）。
 
-### 1.2 監控設定檔（JSON，沒有被渲染成雲端資源）
+### 1.4 watch receipt
 
-- `infra/monitoring/README.md:35-36` 寫明這些 JSON 要由 Terraform／`gcloud` exporter 渲染成 Cloud Monitoring 資源。repo 內沒有針對告警與 SLO 的 exporter。
-- **`infra/monitoring/alerts.json`**：12 條告警，條件都是文字描述，沒有數值門檻（例如 `:17`）。
-  - 路由在 `:124-139`：預設接收者 `admin`；P1 給 `ops-lead`；P2、P3 給 `oncall-engineer`。
-  - 和 core-ops 無關的告警：`forecast-daily-failed`（`:23`）與 `model-drift-high`（`:78`）屬於模型功能，core-ops 下這些功能本來就是拒絕的。
-- **`infra/monitoring/slo.json`**：
-  - 可用率 `0.995`，30 天（`:5-12`）。
-  - `latency_p95_ms` 800（`:14-18`）。
-  - RPO／RTO 目標（`:29-38`）。
-- **`infra/monitoring/dashboards.json`**：`slo_owner` 是「SRE Lead / Platform Operations」，`watch_window_minutes` 是 15（`:9-10`）。
+- `staging_closeout` 驗證 watch receipt 時呼叫 `verify_watch_window_receipt`（`deploy-dev.yml:2706`），要求 provider 簽章與 `MONITORING_PROVIDER_SECRET`（`shared/observability/watch_window.py:357-400`、`:825-844`）。以真實資料**不可能**產生通過的 receipt（`L-6.1`）。
+- receipt 不存在（404）時 `staging_closeout` 改為 defer，staging 保留（`deploy-dev.yml:2674-2707`）。
+- 修正 task `ODP-PROD-WATCH-RECEIPT-REAL-METRICS-261127`：**pending**（`L-6.2`）。
+- receipt 的位置 `ODP_PRODUCTION_WATCH_CLOSEOUT_URI`：**未設**（`L-4.3`）。`staging_closeout` 在讀 receipt 之前就要求它（`deploy-dev.yml:2647`）。
 
-### 1.3 應用程式內
+## 2. watch window 與上線後讀回
 
-| 項目 | 現況 | 依據 |
-|---|---|---|
-| health／readiness | `/liveness`、`/healthz`、`/readiness`、`/health`、`/platform/health` | `apps/api/oday_api/main.py:773-895` |
-| release identity | `/platform/version`、`/platform/release-identity` | `main.py:897-912` |
-| metrics 匯出 | `/platform/observability`、`/platform/metrics/export` 會呼叫 `ProductionMetricsExporter`，POST 到 `monitoring.googleapis.com/v3` 的 custom metric。只有被呼叫時才匯出，沒有排程 | `main.py:914-915`；`shared/observability/metrics.py:679`、`:707`、`:820` |
-| 告警路由 | `AlertRouter` 讀 `alerts.json`，把接收者角色字串當 `user_id` 送到 notification service。某個 severity 沒有接收者時會 fail closed | `shared/observability/alerts.py:43`、`:154-168`、`:292-293` |
-| 實際觸發告警的程式 | 只有一處：`dlq-spike`，位於 assisted listing intake worker | `apps/worker/assisted_listing_intake/worker.py:218-222` |
-| 告警需要的 release SHA | `AlertRouter` 讀 `RELEASE_SHA` 或 `TRUSTED_DEPLOYED_RELEASE_SHA`（`alerts.py:45-49`）。部署腳本與 workflow 設定的是 `ODAY_RELEASE_SHA`，前兩者沒有任何部署路徑會設定 | `alerts.py:45-49`；`deploy-dev.yml:1258` |
-| on-call 傳送 | 需要 `NOTIFICATION_ADAPTER_TYPE`、`ONCALL_ENDPOINT_URL`、`ONCALL_PROVIDER_SECRET`；production 一定要有 on-call route。這三個在 Terraform 與 workflow 裡都沒有設定 | `modules/notifications/infrastructure/adapters.py:757-760` |
-| 唯一的 on-call 傳送測試 | 本機 loopback，結果 `status: FAILED`、`http_status: 0` | `support/sidecars/ODP-PLAN-OBSERVABILITY-LIVE-001/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW.md:18-22`、`:34` |
-| 結構化 log | JSON 寫到 stderr，Cloud Run 會收進 Cloud Logging（平台預設行為，本包**未驗證**） | `shared/observability/logging.py:135`、`:144` |
-
-### 1.4 watch window 的程式
-
-- `bluegreen_release.py` 寫明「Start watch window」是呼叫者的責任，沒有 `watch` 子命令（`product_ops/deployment/bluegreen_release.py:852-863`、`:989-1047`）。
-- 以現行 workflow，production deploy job 會在 `capture-state` 那一步 failure，`staging_closeout` 因此被 skip，根本不會讀 watch receipt（`deploy-dev.yml:1609-1615`、`:1681`；見 `deployment-plan.md` §5 第 1 點）。下面描述的是這個 job 實際執行時的行為。
-- `staging_closeout` 只會**驗證** watch receipt：它讀 `vars.ODP_PRODUCTION_WATCH_CLOSEOUT_URI`，呼叫 `verify_watch_window_receipt`（`.github/workflows/deploy-dev.yml:1695`、`:1793-1798`）。驗證內容是：
-  - `release_sha` 必須相符；
-  - 狀態必須是 `WATCH_PASSED`；
-  - 至少 15 分鐘（`shared/observability/watch_window.py:694-734`）。
-- repo 內只有 fail-closed 的負向測試會呼叫 `record_deployment_watch_window_status`（`product_ops/deployment/validate_cloud_run_live_deployment.py:617-634`）。**沒有任何真實的產生者。**
-- 已 commit 的 `docs/evidence/watch_window_receipt.json` 是 `LOCAL_TEST_ONLY`，用的也是已淘汰的專案（`docs/deployment/GCP_DEPLOY_GUIDE.md:196`）。
-
-## 2. 已記錄的 watch 與觀察義務
-
-### 2.1 切換後的 watch window（上線當下）
+### 2.1 切換後的 watch window（決定 C）
 
 | 參數 | 值 | 性質 | 依據 |
 |---|---|---|---|
-| Watch window | 30 分鐘 | 寬鬆初始值，沒有實測依據，**不是自動化閘門** | `docs/evidence/runtime/ODP-PROD-OPS-WATCH-PARAMS-001/README.md:22`、`:32-37`；`docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:288-296` |
-| SLO 門檻 | 錯誤率 < 5% 且 p95 < 5 秒 | 同上 | 同上 README `:23` |
-| Rollback 觸發 | 錯誤率 > 10% 持續 5 分鐘；p95 > 10 秒持續 5 分鐘；health check 連續 3 次失敗；auth failure、資料品質、job、queue lag、audit 缺失、operator 判定 | 人工判斷 | 同上 README `:24`；`EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:301-309` |
-| Rollback／On-call owner | Human/Ops（文件中記載了一個具名帳號） | 只寫在文件裡，沒有接到任何告警路由或設定 | 同上 README `:25`；`EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:266`、`:307` |
+| Watch window | **30 分鐘** | 寬鬆初始值，人工判斷，不是自動閘門 | `docs/evidence/runtime/ODP-PROD-OPS-WATCH-PARAMS-001/README.md:22`、`:31-36`；決定 C |
+| SLO 門檻 | 錯誤率 < 5% 且 p95 < 5 秒 | 同上 | 同 README `:23` |
+| Rollback 觸發 | 錯誤率 > 10% 持續 5 分鐘；p95 > 10 秒持續 5 分鐘；health check 連續 3 次失敗；auth failure、資料品質、job、queue lag、audit 缺失、operator 判定 | 人工判斷 | 同 README `:24` |
+| Watch／rollback／on-call owner | **負責人**（決定 C） | — | 決定 C；同 README `:25` |
 
-**文件之間互相矛盾，需人工決定：**
+**2026-10-24 版列的門檻矛盾，現況：**
 
-- watch window：15 分鐘（`infra/monitoring/dashboards.json:10`、`docs/runbooks/observability-and-runbook.md:168`、`watch_window.py` 的下限）對 30 分鐘（PROD-OPS-05）。
-- p95：800 ms（`slo.json:17`）對 < 5 秒（PROD-OPS-05）對 ≤ 3.0 秒（NFR）。
+- watch window：PROD-OPS-05 的 30 分鐘已由決定 C 採用。`watch_window.py` 的下限 15 分鐘（`:441-448`）是 receipt 的最低要求，與 30 分鐘不衝突。`infra/monitoring/dashboards.json:10` 的 15 分鐘是未核准設定檔，不採用。
+- p95：Cloud Monitoring 告警採核准的 NFR 3000 ms（`monitoring.tf:9-13`，註解寫明不採 `slo.json` 的 800 ms）。watch window 的 < 5 秒與回滾的 > 10 秒是人工判斷用的門檻。三者用途不同，已不衝突。
 
-### 2.2 上線後的觀察義務（`ODP-POSTDEPLOY-WATCH-CLOSEOUT-001`）
+### 2.2 Claude 的每小時讀回（決定 C）
+
+- **期間**：production 切換完成（`DEPLOYMENT_COMMITTED=true`）後 24 小時，每小時一次，共 24 次。
+- **讀什麼（提議，待負責人確認）**：
+
+  | 項目 | 讀法 | 不符時 |
+  |---|---|---|
+  | 告警事件 | Cloud Monitoring 的 incident 清單與 6 條政策的狀態 | 立即通知負責人 |
+  | uptime | Web 與 API uptime check 的最近結果 | 同上 |
+  | Cloud Run | `oday-prod-api`、`oday-prod-web` 的 serving revision 與流量；revision 應等於這次 release | 同上 |
+  | 錯誤 log | 兩個 service 的 `severity>=ERROR` 筆數 | 明顯增加時通知負責人 |
+  | Cloud Run job | worker、scheduler 最近 execution 的結果 | 失敗時通知負責人 |
+  | Cloud SQL | `oday-prod-foundation-sql` 的狀態（`RUNNABLE`） | 同上 |
+  | release identity | `runbook-core-ops.md` §2.3 | 見下 |
+
+- **身分**：Claude 以唯讀身分讀回（與 `L-…` 相同的 `deborah.lu`）。release identity 需要 Web session 或 API invoker（`runbook-core-ops.md` §2.3）；Claude 是否另有 production 帳號，**仍待決**。在決定之前，release identity 由負責人在 watch window 內讀一次。
+- **紀錄**：每次讀回記下時間（UTC）、各項結果與異常。記錄放在哪裡（例如另開 evidence task），**仍待決**。
+- **Claude 不會自行撤銷或回滾**；異常只通知負責人，由負責人判定（`runbook-core-ops.md` §6.2）。
+
+### 2.3 上線後的觀察義務（`ODP-POSTDEPLOY-WATCH-CLOSEOUT-001`）
 
 來源：`docs/evidence/completion/ODP-RELEASE-ACCEPTANCE-CARRYFORWARD-001/obligation_matrix.json`
 
-| Obligation | 要求 | 觀察期 | Owner | 行號 |
+| Obligation | 要求 | 觀察期 | 現況 | 行號 |
 |---|---|---|---|---|
-| `ODP-NFR-PERF-001-PROD` | API P95 ≤ 3.0 秒 | ≥ 24 小時的 production 實際流量；receipt 取自 `run.googleapis.com/request_latencies` | Human/Ops | `:111-127` |
-| `ODP-NFR-BATCH-002` | 每日 batch 在營業日 cutoff 前完成 | 連續 7 個營業日。**cutoff 時間在 repo 內沒有定義，需要 Human/Ops 提供** | Human/Ops | `:140-167` |
-| `ODP-NFR-AVAIL-003` | OpsBoard 月可用率 ≥ 99.5% | 一個完整日曆月；以 uptime check 的 `check_passed` 比率 ≥ 0.995 為準 | Human/Ops | `:170-186` |
+| `ODP-NFR-PERF-001-PROD` | API P95 ≤ 3.0 秒 | ≥ 24 小時 production 實際流量；receipt 取自 `run.googleapis.com/request_latencies` | Cloud Monitoring 已有 p95 > 3000 ms 告警；量測 receipt 仍要另外產生 | `:111-127` |
+| `ODP-NFR-BATCH-002` | 每日 batch 在營業日 cutoff 前完成 | 連續 7 個營業日 | **對 core-ops 記為 not-applicable**：core-ops 沒有每日 batch；上模型時再定（決定 F） | `:140-167` |
+| `ODP-NFR-AVAIL-003` | OpsBoard 月可用率 ≥ 99.5% | 一個完整日曆月；以 uptime check 的 `check_passed` 比率 ≥ 0.995 為準 | Web uptime check 已存在（`L-3.3`），可作為資料來源 | `:170-186` |
 
-- 三項都是 `BLOCKED_BY_EVIDENCE`。它們屬於 post-production 觀察，**不擋** production admission（`:160-167`）。
-- 注意：`ODP-NFR-AVAIL-003` 需要 production uptime check，但 Terraform 裡沒有 uptime check 資源（見 §1.1）。
+- 三項都是 `BLOCKED_BY_EVIDENCE`，屬於上線後的觀察，**不擋** production admission（`:160-167`）。
+- task owner 記載仍不一致：registry 寫 Antigravity5（`RELEASE_GATE_REGISTRY.json:797`），`owner_inventory.json:86-88` 寫 Antigravity3。本包**未驗證**，見 HD-29。
 
-**task owner 記載不一致：**
+### 2.4 事故等級與回應（既有 runbook，未變）
 
-- registry 寫 `ODP-POSTDEPLOY-WATCH-CLOSEOUT-001` 的 owner 是 Antigravity5（`RELEASE_GATE_REGISTRY.json:495`）。
-- `owner_inventory.json:86-88` 寫的是 Antigravity3，`status: todo`。
-- 這個 task 的定義不在 repo 內，本包**未驗證**。
-
-### 2.3 事故等級與回應（既有 runbook）
-
-- 等級 P0 到 P4（`docs/runbooks/incident-management.md:9-15`）。
-- 角色：Incident Commander、Tech Lead、Data Lead、ML Lead、Security Lead、Communications Lead、Scribe、Business Owner、Support Lead。P0 與 P1 必須指定 Incident Commander（`:19-21`）。
+- 等級 P0 到 P4（`docs/runbooks/incident-management.md:9-15`）；P0、P1 必須指定 Incident Commander（`:19-21`）。
 - 回應 SLA：P0 15 分鐘、P1 30 分鐘、P2 4 小時（`:50-54`）。
-- `alerts.json` 只定義到 P1–P3，沒有 P0 路由（`:124-139`）。
+- core-ops 上線初期，Incident Commander、Rollback owner、Watch owner 都由負責人擔任（決定 C）。
 
-## 3. core-ops 上線需要補的監控（缺口清單，需人工決定）
+## 3. 仍需補的項目（需人工決定或另開 task）
 
-1. 決定 production 的告警是否走 Cloud Monitoring。若是：
-   - 要啟用 Monitoring API；
-   - 要建立 alert policy、uptime check、notification channel；
-   - 要給 runtime 身分 metric writer 權限。
+1. **watch receipt 的產生**：等 `ODP-PROD-WATCH-RECEIPT-REAL-METRICS-261127` 合併（pending）。它若改到 evidence 以外的路徑，必須在凍結、選定 candidate 之前合併（決定 A；`deployment-plan.md` §5 第 1 點）。
+2. **設定 `ODP_PRODUCTION_WATCH_CLOSEOUT_URI`**（staging 與 production environment，`L-4.3`）。
+3. **API uptime check**：首次部署後讀回是否存在並通過（§1.2）。
+4. **應用層訊號的告警**（`audit-write-failure`、`unauthorized-spike`、`dlq-spike`）：要不要以 log-based metric 補，或明確接受不補（§1.3）。
+5. **值班人員直接讀 API 的身分**：是否設定 `ODP_PROD_API_INVOKER_GROUP`（`L-4.4`；`runbook-core-ops.md` §2.3）。要在首次 production 部署前決定，因為 binding 在部署時才套用。
+6. **Claude 每小時讀回的項目、身分與紀錄位置**（§2.2）。
 
-   這些都是 IaC 或 IAM 變更，不在本 task 範圍。
-2. 至少涵蓋 core-ops 相關的訊號：
-   - `api-availability-drop`（P1）
-   - `audit-write-failure`（P1）
-   - `unauthorized-spike`（P2）
-   - `dlq-spike`（P2）
-   - `alert-delivery-failure`（P1）
-   - `/readiness` 的 uptime
+## 4. 值班與角色表
 
-   模型類告警可以標為 not-applicable，因為 core-ops 下這些功能是拒絕的。
-3. 決定告警通道並設定 `ONCALL_ENDPOINT_URL` 與 `ONCALL_PROVIDER_SECRET`。設定前，production 的 notification adapter 會 fail closed。
-4. 設定 runtime 的 `RELEASE_SHA` 或 `TRUSTED_DEPLOYED_RELEASE_SHA`，否則應用程式內的告警路由會在缺 SHA 時 raise。這是程式或部署層變更，需另開 task。
-5. 決定 watch receipt 由誰、用什麼工具產生、上傳到哪個 `ODP_PRODUCTION_WATCH_CLOSEOUT_URI`。
-6. 統一 watch window 長度與 p95 門檻（見 §2.1）。
-7. 定義營業日 cutoff 時間（`ODP-NFR-BATCH-002`）。
+依決定 C，上線當下的 on-call、watch owner 與 rollback owner 都是負責人。下表的「方向」欄記錄這個決定；**具名欄仍留白**，由負責人簽核時填寫。
 
-## 4. 值班與角色表（**姓名留白，由 Human/Ops 填寫**）
-
-| 角色 | 職責（依 repo 文件） | 上線當下必須在線 | 姓名 | 聯絡管道 | 代理人 | 依據 |
+| 角色 | 職責 | 方向（決定 C） | 姓名（留白） | 聯絡管道（留白） | 代理人（留白） | 依據 |
 |---|---|---|---|---|---|---|
-| Watch owner | 切換後監看 watch window，依 SLO 門檻判斷 | 是 | | | | `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:266`、`:294` |
-| Rollback owner | 判定並執行回滾 | 是 | | | | 同上 `:204`、`:307` |
-| Incident Commander | P0／P1 事故指揮 | 是（待命） | | | | `incident-management.md:19-21` |
-| `ops-lead`（P1 告警接收者） | P1 告警 | 是 | | | | `alerts.json:127-130` |
-| `oncall-engineer`（P2／P3 告警接收者） | P2／P3 告警 | 是 | | | | `alerts.json:131-138` |
-| `admin`（預設接收者） | 無路由的告警 | 視需要 | | | | `alerts.json:125` |
-| SRE Lead／Platform Operations（SLO owner） | dashboard 與 SLO | 是 | | | | `dashboards.json:9` |
-| Security Lead | auth 或權限異常 | 待命 | | | | `incident-management.md:19-21` |
-| Communications Lead | 對使用者公告 | 待命 | | | | 同上 |
-| Scribe | 事故紀錄 | 待命 | | | | 同上 |
-| Support Lead | 使用者回報窗口 | 是 | | | | 同上；`observability-and-runbook.md:4` |
-| GitHub `production` environment reviewer | 核准 deploy job | dispatch 當下 | | | | `GCP_DEPLOY_GUIDE.md:15` |
+| On-call／Watch owner | 收告警 email；監看 30 分鐘 watch window | 負責人 | | | | `ODP-PROD-OPS-WATCH-PARAMS-001/README.md:25` |
+| Rollback owner | 判定撤銷（首次 release）或回滾（後續 release） | 負責人 | | | | `runbook-core-ops.md` §6；`rollback-plan.md` §3 |
+| Incident Commander | P0／P1 事故指揮 | 負責人 | | | | `incident-management.md:19-21` |
+| 上線後 24 小時讀回 | 每小時讀回，異常通知負責人 | Claude | — | — | — | §2.2 |
+| Support Lead | 使用者回報窗口 | 待決 | | | | `observability-and-runbook.md:4` |
+| GitHub `production` environment reviewer | 核准 deploy job | `Alien-alfaloop`、`ajoe734`（`L-4.5`） | | | | `GCP_DEPLOY_GUIDE.md:15` |
 
 **watch window 時段（留白）：**
 
@@ -151,6 +139,6 @@ Runtime Release 的 production 部署是用 `gcloud` 直接部署，不執行 Te
 
 | 項目 | 簽署人 | 角色 | 日期 | 決定 |
 |---|---|---|---|---|
-| 值班表與告警路由已指派並生效 | | Human/Ops | | □ 核准 □ 附條件 □ 退回 |
-| watch window 長度與門檻 | | Human/Ops | | |
-| watch receipt 產生方式 | | Human/Ops | | |
+| 告警路由與值班（方向已由決定 C 決定）已生效 | | Human/Ops | | □ 核准 □ 附條件 □ 退回 |
+| §3 的未決項目處置 | | Human/Ops | | |
+| watch receipt 產生方式（等修正 task 合併後） | | Human/Ops | | |

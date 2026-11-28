@@ -550,7 +550,7 @@ describe("GrowthWorkspace API loading", () => {
       expect(screen.queryByText(straddled.name)).not.toBeInTheDocument();
       expect(screen.queryByTestId("growth-entry-cards")).not.toBeInTheDocument();
       expect(screen.queryByTestId("growth-new-action")).not.toBeInTheDocument();
-      expect(screen.queryAllByRole("button").map((button) => button.textContent)).toEqual(["重新載入"]);
+      expect(screen.queryAllByRole("button").map((button) => button.textContent)).toEqual(["複製診斷資訊", "重新載入"]);
       expect(writes).toEqual([]);
     },
   );

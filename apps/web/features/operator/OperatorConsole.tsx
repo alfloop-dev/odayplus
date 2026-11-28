@@ -326,7 +326,7 @@ function dataModeBannerCopy(
     }
     return { label: "Live API", detail: "目前顯示的是經驗證的正式營運資料。" };
   }
-  if (fixturesAllowed) {
+  if (fixturesAllowed && status === "fixture") {
     return { label: "Local fixture mode", detail: "本機示範資料，僅供開發與測試使用。" };
   }
   if (status === "loading") {

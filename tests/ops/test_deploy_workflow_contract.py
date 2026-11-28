@@ -1012,7 +1012,7 @@ def test_staging_uses_release_scoped_remote_backend_and_persists_recovery_sideca
     assert "${STAGING_BACKEND_PREFIX}" in create_run
     assert "${RUNNER_TEMP}" not in create_run
     persist = next(step for step in deploy_steps if step.get("name") == "Persist staging recovery bundle to protected recovery storage")
-    assert "gcloud storage cp" in str(persist["run"])
+    assert "staging_lifecycle.py persist-recovery" in str(persist["run"])
     assert "STAGING_BUNDLE_URI" in str(persist["run"])
 
     closeout = parsed["jobs"]["staging_closeout"]
@@ -1096,7 +1096,8 @@ def test_staging_recovery_bundle_storage_boundary_contract() -> None:
         step for step in deploy_steps if step.get("name") == "Persist staging recovery bundle to protected recovery storage"
     )
     assert persist_create.get("if") == "${{ success() && inputs.environment == 'staging' }}"
-    assert 'gcloud storage cp "${STAGING_OUTPUTS_FILE}" "${STAGING_BUNDLE_URI}/staging-terraform-outputs.json"' in str(persist_create["run"])
+    assert '--outputs-file "${STAGING_OUTPUTS_FILE}"' in str(persist_create["run"])
+    assert '--receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-create.json"' in str(persist_create["run"])
 
     persist_hold = next(
         step for step in deploy_steps if step.get("name") == "Persist staging hold state to protected recovery storage"
@@ -1104,11 +1105,14 @@ def test_staging_recovery_bundle_storage_boundary_contract() -> None:
     assert persist_hold.get("if") == "${{ always() && inputs.environment == 'staging' }}"
     # The recovery bucket's retention policy forbids overwriting the
     # create-time sidecar, so each run's hold state gets its own object name.
-    assert (
-        'gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/hold-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(basename "${sidecar}")"'
-        in str(persist_hold["run"])
-    )
-    assert '"${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"' not in str(persist_hold["run"])
+    assert "staging_lifecycle.py persist-recovery" in str(persist_hold["run"])
+    assert '--run-attempt "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in str(persist_hold["run"])
+    assert '--create-receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-create.json"' in str(persist_hold["run"])
+    assert '--receipt "${RELEASE_RECEIPT_DIR}/staging-recovery-final.json"' in str(persist_hold["run"])
+    for step in (persist_create, persist_hold):
+        assert '--candidate-sha "${ODAY_RELEASE_SHA}"' in str(step["run"])
+        assert '--manifest-digest "${MANIFEST_DIGEST}"' in str(step["run"])
+        assert '--run-attempt "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in str(step["run"])
 
     # 3. closeout job environment exports and path preparation checks
     closeout_job = parsed["jobs"]["staging_closeout"]
@@ -1391,10 +1395,19 @@ def test_deploy_script_production_refuses_the_tag_build_path(
         "ODP_AUTH_MODE": "local",
         "ODP_PROD_DEPLOY_URL": "https://web.example.test",
         "ODP_PROD_API_URL": "https://api.example.test",
+        "ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET": "oday-prod-intake-cursor-signing-key:1",
+        # Production refuses to deploy below two warm instances.
+        "ODP_CLOUD_RUN_MIN_INSTANCES": "2",
         "GCP_PROJECT": "project-under-test",
         "GCP_REGION": "asia-east1",
         "GCP_AR_REPO": "runtime",
     }
+    if deploy_environment in {"prod", "production"}:
+        env.update(
+            ODP_PROD_VPC_NETWORK="oday-prod-vpc",
+            ODP_PROD_VPC_SUBNETWORK="oday-prod-asia-east1",
+            ODP_CLOUD_RUN_VPC_EGRESS="all-traffic",
+        )
     for name in ("API_IMAGE", "WEB_IMAGE", "WORKER_IMAGE", "SCHEDULER_IMAGE"):
         # The environment's own registry: production refuses any other one.
         image = f"asia-east1-docker.pkg.dev/project-under-test/runtime/{name.lower()}"
@@ -1436,6 +1449,7 @@ def test_deploy_script_applies_optional_vpc_network_args_to_every_cloud_run_targ
     script = _deploy_script_text()
     network_args = '"${CLOUD_RUN_NETWORK_ARGS[@]}"'
     targets = (
+        'gcloud run jobs create "${job}"',
         'gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}"',
         'gcloud run deploy "${API_SERVICE}"',
         'gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}"',
@@ -1554,8 +1568,35 @@ def test_deploy_job_passes_the_production_live_e2e_origins_from_the_bound_enviro
     assert deploy_env["ODP_DEPLOY_ENV"] == "${{ inputs.environment }}"
     assert deploy_env["ODP_PROD_DEPLOY_URL"] == "${{ vars.ODP_PROD_DEPLOY_URL }}"
     assert deploy_env["ODP_PROD_API_URL"] == "${{ vars.ODP_PROD_API_URL }}"
+    assert deploy_env["ODP_PROD_API_INVOKER_GROUP"] == "${{ vars.ODP_PROD_API_INVOKER_GROUP }}"
+    assert deploy_env["ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET"] == "${{ vars.ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET }}"
     for name in ("ODP_DEV_DEPLOY_URL", "ODP_STAGING_DEPLOY_URL", "ODP_STAGING_API_URL"):
         assert name not in deploy_env, f"{name} must not be a fallback origin for the deploy script"
+
+
+def test_deploy_job_passes_the_warm_minimum_from_the_bound_environment() -> None:
+    """Production owns its Cloud Run services in the deploy path (owner decision
+    2026-11-20), so the warm minimum must reach the deploy script from the bound
+    environment, and the script must refuse production below two."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_job = parsed["jobs"]["deploy"]
+    assert deploy_job["environment"]["name"] == "${{ inputs.environment }}"
+    assert deploy_job["env"]["ODP_CLOUD_RUN_MIN_INSTANCES"] == "${{ vars.ODP_CLOUD_RUN_MIN_INSTANCES }}"
+    deploy_step = _named_step(deploy_job, "Deploy Cloud Run by immutable digest")
+    assert deploy_step["run"] == "./product_ops/deployment/deploy_cloud_run_waji.sh"
+    assert "ODP_CLOUD_RUN_MIN_INSTANCES" not in deploy_step.get("env", {}), "one source: the job env"
+
+    script = _deploy_script_text()
+    guard = script.index("production requires ODP_CLOUD_RUN_MIN_INSTANCES of at least 2")
+    block = script[script.rindex("case \"${ODP_DEPLOY_ENV}\" in", 0, guard) : guard]
+    assert "prod|production)" in block
+    assert '[ -z "${CLOUD_RUN_MIN_INSTANCES}" ]' in block
+    assert "-lt 2" in block
+    # The dev default of one warm instance is unchanged.
+    assert (
+        'if [ -z "${CLOUD_RUN_MIN_INSTANCES}" ] && [ "${ODP_DEPLOY_ENV}" = "dev" ]; then\n'
+        "  CLOUD_RUN_MIN_INSTANCES=1\n"
+    ) in script
 
 
 def test_sources_off_probe_persists_and_validates_the_runtime_receipt() -> None:
@@ -1987,6 +2028,117 @@ def test_staging_closeout_present_but_invalid_watch_receipt_fails(fake_cloud: di
     assert "verified" not in _outputs(fake_cloud)
 
 
+def test_staging_closeout_accepts_valid_real_metrics_watch_receipt_without_provider_secret(
+    fake_cloud: dict[str, object],
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from shared.observability.watch_window import record_deployment_watch_window_status
+
+    tmp = fake_cloud["tmp"]  # type: ignore[assignment]
+    api_digest = "sha256:" + "1" * 64
+    web_digest = "sha256:" + "2" * 64
+    manifest = tmp / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "release_id": "odp-" + PROD_RELEASE_SHA[:12],
+                "candidate_sha": PROD_RELEASE_SHA,
+                "manifest_digest": "sha256:" + "a" * 64,
+                "components": {
+                    "api": {"image": f"asia-east1-docker.pkg.dev/oday-prod/r/api@{api_digest}"},
+                    "web": {"image": f"asia-east1-docker.pkg.dev/oday-prod/r/web@{web_digest}"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    end_dt = datetime(2026, 11, 27, 6, 30, 0, tzinfo=UTC)
+    start_dt = end_dt - timedelta(minutes=30)
+    pts = [start_dt + timedelta(seconds=30), end_dt - timedelta(seconds=30)]
+
+    def fake_gcp_transport(method: str, url: str, params=None, payload=None, headers=None):
+        pr = params or {}
+        if url.endswith("/services/oday-prod-api"):
+            return 200, {"trafficStatuses": [{"revision": "oday-prod-api-00001-a", "percent": 100}]}
+        if url.endswith("/services/oday-prod-web"):
+            return 200, {"trafficStatuses": [{"revision": "oday-prod-web-00001-b", "percent": 100}]}
+        if url.endswith("/revisions/oday-prod-api-00001-a"):
+            return 200, {"containers": [{"image": f"asia-east1-docker.pkg.dev/oday-prod/r/api@{api_digest}"}]}
+        if url.endswith("/revisions/oday-prod-web-00001-b"):
+            return 200, {"containers": [{"image": f"asia-east1-docker.pkg.dev/oday-prod/r/web@{web_digest}"}]}
+        flt = str(pr.get("filter") or "")
+        svc = "oday-prod-api" if "oday-prod-api" in flt else "oday-prod-web"
+        rev = "oday-prod-api-00001-a" if svc == "oday-prod-api" else "oday-prod-web-00001-b"
+        if "request_count" in flt:
+            return 200, {
+                "timeSeries": [
+                    {
+                        "metric": {"type": "run.googleapis.com/request_count", "labels": {"response_code_class": "2xx"}},
+                        "resource": {
+                            "type": "cloud_run_revision",
+                            "labels": {"project_id": "oday-prod", "location": "asia-east1", "service_name": svc, "revision_name": rev},
+                        },
+                        "points": [{"interval": {"endTime": ts.isoformat()}, "value": {"int64Value": "50"}} for ts in pts],
+                    }
+                ]
+            }
+        return 200, {
+            "timeSeries": [
+                {
+                    "metric": {"type": "run.googleapis.com/request_latencies", "labels": {}},
+                    "resource": {
+                        "type": "cloud_run_revision",
+                        "labels": {"project_id": "oday-prod", "location": "asia-east1", "service_name": svc, "revision_name": rev},
+                    },
+                    "points": [
+                        {
+                            "interval": {"endTime": ts.isoformat()},
+                            "value": {
+                                "distributionValue": {
+                                    "count": "50",
+                                    "bucketOptions": {"explicitBuckets": {"bounds": [100.0, 500.0, 5000.0]}},
+                                    "bucketCounts": ["10", "40", "0", "0"],
+                                }
+                            },
+                        }
+                        for ts in pts
+                    ],
+                }
+            ]
+        }
+
+    receipt = tmp / "stored-valid-receipt.json"
+    record_deployment_watch_window_status(
+        release_sha=PROD_RELEASE_SHA,
+        start_time=start_dt,
+        end_time=end_dt,
+        gcp_project="oday-prod",
+        gcp_region="asia-east1",
+        api_service="oday-prod-api",
+        web_service="oday-prod-web",
+        manifest_path=manifest,
+        receipt_path=receipt,
+        query_transport=fake_gcp_transport,
+    )
+
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+    env.pop("MONITORING_PROVIDER_SECRET", None)
+    env.pop("ONCALL_PROVIDER_SECRET", None)
+    env.update(
+        ODP_PRODUCTION_WATCH_CLOSEOUT_URI="gs://watch/receipt.json",
+        STAGING_WATCH_RECEIPT=str(tmp / "watch.json"),
+        STAGING_RELEASE_ID="odp-" + PROD_RELEASE_SHA[:12],
+        FAKE_WATCH_RECEIPT=str(receipt),
+    )
+
+    result = _run_step(_release_jobs()["staging_closeout"], WATCH_STEP, env)
+
+    assert result.returncode == 0, result.stderr
+    assert _outputs(fake_cloud)["verified"] == "true"
+
+
 # --------------------------------------------------------------------------
 # ODP-STAGING-RETAINED-CLEANUP-261117: operator cleanup of a held staging release
 #
@@ -2255,6 +2407,7 @@ def test_retained_cleanup_admits_the_verified_state_a_refused_hold_left(fake_clo
         "hold_run_attempt": "1",
         "hold_owner_task_id": "odp-ephemeral-staging-rollout-001",
         "hold_sidecar_status": "verified",
+        "hold_expires_at_json": "null",
     }
 
 
@@ -2424,6 +2577,362 @@ def test_retained_cleanup_refuses_when_the_hold_receipt_is_missing(fake_cloud: d
     )
     assert result.returncode != 0
     assert "hold receipt unreadable" in result.stderr
+
+
+@pytest.fixture
+def expired_verified(fake_cloud: dict[str, object]) -> dict[str, str]:
+    """Execute the bundle gate and hand its actual expiry output to the receipt gate."""
+
+    sidecar = _verified_sidecar()
+    sidecar["outputs"] = {"expires_at": "2000-01-01T00:00:00Z"}
+    state_dir = _retained_bundle(fake_cloud, hold=sidecar)
+    result = _run_step(
+        _release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_HOLD_STEP,
+        _retained_env(fake_cloud, state_dir),
+    )
+    assert result.returncode == 0, result.stderr
+    tmp = fake_cloud["tmp"]
+    hold_path = tmp / "staging-lifecycle-hold.json"
+    proof = {"success": True, "release_id": RETAINED_RELEASE_ID, "candidate_sha": RETAINED_SHA}
+    for name in ("staging-lifecycle-create.json", "staging-rehearsal-receipt.json"):
+        (tmp / name).write_text(json.dumps(proof), encoding="utf-8")
+    registry = tmp / "dispatch-registry.json"
+    registry.write_text(json.dumps({"release": {"candidate_sha": "b" * 40}}), encoding="utf-8")
+    gh = tmp / "bin/gh"
+    gh.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, pathlib, sys\n"
+        "pathlib.Path(os.environ['FAKE_GH_LOG']).write_text(json.dumps(sys.argv[1:]))\n"
+        "print(pathlib.Path(os.environ['FAKE_REGISTRY']).read_text())\n"
+        "sys.exit(int(os.environ.get('FAKE_GH_RETURN_CODE', '0')))\n",
+        encoding="utf-8",
+    )
+    gh.chmod(0o755)
+    env = _receipt_env(fake_cloud, hold_path, sidecar_status="verified")
+    env.update(
+        HOLD_EXPIRES_AT_JSON=_outputs(fake_cloud)["hold_expires_at_json"],
+        ODAY_RELEASE_SHA=RETAINED_SHA,
+        GITHUB_REPOSITORY="example/odayplus",
+        GITHUB_REF_NAME="task/dispatch-policy",
+        FAKE_REGISTRY=str(registry),
+        FAKE_GH_LOG=str(tmp / "gh.log"),
+    )
+    return env
+
+
+@pytest.mark.parametrize("expiry", ["2000-01-01T00:00:00Z", "2000-01-01T00:00:00.123+00:00"])
+def test_retained_cleanup_admits_expired_superseded_verified_without_a_hold(
+    expired_verified: dict[str, str], expiry: str,
+) -> None:
+    expired_verified["HOLD_EXPIRES_AT_JSON"] = json.dumps(expiry)
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, expired_verified)
+    assert result.returncode == 0, result.stderr
+    assert "expired at" in result.stdout and "superseded by" in result.stdout
+    assert json.loads(Path(expired_verified["FAKE_GH_LOG"]).read_text()) == [
+        "api", "-H", "Accept: application/vnd.github.raw+json",
+        "repos/example/odayplus/contents/docs/evidence/gates/RELEASE_GATE_REGISTRY.json?ref=task/dispatch-policy",
+    ]
+    step = _named_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP)
+    assert step["env"]["GH_TOKEN"] == "${{ github.token }}"
+    assert step["env"]["HOLD_EXPIRES_AT_JSON"] == "${{ steps.retained-hold.outputs.hold_expires_at_json }}"
+
+
+@pytest.mark.parametrize(
+    "expiry",
+    [
+        "2999-01-01T00:00:00Z",  # not yet expired
+        None, "", 123, {},
+        "2000-01-01T00:00:00",  # naive timestamps are not UTC proof
+        "2000-01-01T00:00:00+01:00",
+        "2000-02-30T00:00:00Z",  # shape alone does not prove a valid date
+        "not-a-date", "2000-01-01T00:00:00Z\nextra-output=true",
+    ],
+)
+def test_retained_cleanup_refuses_unexpired_or_invalid_verified_expiry(
+    expired_verified: dict[str, str], expiry: object,
+) -> None:
+    expired_verified["HOLD_EXPIRES_AT_JSON"] = json.dumps(expiry)
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, expired_verified)
+    assert result.returncode != 0
+    assert "expired verified admission failed" in result.stderr
+    assert not Path(expired_verified["FAKE_GH_LOG"]).exists()
+
+
+@pytest.mark.parametrize("name", ["staging-lifecycle-create.json", "staging-rehearsal-receipt.json"])
+@pytest.mark.parametrize(
+    "defect",
+    ["missing", "malformed", "not-an-object", "unsuccessful", "numeric-success", "wrong-release", "wrong-sha"],
+)
+def test_retained_cleanup_refuses_missing_or_invalid_successful_staging_receipts(
+    expired_verified: dict[str, str], name: str, defect: str,
+) -> None:
+    path = Path(expired_verified["HOLD_RECEIPT"]).with_name(name)
+    proof = json.loads(path.read_text())
+    if defect == "missing":
+        path.unlink()
+    elif defect == "malformed":
+        path.write_text("{broken")
+    else:
+        if defect == "not-an-object":
+            proof = []
+        elif defect == "unsuccessful":
+            proof["success"] = False
+        elif defect == "numeric-success":
+            proof["success"] = 1
+        elif defect == "wrong-release":
+            proof["release_id"] = "odp-bbbbbbbbbbbb"
+        else:
+            proof["candidate_sha"] = "b" * 40
+        path.write_text(json.dumps(proof))
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, expired_verified)
+    assert result.returncode != 0
+    assert "expired verified admission failed" in result.stderr
+    assert not Path(expired_verified["FAKE_GH_LOG"]).exists()
+
+
+@pytest.mark.parametrize(
+    "registry",
+    [
+        {"release": {"candidate_sha": RETAINED_SHA}},  # active staging candidate
+        {}, {"release": {}}, {"release": []}, [], None,
+        {"release": {"candidate_sha": ""}},
+        {"release": {"candidate_sha": "not-a-sha"}},
+    ],
+)
+def test_retained_cleanup_refuses_active_or_unidentified_registry_candidate(
+    expired_verified: dict[str, str], registry: object,
+) -> None:
+    Path(expired_verified["FAKE_REGISTRY"]).write_text(json.dumps(registry))
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, expired_verified)
+    assert result.returncode != 0
+    assert "dispatch-ref registry" in result.stderr
+
+
+@pytest.mark.parametrize("defect", ["malformed", "api-error"])
+def test_retained_cleanup_refuses_unreadable_dispatch_registry(
+    expired_verified: dict[str, str], defect: str,
+) -> None:
+    if defect == "malformed":
+        Path(expired_verified["FAKE_REGISTRY"]).write_text("{broken")
+    else:
+        # Even a valid superseding response body must not override API failure.
+        expired_verified["FAKE_GH_RETURN_CODE"] = "1"
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, expired_verified)
+    assert result.returncode != 0
+    assert "expired verified admission failed" in result.stderr
+
+
+@pytest.mark.parametrize("defect", ["malformed", "invalid", "refused-hold"])
+def test_retained_cleanup_never_bypasses_a_present_hold_receipt_for_expiry(
+    expired_verified: dict[str, str], defect: str,
+) -> None:
+    path = Path(expired_verified["HOLD_RECEIPT"])
+    if defect == "malformed":
+        path.write_text("{broken")
+    elif defect == "invalid":
+        path.write_text("{}")
+    else:
+        path.write_text(json.dumps({
+            "action": "hold", "release_id": RETAINED_RELEASE_ID, "success": False,
+            "errors": [_VERIFIED_HOLD_REFUSAL], "metadata": _VERIFIED_METADATA,
+            "resources": [{"release_id": RETAINED_RELEASE_ID, "status": "retained_for_debugging"}],
+        }))
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, expired_verified)
+    assert result.returncode == (0 if defect == "refused-hold" else 1), result.stderr
+    assert not Path(expired_verified["FAKE_GH_LOG"]).exists()
+
+
+def test_retained_cleanup_admits_unpersisted_created_hold_only_when_flagged(
+    fake_cloud: dict[str, object],
+) -> None:
+    state_dir = _retained_bundle(fake_cloud, hold=_held(recovery_bundle_absent=True))
+    hold_res = _run_step(
+        _release_jobs()[RETAINED_CLEANUP_JOB],
+        RETAINED_HOLD_STEP,
+        _retained_env(fake_cloud, state_dir),
+    )
+    assert hold_res.returncode == 0, hold_res.stderr
+    assert _outputs(fake_cloud)["hold_recovery_bundle_absent"] == "true"
+
+    created_meta = {"state_status": "created", "owner_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001"}
+    env = _receipt_env(fake_cloud, _hold_receipt(fake_cloud, metadata=created_meta))
+    env["HOLD_RECOVERY_BUNDLE_ABSENT"] = "true"
+    receipt_res = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, env)
+    assert receipt_res.returncode == 0, receipt_res.stderr
+
+    # With recovery_bundle_absent=true, non-'created' states must be refused.
+    bad_env = _receipt_env(fake_cloud, _hold_receipt(fake_cloud))
+    bad_env["HOLD_RECOVERY_BUNDLE_ABSENT"] = "true"
+    refused = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, bad_env)
+    assert refused.returncode != 0
+    assert "unpersisted hold state" in refused.stderr
+
+
+def test_retained_cleanup_reconstructs_unpersisted_bundle_from_failed_deploy_run(
+    fake_cloud: dict[str, object],
+) -> None:
+    """Staging deploy 45104336909 (e9ef7b5159b1): create+hold succeeded, GCS bundle upload failed."""
+    import hashlib
+
+    tmp: Path = fake_cloud["tmp"]  # type: ignore[assignment]
+    bin_dir = tmp / "unpersisted-bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    state_dir = tmp / "unpersisted-state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    artifacts_src = tmp / "unpersisted-artifacts"
+    (artifacts_src / "runtime-release-staging-lifecycle-receipts").mkdir(parents=True)
+    (artifacts_src / "release-admission-receipt-staging").mkdir(parents=True)
+
+    rhash = hashlib.sha256(RETAINED_RELEASE_ID.encode("utf-8")).hexdigest()[:8]
+    stem = f"{RETAINED_RELEASE_ID}-{rhash}"
+    manifest_digest = "sha256:" + "d" * 64
+    img_base = "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev"
+
+    def write_artifacts(*, expires_at: str = "2000-01-01T00:00:00Z", active_sha: str = "b" * 40) -> None:
+        (artifacts_src / "runs.json").write_text(
+            json.dumps({
+                "workflow_runs": [{
+                    "id": 45104336909,
+                    "run_attempt": 1,
+                    "display_title": f"Runtime Release staging deploy {RETAINED_SHA}",
+                    "status": "completed",
+                    "conclusion": "failure",
+                }]
+            }),
+            encoding="utf-8",
+        )
+        (artifacts_src / "registry.json").write_text(
+            json.dumps({"release": {"candidate_sha": active_sha}}), encoding="utf-8"
+        )
+        (artifacts_src / "runtime-release-staging-lifecycle-receipts/staging-lifecycle-create.json").write_text(
+            json.dumps({
+                "action": "create",
+                "release_id": RETAINED_RELEASE_ID,
+                "candidate_sha": RETAINED_SHA,
+                "manifest_digest_prefix": "d" * 16,
+                "success": True,
+                "resources": [{
+                    "id": "db-1",
+                    "type": "google_sql_database",
+                    "name": "stg_db",
+                    "created_at": "2000-01-01T00:00:00Z",
+                    "expires_at": expires_at,
+                    "labels": {"release_id": stem, "tenant": "tenant-123"},
+                }],
+            }),
+            encoding="utf-8",
+        )
+        (artifacts_src / "runtime-release-staging-lifecycle-receipts/staging-lifecycle-hold.json").write_text(
+            json.dumps({
+                "action": "hold",
+                "release_id": RETAINED_RELEASE_ID,
+                "success": True,
+                "metadata": {"state_status": "created", "owner_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001", "ttl_hours": 24},
+                "resources": [{
+                    "id": "db-1",
+                    "release_id": RETAINED_RELEASE_ID,
+                    "status": "retained_for_debugging",
+                    "created_at": "2000-01-01T00:00:00Z",
+                    "expires_at": expires_at,
+                }],
+            }),
+            encoding="utf-8",
+        )
+        (artifacts_src / "release-admission-receipt-staging/release-admission-receipt.json").write_text(
+            json.dumps({
+                "admitted": True,
+                "target_environment": "staging",
+                "allowed_action": "deploy",
+                "release_id": RETAINED_RELEASE_ID,
+                "candidate_sha": RETAINED_SHA,
+                "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+                "manifest_digest": manifest_digest,
+                "release_profile": "core-ops",
+                "component_images": {
+                    key: f"{img_base}/oday-staging-{key}@sha256:" + "e" * 64
+                    for key in ("api", "web", "worker", "scheduler")
+                },
+            }),
+            encoding="utf-8",
+        )
+
+    gcloud_stub = bin_dir / "gcloud"
+    gcloud_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo 'CommandException: One or more URLs matched no objects.' >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    gcloud_stub.chmod(0o755)
+    gh_stub = bin_dir / "gh"
+    gh_stub.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, pathlib, shutil, sys\n"
+        "src = pathlib.Path(os.environ['FAKE_UNPERSISTED_SRC'])\n"
+        "if sys.argv[1] == 'api':\n"
+        "    endpoint = sys.argv[-1]\n"
+        "    if 'runs?' in endpoint:\n"
+        "        print((src / 'runs.json').read_text())\n"
+        "    else:\n"
+        "        print((src / 'registry.json').read_text())\n"
+        "elif sys.argv[1:3] == ['run', 'download']:\n"
+        "    dest = pathlib.Path(sys.argv[sys.argv.index('-D') + 1])\n"
+        "    for sub in ('runtime-release-staging-lifecycle-receipts', 'release-admission-receipt-staging'):\n"
+        "        shutil.copytree(src / sub, dest / sub, dirs_exist_ok=True)\n",
+        encoding="utf-8",
+    )
+    gh_stub.chmod(0o755)
+
+    base_env = _retained_env(fake_cloud, state_dir)
+    base_env.update(
+        PATH=f"{bin_dir}:{os.environ['PATH']}",
+        FAKE_UNPERSISTED_SRC=str(artifacts_src),
+        STAGING_BUNDLE_URI="gs://recovery-bucket/oday-plus/ephemeral-staging/odp-aaaaaaaaaaaa/bundle",
+        RELEASE_TASK_ID="ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+        GITHUB_REPOSITORY="example/odayplus",
+        GITHUB_REF_NAME="dev",
+        GCP_PROJECT_ID="odayplus-runtime-20260825",
+        GCP_REGION="asia-east1",
+        GCP_CLOUD_SQL_INSTANCE="odayplus-runtime-20260825:asia-east1:oday-staging-foundation-sql",
+        ODP_STAGING_VPC_NETWORK="oday-staging-vpc",
+        ODP_STAGING_VPC_SUBNETWORK="oday-staging-subnet",
+        ODP_STAGING_KMS_KEY_ID="projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/kr/cryptoKeys/k",
+        ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT="github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    )
+
+    # Unexpired release is refused during bundle reconstruction.
+    write_artifacts(expires_at="2999-01-01T00:00:00Z")
+    unexpired = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], "Read staging recovery bundle with staging identity", base_env)
+    assert unexpired.returncode != 0
+    assert "has not yet expired" in unexpired.stderr
+
+    # Active registry candidate is refused during bundle reconstruction.
+    write_artifacts(active_sha=RETAINED_SHA)
+    active_refused = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], "Read staging recovery bundle with staging identity", base_env)
+    assert active_refused.returncode != 0
+    assert "active staging candidate" in active_refused.stderr
+
+    # Expired, superseded pre-persist hold reconstructs cleanly with admitted release_profile='core-ops'.
+    write_artifacts()
+    reconstructed = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], "Read staging recovery bundle with staging identity", base_env)
+    assert reconstructed.returncode == 0, reconstructed.stderr
+    tfvars = json.loads((state_dir / f"{stem}.tfvars.json").read_text(encoding="utf-8"))
+    assert tfvars["release_profile"] == "core-ops"
+    assert tfvars["manifest_digest"] == manifest_digest
+    hold_res = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_HOLD_STEP, base_env)
+    assert hold_res.returncode == 0, hold_res.stderr
+    assert _outputs(fake_cloud)["hold_run_id"] == "45104336909"
+    assert _outputs(fake_cloud)["hold_recovery_bundle_absent"] == "true"
+
+
+def test_retained_cleanup_never_uses_expiry_for_a_held_sidecar_without_a_hold_receipt(
+    expired_verified: dict[str, str],
+) -> None:
+    expired_verified["HOLD_SIDECAR_STATUS"] = "held"
+    result = _run_step(_release_jobs()[RETAINED_CLEANUP_JOB], RETAINED_RECEIPT_STEP, expired_verified)
+    assert result.returncode != 0
+    assert "hold receipt unreadable" in result.stderr
+    assert not Path(expired_verified["FAKE_GH_LOG"]).exists()
 
 
 # --------------------------------------------------------------------------

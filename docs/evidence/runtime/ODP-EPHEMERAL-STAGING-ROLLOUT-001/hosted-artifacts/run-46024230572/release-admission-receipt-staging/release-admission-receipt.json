@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "verifier": "delivery_toolchain/release/check_runtime_admission.py",
+  "verified_at": "2026-11-27T15:24:23+00:00",
+  "admitted": true,
+  "lease_id": "lease-56ee417e9b6e02dae2b11bbf0e9f185f",
+  "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+  "release_id": "odp-9de70f949915",
+  "candidate_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+  "manifest_digest": "sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd",
+  "target_environment": "staging",
+  "allowed_action": "deploy",
+  "issued_at": "2026-11-27T15:20:40+00:00",
+  "expires_at": "2026-11-27T15:30:40+00:00",
+  "request_fingerprint": "sha256:a9a13294cd1c43f1a85f62de6a92fa083a6daf7b250bb632e86a798e78968285",
+  "approval_id": "HUMANOPS-STAGING-LEASE-20261127W-R2",
+  "approval_nonce_digest": "sha256:08309c38a68850ca13ff50c6e886a3b7f303a4e0b01ace60ae5773f8a512fdb4",
+  "signature_key_id": "ed25519:f2b354695a03fa8e6f509270b082de63",
+  "nonce_digest": "sha256:8fd84aab07a283bdf9ee2c827f5dd3f553e513bd424968917c7fa17b068ac2a2",
+  "signature_digest": "sha256:1920a25bd9dd22e65282082f92f6ff9ed882a28890f37e2ef3cead787f12cc0b",
+  "consumed_at": "2026-11-27T15:24:30.349470+00:00",
+  "errors": [],
+  "component_images": {
+    "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api@sha256:c67086c8b349d11967a3baf53cfaf0e339938252b1006cdd4eb40ee5a413da73",
+    "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:3a76179ae40ff68df2b6c3a0470243a791888314b596b85971a22307f2749105",
+    "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:5db31d30e98b9728048688fe05a2ac2da7a27978e6159531db127376a112c540",
+    "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:42549e1a440f2c9edf78d70e377f26d03f4ab29a91cb93e7406f74ad28496850"
+  },
+  "target_registry": null,
+  "manifest_transport": {
+    "manifest_path": ".odp_data/release/admitted-manifest/RELEASE_MANIFEST.json",
+    "expected_manifest_digest": "sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd",
+    "digest_binding_required": true
+  },
+  "release_profile": "core-ops"
+}

@@ -271,7 +271,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertIn("google_pubsub_topic", types)
         self.assertIn("google_pubsub_subscription", types)
         self.assertIn("google_cloud_run_v2_service", types)
-        self.assertEqual(types.count("google_cloud_run_v2_job"), 3)
+        self.assertEqual(types.count("google_cloud_run_v2_job"), 4)
         self.assertTrue(any("migration" in n for n in names))
         self.assertTrue(any("worker" in n for n in names))
         self.assertTrue(any("scheduler" in n for n in names))
@@ -3054,6 +3054,14 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             "staging_worker_job_name": names["cloud_run_worker_job"],
             "staging_scheduler_job_name": names["cloud_run_scheduler_job"],
             "staging_scheduler_trigger_name": names["scheduler_job"],
+            "staging_admin_bootstrap_job_name": names["cloud_run_admin_bootstrap_job"],
+            "staging_admin_account": {
+                "username": "staging-admin",
+                "initial_secret": names["secret_admin_initial"],
+                "initial_version": "1",
+                "sign_in_secret": names["secret_admin_sign_in"],
+                "sign_in_version": "1",
+            },
             "staging_cloud_sql_instance": "oday-staging-pg",
             "staging_api_image": "asia-east1-docker.pkg.dev/proj/repo/api@sha256:" + "c" * 64,
             "staging_web_image": "asia-east1-docker.pkg.dev/proj/repo/web@sha256:" + "d" * 64,
@@ -4691,6 +4699,40 @@ def _load_gate_fixtures() -> Any:
     return module
 
 
+def _staging_gcloud(outputs: Mapping[str, Any], fx: Any, trace: list[list[str]] | None = None) -> Any:
+    """A ``_live_gcloud`` double: identity readback, the release's two admin
+    secrets (the gate fixtures' initial secret and sign-in password), and an
+    empty success for every job execution."""
+
+    account = outputs["staging_admin_account"]
+    values = {account["initial_secret"]: fx.INITIAL_PASSWORD, account["sign_in_secret"]: fx.PASSWORD}
+
+    def run(argv: Sequence[str], **_kwargs: Any) -> str:
+        if trace is not None:
+            trace.append(list(argv))
+        if argv[0] == "iam":
+            return argv[3]
+        if list(argv[:3]) == ["secrets", "versions", "access"]:
+            return values[argv[4].removeprefix("--secret=")]
+        return ""
+
+    return run
+
+
+@contextmanager
+def _staging_web_origin(fx: Any, outputs: Mapping[str, Any]) -> Any:
+    """Serve the gate's Web doubles at the governed staging origin, signed in
+    to as the release's own admin account (ODP-EPHEMERAL-STAGING-ROLLOUT-001)."""
+
+    from unittest.mock import patch
+
+    from product_ops.deployment.staging_lifecycle import STAGING_WEB_PUBLIC_ORIGIN
+
+    with patch.object(fx.base, "WEB_URL", STAGING_WEB_PUBLIC_ORIGIN), \
+            patch.object(fx, "USERNAME", outputs["staging_admin_account"]["username"]):
+        yield
+
+
 class StagingLiveE2EGateTests(unittest.TestCase):
     """ODP-CORE-OPS-STAGING-LIVE-GATE-001: staging verify runs the complete gate."""
 
@@ -4718,64 +4760,142 @@ class StagingLiveE2EGateTests(unittest.TestCase):
             **{"anon GET /readiness": self.fx.base.response(200, readiness), **overrides}
         )
 
+    def _bootstrap_job_description(
+        self,
+        outputs: Mapping[str, Any],
+        expires_at: datetime | str,
+        *,
+        dialect: str = "v2",
+        egress: str = "ALL_TRAFFIC",
+        extra_env: Sequence[Mapping[str, Any]] = (),
+    ) -> dict[str, Any]:
+        from product_ops.deployment.staging_lifecycle import format_timestamp
+
+        expiry_value = format_timestamp(expires_at) if isinstance(expires_at, datetime) else expires_at
+        env = [
+            {"name": "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT", "value": expiry_value},
+            *extra_env,
+        ]
+        image = outputs["staging_worker_image"]
+        if dialect == "v1":
+            egress_annotation = "all-traffic" if egress == "ALL_TRAFFIC" else "private-ranges-only"
+            return {
+                "spec": {
+                    "template": {
+                        "metadata": {
+                            "annotations": {"run.googleapis.com/vpc-access-egress": egress_annotation}
+                        },
+                        "spec": {
+                            "template": {
+                                "spec": {"containers": [{"image": image, "env": env}]}
+                            }
+                        },
+                    }
+                }
+            }
+        return {
+            "template": {
+                "template": {
+                    "containers": [{"image": image, "env": env}],
+                    "vpcAccess": {"egress": egress},
+                }
+            }
+        }
+
     def _run_stage(
         self,
         routes: dict[str, Any],
         profile: str = "core-ops",
         *,
         worker_ok: bool = True,
-        web_http: Any = None,
+        fresh_admin: bool = True,
+        web_overrides: Mapping[str, Any] | None = None,
+        outputs: Mapping[str, Any] | None = None,
+        gate_now: datetime | None = None,
+        bootstrap_expires_at: datetime | str | None = None,
+        job_descriptions: Mapping[str, Mapping[str, Any]] | None = None,
+        extra_context: Mapping[str, Any] | None = None,
     ) -> tuple[Mapping[str, Any], dict[str, Any]]:
+        from contextlib import ExitStack
         from unittest.mock import patch
 
         from product_ops.deployment import staging_lifecycle as lifecycle
 
-        seen: dict[str, Any] = {"tokens": [], "clients": []}
+        active_outputs = dict(self.outputs if outputs is None else outputs)
+        seen: dict[str, Any] = {"tokens": [], "clients": [], "gcloud": [], "described": []}
         tokens = {
             lifecycle.staging_smoke_token_audience(self.release_id): self.SMOKE_TOKEN,
-            self.outputs["staging_api_uri"]: self.API_TOKEN,
-            self.outputs["staging_web_uri"]: self.WEB_TOKEN,
+            active_outputs["staging_api_uri"]: self.API_TOKEN,
         }
+        effective_now = gate_now or datetime.now(UTC)
+        default_expiry = (
+            bootstrap_expires_at
+            if bootstrap_expires_at is not None
+            else effective_now + timedelta(hours=24)
+        )
 
         def mint(*, audience: str, operator_identity: str, gcloud_bin: str) -> str:
             seen["tokens"].append((audience, operator_identity))
             return tokens[audience]
 
         def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
+            seen["described"].append((kind, name))
+            if job_descriptions and name in job_descriptions:
+                return dict(job_descriptions[name])
+            if name == active_outputs["staging_admin_bootstrap_job_name"]:
+                return self._bootstrap_job_description(active_outputs, default_expiry)
             return {"template": {"template": {
-                "containers": [{"image": self.outputs["staging_worker_image"]}],
+                "containers": [{"image": active_outputs["staging_worker_image"]}],
                 "vpcAccess": {"egress": "ALL_TRAFFIC"},
             }}}
 
-        def clients(config: Any, *, web_transport_token: str, correlation_id: str) -> Any:
+        def clients(config: Any, *, correlation_id: str) -> Any:
             seen["config"] = config
-            seen["clients"].append((web_transport_token, correlation_id))
-            return (
-                self.fx.base.FakeHttp(routes),
-                web_http if web_http is not None else self.fx.base.passing_web_http(),
+            seen["clients"].append(correlation_id)
+            # The Web as the governed origin serves it: the release admin's
+            # password journey (fresh: first-login rotation still pending).
+            seen["web"] = self.fx.AdminWeb(
+                self.fx.web_routes(**(web_overrides or {})), is_fresh=fresh_admin
             )
+            return self.fx.base.FakeHttp(routes), seen["web"]
 
         def driver(config: Any, *, job: str, region: str, project_id: str, gcloud_bin: str) -> Any:
             seen["driver"] = (job, region, project_id)
             return self.fx.base.FakeWorkerDriver(ok=worker_ok)
 
-        with patch.object(lifecycle, "_live_gcloud", side_effect=lambda argv, **kw: argv[3] if argv[0] == "iam" else ""), \
-                patch.object(lifecycle, "_live_cloud_run_description", side_effect=describe), \
-                patch.object(lifecycle, "_live_identity_token", side_effect=mint), \
-                patch.object(lifecycle, "_live_gate_clients", side_effect=clients), \
-                patch.object(lifecycle, "_live_gate_worker_driver", side_effect=driver), \
-                patch.object(lifecycle, "_live_gate_correlation_id", return_value=self.fx.base.CORRELATION_ID), \
-                patch.object(lifecycle, "STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS", 0.001):
+        stage_context: dict[str, Any] = {
+            "release_profile": profile,
+            "manifest_digest": self.manifest_digest,
+            **(extra_context or {}),
+        }
+
+        with ExitStack() as stack:
+            if gate_now is not None:
+                frozen = gate_now
+
+                class _FrozenDatetime(datetime):
+                    @classmethod
+                    def now(cls, tz: Any = None) -> datetime:
+                        return frozen if tz is None else frozen.astimezone(tz)
+
+                stack.enter_context(patch.object(lifecycle, "datetime", _FrozenDatetime))
+            stack.enter_context(_staging_web_origin(self.fx, active_outputs))
+            stack.enter_context(
+                patch.object(lifecycle, "_live_gcloud", side_effect=_staging_gcloud(active_outputs, self.fx, seen["gcloud"]))
+            )
+            stack.enter_context(patch.object(lifecycle, "_live_cloud_run_description", side_effect=describe))
+            stack.enter_context(patch.object(lifecycle, "_live_identity_token", side_effect=mint))
+            stack.enter_context(patch.object(lifecycle, "_live_gate_clients", side_effect=clients))
+            stack.enter_context(patch.object(lifecycle, "_live_gate_worker_driver", side_effect=driver))
+            stack.enter_context(patch.object(lifecycle, "_live_gate_correlation_id", return_value=self.fx.base.CORRELATION_ID))
+            stack.enter_context(patch.object(lifecycle, "STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS", 0.001))
             executor = lifecycle.make_live_rehearsal_executor(
-                self.outputs,
+                active_outputs,
                 project_id=self.project_id,
                 region="asia-east1",
-                operator_identity=self.outputs["staging_runtime_service_account"],
+                operator_identity=active_outputs["staging_runtime_service_account"],
             )
-            result = executor(
-                "live_e2e_gate",
-                {"release_profile": profile, "manifest_digest": self.manifest_digest},
-            )
+            result = executor("live_e2e_gate", stage_context)
         return result, seen
 
     def test_the_gate_is_the_last_rehearsal_stage(self) -> None:
@@ -4817,7 +4937,36 @@ class StagingLiveE2EGateTests(unittest.TestCase):
             "audit:receipt_integrity",
         } <= names, names)
         self.assertNotIn("runtime:model_bindings", names)
-        self.assertFalse(any(name.startswith(("session:", "admin:", "config:dev_admin")) for name in names))
+        # ODP-EPHEMERAL-STAGING-ROLLOUT-001: password sign-in is verified on
+        # staging with the same journey dev runs, first-login rotation included.
+        self.assertTrue({
+            "config:dev_admin_account",
+            "session:anonymous_session_denied",
+            "session:anonymous_api_denied",
+            "session:invalid_credentials_refused",
+            "session:must_change_enforced",
+            "session:first_login_password_rotated",
+            "session:password_login",
+            "session:session_resolves_account",
+            "admin:identity_user_list",
+            "admin:bootstrap_audited",
+            "admin:bootstrap_principal_bound",
+            "session:cross_tenant_denied",
+            "admin:foreign_tenant_unmodified_readback",
+            "admin:business_shell_denied",
+            "session:wrong_role_denied",
+            "admin:admin_page_served",
+            "session:logout",
+            "session:revoked_session_refused",
+            "admin:logout_revokes_admin_api",
+            "session:html_form_invalid_redirect",
+            "session:html_form_password_login",
+            "session:html_form_session_resolves_account",
+            "admin:html_form_admin_page_served",
+            "session:html_form_logout",
+            "session:html_form_revoked_session_refused",
+        } <= names, names)
+        self.assertTrue(seen["web"].password_rotated)
         self.assertEqual(
             proof["release_profile"],
             {"name": "core-ops", "model_readiness_claimed": False, "full_product_acceptance_claimed": False},
@@ -4825,17 +4974,41 @@ class StagingLiveE2EGateTests(unittest.TestCase):
         # Inputs come from the release's own Terraform outputs and identity.
         config = seen["config"]
         runtime_sa = self.outputs["staging_runtime_service_account"]
+        # No Cloud Run token is minted for the Web: it is reached through the
+        # load balancer at the governed origin, as a browser reaches it.
         self.assertEqual(
             sorted(seen["tokens"]),
             sorted([
                 (staging_smoke_token_audience(self.release_id), runtime_sa),
                 (self.outputs["staging_api_uri"], runtime_sa),
-                (self.outputs["staging_web_uri"], runtime_sa),
             ]),
         )
         self.assertEqual(config.bearer_token, self.SMOKE_TOKEN)
         self.assertEqual(config.api_transport_token, self.API_TOKEN)
-        self.assertEqual(seen["clients"][0][0], self.WEB_TOKEN)
+        self.assertEqual(config.web_url, "https://console-staging.oday-plus.com.tw")
+        account = self.outputs["staging_admin_account"]
+        self.assertEqual(
+            (config.bootstrap_admin_username, config.bootstrap_admin_password, config.dev_admin_initial_password),
+            (account["username"], self.fx.PASSWORD, self.fx.INITIAL_PASSWORD),
+        )
+        self.assertEqual((config.dev_admin_username, config.dev_admin_password), ("", ""))
+        self.assertEqual(config.dev_admin_denied_role, "cs-lead")
+        # The release's bootstrap job runs first, then exactly its two pinned
+        # secret versions are read; nothing else.
+        executed = [argv for argv in seen["gcloud"] if argv[:3] == ["run", "jobs", "execute"]]
+        self.assertEqual([argv[3] for argv in executed], [self.outputs["staging_admin_bootstrap_job_name"]])
+        self.assertEqual(
+            [argv[3:5] for argv in seen["gcloud"] if argv[:3] == ["secrets", "versions", "access"]],
+            [["1", f"--secret={account['initial_secret']}"], ["1", f"--secret={account['sign_in_secret']}"]],
+        )
+        self.assertLess(
+            seen["gcloud"].index(executed[0]),
+            next(i for i, argv in enumerate(seen["gcloud"]) if argv[:2] == ["secrets", "versions"]),
+        )
+        self.assertEqual(
+            result["admin_bootstrap"],
+            {"job": self.outputs["staging_admin_bootstrap_job_name"], "execution": "succeeded"},
+        )
         self.assertEqual(config.expected_deployment, "staging")
         self.assertEqual(config.expected_sha, self.candidate_sha)
         self.assertEqual(config.operator_role, ",".join(STAGING_SMOKE_ROLES))
@@ -4845,6 +5018,413 @@ class StagingLiveE2EGateTests(unittest.TestCase):
         self.assertEqual(
             seen["driver"], (self.outputs["staging_worker_job_name"], "asia-east1", self.project_id)
         )
+
+    def test_an_already_rotated_admin_signs_in_directly_on_a_verify_rerun(self) -> None:
+        # The bootstrap job is a no-op once the account exists; the gate then
+        # signs in with the release's sign-in password without rotating again.
+        result, _ = self._run_stage(self._core_ops_routes(), fresh_admin=False)
+
+        self.assertTrue(result["success"], result.get("detail"))
+        names = {check["name"] for check in result["live_e2e_gate"]["checks"]}
+        self.assertIn("session:password_login", names)
+        self.assertNotIn("session:first_login_password_rotated", names)
+
+    def test_expired_bootstrap_job_expiry_repeats_sign_in_using_live_job_describe_and_utc(self) -> None:
+        from product_ops.deployment import staging_lifecycle as lifecycle
+        from shared.identity import bootstrap as identity_bootstrap
+
+        # No third Python copy of the 72h cap and no verify-wide now plumbing.
+        self.assertFalse(hasattr(lifecycle, "STAGING_ADMIN_BOOTSTRAP_MAX_TTL_HOURS"))
+        self.assertFalse(hasattr(lifecycle, "_staging_admin_bootstrap_window_expired"))
+        self.assertFalse(hasattr(lifecycle, "_context_timestamp"))
+
+        bootstrap_expires_at = self.now + timedelta(hours=72)
+        # shared.identity.bootstrap itself still fails closed at >= expiry;
+        # expiry validation is unchanged.
+        with self.assertRaises(identity_bootstrap.BootstrapRefused) as refused:
+            identity_bootstrap.request_from_env(
+                {
+                    "ODP_IDENTITY_BOOTSTRAP_SECRET": self.fx.INITIAL_PASSWORD,
+                    "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT": lifecycle.format_timestamp(bootstrap_expires_at),
+                    "ODP_IDENTITY_BOOTSTRAP_TENANT_ID": self.outputs["staging_tenant_id"],
+                    "ODP_IDENTITY_BOOTSTRAP_USERNAME": self.outputs["staging_admin_account"]["username"],
+                    "ODP_IDENTITY_BOOTSTRAP_EMAIL": "staging-admin@console-staging.oday-plus.com.tw",
+                },
+                now=bootstrap_expires_at,
+            )
+        self.assertEqual(refused.exception.code, "BOOTSTRAP_SECRET_EXPIRED")
+
+        account = self.outputs["staging_admin_account"]
+        bootstrap_job = self.outputs["staging_admin_bootstrap_job_name"]
+        # Both Cloud Run job describe dialects (v2 template.template and gcloud
+        # v1 spec.template.spec.template.spec) plus UTC-offset timestamps work.
+        cases = (
+            ("v2_exact_boundary", "v2", lifecycle.format_timestamp(bootstrap_expires_at), bootstrap_expires_at),
+            ("v1_after_boundary", "v1", lifecycle.format_timestamp(bootstrap_expires_at), bootstrap_expires_at + timedelta(seconds=1)),
+            ("v2_long_ttl_100h", "v2", lifecycle.format_timestamp(bootstrap_expires_at), self.now + timedelta(hours=100)),
+            ("v1_offset_exact_boundary", "v1", "2026-08-30T14:00:00+08:00", bootstrap_expires_at),
+        )
+        for label, dialect, raw_expiry, gate_now in cases:
+            with self.subTest(case=label):
+                job_desc = {
+                    bootstrap_job: self._bootstrap_job_description(
+                        self.outputs,
+                        raw_expiry,
+                        dialect=dialect,
+                        extra_env=[
+                            {
+                                "name": "ODP_IDENTITY_BOOTSTRAP_SECRET",
+                                "valueFrom" if dialect == "v1" else "valueSource": {
+                                    "secretKeyRef": {"name": account["initial_secret"], "key": "1"}
+                                },
+                            }
+                        ],
+                    )
+                }
+                result, seen = self._run_stage(
+                    self._core_ops_routes(),
+                    fresh_admin=False,
+                    gate_now=gate_now,
+                    job_descriptions=job_desc,
+                    # Stale verify-start timestamp in context must be ignored.
+                    extra_context={"now": lifecycle.format_timestamp(bootstrap_expires_at - timedelta(hours=1))},
+                )
+                self.assertTrue(result["success"], result.get("detail"))
+                self.assertEqual([argv for argv in seen["gcloud"] if argv[:3] == ["run", "jobs", "execute"]], [])
+                self.assertEqual(seen["described"].count(("job", bootstrap_job)), 1)
+                self.assertEqual(
+                    [argv[3:5] for argv in seen["gcloud"] if argv[:3] == ["secrets", "versions", "access"]],
+                    [["1", f"--secret={account['sign_in_secret']}"]],
+                )
+                self.assertEqual(seen["config"].dev_admin_initial_password, "")
+                self.assertEqual(
+                    result["admin_bootstrap"],
+                    {"job": bootstrap_job, "execution": "skipped_bootstrap_window_expired"},
+                )
+                names = {check["name"] for check in result["live_e2e_gate"]["checks"]}
+                self.assertIn("session:password_login", names)
+                self.assertIn("admin:bootstrap_audited", names)
+                self.assertNotIn("session:first_login_password_rotated", names)
+                serialized = json.dumps(result)
+                self.assertNotIn("ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT", serialized)
+                self.assertNotIn(raw_expiry, serialized)
+
+    def test_bootstrap_runs_before_expiry_and_fails_closed_on_unrotated_or_bad_job_describe(self) -> None:
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        account = self.outputs["staging_admin_account"]
+        bootstrap_job = self.outputs["staging_admin_bootstrap_job_name"]
+        bootstrap_expires_at = self.now + timedelta(hours=72)
+
+        # Just before the expiry boundary (v1 gcloud describe shape & offset),
+        # bootstrap runs once, describes once, and rotates the fresh admin.
+        for label, dialect, raw_expiry in (
+            ("v2_before_boundary", "v2", lifecycle.format_timestamp(bootstrap_expires_at)),
+            ("v1_offset_before_boundary", "v1", "2026-08-30T14:00:00+08:00"),
+        ):
+            with self.subTest(case=label):
+                result, seen = self._run_stage(
+                    self._core_ops_routes(),
+                    fresh_admin=True,
+                    gate_now=bootstrap_expires_at - timedelta(seconds=1),
+                    job_descriptions={
+                        bootstrap_job: self._bootstrap_job_description(
+                            self.outputs, raw_expiry, dialect=dialect
+                        )
+                    },
+                )
+                self.assertTrue(result["success"], result.get("detail"))
+                executed = [argv for argv in seen["gcloud"] if argv[:3] == ["run", "jobs", "execute"]]
+                self.assertEqual([argv[3] for argv in executed], [bootstrap_job])
+                self.assertEqual(seen["described"].count(("job", bootstrap_job)), 1)
+                self.assertEqual(
+                    [argv[3:5] for argv in seen["gcloud"] if argv[:3] == ["secrets", "versions", "access"]],
+                    [["1", f"--secret={account['initial_secret']}"], ["1", f"--secret={account['sign_in_secret']}"]],
+                )
+                self.assertEqual(
+                    result["admin_bootstrap"],
+                    {"job": bootstrap_job, "execution": "succeeded"},
+                )
+
+        # Unrotated / unbootstrapped release past expiry cannot use the expired
+        # bootstrap job or initial secret to create/rotate an account.
+        result, seen = self._run_stage(
+            self._core_ops_routes(),
+            fresh_admin=True,
+            gate_now=bootstrap_expires_at + timedelta(hours=1),
+            bootstrap_expires_at=bootstrap_expires_at,
+        )
+        self.assertFalse(result["success"])
+        self.assertEqual([argv for argv in seen["gcloud"] if argv[:3] == ["run", "jobs", "execute"]], [])
+        self.assertEqual(
+            [argv[3:5] for argv in seen["gcloud"] if argv[:3] == ["secrets", "versions", "access"]],
+            [["1", f"--secret={account['sign_in_secret']}"]],
+        )
+        failed = {check["name"] for check in result["live_e2e_gate"]["checks"] if not check["ok"]}
+        self.assertIn("session:password_login", failed)
+        self.assertNotIn("session:first_login_password_rotated", failed)
+        for secret in (self.fx.PASSWORD, self.fx.INITIAL_PASSWORD):
+            self.assertNotIn(secret, json.dumps(result))
+
+        # Malformed, missing, secret-backed, contradictory, or tampered job
+        # descriptions all fail closed before executing bootstrap or reading any secret.
+        v1_valid = self._bootstrap_job_description(self.outputs, bootstrap_expires_at, dialect="v1")
+        v2_other = self._bootstrap_job_description(
+            self.outputs, bootstrap_expires_at + timedelta(hours=1), dialect="v2"
+        )
+        bad_cases: list[tuple[str, dict[str, Any], str]] = [
+            (
+                "missing_env",
+                {"template": {"template": {"containers": [{"image": self.outputs["staging_worker_image"]}], "vpcAccess": {"egress": "ALL_TRAFFIC"}}}},
+                "missing",
+            ),
+            (
+                "empty_env",
+                self._bootstrap_job_description(self.outputs, "   "),
+                "empty or invalid",
+            ),
+            (
+                "secret_backed_v2",
+                {"template": {"template": {
+                    "containers": [{
+                        "image": self.outputs["staging_worker_image"],
+                        "env": [{"name": "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT", "valueSource": {"secretKeyRef": {"secret": "x"}}}],
+                    }],
+                    "vpcAccess": {"egress": "ALL_TRAFFIC"},
+                }}},
+                "non-secret",
+            ),
+            (
+                "secret_backed_v1",
+                {
+                    "spec": {"template": {
+                        "metadata": {"annotations": {"run.googleapis.com/vpc-access-egress": "all-traffic"}},
+                        "spec": {"template": {"spec": {"containers": [{
+                            "image": self.outputs["staging_worker_image"],
+                            "env": [{"name": "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT", "valueFrom": {"secretKeyRef": {"name": "x", "key": "1"}}}],
+                        }]}}},
+                    }}
+                },
+                "non-secret",
+            ),
+            (
+                "malformed_timestamp",
+                self._bootstrap_job_description(self.outputs, "tomorrow"),
+                "ISO-8601",
+            ),
+            (
+                "naive_timestamp",
+                self._bootstrap_job_description(self.outputs, "2026-08-30T06:00:00"),
+                "UTC offset",
+            ),
+            (
+                "contradictory_v1_v2",
+                {**v1_valid, **v2_other},
+                "contradictory",
+            ),
+            (
+                "bad_egress_even_when_expired",
+                self._bootstrap_job_description(self.outputs, bootstrap_expires_at, egress="PRIVATE_RANGES_ONLY"),
+                "expected ALL_TRAFFIC",
+            ),
+        ]
+        for label, bad_payload, pattern in bad_cases:
+            with self.subTest(bad_job=label):
+                with self.assertRaisesRegex(RuntimeError, pattern):
+                    self._run_stage(
+                        self._core_ops_routes(),
+                        fresh_admin=False,
+                        gate_now=bootstrap_expires_at + timedelta(hours=1),
+                        job_descriptions={bootstrap_job: bad_payload},
+                    )
+
+    def test_verify_does_not_pass_now_and_live_gate_uses_its_own_utc(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        captured_contexts: dict[str, dict[str, Any]] = {}
+        bootstrap_expires_at = self.now + timedelta(hours=72)
+        verify_start = bootstrap_expires_at - timedelta(minutes=5)
+        gate_now = bootstrap_expires_at
+
+        # Run verify_ephemeral_staging starting before expiry while live_e2e_gate
+        # executes at expiry; stage_context must not carry `now`, and live gate
+        # must judge against its own UTC clock.
+        class _FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz: Any = None) -> datetime:
+                return gate_now if tz is None else gate_now.astimezone(tz)
+
+        seen_gcloud: list[list[str]] = []
+        tokens = {
+            lifecycle.staging_smoke_token_audience(self.release_id): self.SMOKE_TOKEN,
+            self.outputs["staging_api_uri"]: self.API_TOKEN,
+        }
+
+        def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
+            if name == self.outputs["staging_admin_bootstrap_job_name"]:
+                return self._bootstrap_job_description(self.outputs, bootstrap_expires_at)
+            return {"template": {"template": {
+                "containers": [{"image": self.outputs["staging_worker_image"]}],
+                "vpcAccess": {"egress": "ALL_TRAFFIC"},
+            }}}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            EphemeralStagingVerificationAndHoldTests._seed_live_state(self, state_dir)
+            marker_path = lifecycle._lifecycle_state_path(self.release_id, state_dir)
+            seeded = json.loads(marker_path.read_text(encoding="utf-8"))
+            marker_path.write_text(json.dumps({**seeded, "outputs": self.outputs}), encoding="utf-8")
+            with _staging_web_origin(self.fx, self.outputs), \
+                    patch.object(lifecycle, "datetime", _FrozenDatetime), \
+                    patch.object(lifecycle, "_live_gcloud", side_effect=_staging_gcloud(self.outputs, self.fx, seen_gcloud)), \
+                    patch.object(lifecycle, "_live_cloud_run_description", side_effect=describe), \
+                    patch.object(lifecycle, "_live_identity_token", side_effect=lambda *, audience, **kw: tokens[audience]), \
+                    patch.object(
+                        lifecycle,
+                        "_live_gate_clients",
+                        side_effect=lambda _cfg, **_kw: (
+                            self.fx.base.FakeHttp(self._core_ops_routes()),
+                            self.fx.AdminWeb(self.fx.web_routes(), is_fresh=False),
+                        ),
+                    ), \
+                    patch.object(lifecycle, "_live_gate_worker_driver", return_value=self.fx.base.FakeWorkerDriver(ok=True)), \
+                    patch.object(lifecycle, "_live_gate_correlation_id", return_value=self.fx.base.CORRELATION_ID), \
+                    patch.object(lifecycle, "STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS", 0.001):
+                live = lifecycle.make_live_rehearsal_executor(
+                    self.outputs,
+                    project_id=self.project_id,
+                    region="asia-east1",
+                    operator_identity=self.outputs["staging_runtime_service_account"],
+                )
+
+                def executor(stage: str, context: Mapping[str, Any]) -> Mapping[str, Any]:
+                    captured_contexts[stage] = dict(context)
+                    return live(stage, context) if stage == "live_e2e_gate" else {"success": True}
+
+                receipt = lifecycle.verify_ephemeral_staging(
+                    release_id=self.release_id,
+                    candidate_sha=self.candidate_sha,
+                    manifest_digest=self.manifest_digest,
+                    project_id=self.project_id,
+                    state_dir=state_dir,
+                    dry_run=False,
+                    stage_executor=executor,
+                    now=verify_start,
+                    operator_identity=self.outputs["staging_runtime_service_account"],
+                    lifecycle_outputs=self.outputs,
+                    remote_state_verified=True,
+                    release_profile="core-ops",
+                )
+        self.assertTrue(receipt.success, receipt.errors)
+        self.assertNotIn("now", captured_contexts["live_e2e_gate"])
+        self.assertEqual([argv for argv in seen_gcloud if argv[:3] == ["run", "jobs", "execute"]], [])
+        gate_stage = next(row for row in receipt.resources if row["stage"] == "live_e2e_gate")
+        self.assertEqual(
+            gate_stage["proof"]["admin_bootstrap"],
+            {
+                "job": self.outputs["staging_admin_bootstrap_job_name"],
+                "execution": "skipped_bootstrap_window_expired",
+            },
+        )
+
+    def test_a_wrong_sign_in_password_fails_the_stage_without_leaking_it(self) -> None:
+        def login(body: Any, _headers: Any) -> Any:
+            return self.fx.base.response(
+                401, {"error": {"code": "AUTH_INVALID_CREDENTIALS", "echo": body.get("password")}}
+            )
+
+        result, _ = self._run_stage(self._core_ops_routes(), web_overrides={"anon POST /login": login})
+
+        self.assertFalse(result["success"])
+        failed = {check["name"] for check in result["live_e2e_gate"]["checks"] if not check["ok"]}
+        self.assertIn("session:password_login", failed)
+        self.assertIn("session", result["live_e2e_gate"]["blocking_dependencies"])
+        for secret in (self.fx.PASSWORD, self.fx.INITIAL_PASSWORD):
+            self.assertNotIn(secret, json.dumps(result))
+
+    def test_a_failed_bootstrap_job_stops_the_stage_before_any_secret_is_read(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        trace: list[list[str]] = []
+        fake = _staging_gcloud(self.outputs, self.fx, trace)
+
+        def gcloud(argv: Sequence[str], **kwargs: Any) -> str:
+            if list(argv[:4]) == ["run", "jobs", "execute", self.outputs["staging_admin_bootstrap_job_name"]]:
+                raise RuntimeError("gcloud run jobs execute failed with exit status 2")
+            return fake(argv, **kwargs)
+
+        describe = self._bootstrap_job_description(
+            self.outputs, datetime.now(UTC) + timedelta(hours=24)
+        )
+        with patch.object(lifecycle, "_live_gcloud", side_effect=gcloud), \
+                patch.object(lifecycle, "_live_cloud_run_description", return_value=describe), \
+                patch.object(lifecycle, "_live_identity_token", side_effect=AssertionError("no token")):
+            executor = lifecycle.make_live_rehearsal_executor(
+                self.outputs,
+                project_id=self.project_id,
+                region="asia-east1",
+                operator_identity=self.outputs["staging_runtime_service_account"],
+            )
+            with self.assertRaisesRegex(RuntimeError, "exit status 2"):
+                executor("live_e2e_gate", {"release_profile": "core-ops", "manifest_digest": self.manifest_digest})
+        self.assertFalse(any(argv[:1] == ["secrets"] for argv in trace))
+
+    def test_the_admin_account_handoff_names_only_this_releases_secrets(self) -> None:
+        from product_ops.deployment.staging_lifecycle import (
+            get_ephemeral_resource_names,
+            validate_staging_outputs,
+        )
+
+        def errors(**account: Any) -> list[str]:
+            outputs = {
+                **self.outputs,
+                "staging_admin_account": {**self.outputs["staging_admin_account"], **account},
+            }
+            return validate_staging_outputs(
+                outputs,
+                release_id=self.release_id,
+                candidate_sha=self.candidate_sha,
+                manifest_digest=self.manifest_digest,
+                project_id=self.project_id,
+            )
+
+        self.assertEqual(errors(), [])
+        other = get_ephemeral_resource_names("odp-20260824-002")
+        for account, problem in (
+            ({"initial_secret": other["secret_admin_initial"]}, "initial_secret"),
+            ({"sign_in_secret": "oday-shared-admin-password"}, "sign_in_secret"),
+            ({"sign_in_version": "latest"}, "sign_in_version"),
+            ({"initial_version": ""}, "initial_version"),
+            ({"username": "a b"}, "username"),
+        ):
+            with self.subTest(problem=problem):
+                self.assertTrue(any(problem in error for error in errors(**account)), errors(**account))
+        foreign_job = {**self.outputs, "staging_admin_bootstrap_job_name": other["cloud_run_admin_bootstrap_job"]}
+        self.assertTrue(any(
+            "staging_admin_bootstrap_job_name" in error
+            for error in validate_staging_outputs(
+                foreign_job,
+                release_id=self.release_id,
+                candidate_sha=self.candidate_sha,
+                manifest_digest=self.manifest_digest,
+                project_id=self.project_id,
+            )
+        ))
+        missing = {k: v for k, v in self.outputs.items() if k != "staging_admin_account"}
+        self.assertTrue(any(
+            "staging_admin_account" in error
+            for error in validate_staging_outputs(
+                missing,
+                release_id=self.release_id,
+                candidate_sha=self.candidate_sha,
+                manifest_digest=self.manifest_digest,
+                project_id=self.project_id,
+            )
+        ))
 
     def test_full_profile_is_held_to_the_full_model_assertions(self) -> None:
         result, _ = self._run_stage(self._core_ops_routes("full"), "full")
@@ -4863,7 +5443,7 @@ class StagingLiveE2EGateTests(unittest.TestCase):
             })),
             "auth:web_operator_requires_login": dict(
                 routes=self._core_ops_routes(),
-                web_http=base.FakeHttp({"anon GET /operator": base.response(403)}),
+                web_overrides={"anon GET /operator": base.response(403)},
             ),
             "worker:drain_trigger": dict(routes=self._core_ops_routes(), worker_ok=False),
             "models:registry_refused": dict(routes=self._core_ops_routes(**{
@@ -4933,12 +5513,13 @@ class StagingLiveE2EGateTests(unittest.TestCase):
         self.assertEqual(write.call_args.kwargs["status"], "verification_failed")
         self.assertEqual(marker["status"], "verification_failed")
 
-    def test_tokens_never_reach_the_receipt_or_its_errors(self) -> None:
+    def test_tokens_and_admin_passwords_never_reach_the_receipt_or_its_errors(self) -> None:
         base = self.fx.base
         echo = {
             "detail": f"Bearer {self.SMOKE_TOKEN}",
             "transport": self.API_TOKEN,
-            "web": self.WEB_TOKEN,
+            "password": self.fx.PASSWORD,
+            "initial": self.fx.INITIAL_PASSWORD,
         }
         stage_result, _ = self._run_stage(self._core_ops_routes(**{
             "GET /api/v1/operator/bootstrap": base.response(500, echo),
@@ -4958,7 +5539,7 @@ class StagingLiveE2EGateTests(unittest.TestCase):
         )
         published = json.dumps(receipt.to_dict())
         self.assertIn("auth:operator_bootstrap", published)
-        for secret in (self.SMOKE_TOKEN, self.API_TOKEN, self.WEB_TOKEN):
+        for secret in (self.SMOKE_TOKEN, self.API_TOKEN, self.fx.PASSWORD, self.fx.INITIAL_PASSWORD):
             self.assertNotIn(secret, published)
             self.assertNotIn(secret, json.dumps(stage_result))
 
@@ -5038,7 +5619,7 @@ class StagingLiveE2EGateTests(unittest.TestCase):
         self.assertIn(f"--project={self.project_id}", argv)
         self.assertIn("--wait", argv)
 
-    def test_both_clients_are_bound_to_the_release_origins_with_transport_tokens(self) -> None:
+    def test_the_api_client_is_private_and_the_web_client_is_the_governed_origin(self) -> None:
         from product_ops.deployment import staging_lifecycle as lifecycle
 
         config = lifecycle.staging_live_gate_config(
@@ -5048,13 +5629,14 @@ class StagingLiveE2EGateTests(unittest.TestCase):
             bearer_token=self.SMOKE_TOKEN,
             api_transport_token=self.API_TOKEN,
         )
-        api, web = lifecycle._live_gate_clients(
-            config, web_transport_token=self.WEB_TOKEN, correlation_id="corr-1"
-        )
+        api, web = lifecycle._live_gate_clients(config, correlation_id="corr-1")
         self.assertEqual(api._base_url, self.outputs["staging_api_uri"])
         self.assertEqual((api._bearer_token, api._transport_token), (self.SMOKE_TOKEN, self.API_TOKEN))
-        self.assertEqual(web._base_url, self.outputs["staging_web_uri"])
-        self.assertEqual((web._bearer_token, web._transport_token), ("", self.WEB_TOKEN))
+        # The browser origin behind the load balancer: no Cloud Run token and
+        # no application credential (the password form is the only sign-in).
+        self.assertEqual(web._base_url, lifecycle.STAGING_WEB_PUBLIC_ORIGIN)
+        self.assertNotEqual(web._base_url, self.outputs["staging_web_uri"])
+        self.assertEqual((web._bearer_token, web._transport_token), ("", ""))
 
     # --- the smoke principal is release-scoped Terraform, nothing else ---
 
@@ -5109,11 +5691,28 @@ class StagingLiveE2EGateTests(unittest.TestCase):
             "ODP_DEV_ADMIN",
             "ODP_OPERATOR_SMOKE",
             "ODP_AUTH_PRINCIPAL_MAP_SECRET",
-            "ODP_IDENTITY_BOOTSTRAP",
             "ODP_AUTH_HS256_KEYS",
         ):
             self.assertNotIn(forbidden, main_text)
             self.assertNotIn(forbidden, variables_text)
+        # ODP-EPHEMERAL-STAGING-ROLLOUT-001: the deployment bootstrap inputs
+        # exist only on the release's own admin bootstrap job, never as a
+        # caller variable, and its secret is the release-generated one.
+        self.assertNotIn("ODP_IDENTITY_BOOTSTRAP", variables_text)
+        bootstrap_start = main_text.index('resource "google_cloud_run_v2_job" "staging_admin_bootstrap"')
+        self.assertNotIn("ODP_IDENTITY_BOOTSTRAP", main_text[:bootstrap_start])
+        self.assertNotIn("\nresource ", main_text[bootstrap_start + 1:])
+        self.assertEqual(
+            re.findall(
+                r'name = "ODP_IDENTITY_BOOTSTRAP_SECRET"\n\s*value_source \{\n\s*secret_key_ref \{\n'
+                r'\s*secret\s*= (\S+)\n\s*version = (\S+)\n',
+                main_text,
+            ),
+            [(
+                "google_secret_manager_secret.staging_admin_initial.secret_id",
+                "google_secret_manager_secret_version.staging_admin_initial.version",
+            )],
+        )
         self.assertNotRegex(variables_text, r'variable\s+"[^"]*(smoke|principal)[^"]*"')
         # ODP-STAGING-PASSWORD-RUNTIME-WIRING-261114: the local identity signing
         # key now exists for human password login, but never as a caller input
@@ -5149,9 +5748,13 @@ class StagingLiveE2EGateTests(unittest.TestCase):
                 "staging_cursor_signing_key",
                 "staging_web_session",
                 "staging_identity_token_signing_key",
+                # The release-scoped admin's one-time bootstrap secret and its
+                # sign-in password (live gate password journey).
+                "staging_admin_initial",
+                "staging_admin_sign_in",
             ],
         )
-        self.assertEqual(len(re.findall(r'resource "random_password"', main_text)), 4)
+        self.assertEqual(len(re.findall(r'resource "random_password"', main_text)), 6)
         # Signer, cursor and session keys are three distinct secrets: none is
         # reused for another purpose.
         for env_name, secret in (
@@ -5196,10 +5799,14 @@ class StagingLiveE2EGateTests(unittest.TestCase):
                 "staging_web_session",
                 "staging_runtime_identity_signing_key",
                 "staging_web_identity_signing_key",
+                # The bootstrap job (runtime account) reads only the one-time
+                # secret; nothing is granted on the sign-in password.
+                "staging_runtime_admin_initial",
                 "staging_web_cloudsql",
                 "staging_web_db_url",
             ],
         )
+        self.assertNotRegex(main_text, r'iam_member" "\w+" \{[^}]*staging_admin_sign_in')
         # Wrong-scope negatives: no project-wide secret access, the worker and
         # deployer never read the signing key, and the smoke principal gains no
         # secret grant.
@@ -5393,24 +6000,34 @@ class StagingSmokeAudienceIntegrationTests(unittest.TestCase):
                 else "staging_web_image" if "web" in name
                 else "staging_worker_image"
             ]
-            container = {"containers": [{"image": image}], "vpcAccess": {"egress": "ALL_TRAFFIC"}}
+            container_spec: dict[str, Any] = {"image": image}
+            if name == outputs["staging_admin_bootstrap_job_name"]:
+                container_spec["env"] = [
+                    {
+                        "name": "ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT",
+                        "value": lifecycle.format_timestamp(datetime.now(UTC) + timedelta(hours=24)),
+                    }
+                ]
+            container = {"containers": [container_spec], "vpcAccess": {"egress": "ALL_TRAFFIC"}}
             return {"spec": {"template": container}, "template": {"template": container}}
 
         real_clients = lifecycle._live_gate_clients
 
         def clients(config: Any, **kwargs: Any) -> Any:
             # The API client is the gate's real urllib client; only the Web
-            # origin (a browser redirect check) keeps the gate's own double.
+            # origin (the browser redirect check and the password journey)
+            # keeps the gate's own double.
             api, _web = real_clients(config, **kwargs)
-            return api, self.fx.base.passing_web_http()
+            return api, self.fx.AdminWeb(self.fx.web_routes(), is_fresh=True)
 
         class _Opener:
             def open(self, request: Any, timeout: float = 0.0) -> Any:
                 return edge.open(request, timeout)
 
         stack = ExitStack()
+        stack.enter_context(_staging_web_origin(self.fx, outputs))
         for target, kwargs in (
-            ("_live_gcloud", {"side_effect": lambda argv, **kw: argv[3] if argv[0] == "iam" else ""}),
+            ("_live_gcloud", {"side_effect": _staging_gcloud(outputs, self.fx)}),
             ("_live_cloud_run_description", {"side_effect": describe}),
             ("_live_identity_token", {"side_effect": lambda *, audience, **kw: edge.token(audience)}),
             ("_live_gate_clients", {"side_effect": clients}),
@@ -5623,9 +6240,8 @@ class StagingWorkerIdempotencyStageTests(unittest.TestCase):
             seen["tokens"].append(audience)
             return tokens[audience]
 
-        def clients(config: Any, *, web_transport_token: str, correlation_id: str) -> Any:
+        def clients(config: Any, *, correlation_id: str) -> Any:
             seen["config"] = config
-            seen["web_transport_token"] = web_transport_token
             return RecordingHttp(routes), None
 
         def correlation(expected_sha: str, **kwargs: Any) -> str:
@@ -5691,7 +6307,6 @@ class StagingWorkerIdempotencyStageTests(unittest.TestCase):
             sorted(set(seen["tokens"])),
             sorted([staging_smoke_token_audience(self.release_id), self.outputs["staging_api_uri"]]),
         )
-        self.assertEqual(seen["web_transport_token"], "")
         self.assertEqual(seen["correlation"], [{"purpose": "worker-idempotency"}])
 
     def test_a_replay_that_creates_a_new_job_fails_the_stage(self) -> None:
@@ -6067,9 +6682,9 @@ class StagingPasswordLoginRuntimeWiringTests(unittest.TestCase):
         self.assertEqual(
             [r.resource_name for r in secrets],
             [names["secret_db_url"], names["secret_cursor_key"], names["secret_web_session"],
-             names["secret_identity_key"]],
+             names["secret_identity_key"], names["secret_admin_initial"], names["secret_admin_sign_in"]],
         )
-        key = secrets[-1]
+        key = secrets[3]
         self.assertEqual(key.resource_id, f"projects/{cfg.project_id}/secrets/{names['secret_identity_key']}")
         self.assertTrue(is_staging_ephemeral_resource(key.labels, self.release_id))
         self.assertEqual(key.expires_at, secrets[0].expires_at)
@@ -6690,8 +7305,10 @@ class StagingWebCustomDomainStageTests(unittest.TestCase):
         from product_ops.deployment import staging_lifecycle as lifecycle
 
         proof = {"host": "console-staging.oday-plus.com.tw", "address": "34.120.0.10"}
+        stages_called: list[str] = []
 
         def executor(stage: str, _context: Mapping[str, Any]) -> Mapping[str, Any]:
+            stages_called.append(stage)
             if stage == "web_custom_domain":
                 return {"success": False, "status": "failed", "detail": "DNS not pointed", "custom_domain": proof}
             return {"success": True}
@@ -6718,6 +7335,129 @@ class StagingWebCustomDomainStageTests(unittest.TestCase):
         stage = next(row for row in receipt.resources if row["stage"] == "web_custom_domain")
         self.assertEqual(stage["proof"]["custom_domain"], proof)
         self.assertTrue(any("web_custom_domain failed. DNS not pointed" in error for error in receipt.errors))
+        self.assertNotIn("live_e2e_gate", stages_called)
+        gate = next(row for row in receipt.resources if row["stage"] == "live_e2e_gate")
+        self.assertFalse(gate["success"])
+        self.assertIn("before signing in", gate["details"])
+
+
+class StagingRecoveryPersistenceTests(unittest.TestCase):
+    def test_receipts_pin_each_sidecar_and_refuse_mismatched_bytes(self) -> None:
+        import hashlib
+        import subprocess
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        candidate = "123456789abc" + "d" * 28
+        release_id = f"odp-{candidate[:12]}"
+        identity = {"release_id": release_id, "candidate_sha": candidate, "manifest_digest": "sha256:" + "a" * 64}
+        bundle = f"gs://staging-recovery/oday-plus/ephemeral-staging/{release_id}/bundle"
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            _, tfvars, inventory = lifecycle._terraform_state_paths(release_id, root)
+            marker = lifecycle._lifecycle_state_path(release_id, root)
+            outputs = root / "outputs.json"
+            tfvars.write_text(json.dumps(identity), encoding="utf-8")
+            marker.write_text(json.dumps({"release_id": release_id, "status": "created"}), encoding="utf-8")
+            for file in (inventory, outputs):
+                file.write_text(f"private fixture for {file.name}\n", encoding="utf-8")
+            published: dict[str, bytes] = {}
+            writes: list[str] = []
+            calls: list[str] = []
+
+            def gcloud(args: list[str], **_: Any) -> str:
+                if args[:2] == ["storage", "cp"]:
+                    self.assertEqual(args[2], "--no-clobber")
+                    source, uri = args[3:]
+                    if uri not in published:
+                        published[uri] = Path(source).read_bytes()
+                        writes.append(uri)
+                    return ""
+                self.assertEqual(args[:3], ["storage", "objects", "describe"])
+                self.assertIn(args[3], published)
+                return "123"
+
+            def cat(args: list[str], **_: Any) -> Any:
+                self.assertEqual(args[:3], ["gcloud", "storage", "cat"])
+                uri = args[3]
+                self.assertTrue(uri.endswith("#123"))
+                calls.append(uri)
+                return subprocess.CompletedProcess(args, 0, published[uri.removesuffix("#123")], b"")
+
+            create = root / "create.json"
+            final = root / "final.json"
+            with patch.object(lifecycle, "_live_gcloud", side_effect=gcloud), patch.object(
+                lifecycle.subprocess, "run", side_effect=cat
+            ):
+                lifecycle.persist_staging_recovery(
+                    **identity, state_dir=root, bundle_uri=bundle, receipt_path=create,
+                    outputs_path=outputs, run_attempt="1234-2",
+                )
+                # A rerun after an interrupted readback must read the same
+                # generation of every object and never attempt an overwrite.
+                create.unlink()
+                lifecycle.persist_staging_recovery(
+                    **identity, state_dir=root, bundle_uri=bundle, receipt_path=create,
+                    outputs_path=outputs, run_attempt="1234-2",
+                )
+                self.assertEqual(len(writes), 4)
+                self.assertEqual(len(calls), 8)
+                outputs.write_text("different bytes", encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, "failed SHA-256 readback"):
+                    lifecycle.persist_staging_recovery(
+                        **identity, state_dir=root, bundle_uri=bundle, receipt_path=root / "retry.json",
+                        outputs_path=outputs, run_attempt="1234-2",
+                    )
+                self.assertFalse((root / "retry.json").exists())
+                self.assertEqual(len(writes), 4)
+                marker.write_text(json.dumps({"release_id": release_id, "status": "verified"}), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "belongs to a different release or attempt"):
+                    lifecycle.persist_staging_recovery(
+                        **identity, state_dir=root, bundle_uri=bundle, receipt_path=final,
+                        create_receipt_path=create, run_attempt="1234-1",
+                    )
+                lifecycle.persist_staging_recovery(
+                    **identity, state_dir=root, bundle_uri=bundle, receipt_path=final,
+                    create_receipt_path=create, run_attempt="1234-2",
+                )
+
+            create_rows = json.loads(create.read_text())["objects"]
+            final_receipt = json.loads(final.read_text())
+            final_rows = final_receipt["objects"]
+            self.assertEqual(final_receipt["candidate_sha"], candidate)
+            self.assertEqual(final_receipt["manifest_digest"], identity["manifest_digest"])
+            self.assertEqual(final_receipt["status"], "verified")
+            initial = next(row for row in create_rows if row["object_uri"].endswith(f"/{marker.name}"))
+            self.assertEqual(
+                final_receipt["initial_lifecycle"],
+                {key: initial[key] for key in ("object_uri", "generation", "content_sha256")},
+            )
+            self.assertEqual(len(create_rows), 4)
+            self.assertEqual(len(final_rows), 1)
+            self.assertIn(f"/hold-1234-2-{marker.name}", final_rows[0]["object_uri"])
+            for row in create_rows + final_rows:
+                uri = row["object_uri"]
+                self.assertIn(f"{uri}#{row['generation']}", calls)
+                self.assertEqual(row["content_sha256"], hashlib.sha256(published[uri]).hexdigest())
+            self.assertNotIn("private fixture", create.read_text())
+
+            create.unlink()
+            with patch.object(lifecycle, "_live_gcloud", side_effect=AssertionError("must not write")):
+                with self.assertRaisesRegex(ValueError, "requires its create receipt"):
+                    lifecycle.persist_staging_recovery(
+                        **identity, state_dir=root, bundle_uri=bundle, receipt_path=final,
+                        create_receipt_path=create, run_attempt="1234-3",
+                    )
+            marker.write_text(json.dumps({"release_id": release_id, "status": "held"}), encoding="utf-8")
+            with patch.object(lifecycle, "_live_gcloud", side_effect=gcloud), patch.object(
+                lifecycle.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"wrong", b"")
+            ), self.assertRaisesRegex(RuntimeError, "failed SHA-256 readback"):
+                lifecycle.persist_staging_recovery(
+                    **identity, state_dir=root, bundle_uri=bundle, receipt_path=final,
+                    create_receipt_path=create, run_attempt="1234-3",
+                )
+            self.assertFalse(final.exists(), "failed reads cannot leave a stale success receipt")
 
 
 class StagingWebNegDetachBeforeDestroyTests(unittest.TestCase):

@@ -30,7 +30,16 @@ resource "terraform_data" "production_contract" {
     }
 
     precondition {
-      condition = !local.is_prod || (
+      condition     = !local.cloud_run_managed || (var.api_image != "" && var.web_image != "")
+      error_message = "Terraform-owned Cloud Run services (cloud_run_services_managed = true) require api_image and web_image."
+    }
+
+    # The Cloud Run gates below bind only where this stack owns the services.
+    # Production services belong to the Runtime Release deploy path (owner
+    # decision 2026-11-20; env/prod.tfvars.example), whose entrypoint enforces
+    # the production digest, registry and warm-instance minimums itself.
+    precondition {
+      condition = !(local.is_prod && local.cloud_run_managed) || (
         can(regex("@sha256:[0-9a-f]{64}$", var.api_image))
         && startswith(var.api_image, "${var.region}-docker.pkg.dev/${var.project_id}/")
         && can(regex("@sha256:[0-9a-f]{64}$", var.web_image))
@@ -40,20 +49,34 @@ resource "terraform_data" "production_contract" {
     }
 
     precondition {
-      condition = !local.is_prod || (
+      condition = !(local.is_prod && local.cloud_run_managed) || (
         var.api_min_instances >= 2
         && var.api_max_instances >= var.api_min_instances
         && var.web_min_instances >= 2
         && var.web_max_instances >= var.web_min_instances
-        && var.cloud_sql_disk_gb >= 100
-        && var.cloud_sql_retained_backups >= 30
-        && can(regex("^db-custom-([4-9]|[1-9][0-9]+)-[0-9]+$", var.cloud_sql_tier))
       )
-      error_message = "Production API and Cloud SQL capacity/backup settings are below the required baseline."
+      error_message = "Production API and Web Cloud Run capacity is below the required baseline."
     }
 
     precondition {
       condition = !local.is_prod || (
+        var.cloud_sql_disk_gb >= 100
+        && var.cloud_sql_retained_backups >= 30
+        && can(regex("^db-custom-([4-9]|[1-9][0-9]+)-[0-9]+$", var.cloud_sql_tier))
+      )
+      error_message = "Production Cloud SQL capacity/backup settings are below the required baseline."
+    }
+
+    # The environment-derived name oday-prod-sql is the hand-made production
+    # instance (public IP, no CMEK, ZONAL). This stack creates its own private,
+    # CMEK, REGIONAL instance next to it and must never import or manage it.
+    precondition {
+      condition     = !local.is_prod || (var.cloud_sql_instance_name != "" && var.cloud_sql_instance_name != "${local.name_prefix}-sql")
+      error_message = "Production must set cloud_sql_instance_name to a new instance name: the derived oday-prod-sql is the hand-made instance this stack must not import or manage."
+    }
+
+    precondition {
+      condition = !(local.is_prod && local.cloud_run_managed) || (
         length(var.api_invoker_members) > 0
         && !contains(var.api_invoker_members, "allUsers")
         && !contains(var.api_invoker_members, "allAuthenticatedUsers")
@@ -106,13 +129,19 @@ resource "terraform_data" "production_contract" {
     }
 
     precondition {
-      condition = !local.is_prod || (
+      condition = !local.is_prod || length(setsubtract(
+        local.release_model_config_env_names,
+        toset(keys(var.model_runtime_config)),
+      )) == 0
+      error_message = "Production model_runtime_config is missing configuration its release profile requires (full: model approval, artifact and OSS engine metadata; core-ops: ODP_FORECAST_ENGINE and ODP_FORECAST_MODEL)."
+    }
+
+    # Approved-model inputs bind only the full profile. core-ops serves no model
+    # and must not be satisfied with placeholder values (HD-06 / F2).
+    precondition {
+      condition = !(local.is_prod && local.full_release_profile) || (
         startswith(var.mlflow_tracking_uri, "https://")
         && !can(regex(local.forbidden_production_value_pattern, var.mlflow_tracking_uri))
-        && length(setsubtract(
-          local.required_model_config_env_names,
-          toset(keys(var.model_runtime_config)),
-        )) == 0
         && can(regex(
           "^(sha256:)?[0-9a-f]{64}$",
           lookup(var.model_runtime_config, "ODP_AVM_LIQUIDITY_ARTIFACT_SHA256", ""),
@@ -122,7 +151,7 @@ resource "terraform_data" "production_contract" {
           lookup(var.model_runtime_config, "ODP_AVM_LIQUIDITY_ARTIFACT_URI", ""),
         ))
       )
-      error_message = "Production MLflow, model approval, artifact, or OSS engine configuration is incomplete."
+      error_message = "Production with the full release profile requires a remote HTTPS MLflow registry and a real approved AVM artifact digest and URI."
     }
 
     precondition {
@@ -177,7 +206,7 @@ check "runtime_environment_names_do_not_collide" {
   }
 
   assert {
-    condition = !local.is_prod || (
+    condition = !(local.is_prod && local.cloud_run_managed) || (
       can(regex("@sha256:[0-9a-f]{64}$", var.web_image))
       && startswith(
         var.web_image,
@@ -206,7 +235,7 @@ check "runtime_environment_names_do_not_collide" {
 
 check "production_image_and_capacity" {
   assert {
-    condition = !local.is_prod || can(regex(
+    condition = !(local.is_prod && local.cloud_run_managed) || can(regex(
       "@sha256:[0-9a-f]{64}$",
       var.api_image,
     ))
@@ -214,7 +243,7 @@ check "production_image_and_capacity" {
   }
 
   assert {
-    condition = !local.is_prod || startswith(
+    condition = !(local.is_prod && local.cloud_run_managed) || startswith(
       var.api_image,
       "${var.region}-docker.pkg.dev/${var.project_id}/",
     )
@@ -222,12 +251,12 @@ check "production_image_and_capacity" {
   }
 
   assert {
-    condition     = !local.is_prod || var.api_min_instances >= 2
+    condition     = !(local.is_prod && local.cloud_run_managed) || var.api_min_instances >= 2
     error_message = "Production requires at least two warm API Cloud Run instances."
   }
 
   assert {
-    condition     = !local.is_prod || var.web_min_instances >= 2
+    condition     = !(local.is_prod && local.cloud_run_managed) || var.web_min_instances >= 2
     error_message = "Production requires at least two warm Web Cloud Run instances."
   }
 
@@ -247,7 +276,7 @@ check "production_image_and_capacity" {
   }
 
   assert {
-    condition     = !local.is_prod || length(var.web_invoker_members) > 0
+    condition     = !(local.is_prod && local.cloud_run_managed) || length(var.web_invoker_members) > 0
     error_message = "Production Web requires at least one invoker member."
   }
 
@@ -312,7 +341,7 @@ check "production_identity_contract" {
   }
 
   assert {
-    condition = !local.is_prod || (
+    condition = !(local.is_prod && local.cloud_run_managed) || (
       length(var.api_invoker_members) > 0
       && !contains(var.api_invoker_members, "allUsers")
       && !contains(var.api_invoker_members, "allAuthenticatedUsers")
@@ -323,23 +352,23 @@ check "production_identity_contract" {
 
 check "production_model_runtime_contract" {
   assert {
-    condition = !local.is_prod || (
+    condition = !(local.is_prod && local.full_release_profile) || (
       startswith(var.mlflow_tracking_uri, "https://")
       && !can(regex(local.forbidden_production_value_pattern, var.mlflow_tracking_uri))
     )
-    error_message = "Production requires a remote HTTPS MLflow tracking/registry URI."
+    error_message = "Production with the full release profile requires a remote HTTPS MLflow tracking/registry URI."
   }
 
   assert {
     condition = !local.is_prod || length(setsubtract(
-      local.required_model_config_env_names,
+      local.release_model_config_env_names,
       toset(keys(var.model_runtime_config)),
     )) == 0
-    error_message = "Production is missing required model approval, artifact, or OSS engine configuration."
+    error_message = "Production is missing model approval, artifact, or OSS engine configuration required by its release profile."
   }
 
   assert {
-    condition = !local.is_prod || can(regex(
+    condition = !(local.is_prod && local.full_release_profile) || can(regex(
       "^(sha256:)?[0-9a-f]{64}$",
       lookup(var.model_runtime_config, "ODP_AVM_LIQUIDITY_ARTIFACT_SHA256", ""),
     ))
@@ -347,7 +376,7 @@ check "production_model_runtime_contract" {
   }
 
   assert {
-    condition = !local.is_prod || can(regex(
+    condition = !(local.is_prod && local.full_release_profile) || can(regex(
       "^(gs|https|models|runs):/",
       lookup(var.model_runtime_config, "ODP_AVM_LIQUIDITY_ARTIFACT_URI", ""),
     ))

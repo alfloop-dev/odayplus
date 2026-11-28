@@ -885,18 +885,17 @@ def plan_protected_execution(
     protected_paths: Iterable[str],
     *,
     alias_roots: Iterable[Path | str] = (),
+    runner_root: Path | None = None,
     bwrap: str = BWRAP_BINARY,
 ) -> ProtectedExecutionPlan:
     """Deny each protected path in every checkout of the repository.
 
-    Every registered worktree (fleet root, runtime and other task checkouts)
-    and every named alias root is covered.  A protected entry that exists is
-    masked; one that is missing is denied by freezing its nearest existing
-    ancestor, so a later host addition stays invisible.  The workspace's
-    parent -- where sibling task checkouts appear -- is frozen the same way
-    when it is a dedicated directory.  Only the task's own workspace is ever
-    written to (an empty mount point for its own missing protected path).
-    A symlinked ancestor anywhere refuses: masking a target would be guesswork.
+    The workspace, named aliases, the runner checkout and roots containing
+    the workspace's Git common directory keep the per-path masks.
+    Other registered checkouts are hidden as a whole. The checkout that only
+    hosts shared Git metadata can be frozen at its root when a protected
+    ancestor is absent. Only mount points in the task's workspace are created
+    on the host. A symlinked protected ancestor anywhere refuses.
     """
     protected = normalize_protected_paths(list(protected_paths or ()))
     if not protected:
@@ -917,6 +916,24 @@ def plan_protected_execution(
         if resolved not in roots and resolved.is_dir():
             roots.append(resolved)
 
+    common_dir = _git_metadata_path(workspace, "rev-parse", "--git-common-dir")
+    if common_dir is None:
+        raise ProtectedExecutionUnavailable("workspace Git common directory cannot be resolved")
+    required = (workspace, *aliases)
+    if runner_root is not None:
+        try:
+            runner = runner_root.resolve(strict=True)
+        except (OSError, RuntimeError):
+            raise ProtectedExecutionUnavailable("worker runner root cannot be resolved") from None
+        if not runner.is_dir():
+            raise ProtectedExecutionUnavailable("worker runner root is not a directory")
+        # Keep its registered checkout when it has one. The runner path is
+        # not a new delivery alias and does not alter the parent freeze.
+        required += (runner,)
+    # Keep ancestors of required paths. An unrelated checkout nested below
+    # a required root does not need to be visible to this worker.
+    foreign = {root for root in roots if not any(_is_within(path, root) for path in (*required, common_dir))}
+
     operations: list[tuple] = []
     absent_frozen_paths: list[Path] = []
     base = workspace.parent
@@ -926,6 +943,9 @@ def plan_protected_execution(
         violation = _worktree_metadata_violation(root, protected)
         if violation:
             raise ProtectedExecutionUnavailable(f"{root}: {violation}")
+        hide_root = root in foreign
+        if hide_root and not foreign.intersection(root.parents):
+            operations.append(("hide", root))
         for path in protected:
             target = root / path
             try:
@@ -952,25 +972,27 @@ def plan_protected_execution(
                 # the worker from creating new protected content.
                 target.mkdir(parents=True, exist_ok=True)
                 metadata = target.lstat()
-            if metadata is None:
-                ancestor = target.parent
-                while ancestor != root and not ancestor.exists():
-                    ancestor = ancestor.parent
-                if ancestor != root:
-                    operations.append(_shadow_operation(ancestor))
-                elif root in aliases or _is_within(workspace, root):
-                    raise ProtectedExecutionUnavailable(
-                        f"{root} lacks every ancestor of protected {path}; it cannot be denied without "
-                        "modifying that shared checkout"
-                    )
+            if metadata is not None:
+                if stat.S_ISDIR(metadata.st_mode):
+                    kind = "dir"
+                elif stat.S_ISREG(metadata.st_mode):
+                    kind = "file"
                 else:
-                    operations.append(("hide", root))
-            elif stat.S_ISDIR(metadata.st_mode):
-                operations.append(("mask", target, "dir"))
-            elif stat.S_ISREG(metadata.st_mode):
-                operations.append(("mask", target, "file"))
-            else:
-                raise ProtectedExecutionUnavailable(f"{target} is neither a directory nor a regular file")
+                    raise ProtectedExecutionUnavailable(f"{target} is neither a directory nor a regular file")
+                if not hide_root:
+                    operations.append(("mask", target, kind))
+                continue
+            if hide_root:
+                continue
+            ancestor = target.parent
+            while ancestor != root and not ancestor.exists():
+                ancestor = ancestor.parent
+            if ancestor == root and (root in _UNSHADOWABLE or any(_is_within(path, root) for path in required)):
+                raise ProtectedExecutionUnavailable(
+                    f"{root} lacks every ancestor of protected {path}; it cannot be denied without "
+                    "modifying that shared checkout"
+                )
+            operations.append(_shadow_operation(ancestor))
     # Parents before children, so an inner mask lands on top of an outer
     # freeze rather than underneath it.
     unique: dict[Path, tuple] = {}
@@ -1072,13 +1094,16 @@ def protected_execution_argv(
     cwd: Path | str,
     protected_paths: Iterable[str],
     alias_roots: Iterable[Path | str] = (),
+    runner_root: Path | None = None,
     bwrap: str | None = None,
 ) -> list[str]:
     """The one way a protected task's native process is started."""
     binary = bwrap or BWRAP_BINARY
     if not Path(binary).is_absolute():
         binary = shutil.which(binary) or binary
-    plan = plan_protected_execution(cwd, protected_paths, alias_roots=alias_roots, bwrap=binary)
+    plan = plan_protected_execution(
+        cwd, protected_paths, alias_roots=alias_roots, runner_root=runner_root, bwrap=binary,
+    )
     probe_protected_execution(plan)
     return plan.wrap(list(command))
 

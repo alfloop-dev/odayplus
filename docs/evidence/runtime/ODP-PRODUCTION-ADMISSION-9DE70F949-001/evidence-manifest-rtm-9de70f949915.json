@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "kind": "core-ops-reproducible-evidence-manifest",
+  "release_id": "odp-9de70f949915",
+  "release_profile": "core-ops",
+  "candidate_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+  "release_manifest_digest": "sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd",
+  "rtm_reference": "docs/rtm/ODAY_PLUS_EXECUTION_RTM.md",
+  "rtm_gate_mappings": [
+    {
+      "gate_id": "gate-0",
+      "rtm_domain": "CI / Code / Static & Unit Verification",
+      "evidence_paths": [
+        "docs/evidence/runtime/ODP-STAGING-ADMISSION-9DE70F949-001/candidate-ci-9de70f949.json",
+        "docs/evidence/gates/RELEASE_MANIFEST.json"
+      ]
+    },
+    {
+      "gate_id": "gate-2",
+      "rtm_domain": "Persistence / Canonical Mapping / Disabled External Providers",
+      "evidence_paths": [
+        "docs/evidence/runtime/ODP-STAGING-ADMISSION-9DE70F949-001/humanops-staging-admission-authorization-20261127.json",
+        "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/hosted-artifacts/run-46024230572/runtime-release-staging-lifecycle-receipts/staging-rehearsal-receipt.json"
+      ]
+    },
+    {
+      "gate_id": "gate-3",
+      "rtm_domain": "Core-Ops Truthful Model Refusal & Deviation Governance",
+      "evidence_paths": [
+        "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/humanops-production-go-authorization-20261128.json",
+        "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/hosted-artifacts/run-46024230572/runtime-release-staging-validation/remote-staging-proof/staging-46024230572.json"
+      ]
+    },
+    {
+      "gate_id": "gate-5",
+      "rtm_domain": "Live E2E Gate / Ephemeral Staging Rehearsal / Role-Based UAT Sign-Off",
+      "evidence_paths": [
+        "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/staging-verified-summary.json",
+        "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/uat-signoff-core-ops-20261128.yaml"
+      ]
+    },
+    {
+      "gate_id": "gate-6",
+      "rtm_domain": "Release Notes / Runbook / Rollback Rehearsal / Cloud SQL DR Drill / WORM Audit",
+      "evidence_paths": [
+        "docs/runbooks/core-ops.md",
+        "docs/evidence/AUDIT_EVIDENCE_RETENTION_PROOF.md",
+        "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/hd21-first-release-takedown-rehearsal/hd21-staging-takedown-rehearsal-receipt.json",
+        "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/production-dr-drill/production-dr-drill-receipt.json",
+        "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/production-environment-iam-readback-20261128.json",
+        "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/release-notes-core-ops-odp-9de70f949915.md"
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "docs/evidence/gates/RELEASE_MANIFEST.json",
+      "sha256": "sha256:a4ced3dc438e20ce4d4aa100f1e4ce4b18c17c917177c3584625b6e27d8c0d87"
+    },
+    {
+      "path": "docs/runbooks/core-ops.md",
+      "sha256": "sha256:17ddd388f77e92090fade4846bf6602a1f2a69510a79890741418246dc04da0c"
+    },
+    {
+      "path": "docs/rtm/ODAY_PLUS_EXECUTION_RTM.md",
+      "sha256": "sha256:295a0ee6d193b3ac88897157a86f9eceb5f802061323a38f5a10477ba8069c29"
+    },
+    {
+      "path": "docs/evidence/AUDIT_EVIDENCE_RETENTION_PROOF.md",
+      "sha256": "sha256:ec09ea48df9e6dc9d4d4dd8623794188cdad8519334b9e14d239f754ffd34421"
+    },
+    {
+      "path": "docs/evidence/runtime/ODP-STAGING-ADMISSION-9DE70F949-001/candidate-ci-9de70f949.json",
+      "sha256": "sha256:3233a94ce04701ecd0c7020a5bf6b728fb6f16c34737145d7dacfa95384e1436"
+    },
+    {
+      "path": "docs/evidence/runtime/ODP-STAGING-ADMISSION-9DE70F949-001/humanops-staging-admission-authorization-20261127.json",
+      "sha256": "sha256:437bf0be8bb5dae8de768b3c6e8094bd010b126358ea902fa7c1e717ea243035"
+    },
+    {
+      "path": "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/staging-verified-summary.json",
+      "sha256": "sha256:47cbc8994353187e0332b19a8f0c29968eba194bd16c71de1503b45ced6c870e"
+    },
+    {
+      "path": "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/hosted-artifacts/run-46024230572/runtime-release-staging-lifecycle-receipts/staging-rehearsal-receipt.json",
+      "sha256": "sha256:d03658455be54a490292472cfe4f45f5ba9cb3ac29faae616f1f6c97dc8e9b22"
+    },
+    {
+      "path": "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/hosted-artifacts/run-46024230572/runtime-release-staging-lifecycle-receipts/staging-recovery-final.json",
+      "sha256": "sha256:f3b83f4073bc4074e2c54ce52d2eaa35024a10385ded3cf5b6038b3a3774f180"
+    },
+    {
+      "path": "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/hosted-artifacts/run-46024230572/runtime-release-staging-validation/remote-staging-proof/staging-46024230572.json",
+      "sha256": "sha256:765207b3bb492834f4be172aab6e3b40f4b1b7558d5f53a00d2cacff0d687a2c"
+    },
+    {
+      "path": "docs/evidence/runtime/ODP-EPHEMERAL-STAGING-ROLLOUT-001/hd21-first-release-takedown-rehearsal/hd21-staging-takedown-rehearsal-receipt.json",
+      "sha256": "sha256:e0d38b1200a25a7ec5dbf22d5f97ad6c663bd7c447453801e4de4ab579d7fdac"
+    },
+    {
+      "path": "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/humanops-production-go-authorization-20261128.json",
+      "sha256": "sha256:72d8b4d9aef5cee2c1f9ac8052f4beee47d0d42f8ec006bd050b8c787da8dd67"
+    },
+    {
+      "path": "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/uat-signoff-core-ops-20261128.yaml",
+      "sha256": "sha256:8a44baedb0625a90ef8d9fc973b94e4a9f3f11e6ed1225b9a5c6993f3de0b353"
+    },
+    {
+      "path": "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/production-dr-drill/production-dr-drill-receipt.json",
+      "sha256": "sha256:9498ed91676e150fc06642d1738a8200d2c4d55b0488f503a6602bcced47998b"
+    },
+    {
+      "path": "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/production-environment-iam-readback-20261128.json",
+      "sha256": "sha256:437ae0bfdd4e0f5ba74757fc643eef494870de7d505d888f6b4b207b2e3619fd"
+    },
+    {
+      "path": "docs/evidence/runtime/ODP-PRODUCTION-ADMISSION-9DE70F949-001/release-notes-core-ops-odp-9de70f949915.md",
+      "sha256": "sha256:43f7f8db2946576321d7956d89032aeb6b5689e0a114d58ef8d37de1798fd819"
+    }
+  ],
+  "evidence_manifest_digest": "sha256:61ae9694d655cbe057d5e4ec4308fa5685427b3cc0b456f4155ddff45db15c74"
+}

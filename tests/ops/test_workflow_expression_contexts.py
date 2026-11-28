@@ -59,6 +59,7 @@ CONTEXT_AVAILABILITY: dict[str, frozenset[str]] = {
     "run-name": frozenset({"github", "inputs", "vars"}),
     "env": frozenset({"github", "secrets", "vars", "inputs"}),
     "concurrency": frozenset({"github", "inputs", "vars"}),
+    "on.workflow_call.outputs.<output_id>.value": frozenset({"github", "jobs", "vars", "inputs"}),
     "jobs.<job_id>.concurrency": frozenset(
         {"github", "needs", "strategy", "matrix", "vars", "inputs"}
     ),
@@ -133,6 +134,8 @@ def _referenced_contexts(value: str) -> set[str]:
 def _availability_key(trail: list[str]) -> str:
     """Collapse a YAML path to the key the availability table is written in."""
 
+    if len(trail) == 5 and trail[:3] == ["on", "workflow_call", "outputs"] and trail[4] == "value":
+        return "on.workflow_call.outputs.<output_id>.value"
     if trail[:1] == ["jobs"] and len(trail) >= 3:
         key = trail[2]
         if key == "steps":
@@ -154,7 +157,8 @@ def _expression_sites(document: object) -> list[tuple[str, str, str]]:
     def walk(node: object, trail: list[str]) -> None:
         if isinstance(node, dict):
             for key, value in node.items():
-                walk(value, [*trail, str(key)])
+                # PyYAML's YAML 1.1 resolver treats an unquoted top-level `on` as True.
+                walk(value, [*trail, "on" if not trail and key is True else str(key)])
         elif isinstance(node, list):
             for index, value in enumerate(node):
                 walk(value, [*trail, f"[{index}]"])

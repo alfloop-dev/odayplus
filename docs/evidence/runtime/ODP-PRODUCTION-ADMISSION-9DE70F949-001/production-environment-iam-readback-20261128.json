@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "kind": "production-environment-and-iam-readback",
+  "verified_at": "2026-11-27T15:17:51Z",
+  "verifier_identity": "deborah.lu@dev.cctech-support.com",
+  "candidate_sha": "9de70f949915706d1bad1bc25c24b681eeb902e9",
+  "manifest_digest": "sha256:964d00090d8516b30d6329dcc5e0550cbab0342f9d32567b651003aa12ef0ccd",
+  "hd_04_staging_reads_prod_lease_store": {
+    "bucket": "gs://odayplus-prod-20260826-release-leases",
+    "staging_deployer_sa": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "roles_verified": [
+      "roles/storage.legacyBucketReader",
+      "roles/storage.objectViewer"
+    ],
+    "live_proven_in_staging_deploy_run": 46024230572
+  },
+  "hd_18_production_ar_iam_and_env_vars": {
+    "production_project": "odayplus-prod-20260826",
+    "region": "asia-east1",
+    "artifact_registry_repo": "projects/odayplus-prod-20260826/locations/asia-east1/repositories/oday-plus",
+    "production_deployer_sa": "github-deployer@odayplus-prod-20260826.iam.gserviceaccount.com",
+    "staging_ar_reader_granted": true,
+    "production_ar_writer_granted": true,
+    "prod_deployer_sql_backup_role_granted": "projects/odayplus-prod-20260826/roles/prodDeployerSqlBackup",
+    "watch_closeout_bucket_staging_reader_granted": true,
+    "github_environment_variables_verified": {
+      "GCP_CLOUD_SQL_INSTANCE": "odayplus-prod-20260826:asia-east1:oday-prod-foundation-sql",
+      "ODP_AUDIT_WORM_SINK_URI": "gs://oday-prod-audit-worm-odayplus-prod-20260826/audit-evidence",
+      "ODP_CLOUD_RUN_API_SERVICE": "oday-prod-api",
+      "ODP_CLOUD_RUN_WEB_SERVICE": "oday-prod-web",
+      "ODP_CLOUD_RUN_MIN_INSTANCES": "2",
+      "ODP_CLOUD_RUN_VPC_EGRESS": "all-traffic",
+      "ODP_PROD_DEPLOY_URL": "https://console.oday-plus.com.tw",
+      "ODP_PROD_API_URL": "https://api.oday-plus.com.tw",
+      "ODP_AUTH_MODE": "local",
+      "ODP_INTAKE_CURSOR_SIGNING_KEY_SECRET": "oday-prod-intake-cursor-signing-key:1",
+      "ODP_FORECAST_ENGINE": "statsforecast",
+      "ODP_FORECAST_MODEL": "seasonal_naive",
+      "ODP_PRODUCTION_WATCH_CLOSEOUT_URI": "gs://odayplus-prod-20260826-recovery/watch-closeout/production-watch-window-receipt.json",
+      "ODP_RELEASE_LEASE_STATE_URI": "gs://odayplus-prod-20260826-release-leases/leases"
+    },
+    "ssl_certificate": {
+      "name": "oday-prod-web-lb-249683d7",
+      "status": "ACTIVE",
+      "domains": {
+        "console.oday-plus.com.tw": "ACTIVE",
+        "api.oday-plus.com.tw": "ACTIVE"
+      }
+    }
+  },
+  "hd_19_cloud_sql_and_worm": {
+    "instance": "oday-prod-foundation-sql",
+    "state": "RUNNABLE",
+    "availabilityType": "REGIONAL",
+    "ipv4Enabled": false,
+    "pointInTimeRecoveryEnabled": true,
+    "transactionLogRetentionDays": 7,
+    "retainedBackups": 30,
+    "post_billing_recovery_automated_backup_id": "1795802400000",
+    "post_billing_recovery_automated_backup_status": "SUCCESSFUL",
+    "audit_worm_bucket": "oday-prod-audit-worm-odayplus-prod-20260826",
+    "audit_worm_retention_seconds": 220924800,
+    "audit_worm_locked": true
+  },
+  "hd_22_monitoring_and_oncall": {
+    "oncall_and_watch_owner": "蔡尚志 (Human/Ops)",
+    "watch_window_minutes": 30,
+    "post_cutover_hourly_readback_hours": 24,
+    "cloud_monitoring_email_channel_present": true,
+    "active_alert_policies_count": 6,
+    "web_uptime_check_present": true,
+    "api_uptime_check_disposition": "Terraform variable cloud_run_api_service_deployed flips to true immediately after first deploy creates oday-prod-api."
+  }
+}

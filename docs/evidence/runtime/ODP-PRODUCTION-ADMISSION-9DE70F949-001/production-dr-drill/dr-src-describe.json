@@ -1,0 +1,140 @@
+{
+  "backendType": "SECOND_GEN",
+  "connectionName": "odayplus-prod-20260826:asia-east1:oday-prod-foundation-sql",
+  "createTime": "2026-11-25T06:49:40.785Z",
+  "databaseInstalledVersion": "POSTGRES_16_15",
+  "databaseVersion": "POSTGRES_16",
+  "diskEncryptionConfiguration": {
+    "cmekSourceLogEncryptionEnforced": false,
+    "confidentialMode": false,
+    "kind": "sql#diskEncryptionConfiguration",
+    "kmsKeyName": "projects/odayplus-prod-20260826/locations/asia-east1/keyRings/oday-prod-runtime/cryptoKeys/oday-prod-runtime"
+  },
+  "diskEncryptionStatus": {
+    "kind": "sql#diskEncryptionStatus",
+    "kmsKeyVersionName": "projects/odayplus-prod-20260826/locations/asia-east1/keyRings/oday-prod-runtime/cryptoKeys/oday-prod-runtime/cryptoKeyVersions/1"
+  },
+  "etag": "dee20684e9289b4a53b76127f2201c7be41d9e56d1c45004fff85340dac11fab",
+  "failoverReplica": {
+    "available": true
+  },
+  "gceZone": "asia-east1-b",
+  "geminiConfig": {
+    "activeQueryEnabled": true,
+    "entitled": false,
+    "googleVacuumMgmtEnabled": false,
+    "indexAdvisorEnabled": false,
+    "oomSessionCancelEnabled": true
+  },
+  "includeReplicasForMajorVersionUpgrade": false,
+  "instanceType": "CLOUD_SQL_INSTANCE",
+  "ipAddresses": [
+    {
+      "ipAddress": "10.235.0.2",
+      "type": "PRIVATE"
+    }
+  ],
+  "kind": "sql#instance",
+  "maintenanceVersion": "POSTGRES_16_15.R20261013.06_02",
+  "name": "oday-prod-foundation-sql",
+  "project": "odayplus-prod-20260826",
+  "region": "asia-east1",
+  "satisfiesPzi": true,
+  "secondaryGceZone": "asia-east1-c",
+  "selfLink": "https://sqladmin.googleapis.com/sql/v1beta4/projects/odayplus-prod-20260826/instances/oday-prod-foundation-sql",
+  "serverCaCert": {
+    "cert": "-----BEGIN CERTIFICATE-----\nMIIDcTCCAlmgAwIBAgIBADANBgkqhkiG9w0BAQsFADBwMS0wKwYDVQQuEyQzYjZm\nM2IwZS1jYjE0LTRmYTEtOWM0YS0xYTg3NDVmYWUzZjkxHDAaBgNVBAMTE0Nsb3Vk\nIFNRTCBTZXJ2ZXIgQ0ExFDASBgNVBAoTC0dvb2dsZSwgSW5jMQswCQYDVQQGEwJV\nUzAeFw0yNjExMjUwNjUxMzlaFw0zNjExMjIwNjUyMzlaMHAxLTArBgNVBC4TJDNi\nNmYzYjBlLWNiMTQtNGZhMS05YzRhLTFhODc0NWZhZTNmOTEcMBoGA1UEAxMTQ2xv\ndWQgU1FMIFNlcnZlciBDQTEUMBIGA1UEChMLR29vZ2xlLCBJbmMxCzAJBgNVBAYT\nAlVTMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2TbejMdwYJUZQDXS\n+IthswVAguchbipInWPYAfrZW+iZWT85zIDXQqhEeLsuvtO/dGu6GhvHxeGHurhA\n3olFY4jztQEduYsmtEmpiRWVboNRZhJycNOP3Xc23xq85PL6k/2NPsdSwP/knGdC\nlOf/uJaCEXTepBw2Ia9jO1jVrM0KSCqc+vMZe0JMx7MFOKkpTmf8G+A+o9YhwlH2\n1T8ysT3jj0uKtCogju4nm7S6F6Fxxf19Bgy2QGm1QfT2OoIWOd8XkjCFJ7uJG7QV\naVQRwIsL8tdJ41foBEHEyR9Jmnz/C0beaZwKd7M7GW0w742QRj+SbRqtFAkqNzNd\ndQE7PQIDAQABoxYwFDASBgNVHRMBAf8ECDAGAQH/AgEAMA0GCSqGSIb3DQEBCwUA\nA4IBAQChJccR2d3l2f8gtGVnngD4W0cBw+72xF3vPz29yG1bHdAlB2vtK6G7YtOg\nhoYvb2XfE4FLri2WcpRE+mgcUoKJNJEd9Z+3EslUqrWiUIY5Oh+N44WAJ+We/Wl1\na99f/eKzfOEvpil/nJ5bOOvuEJHDV6rnawLgFjs8s/elC1Ix8h4O908SiYnBwV+r\nlQA4/kYjdnjWYEn/W7uy0jY6y0MN8uXJ+h/xm2R7RuzTu5sBIJA24zF9O8CyvOPN\n6ZMfCDlnO25UYaHMykA5W8q88hotS9wEkR4WrZgTeNkUuW6SHwf43sjL/t4Dtt+R\nTStexqMOjU1YDIu0Byddm3qlFdo7\n-----END CERTIFICATE-----",
+    "certSerialNumber": "0",
+    "commonName": "C=US,O=Google\\, Inc,CN=Cloud SQL Server CA,dnQualifier=3b6f3b0e-cb14-4fa1-9c4a-1a8745fae3f9",
+    "createTime": "2026-11-25T06:51:39.242Z",
+    "expirationTime": "2036-11-22T06:52:39.242Z",
+    "instance": "oday-prod-foundation-sql",
+    "kind": "sql#sslCert",
+    "sha1Fingerprint": "2627e515dc43f6bfd73507565410f99de9c9d2b2"
+  },
+  "serviceAccountEmailAddress": "p365886461656-8rjwn3@gcp-sa-cloud-sql.iam.gserviceaccount.com",
+  "settings": {
+    "activationPolicy": "ALWAYS",
+    "availabilityType": "REGIONAL",
+    "backupConfiguration": {
+      "backupRetentionSettings": {
+        "retainedBackups": 30,
+        "retentionUnit": "COUNT"
+      },
+      "backupTier": "STANDARD",
+      "enabled": true,
+      "kind": "sql#backupConfiguration",
+      "location": "asia-east1",
+      "pointInTimeRecoveryEnabled": true,
+      "replicationLogArchivingEnabled": true,
+      "startTime": "18:00",
+      "transactionLogRetentionDays": 7,
+      "transactionalLogStorageState": "CLOUD_STORAGE"
+    },
+    "connectorEnforcement": "NOT_REQUIRED",
+    "dataDiskSizeGb": "100",
+    "dataDiskType": "PD_SSD",
+    "databaseFlags": [
+      {
+        "name": "cloudsql.iam_authentication",
+        "value": "on"
+      }
+    ],
+    "deletionProtectionEnabled": true,
+    "edition": "ENTERPRISE",
+    "enableDataplexIntegration": false,
+    "enableGoogleMlIntegration": false,
+    "insightsConfig": {
+      "queryInsightsEnabled": true,
+      "queryPlansPerMinute": 5,
+      "queryStringLength": 4500,
+      "recordApplicationTags": true
+    },
+    "ipConfiguration": {
+      "enablePrivatePathForGoogleCloudServices": true,
+      "ipv4Enabled": false,
+      "privateNetwork": "projects/odayplus-prod-20260826/global/networks/oday-prod-runtime",
+      "requireSsl": false,
+      "serverCaMode": "GOOGLE_MANAGED_INTERNAL_CA",
+      "serverCertificateRotationMode": "SERVER_CERTIFICATE_ROTATION_MODE_UNSPECIFIED",
+      "sslMode": "ENCRYPTED_ONLY"
+    },
+    "kind": "sql#settings",
+    "locationPreference": {
+      "kind": "sql#locationPreference",
+      "zone": "asia-east1-b"
+    },
+    "maintenanceWindow": {
+      "day": 7,
+      "hour": 19,
+      "kind": "sql#maintenanceWindow",
+      "updateTrack": "stable"
+    },
+    "pricingPlan": "PER_USE",
+    "replicationLagMaxSeconds": 31536000,
+    "replicationType": "SYNCHRONOUS",
+    "settingsVersion": "17",
+    "storageAutoResize": true,
+    "storageAutoResizeLimit": "0",
+    "tier": "db-custom-4-15360",
+    "userLabels": {
+      "app": "oday-plus",
+      "environment": "prod",
+      "managed_by": "terraform"
+    }
+  },
+  "sqlNetworkArchitecture": "NEW_NETWORK_ARCHITECTURE",
+  "state": "RUNNABLE",
+  "upgradableDatabaseVersions": [
+    {
+      "displayName": "PostgreSQL 17",
+      "majorVersion": "POSTGRES_17",
+      "name": "POSTGRES_17"
+    },
+    {
+      "displayName": "PostgreSQL 18",
+      "majorVersion": "POSTGRES_18",
+      "name": "POSTGRES_18"
+    }
+  ]
+}

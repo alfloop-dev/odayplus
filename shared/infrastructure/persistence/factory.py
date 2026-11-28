@@ -247,6 +247,7 @@ class PersistenceBundle:
             getattr(self.assisted_intake_store, "_canonical_audit_sink", None),
             delivery_authenticator=IdentityDeliveryAuthenticator(self.engine),
             identity_service_boundary=identity_service_boundary,
+            geo_provider=native_intake_geo_provider(),
         )
 
 
@@ -344,6 +345,40 @@ class PersistenceBundle:
         )
 
         return CanonicalIdentityDecisionRepository(self.canonical_identity_graph())
+
+
+def native_intake_geo_provider() -> Any:
+    """Compose the existing LIVE geocode adapter for native Intake Geo evidence.
+
+    This is the single runtime composition point: the Listing owner and the
+    controlled child transport receive the original provider types here and
+    never import the frozen producer packages themselves.
+    """
+    from modules.external_data.connectors.provider_registry import (
+        ExternalProviderConfigError,
+        ExternalProviderMode,
+        validate_external_providers_or_raise,
+    )
+    from modules.external_data.providers.live import (
+        GEOCODE_ENDPOINT_ENV_VAR,
+        GeocodeHttpResponse,
+        GeocodeProviderAuthError,
+        GeocodeProviderError,
+        GeocodeProviderRateLimitError,
+        GeocodeProviderTimeoutError,
+        HttpGeocodeClient,
+        PrimaryGeocodeProvider,
+    )
+    from modules.listing.application.pipeline import NativeIntakeGeoProvider
+
+    return NativeIntakeGeoProvider(
+        validate=validate_external_providers_or_raise, config_error=ExternalProviderConfigError,
+        live_mode=ExternalProviderMode.LIVE,
+        endpoint_env_var=GEOCODE_ENDPOINT_ENV_VAR, client_type=HttpGeocodeClient,
+        provider_type=PrimaryGeocodeProvider, response_type=GeocodeHttpResponse,
+        auth_error=GeocodeProviderAuthError, provider_error=GeocodeProviderError,
+        rate_limit_error=GeocodeProviderRateLimitError, timeout_error=GeocodeProviderTimeoutError,
+    )
 
 
 def _default_decision_policy_repository() -> InMemoryDecisionPolicyRepository:

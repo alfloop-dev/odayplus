@@ -304,7 +304,7 @@ def test_workflow_keeps_one_deployment_implementation_and_manual_gate():
     trigger = ci_jobs["automatic-dev-release"]
     assert "github.event_name == 'push'" in trigger["if"]
     assert "refs/heads/dev" in trigger["if"]
-    assert set(trigger["needs"]) == {"orchestrator", "product", "performance-gate", "product-e2e-gate"}
+    assert set(trigger["needs"]) == {"freeze-policy", "orchestrator", "product", "performance-gate", "product-e2e-gate"}
     assert trigger["permissions"]["actions"] == "write"
 
 

@@ -1,0 +1,431 @@
+{
+  "action": "cleanup",
+  "release_id": "odp-8e5020a29bad",
+  "candidate_sha": "",
+  "manifest_digest_prefix": "",
+  "success": true,
+  "timestamp": "2026-11-27T14:57:36Z",
+  "resources": [
+    {
+      "id": "projects/odayplus-runtime-20260825/instances/oday-staging-foundation-sql/databases/stg_odp_8e5020a29bad_5c24aae5",
+      "type": "google_sql_database",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/instances/oday-staging-foundation-sql/users/stg_odp_8e5020a29bad_5c24aae5_app",
+      "type": "google_sql_user",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/secrets/stg-odp-8e5020a29bad-5c24aae5-database-url",
+      "type": "google_secret_manager_secret",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/secrets/stg-odp-8e5020a29bad-5c24aae5-cursor-signing-key",
+      "type": "google_secret_manager_secret",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/secrets/stg-odp-8e5020a29bad-5c24aae5-web-session",
+      "type": "google_secret_manager_secret",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/secrets/stg-odp-8e5020a29bad-5c24aae5-identity-signing-key",
+      "type": "google_secret_manager_secret",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/secrets/stg-odp-8e5020a29bad-5c24aae5-admin-initial",
+      "type": "google_secret_manager_secret",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/secrets/stg-odp-8e5020a29bad-5c24aae5-admin-sign-in",
+      "type": "google_secret_manager_secret",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "gs://stg-odp-8e5020a2-5c24aae5-data-odayplus-runtime-20260825",
+      "type": "google_storage_bucket",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/serviceAccounts/stg-odp-8e5020a29-5c24aae5-rt@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "type": "google_service_account",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/serviceAccounts/stg-odp-8e5020a29-5c24aae5-web@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "type": "google_service_account",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/serviceAccounts/stg-odp-8e5020a29-5c24aae5-wkr@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "type": "google_service_account",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/topics/stg-odp-8e5020a29bad-5c24aae5-jobs",
+      "type": "google_pubsub_topic",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/topics/stg-odp-8e5020a29bad-5c24aae5-jobs-dlq",
+      "type": "google_pubsub_topic",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/subscriptions/stg-odp-8e5020a29bad-5c24aae5-jobs",
+      "type": "google_pubsub_subscription",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/subscriptions/stg-odp-8e5020a29bad-5c24aae5-jobs-dlq",
+      "type": "google_pubsub_subscription",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/locations/asia-east1/services/stg-odp-8e5020a29bad-5c24aae5-api",
+      "type": "google_cloud_run_v2_service",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/locations/asia-east1/services/stg-odp-8e5020a29bad-5c24aae5-web",
+      "type": "google_cloud_run_v2_service",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/locations/asia-east1/jobs/stg-odp-8e5020a29bad-5c24aae5-migration",
+      "type": "google_cloud_run_v2_job",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/locations/asia-east1/jobs/stg-odp-8e5020a29bad-5c24aae5-worker",
+      "type": "google_cloud_run_v2_job",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/locations/asia-east1/jobs/stg-odp-8e5020a29bad-5c24aae5-scheduler",
+      "type": "google_cloud_run_v2_job",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/locations/asia-east1/jobs/stg-odp-8e5020a29bad-5c24aae5-admin-bootstrap",
+      "type": "google_cloud_run_v2_job",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    },
+    {
+      "id": "projects/odayplus-runtime-20260825/locations/asia-east1/jobs/stg-odp-8e5020a29bad-5c24aae5-worker-trigger",
+      "type": "google_cloud_scheduler_job",
+      "status": "deleted",
+      "labels": {
+        "app": "oday-plus",
+        "candidate_sha": "8e5020a29bad92300cce2fe7262e496fb31370b5",
+        "created_at": "2026-11-25-05-48-38",
+        "environment": "staging",
+        "ephemeral": "true",
+        "expires_at": "2026-11-26-05-48-38",
+        "managed_by": "terraform",
+        "manifest_digest_prefix": "4ccc2c6e30497250",
+        "owner_task": "odp-ephemeral-staging-rollout-001",
+        "release_id": "odp-8e5020a29bad-5c24aae5",
+        "tenant": "f10870b0-b8be-5518-83fc-f461eadfea95"
+      }
+    }
+  ],
+  "errors": [],
+  "remediation_required": false,
+  "remediation_notes": "",
+  "metadata": {
+    "dry_run": false,
+    "matched_count": 23
+  }
+}

@@ -1,27 +1,39 @@
 # Template only. Production checks intentionally reject every REPLACE_WITH
 # value so this file can never become an accidental deployment configuration.
+#
+# Core-ops go-live (owner decisions 2026-11-20): no model is served, the
+# external sources stay off, sign-in is local password (D15), and the API/Web
+# Cloud Run services (oday-prod-api / oday-prod-web) are created and owned by
+# the Runtime Release deploy path, not by this stack. The first apply adopts the
+# hand-made deployer, WIF pool/provider, runtime and smoke identities and the
+# database URL / Web session secrets through the import blocks in iam.tf.
 project_id  = "REPLACE_WITH_PRODUCTION_PROJECT_ID"
 environment = "prod"
 region      = "asia-east1"
 
-api_image   = "asia-east1-docker.pkg.dev/REPLACE_WITH_PROJECT/oday/api@sha256:REPLACE_WITH_64_HEX"
-web_image   = "asia-east1-docker.pkg.dev/REPLACE_WITH_PROJECT/oday/web@sha256:REPLACE_WITH_64_HEX"
+release_profile = "core-ops"
+auth_mode       = "local"
+
+# The commit of this Terraform configuration being applied.
 release_sha = "REPLACE_WITH_40_HEX_GIT_SHA"
 
+# deploy_cloud_run_waji.sh owns the services, their images and their warm
+# minimum (ODP_CLOUD_RUN_MIN_INSTANCES >= 2 in the production environment), so
+# api_image / web_image / *_min_instances / *_invoker_members are not set here.
+cloud_run_services_managed     = false
+cloud_run_api_service_deployed = false # flip to true once the first Runtime Release deploy creates oday-prod-api
+
+# A new private-IP, CMEK, REGIONAL instance. The hand-made oday-prod-sql keeps
+# running untouched: never import it and never reuse its name here.
+cloud_sql_instance_name    = "oday-prod-foundation-sql"
 cloud_sql_tier             = "db-custom-4-15360"
 cloud_sql_disk_gb          = 100
 cloud_sql_retained_backups = 30
 
-api_min_instances = 2
-api_max_instances = 20
-web_min_instances = 2
-web_max_instances = 20
+# The existing registry the deployer pushes promoted images to (GCP_AR_REPO).
+artifact_registry_repository = "oday-plus"
 
-oidc_issuer    = "https://REPLACE_WITH_IDP_ISSUER"
-oidc_audiences = ["REPLACE_WITH_API_AUDIENCE"]
-oidc_jwks_uri  = "https://REPLACE_WITH_IDP_JWKS"
-
-web_base_url      = "https://console.oday-plus.com.tw"
+web_base_url = "https://console.oday-plus.com.tw"
 
 # Persistent custom-domain load balancer (load_balancer.tf). After apply, add
 # registrar A records for console.oday-plus.com.tw and api_public_host pointing
@@ -30,41 +42,32 @@ web_base_url      = "https://console.oday-plus.com.tw"
 web_load_balancer_enabled = true
 api_public_host           = "api.oday-plus.com.tw"
 
-web_oidc_client_id = "REPLACE_WITH_WEB_OIDC_CLIENT_ID"
-web_oidc_client_secret_ref = {
-  secret_id = "REPLACE_WITH_WEB_OIDC_CLIENT_SECRET_ID"
+# Local password auth: no OIDC issuer or Web client. The service-identity
+# issuer/JWKS default to Google; the API accepts the deploy smoke token for
+# this audience (the API's public origin, as ODP_AUTH_AUDIENCES).
+service_auth_audiences = ["REPLACE_WITH_API_SERVICE_AUDIENCE"]
+
+# Shared local Web-to-API signing key. The secret exists; pin the version the
+# production ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET variable mounts.
+identity_token_signing_key_ref = {
+  secret_id = "oday-prod-identity-token-signing-key"
   version   = "REPLACE_WITH_VERSION"
 }
 
-mlflow_tracking_uri = "https://REPLACE_WITH_MLFLOW_REGISTRY"
-
+# core-ops requires only the forecast binding the release entrypoint requires
+# (ODP_FORECAST_ENGINE / ODP_FORECAST_MODEL, same values as the production
+# GitHub environment). No MLflow URI or model approval values: core-ops serves
+# no model and placeholders are forbidden (HD-06 / F2).
 model_runtime_config = {
-  ODP_AVM_LIQUIDITY_APPROVED_AT         = "REPLACE_WITH_RFC3339_APPROVAL_TIME"
-  ODP_AVM_LIQUIDITY_APPROVED_BY         = "REPLACE_WITH_APPROVER_ID"
-  ODP_AVM_LIQUIDITY_ARTIFACT_SHA256     = "REPLACE_WITH_SHA256"
-  ODP_AVM_LIQUIDITY_ARTIFACT_URI        = "REPLACE_WITH_REMOTE_ARTIFACT_URI"
-  ODP_AVM_LIQUIDITY_DATASET_SNAPSHOT_ID = "REPLACE_WITH_DATASET_SNAPSHOT"
-  ODP_AVM_LIQUIDITY_MODEL_VERSION       = "REPLACE_WITH_MODEL_VERSION"
-  ODP_AVM_MODEL_NAME                    = "REPLACE_WITH_MLFLOW_MODEL_NAME"
-  ODP_FORECAST_ENGINE                   = "statsforecast"
-  ODP_FORECAST_MODEL                    = "REPLACE_WITH_APPROVED_MODEL"
+  ODP_FORECAST_ENGINE = "statsforecast"
+  ODP_FORECAST_MODEL  = "REPLACE_WITH_APPROVED_FORECAST_MODEL"
 }
 
-# Add MLFLOW_TRACKING_TOKEN or equivalent only when the registry cannot use
-# workload identity.
 model_secret_refs = {}
-
-api_invoker_members = [
-  "group:REPLACE_WITH_PRODUCTION_OPERATOR_GROUP",
-]
-
-web_invoker_members = [
-  "allUsers",
-]
 
 # Alert routing (ODP-PROD-MONITORING-ALERTING-001). Supply at least one target;
 # never commit personal addresses.
 monitoring_notification_emails       = []
 monitoring_notification_channel_ids  = ["projects/REPLACE_WITH_PRODUCTION_PROJECT_ID/notificationChannels/REPLACE_WITH_CHANNEL_ID"]
 monitoring_api_uptime_host           = "api.oday-plus.com.tw" # must equal api_public_host
-monitoring_cloud_sql_max_connections = 0 # REPLACE_WITH_EFFECTIVE_MAX_CONNECTIONS
+monitoring_cloud_sql_max_connections = 0                      # REPLACE_WITH_EFFECTIVE_MAX_CONNECTIONS

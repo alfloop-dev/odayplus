@@ -45,6 +45,7 @@ ROOT = Path(__file__).resolve().parents[2]
 POLICY_PATH = ROOT / ".github/branch-protection/policy.json"
 CI_WORKFLOW_PATH = ROOT / ".github/workflows/ci.yml"
 REVIEW_GATE_WORKFLOW_PATH = ROOT / ".github/workflows/merge-queue-review-gate.yml"
+FROZEN_REVIEW_POLICY_PATH = ROOT / ".github/workflows/frozen-review-policy.yml"
 RUNBOOK_PATH = ROOT / "docs/runbooks/dev-merge-queue.md"
 
 # The three required contexts that are GitHub Actions jobs. `task-review-gate`
@@ -54,7 +55,6 @@ ACTIONS_CONTEXTS = ("orchestrator", "product", "product-e2e-gate")
 REQUIRED_CONTEXTS = ("orchestrator", "product", "product-e2e-gate", "task-review-gate")
 
 GROUP_HEAD_EXPR = "${{ github.event.merge_group.head_sha }}"
-GROUP_REF_EXPR = "${{ github.event.merge_group.head_ref }}"
 TOOLING_SKIP_IF = "${{ needs.change-scope.outputs.scope != 'development_tooling' }}"
 
 # Distinct, obviously-fake SHAs so an assertion failure names which one leaked.
@@ -62,7 +62,7 @@ GROUP_SHA = "b" * 40
 PR_HEAD_SHA = "c" * 40
 OLD_HEAD_SHA = "d" * 40
 NEW_HEAD_SHA = "e" * 40
-QUEUE_REF = f"gh-readonly-queue/dev/pr-1284-{'f' * 40}"
+QUEUE_REF = f"refs/heads/gh-readonly-queue/dev/pr-1284-{'f' * 40}"
 
 
 def _load_policy() -> dict[str, Any]:
@@ -143,14 +143,18 @@ def flag(name):
     return argv[argv.index(name) + 1] if name in argv else None
 
 
-if argv[:2] == ["pr", "view"]:
-    number = argv[2]
+if argv[:1] == ["api"] and "/pulls/" in argv[1]:
+    number = argv[1].rsplit("/", 1)[-1]
     record({"call": "pr_view", "pr": number})
     head = fixture["pr_heads"].get(number)
     if head is None:
         sys.stderr.write("gh stub: no such PR: %s\n" % number)
         sys.exit(1)
-    print(jq(flag("--jq"), {"headRefOid": head}))
+    print(json.dumps({
+        "number": int(number),
+        "base": {"repo": {"full_name": "alfloop-dev/odayplus"}, "ref": "dev"},
+        "head": {"repo": {"full_name": fixture["source_repo"]}, "ref": fixture["source_branch"], "sha": head},
+    }))
     sys.exit(0)
 
 if argv[:1] == ["api"] and flag("-X") == "POST":
@@ -185,6 +189,8 @@ def _run_review_gate(
     pr_heads: dict[str, str],
     statuses: dict[str, list[dict[str, str]]],
     group_head: str = GROUP_SHA,
+    source_repo: str = "alfloop-dev/odayplus",
+    source_branch: str = "task/example",
 ) -> tuple[subprocess.CompletedProcess[str], list[dict[str, Any]]]:
     """Execute the review gate's real shell with a stubbed `gh`.
 
@@ -198,7 +204,8 @@ def _run_review_gate(
 
     fixture_path = tmp_path / "fixture.json"
     fixture_path.write_text(
-        json.dumps({"pr_heads": pr_heads, "statuses": statuses}), encoding="utf-8"
+        json.dumps({"pr_heads": pr_heads, "statuses": statuses, "source_repo": source_repo, "source_branch": source_branch}),
+        encoding="utf-8",
     )
     calls_path = tmp_path / "calls.jsonl"
     calls_path.write_text("", encoding="utf-8")
@@ -213,9 +220,17 @@ def _run_review_gate(
             "GH_TOKEN": "stub-token",
             "GITHUB_REPOSITORY": "alfloop-dev/odayplus",
             "HEAD_SHA": group_head,
-            "HEAD_REF": head_ref,
         }
     )
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"merge_group": {"head_ref": head_ref, "base_ref": "refs/heads/dev"}}))
+    outputs = tmp_path / "outputs"
+    outputs.touch()
+    env.update(GITHUB_EVENT_NAME="merge_group", GITHUB_EVENT_PATH=str(event), GITHUB_OUTPUT=str(outputs))
+    selection = _load_yaml(FROZEN_REVIEW_POLICY_PATH)["jobs"]["select"]["steps"][0]["run"]
+    selected = subprocess.run(["bash", "-c", selection], env=env, cwd=tmp_path, capture_output=True, text=True)
+    values = dict(line.split("=", 1) for line in outputs.read_text().splitlines()) if selected.returncode == 0 else {}
+    env.update(PR_NUMBER=values.get("pr_number", ""), PR_HEAD=values.get("pr_head", ""))
 
     proc = subprocess.run(
         ["bash", "-c", _review_gate_step()["run"]],
@@ -415,6 +430,37 @@ def test_scenario_3_unrecognised_queue_ref_is_refused(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "source_repo, source_branch, expected",
+    [
+        ("alfloop-dev/odayplus", "task/ODP-WORKER-SANDBOX-MOUNT-SCALE-261123", ".orchestrator/test_supervisor.py"),
+        ("alfloop-dev/odayplus", "task/ODP-CANONICAL-INTAKE-STORAGE-RETRY-TEST-261123", ".orchestrator/test_supervisor.py"),
+        ("fork/odayplus", "task/ODP-CANONICAL-INTAKE-STORAGE-RETRY-TEST-261123", ""),
+        ("alfloop-dev/odayplus", "task/ODP-STAGING-PASSWORD-JOURNEY-261121", ".orchestrator/test_supervisor.py"),
+        ("alfloop-dev/odayplus", "task/ODP-CORE-OPS-PROD-IMPLEMENTATION-261121", ".orchestrator/test_supervisor.py"),
+        ("alfloop-dev/odayplus", "task/ODP-OPERATOR-ERROR-DIAGNOSTICS-261123", ".orchestrator/test_supervisor.py"),
+        ("fork/odayplus", "task/ODP-OPERATOR-ERROR-DIAGNOSTICS-261123", ""),
+        ("alfloop-dev/odayplus", "task/ODP-FORECAST-SOURCE-COMPLETENESS-261024", ".orchestrator/test_supervisor.py"),
+        ("alfloop-dev/odayplus", "task/ODP-CI-FROZEN-FORECAST-REVIEW-261123", ".orchestrator/test_supervisor.py"),
+        ("alfloop-dev/odayplus", "task/ODP-STAGING-RETAINED-CLEANUP-EXPIRED-261123", ".orchestrator/test_supervisor.py"),
+        ("alfloop-dev/odayplus", "task/ODP-STAGING-RECOVERY-NOCLOBBER-261123", ".orchestrator/test_supervisor.py"),
+        ("alfloop-dev/odayplus", "task/ODP-OSS-POLICY-D01-AMENDMENT-261123", ".orchestrator/test_supervisor.py"),
+        ("fork/odayplus", "task/ODP-STAGING-PASSWORD-JOURNEY-261121", ""),
+    ],
+)
+def test_merge_group_resolves_release_freeze_from_pr_source(tmp_path: Path, source_repo: str, source_branch: str, expected: str) -> None:
+    process, _ = _run_review_gate(
+        tmp_path,
+        head_ref=QUEUE_REF,
+        pr_heads={"1284": PR_HEAD_SHA},
+        statuses={PR_HEAD_SHA: [{"context": "task-review-gate", "state": "success"}]},
+        source_repo=source_repo,
+        source_branch=source_branch,
+    )
+    assert process.returncode == 0, process.stderr
+    assert f"path={expected}" in (tmp_path / "outputs").read_text().splitlines()
+
+
 # ==============================================================================
 # Scenario 4: Head change re-validation
 # ==============================================================================
@@ -572,14 +618,14 @@ def test_scenario_6_tooling_skip_stays_bounded_to_tooling_only_changes() -> None
         assert jobs[context].get("if") == TOOLING_SKIP_IF, (
             f"job {context} carries an unexpected condition: {jobs[context].get('if')!r}"
         )
-        assert jobs[context].get("needs") == "change-scope"
+        assert jobs[context].get("needs") == ["freeze-policy", "change-scope"]
 
     # `product` aggregates the five parallel product lanes and always runs
     # fail-closed to verify their results.
     assert jobs["product"].get("if") == "always()", (
         f"job product carries an unexpected condition: {jobs['product'].get('if')!r}"
     )
-    assert jobs["product"].get("needs") == ["change-scope", *product_lanes]
+    assert jobs["product"].get("needs") == ["freeze-policy", "change-scope", *product_lanes]
 
     assert jobs["orchestrator"].get("if") is None, "orchestrator must never be skipped"
     assert jobs["change-scope"].get("if") is None, "the scope classifier must always run"
@@ -671,7 +717,8 @@ def test_scenario_6_review_gate_builds_and_stamps_the_group_head() -> None:
 
     step = _review_gate_step()
     assert step["env"]["HEAD_SHA"] == GROUP_HEAD_EXPR
-    assert step["env"]["HEAD_REF"] == GROUP_REF_EXPR
+    assert step["env"]["PR_NUMBER"] == "${{ needs.freeze-policy.outputs.pr_number }}"
+    assert step["env"]["PR_HEAD"] == "${{ needs.freeze-policy.outputs.pr_head }}"
     assert "statuses/${HEAD_SHA}" in step["run"], (
         "the status must be POSTed to the merge group head SHA"
     )
