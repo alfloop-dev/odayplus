@@ -721,7 +721,7 @@ export type OperatorBootstrapResponse = {
   kpis: Array<{ label: string; value: string; delta?: string; meta?: string; tone?: string }>;
   workQueue: OperatorWorkQueueItem[];
   decisions: OperatorApprovalItem[];
-  riskRows?: Array<{ label: string; score: number; signal?: string; tone?: string }>;
+  riskRows?: Array<{ label: string; score?: number | null; signal?: string; tone?: string }>;
   auditFeed?: Array<{ actor: string; category: string; detail: string; time: string; auditEventId?: string }>;
   notifications?: Array<{ title: string; detail: string; tone?: string }>;
   [key: string]: unknown;
