@@ -1545,6 +1545,16 @@ export type IngestionRunPayload = {
   window_start?: string | null;
 };
 
+/** InitialAssignmentTargetPage */
+export type InitialAssignmentTargetPage = {
+  assignment_id: string;
+  assignment_version: number;
+  due_at: string;
+  intake_id: string;
+  intake_version: number;
+  items: AssignmentTransferTarget[];
+};
+
 /** IntakeCorrectPayload */
 export type IntakeCorrectPayload = {
   actorName?: string | null;
@@ -3381,6 +3391,7 @@ export const API_PATHS = {
   "/api/v1/intakes/{intake_id}/actions/reopen": ["POST"],
   "/api/v1/intakes/{intake_id}/assignment": ["PUT"],
   "/api/v1/intakes/{intake_id}/assignment/receipt": ["GET"],
+  "/api/v1/intakes/{intake_id}/assignment/targets": ["GET"],
   "/api/v1/intakes/{intake_id}/corrections": ["POST"],
   "/api/v1/intakes/{intake_id}/match-case": ["GET", "POST"],
   "/api/v1/intakes/{intake_id}/match-case/property-options": ["GET"],

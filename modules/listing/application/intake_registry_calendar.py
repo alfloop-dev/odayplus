@@ -360,15 +360,8 @@ class RegistryIntakeWorkflowPolicy:
         reason: str,
     ) -> IntakeWorkflowPlan:
         policy, calendar = self._bound(schedule, scope)
-        if not all(
-            policy.reads(x) for x in ("actor_account", "target_account", "requested_due_at")
-        ):
-            raise IntakeWorkflowUnavailable("Assignment policy does not declare its runtime inputs")
-        _actor, actor_roles = self._account(actor_id, scope)
+        actor_roles = self._initial_assignment_actor(policy, scope, actor_id)
         _owner, owner_roles = self._account(owner_subject_id, scope)
-        managers = {Role.SITE_REVIEWER, Role.DATA_OWNER, Role.EXECUTIVE}
-        if not actor_roles & managers:
-            raise PermissionError("Actor cannot assign this workflow")
         return self._assignment_plan(
             policy,
             calendar,
@@ -379,6 +372,24 @@ class RegistryIntakeWorkflowPolicy:
             requested_due_at,
             reason,
         )
+
+    def _initial_assignment_actor(self, policy, scope, actor_id):
+        """The original manager/router guard for both initial reads and writes."""
+        if not all(
+            policy.reads(x) for x in ("actor_account", "target_account", "requested_due_at")
+        ):
+            raise IntakeWorkflowUnavailable("Assignment policy does not declare its runtime inputs")
+        _actor, actor_roles = self._account(actor_id, scope)
+        if not actor_roles & {Role.SITE_REVIEWER, Role.DATA_OWNER, Role.EXECUTIVE}:
+            raise PermissionError("Actor cannot assign this workflow")
+        return actor_roles
+
+    def list_initial_assignment_targets(
+        self, scope: Mapping[str, Any], schedule: SlaSchedule, *, actor_id: str,
+    ) -> list[dict[str, str]]:
+        policy, _calendar = self._bound(schedule, scope)
+        self._initial_assignment_actor(policy, scope, actor_id)
+        return self._assignment_targets(policy, scope)
 
     def _assignment_plan(
         self,
@@ -497,6 +508,10 @@ class RegistryIntakeWorkflowPolicy:
             "actor_account", "target_account", "requested_due_at",
         )):
             raise IntakeWorkflowUnavailable("Transfer policy does not declare runtime inputs")
+        return self._assignment_targets(policy, scope, excluded_subject_id=current_owner_subject_id)
+
+    def _assignment_targets(self, policy, scope, *, excluded_subject_id=None):
+        """One scoped live directory; each caller retains its distinct actor guard."""
         bindings = policy.parameters.get("assignee_role_bindings")
         try:
             if not isinstance(bindings, Mapping) or not bindings:
@@ -508,10 +523,10 @@ class RegistryIntakeWorkflowPolicy:
                 roles.append((name, Role(role)))
         except (TypeError, ValueError) as exc:
             raise IntakeWorkflowUnavailable("Assignment role bindings are unavailable") from exc
-        targets = []
+        targets = {}
         for candidate in self._identities.list_scoped_active_accounts(scope["tenant_id"]):
             subject_id = str(candidate.account_id)
-            if UUID(subject_id) == UUID(current_owner_subject_id):
+            if excluded_subject_id is not None and UUID(subject_id) == UUID(excluded_subject_id):
                 continue
             try:
                 # Re-read active status, tenant, roles and every resource scope axis.
@@ -520,12 +535,12 @@ class RegistryIntakeWorkflowPolicy:
                 continue
             for owner_role, required_role in roles:
                 if required_role in account_roles:
-                    targets.append({
+                    targets[(subject_id, owner_role)] = {
                         "subject_id": subject_id,
                         "display_name": account.display_name.strip() or subject_id,
                         "owner_role": owner_role,
-                    })
-        return sorted(targets, key=lambda row: (
+                    }
+        return sorted(targets.values(), key=lambda row: (
             row["display_name"], row["subject_id"], row["owner_role"],
         ))
 

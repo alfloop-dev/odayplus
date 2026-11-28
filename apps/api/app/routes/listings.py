@@ -23,6 +23,7 @@ from modules.listing.application.intake_assignment_commands import (
     authorize_initial_assignment,
     change_assignment,
     list_assignment_transfer_targets,
+    list_initial_assignment_targets,
 )
 from modules.listing.application.intake_completion import IntakeWorkIncomplete
 from modules.listing.application.intake_correction_lineage import apply_field, correction_values
@@ -512,6 +513,14 @@ else:
     class AssignmentTransferTargetPage(BaseModel):
         assignment_id: UuidString
         assignment_version: int
+        items: list[AssignmentTransferTarget]
+
+    class InitialAssignmentTargetPage(BaseModel):
+        intake_id: UuidString
+        intake_version: int = Field(ge=1, strict=True)
+        assignment_id: UuidString
+        assignment_version: int = Field(ge=1, strict=True)
+        due_at: DateTimeString
         items: list[AssignmentTransferTarget]
 
     class AssignmentTransferRequest(BaseModel):
@@ -3243,6 +3252,40 @@ else:
             response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
             response.headers["ETag"] = f'W/"{val["version"]}"'
             return CorrectionReceipt(**val)
+
+        @router.get(
+            "/intakes/{intake_id}/assignment/targets",
+            operation_id="listInitialAssignmentTargets",
+            response_model=InitialAssignmentTargetPage,
+            responses=api_error_responses(403, 404, 409, 422, 503),
+        )
+        def get_initial_assignment_targets(
+            intake_id: UuidString,
+            request: Request,
+            response: Response,
+            tenant_id: str = Depends(require_actor),
+        ) -> InitialAssignmentTargetPage:
+            # This finite read belongs to the native initial-assignment consumer.
+            # It neither selects a purpose nor borrows transfer/legacy authority.
+            native = native_workflow_owner(request, tenant_id, intake_id=intake_id)
+            if native is None:
+                raise HTTPException(404, "intake not found")
+            repo, _ = native
+            with native_workflow_unit(request, tenant_id, repo, intake_id) as (principal, state):
+                if not principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE, Role.DATA_OWNER):
+                    raise HTTPException(403, "ROLE_DENIED")
+                try:
+                    result = list_initial_assignment_targets(
+                        state, intake_id, state.workflow_policy, principal.subject_id,
+                    )
+                except PermissionError as exc:
+                    raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED") from exc
+                except DomainValidationError as exc:
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
+                except Exception as exc:
+                    raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+            response.headers["Cache-Control"] = "no-store"
+            return InitialAssignmentTargetPage(**result)
 
         @router.put(
             "/intakes/{intake_id}/assignment",

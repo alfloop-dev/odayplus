@@ -751,6 +751,7 @@ def test_native_workflow_actions_use_live_sql_registry_directory_and_approver(in
     row = _workflow_row()
     parameters = deepcopy(row.parameters)
     parameters["assignee_role_bindings"]["site-reviewer"] = Role.SITE_REVIEWER.value
+    parameters["assignee_role_bindings"]["staff-secondary"] = Role.EXPANSION_USER.value
     with db.connect() as conn:
         _seed_identities(conn)
         _insert_policy(conn, replace(row, parameters=parameters))
@@ -791,11 +792,130 @@ def test_native_workflow_actions_use_live_sql_registry_directory_and_approver(in
             iid = created.json()["intake_id"]
             workflow = client.get("/api/v1/canonical-intakes/" + iid).json()["workflow"]
             aid, sid = workflow["assignment_id"], workflow["sla_instance_id"]
-            body = {"owner_subject_id": OWNER, "owner_role": "expansion-staff", "due_at": workflow["due_at"],
+            assert len({iid, aid, sid}) == 3
+            targets_path = f"/api/v1/intakes/{iid}/assignment/targets"
+
+            def snapshot():
+                # Include full row values: counts alone cannot detect a GET update.
+                with db.connect() as conn:
+                    return [conn.execute("SELECT row_to_json(t) FROM " + table + " t ORDER BY row_to_json(t)::text").fetchall()
+                            for table in (*tables, "intake.intakes", "workflow.idempotency_records")]
+
+            def directory(expected=200, **kwargs):
+                before_read = snapshot()
+                result = client.get(targets_path, **kwargs)
+                assert result.status_code == expected, result.text
+                assert snapshot() == before_read
+                if expected == 200:
+                    assert result.headers["cache-control"] == "no-store"
+                return result
+
+            page = directory().json()
+            assert page == {"intake_id": iid, "intake_version": 1, "assignment_id": aid,
+                "assignment_version": 1, "due_at": workflow["due_at"], "items": [
+                    {"subject_id": MANAGER, "display_name": MANAGER, "owner_role": "site-reviewer"},
+                    {"subject_id": OWNER, "display_name": OWNER, "owner_role": "expansion-staff"},
+                    {"subject_id": OWNER, "display_name": OWNER, "owner_role": "staff-secondary"},
+                ]}
+            # Initial discovery cannot borrow transfer's current-owner authority.
+            before = snapshot()
+            assert client.get(f"/api/v1/assignments/{aid}/transfer-targets").status_code == 403
+            assert snapshot() == before
+            act(OWNER)
+            directory(403)
+            act(MANAGER)
+            directory(409, headers={"If-Actor-Match": OWNER})
+            directory(409, headers={"If-Tenant-Match": str(uuid4())})
+            caller["principal"] = Principal(MANAGER, frozenset({Role.SITE_REVIEWER}),
+                Scope(tenant_id=TENANT, brand_ids=frozenset({str(uuid4())})))
+            directory(403)
+            caller["principal"] = Principal(MANAGER, frozenset({Role.SITE_REVIEWER}), Scope(tenant_id=str(uuid4())))
+            directory(404)
+            act(MANAGER)
+            for actor in (MANAGER, APPROVER):
+                account(actor, "disabled")
+                directory(403 if actor == MANAGER else 503)
+                account(actor, "active")
+            with db.connect() as conn:
+                conn.execute("DELETE FROM identity.account_roles WHERE account_id=%s", (MANAGER,))
+            directory(403)
+            with db.connect() as conn:
+                conn.execute("INSERT INTO identity.account_roles(account_id,role,granted_by) VALUES (%s,%s,'isolated-synthetic-test')",
+                    (MANAGER, Role.SITE_REVIEWER.value))
+            # Both verified HTTP scope and the live SQL actor scope must cover the Intake.
+            for actor in (MANAGER, OWNER):
+                for axis in ("brand_ids", "region_ids", "store_ids", "assigned_area_ids", "heat_zone_ids", "modules"):
+                    with db.connect() as conn:
+                        conn.execute(f"UPDATE identity.account_scopes SET {axis}=%s WHERE account_id=%s",
+                            (Jsonb([str(uuid4())]), actor))
+                    result = directory(403 if actor == MANAGER else 200)
+                    if actor == OWNER:
+                        assert all(item["subject_id"] != OWNER for item in result.json()["items"])
+                    with db.connect() as conn:
+                        conn.execute(f"UPDATE identity.account_scopes SET {axis}='[]'::jsonb WHERE account_id=%s", (actor,))
+            account(OWNER, "disabled")
+            assert all(item["subject_id"] != OWNER for item in directory().json()["items"])
+            account(OWNER, "active")
+            with db.connect() as conn:
+                conn.execute("DELETE FROM identity.account_roles WHERE account_id=%s", (OWNER,))
+            assert all(item["subject_id"] != OWNER for item in directory().json()["items"])
+            with db.connect() as conn:
+                conn.execute("INSERT INTO identity.account_roles(account_id,role,granted_by) VALUES (%s,%s,'isolated-synthetic-test')",
+                    (OWNER, Role.EXPANSION_USER.value))
+            # No eligible target is a successful empty observation, not registry failure.
+            account(OWNER, "disabled")
+            with db.connect() as conn:
+                conn.execute("DELETE FROM identity.account_roles WHERE account_id=%s", (MANAGER,))
+                conn.execute("INSERT INTO identity.account_roles(account_id,role,granted_by) VALUES (%s,%s,'isolated-synthetic-test')",
+                    (MANAGER, Role.EXECUTIVE.value))
+            assert directory().json()["items"] == []
+            with db.connect() as conn:
+                conn.execute("DELETE FROM identity.account_roles WHERE account_id=%s", (MANAGER,))
+                conn.execute("INSERT INTO identity.account_roles(account_id,role,granted_by) VALUES (%s,%s,'isolated-synthetic-test')",
+                    (MANAGER, Role.SITE_REVIEWER.value))
+            account(OWNER, "active")
+            # SQL directory rows are still verified; duplicate observations cannot
+            # duplicate a (subject, role) option or collapse its distinct roles.
+            provider = bundle.assisted_intake_workflow_policy
+            identities = provider._identities
+            original_directory = identities.list_scoped_active_accounts
+            with monkeypatch.context() as patch:
+                patch.setattr(identities, "list_scoped_active_accounts", lambda tenant:
+                    original_directory(tenant) * 2)
+                assert directory().json() == page
+            with monkeypatch.context() as patch:
+                def unavailable(_tenant):
+                    raise RuntimeError("Synthetic SQL directory unavailable")
+                patch.setattr(identities, "list_scoped_active_accounts", unavailable)
+                directory(503)
+            # A second recorded Assignment, including completed history, is not
+            # an unambiguous initial workflow. The existing SQL owner refuses it.
+            duplicate = str(uuid4())
+            with db.connect() as conn:
+                conn.execute("INSERT INTO workflow.assignments(assignment_id,tenant_id,intake_id,status,queue_key,due_at) "
+                    "VALUES (%s,%s,%s,'COMPLETED','synthetic-duplicate',%s)", (duplicate, TENANT, iid, workflow["due_at"]))
+            directory(503)
+            with db.connect() as conn:
+                conn.execute("DELETE FROM workflow.assignments WHERE assignment_id=%s", (duplicate,))
+                conn.execute("UPDATE workflow.assignments SET owner_subject_id=%s WHERE assignment_id=%s", (OWNER, aid))
+            directory(409)
+            with db.connect() as conn:
+                conn.execute("UPDATE workflow.assignments SET owner_subject_id=NULL WHERE assignment_id=%s", (aid,))
+            body = {"owner_subject_id": OWNER, "owner_role": "expansion-staff", "due_at": page["due_at"],
                     "reason": "Synthetic SQL native assignment"}
-            assign_headers = {"Idempotency-Key": "synthetic-native-reg-assign", "If-Match": 'W/"1"'}
+            assign_headers = {"Idempotency-Key": "synthetic-native-reg-assign",
+                              "If-Match": f'W/"{page["intake_version"]}"'}
+            before = snapshot()
+            stale = client.put(f"/api/v1/intakes/{iid}/assignment", json=body,
+                headers={**assign_headers, "If-Match": 'W/"2"'})
+            assert stale.status_code == 409, stale.text
+            assert snapshot() == before
+            account(OWNER, "disabled")
+            assert client.put(f"/api/v1/intakes/{iid}/assignment", json=body, headers=assign_headers).status_code == 403
+            account(OWNER, "active")
             assigned = client.put(f"/api/v1/intakes/{iid}/assignment", json=body, headers=assign_headers)
             assert assigned.status_code == 200, assigned.text
+            directory(409)
             # A stored receipt never retains a revoked target's authority.
             account(OWNER, "disabled")
             before = counts()

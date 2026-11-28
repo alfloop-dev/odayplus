@@ -99,6 +99,31 @@ def authorize_initial_assignment(
     return intake, sla, plan
 
 
+def list_initial_assignment_targets(
+    store: Any, intake_id: str, policy: Any, actor_id: str,
+) -> dict[str, Any]:
+    """Observe initial eligibility only; never used as PUT replay authorization."""
+    if policy is None:
+        raise IntakeWorkflowUnavailable("Assignment registry is unavailable")
+    assignments = [row for row in store.assignments.values() if row.get("intake_id") == intake_id]
+    if len(assignments) != 1:
+        raise IntakeWorkflowUnavailable("Initial Assignment requires one recorded workflow")
+    record = assignments[0]
+    intake, sla, schedule = assignment_workflow(store, record)
+    scope = deepcopy(intake["scope"])
+    items = policy.list_initial_assignment_targets(scope, schedule, actor_id=actor_id)
+    if scope != intake["scope"]:
+        raise IntakeWorkflowUnavailable("Provider changed the authorized assignment scope")
+    if (record["status"] != "UNASSIGNED" or record["owner_subject_id"] is not None
+            or record["owner_role"] is not None or sla["state"] in {"PAUSED", "COMPLETED", "BREACHED"}):
+        raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "Initial Assignment is unavailable")
+    return {
+        "intake_id": intake["intake_id"], "intake_version": intake["version"],
+        "assignment_id": record["assignment_id"], "assignment_version": record["version"],
+        "due_at": record["due_at"], "items": items,
+    }
+
+
 def list_assignment_transfer_targets(
     store: Any, record: Mapping[str, Any], policy: Any, actor_id: str,
 ) -> dict[str, Any]:
